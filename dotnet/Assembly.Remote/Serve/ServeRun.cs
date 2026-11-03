@@ -88,7 +88,7 @@ public static class ServeRun
         using var hostStop = new CancellationTokenSource();
         var tokens = new McpTokens();
         var endpoint = new McpEndpointReady(tokens);
-        var helperCards = new EngineHelperCards(db, TimeProvider.System, Console.Out);
+        var helperCards = new EngineHelperCards(db, TimeProvider.System, Console.Out, sessionStore);
         SessionRegistry? sessions = null;
         WorkflowReceiptServices? workflowReceipts = null;
         EngineRuntime? engine = null;

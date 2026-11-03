@@ -32,8 +32,9 @@ pub(super) enum OutFrame<'a> {
     EngineSub {
         id: u64,
         stream: &'static str,
-        topic: &'static str,
-        key: &'a str,
+        topic: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        key: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         machine: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]

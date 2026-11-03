@@ -12,7 +12,7 @@
 //!   open, so a backend that welcomes and drops can't make it loop.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicU64;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
@@ -62,6 +62,7 @@ pub(super) struct ClientThread {
     states: UnboundedSender<ConnectionState>,
     /// The window's call and subscription ids; a re-subscribe after a gap takes a fresh one.
     ids: Arc<AtomicU64>,
+    engine_machine: Arc<Mutex<Option<String>>>,
     calls: HashMap<u64, oneshot::Sender<Outcome<Value>>>,
     /// The newest call per key.
     keys: HashMap<String, u64>,
@@ -92,6 +93,7 @@ impl ClientThread {
         sender: Sender<Event>,
         states: UnboundedSender<ConnectionState>,
         ids: Arc<AtomicU64>,
+        engine_machine: Arc<Mutex<Option<String>>>,
     ) -> JoinHandle<()> {
         let mut client = Self {
             endpoint,
@@ -105,6 +107,7 @@ impl ClientThread {
             reopened: false,
             states,
             ids,
+            engine_machine,
             calls: HashMap::new(),
             keys: HashMap::new(),
             topics: HashMap::new(),
@@ -229,24 +232,20 @@ impl ClientThread {
                 machine,
                 updates,
             } => {
-                let machine = machine.or_else(|| {
-                    self.connection
-                        .as_ref()
-                        .and_then(|connection| connection.engine_machine.clone())
-                });
-                self.engines.insert(
-                    id,
-                    super::engine_update::EngineFeed {
-                        handle: id,
-                        message,
-                        machine,
-                        updates,
-                        through: None,
-                        at: None,
-                        snapshot_cut: None,
-                    },
-                );
-                self.send_engine(id);
+                self.add_engine(id, "messages".into(), Some(message), machine, false, updates);
+            }
+            Event::SubscribeEngineScope { id, topic, key, machine, updates } => {
+                self.add_engine(id, topic, key, machine, true, updates);
+            }
+            Event::AcknowledgeEngine { handle, wire, through, at } => {
+                if let Some(feed) = self.engines.get_mut(&wire)
+                    && feed.handle == handle && feed.scoped
+                    && feed.through.is_some_and(|received| through <= received)
+                    && feed.acknowledged.as_ref().is_none_or(|(ack, _)| through > *ack)
+                {
+                    feed.acknowledged = Some((through, at));
+                    self.send(&OutFrame::Ack { id:wire, stream:"engine", after:through });
+                }
             }
             Event::Unsubscribe { id } => {
                 if let Some(wire) = self
@@ -330,8 +329,18 @@ impl ClientThread {
 
     fn close(&mut self) {
         self.connection = None;
-        for feed in self.engines.values_mut() {
+        *self.engine_machine.lock().expect("Engine identity lock") = None;
+        // A scoped page queued before disconnect cannot acknowledge the next connection.
+        // Resume only its last applied page, under a new wire generation.
+        for (wire, mut feed) in std::mem::take(&mut self.engines) {
             feed.snapshot_cut = None;
+            feed.snapshot_items.clear();
+            let wire = if feed.scoped {
+                feed.through = feed.acknowledged.as_ref().map(|(through, _)| *through);
+                feed.at = feed.acknowledged.as_ref().and_then(|(_, at)| at.clone());
+                self.ids.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+            } else { wire };
+            self.engines.insert(wire, feed);
         }
         self.keys.clear();
         for (_, answer) in self.calls.drain() {
@@ -344,6 +353,7 @@ impl ClientThread {
         match Connection::open(&self.endpoint, self.path, self.sender.clone()) {
             Ok(connection) => {
                 let machine = connection.machine.clone();
+                *self.engine_machine.lock().expect("Engine identity lock") = connection.engine_machine.clone();
                 self.connection = Some(connection);
                 let topics: Vec<u64> = self.topics.keys().copied().collect();
                 topics.into_iter().for_each(|id| self.send_topic(id));
@@ -394,8 +404,9 @@ impl ClientThread {
         let Some(feed) = self.engines.get(&id) else {
             return;
         };
-        let (message, machine, after, at) = (
-            feed.message.clone(),
+        let (topic, key, machine, after, at) = (
+            feed.topic.clone(),
+            feed.key.clone(),
             feed.machine.clone(),
             feed.through,
             feed.at.clone(),
@@ -403,8 +414,8 @@ impl ClientThread {
         self.send(&OutFrame::EngineSub {
             id,
             stream: "engine",
-            topic: "messages",
-            key: &message,
+            topic: &topic,
+            key: key.as_deref(),
             machine: machine.as_deref(),
             after,
             at: at.as_ref(),

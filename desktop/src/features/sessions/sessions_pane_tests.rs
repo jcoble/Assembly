@@ -534,3 +534,32 @@ fn the_needs_total_reads_as_words_above_zero() {
     assert_eq!(needs_words(1).as_deref(), Some("1 needs you"));
     assert_eq!(needs_words(3).as_deref(), Some("3 need you"));
 }
+
+// Selecting the middle status pill must keep status and location separate in
+// the rail query, including after saved filters are restored.
+#[gpui::test]
+fn status_then_location_picks_keep_their_query_meaning(cx: &mut TestAppContext) {
+    let (pane, cx) = open(cx);
+    pane.update(cx, |pane, cx| {
+        pane.restore(
+            vec!["codex".into()],
+            vec!["remote".into()],
+            vec!["done".into()],
+            View::default(),
+            cx,
+        );
+        pane.pills.update(cx, |pills, cx| {
+            assert_eq!(pills.state.groups[1].label, "Status");
+            assert_eq!(pills.state.groups[2].label, "Location");
+            pills.state.toggle(1, "working");
+            pills.state.toggle(2, "local");
+            cx.emit(crate::core::ui::filter_pills::FilterPillsChanged);
+        });
+    });
+    cx.run_until_parked();
+    pane.read_with(cx, |pane, _| {
+        assert_eq!(pane.rail.providers, ["codex"]);
+        assert_eq!(pane.rail.statuses, ["working", "done"]);
+        assert_eq!(pane.rail.locations, ["local", "remote"]);
+    });
+}

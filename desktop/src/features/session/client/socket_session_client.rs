@@ -53,6 +53,7 @@ impl SessionClient for SocketSessionClient {
             while let Ok(update) = updates.updates.recv().await {
                 let items = match update {
                     EngineUpdate::Snapshot(items) | EngineUpdate::Events(items) => items,
+                    EngineUpdate::Scoped(_) => continue,
                 };
                 for item in items {
                     cx.update(|cx| sink(item, cx));

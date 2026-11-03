@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
+use std::sync::Mutex;
 use std::thread::JoinHandle;
 
 use futures_channel::mpsc::unbounded;
@@ -30,6 +31,7 @@ pub struct SocketClient {
     /// Call and subscription ids, shared by every caller so a handle knows its own id to cancel or unsub.
     next_id: Arc<AtomicU64>,
     state: ConnectionState,
+    engine_machine: Arc<Mutex<Option<String>>>,
     /// Brings the client thread's state changes to the entity.
     _states: Task<()>,
     /// Joined on drop, after `Event::Stop`.
@@ -96,6 +98,7 @@ impl SocketClient {
     ) -> Entity<Self> {
         let (events, receiver) = mpsc::channel();
         let (states, mut changes) = unbounded();
+        let engine_machine = Arc::new(Mutex::new(None));
         let thread = ClientThread::spawn(
             endpoint,
             path,
@@ -103,6 +106,7 @@ impl SocketClient {
             events.clone(),
             states,
             next_id.clone(),
+            engine_machine.clone(),
         );
         cx.new(|cx| {
             let states = cx.spawn(async move |this, cx| {
@@ -120,11 +124,18 @@ impl SocketClient {
             Self {
                 events,
                 next_id,
+                engine_machine,
                 state: ConnectionState::Connecting,
                 _states: states,
                 thread: Some(thread),
             }
         })
+    }
+
+    /// Actual durable Engine ID from this connection's Welcome, absent while disconnected.
+    /// A display host name or a saved-machine alias is never substituted.
+    pub fn engine_machine(&self) -> Option<String> {
+        self.engine_machine.lock().ok()?.clone()
     }
 
     pub fn global(cx: &App) -> Entity<Self> {
@@ -222,6 +233,19 @@ impl SocketClient {
             message: message.into(),
             machine: machine.map(Into::into),
             updates,
+        });
+        TopicSubscription::new(id, self.events.clone(), receiver)
+    }
+
+    /// Current Engine display state on the existing connection and cursor owner.
+    /// Dropping the returned subscription cancels the scope and its staged snapshot.
+    pub fn subscribe_engine(
+        &self, topic: &str, key: Option<&str>, machine: Option<&str>,
+    ) -> TopicSubscription<super::engine_update::EngineUpdate> {
+        let id = self.id();
+        let (updates, receiver) = unbounded();
+        let _ = self.events.send(Event::SubscribeEngineScope {
+            id, topic: topic.into(), key: key.map(Into::into), machine: machine.map(Into::into), updates,
         });
         TopicSubscription::new(id, self.events.clone(), receiver)
     }

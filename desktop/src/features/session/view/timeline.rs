@@ -10,6 +10,8 @@ use std::rc::Rc;
 
 use gpui_kit::component::message_scroller::{MessageScroller, MessageScrollerState};
 use gpui_kit::*;
+use crate::core::state::preferences::Preferences;
+use crate::core::theme::text::TextRole;
 
 use crate::features::session::model::entries::Entry;
 use crate::features::session::model::follow::{Follow, FollowEvent, FollowStep};
@@ -39,6 +41,7 @@ pub struct Timeline {
     /// The top row on screen when the scroller last changed.
     top: usize,
     _scrolled: Subscription,
+    _appearance: Option<Subscription>,
     /// How many times the entries were worked out again, for tests.
     #[cfg(test)]
     pub builds: usize,
@@ -68,6 +71,23 @@ impl Timeline {
             }
             cx.notify();
         });
+        let appearance = Preferences::try_global(cx).map(|preferences| {
+            let mut metrics = Preferences::read(cx, |appearance| {
+                (appearance.ui_font(), appearance.ui_text(TextRole::Chat))
+            });
+            cx.observe(&preferences, move |timeline, _, cx| {
+                let next = Preferences::read(cx, |appearance| {
+                    (appearance.ui_font(), appearance.ui_text(TextRole::Chat))
+                });
+                if next != metrics {
+                    metrics = next;
+                    timeline.scroller.update(cx, |scroller, cx| {
+                        scroller.remeasure_items(0..timeline.entries.len(), cx);
+                    });
+                    cx.notify();
+                }
+            })
+        });
         Timeline {
             scroller,
             render_row,
@@ -78,6 +98,7 @@ impl Timeline {
             restore: None,
             top: 0,
             _scrolled: scrolled,
+            _appearance: appearance,
             #[cfg(test)]
             builds: 0,
         }

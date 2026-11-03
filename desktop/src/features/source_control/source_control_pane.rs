@@ -11,6 +11,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::git_status::{GitStatus, Section};
+use super::commit_timeline::CommitTimeline;
+use crate::core::intents::open_git_history::OpenGitHistory;
 use crate::core::intents::open_branch_diff::OpenBranchDiff;
 use crate::core::intents::open_diff::OpenDiff;
 use crate::core::state::session_read::{SessionRead, Shown};
@@ -22,6 +24,9 @@ pub struct SourceControlPane {
     focus: FocusHandle,
     read: Entity<SessionRead<GitStatus>>,
     _heard: Subscription,
+    active: bool,
+    history_open: bool,
+    history: Option<(String, Entity<CommitTimeline>)>,
 }
 
 impl SourceControlPane {
@@ -35,12 +40,37 @@ impl SourceControlPane {
 
     pub fn new(cx: &mut Context<Self>) -> Self {
         let read = cx.new(|cx| SessionRead::new("git", "status", cx));
-        let heard = cx.observe(&read, |_, _, cx| cx.notify());
+        let heard = cx.observe(&read, |pane: &mut Self, _, cx| { pane.sync_history(cx); cx.notify(); });
         Self {
             focus: cx.focus_handle(),
             read,
             _heard: heard,
+            active: false,
+            history_open: false,
+            history: None,
         }
+    }
+
+    fn sync_history(&mut self, cx: &mut Context<Self>) {
+        let session = self.read.read(cx).session().map(String::from);
+        if self.history.as_ref().map(|(session, _)| session) != session.as_ref() {
+            self.history = None;
+            if self.history_open {
+                if let Some(session) = session {
+                    let timeline = cx.new(|cx| CommitTimeline::new(session.clone(), None, self.active, cx));
+                    self.history = Some((session, timeline));
+                }
+            }
+        }
+    }
+
+    fn toggle_history(&mut self, cx: &mut Context<Self>) {
+        self.history_open = !self.history_open;
+        if self.history.is_none() { self.sync_history(cx); }
+        else if let Some((_, timeline)) = &self.history {
+            timeline.update(cx, |timeline, cx| timeline.set_active(self.active && self.history_open, cx));
+        }
+        cx.notify();
     }
 }
 
@@ -122,7 +152,11 @@ impl BasePanel for SourceControlPane {
     }
 
     fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        self.active = active;
         self.read.update(cx, |read, cx| read.set_active(active, cx));
+        if let Some((_, timeline)) = &self.history {
+            timeline.update(cx, |timeline, cx| timeline.set_active(active && self.history_open, cx));
+        }
     }
 }
 
@@ -224,10 +258,24 @@ impl Render for SourceControlPane {
                 .when_some(status.more_line(), |pane, more| pane.child(line(more)))
                 .into_any_element(),
         };
+        let open_history = OpenGitHistory { session_id: session, path: None };
+        let history = v_flex()
+            .child(h_flex().px_2().gap_2()
+                .child(Button::new("history-section").ghost().compact()
+                    .label(if self.history_open { "▾ History" } else { "▸ History" })
+                    .on_click(cx.listener(|pane, _, _, cx| pane.toggle_history(cx))))
+                .child(Button::new("open-git-history").ghost().compact().label("Open history")
+                    .disabled(open_history.session_id.is_empty())
+                    .on_click(move |_, window, cx| window.dispatch_action(Box::new(open_history.clone()), cx))))
+            .when(self.history_open, |section| match &self.history {
+                Some((_, timeline)) => section.child(div().h(px(240.)).child(timeline.clone())),
+                None => section.child(line("Pick a session to see its history.".into())),
+            });
         v_flex()
             .track_focus(&self.focus)
             .size_full()
             .child(header)
             .child(body)
+            .child(history)
     }
 }

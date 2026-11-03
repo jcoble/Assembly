@@ -77,11 +77,12 @@ impl FileView {
     }
 
     pub(super) fn load_part(&mut self, offset: u64, cx: &mut Context<Self>) {
-        let Some(socket) = SocketClient::try_global(cx) else {
+        let Some(socket) = SocketClient::try_bulk(cx) else {
             self.text.failed("The backend isn't running.".into());
             return;
         };
-        let args = json!({ "session": self.session, "path": self.path, "offset": offset });
+        let args = json!({ "session": self.session, "path": self.path, "offset": offset,
+            "revision": self.text.revision() });
         let call = socket
             .read(cx)
             .call::<FileChunk>("files", "read", args, None);
@@ -162,8 +163,13 @@ impl BasePanel for FileView {
         }
     }
 
-    fn on_removed(&mut self, _: &mut Window, _: &mut Context<Self>) {
+    fn on_removed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.loading = None;
+        if let (Some(socket), Some(revision)) = (SocketClient::try_bulk(cx), self.text.revision()) {
+            let call = socket.read(cx).call::<Value>("files", "release",
+                json!({ "session": self.session, "path": self.path, "revision": revision }), None);
+            call.ignore_reply();
+        }
     }
 
     fn dump(&self, _: &App) -> PanelState {

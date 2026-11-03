@@ -26,7 +26,9 @@ impl NumberSetting {
 
     /// The value as the slider shows it beside itself: whole pixels, or a multiplier to one decimal.
     pub fn label(&self, value: f32) -> String {
-        if self.step < 1. {
+        if self.step < 0.1 {
+            format!("{value:.2}{}", self.unit)
+        } else if self.step < 1. {
             format!("{value:.1}{}", self.unit)
         } else {
             format!("{value:.0}{}", self.unit)

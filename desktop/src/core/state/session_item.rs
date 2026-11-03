@@ -9,6 +9,9 @@ pub struct SessionItem {
     pub session_id: String,
     pub agent: String,
     pub repo_url: String,
+    /// Existing owning-machine paths; a remote root is never resolved on this Mac.
+    pub root: Option<String>,
+    pub checkout_root: Option<String>,
     pub title: Option<String>,
     pub machine: Option<String>,
     /// Set on a started session (on the list) and a native subagent (not on it).

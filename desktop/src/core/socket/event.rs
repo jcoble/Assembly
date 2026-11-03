@@ -41,6 +41,19 @@ pub(super) enum Event {
         machine: Option<String>,
         updates: UnboundedSender<super::engine_update::EngineUpdate>,
     },
+    SubscribeEngineScope {
+        id: u64,
+        topic: String,
+        key: Option<String>,
+        machine: Option<String>,
+        updates: UnboundedSender<super::engine_update::EngineUpdate>,
+    },
+    AcknowledgeEngine {
+        handle: u64,
+        wire: u64,
+        through: i64,
+        at: Option<super::engine_update::CursorAt>,
+    },
     Unsubscribe {
         id: u64,
     },

@@ -19,6 +19,18 @@ public static class SessionPaths
         return Directory.Exists(root) ? root : throw new CallFailed("this session's folder is made on its first message");
     }
 
+    /// <summary>Files-specific contract; shared Git/worktree root resolution keeps its existing semantics.</summary>
+    public static string ResolveFile(string root, string relative, bool allowRoot = false)
+    {
+        if (relative.Length > 4096 || relative.Contains('\0') || Path.IsPathRooted(relative))
+            throw new CallFailed("expected a relative file path of at most 4096 characters");
+        if (relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]).Any(part => part is "." or ".."))
+            throw new CallFailed("that path is outside the session's folder: traversal components are not allowed");
+        if (relative.Length == 0 && !allowRoot)
+            throw new CallFailed("the session's root cannot be changed as a file");
+        return Resolve(root, relative);
+    }
+
     public static string Resolve(string root, string relative)
     {
         root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));

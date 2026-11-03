@@ -28,3 +28,17 @@ fn a_session_shows_the_title_else_the_repo_and_where_it_runs() {
         "claude · Workbox Test"
     );
 }
+
+#[test]
+fn session_checkout_paths_keep_the_owning_machine_values() {
+    let item: SessionItem = serde_json::from_value(json!({
+        "sessionId":"remote-session", "agent":"codex", "repoUrl":"https://github.com/o/r",
+        "machine":"Workbox Test", "updatedAt":1,
+        "root":null, "checkoutRoot":"/home/test/worktrees/actual-checkout"
+    })).unwrap();
+    assert_eq!(item.root, None);
+    assert_eq!(item.checkout_root.as_deref(), Some("/home/test/worktrees/actual-checkout"));
+    let local = session(None, "/repo", None);
+    assert_eq!(local.root, None);
+    assert_eq!(local.checkout_root, None);
+}

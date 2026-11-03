@@ -10,8 +10,8 @@ import { safePath, takeLauncherLock } from '../seed-dev.ts';
 
 const PROFILE = '/home/blackcolours/assembly-dev/worktrees/tsk-1649-engine-integration-fresh-f3e40988e73ec120';
 const LANE = '/home/blackcolours/assembly-dotnet-tsk-1649-engine-integration-fresh/ui-check';
-const MANIFEST = '/tmp/tsk-1661-acceptance-daea850fc0d1/accepted11.manifest.json';
-const MANIFEST_SHA = '09540c698b11f2512c89aa76826bec112d4b4eab37190bcc3022fcabba2a4864';
+const MANIFEST = '/home/blackcolours/dev/work/reports/assembly-execution/tsk-1649-c2-board-database-source/board-proof-database.manifest.json';
+const MANIFEST_SHA = 'ce8a1afb51b3866e54fb5cb405043f8abc3cb5bbd3cc6a822b7b5b1bac135d68';
 const MARKER = 'fixture.board-native.tsk-1649.v1';
 const PREFIX = 'source-derived-board-native-tsk-1649-v1:';
 const LAYOUT_KEY = 'shell.dock-layout';
@@ -35,11 +35,32 @@ function parse(args: string[]): Options {
   if (dirname(path) !== join(PROFILE, 'board-fixture-backups') || !/^[a-zA-Z0-9_-]+\.db$/.test(basename(path)) || existsSync(path))
     throw new Error('Backup must be a NEW explicit .db file inside this profile/board-fixture-backups (create its private directory first).');
   if (!existsSync(dirname(path))) throw new Error('Native owner must create the private backup directory first.');
-  if (!/^seed-[0-9a-f]{64}$/.test(creator)) throw new Error('Choose an explicit existing accepted11 seeded session; no default session is selected.');
+  if (!/^seed-[0-9a-f]{64}$/.test(creator)) throw new Error('Choose an explicit existing database-backed Board-proof seeded session; no default session is selected.');
   return { profile, backup: path, creator, underLock };
 }
 
 // An explicit PID assertion cannot establish offline ownership. Inspect only executable identities, never argv/env.
+function isProtectedSystemChild(pid: string): boolean {
+  try {
+    const child = readFileSync(`/proc/${pid}/comm`, 'utf8').trim();
+    const parent = /^PPid:\s+(\d+)$/m.exec(readFileSync(`/proc/${pid}/status`, 'utf8'))?.[1];
+    if (parent === undefined) return false;
+    const owner = readFileSync(`/proc/${parent}/comm`, 'utf8').trim();
+    const ownerUid = statSync(`/proc/${parent}`).uid;
+    const ssh = ['sshd', 'sshd-session'];
+    if (ownerUid === 0) return (ssh.includes(child) && ssh.includes(owner)) ||
+      ((child === 'smbd' || child.startsWith('smbd[')) && owner === 'smbd') || (child === 'systemd' && owner === 'systemd');
+    if (ownerUid !== process.getuid!()) return false;
+    const sshTransfer = child === 'sftp-server' && ssh.includes(owner);
+    const userService = ['(sd-pam)', 'ssh-agent'].includes(child) && owner === 'systemd';
+    if (!sshTransfer && !userService) return false;
+    const grandparent = /^PPid:\s+(\d+)$/m.exec(readFileSync(`/proc/${parent}/status`, 'utf8'))?.[1];
+    if (grandparent === undefined || statSync(`/proc/${grandparent}`).uid !== 0) return false;
+    const ancestor = readFileSync(`/proc/${grandparent}/comm`, 'utf8').trim();
+    return sshTransfer ? ssh.includes(ancestor) : ancestor === 'systemd';
+  } catch { return false; } // Missing or restricted ancestry remains unknown and is refused.
+}
+
 function requireOffline(): void {
   if (process.platform !== 'linux') throw new Error('This fixture is limited to the approved Workbox Lane 9.');
   const configPath = safePath(join(LANE, 'backend/lane.json'));
@@ -54,6 +75,7 @@ function requireOffline(): void {
         throw new Error(`Owned Lane 9 app/backend process ${entry} is still running; no process is stopped by this script.`);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'EACCES' && isProtectedSystemChild(entry)) continue;
       if (code !== 'ENOENT' && code !== 'ESRCH') throw error;
     }
   }
@@ -163,12 +185,12 @@ async function apply(options: Options): Promise<void> {
   const launcher = JSON.parse(readFileSync(safePath(join(PROFILE, 'launcher.lock')), 'utf8'));
   if (launcher.launcher !== process.ppid || launcher.purpose !== 'dev-seed') throw new Error('The parent does not own the existing seed launcher guard.');
   const manifestBytes = readFileSync(safePath(MANIFEST));
-  if (sha(manifestBytes) !== MANIFEST_SHA) throw new Error('Accepted11 manifest changed; refuse another source.');
+  if (sha(manifestBytes) !== MANIFEST_SHA) throw new Error('Board-proof database manifest changed; refuse another source.');
   const manifest = JSON.parse(manifestBytes.toString('utf8'));
-  // DevSeed.SessionId: compact [origin, key] JSON, UTF-8 SHA256. This pinned manifest has eleven ASCII ACP keys.
-  const acceptedCreators = new Set(manifest.sources.map((source: { sessionKey: string }) =>
-    'seed-' + sha(JSON.stringify([manifest.originId, source.sessionKey]))));
-  if (!acceptedCreators.has(options.creator)) throw new Error('Creator is not one of the eleven pinned accepted11 seed sessions.');
+  // DevSeed.SessionId: compact [origin, key] JSON, UTF-8 SHA256. This pinned database manifest has explicit ASCII sessionKeys.
+  const acceptedCreators = new Set(manifest.sources.flatMap((source: { sessionKeys: string[] }) => source.sessionKeys.map(key =>
+    'seed-' + sha(JSON.stringify([manifest.originId, key])))));
+  if (!acceptedCreators.has(options.creator)) throw new Error('Creator is not a pinned database-backed Board-proof seed session.');
   const path = safePath(join(PROFILE, 'assembly.db'));
   if (!lstatSync(path).isFile() || lstatSync(path).nlink !== 1) throw new Error('Database must be the existing unaliased private profile file.');
   const db = new DatabaseSync(path, { timeout: 0 });
@@ -176,7 +198,7 @@ async function apply(options: Options): Promise<void> {
     requireSchema(db);
     const creator = db.prepare('SELECT session_id,repo_url,machine,acp_session_id FROM session_info WHERE session_id=?').get(options.creator);
     if (!creator || creator.machine !== null || creator.acp_session_id !== null || typeof creator.repo_url !== 'string')
-      throw new Error('Creator must be an existing local archival accepted11 seed with no provider resume identity.');
+      throw new Error('Creator must be an existing local archival database-backed Board-proof seed with no provider resume identity.');
     const folder = safePath(creator.repo_url);
     if (!folder.startsWith(join(PROFILE, 'sessions') + '/') || !lstatSync(safePath(join(folder, 'SEED-FIXTURE.txt'))).isFile())
       throw new Error('Creator does not have the existing accepted seed fixture surroundings.');

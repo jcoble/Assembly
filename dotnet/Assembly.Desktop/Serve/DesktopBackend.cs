@@ -228,7 +228,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                 catch (CallFailed) { return false; }
             }
             hostStop = new CancellationTokenSource();
-            helperCards = new EngineHelperCards(db, TimeProvider.System, log);
+            helperCards = new EngineHelperCards(db, TimeProvider.System, log, sessionStore);
             var cutover = new SessionCutover(db, sessionStore, launcher, checkouts, TimeProvider.System, helperCards: helperCards);
             engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits,
                 cutover: cutover,

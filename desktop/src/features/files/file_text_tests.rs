@@ -172,3 +172,15 @@ fn a_file_that_changes_twice_while_read_stops_and_says_so() {
     assert_eq!(text.error.as_deref(), Some(KEEPS_CHANGING));
     assert_eq!(text.more(0), None, "nothing more is read");
 }
+
+#[test]
+fn editing_content_preserves_crlf_trailing_newlines_and_unicode_across_chunks() {
+    let mut text = FileText::default();
+    text.start();
+    text.loaded(0, chunk("é\r", "r1", Some(3)));
+    assert_eq!(text.content(), None, "a partial read cannot become an editable draft");
+    assert_eq!(text.revision(), Some("r1"));
+    text.more(0);
+    text.loaded(3, chunk("\nlast\r\n\r\n", "r1", None));
+    assert_eq!(text.content(), Some("é\r\nlast\r\n\r\n"));
+}

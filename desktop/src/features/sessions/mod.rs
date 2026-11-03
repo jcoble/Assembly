@@ -15,3 +15,6 @@ pub mod session_row;
 pub mod sessions_pane;
 pub mod status;
 pub mod view_options;
+
+#[cfg(test)]
+mod text_size_tests;

@@ -2,6 +2,7 @@
 //! opened (`files/list`), and a search over its file and folder names (`files/search`). Replaces the old app's
 //! FilesPanel.svelte tree and its Search tab, which searched names only.
 
+pub mod document_store;
 pub mod entry;
 pub mod file_text;
 pub mod file_tree;

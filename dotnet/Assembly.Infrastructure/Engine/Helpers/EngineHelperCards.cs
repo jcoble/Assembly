@@ -2,12 +2,13 @@ using System.Collections.Immutable;
 using System.Threading.Channels;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Chat.Helpers;
+using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Rows;
 
 namespace Assembly.Infrastructure.Engine.Helpers;
 
 /// <summary>Projects committed Engine children through the existing helper card writer.</summary>
-public sealed partial class EngineHelperCards(IAppDatabase db, TimeProvider time, TextWriter log) : IAsyncDisposable
+public sealed partial class EngineHelperCards(IAppDatabase db, TimeProvider time, TextWriter log, SessionStore sessions) : IAsyncDisposable
 {
     private readonly Lock _gate = new();
     private readonly Channel<bool> _wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
@@ -46,7 +47,20 @@ public sealed partial class EngineHelperCards(IAppDatabase db, TimeProvider time
     /// <summary>Call after a mirror page establishes its current generation, in that same writer.</summary>
     public void Mirrored(IWriteScope scope, string machine)
     {
-        foreach (var card in Read(scope, source: machine)) scope.AfterCommit(() => Publish(card));
+        foreach (var card in Read(scope, source: machine))
+        {
+            if (card.Session.Machine is not { Length: > 0 } || string.IsNullOrWhiteSpace(card.Session.Agent) ||
+                string.IsNullOrWhiteSpace(card.Session.WorkingFolder))
+                throw new InvalidOperationException("The mirrored helper's display identity is unavailable.");
+            var existing = sessions.Get(scope, card.Id);
+            if (existing is not null && (existing.Machine != card.Session.Machine ||
+                existing.ParentSessionId != card.ParentId || existing.Agent != card.Session.Agent || !existing.Helper))
+                throw new InvalidOperationException("The mirrored helper's display identity conflicts.");
+            // Materialize only the remote display cache in this mirror transaction, before publishing its card.
+            // This overload uses the actual remote folder without resolving a local owning Engine session.
+            sessions.ProjectEngineSession(scope, card.Session, null, card.Session.WorkingFolder);
+            scope.AfterCommit(() => Publish(card));
+        }
     }
 
     /// <summary>Copied terminal rows supply display details; current Engine state still decides activity.</summary>

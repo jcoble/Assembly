@@ -22,7 +22,7 @@ use super::search;
 use super::section::Section;
 use crate::core::state::appearance::{
     EDITOR_FONT_SIZE, EDITOR_LINE_HEIGHT, NumberSetting, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT,
-    UI_FONT_SIZE,
+    UI_FONT_SIZE, UI_LINE_HEIGHT,
 };
 use crate::core::state::machines::{GlobalMachines, Machines};
 use crate::core::state::preferences::Preferences;
@@ -110,6 +110,7 @@ impl SettingsPage {
         ));
         let numbers = [
             UI_FONT_SIZE,
+            UI_LINE_HEIGHT,
             EDITOR_FONT_SIZE,
             EDITOR_LINE_HEIGHT,
             TERMINAL_FONT_SIZE,

@@ -19,6 +19,7 @@ pub const NEAR_END: usize = 200;
 #[derive(Default)]
 pub struct FileText {
     pub lines: Vec<String>,
+    raw: String,
     /// The longest line's index, which sets how far the view scrolls sideways.
     pub widest: usize,
     /// The longest line's length in characters, not bytes: two-byte "é" is no wider than "a" in the code font.
@@ -43,6 +44,16 @@ impl FileText {
         *self = Self::default();
         self.loading = Some(0);
         0
+    }
+
+    /// Exact UTF-8 bytes decoded as text, available for editing only after the coherent read completes.
+    pub fn content(&self) -> Option<&str> {
+        (self.revision.is_some() && self.next.is_none() && self.loading.is_none()
+            && !self.binary && self.error.is_none()).then_some(self.raw.as_str())
+    }
+
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
     }
 
     pub fn is_loading(&self) -> bool {
@@ -94,6 +105,7 @@ impl FileText {
         self.line_count = chunk.line_count;
         self.binary = chunk.binary;
         self.next = chunk.next_offset;
+        self.raw.push_str(&chunk.content);
         if chunk.content.is_empty() {
             return None;
         }

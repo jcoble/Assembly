@@ -82,7 +82,7 @@ public sealed partial class SessionStore : ISessionProjectProjection
             ?? throw new InvalidOperationException("The owning Engine folder is required for projection."));
 
     // Initialization has not attached the observer; the Engine supplies its authoritative folder in this transaction.
-    internal void ProjectEngineSession(IWriteScope scope, SessionInfo session, string? pendingModel, string folder)
+    public void ProjectEngineSession(IWriteScope scope, SessionInfo session, string? pendingModel, string folder)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folder);
         var inserted = scope.Execute("""

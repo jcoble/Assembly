@@ -202,7 +202,7 @@ public sealed class EngineHelperCardsTests
             Store = SessionStore.Open(Engine.Db, Engine.Time, "/checkouts", summaries);
             Parent = Store.Create("codex", "repo");
             Hub = new(Rows, summaries: summaries);
-            Cards = new(Engine.Db, Engine.Time, TextWriter.Null);
+            Cards = new(Engine.Db, Engine.Time, TextWriter.Null, Store);
             Runtime = EngineRuntime.Start(Engine.Db, new Topics(), Engine.Time, Engine.Limits,
                 cutover: new(Engine.Db, Store, Launcher, "/checkouts", Engine.Time, helperCards: Cards));
             _feed = new(Runtime, TextWriter.Null, Engine.Time, Cards);
@@ -271,6 +271,9 @@ public sealed class EngineHelperCardsTests
                 machine = "remote-owner",
                 version,
                 provider = "codex",
+                // SOURCE-DERIVED metadata matching the owning session display DTO, not a provider capture.
+                folder = "/remote-work",
+                updatedMs = 1000,
                 title = "Remote title",
                 parentId = Parent.SessionId,
                 holder = "local",

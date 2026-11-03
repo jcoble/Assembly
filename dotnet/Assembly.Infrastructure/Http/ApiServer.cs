@@ -1,4 +1,7 @@
 using System.Net;
+using System.Text.Json;
+using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Database;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Routing;
@@ -51,12 +54,24 @@ public static class ApiServer
             app.Lifetime.ApplicationStopping.Register(terminal.CloseAll);
             app.Lifetime.ApplicationStopping.Register(socket.CloseAll);
             app.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
-            dropSockets = () =>
+            Action drop = () =>
             {
                 socket.DropAll();
                 bulk.DropAll();
                 terminal.DropAll();
             };
+            dropSockets = drop;
+            calls.Write("diagnostics", "drop", SocketJson.Default.JsonElement, SocketJson.Default.JsonElement, (_, call) =>
+            {
+                if (call.Peer is not OwnerPeer) throw new CallFailed("Only the authenticated owner can drop sockets.");
+                return Task.FromResult<Func<IWriteScope, JsonElement>>(scope =>
+                {
+                    // Keep the control on the normal mutation queue; a rolled-back save must not close sockets.
+                    scope.AfterCommit(drop);
+                    using var empty = JsonDocument.Parse("{}");
+                    return empty.RootElement.Clone();
+                });
+            });
             // Each is an exact route: /socket/other reaches neither.
             app.Map("/socket", socket.HandleAsync);
             app.Map("/socket/bulk", bulk.HandleAsync);

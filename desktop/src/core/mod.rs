@@ -13,6 +13,7 @@ pub mod backend;
 )]
 pub mod clock;
 pub mod commands;
+pub mod engine;
 pub mod intents;
 pub mod native_views;
 #[expect(

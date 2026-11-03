@@ -73,7 +73,7 @@ public sealed partial class RemoteMachineTests
         await ProviderInsertionAsync(_box, BoxToken, helperId, "restart-helper", "restart-helper-provider");
         await StartDesktopAsync();
 
-        await Until(async () => (await RowsAsync(_desktop!, DesktopToken, helperId)).LastOrDefault(row => row.GetProperty("kind").GetString() == "turn")
+        await Until(async () => (await RestartHelperRowsAsync(helperId)).LastOrDefault(row => row.GetProperty("kind").GetString() == "turn")
             is { } turn && turn.GetProperty("payload").GetProperty("state").GetString() == "started");
         Assert.Equal("running", await HelperStateAsync(parent, helperId));
 
@@ -87,16 +87,24 @@ public sealed partial class RemoteMachineTests
     [Fact]
     public async Task A_remote_helper_shown_running_stays_running_after_a_restart_while_the_box_is_down()
     {
-        var (parent, helperId, _) = await RemoteHelperIdleAsync();
+        var (parent, helperId, box) = await RemoteHelperIdleAsync();
+
+        // Establish real new work and its last-known running mirror before the owner becomes unreachable.
+        await RestartSendAsync(_box, BoxToken, helperId, "Which file?", "restart-offline-helper");
+        await box.CloseAsync();
+        await box.OpenAsync();
+        var prompt = await box.ReadAsync("session/prompt");
+        await box.InsertAsync(prompt, "restart-offline-helper-provider");
+        await ProviderInsertionAsync(_box, BoxToken, helperId, "restart-offline-helper", "restart-offline-helper-provider");
+        await UntilRestartStateAsync(parent, helperId, "running");
 
         await _desktop!.DisposeAsync();
-        ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
         await using var down = new MachinesSocketTests.StubRemote { DropVersion = true };
         await down.StartAsync();
         _desktop = await DesktopOnAsync(down, _desktopHome);
 
-        // The follower gives up; only Resume or the stop button ends the row.
-        await Until(() => _log.ToString().Contains($"remote session {helperId}: {Box} didn't answer"));
+        // The actual probe fails; a log from the former row follower is not its completion contract.
+        await RestartBoxUnavailableAsync(down);
         Assert.Equal("running", await HelperStateAsync(parent, helperId));
     }
 
@@ -199,6 +207,41 @@ public sealed partial class RemoteMachineTests
     {
         using var socket = await ApiTests.OpenOwnerSocketAsync(backend.Address, token);
         return ApiTests.Result(await ApiTests.SocketRequestAsync(socket, 1, feature, method, JsonSerializer.Serialize(args)));
+    }
+
+    private async Task<List<JsonElement>> RestartHelperRowsAsync(string helperId)
+    {
+        using var socket = await ApiTests.OpenOwnerSocketAsync(_desktop!.Address, DesktopToken, "/socket/bulk");
+        var frame = await ApiTests.SocketRequestAsync(socket, 1, "rows", "page", JsonSerializer.Serialize(new { session = helperId, limit = 500 }));
+        if (frame.GetProperty("t").GetString() == "error")
+        {
+            var code = frame.TryGetProperty("code", out var errorCode) ? errorCode.GetString() : null;
+            var reason = frame.TryGetProperty("message", out var errorMessage) ? errorMessage.GetString() : null;
+            Console.Error.WriteLine("restart helper rows failed: code=" +
+                (code is "failed" or "bad_args" or "unavailable" or "unreachable" or "forbidden" ? code : "other") +
+                "; reason=" + (reason == "unknown session" ? "unknown_session" : "other"));
+        }
+        // Keep the same result assertion and rows/page request; only the safe diagnostic is new.
+        return ApiTests.Result(frame).GetProperty("rows").EnumerateArray().ToList();
+    }
+
+    private async Task RestartBoxUnavailableAsync(MachinesSocketTests.StubRemote down)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await down.VersionStarted.Task.WaitAsync(deadline.Token);
+        using var socket = await ApiTests.OpenOwnerSocketAsync(_desktop!.Address, DesktopToken).WaitAsync(deadline.Token);
+        await SocketSendAsync(socket, "{\"t\":\"sub\",\"id\":1,\"topic\":\"machines\"}").WaitAsync(deadline.Token);
+        while (true)
+        {
+            var frame = await ApiTests.ReadFrameAsync(socket).WaitAsync(deadline.Token);
+            var type = frame.GetProperty("t").GetString();
+            Assert.True(type is "state" or "change");
+            IEnumerable<JsonElement> items = type == "state"
+                ? frame.GetProperty("items").EnumerateArray().Select(entry => entry.GetProperty("item"))
+                : [frame.GetProperty("item")];
+            if (items.Any(item => item.GetProperty("name").GetString() == Box &&
+                item.GetProperty("checked").GetBoolean() && !item.GetProperty("reachable").GetBoolean())) return;
+        }
     }
 
     private async Task<string?> HelperStateAsync(string parent, string helperId) =>

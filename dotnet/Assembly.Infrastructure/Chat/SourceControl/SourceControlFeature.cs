@@ -24,8 +24,30 @@ internal sealed class SourceControlFeature(SessionStore sessions) : IFeature
         });
         calls.Read("git", "branchDiff", SourceControlJson.Default.Args, SourceControlJson.Default.GitBranchDiff, async (args, call) =>
             await new GitBranchDiffReader(new GitCli()).ReadAsync(SessionPaths.RootOf(sessions, args.Session), call.Cancellation));
+        calls.Read("git", "history", SourceControlJson.Default.HistoryArgs, SourceControlJson.Default.GitHistoryPage, async (args, call) =>
+        {
+            var root = SessionPaths.RootOf(sessions, args.Session);
+            var path = args.Path is null ? null : FilePath(root, args.Path);
+            return await new GitHistoryReader(new GitCli()).ReadAsync(root, args.Cursor, path, call.Cancellation);
+        });
+        calls.Read("git", "commitFiles", SourceControlJson.Default.CommitArgs, SourceControlJson.Default.IReadOnlyListGitCommitFile, async (args, call) =>
+            await new GitCommitReader(new GitCli()).FilesAsync(SessionPaths.RootOf(sessions, args.Session), args.Sha, call.Cancellation));
+        calls.Read("git", "commitDiff", SourceControlJson.Default.CommitDiffArgs, SourceControlJson.Default.GitFileDiff, async (args, call) =>
+        {
+            var root = SessionPaths.RootOf(sessions, args.Session);
+            return await new GitCommitReader(new GitCli()).DiffAsync(root, args.Sha, FilePath(root, args.Path), call.Cancellation);
+        });
     }
 
+    private static string FilePath(string root, string path)
+    {
+        var relative = Path.GetRelativePath(root, SessionPaths.Resolve(root, path));
+        return relative == "." ? throw new CallFailed("expected a file in the session's folder") : relative;
+    }
+
+    internal sealed record HistoryArgs([property: JsonRequired] string Session, string? Cursor, string? Path);
+    internal sealed record CommitArgs([property: JsonRequired] string Session, [property: JsonRequired] string Sha);
+    internal sealed record CommitDiffArgs([property: JsonRequired] string Session, [property: JsonRequired] string Sha, [property: JsonRequired] string Path);
     internal sealed record DiffArgs([property: JsonRequired] string Session, [property: JsonRequired] string Path, string? OriginalPath);
     internal sealed record Args([property: JsonRequired] string Session);
 }
@@ -37,4 +59,9 @@ internal sealed class SourceControlFeature(SessionStore sessions) : IFeature
 [JsonSerializable(typeof(SourceControlFeature.DiffArgs))]
 [JsonSerializable(typeof(GitFileDiff))]
 [JsonSerializable(typeof(GitBranchDiff))]
+[JsonSerializable(typeof(SourceControlFeature.HistoryArgs))]
+[JsonSerializable(typeof(SourceControlFeature.CommitArgs))]
+[JsonSerializable(typeof(SourceControlFeature.CommitDiffArgs))]
+[JsonSerializable(typeof(GitHistoryPage))]
+[JsonSerializable(typeof(IReadOnlyList<GitCommitFile>))]
 internal sealed partial class SourceControlJson : JsonSerializerContext;

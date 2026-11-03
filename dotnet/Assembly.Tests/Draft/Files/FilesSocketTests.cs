@@ -43,6 +43,9 @@ public sealed class FilesSocketTests : IAsyncLifetime
         _app.UseWebSockets();
         var endpoint = new SocketEndpoint("files-token", calls, "test-machine", TimeProvider.System);
         _app.Map("/socket", endpoint.HandleAsync);
+        var bulk = new SocketEndpoint("files-token", calls, "test-machine", TimeProvider.System, bulk: true);
+        _app.Map("/socket/bulk", bulk.HandleAsync);
+        _app.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
         _app.Lifetime.ApplicationStopping.Register(endpoint.CloseAll);
         await _app.StartAsync();
         var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
@@ -82,7 +85,7 @@ public sealed class FilesSocketTests : IAsyncLifetime
         var root = _sessions.Item(session).Root!;
         GitFolder.Fill(root, "src/");
         File.WriteAllText(Path.Combine(root, "src", "a.txt"), "one\ntwo\n");
-        using var socket = await OpenAsync();
+        using var socket = await OpenAsync(bulk: true);
         await CallAsync(socket, 1, "read", $$"""{"session":"{{session.SessionId}}","path":"src/a.txt"}""");
         var result = JsonDocument.Parse(await ReadAsync(socket)).RootElement.GetProperty("result");
         Assert.Equal("one\ntwo\n", result.GetProperty("content").GetString());
@@ -160,10 +163,10 @@ public sealed class FilesSocketTests : IAsyncLifetime
         }
     }
 
-    private async Task<ClientWebSocket> OpenAsync()
+    private async Task<ClientWebSocket> OpenAsync(bool bulk = false)
     {
         var socket = new ClientWebSocket();
-        await socket.ConnectAsync(_address, CancellationToken.None);
+        await socket.ConnectAsync(bulk ? new Uri(_address + "/bulk") : _address, CancellationToken.None);
         await SendAsync(socket, """{"t":"hello","token":"files-token","protocol":1}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;

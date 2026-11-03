@@ -3,7 +3,7 @@
 //! so this runs again after every theme switch.
 
 use gpui_kit::component::Theme;
-use gpui_kit::{App, px};
+use gpui_kit::{App, Pixels, px};
 
 use crate::core::state::appearance::UI_FONT_SIZE;
 use crate::core::state::preferences::Preferences;
@@ -19,5 +19,29 @@ pub fn apply_text(cx: &mut App) {
         Theme::update(cx, |theme| {
             (theme.font_family, theme.font_size, theme.mono_font_family) = (ui, size, code);
         });
+    }
+}
+
+/// Roles in the rail and chat, expressed against the familiar 13px interface size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextRole {
+    Title,
+    Second,
+    Preview,
+    Heading,
+    Chat,
+}
+
+impl TextRole {
+    pub fn metrics(self, interface_size: f32, line_height: f32) -> (Pixels, Pixels) {
+        let base = match self {
+            Self::Title => 13.,
+            Self::Second | Self::Heading => 11.5,
+            Self::Preview => 12.,
+            Self::Chat => 13.5,
+        };
+        let size = interface_size * base / 13.;
+        let leading = if self == Self::Chat { 1.6 } else { line_height };
+        (px(size), px(size * leading))
     }
 }

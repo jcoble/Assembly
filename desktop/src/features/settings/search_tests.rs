@@ -33,11 +33,11 @@ fn an_empty_search_lists_every_section_and_row() {
 fn a_search_keeps_only_the_sections_and_rows_it_matches() {
     assert_eq!(
         ids(&sections("Line HEIGHT"), |section| section.id),
-        ["editor", "terminal"]
+        ["appearance", "editor", "terminal"]
     );
     assert_eq!(
         ids(&rows("line height"), |row| row.id),
-        ["editor-line-height", "terminal-line-height"]
+        ["ui-line-height", "editor-line-height", "terminal-line-height"]
     );
 }
 
@@ -91,7 +91,7 @@ fn a_sections_rows_are_grouped_into_cards() {
         appearance,
         [
             ("Colors", vec!["theme"]),
-            ("Text", vec!["ui-font", "code-font", "ui-font-size"])
+            ("Text", vec!["ui-font", "code-font", "ui-font-size", "ui-line-height"])
         ]
     );
     let searched: Vec<&str> = cards("size", "appearance")

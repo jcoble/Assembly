@@ -1,0 +1,63 @@
+use super::*;
+
+fn key(machine: &str, path: &str) -> DocumentKey {
+    DocumentKey { machine: machine.into(), checkout_root: "/checkout".into(), path: path.into() }
+}
+
+#[test]
+fn a_save_completion_cleans_only_the_version_that_was_sent() {
+    let mut docs = DocumentStore::default();
+    let key = key("local", "a.rs");
+    docs.open(key.clone(), "r1".into(), "old".into()).unwrap();
+    let sent = docs.replace(&key, 0, "first".into()).unwrap();
+    docs.replace(&key, sent, "second".into()).unwrap();
+    docs.saved(&key, sent, "r2".into());
+    assert_eq!(docs.snapshot(&key).unwrap().text, "second");
+    assert_eq!(docs.snapshot(&key).unwrap().base_revision, "r2");
+    assert!(docs.is_dirty(&key));
+}
+
+#[test]
+fn a_stale_second_target_leaves_the_whole_batch_unchanged() {
+    let mut docs = DocumentStore::default();
+    let a = key("local", "a");
+    let b = key("local", "b");
+    docs.open(a.clone(), "r1".into(), "alpha".into()).unwrap();
+    docs.open(b.clone(), "r2".into(), "beta".into()).unwrap();
+    let edits = [
+        DraftEdit { key: a.clone(), expected_version: 0, edits: vec![TextEdit { start: 0, end: 5, replacement: "new".into() }] },
+        DraftEdit { key: b.clone(), expected_version: 9, edits: vec![] },
+    ];
+    assert_eq!(docs.apply_batch(&edits), Err(DraftFailure::Stale));
+    assert_eq!(docs.snapshot(&a).unwrap().text, "alpha");
+    assert!(!docs.is_dirty(&a));
+}
+
+#[test]
+fn unicode_boundaries_and_owner_identity_are_preserved() {
+    let mut docs = DocumentStore::default();
+    let local = key("local", "a");
+    let remote = key("workbox", "a");
+    docs.open(local.clone(), "r1".into(), "é\r\n".into()).unwrap();
+    docs.open(remote.clone(), "r2".into(), "remote".into()).unwrap();
+    assert_eq!(docs.apply_batch(&[DraftEdit { key: local.clone(), expected_version: 0,
+        edits: vec![TextEdit { start: 1, end: 2, replacement: "x".into() }] }]), Err(DraftFailure::InvalidRange));
+    assert_eq!(docs.snapshot(&local).unwrap().text, "é\r\n");
+    assert_eq!(docs.snapshot(&remote).unwrap().text, "remote");
+    assert_eq!(docs.open(key("local", "../escape"), "r".into(), String::new()), Err(DraftFailure::OutsideRoot));
+}
+
+#[test]
+fn dirty_budget_refusal_keeps_all_existing_drafts() {
+    let mut docs = DocumentStore::default();
+    for i in 0..8 {
+        let key = key("local", &i.to_string());
+        docs.open(key.clone(), "r".into(), String::new()).unwrap();
+        docs.replace(&key, 0, "draft".into()).unwrap();
+    }
+    let ninth = key("local", "ninth");
+    docs.open(ninth.clone(), "r".into(), String::new()).unwrap();
+    assert_eq!(docs.replace(&ninth, 0, "new draft".into()), Err(DraftFailure::OverLimit));
+    assert!(docs.is_dirty(&key("local", "0")));
+    assert_eq!(docs.snapshot(&ninth).unwrap().text, "");
+}

@@ -8,12 +8,12 @@ use gpui::TestAppContext;
 use gpui_kit::AppContext as _;
 use serde_json::{Value, json};
 
-use super::{ChangesPane, Picked, Shown};
+use super::{ChangesPane, Picked, Shown, PatchContent};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
 use crate::core::socket::test_wait::until;
-use crate::features::changes::file_diff::Row;
+use gpui_kit::component::diff::DiffMode;
 
 /// What the backend saw: each `git/diff` call's path and id, and each cancel's id.
 #[derive(Default)]
@@ -41,7 +41,7 @@ fn backend(seen: Arc<Mutex<Seen>>, heard: UnboundedSender<()>) -> FakeBackend {
                     Vec::new()
                 } else {
                     vec![Reply::Frame(json!({"t": "result", "id": id, "result": {
-                        "path": path, "staged": "", "unstaged": "@@ -1 +1 @@\n-a\n+b\n",
+                        "path": path, "staged": "", "unstaged": "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-a\n+b\n",
                         "binary": false, "truncated": false }}))]
                 }
             }
@@ -49,7 +49,7 @@ fn backend(seen: Arc<Mutex<Seen>>, heard: UnboundedSender<()>) -> FakeBackend {
                 seen.reads.push(("branch".into(), id.clone()));
                 vec![Reply::Frame(json!({"t": "result", "id": id, "result": {
                     "base": "origin/main", "truncated": false,
-                    "diff": "diff --git a/src/a.rs b/src/a.rs\n@@ -1 +1 @@\n-a\n+b\n" }}))]
+                    "diff": "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-a\n+b\n" }}))]
             }
             Some("cancel") => {
                 seen.cancels.push(id);
@@ -147,8 +147,8 @@ async fn opening_the_branch_diff_shows_each_file_under_its_base_and_stops_the_fi
     until("branch diff shown", &mut changes, &changed, || {
         cx.run_until_parked();
         let shown = cx.update(|cx| {
-            matches!(&pane.read(cx).shown, Shown::Read { base: Some(base), rows, .. }
-                if base == "origin/main" && rows[0] == Row::Label("src/a.rs".into()))
+            matches!(&pane.read(cx).shown, Shown::Read { base: Some(base), views, .. }
+                if base == "origin/main" && views.len() == 1 && matches!(&views[0].content, PatchContent::Unified(state) if state.read(cx).files()[0].path().as_ref() == "src/a.rs"))
         });
         shown && !seen.lock().unwrap().cancels.is_empty()
     })
@@ -156,4 +156,23 @@ async fn opening_the_branch_diff_shows_each_file_under_its_base_and_stops_the_fi
     let seen = seen.lock().unwrap();
     assert_eq!(seen.cancels, vec![seen.reads[0].1.clone()]);
     drop(backend);
+}
+
+// Pins: g9#17
+#[gpui::test]
+fn changing_presentation_retains_the_same_patch_revision(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let pane = cx.new(|cx| ChangesPane::new(None, cx));
+    pane.update(cx, |pane, cx| {
+        pane.shown = Shown::patches(vec![("Commit", "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-a\n+b\n")], false, vec![], None, DiffMode::Unified, cx);
+        let Shown::Read { views, .. } = &pane.shown else { panic!("parsed patch") };
+        let PatchContent::Unified(state) = &views[0].content else { panic!("unified patch") };
+        let revision = state.entity_id();
+        pane.set_mode(DiffMode::Split, cx);
+        let Shown::Read { views, .. } = &pane.shown else { panic!("retained patch") };
+        let PatchContent::Unified(state) = &views[0].content else { panic!("retained unified patch") };
+        assert_eq!(state.entity_id(), revision);
+        assert_eq!(state.read(cx).mode(), DiffMode::Split);
+        assert_eq!(state.read(cx).files()[0].additions(), 1);
+    });
 }

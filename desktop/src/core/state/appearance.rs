@@ -10,6 +10,7 @@ use serde_json::Value;
 
 pub use super::number_setting::NumberSetting;
 use crate::core::theme::theme_id::ThemeId;
+use crate::core::theme::text::TextRole;
 
 pub const THEME: &str = "appearance.theme";
 pub const UI_FONT: &str = "appearance.uiFont";
@@ -25,6 +26,15 @@ pub const UI_FONT_SIZE: NumberSetting = NumberSetting {
     step: 1.,
     default: 13.,
     unit: "px",
+};
+/// Interface leading; chat keeps its own reading ratio.
+pub const UI_LINE_HEIGHT: NumberSetting = NumberSetting {
+    key: "appearance.uiLineHeight",
+    min: 1.2,
+    max: 1.8,
+    step: 0.05,
+    default: 1.45,
+    unit: "×",
 };
 pub const EDITOR_FONT_SIZE: NumberSetting = NumberSetting {
     key: "editor.fontSize",
@@ -84,6 +94,11 @@ impl Appearance {
 
     pub fn number(&self, setting: &NumberSetting) -> f32 {
         setting.read(self.saved.get(setting.key))
+    }
+
+    /// Text sizes share the interface scale; line height follows the selected role.
+    pub fn ui_text(&self, role: TextRole) -> (Pixels, Pixels) {
+        role.metrics(self.number(&UI_FONT_SIZE), self.number(&UI_LINE_HEIGHT))
     }
 
     pub fn theme(&self) -> ThemeId {

@@ -9,3 +9,4 @@ pub mod filter_pills;
 mod filter_pills_tests;
 pub mod pane_names;
 pub mod spinner;
+pub mod diff;

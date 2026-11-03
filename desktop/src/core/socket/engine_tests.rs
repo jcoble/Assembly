@@ -291,3 +291,116 @@ fn welcome_engine_subscription(engine: Option<&str>, owner: Option<&str>, expect
         json!({"t":"ack","id":id,"stream":"engine","after":2})
     );
 }
+
+#[test]
+fn scoped_snapshot_publishes_only_the_complete_cut_and_unsubscribes_on_drop() {
+    let backend = FakeBackend::start(|frame| {
+        if let Some(welcome) = hello(frame) { return welcome; }
+        if frame["t"] == "sub" {
+            return vec![
+                Reply::Frame(json!({"t":"engine_snapshot","id":frame["id"],"machine":"owner","through":9,
+                    "items":[{"entityKind":"session","id":"a","machine":"owner","version":1}],"more":true})),
+                Reply::Frame(json!({"t":"engine_snapshot","id":frame["id"],"machine":"owner","through":9,
+                    "items":[{"entityKind":"session","id":"b","machine":"owner","version":2}],"more":false,
+                    "at":{"kind":"session.changed","entityId":"b","version":2}})),
+            ];
+        }
+        vec![]
+    });
+    let client = TestClient::start(backend.port);
+    let id = client.id();
+    let (updates, mut received) = unbounded();
+    client.events.send(Event::SubscribeEngineScope {
+        id, topic: "sessions".into(), key: None, machine: Some("owner".into()), updates,
+    }).unwrap();
+    assert_eq!(backend.next()["t"], "hello");
+    let sub = backend.next();
+    assert_eq!(sub["topic"], "sessions");
+    assert!(sub.get("key").is_none());
+    match block_on(received.recv()).unwrap() {
+        EngineUpdate::Scoped(page) => {
+            assert!(page.snapshot);
+            assert_eq!(page.machine, "owner");
+            assert_eq!(page.through, 9);
+            assert_eq!(page.items.len(), 2);
+            assert_eq!(page.items[0]["id"], "a");
+            assert_eq!(page.items[1]["id"], "b");
+            assert_eq!(page.at.as_ref().unwrap().entity_id, "b");
+            client.events.send(Event::AcknowledgeEngine {
+                handle:id, wire:page.wire, through:page.through, at:page.at,
+            }).unwrap();
+        }
+        update => panic!("expected a complete scoped snapshot, got {update:?}"),
+    }
+    assert_eq!(backend.next(), json!({"t":"ack","id":id,"stream":"engine","after":9}));
+    client.events.send(Event::Unsubscribe { id }).unwrap();
+    assert_eq!(backend.next(), json!({"t":"unsub","id":id}));
+}
+
+#[test]
+fn engine_identity_is_cleared_until_the_reconnected_welcome_names_its_owner() {
+    let (allow, ready) = mpsc::channel();
+    let mut welcomes = 0;
+    let backend = FakeBackend::start(move |frame| {
+        if frame["t"] == "hello" {
+            welcomes += 1;
+            if welcomes == 2 { ready.recv_timeout(DEADLINE).unwrap(); }
+            return vec![Reply::Frame(json!({"t":"welcome","protocol":1,
+                "machine":"Friendly display name", "engine": if welcomes == 1 { "engine-a" } else { "engine-b" }}))];
+        }
+        if frame["t"] == "call" { return vec![Reply::Drop]; }
+        vec![]
+    });
+    let mut client = TestClient::start(backend.port);
+    assert_eq!(backend.next()["t"], "hello");
+    while !matches!(client.state(), super::connection_state::ConnectionState::Connected { .. }) {}
+    assert_eq!(client.engine_machine.lock().unwrap().as_deref(), Some("engine-a"));
+    let _ = client.call("drop", None);
+    assert_eq!(backend.next()["t"], "call");
+    assert_eq!(backend.next()["t"], "hello");
+    assert_eq!(*client.engine_machine.lock().unwrap(), None);
+    allow.send(()).unwrap();
+    while !matches!(client.state(), super::connection_state::ConnectionState::Connected { .. }) {}
+    assert_eq!(client.engine_machine.lock().unwrap().as_deref(), Some("engine-b"));
+}
+
+#[test]
+fn unapplied_scoped_pages_are_replayed_and_a_stale_delivery_cannot_ack_a_reconnect() {
+    let backend = FakeBackend::start(|frame| {
+        if frame["t"] == "hello" {
+            return vec![Reply::Frame(json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"owner"}))];
+        }
+        if frame["t"] == "sub" {
+            return vec![Reply::Frame(json!({"t":"engine_snapshot","id":frame["id"],"machine":"owner",
+                "through":9,"items":[],"more":false}))];
+        }
+        if frame["method"] == "drop" { return vec![Reply::Drop]; }
+        if frame["t"] == "call" {
+            return vec![Reply::Frame(json!({"t":"result","id":frame["id"],"result":{}}))];
+        }
+        vec![]
+    });
+    let client = TestClient::start(backend.port);
+    let id = client.id();
+    let (updates, mut received) = unbounded();
+    client.events.send(Event::SubscribeEngineScope {
+        id, topic:"sessions".into(), key:None, machine:Some("owner".into()), updates,
+    }).unwrap();
+    assert_eq!(backend.next()["t"], "hello");
+    let first = backend.next();
+    let EngineUpdate::Scoped(page) = block_on(received.recv()).unwrap() else { panic!("scoped page"); };
+    let (_, dropped) = client.call("drop", None);
+    assert_eq!(backend.next()["t"], "call", "enqueue alone must not acknowledge the snapshot");
+    assert!(matches!(super::test_client::outcome(dropped), super::outcome::Outcome::Aborted));
+    assert_eq!(backend.next()["t"], "hello");
+    let replay = backend.next();
+    assert_eq!(replay["t"], "sub");
+    assert_ne!(replay["id"], first["id"]);
+    assert!(replay.get("after").is_none(), "the received but unapplied page cannot become the resume cursor");
+    client.events.send(Event::AcknowledgeEngine {
+        handle:id, wire:page.wire, through:page.through, at:page.at,
+    }).unwrap();
+    let (_, barrier) = client.call("barrier", None);
+    assert_eq!(backend.next()["t"], "call", "a prior connection's delivery cannot ack this one");
+    assert!(matches!(super::test_client::outcome(barrier), super::outcome::Outcome::Ok(_)));
+}

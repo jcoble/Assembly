@@ -15,7 +15,7 @@ use super::real_backend::RealBackend;
 use super::row_update::RowUpdate;
 use super::test_client::{DEADLINE, TestClient as Client, outcome, updates};
 
-/// An ACP agent that opens sessions and never answers a prompt or a config change. It says "prompted" when a prompt
+/// An ACP v2 agent that opens sessions and never answers a prompt or a config change. It says "prompted" when a prompt
 /// comes and "setting" when a config change does, as message text, so the test waits on rows, not on time.
 const STUB: &str = r#"
 id() { printf '%s' "$1" | sed -n 's/^{"jsonrpc":"2.0","id":\([0-9]*\),.*/\1/p'; }
@@ -23,7 +23,7 @@ answer() { printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$1" "$2"; }
 say() { printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"stub","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"%s"}}}}\n' "$1"; }
 while IFS= read -r line; do
   case "$line" in
-    *'"method":"initialize"'*) answer "$(id "$line")" '{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}' ;;
+    *'"method":"initialize"'*) answer "$(id "$line")" '{"protocolVersion":2,"capabilities":{},"authMethods":[]}' ;;
     *'"method":"session/new"'*) answer "$(id "$line")" '{"sessionId":"stub"}' ;;
     *'"method":"session/prompt"'*) say prompted ;;
     *'"method":"session/set_config_option"'*) say setting ;;

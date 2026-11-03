@@ -7,6 +7,9 @@ use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::core::state::preferences::Preferences;
+use crate::core::theme::text::TextRole;
+
 use super::grow::chevron;
 use super::markdown_view::MarkdownView;
 use super::message_meta::MessageMeta;
@@ -45,6 +48,7 @@ pub struct ItemRow {
 impl RenderOnce for ItemRow {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
+        let (chat_size, chat_height) = Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Chat));
         let (muted, danger) = (theme.muted_foreground, theme.danger);
         let key = self.item.key.clone();
         // Each row its own hover group, so its copy button and time show only under the pointer.
@@ -159,8 +163,8 @@ impl RenderOnce for ItemRow {
             .mx_auto()
             .px_4()
             // The reading style, the mock's `.reply`: 13.5 px at 1.6; a line that sets its own size keeps the proportion.
-            .text_size(px(13.5))
-            .line_height(relative(1.6))
+            .text_size(chat_size)
+            .line_height(chat_height)
             .child(body)
     }
 }

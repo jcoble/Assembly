@@ -9,3 +9,5 @@ pub mod open_file;
 pub mod open_session;
 pub mod open_settings;
 pub mod open_url;
+pub mod open_commit_diff;
+pub mod open_git_history;

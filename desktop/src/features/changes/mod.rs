@@ -4,5 +4,4 @@
 
 pub mod branch_diff;
 pub mod changes_pane;
-pub mod diff_lines;
 pub mod file_diff;

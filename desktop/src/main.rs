@@ -47,6 +47,7 @@ fn main() {
             features::session::context::context_pane::ContextPane::register(cx);
             features::sessions::history::history_pane::HistoryPane::register(cx);
             features::source_control::source_control_pane::SourceControlPane::register(cx);
+            features::source_control::history_pane::HistoryPane::register(cx);
             features::worktrees::worktrees_pane::WorktreesPane::register(cx);
             features::changes::changes_pane::ChangesPane::register(cx);
             features::board::board_pane::BoardPane::register(cx);

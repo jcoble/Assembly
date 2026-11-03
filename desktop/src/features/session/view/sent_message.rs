@@ -6,6 +6,9 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::core::state::preferences::Preferences;
+use crate::core::theme::text::TextRole;
+
 use super::session_action::{OnAction, SessionAction};
 
 /// The bubble's corners: the design system's radius-xl.
@@ -45,6 +48,7 @@ pub fn shown(text: &str, open: bool) -> (&str, bool) {
 impl RenderOnce for SentMessage {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
+        let (chat_size, chat_height) = Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Chat));
         let (text, long) = shown(&self.text, self.open);
         let toggle = long.then(|| {
             let (key, on_action) = (self.key.clone(), self.on_action.clone());
@@ -111,8 +115,8 @@ impl RenderOnce for SentMessage {
                 v_flex()
                     .px(px(16.))
                     .py(px(10.))
-                    .text_size(px(13.5))
-                    .line_height(relative(1.5))
+                    .text_size(chat_size)
+                    .line_height(chat_height)
                     .rounded(BUBBLE_RADIUS)
                     .bg(theme.secondary)
                     .gap_1()

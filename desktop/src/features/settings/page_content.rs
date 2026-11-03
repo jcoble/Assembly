@@ -18,7 +18,7 @@ use super::section::Section;
 use super::settings_page::SettingsPage;
 use crate::core::state::appearance::{
     CODE_FONT, EDITOR_FONT, EDITOR_FONT_SIZE, EDITOR_LINE_HEIGHT, NumberSetting, TERMINAL_FONT,
-    TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, THEME, UI_FONT, UI_FONT_SIZE,
+    TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, THEME, UI_FONT, UI_FONT_SIZE, UI_LINE_HEIGHT,
 };
 use crate::core::state::preferences::Preferences;
 use crate::core::theme::theme_id::ThemeId;
@@ -198,6 +198,7 @@ impl SettingsPage {
 fn number_row(id: &str) -> Option<NumberSetting> {
     Some(match id {
         "ui-font-size" => UI_FONT_SIZE,
+        "ui-line-height" => UI_LINE_HEIGHT,
         "editor-font-size" => EDITOR_FONT_SIZE,
         "editor-line-height" => EDITOR_LINE_HEIGHT,
         "terminal-font-size" => TERMINAL_FONT_SIZE,

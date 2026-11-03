@@ -16,6 +16,8 @@ use super::presence::Presence;
 use super::rail_page::RailEntry;
 use super::status::Status;
 use crate::core::ui::spinner::RingSpinner;
+use crate::core::state::preferences::Preferences;
+use crate::core::theme::text::TextRole;
 
 /// Moves a session to a group: the pane's `mark`.
 pub type OnMark = Rc<dyn Fn(String, Status, &mut App)>;
@@ -85,6 +87,10 @@ fn tint(presence: Presence, cx: &App) -> Hsla {
 impl RenderOnce for SessionRow {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
+        let text = |role| Preferences::read(cx, |appearance| appearance.ui_text(role));
+        let (title_size, title_height) = text(TextRole::Title);
+        let (second_size, second_height) = text(TextRole::Second);
+        let (preview_size, preview_height) = text(TextRole::Preview);
         let entry = self.entry;
         let title = match entry.title.as_deref().map(str::trim) {
             Some(title) if !title.is_empty() => title.to_string(),
@@ -135,8 +141,8 @@ impl RenderOnce for SessionRow {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_size(px(13.))
-                    .line_height(px(18.))
+                    .text_size(title_size)
+                    .line_height(title_height)
                     .font_weight(FontWeight::SEMIBOLD)
                     .when(running, |text| text.text_color(accent))
                     // An offline row's title steps back, as the mock's offline row.
@@ -147,15 +153,15 @@ impl RenderOnce for SessionRow {
             )
             .children(time.map(|time| {
                 time.flex_none()
-                    .text_size(px(11.5))
+                    .text_size(second_size)
                     .font_features(tabular())
             }));
         let dot = |color: Hsla| div().flex_none().size(px(6.)).rounded_full().bg(color);
         let second = h_flex()
             .mt(px(3.))
             .gap(px(6.))
-            .text_size(px(11.5))
-            .line_height(px(16.))
+            .text_size(second_size)
+            .line_height(second_height)
             .text_color(faint)
             .children(status_words(presence, offline).into_iter().map(|word| {
                 match word {
@@ -192,8 +198,8 @@ impl RenderOnce for SessionRow {
         let preview = entry.preview.clone().map(|preview| {
             div()
                 .mt_1()
-                .text_size(px(12.))
-                .line_height(px(17.))
+                .text_size(preview_size)
+                .line_height(preview_height)
                 .text_color(theme.muted_foreground)
                 .line_clamp(2)
                 .text_ellipsis()

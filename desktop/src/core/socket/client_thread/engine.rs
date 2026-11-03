@@ -1,11 +1,23 @@
 //! Engine replay uses the global scanned cursor, including pages without matching events.
 use super::ClientThread;
-use crate::core::socket::engine_update::{CursorAt, EngineUpdate};
+use crate::core::socket::engine_update::{CursorAt, EnginePage, EngineUpdate};
 use crate::core::socket::out_frame::OutFrame;
 use serde_json::Value;
 use std::sync::atomic::Ordering;
 
 impl ClientThread {
+    pub(super) fn add_engine(
+        &mut self, id: u64, topic: String, key: Option<String>, machine: Option<String>,
+        scoped: bool, updates: futures_channel::mpsc::UnboundedSender<EngineUpdate>,
+    ) {
+        let machine = machine.or_else(|| self.connection.as_ref().and_then(|connection| connection.engine_machine.clone()));
+        self.engines.insert(id, crate::core::socket::engine_update::EngineFeed {
+            handle: id, topic, key, scoped, machine, updates,
+            through: None, acknowledged: None, at: None, snapshot_cut: None, snapshot_items: Vec::new(),
+        });
+        self.send_engine(id);
+    }
+
     pub(super) fn engine_snapshot(
         &mut self,
         id: u64,
@@ -27,14 +39,21 @@ impl ClientThread {
             self.reset_engine(id);
             return;
         }
-        feed.machine = Some(machine);
-        // A snapshot is an authoritative reset and may rewind after mirror promotion.
+        if feed.snapshot_cut.is_some_and(|cut| cut != through) {
+            self.reset_engine(id);
+            return;
+        }
+        feed.machine = Some(machine.clone());
         feed.snapshot_cut = Some(through);
-        if feed
-            .updates
-            .unbounded_send(EngineUpdate::Snapshot(items))
-            .is_err()
-        {
+        feed.snapshot_items.extend(items);
+        if more { return; }
+        let items = std::mem::take(&mut feed.snapshot_items);
+        let update = if feed.scoped {
+            EngineUpdate::Scoped(EnginePage {
+                wire:id, machine, through, at: at.clone(), snapshot: true, items, events: Vec::new(),
+            })
+        } else { EngineUpdate::Snapshot(items) };
+        if feed.updates.unbounded_send(update).is_err() {
             self.engines.remove(&id);
             self.send(&OutFrame::Unsub { id });
             return;
@@ -44,11 +63,9 @@ impl ClientThread {
             feed.through = Some(through);
             feed.at = at;
             feed.snapshot_cut = None;
-            self.send(&OutFrame::Ack {
-                id,
-                stream: "engine",
-                after: through,
-            });
+            if !feed.scoped {
+                self.send(&OutFrame::Ack { id, stream:"engine", after:through });
+            }
         }
     }
 
@@ -90,10 +107,12 @@ impl ClientThread {
             self.reset_engine(id);
             return;
         }
-        if feed
-            .updates
-            .unbounded_send(EngineUpdate::Events(events))
-            .is_err()
+        let update = if feed.scoped {
+            EngineUpdate::Scoped(EnginePage {
+                wire:id, machine, through, at: at.clone(), snapshot: false, items: Vec::new(), events,
+            })
+        } else { EngineUpdate::Events(events) };
+        if feed.updates.unbounded_send(update).is_err()
         {
             self.engines.remove(&id);
             self.send(&OutFrame::Unsub { id });
@@ -101,11 +120,9 @@ impl ClientThread {
         }
         feed.through = Some(through);
         feed.at = at;
-        self.send(&OutFrame::Ack {
-            id,
-            stream: "engine",
-            after: through,
-        });
+        if !feed.scoped {
+            self.send(&OutFrame::Ack { id, stream:"engine", after:through });
+        }
     }
 
     pub(super) fn reset_engine(&mut self, wire: u64) {
@@ -114,8 +131,10 @@ impl ClientThread {
         };
         self.send(&OutFrame::Unsub { id: wire });
         feed.through = None;
+        feed.acknowledged = None;
         feed.at = None;
         feed.snapshot_cut = None;
+        feed.snapshot_items.clear();
         let id = self.ids.fetch_add(1, Ordering::Relaxed) + 1;
         self.engines.insert(id, feed);
         self.send_engine(id);

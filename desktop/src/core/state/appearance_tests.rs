@@ -115,3 +115,41 @@ fn the_terminal_draws_in_its_own_font_size_and_line_spacing() {
         ("Fira Code", px(14.), px(21.))
     );
 }
+
+#[test]
+fn ui_line_height_defaults_to_1_45_and_clamps() {
+    assert!((Appearance::default().number(&UI_LINE_HEIGHT) - 1.45).abs() < 1e-5);
+    let low = saved(&[(UI_LINE_HEIGHT.key, json!(0.5))]);
+    let high = saved(&[(UI_LINE_HEIGHT.key, json!(3.0))]);
+    assert_eq!(low.number(&UI_LINE_HEIGHT), 1.2);
+    assert_eq!(high.number(&UI_LINE_HEIGHT), 1.8);
+}
+
+#[test]
+fn text_roles_scale_with_the_interface_size() {
+    use crate::core::theme::text::TextRole;
+    let appearance = saved(&[(UI_FONT_SIZE.key, json!(16)), (UI_LINE_HEIGHT.key, json!(1.5))]);
+    for (role, base) in [(TextRole::Title, 13.), (TextRole::Second, 11.5),
+        (TextRole::Preview, 12.), (TextRole::Heading, 11.5), (TextRole::Chat, 13.5)] {
+        let (size, height) = appearance.ui_text(role);
+        let expected = 16. * base / 13.;
+        assert!((size - px(expected)).abs() < px(0.001));
+        let line_height = if role == TextRole::Chat { 1.6 } else { 1.5 };
+        assert!((height - px(expected * line_height)).abs() < px(0.001));
+    }
+}
+
+#[test]
+fn chat_line_height_keeps_its_reading_ratio() {
+    use crate::core::theme::text::TextRole;
+    let compact = saved(&[(UI_LINE_HEIGHT.key, json!(1.2))]);
+    let roomy = saved(&[(UI_LINE_HEIGHT.key, json!(1.8))]);
+    assert_eq!(compact.ui_text(TextRole::Chat), roomy.ui_text(TextRole::Chat));
+    assert_ne!(compact.ui_text(TextRole::Preview), roomy.ui_text(TextRole::Preview));
+}
+
+#[test]
+fn interface_leading_keeps_its_half_tenth_in_the_slider_label() {
+    assert_eq!(UI_LINE_HEIGHT.label(1.45), "1.45×");
+    assert_eq!(TERMINAL_LINE_HEIGHT.label(1.2), "1.2×");
+}

@@ -64,7 +64,7 @@ public sealed class McpTests : IAsyncLifetime
         _checkouts = Directory.CreateDirectory(Path.Combine(_work, "checkouts")).FullName;
         _sessionStore = SessionStore.Open(_database, TimeProvider.System, _checkouts);
         _background = new(TimeProvider.System, TextWriter.Null);
-        _cards = new(_database, TimeProvider.System, TextWriter.Null);
+        _cards = new(_database, TimeProvider.System, TextWriter.Null, _sessionStore);
         _endpoint = new(_tokens);
         var limits = new SessionLimits(() => 1, () => 2);
         _runtime = EngineRuntime.Start(_database, _topics, TimeProvider.System, limits, messageLimit: () => 1,

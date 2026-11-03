@@ -23,7 +23,8 @@ public sealed partial class EngineHelperCards
             SELECT c.id,c.parent_id,c.provider,CAST(c.title AS BLOB) title,c.state,c.activity_state,
                 c.epoch,c.version,0 generation,c.machine,
                 EXISTS(SELECT 1 FROM engine_message m WHERE m.to_session_id=c.id
-                    AND m.state='queued' AND m.in_flight=1) prompt_in_flight
+                    AND m.state='queued' AND m.in_flight=1) prompt_in_flight,
+                c.folder,c.updated_ms,NULL display_machine,pi.repo_url
             FROM engine_session c JOIN engine_session p ON p.id=c.parent_id
             JOIN session_info pi ON pi.session_id=p.id AND pi.machine IS NULL
             WHERE c.machine=(SELECT machine_id FROM engine_meta WHERE singleton=1) AND c.holder='local'
@@ -39,13 +40,15 @@ public sealed partial class EngineHelperCards
                     WHERE message.machine=r.machine AND message.generation=r.generation AND message.entity_kind='message'
                         AND json_extract(message.row_json,'$.toSessionId')=r.entity_id
                         AND json_extract(message.row_json,'$.state')='queued'
-                        AND json_extract(message.row_json,'$.inFlight')=1)
+                        AND json_extract(message.row_json,'$.inFlight')=1),
+                json_extract(r.row_json,'$.folder'),json_extract(r.row_json,'$.updatedMs'),m.name,pi.repo_url
             FROM engine_mirror_row r JOIN engine_mirror m ON m.machine=r.machine AND m.generation=r.generation AND m.state='live'
             JOIN engine_session p ON p.id=json_extract(r.row_json,'$.parentId')
                 AND p.machine=(SELECT machine_id FROM engine_meta WHERE singleton=1) AND p.holder='local' AND p.state<>'foreign'
             JOIN session_info pi ON pi.session_id=p.id AND pi.machine IS NULL
             LEFT JOIN session_info si ON si.session_id=r.entity_id AND si.machine=m.name
             WHERE r.entity_kind='session' AND json_extract(r.row_json,'$.holder')='local'
+                AND json_extract(r.row_json,'$.machine')=r.machine AND json_extract(r.row_json,'$.id')=r.entity_id
                 AND json_extract(r.row_json,'$.state')<>'foreign'
                 AND ($id IS NULL OR r.entity_id=$id) AND ($source IS NULL OR r.machine=$source)
         )
@@ -54,7 +57,8 @@ public sealed partial class EngineHelperCards
             (SELECT json_extract(e.payload,'$.message') FROM rows e WHERE e.session_id=c.id AND e.kind='error'
                 AND e.run_id IS t.run_id AND e.seq<t.seq ORDER BY e.seq DESC LIMIT 1),
             (SELECT payload FROM rows old WHERE old.session_id=c.parent_id AND old.kind='subagent'
-                AND old.item_id='subagent:'||c.id ORDER BY old.seq DESC LIMIT 1),c.prompt_in_flight
+                AND old.item_id='subagent:'||c.id ORDER BY old.seq DESC LIMIT 1),c.prompt_in_flight,
+            c.folder,c.updated_ms,c.display_machine,c.repo_url
         FROM children c LEFT JOIN rows t ON t.session_id=c.id AND t.seq=(
             SELECT seq FROM rows WHERE session_id=c.id AND kind='turn' ORDER BY seq DESC LIMIT 1)
         WHERE c.title IS NOT NULL
@@ -69,7 +73,8 @@ public sealed partial class EngineHelperCards
         var terminal = r.IsNull(11) ? null : r.Text(11);
         var stop = !running && terminal == "cancelled" ? "cancelled" : null;
         var error = !running && terminal == "failed" ? r.IsNull(12) ? "It failed." : r.Text(12) : null;
-        var session = new SessionInfo(id, agent, "", title, null, 0, ParentSessionId: parent, Helper: true);
+        var session = new SessionInfo(id, agent, r.Text(18), title, null, r.Long(16),
+            Machine: r.IsNull(17) ? null : r.Text(17), ParentSessionId: parent, Helper: true, WorkingFolder: r.Text(15));
         var payload = new SubagentPayload(id, title, $"Session ({agent})", running ? "running" : "idle", stop, error,
             CanStop: running, ToolCallId: null, Agent: agent, Helper: true);
         return new Card(id, parent, r.Text(9), r.Long(8), r.Long(6), r.Long(7), r.IsNull(10) ? 0 : r.Long(10),

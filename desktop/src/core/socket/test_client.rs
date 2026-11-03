@@ -2,7 +2,7 @@
 //! backend's usual answers. Every wait is on the event that marks it done, with a deadline so a missed event fails
 //! the test instead of hanging it; nothing polls.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
@@ -27,6 +27,7 @@ pub(super) const DEADLINE: Duration = Duration::from_secs(5);
 
 pub(super) struct TestClient {
     pub events: Sender<Event>,
+    pub engine_machine: Arc<Mutex<Option<String>>>,
     states: Receiver<ConnectionState>,
     ids: Arc<AtomicU64>,
     thread: Option<JoinHandle<()>>,
@@ -42,6 +43,7 @@ impl TestClient {
         let (events, receiver) = mpsc::channel();
         let (states_tx, mut changes) = unbounded();
         let ids = Arc::new(AtomicU64::new(0));
+        let engine_machine = Arc::new(Mutex::new(None));
         let thread = ClientThread::spawn(
             endpoint,
             path,
@@ -49,6 +51,7 @@ impl TestClient {
             events.clone(),
             states_tx,
             ids.clone(),
+            engine_machine.clone(),
         );
         // The state channel is async; a thread hands each state on to one the test can wait on with a deadline.
         let (forward, states) = mpsc::channel();
@@ -61,6 +64,7 @@ impl TestClient {
         });
         Self {
             events,
+            engine_machine,
             states,
             ids,
             thread: Some(thread),

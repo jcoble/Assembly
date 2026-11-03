@@ -11,7 +11,7 @@ pub struct Row {
     pub keywords: &'static str,
 }
 
-pub const ROWS: [Row; 13] = [
+pub const ROWS: [Row; 14] = [
     Row {
         id: "theme",
         section: "appearance",
@@ -43,6 +43,14 @@ pub const ROWS: [Row; 13] = [
         title: "Interface font size",
         description: "Base size for chrome, labels and menus.",
         keywords: "type scale bigger smaller",
+    },
+    Row {
+        id: "ui-line-height",
+        section: "appearance",
+        card: "Text",
+        title: "Interface line height",
+        description: "Space between lines in the session rail and interface.",
+        keywords: "spacing leading rows",
     },
     Row {
         id: "editor-font",

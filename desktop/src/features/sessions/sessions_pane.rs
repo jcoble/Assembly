@@ -1,5 +1,5 @@
 //! `SessionsPane` is the sessions column: a search field (title or project) with view options and New session beside
-//! it, provider, location and status pills, the saved grouping and sort popover, and the backend's explicit
+//! it, provider, status and location pills, the saved grouping and sort popover, and the backend's explicit
 //! section, project and session entries as a virtual list, loading
 //! the next page as the reader nears its end. Every list and total comes from `sessions/rail`, read again whenever
 //! the `sessionRail` topic says a session changed (and at subscribe and each reconnect). A row's menu moves its
@@ -30,6 +30,8 @@ use crate::core::socket::outcome::Outcome;
 use crate::core::socket::update::Update;
 use crate::core::state::machines::{GlobalMachines, Machines};
 use crate::core::state::selected_session::SelectedSession;
+use crate::core::state::preferences::Preferences;
+use crate::core::theme::text::TextRole;
 use crate::core::state::sessions::GlobalSessions;
 use crate::core::ui::filter_pills::{FilterGroup, FilterOption, FilterPills, FilterPillsChanged};
 
@@ -38,8 +40,8 @@ const RAIL_TOPIC: &str = "sessionRail";
 const FILTERS_KEY: &str = "rail.filters";
 /// The pills' groups, in order.
 const PROVIDER: usize = 0;
-const LOCATION: usize = 1;
-const STATUS: usize = 2;
+const STATUS: usize = 1;
+const LOCATION: usize = 2;
 
 pub struct SessionsPane {
     focus: FocusHandle,
@@ -108,13 +110,13 @@ impl SessionsPane {
             FilterPills::new(
                 vec![
                     provider,
-                    FilterGroup::new("Location", locations.into()),
                     FilterGroup::new("Status", statuses.into()),
+                    FilterGroup::new("Location", locations.into()),
                 ],
                 cx,
             )
         });
-        let heard = vec![
+        let mut heard = vec![
             cx.observe(&SelectedSession::global(cx), |_, _, cx| cx.notify()),
             cx.observe_global::<GlobalSessions>(|pane, cx| pane.follow_backend(cx)),
             cx.observe_global::<GlobalMachines>(|pane, cx| pane.follow_backend(cx)),
@@ -137,6 +139,24 @@ impl SessionsPane {
                 pane.send(Some(read), cx);
             }),
         ];
+        if let Some(preferences) = Preferences::try_global(cx) {
+            let mut metrics = Preferences::read(cx, |appearance| {
+                (appearance.ui_font(), appearance.ui_text(TextRole::Title))
+            });
+            heard.push(cx.observe(&preferences, move |pane, _, cx| {
+                let next = Preferences::read(cx, |appearance| {
+                    (appearance.ui_font(), appearance.ui_text(TextRole::Title))
+                });
+                if next != metrics {
+                    metrics = next;
+                    let top = pane.lines.logical_scroll_top();
+                    let count = pane.entries.len();
+                    pane.lines.remeasure_items(0..count);
+                    pane.lines.scroll_to(top);
+                    cx.notify();
+                }
+            }));
+        }
         let mut pane = SessionsPane {
             focus: cx.focus_handle(),
             creating: None,
