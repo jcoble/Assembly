@@ -12,6 +12,7 @@ impl ClientThread {
         topic: String,
         key: Option<String>,
         machine: Option<String>,
+        expected_source:Option<crate::core::socket::row_source::ExpectedRowSource>,
         scoped: bool,
         updates: futures_channel::mpsc::UnboundedSender<EngineUpdate>,
     ) {
@@ -27,6 +28,7 @@ impl ClientThread {
                 topic,
                 key,
                 scoped,
+                expected_source,
                 machine,
                 updates,
                 through: None,

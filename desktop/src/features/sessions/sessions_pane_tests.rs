@@ -210,14 +210,18 @@ fn answer(pane: &Entity<SessionsPane>, answer: RailPage, cx: &mut VisualTestCont
 }
 
 #[gpui::test]
-fn filtered_out_selection_stays_open(cx: &mut TestAppContext) {
+async fn filtered_out_selection_stays_open(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     let (pane, cx) = open(cx);
+    let mut nav=cx.update(|window,cx|crate::features::session::view::session_pane::test_navigation::NavigationFixture::new(false,window,cx));
+    nav.ready(cx).await;
     answer(
         &pane,
         page(vec![test_entry("a", "/r"), test_entry("b", "/r")]),
         cx,
     );
     click("session-a", cx);
+    nav.opened("a",cx).await;
     assert_eq!(selected(cx).as_deref(), Some("a"));
     // Running no longer lists it: the session stays open.
     answer(&pane, page(vec![test_entry("b", "/r")]), cx);
@@ -226,8 +230,11 @@ fn filtered_out_selection_stays_open(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn filter_clears_on_escape_and_selection(cx: &mut TestAppContext) {
+async fn filter_clears_on_escape_and_selection(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     let (pane, cx) = open(cx);
+    let mut nav=cx.update(|window,cx|crate::features::session::view::session_pane::test_navigation::NavigationFixture::new(false,window,cx));
+    nav.ready(cx).await;
     answer(&pane, page(vec![test_entry("a", "/r")]), cx);
     let typed = |pane: &Entity<SessionsPane>, cx: &mut VisualTestContext| {
         pane.update_in(cx, |pane, window, cx| {
@@ -252,6 +259,7 @@ fn filter_clears_on_escape_and_selection(cx: &mut TestAppContext) {
     typed(&pane, cx);
     answer(&pane, page(vec![test_entry("a", "/r")]), cx);
     click("session-a", cx);
+    nav.opened("a",cx).await;
     assert_eq!(selected(cx).as_deref(), Some("a"));
     cleared(&pane, cx);
 }

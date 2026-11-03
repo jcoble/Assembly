@@ -158,6 +158,7 @@ impl SessionPane {
                     item: shown,
                     kept: self.kept.get(&item.key).cloned().unwrap_or_default(),
                     session: self.session.clone().unwrap_or_default().into(),
+                    expected_source: self.row_source.clone(),
                     copy: self.copy_text(item),
                     turn: self.turn_of(item, now),
                     checkout: self.checkout(item),

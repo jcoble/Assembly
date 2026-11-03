@@ -95,6 +95,7 @@ impl Render for SourceControlPane {
                         )
                         .child({
                             let open = OpenBranchDiff {
+                                expected_source: self.read.read(cx).source().cloned(),
                                 session_id: session.clone(),
                             };
                             Button::new("source-control-branch-diff")
@@ -110,7 +111,7 @@ impl Render for SourceControlPane {
                     if status.files.is_empty() {
                         return pane.child(line("No changes.".into()));
                     }
-                    pane.child(lists(&status, &session, cx.entity().downgrade(), busy, cx))
+                    pane.child(lists(&status, &session, self.read.read(cx).source().cloned(), cx.entity().downgrade(), busy, cx))
                 })
                 .when_some(status.more_line(), |pane, more| pane.child(line(more)))
                 .into_any_element(),
@@ -246,6 +247,7 @@ impl Render for SourceControlPane {
                     })),
             );
         let open_history = OpenGitHistory {
+            expected_source: self.read.read(cx).source().cloned(),
             session_id: session,
             path: None,
         };

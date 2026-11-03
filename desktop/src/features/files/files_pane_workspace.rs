@@ -54,6 +54,8 @@ impl FilesPane {
         self.workspace_checked = false;
         self.restoring_tree = None;
         self.session = None;
+        self.source = None;
+        self.owner = None;
         self.started = false;
         self.tree = FileTree::default();
         self.selected = None;
@@ -96,6 +98,7 @@ impl FilesPane {
         self.loads.clear();
         self.release_watch(cx);
         self.workspace_key = Some(key);
+        self.owner = None;
         self.workspace_checked = false;
         self.started = false;
         self.tree = FileTree::default();
@@ -110,32 +113,26 @@ impl FilesPane {
         cx.notify();
     }
     pub(super) fn validate_workspace_owner(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(key) = self.workspace_key.clone() else {
-            return true;
-        };
-        if self.workspace_checked {
-            return true;
-        }
-        if self.observing.is_some() {
-            return false;
-        }
-        let Some(socket) = SocketClient::try_global(cx) else {
-            return false;
-        };
-        let generation = self.generation;
-        let call = socket.read(cx).call::<FileOwnership>(
-            "files",
-            "owner",
-            json!({"session":key.session_id}),
-            None,
-        );
+        if self.workspace_checked { return true; }
+        if self.observing.is_some() { return false; }
+        let (Some(socket),Some(session))=(SocketClient::try_global(cx),self.session.clone()) else {return false;};
+        let key=self.workspace_key.clone();
+        let source=self.source.clone();
+        let expected=self.owner.clone().or_else(||key.as_ref().map(|key|FileOwnership {
+            machine:key.machine.clone(),checkout_root:key.checkout_root.clone(),remote_session_id:key.session_id.clone()}));
+        let generation=self.generation;
+        let call=socket.read(cx).call::<FileOwnership>("files","owner",json!({"session":session,
+            "expectedSource":source,"expectedOwner":expected}),None);
         self.observing=Some(cx.spawn(async move |pane,cx| {
             let answer=call.await;
             let _=pane.update(cx,|pane,cx| {
-                if pane.generation!=generation||pane.workspace_key.as_ref()!=Some(&key)||!pane.shown {return;}
+                if pane.generation!=generation||pane.workspace_key!=key||pane.source!=source||!pane.shown {return;}
                 pane.observing=None;
                 match answer {
-                    Outcome::Ok(owner) if owner.machine==key.machine&&owner.checkout_root==key.checkout_root => {pane.workspace_checked=true;pane.start(cx);}
+                    Outcome::Ok(owner) if key.as_ref().is_none_or(|key|owner.machine==key.machine&&owner.checkout_root==key.checkout_root) => {
+                        pane.owner=Some(owner);pane.workspace_checked=true;pane.start(cx);
+                    }
+                    Outcome::Failed(error)=>{pane.tree.start();pane.tree.loaded("",Err(error.message));}
                     _=>{pane.tree.start();pane.tree.loaded("",Err("The owning checkout is unavailable or changed. The saved tree remains unchanged.".into()));}
                 }cx.notify();
             });

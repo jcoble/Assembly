@@ -304,6 +304,7 @@ impl Render for PrFiles {
                             id: SharedString::from(format!("pr-comment:{}", comment.id)),
                             blocks: comment.body_blocks.clone(),
                             session: None,
+                            expected_source: None,
                         })
                         .into_any_element(),
                     None => Empty.into_any_element(),

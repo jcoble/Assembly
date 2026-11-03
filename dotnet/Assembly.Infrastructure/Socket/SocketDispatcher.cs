@@ -135,6 +135,8 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     internal async Task<ISocketSubscription?> SubscribeAsync(InFrame frame, long id, SocketConnection connection)
     {
         if (frame.ExpectedSource is null) return Subscribe(frame, id, connection);
+        if (frame.Stream == "engine" && frame.Topic == "messages")
+            return await SourceBoundEngine.OpenAsync(frame, id, connection, engine, _topics.GetValueOrDefault("rows")?.Sources, time);
         if (frame.Topic != "rows" || frame.Stream is not null || frame.Key is null || connection.Bulk || connection.Terminal ||
             connection.Peer is not OwnerPeer || !_topics.TryGetValue(frame.Topic, out var topic) || topic.Sources is null)
         {
@@ -329,8 +331,11 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     {
         if (frame.ExpectedSource is not null &&
             !(frame.Feature == "rows" && frame.Method is ("page" or "subagents") ||
-                frame.Feature == "sessions" && frame.Method == "read"))
-            return Error(id, "bad_args", "expectedSource requires a supported rows read.");
+                frame.Feature == "sessions" && frame.Method == "read" ||
+                frame.Feature == "send" && frame.Method is ("send" or "answer" or "stop" or "stopTask") ||
+                frame.Feature == "config" && frame.Method is ("get" or "warm" or "set") ||
+                frame.Feature == "engine" && frame.Method is ("owner_prompts" or "owner_prompt_chunk")))
+            return Error(id, "bad_args", "expectedSource requires a supported session call.");
         var name = $"{frame.Feature}/{frame.Method}";
         if ((frame.Feature == "terminal") != connection.Terminal)
             return Error(id, "not_found", frame.Feature == "terminal" ? $"{name} is on /socket/terminal" : $"{name} is on /socket");
@@ -347,6 +352,10 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         {
             return Error(id, "bad_args", $"{name}: {error.Message}");
         }
+
+        if (args is Assembly.Application.Features.Chat.Sessions.SendFeature.StopArgs stop &&
+            (stop.ExpectedSource is not null || frame.ExpectedSource is not null) && string.IsNullOrWhiteSpace(stop.Session))
+            return Error(id, "bad_args", "A source-bound stop requires its session.");
 
         using var scope = log.BeginScope("{Call} {Id} on {Connection}", name, id, connection.Id);
         log.LogDebug("call {Call}", name);

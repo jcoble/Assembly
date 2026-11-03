@@ -14,6 +14,73 @@ namespace Assembly.Infrastructure.Engine.Sessions;
 internal sealed class SessionRowSources(IAppDatabase db, SessionStore sessions, MachineSet machines,
     RemoteConnections? connections = null) : IRowSourceBindings
 {
+    public async Task<IExpectedSourceGuard> CaptureEngineAsync(ExpectedSource source, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(source.Machine)) throw Changed();
+        EngineGuard guard;
+        var local = db.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", row => row.Text(0), ct);
+        if (source.Machine == local)
+        {
+            if (source.Generation != 0 || source.RouteMachine is not null) throw Changed();
+            guard = new(() =>
+            {
+                if (db.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", row => row.Text(0), default) != source.Machine)
+                    throw Changed();
+            }, null);
+        }
+        else
+        {
+            if (connections is null) throw Changed();
+            var captured = await connections.CaptureSessionOpenSourceAsync(db, source, ct);
+            guard = new(captured.EnsureCurrent, captured.Live);
+        }
+        try { ct.ThrowIfCancellationRequested(); guard.EnsureCurrent(); return guard; }
+        catch { guard.Dispose(); throw; }
+    }
+
+    private sealed class EngineGuard : IExpectedSourceGuard
+    {
+        private readonly Action _check;
+        private readonly EngineMirror.LiveMirrorBinding? _live;
+        private readonly CancellationTokenSource? _changed;
+        private readonly CancellationToken _token;
+        private int _disposed;
+        internal EngineGuard(Action check, EngineMirror.LiveMirrorBinding? live)
+        {
+            (_check, _live) = (check, live);
+            _changed = live is null ? null : CancellationTokenSource.CreateLinkedTokenSource(live.Invalidated, live.OwnerBinding.Invalidated);
+            _token = _changed?.Token ?? CancellationToken.None;
+        }
+        public CancellationToken Changed => _token;
+        public void EnsureCurrent()
+        {
+            if (Volatile.Read(ref _disposed) != 0 || _token.IsCancellationRequested || _live?.IsInvalidated == true) throw SessionRowSources.Changed();
+            _check();
+        }
+        public void Dispose() { if (Interlocked.Exchange(ref _disposed, 1) == 0) _changed?.Dispose(); }
+    }
+
+    internal sealed record CommandBinding(RowSourceBinding Guard, SessionInfo Session, IMachine Machine,
+        EngineMirror.LiveMirrorBinding? Live);
+
+    internal async Task<CommandBinding> CaptureCommandAsync(ExpectedSource source, string session, CancellationToken ct)
+    {
+        var guard = await CaptureAsync(source, session, ct);
+        try
+        {
+            guard.EnsureDisplayCurrent();
+            var info = sessions.Get(session) ?? throw Changed();
+            return guard switch
+            {
+                LocalBinding local => new(guard, info, local.CapturedMachine, null),
+                RemoteBinding remote => new(guard, info, remote.CapturedMachine, remote.Live),
+                _ => throw Changed()
+            };
+        }
+        catch { guard.Dispose(); throw; }
+    }
+
     public async Task<RowSourceBinding> CaptureAsync(ExpectedSource source, string session, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -65,6 +132,7 @@ internal sealed class SessionRowSources(IAppDatabase db, SessionStore sessions, 
 
     private sealed class LocalBinding(IMachine machine, SessionInfo session, Action check, Action<IReadScope?> certifyDisplay) : RowSourceBinding
     {
+        internal IMachine CapturedMachine => machine;
         public override bool Remote => false;
         public override CancellationToken Changed => CancellationToken.None;
         public override void EnsureCurrent() => check();
@@ -79,6 +147,8 @@ internal sealed class SessionRowSources(IAppDatabase db, SessionStore sessions, 
 
     private sealed class RemoteBinding : RowSourceBinding
     {
+        internal RemoteMachine CapturedMachine => _machine;
+        internal EngineMirror.LiveMirrorBinding Live => _live;
         private readonly string _session;
         private readonly RemoteMachine _machine;
         private readonly EngineMirror.LiveMirrorBinding _live;

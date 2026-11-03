@@ -6,6 +6,7 @@ use gpui_kit::*;
 #[action(namespace = intents, no_json)]
 pub struct OpenDiff {
     pub session_id: String,
+    pub expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     pub path: String,
     /// A staged rename's old path, so its diff shows the rename.
     pub original_path: Option<String>,

@@ -77,7 +77,7 @@ pub struct FileChunk {
     pub next_offset: Option<u64>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileOwnership {
     pub machine: String,

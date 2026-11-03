@@ -9,6 +9,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::core::intents::open_file::OpenFile;
+use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::intents::open_url::OpenUrl;
 use crate::core::ui::markdown::payload::{Block, Inline};
 
@@ -19,6 +20,8 @@ pub struct MarkdownView {
     pub blocks: Vec<Block>,
     /// Actual session context for file links; absent for untrusted global content.
     pub session: Option<SharedString>,
+    /// Source captured with this content; never refreshed from the current selection at click time.
+    pub expected_source: Option<ExpectedRowSource>,
 }
 
 impl RenderOnce for MarkdownView {
@@ -26,6 +29,7 @@ impl RenderOnce for MarkdownView {
         let mut draw = Draw {
             id: &self.id,
             session: self.session.as_deref(),
+            expected_source: self.expected_source.as_ref(),
             next: 0,
             cx,
         };
@@ -51,7 +55,7 @@ pub enum LinkTarget {
 }
 
 impl LinkTarget {
-    fn action(&self, session: Option<&str>) -> Option<Box<dyn Action>> {
+    fn action(&self, session: Option<&str>, expected_source: Option<&ExpectedRowSource>) -> Option<Box<dyn Action>> {
         match self {
             Self::Url(url) => Some(Box::new(OpenUrl { url: url.clone() })),
             Self::File(path) => Some(Box::new(OpenFile {
@@ -60,6 +64,7 @@ impl LinkTarget {
                 line: None,
                 column: None,
                 pinned: true,
+                expected_source: expected_source.cloned(),
             })),
         }
     }
@@ -149,6 +154,7 @@ impl Runs {
 struct Draw<'a> {
     id: &'a str,
     session: Option<&'a str>,
+    expected_source: Option<&'a ExpectedRowSource>,
     next: usize,
     cx: &'a App,
 }
@@ -316,10 +322,11 @@ impl Draw<'_> {
         self.next += 1;
         let (ranges, targets): (Vec<_>, Vec<_>) = links.into_iter().unzip();
         let session = self.session.map(str::to_owned);
+        let expected_source = self.expected_source.cloned();
         let id = ElementId::Name(format!("{}:{}", self.id, self.next).into());
         InteractiveText::new(id, styled)
             .on_click(ranges, move |at, window, cx| {
-                if let Some(action) = targets[at].action(session.as_deref()) {
+                if let Some(action) = targets[at].action(session.as_deref(),expected_source.as_ref()) {
                     window.dispatch_action(action, cx);
                 }
             })

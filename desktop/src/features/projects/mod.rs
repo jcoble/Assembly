@@ -15,3 +15,5 @@ pub mod new_project_dialog;
 pub mod folder_browser;
 
 pub mod projects;
+
+pub mod projects_view;

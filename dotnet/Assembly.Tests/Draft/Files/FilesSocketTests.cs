@@ -10,6 +10,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Application.Common;
+using Assembly.Application.Common.Machines;
+using Assembly.Infrastructure.Engine.Sessions;
+using Assembly.Tests.Draft.Base.Chat;
 using Assembly.Infrastructure.Chat.Files;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Socket;
@@ -18,13 +22,14 @@ using TopicSet = Assembly.Infrastructure.Topics.Topics;
 namespace Assembly.Tests.Draft.Files;
 
 /// <summary><c>files/list</c> and <c>files/search</c> over the socket, for sessions whose folders are temp git repos.</summary>
-public sealed class FilesSocketTests : IAsyncLifetime
+public sealed partial class FilesSocketTests : IAsyncLifetime
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
     private readonly TempDatabase _file = new();
     private readonly DirectoryInfo _checkouts = Directory.CreateTempSubdirectory("files-socket-");
     private AppDatabase _db = null!;
+    private readonly BackgroundWork _work = new(TimeProvider.System, TextWriter.Null);
     private SessionStore _sessions = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
@@ -36,7 +41,7 @@ public sealed class FilesSocketTests : IAsyncLifetime
         _sessions = SessionStore.Open(_db, TimeProvider.System, _checkouts.FullName);
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
         global::Assembly.Engine.Persistence.EngineSchema.Open(_db, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-        new FilesFeature(_sessions, new FileOwner(_sessions, _db)).Register(calls);
+        new FilesFeature(_sessions, new FileOwner(_sessions, _db), _work, sources: new SessionRowSources(_db, _sessions, new MachineSet(new FakeMachine(null, _sessions)))).Register(calls);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
@@ -57,6 +62,7 @@ public sealed class FilesSocketTests : IAsyncLifetime
     {
         await _app.StopAsync();
         await _app.DisposeAsync();
+        await _work.DisposeAsync();
         _db.Dispose();
         _file.Dispose();
         _checkouts.Delete(recursive: true);

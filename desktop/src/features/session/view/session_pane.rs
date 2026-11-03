@@ -577,3 +577,10 @@ mod helper_stop;
 #[cfg(test)]
 #[path="tests/helper_stop_tests.rs"]
 mod helper_stop_tests;
+
+#[cfg(test)]
+#[path="navigation/test_navigation.rs"]
+pub(crate) mod test_navigation;
+#[cfg(test)]
+#[path="navigation/navigation_switch_tests.rs"]
+mod navigation_switch_tests;

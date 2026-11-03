@@ -90,10 +90,14 @@ fn projects_start_folded_and_a_click_opens_one_newest_first(cx: &mut TestAppCont
 
 // Pins: g0-shape#15
 #[gpui::test]
-fn a_click_on_a_session_opens_it(cx: &mut TestAppContext) {
+async fn a_click_on_a_session_opens_it(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     let (_pane, cx) = open(Some(two_projects()), cx);
+    let mut nav=cx.update(|window,cx|crate::features::session::view::session_pane::test_navigation::NavigationFixture::new(false,window,cx));
+    nav.ready(cx).await;
     click("history-project-/w/notes", cx);
     click("history-session-s1", cx);
+    nav.opened("s1",cx).await;
     let selected = cx.update(|_, cx| {
         SelectedSession::global(cx)
             .read(cx)

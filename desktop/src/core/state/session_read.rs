@@ -31,6 +31,7 @@ pub struct SessionRead<T> {
     active: bool,
     /// The session what's shown, or the read on its way, is for.
     read_for: Option<String>,
+    source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     shown: Shown<T>,
     reading: bool,
     /// The read on its way; dropping it cancels the call on the backend.
@@ -53,6 +54,7 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
             method,
             active: false,
             read_for: None,
+            source: None,
             shown: Shown::NoSession,
             reading: false,
             _read: None,
@@ -106,6 +108,10 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         self.read_for.as_deref()
     }
 
+    pub fn source(&self) -> Option<&crate::core::socket::row_source::ExpectedRowSource> {
+        self.source.as_ref()
+    }
+
     pub fn reading(&self) -> bool {
         self.reading
     }
@@ -132,19 +138,20 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
 
     /// Reads the selected session, unless it's already shown or on its way and `again` isn't set.
     fn read(&mut self, again: bool, cx: &mut Context<Self>) {
-        let selected = SelectedSession::global(cx)
-            .read(cx)
-            .session_id()
-            .map(String::from);
+        let selection = SelectedSession::global(cx);
+        let selection = selection.read(cx);
+        let selected = selection.session_id().map(String::from);
+        let source = selection.source().cloned();
         let Some(session) = selected else {
             self.read_for = None;
             self.reading = false;
             self._read = None;
+            self.source = None;
             self.shown = Shown::NoSession;
             cx.notify();
             return;
         };
-        let same = self.read_for.as_deref() == Some(session.as_str());
+        let same = self.read_for.as_deref() == Some(session.as_str()) && self.source == source;
         if same && !again && !matches!(self.shown, Shown::Failed(_)) {
             return;
         }
@@ -153,6 +160,7 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         }
         self.settled_state = Self::selected_state(cx);
         self.read_for = Some(session.clone());
+        self.source = source.clone();
         let Some(socket) = SocketClient::try_global(cx) else {
             self.reading = false;
             self._read = None;
@@ -165,13 +173,14 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         let call = socket.read(cx).call::<Value>(
             self.feature,
             self.method,
-            json!({ "session": session }),
+            json!({ "session": session, "expectedSource": source }),
             Some(&key),
         );
         self.reading = true;
         self._read = Some(cx.spawn(async move |read, cx| {
             let outcome = call.await;
             _ = read.update(cx, |read, cx| {
+                if read.read_for.as_deref() != Some(session.as_str()) || read.source != source { return; }
                 read.reading = false;
                 read.shown = match outcome {
                     Outcome::Ok(result) => match serde_json::from_value(result) {

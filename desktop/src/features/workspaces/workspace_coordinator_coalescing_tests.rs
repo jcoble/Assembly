@@ -68,14 +68,14 @@ async fn newer_outgoing_edits_are_saved_before_the_target_commit(cx: &mut TestAp
             let _ = tell.unbounded_send(());
         })
     });
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             WorkspaceTarget::Checkout(key("/a")),
             Box::new(|_, _, _| Ok(())),
             window,
             cx,
         );
-    });
+    }));
     until("A ready", &mut changes, &changed, || {
         coordinator.read_with(cx, |view, _| view.current_key() == Some(&key("/a")))
     })
@@ -84,7 +84,7 @@ async fn newer_outgoing_edits_are_saved_before_the_target_commit(cx: &mut TestAp
     let commits = Rc::new(RefCell::new(Vec::new()));
     let committed = commits.clone();
     let captured = saves.clone();
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             WorkspaceTarget::Checkout(key("/b")),
             Box::new(move |key, _, _| {
@@ -99,7 +99,7 @@ async fn newer_outgoing_edits_are_saved_before_the_target_commit(cx: &mut TestAp
             window,
             cx,
         );
-    });
+    }));
     first_save.await.unwrap();
     *live.borrow_mut() = json!({"files":[],"activePath":"newer edit"});
     // An actual independent read releases the held first receipt; no timer or polling controls the race.

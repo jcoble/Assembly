@@ -33,6 +33,7 @@ pub struct ItemRow {
     pub kept: Kept,
     /// The session the item is in, for its file links.
     pub session: SharedString,
+    pub expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     /// What the copy button under a prompt or a final reply copies; `None` draws no meta line.
     pub copy: Option<SharedString>,
     /// A final reply's turn line ("Worked for 42s · Thu 12:02 PM · model · …"), shown in its meta line.
@@ -106,6 +107,7 @@ impl RenderOnce for ItemRow {
                     id: key.clone().into(),
                     blocks,
                     session: Some(self.session.clone()),
+                    expected_source: self.expected_source.clone(),
                 }))
                 .children(meta(at, self.copy.clone(), self.turn.clone(), true))
                 .into_any_element(),

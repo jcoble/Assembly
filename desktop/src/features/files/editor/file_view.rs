@@ -46,6 +46,7 @@ pub struct FileView {
     pub(super) loading: Option<Task<()>>,
     started: bool,
     owner: Option<FileOwnership>,
+    source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     document: Option<DocumentKey>,
     editor: Option<EditorSurface>,
     editor_events: Option<Subscription>,
@@ -122,7 +123,7 @@ impl FileView {
 
     /// Opens the session's file at `path` in the center, or brings its tab forward.
     pub fn open(session: String, path: String, window: &mut Window, cx: &mut App) {
-        Self::open_at(session, path, None, None, false, window, cx);
+        Self::open_at(session, path, None, None, false, None, window, cx);
     }
 
     pub fn new(session: String, path: String, cx: &mut Context<Self>) -> Self {
@@ -134,6 +135,7 @@ impl FileView {
             loading: None,
             started: false,
             owner: None,
+            source: None,
             document: None,
             editor: None,
             editor_events: None,
@@ -166,7 +168,7 @@ impl FileView {
             return;
         };
         let args = json!({ "session": self.session, "path": self.path, "offset": offset,
-            "revision": self.text.revision() });
+            "revision": self.text.revision(), "expectedSource": self.source, "expectedOwner": self.owner });
         let call = socket
             .read(cx)
             .call::<FileChunk>("files", "read", args, None);
@@ -210,7 +212,7 @@ impl FileView {
         let call = socket.read(cx).call::<FileOwnership>(
             "files",
             "owner",
-            json!({ "session": self.session }),
+            json!({ "session": self.session, "expectedSource": self.source, "expectedOwner": self.owner }),
             None,
         );
         self.loading = Some(cx.spawn(async move |view, cx| {
@@ -270,6 +272,7 @@ impl FileView {
         line: Option<u32>,
         column: Option<u32>,
         pinned: bool,
+        source: Option<crate::core::socket::row_source::ExpectedRowSource>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -283,6 +286,7 @@ impl FileView {
             cx.new(|cx| {
                 let mut view = FileView::new(session, path, cx);
                 view.pinned = pinned;
+                view.source = source.clone();
                 view
             })
         });
@@ -290,6 +294,10 @@ impl FileView {
             && let Some(view) = Self::panel(id, cx)
         {
             view.update(cx, |view, cx| {
+                if view.source != source {
+                    view.editor_error = Some("The file was opened from a different source. Its existing draft remains unchanged.".into());
+                    cx.notify();return;
+                }
                 view.pinned |= pinned;
                 if let Some(line) = line {
                     if let Some(editor) = &mut view.editor {
@@ -303,10 +311,10 @@ impl FileView {
         }
     }
 
-    pub fn open_history(session: String, path: String, window: &mut Window, cx: &mut App) {
+    pub fn open_history(session: String, path: String, source: Option<crate::core::socket::row_source::ExpectedRowSource>, window: &mut Window, cx: &mut App) {
         let alias = key(&session, &path);
         if let Some(id) = CenterPanes::open(alias, window, cx, |_, cx| {
-            cx.new(|cx| Self::new(session, path, cx))
+            cx.new(|cx| {let mut view=Self::new(session, path, cx);view.source=source.clone();view})
         }) && let Some(view) = Self::panel(id, cx)
         {
             view.update(cx, |view, cx| {
@@ -322,7 +330,7 @@ impl FileView {
         self.history_shown = !self.history_shown;
         if self.history.is_none() {
             self.history =
-                Some(cx.new(|_| FileHistory::new(self.session.clone(), self.path.clone())));
+                Some(cx.new(|_| FileHistory::new(self.session.clone(), self.path.clone(), self.source.clone())));
         }
         if let Some(history) = &self.history {
             history.update(cx, |history, cx| {
@@ -495,3 +503,7 @@ fn key(session: &str, path: &str) -> String {
         serde_json::to_string(&(session, path)).expect("file alias")
     )
 }
+
+#[cfg(test)]
+#[path = "file_view_source_tests.rs"]
+mod source_tests;

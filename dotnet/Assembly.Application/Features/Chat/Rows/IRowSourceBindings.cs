@@ -8,6 +8,8 @@ namespace Assembly.Application.Features.Chat.Rows;
 public interface IRowSourceBindings
 {
     Task<RowSourceBinding> CaptureAsync(ExpectedSource source, string session, CancellationToken ct);
+    Task<IExpectedSourceGuard> CaptureEngineAsync(ExpectedSource source, CancellationToken ct) =>
+        throw new CallFailed("Source-bound Engine reads are unavailable.", "source_changed");
 }
 
 public abstract class RowSourceBinding : IExpectedSourceGuard

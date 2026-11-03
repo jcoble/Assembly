@@ -51,3 +51,7 @@ pub(crate) mod test_client;
 pub(crate) mod test_wait;
 pub mod topic_subscription;
 pub mod update;
+
+#[cfg(test)]
+#[path="tests/message_source_tests.rs"]
+mod message_source_tests;

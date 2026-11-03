@@ -392,8 +392,8 @@ fn queued_prompt_consumes_pushed_outcome_and_releases_subscription_on_switch(
     cx.update(|_, cx| {
         client.push_message(
             &message,
-            None,
-            json!({"machine":"local", "entityKind":"message", "entityId":message,
+            Some("owner"),
+            json!({"machine":"owner", "entityKind":"message", "entityId":message,
         "version":3, "data":{"sessionId":"s", "state":"held", "reason":"needs_me"}}),
             cx,
         )
@@ -413,8 +413,8 @@ fn queued_prompt_consumes_pushed_outcome_and_releases_subscription_on_switch(
     cx.update(|_, cx| {
         client.push_message(
             &message,
-            None,
-            json!({"machine":"local", "entityKind":"message", "entityId":message,
+            Some("owner"),
+            json!({"machine":"owner", "entityKind":"message", "entityId":message,
         "version":4, "data":{"sessionId":"s", "state":"failed", "reason":"model_unavailable"}}),
             cx,
         )

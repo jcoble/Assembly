@@ -18,6 +18,7 @@ use serde_json::json;
 struct Copied {
     key: DocumentKey,
     cut: bool,
+    source: Option<crate::core::socket::row_source::ExpectedRowSource>,
 }
 struct FileClipboard(Copied);
 impl Global for FileClipboard {}
@@ -36,7 +37,7 @@ impl FilesPane {
             return;
         };
         let form = cx.new(|cx| {
-            FileActionForm::new(session, kind, path, destination, expected_owner, window, cx)
+            FileActionForm::new(session, kind, path, destination, expected_owner, self.source.clone(), self.owner.clone(), window, cx)
         });
         self.action_event = Some(cx.subscribe(&form, |pane, _, finished: &Finished, cx| {
             if finished.moved.as_ref().is_some_and(|key| {
@@ -70,7 +71,7 @@ impl FilesPane {
         let call = socket.read(cx).call::<FileOwnership>(
             "files",
             "owner",
-            json!({"session":session}),
+            json!({"session":session,"expectedSource":self.source,"expectedOwner":self.owner}),
             None,
         );
         self.action_loading = Some(cx.spawn(async move |pane, cx| {
@@ -93,6 +94,7 @@ impl FilesPane {
                                     path,
                                 },
                                 cut: action == "cut",
+                                source: pane.source.clone(),
                             })),
                             "copyPath" => {
                                 let text = if local {
@@ -127,9 +129,11 @@ impl FilesPane {
         kind: &'static str,
         pane: WeakEntity<Self>,
         path: String,
+        source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     ) -> PopupMenuItem {
         PopupMenuItem::new(label).on_click(move |_, window, cx| {
             let _ = pane.update(cx, |pane, cx| {
+                if pane.source != source { pane.action_error=Some("The file menu belongs to an earlier source.".into());cx.notify();return; }
                 pane.open_action(kind, path.clone(), None, None, window, cx)
             });
         })
@@ -139,9 +143,11 @@ impl FilesPane {
         action: &'static str,
         pane: WeakEntity<Self>,
         path: String,
+        source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     ) -> PopupMenuItem {
         PopupMenuItem::new(label).on_click(move |_, _, cx| {
             let _ = pane.update(cx, |pane, cx| {
+                if pane.source != source { pane.action_error=Some("The file menu belongs to an earlier source.".into());cx.notify();return; }
                 pane.metadata_action(path.clone(), action, cx)
             });
         })
@@ -152,6 +158,7 @@ impl FilesPane {
         session: String,
         path: String,
         folder: bool,
+        source: Option<crate::core::socket::row_source::ExpectedRowSource>,
         cx: &App,
     ) -> PopupMenu {
         if folder {
@@ -161,12 +168,14 @@ impl FilesPane {
                     "createFile",
                     pane.clone(),
                     path.clone(),
+                    source.clone(),
                 ))
                 .item(Self::mutation_item(
                     "New folder",
                     "createFolder",
                     pane.clone(),
                     path.clone(),
+                    source.clone(),
                 ));
             if let Some(copied) = cx
                 .try_global::<FileClipboard>()
@@ -178,8 +187,10 @@ impl FilesPane {
                     copied.key.path.rsplit('/').next().unwrap_or_default()
                 );
                 let pane = pane.clone();
+                let paste_source=source.clone();
                 menu = menu.item(PopupMenuItem::new("Paste").on_click(move |_, window, cx| {
                     let _ = pane.update(cx, |pane, cx| {
+                        if pane.source != paste_source || copied.source != paste_source { pane.action_error=Some("The copied item or destination source changed.".into());cx.notify();return; }
                         pane.open_action(
                             if copied.cut { "move" } else { "copy" },
                             copied.key.path.clone(),
@@ -195,17 +206,20 @@ impl FilesPane {
         } else {
             let timeline_session = session.clone();
             let timeline_path = path.clone();
+            let timeline_source=source.clone();
             menu = menu.item(
                 PopupMenuItem::new("Open timeline").on_click(move |_, window, cx| {
                     crate::features::files::file_view::FileView::open_history(
                         timeline_session.clone(),
                         timeline_path.clone(),
+                        timeline_source.clone(),
                         window,
                         cx,
                     )
                 }),
             );
             let history_path = path.clone();
+            let history_source=source.clone();
             menu = menu
                 .item(PopupMenuItem::new("Git: View file history").on_click(
                     move |_, window, cx| {
@@ -213,6 +227,7 @@ impl FilesPane {
                             Box::new(OpenGitHistory {
                                 session_id: session.clone(),
                                 path: Some(history_path.clone()),
+                                expected_source: history_source.clone(),
                             }),
                             cx,
                         )
@@ -226,18 +241,21 @@ impl FilesPane {
                 "cut",
                 pane.clone(),
                 path.clone(),
+                source.clone(),
             ))
             .item(Self::metadata_item(
                 "Copy",
                 "copy",
                 pane.clone(),
                 path.clone(),
+                source.clone(),
             ))
             .item(Self::metadata_item(
                 "Copy path",
                 "copyPath",
                 pane.clone(),
                 path.clone(),
+                source.clone(),
             ))
             .separator()
             .item(Self::mutation_item(
@@ -245,12 +263,14 @@ impl FilesPane {
                 "rename",
                 pane.clone(),
                 path.clone(),
+                source.clone(),
             ))
             .item(Self::mutation_item(
                 "Move to Trash",
                 "trash",
                 pane.clone(),
                 path.clone(),
+                source.clone(),
             ))
             .separator()
             .item(Self::metadata_item(
@@ -258,6 +278,7 @@ impl FilesPane {
                 "reveal",
                 pane.clone(),
                 path,
+                source.clone(),
             ));
         menu.item(
             PopupMenuItem::new("Toggle excluded files").on_click(move |_, _, cx| {

@@ -25,6 +25,7 @@ pub trait SessionClient: 'static {
         &self,
         message: &str,
         machine: Option<&str>,
+        expected_source:Option<&crate::core::socket::row_source::ExpectedRowSource>,
         sink: MessageSink,
         cx: &App,
     ) -> Subscription;
@@ -49,7 +50,7 @@ pub trait SessionClient: 'static {
 pub type ClockSink = Box<dyn FnMut(i64, &mut App)>;
 
 /// Where a rows subscription's events go, on the main thread.
-pub type MessageSink = Box<dyn FnMut(Value, &mut App)>;
+pub type MessageSink = Box<dyn FnMut(Result<Value,CallError>, &mut App)>;
 
 pub type RowsSink = Box<dyn FnMut(RowUpdate, &mut App)>;
 

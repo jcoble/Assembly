@@ -50,6 +50,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         private readonly Func<string, string, bool>? _isConfiguredProvider;
         public Action<ICallRegistry>? AdditionalFeatures { get; set; }
         public IRowSourceBindings? SessionSources { get; set; }
+        public Assembly.Application.Common.Engine.IEngineDoor? ChatDoor { get; set; }
         public Action? CommandCommitted { get; set; }
         public Action<string>? WriteCommitted { get; set; }
         public Func<Task>? Identifying { get; set; }
@@ -100,7 +101,7 @@ internal sealed class TwoHosts : IAsyncDisposable
             var calls = new SocketDispatcher(new CommandWriter(Fixture.Db.Writer, () => CommandCommitted?.Invoke(), what => WriteCommitted?.Invoke(what)), Topics, Fixture.Time, NullLogger.Instance, new EngineSocketStream(Runtime));
             if (_windowCalls)
             {
-                var engineCalls = Forwarder is null ? new EngineCalls(Runtime, Fixture.Time, Needs) : new EngineCalls(Runtime, Fixture.Time, Needs, Forwarder);
+                var engineCalls = Forwarder is null ? new EngineCalls(Runtime, Fixture.Time, Needs, ChatDoor) : new EngineCalls(Runtime, Fixture.Time, Needs, Forwarder, ChatDoor);
                 engineCalls.Register(new IdentityGate(calls, this));
             }
             else calls.Read("engine", "machine", EngineSocketJson.Default.JsonElement, EngineSocketJson.Default.MachineInfo, async (_, c) =>

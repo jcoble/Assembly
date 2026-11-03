@@ -23,7 +23,7 @@ async fn actual_view_changes_save_through_the_same_cas_owner_without_a_selection
         WorkspacePanes::register(Box::new(CurrentFiles(live.clone())),cx).unwrap();WorkspaceCoordinator::init(cx)
     });let (_,cx)=cx.add_window_view(|_,_|Host);
     let (sent,mut activated)=unbounded();let _activated=cx.update(|_,cx|cx.subscribe(&coordinator,move |_,event:&super::WorkspaceActivated,_|{sent.unbounded_send(event.clone()).unwrap();}));
-    coordinator.update_in(cx,|view,window,cx|{view.request(WorkspaceTarget::Checkout(key("/a")),Box::new(|_,_,_|Ok(())),window,cx);});
+    cx.update(|window, cx| coordinator.update(cx, |view, cx|{view.request(WorkspaceTarget::Checkout(key("/a")),Box::new(|_,_,_|Ok(())),window,cx);}));
     activated.recv().await.unwrap();
     let (sent,mut saved)=unbounded();let _saved=cx.update(|_,cx|cx.subscribe(&coordinator,move |_,event:&WorkspaceSaved,_|{sent.unbounded_send(event.clone()).unwrap();}));
     *live.borrow_mut()=json!({"files":[],"activePath":"actual user change"});

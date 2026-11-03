@@ -79,27 +79,20 @@ fn keys(pane: &Entity<SessionPane>, cx: &mut VisualTestContext) -> Vec<String> {
 
 // Pins: g0-session#1
 #[gpui::test]
-fn opening_subscribes_then_the_jump_loads_the_page_below_it_and_live_rows_go_after(
-    cx: &mut TestAppContext,
-) {
-    let (pane, client, cx) = open(cx);
-    show(&pane, "s1", cx);
-    assert!(client.subscribed().is_empty());
-    assert!(
-        client.calls().is_empty(),
-        "nothing loads before the socket says where the session is"
-    );
-    client.queue_answer(Ok(page(vec![user(3, "one"), user(5, "two")], false, None)));
-    jump(&client, 5, cx);
-    assert_eq!(
-        client.calls(),
-        [(
-            "rows/page".to_string(),
-            json!({ "session": "s1", "before": 6, "limit": 100 })
-        )]
-    );
-    live(&client, user(6, "three"), cx);
-    assert_eq!(keys(&pane, cx), ["seq:3", "seq:5", "seq:6"]);
+async fn opening_subscribes_then_the_jump_loads_the_page_below_it_and_live_rows_go_after(cx:&mut TestAppContext) {
+    use crate::core::{engine::SessionKey,intents::session_open::{SessionOpenRequest,SessionOpenTarget}};
+    cx.executor().allow_parking();let(_,_,cx)=open(cx);cx.update(|_,cx|SelectedSession::init(cx));
+    let mut nav=cx.update(|window,cx|super::test_navigation::NavigationFixture::new(false,window,cx));
+    nav.ready(cx).await;nav.rows("s1",vec![user(3,"one"),user(5,"two")]);nav.hold_target();
+    nav.pane.update_in(cx,|pane,window,cx|pane.request_open(SessionOpenRequest{key:SessionKey{machine:"owner".into(),id:"s1".into()},request_id:"first".into(),target:SessionOpenTarget::Historical},window,cx));
+    nav.call_entered("open_target").await;
+    assert!(!nav.calls().iter().any(|frame|frame["topic"]=="rows"));
+    assert!(!nav.calls().iter().any(|frame|frame["feature"]=="rows"),"nothing loads before the captured target is admitted");
+    nav.control("release_target",json!({}),cx).await;nav.opened("s1",cx).await;
+    let calls=nav.calls();let pages=calls.iter().filter(|frame|frame["feature"]=="rows"&&frame["method"]=="page").collect::<Vec<_>>();
+    assert_eq!(pages.len(),1);assert_eq!(pages[0]["args"],json!({"session":"s1","before":6,"limit":100,"expectedSource":{"machine":"owner","generation":0,"routeMachine":null}}));
+    let mut row=user(6,"three");row["prevSeq"]=json!(5);nav.control("push",json!({"row":row}),cx).await;nav.count_rows(3,cx).await;
+    assert_eq!(keys(&nav.pane,cx),["seq:3","seq:5","seq:6"]);
 }
 
 // Pins: g0-session#3

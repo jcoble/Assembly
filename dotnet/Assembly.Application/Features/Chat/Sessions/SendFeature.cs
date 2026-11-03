@@ -38,6 +38,9 @@ internal sealed class SendFeature : IFeature
     {
         calls.Write(Feature, "send", SessionsJson.Default.SendArgs, SessionsJson.Default.OwnerPromptAccepted, async (args, call) =>
         {
+            args = args with { ExpectedSource = Source(args.ExpectedSource, call) };
+            if (args.ExpectedSource is not null)
+                return await _door.PrepareSourceOwnerPromptAsync(OwnerRequest(args), call);
             var session = Session(args.Session);
             // Native subagents take prompts only from their parent; started sessions also accept the person's prompts.
             if (!session.Helper && session.ParentSessionId is { } parent && _store.Get(parent) is not null)
@@ -47,14 +50,28 @@ internal sealed class SendFeature : IFeature
         }, args => OrderOf(args.Session));
         calls.Write(Feature, "stop", SessionsJson.Default.StopArgs, SessionsJson.Default.Done, async (args, call) =>
         {
+            var expected = Source(args.ExpectedSource, call);
+            if (expected is not null)
+            {
+                if (string.IsNullOrWhiteSpace(args.Session)) throw new CallBadArguments("A source-bound stop requires its session.");
+                var apply = await _door.PrepareStopAsync(args.Session, args.RunId, expected, call);
+                return scope => apply(scope) ? new Done(true) : throw new CallFailed("that run isn't running");
+            }
             var stopped = _hub.SessionOfRun(args.RunId) is { } sessionId && _store.Get(sessionId) is { } session
                 && await _machines.For(session).StopAsync(session, args.RunId, call.Cancellation);
             return stopped ? _ => new Done(true) : throw new CallFailed("that run isn't running");
-        }, args => _hub.SessionOfRun(args.RunId) is { } session ? OrderOf(session) : null);
+        }, args => args.Session is { } selected ? OrderOf(selected)
+            : _hub.SessionOfRun(args.RunId) is { } session ? OrderOf(session) : null);
         calls.Write(Feature, "answer", SessionsJson.Default.AnswerArgs, SessionsJson.Default.Done, async (args, call) =>
         {
+            var expected = Source(args.ExpectedSource, call);
             if (args.Answer.ValueKind != JsonValueKind.Object)
                 throw new CallFailed("expected { optionId } or { action, content }");
+            if (expected is not null)
+            {
+                var apply = await _door.PrepareSourceNeedAnswerAsync(new(args.Session, args.Ask, args.Answer, expected), call);
+                return scope => apply(scope) ? new Done(true) : throw new CallFailed("that ask isn't open, or the answer doesn't fit it");
+            }
             var session = Session(args.Session);
             var answer = await _door.PrepareNeedAnswerAsync(new(session.SessionId, args.Ask, args.Answer), call.Cancellation);
             return scope => answer(scope)
@@ -63,6 +80,12 @@ internal sealed class SendFeature : IFeature
         }, args => OrderOf(args.Session));
         calls.Write(Feature, "stopTask", SessionsJson.Default.StopTaskArgs, SessionsJson.Default.Done, async (args, call) =>
         {
+            var expected = Source(args.ExpectedSource, call);
+            if (expected is not null)
+            {
+                var apply = await _door.PrepareStopTaskAsync(args.Session, args.Task, expected, call);
+                return scope => apply(scope) ? new Done(true) : throw new CallFailed("that task isn't running, or can't be stopped");
+            }
             var session = Session(args.Session);
             return await _machines.For(session).StopTaskAsync(session, args.Task, call.Cancellation)
                 ? _ => new Done(true)
@@ -83,22 +106,36 @@ internal sealed class SendFeature : IFeature
 
     /// <summary><c>ClientId</c>, when given, replays the original committed owner-prompt acknowledgement.</summary>
     internal sealed record SendArgs([property: JsonRequired] string Session, [property: JsonRequired] string Text, string? ClientId = null,
-        IReadOnlyList<string>? AttachmentIds = null, long? Epoch = null);
+        IReadOnlyList<string>? AttachmentIds = null, long? Epoch = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExpectedSource? ExpectedSource = null);
 
     internal static OwnerPromptRequest OwnerRequest(SendArgs args)
     {
         if (args.Epoch < 0) throw new CallFailed("epoch must be nonnegative");
         if (args.ClientId is not null && ClientIdError(args.ClientId) is { } error) throw new CallFailed(error);
         return new(args.Session, args.Text, args.ClientId ?? Guid.NewGuid().ToString("N"),
-            args.AttachmentIds?.ToArray() ?? [], args.Epoch);
+            args.AttachmentIds?.ToArray() ?? [], args.Epoch, ExpectedSource: args.ExpectedSource);
     }
 
-    internal sealed record StopArgs([property: JsonRequired] string RunId);
+    internal sealed record StopArgs([property: JsonRequired] string RunId,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Session = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExpectedSource? ExpectedSource = null);
 
     internal sealed record AnswerArgs([property: JsonRequired] string Session, [property: JsonRequired] string Ask,
-        [property: JsonRequired] JsonElement Answer);
+        [property: JsonRequired] JsonElement Answer,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExpectedSource? ExpectedSource = null);
 
-    internal sealed record StopTaskArgs([property: JsonRequired] string Session, [property: JsonRequired] string Task);
+    internal sealed record StopTaskArgs([property: JsonRequired] string Session, [property: JsonRequired] string Task,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExpectedSource? ExpectedSource = null);
+
+    internal static ExpectedSource? Source(ExpectedSource? expected, CallContext call)
+    {
+        if (expected is not null && call.ExpectedSource is not null && expected != call.ExpectedSource)
+            throw new CallBadArguments("The session source arguments contradict the frame.");
+        expected ??= call.ExpectedSource;
+        if (expected is not null && call.Peer is not OwnerPeer) throw new CallFailed("Forbidden.", "forbidden");
+        return expected;
+    }
 
     internal sealed record Done(bool Ok);
 }

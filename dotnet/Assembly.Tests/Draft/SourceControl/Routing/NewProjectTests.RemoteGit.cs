@@ -117,6 +117,61 @@ public sealed partial class NewProjectTests
         Assert.Equal("", (await git.RunAsync(h.RemoteParent, ["diff", "--cached", "--name-only"], null, null, default)).Output);
     }
 
+    [Fact]
+    public async Task History_reads_require_the_original_remote_source_and_refuse_stale_or_missing_sources()
+    {
+        await using var h = await Harness.Start();
+        var repository = await h.CloneSource();
+        var owned = h.Hosts.Remote.Sessions.Create("fixture", "", workingFolder: repository);
+        h.Hosts.Mac.Sessions.Add(owned.SessionId, "fixture", "", "workbox-test", workingFolder: h.LocalParent);
+        var origin = h.Hosts.Mac.Fixture.Db.QueryFirst(
+            "SELECT machine,generation,name FROM engine_mirror WHERE state='live' AND name='workbox-test'",
+            row => new ExpectedSource(row.Text(0), row.Long(1), row.Text(2)), default)!;
+        using var client = await h.Open();
+        var missing = await h.Call(client, 1, "history", new { session = owned.SessionId });
+        Assert.Equal("source_changed", missing.GetProperty("code").GetString());
+        var stale = await h.Call(client, 2, "history", new
+        {
+            session = owned.SessionId,
+            expectedSource = new { machine = origin.Machine, generation = origin.Generation + 1, routeMachine = origin.RouteMachine }
+        });
+        Assert.Equal("source_changed", stale.GetProperty("code").GetString());
+        var valid = await h.Call(client, 3, "history", new
+        {
+            session = owned.SessionId,
+            expectedSource = new { machine = origin.Machine, generation = origin.Generation, routeMachine = origin.RouteMachine }
+        });
+        Assert.Equal("result", valid.GetProperty("t").GetString());
+        Assert.Equal("fixture", Assert.Single(valid.GetProperty("result").GetProperty("commits").EnumerateArray()).GetProperty("subject").GetString());
+        var ownerMarker = await h.Call(client, 4, "history", new
+        {
+            session = owned.SessionId,
+            expectedSource = new { machine = origin.Machine, generation = 0, routeMachine = (string?)null }
+        });
+        Assert.Equal("source_changed", ownerMarker.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task A_local_read_refuses_a_foreign_assertion_before_reading_its_checkout()
+    {
+        await using var h = await Harness.Start();
+        var owned = h.Hosts.Mac.Sessions.Create("fixture", "", workingFolder: h.LocalParent);
+        using var client = await h.Open();
+        var refused = await h.Call(client, 1, "status", new
+        {
+            session = owned.SessionId,
+            expectedSource = new { machine = h.Hosts.Remote.Fixture.Machine, generation = 0, routeMachine = (string?)null }
+        });
+        Assert.Equal("source_changed", refused.GetProperty("code").GetString());
+        await new GitWriter(new GitCli()).InitAsync(h.LocalParent, default);
+        var accepted = await h.Call(client, 2, "status", new
+        {
+            session = owned.SessionId,
+            expectedSource = new { machine = h.Hosts.Mac.Fixture.Machine, generation = 0, routeMachine = (string?)null }
+        });
+        Assert.Equal("result", accepted.GetProperty("t").GetString());
+    }
+
     private sealed class BlockedFetch : Assembly.Application.Common.Git.IGit
     {
         private readonly GitCli _inner = new();
@@ -145,7 +200,16 @@ public sealed partial class NewProjectTests
         var owned = h.Hosts.Remote.Sessions.Create("fixture", "", workingFolder: h.RemoteParent);
         h.Hosts.Mac.Sessions.Add(owned.SessionId, "fixture", "", "workbox-test", workingFolder: h.LocalParent);
         using var client = await h.Open();
-        var before = await h.Call(client, 1, "status", new { session = owned.SessionId });
+        var origin = h.Hosts.Mac.Fixture.Db.QueryFirst(
+            "SELECT machine,generation,name FROM engine_mirror WHERE state='live' AND name='workbox-test'",
+            row => new ExpectedSource(row.Text(0), row.Long(1), row.Text(2)), default)!;
+        var missing = await h.Call(client, 10, "status", new { session = owned.SessionId });
+        Assert.Equal("source_changed", missing.GetProperty("code").GetString());
+        var before = await h.Call(client, 1, "status", new
+        {
+            session = owned.SessionId,
+            expectedSource = new { machine = origin.Machine, generation = origin.Generation, routeMachine = origin.RouteMachine }
+        });
         Assert.Equal("result", before.GetProperty("t").GetString());
         Assert.Contains(before.GetProperty("result").GetProperty("files").EnumerateArray(), file => file.GetProperty("path").GetString() == "remote ü.txt");
         Assert.DoesNotContain(before.GetProperty("result").GetProperty("files").EnumerateArray(), file => file.GetProperty("path").GetString() == "local.txt");

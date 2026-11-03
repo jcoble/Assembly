@@ -101,7 +101,7 @@ impl Render for TopBar {
                             }),
                     )
                     .item(PopupMenuItem::new("Projects").on_click(|_, window, cx| {
-                        super::workspace_preview::open(false, window, cx)
+                        crate::features::projects::projects_view::open(window, cx)
                     }))
                     .separator()
                     .item(

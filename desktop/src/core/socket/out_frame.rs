@@ -33,6 +33,8 @@ pub(super) enum OutFrame<'a> {
     #[serde(rename = "sub")]
     EngineSub {
         id: u64,
+        #[serde(rename="expectedSource",skip_serializing_if="Option::is_none")]
+        expected_source: Option<&'a super::row_source::ExpectedRowSource>,
         stream: &'static str,
         topic: &'a str,
         #[serde(skip_serializing_if = "Option::is_none")]

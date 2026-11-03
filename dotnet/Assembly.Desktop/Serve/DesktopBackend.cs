@@ -335,7 +335,8 @@ public sealed class DesktopBackend : IAsyncDisposable
                     new AskOwnerTool(gate, answers), new AnswerNeedTool(gate, answers), new ReportTool(gate, workflowReceipts!.Capture),
                     new WorkflowFormatTool(gate), new CheckWorkflowTool(gate, WorkflowLoader.Load), new StartWorkflowTool(gate, WorkflowLoader.Load),
                     new LinkTaskTool(gate), new GetSessionTitleTool(gate), new BoardUpdateTool(gate, board)]);
-            var door = new EngineDoor(engine, sessionStore, machines, attachments, TimeProvider.System, answers);
+            var sessionSources = new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(db, sessionStore, machines, connections);
+            var door = new EngineDoor(engine, sessionStore, machines, attachments, TimeProvider.System, answers, hub, sessionSources);
             cliHttp = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
             var cliUpdates = new UpdateCalls(launcher, engine.Machine, cliHttp, TimeProvider.System, hostStop.Token,
                 (machine, ct) => connections.CliLocator(db, machine, ct), new RemoteCliClient(cliHttp, TimeProvider.System));
@@ -353,11 +354,12 @@ public sealed class DesktopBackend : IAsyncDisposable
             var projectCoordinator = new NewProjectCoordinator(projectStore, db, localFolders, projectWriter, checkoutWrites, gitOperations, connections);
             providerRuntimeSubscriptions = new ProviderRuntimeSubscriptions(topics, connections.CaptureMirrorOwners);
             var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, machineForward, connections);
+            var fileOwners = new FileOwner(sessionStore, db);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
-                [cliUpdates, new ProviderRuntimeCalls(engine.Machine, agentsFile, machineForward, providerRuntimeSubscriptions), new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward, project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore, connections: connections), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(db, sessionStore, machines, connections)), new SessionsFeature(sessionStore, machines, new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(db, sessionStore, machines, connections)),
-                    new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines), machinesFeature,
+                [cliUpdates, new ProviderRuntimeCalls(engine.Machine, agentsFile, machineForward, providerRuntimeSubscriptions), new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward, project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore, connections: connections), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources),
+                    new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(home, "staging", "attachments")),
-                    new FilesFeature(sessionStore, new FileOwner(sessionStore, db)),
+                    new FilesFeature(sessionStore, fileOwners, work, new FileRemoteRoutes(db, fileOwners, connections, work), sessionSources),
                     new Assembly.Application.Features.Workspaces.WorkspacesFeature(new Assembly.Application.Features.Workspaces.WorkspaceStore(db, TimeProvider.System)),
                     new WorktreesFeature(sessionStore),
                     gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes),

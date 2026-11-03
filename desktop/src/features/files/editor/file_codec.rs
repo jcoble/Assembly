@@ -152,7 +152,8 @@ impl PaneCodec for FilesCodec {
             );
         }
         if let Some(path) = snapshot.active_path {
-            FileView::open_at(key.session_id, path, None, None, true, window, cx);
+            let source = FileView::workspace_source(&key, cx);
+            FileView::open_at(key.session_id, path, None, None, true, source, window, cx);
         }
     }
 }

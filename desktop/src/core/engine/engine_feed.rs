@@ -253,6 +253,9 @@ impl EngineFeed {
             let _connection = connection;
             let _main_connection = main_connection;
             'updates: while let Ok(update) = subscription.updates.recv().await {
+                if let EngineUpdate::Refused{code,message}=update {
+                    let _=feed.update(cx,|feed,cx|{feed.error=Some(EngineRefusal{code,message});cx.notify();});return;
+                }
                 let EngineUpdate::Scoped(page) = update else {
                     continue;
                 };

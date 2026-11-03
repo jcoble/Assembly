@@ -38,7 +38,7 @@ internal sealed class FileObservations
     }
 }
 
-internal sealed record ObserveRoot(string Session);
-internal sealed record UnobserveRoot(string Lease);
+internal sealed record ObserveRoot(string Session, string? RelayScope = null, ExpectedSource? ExpectedSource = null, FileOwnership? ExpectedOwner = null);
+internal sealed record UnobserveRoot(string Lease, string? RelayScope = null, ExpectedSource? ExpectedSource = null, FileOwnership? ExpectedOwner = null);
 internal sealed record ObservedRoot(string Lease, string Generation);
 internal sealed record UnobservedRoot(bool Released);

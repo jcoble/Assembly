@@ -179,12 +179,17 @@ impl Composer {
             let subscription = self.client.subscribe_message(
                 &message,
                 machine.as_deref(),
+                self.expected_source.as_ref(),
                 Box::new(move |item, cx| {
                     _ = weak.update(cx, |composer, cx| {
                         if !composer.operational() || composer.source_serial!=generation || composer.session_key.as_ref()!=Some(&key) || composer.session.as_ref() != Some(&selected) || composer.machine != owner
                         {
                             return;
                         }
+                        let item=match item {Ok(item)=>item,Err(error)=>{
+                            if matches!(&error,CallError::Refused{code,..} if code=="source_changed"){composer.invalidate_source(cx);}
+                            composer.error=Some(error.reason().into());cx.notify();return;
+                        }};
                         let mut delivered = false;
                         if let Some(pending) = composer
                             .pending
@@ -228,6 +233,7 @@ impl Composer {
         let mut machine = self.machine.clone();
         let key = self.session_key.clone().expect("operational owner");
         let expected_machine=key.machine.clone();
+        let source=self.expected_source.clone().expect("operational source");
         self._pending_read = Some(cx.spawn(async move |composer, cx| {
             let mut after_created = None;
             let mut after_client: Option<String> = None;
@@ -237,7 +243,7 @@ impl Composer {
                     let call = cx.update(|cx| {
                         client.call("engine", "owner_prompts",
                         json!({"session":session,"machine":machine,"afterCreatedMs":after_created,
-                            "afterClientId":after_client,"limit":50}), None, cx)
+                            "afterClientId":after_client,"limit":50,"expectedSource":source}), None, cx)
                     });
                     let page: Page = serde_json::from_value(call.await?).map_err(|_| invalid())?;
                     if page.engine_machine!=expected_machine{return Err(invalid());}
@@ -254,6 +260,7 @@ impl Composer {
                                     "text",
                                     manifest.text_utf8_bytes,
                                     machine.as_deref(),
+                                    &source,
                                     cx,
                                 )
                                 .await?,
@@ -267,6 +274,7 @@ impl Composer {
                             "attachments",
                             manifest.attachment_json_utf8_bytes,
                             machine.as_deref(),
+                            &source,
                             cx,
                         )
                         .await?;
@@ -326,6 +334,7 @@ impl Composer {
                     cx.emit(ComposerEvent::PendingChanged);
                 }
                 Err(error) => {
+                    if matches!(&error,CallError::Refused{code,..} if code=="source_changed"){composer.invalidate_source(cx);}
                     composer.error = Some(
                         format!("Couldn't recover pending prompts: {}", error.reason()).into(),
                     );
@@ -344,6 +353,7 @@ async fn read_part(
     part: &str,
     total: u64,
     machine: Option<&str>,
+    source:&crate::core::socket::row_source::ExpectedRowSource,
     cx: &mut AsyncApp,
 ) -> Result<Vec<u8>, CallError> {
     let mut bytes = Vec::new();
@@ -351,7 +361,7 @@ async fn read_part(
     loop {
         let call = cx.update(|cx| client.call("engine", "owner_prompt_chunk",
             json!({"session":session,"clientId":manifest.client_id,"contentSha256":manifest.content_sha256,
-                "part":part,"offset":offset,"count":1048576,"machine":machine}), None, cx));
+                "part":part,"offset":offset,"count":1048576,"machine":machine,"expectedSource":source}), None, cx));
         let chunk: Chunk = serde_json::from_value(call.await?).map_err(|_| invalid())?;
         let data = base64::engine::general_purpose::STANDARD
             .decode(&chunk.data)

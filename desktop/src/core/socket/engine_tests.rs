@@ -46,6 +46,7 @@ fn engine_snapshot_ack_empty_cursor_replay_and_drop_use_the_existing_socket() {
             id,
             message: "prompt/s/c".into(),
             machine: Some("owner".into()),
+            expected_source:None,
             updates,
         })
         .unwrap();
@@ -114,6 +115,7 @@ fn resnapshot_keeps_handle(reject_cursor: bool) {
             id,
             message: "prompt/s/c".into(),
             machine: Some("owner".into()),
+            expected_source:None,
             updates,
         })
         .unwrap();
@@ -164,6 +166,7 @@ fn engine_snapshot_finishes_before_ack_and_reconnect_replays_its_fingerprint() {
             id,
             message: "prompt/s/c".into(),
             machine: Some("owner".into()),
+            expected_source:None,
             updates,
         })
         .unwrap();
@@ -264,6 +267,7 @@ fn welcome_engine_subscription(engine: Option<&str>, owner: Option<&str>, expect
             id,
             message: "prompt/s/c".into(),
             machine: owner.map(str::to_string),
+            expected_source:None,
             updates,
         })
         .unwrap();

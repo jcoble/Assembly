@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common.Engine;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Infrastructure.Engine;
 
 namespace Assembly.Infrastructure.Remote;
 
@@ -62,12 +63,24 @@ internal sealed partial class RemoteMachine
         { throw Unreachable("machine socket changed", $"{_name}: owning engine connection changed", error); }
     }
 
-    internal async Task<OwnerPromptAccepted> SendOwnerPromptAsync(OwnerPromptRequest request, CancellationToken cancellationToken)
+    internal async Task<OwnerPromptAccepted> SendOwnerPromptAsync(OwnerPromptRequest request, CancellationToken cancellationToken,
+        EngineMirror.LiveMirrorBinding? live = null)
     {
-        var result = await CallAsync("send", "send", new SendFeature.SendArgs(request.Session, request.Text,
-            request.ClientId, request.AttachmentIds, request.Epoch), cancellationToken);
+        var args = new SendFeature.SendArgs(request.Session, request.Text, request.ClientId, request.AttachmentIds,
+            request.Epoch, live is null ? null : LocalSource(live));
+        JsonElement result;
+        if (live is not null) result = await BoundChatAsync("send", "send", args, live, cancellationToken);
+        else
+        {
+            if (request.ExpectedSource is not null) throw new Assembly.Application.Common.Calls.CallFailed("The selected chat source changed.", "source_changed");
+            var owner = await CaptureOwnerReadAsync(null, cancellationToken);
+            result = await CallAsync("send", "send", JsonSerializer.SerializeToElement(args, SessionsJson.Default.SendArgs),
+                false, cancellationToken, owner.Identity, owner.Socket);
+        }
         var accepted = result.Deserialize(SessionsJson.Default.OwnerPromptAccepted)
             ?? throw new IOException("Invalid owner prompt acknowledgement");
+        if (accepted.SessionId != request.Session || accepted.ClientId != request.ClientId)
+            throw new IOException("Invalid owner prompt acknowledgement identity");
         _follower.Watch(request.Session);
         return accepted;
     }

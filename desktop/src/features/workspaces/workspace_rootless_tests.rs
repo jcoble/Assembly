@@ -57,7 +57,7 @@ async fn rootless_transcript_activation_does_no_incoming_workspace_or_file_io(
     let committed = Rc::new(std::cell::Cell::new(false));
     let commit = committed.clone();
     let expected = target.clone();
-    let generation = coordinator.update_in(cx, |view, window, cx| {
+    let generation = cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             target.clone(),
             Box::new(move |target, _, cx| {
@@ -69,7 +69,7 @@ async fn rootless_transcript_activation_does_no_incoming_workspace_or_file_io(
             window,
             cx,
         )
-    });
+    }));
     let activated = outcomes.recv().await.unwrap();
     assert_eq!(activated.generation, generation);
     assert_eq!(activated.target, target);
@@ -122,14 +122,14 @@ async fn rootless_departure_still_requires_the_outgoing_exact_cas_save(cx: &mut 
             let _ = tell.unbounded_send(());
         })
     });
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             WorkspaceTarget::Checkout(key("/a")),
             Box::new(|_, _, _| Ok(())),
             window,
             cx,
         );
-    });
+    }));
     until(
         "outgoing workspace hydrated",
         &mut changes,
@@ -148,14 +148,14 @@ async fn rootless_departure_still_requires_the_outgoing_exact_cas_save(cx: &mut 
         machine: "actual-source".into(),
         id: "historical".into(),
     });
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             target.clone(),
             Box::new(|_, _, _| panic!("refused outgoing CAS must never commit transcript")),
             window,
             cx,
         );
-    });
+    }));
     let terminal = refused.recv().await.unwrap();
     assert_eq!(terminal.target, target);
     assert!(terminal.reason.contains("Revision conflict"));
@@ -256,14 +256,14 @@ async fn checkout_to_transcript_saves_before_teardown_and_return_restores_that_c
             let _ = tell.unbounded_send(());
         })
     });
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             WorkspaceTarget::Checkout(key("/a")),
             Box::new(|_, _, _| Ok(())),
             window,
             cx,
         );
-    });
+    }));
     until("A loaded", &mut changes, &changed, || {
         coordinator.read_with(cx, |view, _| view.current_key() == Some(&key("/a")))
     })
@@ -277,7 +277,7 @@ async fn checkout_to_transcript_saves_before_teardown_and_return_restores_that_c
     let commit = committed.clone();
     let owned = alive.clone();
     let receipt = saved.clone();
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             target,
             Box::new(move |_, _, cx| {
@@ -294,21 +294,21 @@ async fn checkout_to_transcript_saves_before_teardown_and_return_restores_that_c
             window,
             cx,
         );
-    });
+    }));
     until("transcript committed", &mut changes, &changed, || {
         committed.get()
     })
     .await;
     assert!(!alive.get());
     assert_eq!(saved.lock().unwrap().2, vec![json!("read"), json!("save")]);
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             WorkspaceTarget::Checkout(key("/a")),
             Box::new(|_, _, _| Ok(())),
             window,
             cx,
         );
-    });
+    }));
     until(
         "A restored after transcript",
         &mut changes,
@@ -373,14 +373,14 @@ async fn transcript_commit_refusal_restores_the_previous_key_and_never_deactivat
             let _ = tell.unbounded_send(());
         })
     });
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             WorkspaceTarget::Checkout(key("/a")),
             Box::new(|_, _, _| Ok(())),
             window,
             cx,
         );
-    });
+    }));
     until("A loaded", &mut changes, &changed, || {
         coordinator.read_with(cx, |view, _| view.current_key() == Some(&key("/a")))
     })
@@ -391,7 +391,7 @@ async fn transcript_commit_refusal_restores_the_previous_key_and_never_deactivat
             sent.unbounded_send(event.clone()).unwrap();
         })
     });
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             WorkspaceTarget::TranscriptOnly(crate::core::engine::SessionKey {
                 machine: "actual-source".into(),
@@ -401,7 +401,7 @@ async fn transcript_commit_refusal_restores_the_previous_key_and_never_deactivat
             window,
             cx,
         );
-    });
+    }));
     assert!(refused.recv().await.unwrap().reason.contains("superseded"));
     assert!(alive.get());
     assert_eq!(live.borrow()["activePath"], "A");
@@ -451,14 +451,14 @@ async fn unmigrated_legacy_file_metadata_blocks_both_checkout_and_rootless_teard
             id: "history".into(),
         }),
     ] {
-        coordinator.update_in(cx, |view, window, cx| {
+        cx.update(|window, cx| coordinator.update(cx, |view, cx| {
             view.request(
                 target.clone(),
                 Box::new(|_, _, _| panic!("unmigrated metadata must not be removed")),
                 window,
                 cx,
             );
-        });
+        }));
         let refused = outcomes.recv().await.unwrap();
         assert_eq!(refused.target, target);
         assert!(refused.reason.contains("migrated"));

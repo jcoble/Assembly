@@ -94,7 +94,7 @@ async fn postcommit_restore_failure_reports_the_actual_error_without_fake_rollba
     });
     let callback = visible.clone();
     let target = WorkspaceTarget::Checkout(key("/target"));
-    let generation = coordinator.update_in(cx, |view, window, cx| {
+    let generation = cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             target.clone(),
             Box::new(move |target, _, _| {
@@ -104,7 +104,7 @@ async fn postcommit_restore_failure_reports_the_actual_error_without_fake_rollba
             window,
             cx,
         )
-    });
+    }));
     let event = events.recv().await.unwrap();
     assert_eq!(event.generation, generation);
     assert_eq!(event.target, target);
@@ -128,7 +128,7 @@ async fn postcommit_restore_failure_reports_the_actual_error_without_fake_rollba
         id: "history".into(),
     });
     let callback = visible.clone();
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             history.clone(),
             Box::new(move |target, _, _| {
@@ -138,7 +138,7 @@ async fn postcommit_restore_failure_reports_the_actual_error_without_fake_rollba
             window,
             cx,
         );
-    });
+    }));
     let event = events.recv().await.unwrap();
     assert_eq!(event.target, history);
     assert!(!event.restored, "rootless success carries no hydration");

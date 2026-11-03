@@ -20,6 +20,7 @@ use gpui_kit::component::diff::DiffMode;
 struct Seen {
     reads: Vec<(String, Value)>,
     cancels: Vec<Value>,
+    sources: Vec<Value>,
 }
 
 /// Answers a one-line edit for any path but `slow.rs`, which it never answers.
@@ -37,6 +38,7 @@ fn backend(seen: Arc<Mutex<Seen>>, heard: UnboundedSender<()>) -> FakeBackend {
                     .unwrap_or_default()
                     .to_string();
                 seen.reads.push((path.clone(), id.clone()));
+                seen.sources.push(frame["args"]["expectedSource"].clone());
                 if path == "slow.rs" {
                     Vec::new()
                 } else {
@@ -47,6 +49,7 @@ fn backend(seen: Arc<Mutex<Seen>>, heard: UnboundedSender<()>) -> FakeBackend {
             }
             Some("call") if frame["method"] == "branchDiff" => {
                 seen.reads.push(("branch".into(), id.clone()));
+                seen.sources.push(frame["args"]["expectedSource"].clone());
                 vec![Reply::Frame(json!({"t": "result", "id": id, "result": {
                     "base": "origin/main", "truncated": false,
                     "diff": "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-a\n+b\n" }}))]
@@ -63,8 +66,14 @@ fn backend(seen: Arc<Mutex<Seen>>, heard: UnboundedSender<()>) -> FakeBackend {
     })
 }
 
+fn origin() -> crate::core::socket::row_source::ExpectedRowSource {
+    crate::core::socket::row_source::ExpectedRowSource {
+        machine: "captured-owner".into(), generation: 12, route_machine: Some("workbox-test".into()),
+    }
+}
 fn picked(path: &str) -> Picked {
     Picked::File {
+        expected_source: Some(origin()),
         session: "s1".into(),
         path: path.into(),
         original_path: None,
@@ -109,6 +118,7 @@ async fn picking_another_file_shows_it_and_stops_the_read_on_its_way(cx: &mut Te
     .await;
     let seen = seen.lock().unwrap();
     assert_eq!(seen.cancels, vec![seen.reads[0].1.clone()]);
+    assert!(seen.sources.iter().all(|source| *source == serde_json::to_value(origin()).unwrap()));
     drop(backend);
 }
 
@@ -141,6 +151,7 @@ async fn opening_the_branch_diff_shows_each_file_under_its_base_and_stops_the_fi
     .await;
 
     let branch = Picked::Branch {
+        expected_source: Some(origin()),
         session: "s1".into(),
     };
     pane.update(cx, |pane, cx| pane.show(branch, cx));
@@ -155,6 +166,7 @@ async fn opening_the_branch_diff_shows_each_file_under_its_base_and_stops_the_fi
     .await;
     let seen = seen.lock().unwrap();
     assert_eq!(seen.cancels, vec![seen.reads[0].1.clone()]);
+    assert!(seen.sources.iter().all(|source| *source == serde_json::to_value(origin()).unwrap()));
     drop(backend);
 }
 

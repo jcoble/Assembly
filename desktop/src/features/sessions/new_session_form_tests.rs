@@ -55,10 +55,11 @@ impl SessionClient for FormClient {
         &self,
         message: &str,
         machine: Option<&str>,
+        expected_source:Option<&crate::core::socket::row_source::ExpectedRowSource>,
         sink: crate::features::session::client::session_client::MessageSink,
         cx: &App,
     ) -> Subscription {
-        self.fake.subscribe_message(message, machine, sink, cx)
+        self.fake.subscribe_message(message, machine,expected_source, sink, cx)
     }
     fn clock(&self, _: ClockSink, _: &mut App) -> Subscription {
         Subscription::new(|| {})

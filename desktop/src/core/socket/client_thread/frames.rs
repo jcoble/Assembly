@@ -56,8 +56,9 @@ impl ClientThread {
                     {
                         self.reset_engine(id);
                     } else {
-                        self.engines.remove(&id);
-                        eprintln!("socket: engine message failed: {message}");
+                        if let Some(feed)=self.engines.remove(&id) {
+                            let _=feed.updates.unbounded_send(crate::core::socket::engine_update::EngineUpdate::Refused{code,message});
+                        }
                     }
                 } else if code == "cancelled" {
                     self.settle(id, Outcome::Aborted);

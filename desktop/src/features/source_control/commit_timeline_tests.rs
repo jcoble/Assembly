@@ -50,7 +50,10 @@ async fn hidden_history_does_not_read_and_load_more_appends_once(cx: &mut TestAp
             cx,
         );
     });
-    let timeline = cx.new(|cx| CommitTimeline::new("s1".into(), Some("a.rs".into()), false, cx));
+    let origin = crate::core::socket::row_source::ExpectedRowSource {
+        machine: "owner-engine".into(), generation: 7, route_machine: Some("workbox-test".into()),
+    };
+    let timeline = cx.new(|cx| CommitTimeline::new("s1".into(), Some("a.rs".into()), Some(origin.clone()), false, cx));
     cx.run_until_parked();
     assert!(seen.lock().unwrap().is_empty());
     let tell = changed.clone();
@@ -87,4 +90,7 @@ async fn hidden_history_does_not_read_and_load_more_appends_once(cx: &mut TestAp
     })
     .await;
     assert!(seen.lock().unwrap()[3]["args"]["path"].is_null());
+    for request in seen.lock().unwrap().iter() {
+        assert_eq!(request["args"]["expectedSource"], serde_json::to_value(&origin).unwrap());
+    }
 }

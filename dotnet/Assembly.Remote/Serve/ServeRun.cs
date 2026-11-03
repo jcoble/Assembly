@@ -10,6 +10,7 @@ using CallFailed = Assembly.Application.Common.Calls.CallFailed;
 using Assembly.Application.Features.Agents;
 using Assembly.Infrastructure.Engine.Auth;
 using Assembly.Infrastructure.Chat;
+using Assembly.Infrastructure.Chat.Files;
 using Assembly.Application.Features.Workflows;
 using Assembly.Engine.Effects;
 using Assembly.Engine.Sessions;
@@ -192,7 +193,8 @@ public static class ServeRun
                     new AskOwnerTool(gate, answers), new AnswerNeedTool(gate, answers), new ReportTool(gate, workflowReceipts!.Capture),
                     new WorkflowFormatTool(gate), new CheckWorkflowTool(gate, WorkflowLoader.Load), new StartWorkflowTool(gate, WorkflowLoader.Load),
                     new LinkTaskTool(gate), new GetSessionTitleTool(gate), new BoardUpdateTool(gate, board)]);
-            var door = new EngineDoor(engine, sessionStore, machines, attachments, TimeProvider.System, answers);
+            var sessionSources = new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(db, sessionStore, machines);
+            var door = new EngineDoor(engine, sessionStore, machines, attachments, TimeProvider.System, answers, hub, sessionSources);
             var git = new GitCli();
             var gh = new GhCli();
             var checkoutWrites = new CheckoutWrites();
@@ -205,11 +207,12 @@ public static class ServeRun
             var projectFolders = new ProjectFolderCreation(localFolders, new GitWriter(git), checkoutWrites, gitOperations);
             var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, null, null);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
-                [new EngineCalls(engine, TimeProvider.System, answers), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, resolveProject: project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore), new SessionTitleCalls(engine, sessionStore), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines), ownerMachineCalls,
+                [new EngineCalls(engine, TimeProvider.System, answers, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, resolveProject: project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore), new SessionTitleCalls(engine, sessionStore), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines), ownerMachineCalls,
                     new ProvidersFeature(challenges, engine.Machine), new ProviderRuntimeCalls(engine.Machine, agents), new TerminalFeature(terminals), workflowCalls,
-                    new RowsFeature(hub, store, sessionStore, machines, new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(db, sessionStore, machines)), new SessionsFeature(sessionStore, machines, new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(db, sessionStore, machines)),
-                    new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines), machinesFeature,
+                    new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources),
+                    new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(options.Home, "staging", "attachments")),
+                    new FilesFeature(sessionStore, new FileOwner(sessionStore, db), work, sources: sessionSources),
                     gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes),
                     new PullRequestsFeature(sessionStore, prReader, gitRoutes), new FoldersFeature(localFolders),
                     new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes)],

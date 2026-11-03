@@ -25,12 +25,13 @@ public sealed record EngineEntityArgs(string EntityKind, string EntityId, string
 public sealed record EngineEntitiesArgs(IReadOnlyList<EngineEntityRef> Refs, string? After = null, string? Machine = null);
 
 /// <summary>The authenticated window's checked owner commands; identity and time are host-owned.</summary>
-public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs) : IFeature
+public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs, IEngineDoor? door = null) : IFeature
 {
     private readonly MachineForward? _forward;
     private readonly MachineStarts? _starts;
-    internal EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs, MachineForward forward) : this(runtime, time, needs) => _forward = forward;
-    internal EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs, MachineForward forward, MachineStarts starts) : this(runtime, time, needs, forward) => _starts = starts;
+    internal EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs, MachineForward forward, IEngineDoor? door = null) : this(runtime, time, needs, door) => _forward = forward;
+    internal EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs, MachineForward forward, MachineStarts starts, IEngineDoor? door = null) : this(runtime, time, needs, forward, door) => _starts = starts;
+    private static CallFailed SourceUnavailable() => new("Source-bound pending reads are unavailable.", "source_changed");
     private MachineForward Forward => _forward ?? throw new KeyNotFoundException("Unknown remote engine machine");
     private bool IsRemote(string? machine) => machine is not null && machine != runtime.Machine;
 
@@ -90,17 +91,23 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAn
             async (args, call) =>
             {
                 if (call.ReplyId is not { } replyId) throw new CallFailed("reply metadata unavailable");
+                if (args.ExpectedSource is not null || call.ExpectedSource is not null)
+                    return await (door ?? throw SourceUnavailable()).ReadSourceOwnerPromptsAsync(args, call);
                 if (IsRemote(args.Machine))
                     return await Forward.OwnerPromptsAsync(args.Machine!, args, candidate => OwnerPageBytes(replyId, candidate), call.Cancellation);
                 return runtime.Reader.OwnerPrompts(args, candidate => SocketDispatcher.Result(replyId,
                     JsonSerializer.SerializeToElement(candidate, EngineSocketJson.Default.OwnerPromptPage)).Length, call.Cancellation);
             });
         calls.Read("engine", "owner_prompt_chunk", EngineSocketJson.Default.OwnerPromptChunkArgs, EngineSocketJson.Default.OwnerPromptChunk,
-            async (args, call) => IsRemote(args.Machine)
-                ? (await Forward.CallAsync(args.Machine!, "engine", "owner_prompt_chunk",
+            async (args, call) =>
+            {
+                if (args.ExpectedSource is not null || call.ExpectedSource is not null)
+                    return await (door ?? throw SourceUnavailable()).ReadSourceOwnerPromptChunkAsync(args, call);
+                return IsRemote(args.Machine) ? (await Forward.CallAsync(args.Machine!, "engine", "owner_prompt_chunk",
                     JsonSerializer.SerializeToElement(args with { Machine = null }, EngineSocketJson.Default.OwnerPromptChunkArgs),
                     true, call.Cancellation)).Deserialize(EngineSocketJson.Default.OwnerPromptChunk)!
-                : runtime.Reader.OwnerPromptContent(args, call.Cancellation), bulk: true);
+                    : runtime.Reader.OwnerPromptContent(args, call.Cancellation);
+            }, bulk: true);
         calls.Read("engine", "machine", EngineSocketJson.Default.JsonElement, EngineSocketJson.Default.MachineInfo,
             (_, call) => Task.FromResult(runtime.Reader.Machine(call.Cancellation)));
         calls.Read("engine", "usage", EngineSocketJson.Default.EngineUsageArgs, EngineSocketJson.Default.UsageTotals,

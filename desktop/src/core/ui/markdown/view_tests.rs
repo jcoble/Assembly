@@ -99,17 +99,31 @@ fn an_empty_link_is_not_clickable() {
 fn file_links_require_an_actual_session_context_while_external_urls_do_not() {
     use crate::core::intents::{open_file::OpenFile, open_url::OpenUrl};
     let file = LinkTarget::File("src/main.rs".into());
-    assert!(file.action(None).is_none());
-    let action = file.action(Some("actual-session")).unwrap();
+    assert!(file.action(None,None).is_none());
+    let action = file.action(Some("actual-session"),None).unwrap();
     assert!(action.partial_eq(&OpenFile {
         session_id: "actual-session".into(),
         path: "src/main.rs".into(),
         line: None,
         column: None,
-        pinned: true
+        pinned: true,
+        expected_source: None
     }));
     let url = LinkTarget::Url("https://example.com/review".into());
-    assert!(url.action(None).unwrap().partial_eq(&OpenUrl {
+    assert!(url.action(None,None).unwrap().partial_eq(&OpenUrl {
         url: "https://example.com/review".into()
     }));
+}
+
+#[test]
+fn a_file_link_keeps_its_rendered_source_even_when_the_same_session_id_has_another_owner() {
+    use crate::core::{intents::open_file::OpenFile,socket::row_source::ExpectedRowSource};
+    let source=ExpectedRowSource{machine:"owner-a".into(),generation:17,route_machine:Some("captured-route".into())};
+    let replacement=ExpectedRowSource{machine:"owner-b".into(),generation:24,route_machine:Some("replacement-route".into())};
+    let target=LinkTarget::File("src/main.rs".into());
+    let action=target.action(Some("same-session"),Some(&source)).unwrap();
+    let expected=OpenFile{session_id:"same-session".into(),path:"src/main.rs".into(),line:None,column:None,pinned:true,expected_source:Some(source)};
+    assert!(action.partial_eq(&expected));
+    assert!(!action.partial_eq(&OpenFile{expected_source:Some(replacement),..expected}));
+    assert!(target.action(None,None).is_none());
 }

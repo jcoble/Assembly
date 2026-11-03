@@ -29,7 +29,10 @@ impl FilesPane {
                 let (path, folder) = (entry.path.clone(), entry.is_directory);
                 let full_path = path.clone();
                 let menu_path = path.clone();
+                let row_session = self.session.clone();
+                let row_source = self.source.clone();
                 let menu_session = self.session.clone();
+                let menu_source = self.source.clone();
                 let pane = cx.entity().downgrade();
                 let (accent, secondary, foreground) =
                     (theme.accent, theme.secondary, theme.foreground);
@@ -66,6 +69,7 @@ impl FilesPane {
                     )
                     .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
                     .on_click(cx.listener(move |pane, event: &ClickEvent, window, cx| {
+                        if pane.session != row_session || pane.source != row_source { return; }
                         window.focus(&pane.focus, cx);
                         pane.clicked(path.clone(), folder, cx);
                         if let (false, Some(session)) = (folder, pane.session.clone()) {
@@ -75,6 +79,7 @@ impl FilesPane {
                                 None,
                                 None,
                                 event.click_count() > 1,
+                                row_source.clone(),
                                 window,
                                 cx,
                             );
@@ -88,6 +93,7 @@ impl FilesPane {
                                 session.clone(),
                                 menu_path.clone(),
                                 folder,
+                                menu_source.clone(),
                                 cx,
                             )
                         } else {

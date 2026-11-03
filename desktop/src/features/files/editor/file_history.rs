@@ -107,13 +107,15 @@ impl FileHistoryState {
 }
 
 pub struct FileHistory {
+    source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     state: FileHistoryState,
     loading: Option<Task<()>>,
 }
 
 impl FileHistory {
-    pub fn new(session: String, path: String) -> Self {
+    pub fn new(session: String, path: String, source: Option<crate::core::socket::row_source::ExpectedRowSource>) -> Self {
         Self {
+            source,
             state: FileHistoryState::new(session, path),
             loading: None,
         }
@@ -146,7 +148,7 @@ impl FileHistory {
         let call = socket.read(cx).call::<GitHistory>(
             "git",
             "history",
-            json!({ "session": request.session, "cursor": request.cursor, "path": request.path }),
+            json!({ "session": request.session, "cursor": request.cursor, "path": request.path, "expectedSource": self.source }),
             None,
         );
         self.loading = Some(cx.spawn(async move |view, cx| {
@@ -207,6 +209,7 @@ impl Render for FileHistory {
                             session_id: self.state.session.clone(),
                             sha: commit.sha.clone(),
                             path: self.state.path.clone(),
+                            expected_source: self.source.clone(),
                             title: format!("{} · {}", commit.short_sha, self.state.path),
                         };
                         v_flex()

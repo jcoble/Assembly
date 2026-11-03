@@ -8,6 +8,7 @@ use gpui_kit::*;
 pub struct OpenFile {
     pub session_id: String,
     pub path: String,
+    pub expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     pub line: Option<u32>,
     pub column: Option<u32>,
     pub pinned: bool,

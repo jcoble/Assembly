@@ -182,10 +182,14 @@ impl SourceControlPane {
             if self.history_open {
                 if let Some(session) = session {
                     let timeline =
-                        cx.new(|cx| CommitTimeline::new(session.clone(), None, self.active, cx));
+                        cx.new(|cx| CommitTimeline::new(session.clone(), None, self.read.read(cx).source().cloned(), self.active, cx));
                     self.history = Some((session, timeline));
                 }
             }
+        }
+        if let Some((_, timeline)) = &self.history {
+            let source = self.read.read(cx).source().cloned();
+            timeline.update(cx, |timeline, cx| timeline.set_target(None, source, cx));
         }
     }
 
@@ -206,6 +210,7 @@ impl SourceControlPane {
 fn lists(
     status: &GitStatus,
     session: &str,
+    expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     pane: WeakEntity<SourceControlPane>,
     busy: bool,
     cx: &App,
@@ -234,6 +239,7 @@ fn lists(
                     _ => theme.warning,
                 };
                 let open = OpenDiff {
+                    expected_source: expected_source.clone(),
                     session_id: session.to_string(),
                     path: file.path.clone(),
                     original_path: file.original_path.clone(),

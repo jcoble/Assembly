@@ -21,6 +21,8 @@ impl SelectedSession {
         cx.set_global(GlobalSelected(selected));
     }
 
+    pub fn try_global(cx:&App)->Option<Entity<Self>> {cx.try_global::<GlobalSelected>().map(|global|global.0.clone())}
+
     pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalSelected>().0.clone()
     }

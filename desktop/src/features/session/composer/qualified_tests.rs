@@ -7,6 +7,9 @@ fn source(owner:&str)->ExpectedRowSource {ExpectedRowSource{machine:owner.into()
 #[gpui::test]
 fn same_id_on_two_actual_owners_never_reuses_the_other_draft_attachment_or_pending_prompt(cx:&mut TestAppContext) {
     let(composer,client,_,cx)=super::tests::open(cx);
+    // Complete A's actual owner read before the rapid switches cancel intermediate visits.
+    composer.update_in(cx,|composer,window,cx|composer.set_target(Some(key("a")),Some(source("a")),window,cx));
+    cx.run_until_parked();
     composer.update_in(cx,|composer,window,cx| {
         composer.set_target(Some(key("a")),Some(source("a")),window,cx);
         composer.draft.update(cx,|draft,cx|draft.set_value("alpha",window,cx));
@@ -41,4 +44,15 @@ fn source_invalidation_preserves_the_typed_draft_but_blocks_send_stop_config_and
     });
     cx.run_until_parked();assert_eq!((client.calls().len(),client.config_calls().len(),client.engine_calls().len()),before);
     assert_eq!(client.message_subscriptions(),0);
+}
+
+#[gpui::test]
+fn pending_reads_carry_the_prepared_source_and_a_refusal_disables_writes_without_losing_the_draft(cx:&mut TestAppContext) {
+    use serde_json::json;
+    use crate::features::session::client::session_client::CallError;
+    let(composer,client,_,cx)=super::tests::open(cx);
+    client.queue_engine_answer(Err(CallError::Refused{code:"source_changed".into(),message:"Actual captured source changed".into()}));
+    composer.update_in(cx,|composer,window,cx|{composer.set_target(Some(key("a")),Some(source("a")),window,cx);composer.draft.update(cx,|draft,cx|draft.set_value("kept",window,cx));});
+    cx.run_until_parked();let calls=client.engine_calls();assert_eq!(calls.len(),1);assert_eq!(calls[0].0,"owner_prompts");assert_eq!(calls[0].1["expectedSource"],json!(source("a")));
+    composer.read_with(cx,|composer,cx|{assert!(!composer.operational());assert_eq!(composer.draft.read(cx).value().as_ref(),"kept");});assert!(client.calls().is_empty());
 }

@@ -28,7 +28,7 @@ async fn global_file_metadata_is_pruned_only_after_the_exact_real_workspace_cas_
     let dock=cx.update(|window,cx| {let dock=cx.new(|cx|DockArea::new("workspace-layout",Some(2),window,cx));CenterPanes::init(&dock,cx);dock});
     let (sent,mut activated)=unbounded();let _activated=cx.update(|_,cx|cx.subscribe(&coordinator,move |_,event:&WorkspaceActivated,_|{sent.unbounded_send(event.clone()).unwrap();}));
     let key=WorkspaceKey {machine:"actual-owner".into(),session_id:"session".into(),checkout_root:"/checkout".into()};
-    coordinator.update_in(cx,|view,window,cx|{view.request(WorkspaceTarget::Checkout(key.clone()),Box::new(|_,_,_|Ok(())),window,cx);});activated.recv().await.unwrap();
+    cx.update(|window, cx| coordinator.update(cx, |view, cx|{view.request(WorkspaceTarget::Checkout(key.clone()),Box::new(|_,_,_|Ok(())),window,cx);}));activated.recv().await.unwrap();
     cx.update(|window,cx|FileView::restore_workspace(&key,"file.rs".into(),None,window,cx));
     let file=cx.update(|_,cx|CenterPanes::file_views(cx).pop().unwrap());let (changed,mut changes)=unbounded();let tell=changed.clone();
     let _observe=cx.update(|_,cx|cx.observe(&file,move |_,_|{let _=tell.unbounded_send(());}));

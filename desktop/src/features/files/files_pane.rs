@@ -34,6 +34,8 @@ pub struct FilesPane {
     focus: FocusHandle,
     /// The session whose folder the tree shows.
     session: Option<String>,
+    source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    owner: Option<super::entry::FileOwnership>,
     pub(super) tree: FileTree,
     /// Whether the tree has asked for this session's root yet: only once the pane is shown.
     started: bool,
@@ -72,6 +74,8 @@ impl FilesPane {
         let mut pane = FilesPane {
             focus: cx.focus_handle(),
             session: None,
+            source: None,
+            owner: None,
             tree: FileTree::default(),
             started: false,
             shown: false,
@@ -102,7 +106,8 @@ impl FilesPane {
             .read(cx)
             .session_id()
             .map(String::from);
-        if session == self.session {
+        let source = SelectedSession::global(cx).read(cx).source().cloned();
+        if session == self.session && source == self.source {
             return;
         }
         self.release_watch(cx);
@@ -110,6 +115,8 @@ impl FilesPane {
         self.action_error = None;
         self.generation = self.generation.wrapping_add(1);
         self.session = session;
+        self.source = source;
+        self.owner = None;
         self.workspace_key = None;
         self.workspace_checked = false;
         self.restoring_tree = None;
@@ -147,7 +154,7 @@ impl FilesPane {
             let call = socket.read(cx).call::<ObservedRoot>(
                 "files",
                 "observe",
-                json!({ "session": session }),
+                json!({ "session": session, "expectedSource": self.source, "expectedOwner": self.owner }),
                 None,
             );
             self.observing = Some(cx.spawn(async move |pane, cx| {
@@ -224,7 +231,7 @@ impl FilesPane {
             return;
         }
         let generation = self.generation;
-        let args = json!({ "session": session, "dir": dir, "includeExcluded": self.include_excluded, "descending": self.descending, "cursor": cursor });
+        let args = json!({ "session": session, "dir": dir, "includeExcluded": self.include_excluded, "descending": self.descending, "expectedSource": self.source, "expectedOwner": self.owner, "cursor": cursor });
         let call = socket
             .read(cx)
             .call::<FileListing>("files", "list", args, None);
@@ -258,7 +265,7 @@ impl FilesPane {
         self.loads.insert(dir, task);
     }
 
-    pub fn reveal_folder(session: &str, path: &str, window: &mut Window, cx: &mut App) {
+    pub fn reveal_folder(session: &str, path: &str, source: Option<&crate::core::socket::row_source::ExpectedRowSource>, window: &mut Window, cx: &mut App) {
         use crate::core::ui::center_panes::CenterPanes;
         use gpui_kit::component::dock::{DockPlacement, PaneRef, PanelHandle};
         if SelectedSession::global(cx).read(cx).session_id() != Some(session) {
@@ -293,6 +300,9 @@ impl FilesPane {
             return;
         };
         view.update(cx, |pane, cx| {
+            if pane.source.as_ref() != source {
+                pane.action_error=Some("The search result belongs to an earlier file source.".into());cx.notify();return;
+            }
             pane.revealing = Some(path.to_string());
             pane.continue_reveal(cx);
         });
@@ -372,7 +382,7 @@ impl FilesPane {
                         && event.keystroke.key == "enter"
                         && let Some(session) = &self.session
                     {
-                        FileView::open_at(session.clone(), path, None, None, true, window, cx);
+                        FileView::open_at(session.clone(), path, None, None, true, self.source.clone(), window, cx);
                     }
                 }
             }

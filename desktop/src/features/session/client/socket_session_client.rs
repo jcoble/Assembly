@@ -59,6 +59,7 @@ impl SessionClient for SocketSessionClient {
         &self,
         message: &str,
         machine: Option<&str>,
+        expected_source:Option<&crate::core::socket::row_source::ExpectedRowSource>,
         mut sink: super::session_client::MessageSink,
         cx: &App,
     ) -> Subscription {
@@ -66,17 +67,20 @@ impl SessionClient for SocketSessionClient {
         let Some(socket) = SocketClient::try_global(cx) else {
             return Subscription::new(|| {});
         };
-        let mut updates = socket.read(cx).subscribe_engine_message(message, machine);
+        let mut updates = socket.read(cx).subscribe_engine_message(message, machine,expected_source);
         let task = cx.spawn(async move |cx| {
+            let mut refused=false;
             while let Ok(update) = updates.updates.recv().await {
                 let items = match update {
                     EngineUpdate::Snapshot(items) | EngineUpdate::Events(items) => items,
+                    EngineUpdate::Refused{code,message}=>{refused=true;cx.update(|cx|sink(Err(CallError::Refused{code,message}),cx));continue;},
                     EngineUpdate::Scoped(_) => continue,
                 };
                 for item in items {
-                    cx.update(|cx| sink(item, cx));
+                    cx.update(|cx| sink(Ok(item), cx));
                 }
             }
+            if !refused {cx.update(|cx|sink(Err(CallError::Failed("The owner message stream ended.".into())),cx));}
         });
         Subscription::new(move || drop(task))
     }

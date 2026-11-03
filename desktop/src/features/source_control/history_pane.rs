@@ -18,6 +18,7 @@ pub struct HistoryPane {
     focus: FocusHandle,
     session: String,
     path: Option<String>,
+    expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     timeline: Entity<CommitTimeline>,
     search: Entity<InputState>,
     filter: HistoryFilter,
@@ -47,6 +48,11 @@ impl HistoryPane {
                 return Err(invalid());
             }
         }
+        if let Some(source) = info.get("expectedSource").filter(|source| !source.is_null()) {
+            if serde_json::from_value::<crate::core::socket::row_source::ExpectedRowSource>(source.clone()).is_err() {
+                return Err(invalid());
+            }
+        }
         Ok(key(session))
     }
 
@@ -58,10 +64,10 @@ impl HistoryPane {
             cx,
         );
         cx.on_action(|_: &ShowGitHistory, cx| {
-            let session = crate::core::state::selected_session::SelectedSession::global(cx)
-                .read(cx)
-                .session_id()
-                .map(String::from);
+            let selected = crate::core::state::selected_session::SelectedSession::global(cx);
+            let selected = selected.read(cx);
+            let session = selected.session_id().map(String::from);
+            let expected_source = selected.source().cloned();
             if let Some(session_id) = session {
                 if let Some(window) = cx
                     .active_window()
@@ -72,6 +78,7 @@ impl HistoryPane {
                             Self::open(
                                 OpenGitHistory {
                                     session_id,
+                                    expected_source,
                                     path: None,
                                 },
                                 window,
@@ -90,7 +97,8 @@ impl HistoryPane {
             };
             let session = saved["session"].as_str().unwrap_or_default().to_string();
             let path = saved["path"].as_str().map(String::from);
-            let pane = cx.new(|cx| Self::new(session.clone(), path, window, cx));
+            let source = saved.get("expectedSource").cloned().and_then(|value| serde_json::from_value(value).ok());
+            let pane = cx.new(|cx| Self::new(session.clone(), path, source, window, cx));
             Self::remember(&session, &pane, cx);
             panel_handle(pane)
         });
@@ -119,12 +127,17 @@ impl HistoryPane {
             .get(&intent.session_id)
             .and_then(WeakEntity::upgrade);
         if let Some(pane) = existing {
-            pane.update(cx, |pane, cx| pane.set_path(intent.path, cx));
+            pane.update(cx, |pane, cx| {
+                pane.path = intent.path.clone();
+                pane.expected_source = intent.expected_source.clone();
+                pane.timeline.update(cx, |timeline, cx| timeline.set_target(intent.path, intent.expected_source, cx));
+                cx.notify();
+            });
             CenterPanes::open(key(&intent.session_id), window, cx, |_, _| pane);
         } else {
             CenterPanes::open(key(&intent.session_id), window, cx, |window, cx| {
                 let session = intent.session_id;
-                let pane = cx.new(|cx| Self::new(session.clone(), intent.path, window, cx));
+                let pane = cx.new(|cx| Self::new(session.clone(), intent.path, intent.expected_source, window, cx));
                 Self::remember(&session, &pane, cx);
                 pane
             });
@@ -133,10 +146,11 @@ impl HistoryPane {
     fn new(
         session: String,
         path: Option<String>,
+        expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let timeline = cx.new(|cx| CommitTimeline::new(session.clone(), path.clone(), true, cx));
+        let timeline = cx.new(|cx| CommitTimeline::new(session.clone(), path.clone(), expected_source.clone(), true, cx));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Subject or SHA prefix"));
         let heard = vec![
             cx.observe(&timeline, |_, _, cx| cx.notify()),
@@ -151,6 +165,7 @@ impl HistoryPane {
             focus: cx.focus_handle(),
             session,
             path,
+            expected_source,
             timeline,
             search,
             filter: HistoryFilter::default(),
@@ -192,7 +207,7 @@ impl BasePanel for HistoryPane {
         PanelState {
             panel_name: HISTORY.into(),
             children: Vec::new(),
-            info: PanelInfo::panel(json!({"session":self.session,"path":self.path})),
+            info: PanelInfo::panel(json!({"session":self.session,"path":self.path,"expectedSource":self.expected_source})),
         }
     }
 }

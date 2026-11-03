@@ -57,12 +57,13 @@ impl Render for WindowRoot {
                     action.line,
                     action.column,
                     action.pinned,
+                    action.expected_source.clone(),
                     window,
                     cx,
                 )
             })
             .on_action(|action: &RevealFileFolder, window, cx| {
-                FilesPane::reveal_folder(&action.session_id, &action.path, window, cx)
+                FilesPane::reveal_folder(&action.session_id, &action.path, action.expected_source.as_ref(), window, cx)
             })
             .size_full()
             .child(self.content.clone())

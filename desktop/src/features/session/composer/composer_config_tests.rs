@@ -288,6 +288,7 @@ impl crate::features::session::client::session_client::SessionClient for Delayed
         &self,
         message: &str,
         machine: Option<&str>,
+        expected_source:Option<&crate::core::socket::row_source::ExpectedRowSource>,
         sink: crate::features::session::client::session_client::MessageSink,
         cx: &gpui_kit::App,
     ) -> gpui_kit::Subscription {
@@ -295,6 +296,7 @@ impl crate::features::session::client::session_client::SessionClient for Delayed
             &self.messages,
             message,
             machine,
+            expected_source,
             sink,
             cx,
         )
@@ -318,6 +320,10 @@ impl crate::features::session::client::session_client::SessionClient for Delayed
     ) -> gpui_kit::Task<Result<Value, crate::features::session::client::session_client::CallError>>
     {
         use crate::features::session::client::session_client::CallError;
+        if feature=="engine" {
+            return crate::features::session::client::session_client::SessionClient::call(
+                &self.messages,feature,method,args,None,cx);
+        }
         assert!(matches!(feature, "config" | "machines"));
         let (answer, receiver) = futures_channel::oneshot::channel();
         self.calls.borrow_mut().push_back(ConfigCall {

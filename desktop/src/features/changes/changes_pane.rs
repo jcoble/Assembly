@@ -28,14 +28,17 @@ impl Global for Open {}
 enum Picked {
     File {
         session: String,
+        expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
         path: String,
         original_path: Option<String>,
     },
     Branch {
         session: String,
+        expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     },
     Commit {
         session: String,
+        expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
         sha: String,
         path: String,
         title: String,
@@ -142,6 +145,11 @@ impl ChangesPane {
                 return Err(invalid());
             }
         }
+        if let Some(source) = info.get("expectedSource").filter(|source| !source.is_null()) {
+            if serde_json::from_value::<crate::core::socket::row_source::ExpectedRowSource>(source.clone()).is_err() {
+                return Err(invalid());
+            }
+        }
         Ok(CHANGES.into())
     }
     pub fn register(cx: &mut App) {
@@ -153,17 +161,19 @@ impl ChangesPane {
             let text = |key: &str| saved[key].as_str().map(String::from);
             let picked = text("session").map(|session| match (text("sha"), text("path")) {
                 (Some(sha), Some(path)) => Picked::Commit {
+                    expected_source: saved.get("expectedSource").cloned().and_then(|value| serde_json::from_value(value).ok()),
                     session,
                     sha,
                     path,
                     title: text("title").unwrap_or_default(),
                 },
                 (_, Some(path)) => Picked::File {
+                    expected_source: saved.get("expectedSource").cloned().and_then(|value| serde_json::from_value(value).ok()),
                     session,
                     path,
                     original_path: text("originalPath"),
                 },
-                _ => Picked::Branch { session },
+                _ => Picked::Branch { session, expected_source: saved.get("expectedSource").cloned().and_then(|value| serde_json::from_value(value).ok()) },
             });
             let pane = cx.new(|cx| {
                 let mut pane = ChangesPane::new(None, cx);
@@ -182,6 +192,7 @@ impl ChangesPane {
         cx.on_action(|intent: &OpenDiff, cx| {
             Self::open_later(
                 Picked::File {
+                    expected_source: intent.expected_source.clone(),
                     session: intent.session_id.clone(),
                     path: intent.path.clone(),
                     original_path: intent.original_path.clone(),
@@ -192,6 +203,7 @@ impl ChangesPane {
         cx.on_action(|intent: &OpenBranchDiff, cx| {
             Self::open_later(
                 Picked::Branch {
+                    expected_source: intent.expected_source.clone(),
                     session: intent.session_id.clone(),
                 },
                 cx,
@@ -200,6 +212,7 @@ impl ChangesPane {
         cx.on_action(|intent: &OpenCommitDiff, cx| {
             Self::open_later(
                 Picked::Commit {
+                    expected_source: intent.expected_source.clone(),
                     session: intent.session_id.clone(),
                     sha: intent.sha.clone(),
                     path: intent.path.clone(),
@@ -267,22 +280,23 @@ impl ChangesPane {
                 session,
                 path,
                 original_path,
+                expected_source,
             } => {
                 let call = socket.call::<FileDiff>(
                     "git",
                     "diff",
-                    json!({"session":session,"path":path,"originalPath":original_path}),
+                    json!({"session":session,"path":path,"originalPath":original_path,"expectedSource":expected_source}),
                     Some(KEY),
                 );
                 cx.spawn(async move |pane, cx| Self::answered(pane, call.await, Shown::file, cx))
             }
             Picked::Commit {
-                session, sha, path, ..
+                session, sha, path, expected_source, ..
             } => {
                 let call = socket.call::<FileDiff>(
                     "git",
                     "commitDiff",
-                    json!({"session":session,"sha":sha,"path":path}),
+                    json!({"session":session,"sha":sha,"path":path,"expectedSource":expected_source}),
                     Some(KEY),
                 );
                 cx.spawn(async move |pane, cx| {
@@ -303,11 +317,11 @@ impl ChangesPane {
                     )
                 })
             }
-            Picked::Branch { session } => {
+            Picked::Branch { session, expected_source } => {
                 let call = socket.call::<BranchDiff>(
                     "git",
                     "branchDiff",
-                    json!({"session":session}),
+                    json!({"session":session,"expectedSource":expected_source}),
                     Some(KEY),
                 );
                 cx.spawn(async move |pane, cx| {
@@ -378,14 +392,16 @@ impl BasePanel for ChangesPane {
                 session,
                 path,
                 original_path,
-            }) => json!({"session":session,"path":path,"originalPath":original_path}),
+                expected_source,
+            }) => json!({"session":session,"path":path,"originalPath":original_path,"expectedSource":expected_source}),
             Some(Picked::Commit {
                 session,
                 sha,
                 path,
                 title,
-            }) => json!({"session":session,"sha":sha,"path":path,"title":title}),
-            Some(Picked::Branch { session }) => json!({"session":session}),
+                expected_source,
+            }) => json!({"session":session,"sha":sha,"path":path,"title":title,"expectedSource":expected_source}),
+            Some(Picked::Branch { session, expected_source }) => json!({"session":session,"expectedSource":expected_source}),
             None => Value::Null,
         };
         if info.is_object() {

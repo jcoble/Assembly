@@ -9,7 +9,7 @@ public sealed record FileOwnership(string Machine, string CheckoutRoot, string R
 /// <summary>Resolves trusted session metadata beside the files. Caller paths never select or authorize a root.</summary>
 internal sealed class FileOwner(SessionStore sessions, IAppDatabase db)
 {
-    public FileOwnership Resolve(string sessionId, CancellationToken ct)
+    public FileOwnership Resolve(string sessionId, CancellationToken ct, FileOwnership? expected = null)
     {
         using var scope = db.OpenSnapshot(ct);
         var local = scope.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", r => r.Text(0))
@@ -24,8 +24,9 @@ internal sealed class FileOwner(SessionStore sessions, IAppDatabase db)
             if (engine is not null && (engine.Holder != "local" || engine.State == "foreign"))
                 throw new CallFailed("this session's checkout is not owned by this engine");
             var root = engine?.Folder ?? sessions.Root(scope, session) ?? throw new CallFailed("this session has no folder");
+            var resolved = Match(new FileOwnership(local, root, sessionId), expected);
             if (!Directory.Exists(root)) throw new CallFailed("this session's folder is made on its first message");
-            return new FileOwnership(local, root, sessionId);
+            return resolved;
         }
         var owners = scope.Query("""
             SELECT machine FROM engine_mirror WHERE (machine=$remote OR name=$remote) AND state='live' LIMIT 2
@@ -38,7 +39,14 @@ internal sealed class FileOwner(SessionStore sessions, IAppDatabase db)
               AND json_extract(r.row_json,'$.holder')='local' AND json_extract(r.row_json,'$.state')<>'foreign'
             """, r => r.IsNull(0) ? null : r.Text(0), new("$machine", owners[0]), new("$id", sessionId));
         if (string.IsNullOrEmpty(folder)) throw new CallFailed("the owning machine has not published this session's checkout");
-        return new FileOwnership(owners[0], folder, sessionId);
+        return Match(new FileOwnership(owners[0], folder, sessionId), expected);
+    }
+
+    private static FileOwnership Match(FileOwnership actual, FileOwnership? expected)
+    {
+        if (expected is not null && expected != actual)
+            throw new CallFailed("The session's checkout changed. The existing draft is preserved.", "checkout_changed");
+        return actual;
     }
 
     public bool IsLocal(FileOwnership ownership, CancellationToken ct) => ownership.Machine ==

@@ -17,6 +17,8 @@ pub(super) struct Finished {
 }
 pub(super) struct FileActionForm {
     session: String,
+    expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    expected_checkout: Option<FileOwnership>,
     kind: &'static str,
     source: String,
     destination: Option<String>,
@@ -34,6 +36,8 @@ impl FileActionForm {
         source: String,
         destination: Option<String>,
         expected_owner: Option<DocumentKey>,
+        expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+        expected_checkout: Option<FileOwnership>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -59,6 +63,8 @@ impl FileActionForm {
         });
         Self {
             session,
+            expected_source,
+            expected_checkout,
             kind,
             source,
             destination,
@@ -121,11 +127,12 @@ impl FileActionForm {
         }
         let session = self.session.clone();
         let kind = self.kind;
+        let expected_source = self.expected_source.clone();
         let handle = window.window_handle();
         let owner = socket.read(cx).call::<FileOwnership>(
             "files",
             "owner",
-            json!({"session":session}),
+            json!({"session":session,"expectedSource":expected_source,"expectedOwner":self.expected_checkout}),
             None,
         );
         self.task = Some(cx.spawn(async move |form, cx| {
@@ -159,7 +166,7 @@ impl FileActionForm {
             if !prepared { return; }
             let expected = destination.clone().unwrap_or_else(|| source.clone());
             let Ok(call) = form.update(cx, |_, cx| socket.read(cx).call::<ActionReply>("files", "action",
-                json!({"session":session,"kind":kind,"path":source,"destination":destination}), None)) else { return; };
+                json!({"session":session,"kind":kind,"path":source,"destination":destination,"expectedSource":expected_source,"expectedOwner":owner}), None)) else { return; };
             let answer = call.await;
             let _ = handle.update(cx, |_, window, cx| form.update(cx, |form, cx| {
                 form.task = None;

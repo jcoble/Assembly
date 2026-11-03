@@ -215,11 +215,12 @@ impl Composer {
                             }
                             composer.retry_ids.insert(prompt_key.clone(), request);
                             if !selected {
-                                composer
-                                    .drafts
-                                    .entry(prompt_key.clone())
-                                    .or_insert_with(||(typed.clone(),Vec::new()));
-                                composer.failed_drafts.insert(prompt_key.clone(), (typed, attached));
+                                let draft=composer.drafts.entry(prompt_key.clone()).or_default();
+                                if draft.0.is_empty()&&draft.1.is_empty() {
+                                    *draft=(typed,attached);
+                                } else {
+                                    composer.failed_drafts.insert(prompt_key.clone(), (typed, attached));
+                                }
                             } else if composer.draft.read(cx).value().is_empty()
                                 && composer.attachments.is_empty()
                             {

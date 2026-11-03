@@ -40,6 +40,7 @@ pub(super) enum Event {
         id: u64,
         message: String,
         machine: Option<String>,
+        expected_source: Option<super::row_source::ExpectedRowSource>,
         updates: UnboundedSender<super::engine_update::EngineUpdate>,
     },
     SubscribeEngineScope {

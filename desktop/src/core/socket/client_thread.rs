@@ -237,6 +237,7 @@ impl ClientThread {
                 id,
                 message,
                 machine,
+                expected_source,
                 updates,
             } => {
                 self.add_engine(
@@ -244,6 +245,7 @@ impl ClientThread {
                     "messages".into(),
                     Some(message),
                     machine,
+                    expected_source,
                     false,
                     updates,
                 );
@@ -255,7 +257,7 @@ impl ClientThread {
                 machine,
                 updates,
             } => {
-                self.add_engine(id, topic, key, machine, true, updates);
+                self.add_engine(id, topic, key, machine, None, true, updates);
             }
             Event::ResnapshotEngine { handle } => {
                 if let Some(wire) = self.engines.iter().find_map(|(wire, feed)| {
@@ -465,16 +467,18 @@ impl ClientThread {
         let Some(feed) = self.engines.get(&id) else {
             return;
         };
-        let (topic, key, machine, after, at) = (
+        let (topic, key, machine, after, at, source) = (
             feed.topic.clone(),
             feed.key.clone(),
             feed.machine.clone(),
             feed.through,
             feed.at.clone(),
+            feed.expected_source.clone(),
         );
         self.send(&OutFrame::EngineSub {
             id,
             stream: "engine",
+            expected_source:source.as_ref(),
             topic: &topic,
             key: key.as_deref(),
             machine: machine.as_deref(),

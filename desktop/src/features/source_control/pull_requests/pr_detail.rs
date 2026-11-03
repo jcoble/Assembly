@@ -404,6 +404,7 @@ impl Render for PrDetail {
                     id: "pr-body".into(),
                     blocks: detail.body_blocks.clone(),
                     session: None,
+                    expected_source: None,
                 });
                 for (index, event) in detail.timeline.iter().enumerate() {
                     let blocks = if event.kind == "comment" {
@@ -434,6 +435,7 @@ impl Render for PrDetail {
                             id: SharedString::from(format!("pr-timeline:{index}")),
                             blocks,
                             session: None,
+                            expected_source: None,
                         })
                     } else {
                         row.child(event.body.clone())

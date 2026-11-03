@@ -31,7 +31,7 @@ fn reopening_auth_refusal_keeps_one_user_row_and_follows_the_owned_message(
     assert_eq!(client.message_subscriptions(), 1);
     let snapshot = json!({"machine":"owner","entityKind":"message","id":"prompt/s1/c",
         "clientId":"c","toSessionId":"s1","version":3,"state":"queued","reason":"auth_required"});
-    cx.update(|_, cx| client.push_message("prompt/s1/c", None, snapshot.clone(), cx));
+    cx.update(|_, cx| client.push_message("prompt/s1/c", Some("owner"), snapshot.clone(), cx));
     cx.run_until_parked();
     pane.read_with(cx, |pane, cx| {
         assert_eq!(pane.view.items.len(), 1);
@@ -51,7 +51,7 @@ fn reopening_auth_refusal_keeps_one_user_row_and_follows_the_owned_message(
         let mut stale = snapshot.clone();
         stale[field] = value;
         stale["state"] = json!("next_turn");
-        cx.update(|_, cx| client.push_message("prompt/s1/c", None, stale, cx));
+        cx.update(|_, cx| client.push_message("prompt/s1/c", Some("owner"), stale, cx));
     }
     cx.run_until_parked();
     pane.read_with(cx, |pane, _| {
@@ -61,7 +61,7 @@ fn reopening_auth_refusal_keeps_one_user_row_and_follows_the_owned_message(
     delivered["version"] = json!(4);
     delivered["state"] = json!("next_turn");
     delivered["reason"] = json!(null);
-    cx.update(|_, cx| client.push_message("prompt/s1/c", None, delivered, cx));
+    cx.update(|_, cx| client.push_message("prompt/s1/c", Some("owner"), delivered, cx));
     cx.run_until_parked();
     pane.read_with(cx, |pane, cx| {
         assert_eq!(pane.view.items.len(), 1);

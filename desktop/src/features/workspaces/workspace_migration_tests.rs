@@ -148,7 +148,7 @@ async fn real_existing_owner_migrates_with_canonical_cas_before_old_tabs_are_rem
         )
     });
     let captured = stored.clone();
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             WorkspaceTarget::TranscriptOnly(crate::core::engine::SessionKey {
                 machine: "actual-owner".into(),
@@ -169,7 +169,7 @@ async fn real_existing_owner_migrates_with_canonical_cas_before_old_tabs_are_rem
             window,
             cx,
         );
-    });
+    }));
     activated.recv().await.unwrap();
     cx.update(|_, cx| assert!(CenterPanes::file_views(cx).is_empty()));
     let stored = stored.lock().unwrap();
@@ -205,7 +205,7 @@ async fn an_unconfirmed_migration_write_is_never_replayed_or_allowed_to_remove_o
             },
         )
     });
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             WorkspaceTarget::TranscriptOnly(crate::core::engine::SessionKey {
                 machine: "actual-owner".into(),
@@ -215,7 +215,7 @@ async fn an_unconfirmed_migration_write_is_never_replayed_or_allowed_to_remove_o
             window,
             cx,
         );
-    });
+    }));
     assert!(
         refused
             .recv()
@@ -329,45 +329,35 @@ async fn a_changed_existing_group_refuses_the_whole_batch_and_preserves_every_ol
         SocketClient::start_bulk(endpoint, cx);
     });
     let (_, cx) = cx.add_window_view(|_, _| Host);
-    let (_dock, files) = cx.update(|window, cx| {
+    let _dock = cx.update(|window, cx| {
         let dock = cx.new(|cx| DockArea::new("legacy-batch", None, window, cx));
         CenterPanes::init(&dock, cx);
-        let files: Vec<_> = ["one", "two"]
-            .into_iter()
-            .map(|alias| {
-                let file = cx.new(|cx| FileView::new(alias.into(), "src/λ.rs".into(), cx));
-                dock.update(cx, |dock, cx| {
-                    dock.add_panel_view(
-                        panel_handle(file.clone()),
-                        DockPlacement::Center,
-                        None,
-                        window,
-                        cx,
-                    )
-                });
-                file
-            })
-            .collect();
-        (dock, files)
+        dock
     });
     let (changed, mut changes) = unbounded();
     let mut observations = Vec::new();
-    for file in &files {
+    let mut files = Vec::new();
+    // File reads are lazy and owned by the active tab. Resolve the first real owner before
+    // opening the second tab, which legitimately cancels unfinished inactive IO.
+    for alias in ["one", "two"] {
+        let file = cx.update(|window, cx| {
+            let file = cx.new(|cx| FileView::new(alias.into(), "src/λ.rs".into(), cx));
+            _dock.update(cx, |dock, cx| {
+                dock.add_panel_view(panel_handle(file.clone()), DockPlacement::Center, None, window, cx)
+            });
+            file
+        });
         let tell = changed.clone();
         observations.push(cx.update(|_, cx| {
-            cx.observe(file, move |_, _| {
-                let _ = tell.unbounded_send(());
-            })
+            cx.observe(&file, move |_, _| { let _ = tell.unbounded_send(()); })
         }));
-    }
-    until("both real legacy owners", &mut changes, &changed, || {
-        files.iter().all(|file| {
+        until("the active legacy file owner is resolved", &mut changes, &changed, || {
             file.read_with(cx, |file, cx| {
                 file.legacy_capture(cx).unwrap().owner.is_some()
             })
-        })
-    })
-    .await;
+        }).await;
+        files.push(file);
+    }
     let groups = cx.update(|_, cx| {
         let captures = CenterPanes::file_views(cx)
             .iter()
@@ -395,7 +385,7 @@ async fn a_changed_existing_group_refuses_the_whole_batch_and_preserves_every_ol
             },
         )
     });
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             WorkspaceTarget::TranscriptOnly(crate::core::engine::SessionKey {
                 machine: "actual-owner".into(),
@@ -405,7 +395,7 @@ async fn a_changed_existing_group_refuses_the_whole_batch_and_preserves_every_ol
             window,
             cx,
         );
-    });
+    }));
     requested.await.unwrap();
     state.lock().unwrap().snapshots.insert(
         existing.session_id.clone(),
@@ -554,7 +544,7 @@ async fn an_unknown_batch_receipt_is_reconciled_by_exact_saved_bytes_without_rep
             },
         )
     });
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             WorkspaceTarget::TranscriptOnly(crate::core::engine::SessionKey {
                 machine: "actual-owner".into(),
@@ -571,7 +561,7 @@ async fn an_unknown_batch_receipt_is_reconciled_by_exact_saved_bytes_without_rep
             window,
             cx,
         );
-    });
+    }));
     activated.recv().await.unwrap();
     cx.update(|_, cx| assert!(CenterPanes::file_views(cx).is_empty()));
     let stored = stored.lock().unwrap();

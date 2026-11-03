@@ -23,6 +23,7 @@ pub(super) enum CommitFiles {
 }
 pub struct CommitTimeline {
     session: String,
+    expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     path: Option<String>,
     active: bool,
     pub(super) history: GitHistory,
@@ -41,6 +42,7 @@ impl CommitTimeline {
     pub fn new(
         session: String,
         path: Option<String>,
+        expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
         active: bool,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -54,6 +56,7 @@ impl CommitTimeline {
         });
         let mut timeline = Self {
             session,
+            expected_source,
             path,
             active,
             history: GitHistory::default(),
@@ -92,6 +95,13 @@ impl CommitTimeline {
             self.refresh(cx);
         }
     }
+    pub fn set_target(&mut self, path: Option<String>, source: Option<crate::core::socket::row_source::ExpectedRowSource>, cx: &mut Context<Self>) {
+        if self.path != path || self.expected_source != source {
+            self.path = path;
+            self.expected_source = source;
+            self.refresh(cx);
+        }
+    }
     pub fn set_filter(&mut self, filter: HistoryFilter, cx: &mut Context<Self>) {
         self.filter = filter;
         self.sync_rows();
@@ -127,7 +137,7 @@ impl CommitTimeline {
         let call = socket.read(cx).call::<GitHistory>(
             "git",
             "history",
-            json!({"session":self.session,"cursor":cursor,"path":self.path}),
+            json!({"session":self.session,"cursor":cursor,"path":self.path,"expectedSource":self.expected_source}),
             Some(&key),
         );
         self.reading = true;
@@ -167,7 +177,7 @@ impl CommitTimeline {
                 let call = socket.read(cx).call::<Vec<GitCommitFile>>(
                     "git",
                     "commitFiles",
-                    json!({"session":self.session,"sha":sha}),
+                    json!({"session":self.session,"sha":sha,"expectedSource":self.expected_source}),
                     Some(&key),
                 );
                 self.files.insert(sha.clone(), CommitFiles::Reading);
@@ -304,6 +314,7 @@ impl CommitTimeline {
                     for file in files {
                         let intent = OpenCommitDiff {
                             session_id: self.session.clone(),
+                            expected_source: self.expected_source.clone(),
                             sha: commit.sha.clone(),
                             path: file.path.clone(),
                             title: format!("{} {}", commit.short_sha, commit.subject),

@@ -13,7 +13,7 @@ async fn the_servers_canonical_batch_size_refusal_preserves_old_metadata_and_nev
             },
         )
     });
-    coordinator.update_in(cx, |view, window, cx| {
+    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
         view.request(
             WorkspaceTarget::TranscriptOnly(crate::core::engine::SessionKey {
                 machine: "actual-owner".into(),
@@ -23,7 +23,7 @@ async fn the_servers_canonical_batch_size_refusal_preserves_old_metadata_and_nev
             window,
             cx,
         );
-    });
+    }));
     assert!(
         refused
             .recv()

@@ -16,6 +16,7 @@ pub enum EngineUpdate {
     Events(Vec<Value>),
     /// A generic scope, published only after all pages at one snapshot cut arrived.
     Scoped(EnginePage),
+    Refused{code:String,message:String},
 }
 
 #[derive(Debug)]
@@ -34,6 +35,7 @@ pub(super) struct EngineFeed {
     pub topic: String,
     pub key: Option<String>,
     pub scoped: bool,
+    pub expected_source:Option<super::row_source::ExpectedRowSource>,
     pub machine: Option<String>,
     pub through: Option<i64>,
     pub acknowledged: Option<(i64, Option<CursorAt>)>,

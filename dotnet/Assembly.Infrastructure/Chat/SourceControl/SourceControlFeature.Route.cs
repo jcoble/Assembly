@@ -5,6 +5,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Infrastructure.Engine;
+using Assembly.Infrastructure.Engine.Sessions;
 using Assembly.Infrastructure.Git;
 using Assembly.Infrastructure.Remote;
 
@@ -29,9 +30,39 @@ internal sealed partial class SourceControlFeature
         if (sessionValue.ValueKind != JsonValueKind.String || sessionValue.GetString() is not { Length: > 0 } session)
             throw new CallBadArguments("A session is required.");
         var info = sessions.Get(session) ?? throw new CallFailed("Session not found");
-        if (info.Machine is null) return await local();
+        var qualifiedRead = method is "status" or "diff" or "branchDiff" or "history" or "commitFiles" or "commitDiff";
+        var expected = qualifiedRead && json.TryGetProperty("expectedSource", out var asserted) && asserted.ValueKind != JsonValueKind.Null
+            ? asserted.Deserialize(SourceControlJson.Default.ExpectedSource) : null;
+        if (info.Machine is null)
+        {
+            if (expected is not null && (expected.Machine != operations.Machine || expected.Generation != 0 || expected.RouteMachine is not null))
+                throw new CallFailed("The session's owning machine changed.", "source_changed");
+            if (!qualifiedRead) return await local();
+            void EnsureLocal()
+            {
+                if (sessions.Get(session) is not { Machine: null } ||
+                    db.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", row => row.Text(0), default) != operations.Machine ||
+                    db.QueryFirst("SELECT machine FROM engine_session WHERE id=$id", row => row.Text(0), default,
+                        new SqlArg("$id", session)) is { } owner && owner != operations.Machine)
+                    throw new CallFailed("The session's owning machine changed.", "source_changed");
+            }
+            call.SourceGuard = new LocalReadSource(EnsureLocal);
+            EnsureLocal();
+            var answerLocal = await local();
+            EnsureLocal();
+            return answerLocal;
+        }
+        if (qualifiedRead && (expected is null || expected.RouteMachine != info.Machine))
+            throw new CallFailed("The session's owning machine changed.", "source_changed");
         if (forward is null || connections is null) throw new CallFailed("This host does not own that session.");
-        var target = await Capture(info.Machine, session, call.Cancellation);
+        var target = await Capture(info.Machine, session, call.Cancellation, expected);
+        if (qualifiedRead)
+        {
+            call.SourceGuard = SessionRowSources.CapturedRemote(session, target.Owner.Machine, target.Live, target.EnsureCurrent);
+            json = OwnerArguments(json, target.Owner.Engine);
+        }
+        using var sourceStop = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation,
+            call.SourceGuard?.Changed ?? CancellationToken.None);
         target.EnsureCurrent();
         if (method == "start" && json.TryGetProperty("operationId", out var operationId) && operationId.TryGetGuid(out var id))
             await operations.WaitRemoteObservationAsync(target.Owner.Engine, id, session,
@@ -41,7 +72,7 @@ internal sealed partial class SourceControlFeature
         try
         {
             answer = await forward.CallAsync(target.Owner.Engine, "git", method, json, kind == CallKind.BulkRead,
-                call.Cancellation, target.Owner.Socket, target.Owner.Binding, target.Live, kind == CallKind.Write);
+                sourceStop.Token, target.Owner.Socket, target.Owner.Binding, target.Live, kind == CallKind.Write);
         }
         catch (MachineUnreachable error) when (kind == CallKind.Write && error.MayHaveBeenSent)
         {
@@ -49,20 +80,43 @@ internal sealed partial class SourceControlFeature
         }
         var result = answer.Deserialize(resultType) ?? throw new CallFailed("The owning machine returned an invalid Git result.");
         if (result is GitOperationStatus status && status.Machine == target.Owner.Engine &&
-            json.TryGetProperty("operationId", out var expectedId) && expectedId.TryGetGuid(out var expected) && expected == status.OperationId)
+            json.TryGetProperty("operationId", out var expectedId) && expectedId.TryGetGuid(out var expectedOperationId) && expectedOperationId == status.OperationId)
             result = (TResult)(object)operations.RecordRemoteStatus(status);
         try { target.EnsureCurrent(); }
         catch (Exception) when (kind == CallKind.Write) { throw new CallUncertain(target.Owner.Engine); }
         return result;
     }
 
+    private sealed class LocalReadSource(Action ensureCurrent) : IExpectedSourceGuard
+    {
+        public CancellationToken Changed => CancellationToken.None;
+        public void EnsureCurrent() => ensureCurrent();
+        public void Dispose() { }
+    }
+
+    private static JsonElement OwnerArguments(JsonElement args, string machine)
+    {
+        using var bytes = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(bytes))
+        {
+            writer.WriteStartObject();
+            foreach (var property in args.EnumerateObject())
+                if (property.Name != "expectedSource") property.WriteTo(writer);
+            writer.WritePropertyName("expectedSource");
+            JsonSerializer.Serialize(writer, new ExpectedSource(machine, 0, null), SourceControlJson.Default.ExpectedSource);
+            writer.WriteEndObject();
+        }
+        using var document = JsonDocument.Parse(bytes.ToArray());
+        return document.RootElement.Clone();
+    }
+
     private sealed record GitTarget(RemoteConnections.ProjectOwner Owner, EngineMirror.LiveMirrorBinding Live, Action EnsureCurrent);
 
-    private async Task<GitTarget> Capture(string name, string? session, CancellationToken ct)
+    private async Task<GitTarget> Capture(string name, string? session, CancellationToken ct, ExpectedSource? expected = null)
     {
         var matches = db.Query("SELECT machine,generation FROM engine_mirror WHERE name=$name AND state='live' LIMIT 2",
             row => new ExpectedSource(row.Text(0), row.Long(1), name), ct, new SqlArg("$name", name));
-        if (matches.Count != 1) throw new CallFailed("The session's owning machine changed.", "source_changed");
+        if (matches.Count != 1 || expected is not null && matches[0] != expected) throw new CallFailed("The session's owning machine changed.", "source_changed");
         var source = await connections!.CaptureSessionOpenSourceAsync(db, matches[0], ct);
         var owner = await connections.CaptureProjectOwnerAsync(name, ct);
         if (owner.Engine != matches[0].Machine || !ReferenceEquals(owner.Machine, source.Machine) ||

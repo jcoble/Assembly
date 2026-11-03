@@ -53,11 +53,11 @@ internal sealed partial class SourceControlFeature(SessionStore sessions, IAppDa
         return relative == "." ? throw new CallFailed("expected a file in the session's folder") : relative;
     }
 
-    internal sealed record HistoryArgs([property: JsonRequired] string Session, string? Cursor, string? Path);
-    internal sealed record CommitArgs([property: JsonRequired] string Session, [property: JsonRequired] string Sha);
-    internal sealed record CommitDiffArgs([property: JsonRequired] string Session, [property: JsonRequired] string Sha, [property: JsonRequired] string Path);
-    internal sealed record DiffArgs([property: JsonRequired] string Session, [property: JsonRequired] string Path, string? OriginalPath);
-    internal sealed record Args([property: JsonRequired] string Session);
+    internal sealed record HistoryArgs([property: JsonRequired] string Session, string? Cursor, string? Path, ExpectedSource? ExpectedSource = null);
+    internal sealed record CommitArgs([property: JsonRequired] string Session, [property: JsonRequired] string Sha, ExpectedSource? ExpectedSource = null);
+    internal sealed record CommitDiffArgs([property: JsonRequired] string Session, [property: JsonRequired] string Sha, [property: JsonRequired] string Path, ExpectedSource? ExpectedSource = null);
+    internal sealed record DiffArgs([property: JsonRequired] string Session, [property: JsonRequired] string Path, string? OriginalPath, ExpectedSource? ExpectedSource = null);
+    internal sealed record Args([property: JsonRequired] string Session, ExpectedSource? ExpectedSource = null);
 }
 
 /// <summary>The arguments and answers for the session's git status, file diff and branch diff reads.</summary>

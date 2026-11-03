@@ -24,6 +24,14 @@ pub(crate) struct WorkspaceTab {
 struct Activity(u64);
 impl Global for Activity {}
 impl FileView {
+    pub(crate) fn workspace_source(key: &WorkspaceKey, cx: &App) -> Option<crate::core::socket::row_source::ExpectedRowSource> {
+        let selected = crate::core::state::selected_session::SelectedSession::try_global(cx)?;
+        let selected = selected.read(cx);
+        let identity = selected.key()?;
+        if identity.machine != key.machine || identity.id != key.session_id { return None; }
+        selected.source().filter(|source| source.machine == key.machine).cloned()
+    }
+
     pub(crate) fn layout_ref(&self)->(&str,&str) {(&self.session,&self.path)}
     pub(crate) fn restored_workspace_path(&self,key:&WorkspaceKey)->Option<&str> {
         (self.owning_workspace().as_ref()==Some(key)||self.expected_workspace.as_ref()==Some(key)).then_some(self.path.as_str())
@@ -54,7 +62,8 @@ impl FileView {
         self.last_active = activity.0;
     }
     pub(crate) fn workspace_tab(&self, key: &WorkspaceKey, cx: &App) -> Option<WorkspaceTab> {
-        let matches = self.document.as_ref().is_some_and(|document| {
+        let matches = self.owning_workspace().as_ref() == Some(key)
+            || self.document.as_ref().is_some_and(|document| {
             document.machine == key.machine && document.checkout_root == key.checkout_root
         }) || (self.session == key.session_id
             && self.owner.as_ref().is_none_or(|owner| {
@@ -178,6 +187,7 @@ impl FileView {
         if let Some(id) = CenterPanes::open(alias, window, cx, |_, cx| {
             cx.new(|cx| {
                 let mut file = Self::new(workspace.session_id.clone(), path.clone(), cx);
+                file.source = Self::workspace_source(&workspace, cx);
                 file.expected_workspace = Some(workspace.clone());
                 file.restored_view = view;
                 let document = DocumentKey {
