@@ -90,7 +90,7 @@ public sealed class MessageMetadataTests
     {
         using var f = new EngineFixture();
         var visible = new string('n', 256);
-        MessageReadFixture.Seed(f, "older", 100, sender: visible + "a full tail");
+        MessageReadFixture.Seed(f, "older", 100, sender: visible + "z full tail");
         MessageReadFixture.Seed(f, "newer", 200, sender: visible + "z full tail");
         var query = new MessageQueries(f.Db, f.Machine);
         var scope = All with { Sort = "sender" }; var first = query.Candidates(scope, null, 1, default);

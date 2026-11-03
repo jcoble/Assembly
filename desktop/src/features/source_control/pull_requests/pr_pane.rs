@@ -3,7 +3,7 @@ use super::{
     pr_owner::{PrOwner, ProjectChoice, holders, resolve},
     pr_queue::PrQueue,
     pr_search::PrState,
-    pull_request::PrTarget,
+    pull_request::{PrTarget, PullRequestSummary},
 };
 use crate::core::{
     socket::row_source::ExpectedRowSource,
@@ -21,11 +21,21 @@ use std::time::Duration;
 
 #[path = "pr_view/list.rs"]
 mod list;
+#[path = "pr_view/opening_page.rs"]
+mod opening_page;
 
 gpui_kit::actions!(pull_requests, [ShowPullRequests]);
 const NAME: &str = "Pull requests";
 const KEY: &str = "pull-requests";
 const MAX_SEARCH: usize = 150;
+#[derive(Clone)]
+struct Selected {
+    repository: Option<String>,
+    number: u64,
+    /// Listed under "All local projects", so only this computer's copy can answer for it.
+    listed_local: bool,
+    row: Option<PullRequestSummary>,
+}
 struct OpenPane(Option<WeakEntity<PrPane>>);
 impl Global for OpenPane {}
 pub struct PrPane {
@@ -38,8 +48,10 @@ pub struct PrPane {
     scope: Vec<String>,
     queue: Entity<PrQueue>,
     detail: Option<Entity<PrDetail>>,
-    /// The number being opened while its project's machine says who owns it. Dropping the task forgets the answer.
-    opening: Option<(u64, Task<()>)>,
+    /// The pull request on screen before anyone can read it, while its owner is unknown.
+    selected: Option<Selected>,
+    /// Asking who owns a project's machine. Dropping the task forgets the answer.
+    opening: Option<Task<()>>,
     /// A repository more than one project holds, waiting for the person to say which.
     choosing: Option<ProjectChoice>,
     search: Entity<InputState>,
@@ -182,6 +194,7 @@ impl PrPane {
             scope: Vec::new(),
             queue,
             detail: None,
+            selected: None,
             opening: None,
             choosing: None,
             search,
@@ -226,6 +239,9 @@ impl PrPane {
     fn cancel_open(&mut self, cx: &mut Context<Self>) {
         self.opening = None;
         self.choosing = None;
+        if self.selected.take().is_some() {
+            self.failure = None;
+        }
         cx.notify();
     }
     fn close_detail(&mut self, cx: &mut Context<Self>) {
@@ -356,30 +372,37 @@ impl PrPane {
         cx.notify();
     }
     fn select_pr(&mut self, repository: Option<String>, number: u64, cx: &mut Context<Self>) {
-        self.open_pr(repository, number, false, cx);
+        let wanted = Selected { repository, number, listed_local: false, row: None };
+        self.open_pr(wanted, cx);
     }
-    fn select_row(&mut self, repository: String, number: u64, cx: &mut Context<Self>) {
-        self.open_pr(Some(repository), number, self.project.is_none(), cx);
+    fn select_row(&mut self, row: PullRequestSummary, cx: &mut Context<Self>) {
+        let wanted = Selected {
+            repository: Some(row.repository.clone()),
+            number: row.number,
+            listed_local: self.project.is_none(),
+            row: Some(row),
+        };
+        self.open_pr(wanted, cx);
     }
-    fn open_pr(
-        &mut self,
-        repository: Option<String>,
-        number: u64,
-        listed_local: bool,
-        cx: &mut Context<Self>,
-    ) {
+    /// Asks the same question again after a machine didn't answer.
+    fn retry_open(&mut self, cx: &mut Context<Self>) {
+        if let Some(wanted) = self.selected.clone() {
+            self.open_pr(wanted, cx);
+        }
+    }
+    fn open_pr(&mut self, wanted: Selected, cx: &mut Context<Self>) {
         self.cancel_open(cx);
+        let Selected { repository, number, listed_local, row } = wanted.clone();
         self.failure = None;
         if let Some(id) = self.session.clone() {
             let source = selected_source(Some(&id), cx);
-            self.open_detail(PrOwner::Session { id, source }, repository, number, cx);
+            self.open_detail(PrOwner::Session { id, source }, repository, number, row, cx);
             return;
         }
         if let Some(owner) = self.same_project(repository.as_deref(), cx) {
-            self.open_detail(owner, repository, number, cx);
+            self.open_detail(owner, repository, number, row, cx);
             return;
         }
-        // The list carries what happens next, and a notice can't show over another pull request.
         self.close_detail(cx);
         let rows = self.projects.as_ref().map(|projects| projects.read(cx).rows());
         let found = holders(
@@ -391,10 +414,12 @@ impl PrPane {
         match found {
             Err(error) => self.failure = Some(error),
             Ok(mut projects) if projects.len() == 1 => {
+                self.selected = Some(wanted);
                 let project = projects.remove(0);
                 self.resolve_project(&project, repository, number, cx);
             }
             Ok(projects) => {
+                self.selected = Some(wanted);
                 self.choosing = Some(ProjectChoice {
                     projects,
                     repository,
@@ -426,7 +451,10 @@ impl PrPane {
             _ = pane.update(cx, |pane, cx| {
                 pane.opening = None;
                 match owner {
-                    Ok(owner) => pane.open_detail(owner, repository, number, cx),
+                    Ok(owner) => {
+                        let row = pane.selected.take().and_then(|selected| selected.row);
+                        pane.open_detail(owner, repository, number, row, cx)
+                    }
                     Err(error) => {
                         pane.failure = Some(error);
                         cx.notify();
@@ -434,7 +462,7 @@ impl PrPane {
                 }
             });
         });
-        self.opening = Some((number, task));
+        self.opening = Some(task);
     }
     /// The person said which project; the same source question follows.
     fn choose_project(&mut self, project_id: &str, cx: &mut Context<Self>) {
@@ -452,10 +480,15 @@ impl PrPane {
         owner: PrOwner,
         repository: Option<String>,
         number: u64,
+        row: Option<PullRequestSummary>,
         cx: &mut Context<Self>,
     ) {
         let active = self.active;
-        let detail = cx.new(|cx| PrDetail::new(owner, repository, number, active, cx));
+        let detail = cx.new(|cx| {
+            let mut detail = PrDetail::new(owner, repository, number, active, cx);
+            detail.show_row(row);
+            detail
+        });
         self._detail = Some([
             cx.subscribe(&detail, |pane: &mut Self, _, _: &PrBack, cx| {
                 pane.close_detail(cx)
@@ -530,9 +563,10 @@ impl Panel for PrPane {
 }
 impl Render for PrPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let page = match self.detail.clone() {
-            Some(detail) => detail.into_any_element(),
-            None => self.list_page(cx).into_any_element(),
+        let page = match (self.detail.clone(), self.selected.clone()) {
+            (Some(detail), _) => detail.into_any_element(),
+            (None, Some(selected)) => self.opening_page(&selected, cx),
+            (None, None) => self.list_page(cx).into_any_element(),
         };
         div()
             .track_focus(&self.focus)

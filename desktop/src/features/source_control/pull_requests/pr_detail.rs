@@ -7,7 +7,7 @@ use super::{
     pr_files::PrFiles,
     pr_owner::PrOwner,
     pr_writes::{PrWrites, WriteDone},
-    pull_request::PullRequestDetail,
+    pull_request::{PullRequestDetail, PullRequestSummary},
     review_draft::{ReviewDraft, ReviewIdentity},
 };
 use crate::core::{
@@ -59,6 +59,8 @@ pub struct PrDetail {
     loading: bool,
     needs_refresh: bool,
     revision: u64,
+    /// The list row this was opened from, standing in until the read arrives.
+    row: Option<PullRequestSummary>,
     pub detail: Option<PullRequestDetail>,
     pub failure: Option<String>,
     review: Option<Entity<ReviewDraft>>,
@@ -90,6 +92,12 @@ pub struct PrDetail {
 impl EventEmitter<PrBack> for PrDetail {}
 impl EventEmitter<PrMerged> for PrDetail {}
 impl PrDetail {
+    pub fn show_row(&mut self, row: Option<PullRequestSummary>) {
+        self.row = row;
+    }
+    pub fn row(&self) -> Option<&PullRequestSummary> {
+        self.row.as_ref()
+    }
     pub fn owner(&self) -> &PrOwner {
         &self.owner
     }
@@ -117,6 +125,7 @@ impl PrDetail {
             loading: false,
             needs_refresh: true,
             revision: 0,
+            row: None,
             detail: None,
             failure: None,
             review: None,
@@ -291,7 +300,9 @@ impl PrDetail {
             .as_ref()
             .map_or((0, 0), |detail| change_totals(&detail.files));
         let on_changes = self.page == Page::Changes;
-        let url = self.detail.as_ref().map(|detail| detail.url.clone());
+        let url = (self.detail.as_ref().map(|detail| detail.url.clone()))
+            .or_else(|| self.row.as_ref().map(|row| row.url.clone()))
+            .filter(|url| !url.is_empty());
         let posting = self.writes.read(cx).posting(cx);
         h_flex()
             .px_3()

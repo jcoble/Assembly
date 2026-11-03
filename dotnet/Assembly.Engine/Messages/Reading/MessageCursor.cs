@@ -40,6 +40,7 @@ internal static class MessageCursors
         using (var json = new Utf8JsonWriter(bytes))
         {
             json.WriteStartArray();
+            json.WriteStringValue("messages-query/logical-anchor-v2");
             foreach (var value in new[] { scope.Machine, scope.SessionMachine, scope.SessionId, scope.RunMachine, scope.RunId, scope.State, scope.Search, scope.Sort }) json.WriteStringValue(value);
             foreach (var source in sources) { json.WriteStringValue(source.Machine); json.WriteNumberValue(source.Generation); }
             json.WriteEndArray();

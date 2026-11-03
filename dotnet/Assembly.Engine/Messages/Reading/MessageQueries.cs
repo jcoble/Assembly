@@ -17,12 +17,24 @@ public sealed partial class MessageQueries(IAppDatabase db, string machine)
         MessageCursors.Validate(read, cursor, hash, sources);
         var args = Arguments(scope, cursor.After).Concat([new SqlArg("$limit", limit + 1)]).ToArray();
         var rows = read.Query(MessageMetadata.Cte + $"""
-            , ordered AS (SELECT c.*,{MessageMetadata.Name(scope.Sort)} AS ordering_name FROM canonical c WHERE {MessageMetadata.Scope})
+            , ordered AS (
+                SELECT c.origin_machine,c.id,c.storage_machine,c.version,c.sender_machine,c.from_session_id,c.sender_name,
+                    c.recipient_machine,c.to_session_id,c.receiver_name,c.run_machine,c.run_id,c.origin_created_ms,c.kind,c.state,c.delivery,c.reason,c.preview,
+                    {MessageMetadata.Name(scope.Sort)} AS ordering_name FROM canonical c WHERE {MessageMetadata.Scope}
+            ), anchor AS (
+                SELECT ordering_name,origin_created_ms,origin_machine,id FROM ordered
+                WHERE origin_machine=$afterOrigin AND id=$afterId AND origin_created_ms=$afterTime
+            )
             SELECT origin_machine,id,storage_machine,version,sender_machine,from_session_id,COALESCE(sender_name,''),
                 recipient_machine,to_session_id,COALESCE(receiver_name,''),run_machine,run_id,origin_created_ms,kind,state,delivery,reason,
-                COALESCE(preview,''),ordering_name FROM ordered c
+                COALESCE(preview,'') FROM ordered c
             WHERE {MessageMetadata.After} ORDER BY ordering_name COLLATE NOCASE,origin_created_ms DESC,origin_machine COLLATE BINARY,id COLLATE BINARY LIMIT $limit
             """, row => Read(row), args);
+        if (cursor.After is not null && rows.Count == 0 && read.QueryFirst(MessageMetadata.Cte + $"""
+            SELECT 1 FROM canonical c WHERE {MessageMetadata.Scope}
+              AND c.origin_machine=$afterOrigin AND c.id=$afterId AND c.origin_created_ms=$afterTime LIMIT 1
+            """, row => row.Long(0), args) != 1)
+            throw new InvalidOperationException("query_changed");
         var more = rows.Count > limit; if (more) rows.RemoveAt(limit);
         var after = rows.Count == 0 ? cursor.After : rows[^1].Order;
         var captured = cursor with { After = after };
@@ -45,7 +57,7 @@ public sealed partial class MessageQueries(IAppDatabase db, string machine)
         var items = read.Query(MessageMetadata.Cte + $"""
             SELECT c.origin_machine,c.id,c.storage_machine,c.version,c.sender_machine,c.from_session_id,COALESCE(c.sender_name,''),
                 c.recipient_machine,c.to_session_id,COALESCE(c.receiver_name,''),c.run_machine,c.run_id,c.origin_created_ms,c.kind,c.state,c.delivery,c.reason,
-                COALESCE(c.preview,''),{MessageMetadata.Name(scope.Sort)} FROM canonical c
+                COALESCE(c.preview,'') FROM canonical c
             WHERE {MessageMetadata.Scope}
               AND EXISTS(SELECT 1 FROM json_each($keys) k WHERE json_extract(k.value,'$.originMachine')=c.origin_machine AND json_extract(k.value,'$.id')=c.id)
               AND ($search='' OR EXISTS(SELECT 1 FROM json_each($matches) m WHERE json_extract(m.value,'$.originMachine')=c.origin_machine AND json_extract(m.value,'$.id')=c.id)
@@ -72,14 +84,14 @@ public sealed partial class MessageQueries(IAppDatabase db, string machine)
     private SqlArg[] Arguments(MessageScope scope, MessageOrder? after) =>
     [ new("$local",machine),new("$storage",scope.Machine),new("$sessionMachine",scope.SessionMachine),new("$session",scope.SessionId),
       new("$runMachine",scope.RunMachine),new("$run",scope.RunId),new("$state",scope.State),new("$search",scope.Search),
-      new("$afterName",after?.Name),new("$afterTime",after?.OriginCreatedMs),new("$afterOrigin",after?.OriginMachine),new("$afterId",after?.Id) ];
+      new("$afterTime",after?.OriginCreatedMs),new("$afterOrigin",after?.OriginMachine),new("$afterId",after?.Id) ];
 
     private static (MessageDisplay Item, MessageOrder Order) Read(IRow row)
     {
         string? Text(int at) => row.IsNull(at) ? null : row.Text(at);
         var origin = row.Text(0); var id = row.Text(1); var created = row.Long(12);
         return (new(new(origin, id), new(row.Text(2), id), row.Long(3), row.Text(4), Text(5), row.Text(6), row.Text(7), row.Text(8), row.Text(9),
-            Text(10), Text(11), created, row.Text(13), row.Text(14), row.Text(15), Text(16), row.Text(17), true), new(row.Text(18), created, origin, id));
+            Text(10), Text(11), created, row.Text(13), row.Text(14), row.Text(15), Text(16), row.Text(17), true), new(created, origin, id));
     }
 
     private MessageStorage[] Unknown(IReadSnapshot read, MessageScope scope) => read.Query(MessageMetadata.Cte + """
