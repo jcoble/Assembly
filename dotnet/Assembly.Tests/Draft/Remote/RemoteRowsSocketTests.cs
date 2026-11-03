@@ -36,6 +36,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
     private int _liveHits, _sessionHttpHits;
     private SessionStore _remoteSessions = null!;
     private FakeMachine _remoteMachine = null!;
+    private Assembly.Application.Common.Engine.NeedAnswerRequest? _remoteAnswer;
     private MachineStatus _status = null!;
     private int? _welcomeFormat;
     private readonly TopicSet _localTopics = new();
@@ -61,7 +62,15 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         var calls = new SocketDispatcher(_remoteDb.Writer, topics, TimeProvider.System, NullLogger.Instance);
         new RowsFeature(_remoteHub, _remoteStore, sessions, machines).Register(calls);
         new SessionsFeature(sessions, machines).Register(calls);
-        new SendFeature(sessions, machines, _remoteHub).Register(calls);
+        var answers = new Assembly.Tests.Infrastructure.Socket.AnswerDoor
+        {
+            Answer = request =>
+            {
+                _remoteAnswer = request;
+                return Task.FromResult<Func<Assembly.Application.Common.Database.IWriteScope, bool>>(_ => !_remoteMachine.Refuses);
+            }
+        };
+        new SendFeature(sessions, machines, _remoteHub, answers).Register(calls);
         new ConfigFeature(sessions, machines).Register(calls);
         new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System).Register(calls);
         _socket = new SocketEndpoint("token", calls, "box", TimeProvider.System);

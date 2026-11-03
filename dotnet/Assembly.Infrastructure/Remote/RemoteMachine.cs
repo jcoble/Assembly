@@ -180,9 +180,21 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
 
     public async Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
-        var content = new ReadOnlyMemoryContent(bytes);
-        content.Headers.ContentType = new MediaTypeHeaderValue(type.ContentType);
-        var saved = await JsonAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/attachments", content, cancellationToken);
+        var owner = await CaptureOwnerReadAsync(null, cancellationToken);
+        var begun = await CallAsync("attachments", "begin", JsonSerializer.SerializeToElement(
+            new AttachmentsFeature.BeginArgs(session.SessionId, type.ContentType, bytes.Length), AttachmentsJson.Default.BeginArgs),
+            true, cancellationToken, owner.Identity, owner.Socket);
+        var upload = begun.GetProperty("upload").GetString()!;
+        for (var offset = 0; offset < bytes.Length; offset += AttachmentsFeature.ChunkBytes)
+        {
+            var chunk = bytes.Slice(offset, Math.Min(AttachmentsFeature.ChunkBytes, bytes.Length - offset)).ToArray();
+            await CallAsync("attachments", "chunk", JsonSerializer.SerializeToElement(
+                new AttachmentsFeature.ChunkArgs(upload, offset, chunk), AttachmentsJson.Default.ChunkArgs),
+                true, cancellationToken, owner.Identity, owner.Socket);
+        }
+        var saved = await CallAsync("attachments", "commit", JsonSerializer.SerializeToElement(
+            new AttachmentsFeature.CommitArgs(upload), AttachmentsJson.Default.CommitArgs),
+            true, cancellationToken, owner.Identity, owner.Socket);
         return saved.GetProperty("path").GetString()!;
     }
 
@@ -228,7 +240,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         return target[TargetPrefix.Length..];
     }
 
-    public async Task<bool> AnswerAsync(SessionInfo session, string askId, JsonElement answer, CancellationToken cancellationToken)
+    internal async Task<bool> AnswerOwnerNeedAsync(SessionInfo session, string askId, JsonElement answer, CancellationToken cancellationToken)
     {
         try { return (await CallAsync("send", "answer", new SendFeature.AnswerArgs(session.SessionId, askId, answer), cancellationToken)).GetProperty("ok").GetBoolean(); }
         // SendFeature.cs rejects an expired ask with this failed message.

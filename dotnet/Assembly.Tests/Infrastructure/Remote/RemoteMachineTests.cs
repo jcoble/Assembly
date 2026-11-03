@@ -511,12 +511,8 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         return http;
     }
 
-    private static async Task<ClientWebSocket> OpenLiveAsync(DesktopBackend backend, string token, string sessionId, long after)
-    {
-        var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://{backend.Address.Authority}/live?session={sessionId}&after={after}&token={token}"), CancellationToken.None);
-        return socket;
-    }
+    private static Task<ClientWebSocket> OpenLiveAsync(DesktopBackend backend, string token, string sessionId, long after) =>
+        ApiTests.OpenRowsAsync(backend.Address, token, sessionId, after);
 
     private static StringContent Json(string json) => new(json, Encoding.UTF8, "application/json");
 

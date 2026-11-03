@@ -73,7 +73,9 @@ fn the_ready_line_hands_over_the_token_and_quit_stops_the_backend() {
     );
     let (mut launcher, ready) = launch(config);
     assert_eq!(ready.recv().unwrap(), TOKEN);
+    let started = Instant::now();
     launcher.stop();
+    assert!(started.elapsed() < launcher.config.stop_grace);
     let home = launcher.config.home.clone();
     assert_eq!(read(&launcher.config, "stopped"), "stopped\n");
     assert_eq!(read(&launcher.config, "runs"), "1\n");
@@ -83,6 +85,7 @@ fn the_ready_line_hands_over_the_token_and_quit_stops_the_backend() {
         log.contains("starting") && log.contains("listening on"),
         "{log}"
     );
+    assert!(!log.contains("so it was killed"), "{log}");
 }
 
 #[test]
@@ -183,6 +186,10 @@ fn a_backend_that_ignores_sigterm_is_killed_after_the_grace_period_with_its_stra
     let pid = *launcher.pid.lock().unwrap();
     let started = Instant::now();
     launcher.stop();
+    assert!(
+        started.elapsed() >= launcher.config.stop_grace,
+        "the child was killed before its grace period"
+    );
     assert!(
         started.elapsed() < Duration::from_secs(3),
         "{:?}",

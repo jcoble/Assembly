@@ -18,6 +18,7 @@ internal sealed class EngineMirror : IAsyncDisposable
     private readonly IAtomicWriter _writer;
     private readonly TimeProvider _time;
     private readonly TextWriter _log;
+    private readonly Action<IWriteScope, string>? _mirrored;
     private readonly CancellationTokenSource _stop = new();
     private readonly CancellationToken _stoppingToken;
     internal CancellationToken Stopping => _stoppingToken;
@@ -31,9 +32,10 @@ internal sealed class EngineMirror : IAsyncDisposable
     private bool _stopping;
     public event Action? CaughtUp;
 
-    public EngineMirror(RemoteMachine remote, IAtomicWriter writer, TimeProvider time, TextWriter log)
+    public EngineMirror(RemoteMachine remote, IAtomicWriter writer, TimeProvider time, TextWriter log, Action<IWriteScope, string>? mirrored = null)
     {
         (_remote, _writer, _time, _log) = (remote, writer, time, log);
+        _mirrored = mirrored;
         _stoppingToken = _stop.Token;
         remote.SocketOpened += Opened;
         _run = RunAsync();
@@ -206,7 +208,10 @@ internal sealed class EngineMirror : IAsyncDisposable
                     cursor = _writer.Write("engine.mirror.snapshot", s =>
                     {
                         MirrorApply.SnapshotPage(s, machine, frame.GetProperty("items").EnumerateArray().ToArray());
-                        return more ? cursor : MirrorApply.EndSnapshot(s, machine, through, at, Now);
+                        if (more) return cursor;
+                        var completed = MirrorApply.EndSnapshot(s, machine, through, at, Now);
+                        _mirrored?.Invoke(s, machine);
+                        return completed;
                     });
                     if (more) { await _remote.SendOwnerBindingAsync(owner, $"{{\"t\":\"next\",\"id\":{id}}}", ct); continue; }
                     cut = null; cutAt = null;
@@ -215,10 +220,14 @@ internal sealed class EngineMirror : IAsyncDisposable
                 {
                     try
                     {
-                        cursor = _writer.Write("engine.mirror.events", s => MirrorApply.Events(s, machine,
-                            frame.GetProperty("after").GetInt64(), through, at,
-                            JsonSerializer.Deserialize(frame.GetProperty("events"), EngineJson.Default.IReadOnlyListEngineEvent)!,
-                            frame.GetProperty("rows").EnumerateArray().ToArray(), Now));
+                        cursor = _writer.Write("engine.mirror.events", s =>
+                        {
+                            var completed = MirrorApply.Events(s, machine, frame.GetProperty("after").GetInt64(), through, at,
+                                JsonSerializer.Deserialize(frame.GetProperty("events"), EngineJson.Default.IReadOnlyListEngineEvent)!,
+                                frame.GetProperty("rows").EnumerateArray().ToArray(), Now);
+                            _mirrored?.Invoke(s, machine);
+                            return completed;
+                        });
                     }
                     catch (MirrorGap)
                     {

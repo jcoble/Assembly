@@ -29,10 +29,14 @@ public sealed partial class RemoteRowsSocketTests
         await _machine.ProbeAsync(CancellationToken.None);
         Assert.True(await _machine.StopAsync(_localSessions.Get("s")!, "running", CancellationToken.None));
         _remoteMachine.Refuses = true;
-        Assert.False(await _machine.AnswerAsync(_localSessions.Get("s")!, "gone",
+        Assert.False(await _machine.AnswerOwnerNeedAsync(_localSessions.Get("s")!, "gone",
             JsonDocument.Parse("""{"optionId":"yes"}""").RootElement, CancellationToken.None));
         Assert.Contains("stop running", _remoteMachine.Asked);
-        Assert.Contains(_remoteMachine.Asked, call => call.StartsWith("answer gone "));
+        Assert.NotNull(_remoteAnswer);
+        Assert.Equal("s", _remoteAnswer.Session);
+        Assert.Equal("gone", _remoteAnswer.Ask);
+        Assert.Equal("yes", _remoteAnswer.Answer.GetProperty("optionId").GetString());
+        Assert.DoesNotContain(_remoteMachine.Asked, call => call.StartsWith("answer "));
         Assert.Equal(0, _sessionHttpHits);
     }
 

@@ -143,6 +143,45 @@ public sealed partial class AdapterEffectsTests
         }
     }
 
+    [Theory]
+    [InlineData("permission")]
+    [InlineData("question")]
+    public async Task Owner_door_uses_caller_transaction_and_refuses_duplicate_or_wrong_session(string kind)
+    {
+        await using var f = new AdapterDeliveryFixture();
+        var (agent, live, need) = await OpenOwnerPreparationAsk(f, kind); using (live)
+        {
+            try
+            {
+                var attachments = new Assembly.Infrastructure.Chat.Attachments.AttachmentStore(Path.GetTempPath());
+                var local = new Assembly.Infrastructure.Machines.LocalMachine(f.Hub, f.Sessions, f.Hosts, attachments);
+                var door = new EngineDoor(f.Runtime, f.Sessions, new(local), attachments, f.Time, OwnerNeedService(f));
+                var answer = kind == "permission" ? JsonSerializer.SerializeToElement("yes")
+                    : JsonSerializer.SerializeToElement(new { action = "decline" });
+                var other = f.Sessions.Create("claude", "https://github.com/o/other");
+                var wrong = await door.PrepareNeedAnswerAsync(new(other.SessionId, need, answer), default);
+                Assert.False(f.Db.Writer.Write("test.door-wrong-session", wrong));
+                var prepared = await door.PrepareNeedAnswerAsync(new(f.Session.SessionId, need, answer), default);
+                Assert.Throws<InvalidOperationException>(() => f.Db.Writer.Write<bool>("test.door-rollback", scope =>
+                {
+                    Assert.True(prepared(scope));
+                    throw new InvalidOperationException("rollback");
+                }));
+                Assert.Equal("open", f.State("engine_needs_me", need));
+                Assert.Equal(0, f.Db.QueryFirst("SELECT COUNT(*) FROM engine_outbox WHERE kind='answer'", r => r.Long(0), default));
+                Assert.NotNull(f.Hosts.For(f.Session.SessionId).PrepareProviderAnswer(need, answer));
+                var raced = await door.PrepareNeedAnswerAsync(new(f.Session.SessionId, need, answer), default);
+                Assert.True(f.Db.Writer.Write("test.door-commit", prepared));
+                Assert.False(f.Db.Writer.Write("test.door-raced-answer", raced));
+                Assert.NotNull(f.Hosts.For(f.Session.SessionId).PrepareProviderAnswer(need, answer));
+                var duplicate = await door.PrepareNeedAnswerAsync(new(f.Session.SessionId, need, answer), default);
+                Assert.False(f.Db.Writer.Write("test.door-duplicate", duplicate));
+                Assert.Equal(1, f.Db.QueryFirst("SELECT COUNT(*) FROM engine_outbox WHERE kind='answer'", r => r.Long(0), default));
+            }
+            finally { await CloseOwnerPreparationAsk(f, agent, need, false); }
+        }
+    }
+
     private static NeedAnswers OwnerNeedService(AdapterDeliveryFixture f) => new(new(f.Runtime, new(() => 5, () => 10), f.Time), f.Runtime, f.Hosts, f.Time);
     private static WindowCommand OwnerWindow(AdapterDeliveryFixture f, string need, JsonElement answer) =>
         new(Guid.NewGuid(), need, 1, f.Number("SELECT epoch FROM engine_session WHERE id=$id", f.Session.SessionId), new ResolveNeed("answered", answer));

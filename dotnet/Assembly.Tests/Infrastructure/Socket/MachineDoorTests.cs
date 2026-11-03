@@ -72,7 +72,7 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
         _machineCalls = new MachineCalls(_runtime, _f.Time, _launcher, _root, _needs);
         _machineCalls.Register(new PeerGate(dispatcher, this));
         dispatcher.Closed(_ => _bulkClosed.TrySetResult());
-        new EngineCalls(_runtime, _f.Time).Register(dispatcher);
+        new EngineCalls(_runtime, _f.Time, _needs).Register(dispatcher);
         dispatcher.Topic("peer", TestJson.Default.Note, n => n.Text, (_, c) => [new(c.Peer is OwnerPeer && c.ReplyId == 37 ? "owner" : "missing")]);
         var builder = WebApplication.CreateSlimBuilder(); builder.Logging.ClearProviders(); builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0));
         _app = builder.Build(); _app.UseWebSockets();

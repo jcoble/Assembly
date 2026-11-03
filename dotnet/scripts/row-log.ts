@@ -1,125 +1,109 @@
-// The row-position log for the step 3 checks: a session's rows, read from the backend on this machine
-// the two ways the webview reads them.
-//   node row-log.ts <sessionId|latest> [--follow SECONDS] [--env FILE] [--port 9797]
-// 1. Every row in seq order, as a socket opened at 0 gets them, checked for duplicates and a broken prevSeq chain.
-//    Seqs may skip: a message's deltas are deleted once the message is saved (RowStore.cs).
-//    With --follow, the socket stays open and live rows are logged as they arrive, with their time.
-// 2. The session as the app opens it: pages of 100 items, newest first, stitched oldest first, each item
-//    at its first seq (its place on screen). Checked against one load of up to 500 items.
-// The token is read from the env file and never printed. Exits 1 if a check fails.
+// Row-position diagnostics through the same control/bulk sockets as the native client.
+// node row-log.ts <sessionId|latest> [--follow SECONDS] [--env FILE] [--port 9797]
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { connectSocket } from '../../scripts/features/socket.ts';
+import { readRows, type Row, type RowPage } from '../../scripts/features/live-rows.ts';
 
-// A row as the backend sends it. The payload's fields depend on the row's kind; describe() reads them.
-type Payload = {
-  text?: string; state?: string; name?: string; summary?: string; from?: number; blocks?: unknown[];
-  done?: boolean; status?: string; durationMs?: number; toolCalls?: number; code?: string; message?: string;
-};
-type Row = { seq: number; prevSeq?: number; kind: string; itemId?: string; firstSeq: number; payload: Payload };
 type Session = { sessionId: string; title?: string; repoUrl: string };
-type Page = { rows: Row[]; hasBefore: boolean; before: number };
-type Frame = { type: string; row: Row };
-
-const args = process.argv.slice(2);
-const option = (name: string, fallback: string): string => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
-const target = args[0];
-if (!target || target.startsWith('--')) {
-  console.error('usage: node row-log.ts <sessionId|latest> [--follow SECONDS] [--env FILE] [--port 9797]');
-  process.exit(2);
-}
-const envFile = option('--env', `${homedir()}/.config/assembly-dotnet/env`);
-const port = option('--port', '9797');
-const followSeconds = Number(option('--follow', '0'));
-const token = readFileSync(envFile, 'utf8').match(/^ASSEMBLY_TOKEN=(\w+)/m)![1];
-const problems: string[] = [];
-const started = Date.now();
-
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`http://127.0.0.1:${port}${path}`, { headers: { authorization: `Bearer ${token}` } });
-  if (!res.ok) throw new Error(`GET ${path} returned ${res.status}`);
-  return (await res.json()) as T;
-}
-
+type LogOptions = { api: string; token: string; target: string; followMs: number; signal: AbortSignal;
+  log?: (line: string) => void };
 function describe(row: Row): string {
   const p = row.payload;
   switch (row.kind) {
     case 'user': return JSON.stringify(p.text);
-    case 'turn': return p.state!;
+    case 'turn': return p.state;
     case 'tool': return `${p.name} ${p.state}: ${p.summary ?? ''}`;
-    case 'delta': return `from block ${p.from}, ${p.text!.length} new chars`;
-    case 'message': return `${p.blocks!.length} blocks`;
-    case 'thinking': return `${p.text!.length} chars${p.done ? ', done' : ''}`;
+    case 'delta': return `from block ${p.from}, ${p.text.length} new chars`;
+    case 'message': return `${p.blocks.length} blocks`;
+    case 'thinking': return `${p.text.length} chars${p.done ? ', done' : ''}`;
     case 'stats': return `${p.status}, ${p.durationMs ?? '?'} ms, ${p.toolCalls} tools`;
     case 'error': return `${p.code ?? 'error'}: ${p.message}`;
     default: return JSON.stringify(p).slice(0, 90);
   }
 }
-
-const clip = (text: string, max: number): string => (text.length > max ? text.slice(0, max) + '…' : text);
-const line = (row: Row): string =>
+const clip = (text: string, max: number) => text.length > max ? text.slice(0, max) + '…' : text;
+const line = (row: Row) =>
   `${String(row.seq).padStart(5)}  ${row.kind.padEnd(8)} ${(row.itemId ?? '-').slice(0, 34).padEnd(34)} ${clip(describe(row), 90)}`;
 
-const sessions = (await get<{ sessions: Session[] }>('/sessions?limit=200')).sessions;
-const session = target === 'latest' ? sessions[0] : sessions.find((t) => t.sessionId === target);
-if (!session) throw new Error(`no session ${target}`);
-console.log(`session ${session.sessionId} "${session.title ?? 'untitled'}", repo ${session.repoUrl}`);
+export async function logRows(options: LogOptions): Promise<void> {
+  const { api, token, target, signal } = options;
+  const log = options.log ?? console.log;
+  const control = await connectSocket(api, token, { signal });
+  let bulk: Awaited<ReturnType<typeof connectSocket>> | undefined;
+  let subscription: Awaited<ReturnType<typeof control.subscribe>> | undefined;
+  try {
+    let session: Session | undefined;
+    if (target === 'latest') {
+      const page = await control.call('sessions', 'page', { limit: 1 });
+      session = page.sessions[0];
+    } else {
+      subscription = await control.subscribe('sessions', target);
+      session = subscription.state.items.find((entry: { key: string }) => entry.key === target)?.item;
+      subscription.close(); subscription = undefined;
+    }
+    if (!session) throw new Error(`no session ${target}`);
+    log(`session ${session.sessionId} "${session.title ?? 'untitled'}", repo ${session.repoUrl}`);
+    log('\n1. Every row in seq order (a socket opened at 0)');
+    const started = Date.now();
+    const { rows, cut } = await readRows({ api, token, session: session.sessionId, signal, followMs: options.followMs,
+      onRow: row => log((options.followMs > 0 ? `+${((Date.now() - started) / 1000).toFixed(1)}s`.padStart(8) : '') + line(row)) });
+    log(`   ${rows.length} rows, seqs up to ${rows.at(-1)?.seq ?? cut}: no duplicates, prevSeq chain unbroken`);
+    log('\n2. The session as the app opens it (pages of 100 items, newest first)');
+    bulk = await connectSocket(api, token, { signal, endpoint: '/socket/bulk' });
+    const pages: Row[][] = [];
+    const cursors = new Set<number>();
+    let before: number | null = null;
+    do {
+      const args = { session: session.sessionId, limit: 100, ...(before == null ? {} : { before }) };
+      const page = await bulk.call('rows', 'page', args) as RowPage;
+      if (!Array.isArray(page.rows)) throw new Error('rows/page omitted rows');
+      pages.push(page.rows);
+      log(`   page ${pages.length}: ${page.rows.length} items, first seqs ${page.rows[0]?.firstSeq}..${page.rows.at(-1)?.firstSeq}`);
+      if (page.hasBefore && (!Number.isSafeInteger(page.before) || page.before! <= 0 || cursors.has(page.before!)))
+        throw new Error('rows/page returned a non-progressing cursor');
+      before = page.hasBefore ? page.before : null;
+      if (before != null) cursors.add(before);
+    } while (before != null);
+    const stitched = pages.reverse().flat();
+    const key = (row: Row) => row.itemId ?? `seq ${row.seq}`;
+    const keys = stitched.map(key);
+    if (new Set(keys).size !== keys.length) throw new Error('an item shows up on more than one page');
+    if (stitched.some((row, index) => index > 0 && row.firstSeq <= stitched[index - 1]!.firstSeq))
+      throw new Error('items are out of order');
+    for (const row of stitched) log(`   at ${String(row.firstSeq).padStart(5)} ${line(row)}`);
+    const whole = await bulk.call('rows', 'page', { session: session.sessionId, limit: 500 }) as RowPage;
+    if (whole.rows.length < 500 && JSON.stringify(whole.rows.map(key)) !== JSON.stringify(keys))
+      throw new Error('the stitched pages differ from one load');
+    log(`   ${stitched.length} items on ${pages.length} pages; one load has ${whole.rows.length} items`);
+    log('\nAll checks passed.');
+  } finally {
+    subscription?.close();
+    await Promise.all([control.close(), bulk?.close()]);
+  }
+}
 
-console.log('\n1. Every row in seq order (a socket opened at 0)');
-let last = 0;
-let count = 0;
-await new Promise<void>((resolve, reject) => {
-  const url = `ws://127.0.0.1:${port}/live?session=${encodeURIComponent(session.sessionId)}&after=0&token=${token}`;
-  const socket = new WebSocket(url);
-  let following = false;
-  let quiet: ReturnType<typeof setTimeout> | undefined;
-  // The backlog comes at once; 1.5 s with no row means it's all here.
-  const settle = () => {
-    clearTimeout(quiet);
-    quiet = setTimeout(() => {
-      if (followSeconds <= 0) return socket.close();
-      following = true;
-      console.log(`   -- backlog done at seq ${last}; following live rows for ${followSeconds} s --`);
-      setTimeout(() => socket.close(), followSeconds * 1000);
-    }, 1500);
-  };
-  socket.onopen = settle;
-  socket.onerror = () => reject(new Error('the socket failed'));
-  socket.onclose = () => resolve();
-  socket.onmessage = (event) => {
-    const frame = JSON.parse(event.data) as Frame;
-    if (frame.type !== 'row') return;
-    const row = frame.row;
-    if (row.seq <= last) problems.push(`seq ${row.seq} came after ${last}`);
-    else if (row.prevSeq !== last) problems.push(`seq ${row.seq} says prevSeq ${row.prevSeq}, the last row was ${last}`);
-    last = Math.max(last, row.seq);
-    count++;
-    const time = following ? `+${((Date.now() - started) / 1000).toFixed(1)}s`.padStart(8) : '';
-    console.log(time + line(row));
-    if (!following) settle();
-  };
-});
-console.log(`   ${count} rows, seqs up to ${last}: ${!problems.length ? 'no duplicates, prevSeq chain unbroken' : 'PROBLEM'}`);
-
-console.log('\n2. The session as the app opens it (pages of 100 items, newest first)');
-const pages: Row[][] = [];
-let before: number | null = null;
-do {
-  const page: Page = await get<Page>(`/sessions/${session.sessionId}/rows?${before === null ? '' : `before=${before}&`}limit=100`);
-  pages.push(page.rows);
-  console.log(`   page ${pages.length}: ${page.rows.length} items, first seqs ${page.rows[0]?.firstSeq}..${page.rows.at(-1)?.firstSeq}`);
-  before = page.hasBefore ? page.before : null;
-} while (before !== null);
-const stitched = pages.reverse().flat();
-for (const row of stitched) console.log(`   at ${String(row.firstSeq).padStart(5)} ${line(row)}`);
-
-const key = (row: Row): string => row.itemId ?? `seq ${row.seq}`;
-const keys = stitched.map(key);
-if (new Set(keys).size !== keys.length) problems.push('an item shows up on more than one page');
-if (stitched.some((row, i) => i > 0 && row.firstSeq <= stitched[i - 1].firstSeq)) problems.push('items are out of order');
-const whole = (await get<{ rows: Row[] }>(`/sessions/${session.sessionId}/rows?limit=500`)).rows;
-if (whole.length < 500 && JSON.stringify(whole.map(key)) !== JSON.stringify(keys))
-  problems.push('the stitched pages differ from one load');
-console.log(`   ${stitched.length} items on ${pages.length} pages; one load has ${whole.length} items`);
-
-console.log(problems.length ? `\nPROBLEMS:\n  ${problems.join('\n  ')}` : '\nAll checks passed.');
-process.exit(problems.length ? 1 : 0);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const args = process.argv.slice(2);
+  const option = (name: string, fallback: string) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback;
+  const target = args[0];
+  const followSeconds = Number(option('--follow', '0'));
+  const port = Number(option('--port', '9797'));
+  if (!target || target.startsWith('--') || !Number.isFinite(followSeconds) || followSeconds < 0 ||
+      !Number.isSafeInteger(port) || port < 1 || port > 65535) {
+    console.error('usage: node row-log.ts <sessionId|latest> [--follow SECONDS] [--env FILE] [--port 9797]');
+    process.exitCode = 2;
+  } else {
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new Error('row-log deadline exceeded')), (followSeconds + 90) * 1000);
+    try {
+      const envFile = option('--env', join(homedir(), '.config', 'assembly-dotnet', 'env'))!;
+      const token = readFileSync(envFile, 'utf8').match(/^ASSEMBLY_TOKEN=(.+)$/m)?.[1]?.trim();
+      if (!token) throw new Error('env file is missing ASSEMBLY_TOKEN');
+      await logRows({ api: `http://127.0.0.1:${port}`, token, target, followMs: followSeconds * 1000, signal: deadline.signal });
+    } catch (error) { console.error(`PROBLEM: ${(error as Error).message}`); process.exitCode = 1; }
+    finally { clearTimeout(timer); }
+  }
+}

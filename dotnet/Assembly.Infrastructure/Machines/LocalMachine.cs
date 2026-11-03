@@ -84,9 +84,6 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
     public Task<SessionConfig> WarmConfigAsync(SessionInfo session, string targetId, CancellationToken cancellationToken) =>
         sessions.For(session.SessionId).WarmConfigAsync(targetId, cancellationToken);
 
-    public Task<bool> AnswerAsync(SessionInfo session, string askId, System.Text.Json.JsonElement answer, CancellationToken cancellationToken) =>
-        Task.FromResult(sessions.For(session.SessionId).Answer(askId, answer));
-
     public void Watch(SessionInfo session)
     {
     }

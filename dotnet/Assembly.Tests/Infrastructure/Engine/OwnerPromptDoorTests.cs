@@ -1,4 +1,9 @@
 using System.Text.Json;
+using Assembly.Application.Common;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Engine.Mcp;
+using Assembly.Infrastructure.Engine.Needs;
+using Assembly.Tests.Features.Chat.Sessions;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Engine;
@@ -104,25 +109,41 @@ public sealed partial class OwnerPromptDoorTests
         public EngineFixture Fixture { get; }
         public SessionStore Sessions { get; private set; }
         public AttachmentStore Attachments { get; } = new(Path.Combine(Path.GetTempPath(), $"assembly-attachments-{Guid.NewGuid():N}"));
-        public EngineDoor Door { get; private set; }
+        public EngineDoor Door { get; private set; } = null!;
         public FakeMachine Machine { get; private set; }
-        private EngineRuntime _runtime;
+        private EngineRuntime _runtime = null!;
+        private LiveHub _hub = null!;
+        private BackgroundWork _work = null!;
+        private SessionRegistry _hosts = null!;
+        private NeedAnswers _needs = null!;
         public Harness()
         {
             Fixture = new(topics: _topics);
             Sessions = SessionStore.Open(Fixture.Db, Fixture.Time, "isolated-checkouts");
             Machine = new FakeMachine(null, Sessions);
-            _runtime = EngineRuntime.Start(Fixture.Db, _topics, Fixture.Time, Fixture.Limits);
-            Door = new(_runtime, Sessions, new MachineSet(Machine), Attachments, Fixture.Time);
+            OpenDoor();
         }
         public async Task Reopen()
         {
-            await _runtime.DisposeAsync(); Fixture.Reopen();
+            await CloseDoor(); Fixture.Reopen();
             Sessions = SessionStore.Open(Fixture.Db, Fixture.Time, "isolated-checkouts");
             Machine = new FakeMachine(null, Sessions);
-            _runtime = EngineRuntime.Start(Fixture.Db, _topics, Fixture.Time, Fixture.Limits);
-            Door = new(_runtime, Sessions, new MachineSet(Machine), Attachments, Fixture.Time);
+            OpenDoor();
         }
-        public async ValueTask DisposeAsync() { await _runtime.DisposeAsync(); Fixture.Dispose(); }
+        private void OpenDoor()
+        {
+            _hub = new LiveHub(RowStore.Open(Fixture.Db));
+            _work = new BackgroundWork(Fixture.Time, TextWriter.Null);
+            _hosts = new SessionRegistry(_hub, Sessions, new FakeLauncher(), Fixture.Time, TextWriter.Null, _work);
+            _runtime = EngineRuntime.Start(Fixture.Db, _topics, Fixture.Time, Fixture.Limits);
+            _needs = new NeedAnswers(new McpGate(_runtime, Fixture.Limits, Fixture.Time), _runtime, _hosts, Fixture.Time);
+            Door = new(_runtime, Sessions, new MachineSet(Machine), Attachments, Fixture.Time, _needs);
+        }
+        private async Task CloseDoor()
+        {
+            await _needs.DisposeAsync(); await _runtime.DisposeAsync(); await _hosts.DisposeAsync();
+            await _work.DisposeAsync(); _hub.Dispose();
+        }
+        public async ValueTask DisposeAsync() { await CloseDoor(); Fixture.Dispose(); }
     }
 }

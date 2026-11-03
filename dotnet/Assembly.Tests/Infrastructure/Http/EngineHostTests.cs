@@ -221,8 +221,9 @@ public sealed partial class EngineHostTests
         private readonly CancellationTokenSource _stop = new();
         private Uri _address = null!;
         public EngineRuntime Runtime { get; private set; } = null!;
+        public Uri Address => _address;
 
-        public static async Task<Host> Start(string host, string home, IEngineEffects? effects, bool failStarted = false, IAgentLauncher? launcher = null)
+        public static async Task<Host> Start(string host, string home, IEngineEffects? effects, bool failStarted = false, IAgentLauncher? launcher = null, int port = 0)
         {
             var result = new Host();
             void Started(EngineRuntime runtime)
@@ -235,7 +236,7 @@ public sealed partial class EngineHostTests
             {
                 if (host == "desktop")
                 {
-                    result._desktop = await DesktopBackend.StartAsync(home, "engine-token", 0, launcher ?? new FakeLauncher(), TextWriter.Null,
+                    result._desktop = await DesktopBackend.StartAsync(home, "engine-token", port, launcher ?? new FakeLauncher(), TextWriter.Null,
                         engineEffects: effects, engineStarted: Started);
                     result._address = result._desktop.Address;
                 }
@@ -244,7 +245,7 @@ public sealed partial class EngineHostTests
                     var tokenFile = Path.Combine(home, "token");
                     await File.WriteAllTextAsync(tokenFile, "ASSEMBLY_TOKEN=engine-token\n");
                     var ready = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
-                    result._remote = ServeRun.RunAsync(new(0, home, tokenFile, Path.Combine(home, "agents.json")),
+                    result._remote = ServeRun.RunAsync(new(port, home, tokenFile, Path.Combine(home, "agents.json")),
                         launcher ?? new FakeLauncher(), effects, (address, runtime) => { Started(runtime); ready.TrySetResult(address); }, result._stop.Token);
                     var completed = await Task.WhenAny(ready.Task, result._remote).WaitAsync(Timeout);
                     if (completed == result._remote) await result._remote;

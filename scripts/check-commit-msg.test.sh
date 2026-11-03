@@ -8,6 +8,8 @@ repo=$(mktemp -d)
 trap 'rm -rf "$repo"' EXIT
 cd "$repo"
 git init -q -b main
+git config core.hooksPath /dev/null
+git config commit.gpgsign false
 git -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
 
 failed=0
@@ -36,22 +38,52 @@ expect 1 "an empty Committed-by stops it" work $'Subject\n\nCommitted-by: '
 expect 0 "a tsk branch with its Task line passes" tsk-42-thing $'Subject\n\nTask: TSK-42 https://app.notion.com/p/'"$page"$'\nArchitecture: unchanged\nCommitted-by: Claude'
 expect 1 "a tsk branch without its Task line stops it" tsk-42-thing "$ok"
 expect 1 "a Task line for another task stops it" tsk-42-thing $'Subject\n\nTask: TSK-43 https://app.notion.com/p/'"$page"$'\nArchitecture: unchanged\nCommitted-by: Claude'
-expect 1 "a fix with no test change stops it" work $'fix(chat): rows keep order\n\nArchitecture: unchanged\nCommitted-by: Claude' app/src/x.ts
+expect 1 "a fix with no test change stops it" work $'fix(chat): rows keep order\n\nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/x.rs
 expect 0 "a fix that changes a .NET test passes" work $'fix(chat): rows keep order\n\nArchitecture: unchanged\nCommitted-by: Claude' dotnet/Assembly.Tests/X.cs
-expect 0 "a fix that changes an app test passes" work $'Fix rows\n\nArchitecture: unchanged\nCommitted-by: Claude' app/test/x.test.ts
+expect 1 "a current app test does not count as a retained test" work $'Fix rows\n\nArchitecture: unchanged\nCommitted-by: Claude' app/test/x.test.ts
 expect 0 "a fix that changes only a script test passes" work $'fix: guard\n\nArchitecture: unchanged\nCommitted-by: Claude' scripts/x.test.sh
 expect 1 "a fix that changes only a script that isn't a test stops it" work $'fix: guard\n\nArchitecture: unchanged\nCommitted-by: Claude' scripts/x.sh
 expect 0 "a fix that changes a Rust test file beside the code passes" work $'fix: frames\n\nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/core/socket/frames_tests.rs
 expect 0 "a fix that changes a Rust tests.rs beside the code passes" work $'fix: frames\n\nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/core/socket/tests.rs
 expect 0 "a fix that changes a Rust test under desktop/tests passes" work $'fix: frames\n\nArchitecture: unchanged\nCommitted-by: Claude' desktop/tests/x.rs
 expect 1 "a fix that changes only Rust code stops it" work $'fix: frames\n\nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/core/mod.rs
-expect 0 "a fix with No-test passes" work $'fix: typo\n\nNo-test: a comment only\nArchitecture: unchanged\nCommitted-by: Claude' app/src/x.ts
-expect 0 "a fix that changes a test with an accented name passes" work $'fix: names\n\nArchitecture: unchanged\nCommitted-by: Claude' 'app/test/résumé.test.ts'
-expect 0 "a fix with No-test above a long body passes" work $'fix: x\n\nNo-test: r\n'"$(seq 20000)"$'\nArchitecture: unchanged\nCommitted-by: Claude' app/src/x.ts
-expect 0 "a subject that only starts with fixup isn't a fix" work $'fixup the docs\n\nArchitecture: unchanged\nCommitted-by: Claude' app/src/x.ts
+expect 0 "a fix with No-test passes" work $'fix: typo\n\nNo-test: a comment only\nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/x.rs
+expect 0 "a fix that changes a test with an accented name passes" work $'fix: names\n\nArchitecture: unchanged\nCommitted-by: Claude' 'dotnet/Assembly.Tests/résumé.cs'
+expect 0 "a fix with No-test above a long body passes" work $'fix: x\n\nNo-test: r\n'"$(seq 20000)"$'\nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/x.rs
+expect 0 "a subject that only starts with fixup isn't a fix" work $'fixup the docs\n\nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/x.rs
 expect 1 "a message without Architecture: unchanged stops it" work $'Subject\n\nCommitted-by: Claude'
 expect 0 "Architecture: unchanged in any case passes" work $'Subject\n\narchitecture: Unchanged\nCommitted-by: Claude'
-expect 0 "a commit that changes docs/architecture.md needs no Architecture line" work $'Subject\n\nCommitted-by: Claude' docs/architecture.md
+expect 1 "changing the old architecture copy still needs an acknowledgement" work $'Subject\n\nCommitted-by: Claude' docs/architecture.md
 expect 1 "a file only named like the guide doesn't count as it" work $'Subject\n\nCommitted-by: Claude' docs/architectureXmd
+
+architecture=https://app.notion.com/p/409394b0689d8184906cd246dc89acd1
+expect 0 "the exact canonical architecture URL passes" work $'Subject\n\nArchitecture: updated '"$architecture"$'\nCommitted-by: Claude'
+expect 1 "updated without a URL stops it" work $'Subject\n\nArchitecture: updated\nCommitted-by: Claude'
+expect 1 "another Notion URL stops it" work $'Subject\n\nArchitecture: updated https://app.notion.com/p/'"$page"$'\nCommitted-by: Claude'
+expect 1 "a malformed canonical URL stops it" work $'Subject\n\nArchitecture: updated app.notion.com/p/409394b0689d8184906cd246dc89acd1\nCommitted-by: Claude'
+expect 1 "a canonical URL with a suffix stops it" work $'Subject\n\nArchitecture: updated '"$architecture"$'?x=1\nCommitted-by: Claude'
+expect 1 "an unchanged prefix with trailing prose stops it" work $'Subject\n\nArchitecture: unchanged maybe\nCommitted-by: Claude'
+expect 1 "an empty No-test reason stops it" work $'fix: x\n\nNo-test:  \nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/x.rs
+expect 1 "a malformed task URL stops it" tsk-42-thing $'Subject\n\nTask: TSK-42 https://app.notion.com/p/no-page\nArchitecture: unchanged\nCommitted-by: Claude'
+
+# Historical commits retain app/test recognition, while the staged hook always requires retained tests.
+mkdir -p app
+printf '{}\n' >app/package.json
+git add app/package.json
+git -c user.name=t -c user.email=t@t commit -q -m 'historical app manifest'
+printf 'test\n' >app/test/old.test.ts
+git add app/test/old.test.ts
+printf '%s\n' $'fix: historical app\n\nArchitecture: unchanged\nCommitted-by: Claude' >"$repo/.msg"
+"$check" "$repo/.msg" 2>/dev/null
+hook=$?
+git -c user.name=t -c user.email=t@t commit -q -F "$repo/.msg"
+"$check" --commit HEAD work 2>/dev/null
+ci=$?
+if [ "$hook" = 1 ] && [ "$ci" = 0 ]; then echo "ok   old app test counts only for a historical commit"
+else echo "FAIL historical app test: hook $hook, ci $ci"; failed=1; fi
+
+git rm -q app/package.json
+git -c user.name=t -c user.email=t@t commit -q -m 'remove historical runtime'
+expect 1 "old app tests no longer count after runtime removal" work $'fix: removed app\n\nArchitecture: unchanged\nCommitted-by: Claude' app/test/old.test.ts
 
 exit "$failed"

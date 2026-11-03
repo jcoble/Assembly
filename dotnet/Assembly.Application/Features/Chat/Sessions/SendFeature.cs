@@ -21,17 +21,19 @@ internal sealed class SendFeature : IFeature
     private readonly SessionStore _store;
     private readonly MachineSet _machines;
     private readonly LiveHub _hub;
+    private readonly IEngineDoor _door;
 
-    public SendFeature(SessionStore store, MachineSet machines, LiveHub hub)
+    public SendFeature(SessionStore store, MachineSet machines, LiveHub hub, IEngineDoor door)
     {
         _store = store;
         _machines = machines;
         _hub = hub;
+        _door = door;
     }
 
     // Each is a write keyed on its session (a stop, on its run's), so one session's calls reach its machine in the order
     // sent, a machine that hangs holds up only its sessions' calls, and a closing socket doesn't cancel one already
-    // queued; the machine's work runs outside the write, which only answers.
+    // queued. Machine I/O and answer preparation run outside the write; its returned closure applies the answer.
     public void Register(ICallRegistry calls)
     {
         calls.Write(Feature, "send", SessionsJson.Default.SendArgs, SessionsJson.Default.Sent, async (args, call) =>
@@ -57,8 +59,9 @@ internal sealed class SendFeature : IFeature
             if (args.Answer.ValueKind != JsonValueKind.Object)
                 throw new CallFailed("expected { optionId } or { action, content }");
             var session = Session(args.Session);
-            return await _machines.For(session).AnswerAsync(session, args.Ask, args.Answer, call.Cancellation)
-                ? _ => new Done(true)
+            var answer = await _door.PrepareNeedAnswerAsync(new(session.SessionId, args.Ask, args.Answer), call.Cancellation);
+            return scope => answer(scope)
+                ? new Done(true)
                 : throw new CallFailed("that ask isn't open, or the answer doesn't fit it");
         }, args => OrderOf(args.Session));
         calls.Write(Feature, "stopTask", SessionsJson.Default.StopTaskArgs, SessionsJson.Default.Done, async (args, call) =>

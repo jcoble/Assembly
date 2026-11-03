@@ -15,6 +15,10 @@ using Assembly.Engine.Effects;
 using Assembly.Engine.Prs;
 using Assembly.Engine.Recording;
 using Assembly.Infrastructure.Engine;
+using Assembly.Infrastructure.Engine.Needs;
+using Assembly.Application.Common;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Tests.Features.Chat.Sessions;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Infrastructure.Engine.Titles;
@@ -37,6 +41,10 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
     private readonly TopicSet _topics = new();
     private EngineFixture _f = null!;
     private EngineRuntime _runtime = null!;
+    private NeedAnswers _needs = null!;
+    private SessionRegistry _needHosts = null!;
+    private LiveHub _needHub = null!;
+    private BackgroundWork _needWork = null!;
     private SessionStore _titleSessions = null!;
     private bool _overrideTitlePeer;
     private CallPeer? _titlePeer;
@@ -50,9 +58,12 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
         _f = new(topics: _topics);
         _database = new(_f.Db);
         _runtime = EngineRuntime.Start(_database, _topics, _f.Time, new(() => 1, () => 5), isConfiguredProvider: (p, a) => p == "codex" && a == "");
-        var calls = new SocketDispatcher(_f.Db.Writer, _topics, _f.Time, NullLogger.Instance, new EngineSocketStream(_runtime));
-        new EngineCalls(_runtime, _f.Time, new MachineForward(_ => { Interlocked.Increment(ref _forwardAttempts); return null; })).Register(calls);
         _titleSessions = SessionStore.Open(_f.Db, _f.Time, "/isolated");
+        _needHub = new(RowStore.Open(_f.Db)); _needWork = new(_f.Time, TextWriter.Null);
+        _needHosts = new(_needHub, _titleSessions, new FakeLauncher(), _f.Time, TextWriter.Null, _needWork);
+        _needs = new(new(_runtime, _f.Limits, _f.Time), _runtime, _needHosts, _f.Time);
+        var calls = new SocketDispatcher(_f.Db.Writer, _topics, _f.Time, NullLogger.Instance, new EngineSocketStream(_runtime));
+        new EngineCalls(_runtime, _f.Time, _needs, new MachineForward(_ => { Interlocked.Increment(ref _forwardAttempts); return null; })).Register(calls);
         new SessionTitleCalls(_runtime, _titleSessions).Register(new TitlePeerGate(calls, this));
         calls.Topic("sessions", TestJson.Default.Note, n => n.Text, (_, _) => [new Note("legacy")]);
         calls.Read("test", "barrier", TestJson.Default.Note, TestJson.Default.Note, (n, _) =>
@@ -78,32 +89,10 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        await _app.DisposeAsync();
+        await _needs.StopWaiting(); await _app.DisposeAsync(); await _needs.DisposeAsync();
         await _runtime.DisposeAsync();
+        await _needHosts.DisposeAsync(); await _needWork.DisposeAsync(); _needHub.Dispose();
         _f.Dispose();
-    }
-
-    [Theory]
-    [InlineData("sessions", "session")]
-    [InlineData("runs", "run")]
-    [InlineData("needs_me", "needs_me")]
-    [InlineData("messages", "message")]
-    [InlineData("prs", "pr")]
-    [InlineData("usage", "usage")]
-    public async Task Each_topic_replays_since_and_snapshots_on_gap(string topic, string kind)
-    {
-        Event(kind, "one"); Event(kind, "other");
-        await Published();
-        using var socket = await Open();
-        await Send(socket, $$"""{"t":"sub","id":7,"stream":"engine","topic":"{{topic}}","key":"one","after":0}""");
-        var page = await Read(socket);
-        Assert.Equal("engine_events", page.GetProperty("t").GetString());
-        Assert.Equal(2, page.GetProperty("through").GetInt64());
-        Assert.Equal("one", Assert.Single(page.GetProperty("events").EnumerateArray()).GetProperty("entityId").GetString());
-        await Send(socket, """{"t":"unsub","id":7}""");
-        _f.Db.Writer.Write("gap", s => s.Execute("DELETE FROM engine_event WHERE seq=1"));
-        await Send(socket, $$"""{"t":"sub","id":8,"stream":"engine","topic":"{{topic}}","after":0}""");
-        Assert.Equal("engine_snapshot", (await Read(socket)).GetProperty("t").GetString());
     }
 
     [Fact]

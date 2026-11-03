@@ -2,7 +2,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
-using Assembly.Remote.Smoke;
+using Assembly.Remote.Record;
 using Assembly.Tests.Core.Acp;
 using Assembly.Infrastructure.Transcript;
 

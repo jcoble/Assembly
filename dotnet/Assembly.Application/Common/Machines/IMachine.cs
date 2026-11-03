@@ -63,9 +63,6 @@ public interface IMachine
     /// <summary>Observes this session's native metadata without sending a prompt.</summary>
     Task<SessionConfig> WarmConfigAsync(SessionInfo session, string targetId, CancellationToken cancellationToken);
 
-    /// <summary>Answers one of the session's open asks (its card row). False if it isn't open or the answer doesn't fit.</summary>
-    Task<bool> AnswerAsync(SessionInfo session, string askId, System.Text.Json.JsonElement answer, CancellationToken cancellationToken);
-
     /// <summary>A webview opened the session: a remote machine brings its rows up to date here. Nothing to do locally.</summary>
     void Watch(SessionInfo session);
 }

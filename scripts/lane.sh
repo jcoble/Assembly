@@ -2,13 +2,13 @@
 # Lane worktrees: a checkout of its own under ~/dev/work/worktrees/Assembly/<name>, on branch lane/<name>, with a
 # .lane file that gives it its own ports, folders, app id and Workbox Test host (scripts/lane-env.sh). Works on the
 # Mac and on the workbox; a lane's number (1 to 9) is reserved on Workbox Test, which every lane's host shares.
-#   scripts/lane.sh new <name>      makes the worktree from main and installs app/'s packages (and shell/'s on the Mac)
+#   scripts/lane.sh new <name>      makes the worktree from main
 #   scripts/lane.sh adopt <name>    makes a worktree here for a lane made elsewhere (its branch lane/<name> pushed
 #                                   to GitHub), with the same number, so its ports, folders, app id and Workbox Test
 #                                   host match: the Mac adopts a workbox lane for the real-window checks
-#   scripts/lane.sh remove <name>   stops its window (Mac), removes its Workbox Test host and folders (unless the
+#   scripts/lane.sh remove <name>   removes its Workbox Test host and folders (unless the
 #                                   lane was adopted here: the machine that made it removes those), then the
-#                                   worktree; refuses a worktree with uncommitted changes. The branch stays unless merged
+#                                   worktree; refuses dirty/unmerged work or running lane processes. Close the native app first
 #   scripts/lane.sh list            the lanes here and the numbers reserved on Workbox Test
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -31,10 +31,8 @@ case "$mode" in
     git -C "$main" worktree add -q -b "lane/$name" "$dir" main
     git -C "$dir" config core.hooksPath .githooks
     printf 'LANE_NAME=%s\nLANE_NUMBER=%s\n' "$name" "$number" > "$dir/.lane"
-    (cd "$dir/app" && pnpm install --silent --prefer-offline)
-    [ "$(uname)" = Darwin ] && (cd "$dir/shell" && pnpm install --silent --prefer-offline)
     (cd "$dir" && . scripts/lane-env.sh && echo "lane $name (number $number) is at $dir on lane/$name:
-  Desktop backend 127.0.0.1:$DESKTOP_PORT, vite dev localhost:$DEV_PORT, data $DATA
+  Desktop backend 127.0.0.1:$DESKTOP_PORT, data $DATA
   Workbox Test host 127.0.0.1:$BOX_PORT, unit $BOX_UNIT, folder ~/$BOX_DATA") ;;
   adopt)
     [ -n "$name" ] || { echo "usage: scripts/lane.sh adopt <name>" >&2; exit 2; }
@@ -46,17 +44,48 @@ case "$mode" in
     git -C "$dir" branch -q --set-upstream-to="origin/lane/$name"
     git -C "$dir" config core.hooksPath .githooks
     printf 'LANE_NAME=%s\nLANE_NUMBER=%s\nLANE_ADOPTED=1\n' "$name" "$number" > "$dir/.lane"
-    (cd "$dir/app" && pnpm install --silent --prefer-offline)
-    [ "$(uname)" = Darwin ] && (cd "$dir/shell" && pnpm install --silent --prefer-offline)
     echo "adopted lane $name (number $number) at $dir on lane/$name" ;;
   remove)
     [ -n "$name" ] && [ -f "$dir/.lane" ] || { echo "no lane named '$name' at $dir" >&2; exit 1; }
     dirty=$(git -C "$dir" status --short)
     [ -z "$dirty" ] || { echo "$dir has uncommitted changes; commit or stash them first:"; echo "$dirty"; exit 1; } >&2
-    if [ "$(uname)" = Darwin ]; then
-      (cd "$dir" && . scripts/lane-env.sh && [ -f "$DATA/mac/app.pid" ] && kill -0 "$(cat "$DATA/mac/app.pid")" 2>/dev/null) \
-        && "$dir/shell/assembly.sh" stop
-    fi
+    git -C "$dir" merge-base --is-ancestor HEAD main || {
+      echo "$dir has work not merged into main; merge it before removing the lane" >&2; exit 1;
+    }
+    # Both app:dev (desktop/) and ui-check (checkout root) retain a lane cwd.
+    # Inspect actual open directories, including when no legacy app.pid exists.
+    # A missing/failed ownership inspection must never permit destructive cleanup.
+    command -v lsof >/dev/null || { echo "cannot prove lane processes are stopped: lsof is required" >&2; exit 1; }
+    owned=$(lsof -a -u "$(id -u)" -d cwd -Fn) || {
+      echo "cannot inspect lane process ownership; close the native app and retry" >&2; exit 1;
+    }
+    (cd "$dir" && . scripts/lane-env.sh
+      if printf '%s\n' "$owned" | awk -v lane="$dir" -v data="$DATA" '
+        /^n/ { path=substr($0,2); if (path==lane || index(path,lane "/")==1 || path==data || index(path,data "/")==1) found=1 }
+        END { exit !found }'; then
+        echo "lane $name has a live owned process; close the native app (or stop its ui-check session) before removing it" >&2
+        exit 1
+      fi
+      # ui-check also records backend/Xvfb IDs. Inspect those actual processes;
+      # never signal an ID or trust a stale/reused legacy app.pid.
+      if [ -f "$DATA/ui-check/state" ]; then
+        while IFS='=' read -r key pid; do
+          case "$key" in app|backend|xvfb) ;; *) continue ;; esac
+          [[ $pid =~ ^[1-9][0-9]*$ ]] || { echo "cannot inspect invalid ui-check $key PID" >&2; exit 1; }
+          if kill -0 "$pid" 2>/dev/null; then
+            files=$(lsof -a -p "$pid" -d cwd,txt -Fn) || {
+              echo "cannot inspect ui-check $key ownership; close the native app and retry" >&2; exit 1;
+            }
+            if printf '%s\n' "$files" | awk -v lane="$dir" -v data="$DATA" '
+              /^n/ { path=substr($0,2); if (path==lane || index(path,lane "/")==1 || path==data || index(path,data "/")==1) found=1 }
+              END { exit !found }'; then
+              echo "lane $name has a live owned ui-check $key; close the native app (or stop its ui-check session) before removing it" >&2
+              exit 1
+            fi
+          fi
+        done < "$DATA/ui-check/state"
+      fi
+    )
     if grep -q '^LANE_ADOPTED=1' "$dir/.lane"; then
       echo "lane $name was adopted here; its Workbox Test host stays for the machine that made it to remove"
     else

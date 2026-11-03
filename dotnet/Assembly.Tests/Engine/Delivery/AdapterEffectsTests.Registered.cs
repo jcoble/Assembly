@@ -22,9 +22,10 @@ public sealed partial class AdapterEffectsTests
     public async Task Actual_registered_socket_Engine_send_reaches_worker_host_provider_and_atomic_ack_once()
     {
         await using var f = new AdapterDeliveryFixture(worker: true);
+        await using var needs = OwnerNeedService(f);
         var attachments = new AttachmentStore(Path.GetTempPath()); var local = new LocalMachine(f.Hub, f.Sessions, f.Hosts, attachments);
         await using var app = ApiServer.Build(new(f.Hub, f.Sessions, new MachineSet(local), attachments, "isolated-token",
-            Writer: f.Db.Writer, Topics: f.Topics, Features: [new EngineCalls(f.Runtime, f.Time)], Engine: f.Runtime), 0, out _);
+            Writer: f.Db.Writer, Topics: f.Topics, Features: [new EngineCalls(f.Runtime, f.Time, needs)], Engine: f.Runtime), 0, out _);
         await app.StartAsync(); var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         using var socket = new ClientWebSocket(); await socket.ConnectAsync(new($"ws://{address.Authority}/socket"), default);
         await SocketSend(socket, """{"t":"hello","token":"isolated-token","protocol":1}"""); Assert.Equal("welcome", (await SocketRead(socket)).GetProperty("t").GetString());

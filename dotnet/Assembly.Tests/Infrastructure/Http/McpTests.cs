@@ -2,114 +2,159 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Assembly.Infrastructure.Http;
 using Assembly.Infrastructure.Mcp;
-using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Infrastructure.Chat.Attachments;
-using Assembly.Application.Features.Chat.Helpers;
-using Assembly.Application.Features.Chat.Rows;
-using Assembly.Application.Common.Machines;
+using Assembly.Infrastructure.Engine;
+using Assembly.Infrastructure.Engine.Helpers;
 using Assembly.Infrastructure.Machines;
 using Assembly.Infrastructure.Persistence;
+using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common;
-using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Application.Features.Chat;
 using Assembly.Domain.Sessions;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Hosting;
+using Assembly.Engine.Mcp;
+using Assembly.Engine.Mcp.Tools;
+using Assembly.Engine.Messages;
+using Assembly.Engine.Sessions;
 using Assembly.Tests.Features.Chat.Sessions;
+using Topics = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Infrastructure.Http;
 
-/// <summary>The Assembly MCP server on the real API, with a scripted agent behind it: helper sessions and messages.</summary>
+/// <summary>The SDK on the real API, with the owning Engine worker and a scripted ACP agent.</summary>
 public sealed class McpTests : IAsyncLifetime
 {
     private const string Token = "test-token";
-
     private readonly TempDatabase _db = new();
     private readonly string _work = Directory.CreateTempSubdirectory("assembly-mcp-").FullName;
     private readonly FakeLauncher _launcher = new();
+    private readonly Topics _topics = new();
+    private readonly McpTokens _tokens = new();
+    private readonly Channel<EngineEvent> _events = Channel.CreateUnbounded<EngineEvent>();
     private AppDatabase _database = null!;
     private RowStore _store = null!;
     private LiveHub _hub = null!;
     private SessionStore _sessionStore = null!;
     private SessionRegistry _sessions = null!;
+    private BackgroundWork _background = null!;
+    private EngineRuntime _runtime = null!;
+    private EngineHelperCards _cards = null!;
+    private McpEndpointReady _endpoint = null!;
+    private IDisposable _subscription = null!;
     private WebApplication _app = null!;
     private HttpClient _http = null!;
-    private Uri _base = null!;
+    private string _checkouts = null!;
     private int _ids;
 
     public async Task InitializeAsync()
     {
-        _database = TestDatabase.Open(_db.Path);
+        _database = AppDatabase.Open(_db.Path, TimeProvider.System, _topics);
         _store = RowStore.Open(_database);
         _hub = new LiveHub(_store);
-        _sessionStore = SessionStore.Open(_database, TimeProvider.System, "checkouts");
-        _sessions = new SessionRegistry(_hub, _sessionStore, _launcher, TimeProvider.System, TextWriter.Null, new BackgroundWork(TimeProvider.System, TextWriter.Null), new HelperLimits(UnfinishedHelpers: 2, MessagesPerPair: 1));
+        _checkouts = Directory.CreateDirectory(Path.Combine(_work, "checkouts")).FullName;
+        _sessionStore = SessionStore.Open(_database, TimeProvider.System, _checkouts);
+        _background = new(TimeProvider.System, TextWriter.Null);
+        _cards = new(_database, TimeProvider.System, TextWriter.Null);
+        _endpoint = new(_tokens);
+        var limits = new SessionLimits(() => 1, () => 2);
+        _runtime = EngineRuntime.Start(_database, _topics, TimeProvider.System, limits, messageLimit: () => 1,
+            cutover: new(_database, _sessionStore, _launcher, _checkouts, TimeProvider.System, helperCards: _cards),
+            effectsReady: _endpoint.Ready, effectsFactory: runtime =>
+            {
+                _sessions = new(_hub, _sessionStore, _launcher, TimeProvider.System, TextWriter.Null, _background,
+                    feed: new EngineFeed(runtime, TextWriter.Null, TimeProvider.System, _cards),
+                    mcp: McpSessionCallbacks.Create(runtime, _endpoint, _tokens));
+                _sessions.BindHelperWorking(_cards.Working, _cards.Refresh);
+                _cards.Start(_sessions.Helpers.Row);
+                return new AdapterEffects(_database, _sessions, _sessionStore, _store);
+            }, effectCompleted: (scope, id) =>
+            {
+                var child = scope.QueryFirst("SELECT session_id FROM engine_outbox WHERE id=$id", r => r.IsNull(0) ? null : r.Text(0), new SqlArg("$id", id));
+                if (child is not null) _cards.Observe(scope, child);
+            });
+        _subscription = _runtime.Publisher.Register(e => _events.Writer.TryWrite(e), out _);
+        var gate = new McpGate(_runtime, limits, TimeProvider.System);
+        var sdk = new McpServerHost(_tokens, new(_runtime, gate, TimeProvider.System),
+            [new StartSessionTool(gate, () => _launcher.Agents.Select(a => a.Id).ToArray(), Directory.Exists),
+                new SendMessageTool(gate), new MessageStatusTool(gate), new ListSessionsTool(gate)]);
         var attachments = new AttachmentStore(Path.Combine(_work, "attachments"));
         var machines = new MachineSet(new LocalMachine(_hub, _sessionStore, _sessions, attachments));
-        _sessions.Helpers.Delivery.Machines = machines;
-        _app = ApiServer.Build(new ApiServices(_hub, _sessionStore, machines, attachments, Token, _sessions.Helpers), port: 0, out _);
+        _app = ApiServer.Build(new(_hub, _sessionStore, machines, attachments, Token, sdk), 0, out _);
         await _app.StartAsync();
-        _base = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
-        _sessions.Helpers.Tokens.Url = new Uri(_base, "/mcp").ToString();
-        _http = new HttpClient { BaseAddress = _base };
-        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token);
+        var address = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
+        _endpoint.Listening(address);
+        _http = new() { BaseAddress = address };
     }
 
     [Fact]
     public async Task A_session_starts_a_helper_reads_its_answer_and_stays_open_while_it_works()
     {
-        var parent = _sessionStore.Create("claude", "https://github.com/o/r");
-        _sessions.For(parent.SessionId).Send("delegate it");
+        var parent = CreateParent();
+        QueueOwner(parent, "delegate it");
         var agent = await _launcher.NextAsync();
         var parentToken = SessionToken(await agent.StartAsync(acpSessionId: "acp-parent"));
         var parentPrompt = await agent.ReadAsync("session/prompt");
+        var parentDone = _sessions.For(parent.SessionId).CurrentTurn.Done;
 
-        // Only a session's own token opens the server; the API's doesn't.
-        Assert.Equal(HttpStatusCode.Unauthorized, (await McpAsync(Token, "tools/list", "{}")).StatusCode);
+        using var unauthorized = await McpAsync(Token, "tools/list", "{}");
+        Assert.Equal(HttpStatusCode.Unauthorized, unauthorized.StatusCode);
         var initialized = await ResultAsync(parentToken, "initialize", """{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}""");
         Assert.Equal("assembly", initialized.GetProperty("serverInfo").GetProperty("name").GetString());
-        var tools = (await ResultAsync(parentToken, "tools/list", "{}")).GetProperty("tools").EnumerateArray().Select(tool => tool.GetProperty("name").GetString());
-        Assert.Equal(["start_session", "send_message", "message_status", "list_sessions"], tools);
+        var tools = (await ResultAsync(parentToken, "tools/list", "{}")).GetProperty("tools").EnumerateArray()
+            .Select(tool => tool.GetProperty("name").GetString()).ToArray();
+        foreach (var required in new[] { "start_session", "send_message", "message_status", "list_sessions" }) Assert.Contains(required, tools);
 
-        var starting = CallAsync(parentToken, "start_session", new { prompt = "Count the lines in notes.txt.", agent = "codex" });
-        // The start reply owns actual provider insertion, so answer its open/prompt before awaiting HTTP.
+        var started = await CallAsync(parentToken, "start_session", new { prompt = "Count the lines in notes.txt.", title = "Count lines", provider = "codex" });
+        var helperId = started.GetProperty("sessionId").GetString()!;
+        var messageId = started.GetProperty("messageId").GetString()!;
+        Assert.True(Guid.TryParse(helperId, out _));
+        Assert.True(Guid.TryParse(messageId, out _));
+        Assert.Equal("queued", (await CallAsync(parentToken, "message_status", new { messageId })).GetProperty("state").GetString());
         var helperAgent = await _launcher.NextAsync();
         var helperToken = SessionToken(await helperAgent.StartAsync(acpSessionId: "acp-helper"));
         Assert.NotEqual(parentToken, helperToken);
+        var foreignStatus = await CallResultAsync(helperToken, "message_status", new { messageId });
+        Assert.True(foreignStatus.GetProperty("isError").GetBoolean());
+        Assert.Contains("not_yours", foreignStatus.GetRawText());
         var helperPrompt = await helperAgent.ReadAsync("session/prompt");
         Assert.Contains("Count the lines in notes.txt.", helperPrompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
-        Assert.False(starting.IsCompleted);
-        await helperAgent.InsertAsync(helperPrompt, "prompt-" + helperPrompt.GetProperty("id").GetRawText());
-        var started = await starting;
-        var helperId = started.GetProperty("sessionId").GetString()!;
-        var messageId = started.GetProperty("messageId").GetString()!;
+        await helperAgent.InsertAsync(helperPrompt, "helper-inserted");
+        await MessageStateAsync(messageId, "next_turn");
+        Assert.Equal("next_turn", (await CallAsync(parentToken, "message_status", new { messageId })).GetProperty("state").GetString());
+        Assert.Equal(parent.SessionId, _store.RowsAfter(helperId, 0).Last(row => row.Kind == "user").Payload.GetProperty("from").GetString());
         var helper = _sessionStore.Get(helperId)!;
         Assert.Equal((parent.SessionId, true, "codex"), (helper.ParentSessionId, helper.Helper, helper.Agent));
+        Assert.True((await CallResultAsync(helperToken, "start_session", new { prompt = "more", title = "Too deep" })).GetProperty("isError").GetBoolean());
 
-        var refused = await CallResultAsync(helperToken, "start_session", new { prompt = "more" });
-        Assert.True(refused.GetProperty("isError").GetBoolean());
-
-        // The parent's turn ends while its helper works: its session stays open, and message_status waits for the answer.
         await agent.FinishAsync(parentPrompt, """{"stopReason":"end_turn"}""");
-        var status = CallAsync(parentToken, "message_status", new { messageId });
-        await Task.Delay(500);
-        Assert.False(status.IsCompleted);
+        await parentDone.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(_sessions.IsOpen(parent.SessionId));
+        Assert.True(_sessions.StartedWorking(parent.SessionId));
         await helperAgent.TextAsync("notes.txt has 3 lines.", "h1", "acp-helper");
         await helperAgent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "acp-helper");
-        var answered = await status;
-        Assert.Equal(("answered", "notes.txt has 3 lines."), (answered.GetProperty("state").GetString(), answered.GetProperty("reply").GetString()));
-
         Assert.Equal("acp-helper", await helperAgent.CloseAsync());
+        var reply = await agent.ReadAsync("session/prompt");
+        Assert.Contains("notes.txt has 3 lines.", reply.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
+        Assert.Equal(helperId, _store.RowsAfter(parent.SessionId, 0).Last(row => row.Kind == "user").Payload.GetProperty("from").GetString());
+        Assert.Equal("next_turn", (await CallAsync(parentToken, "message_status", new { messageId })).GetProperty("state").GetString());
+        await agent.FinishAsync(reply, """{"stopReason":"end_turn"}""");
         Assert.Equal("acp-parent", await agent.CloseAsync());
 
-        // A closed session's token stops working.
-        Assert.Equal(HttpStatusCode.Unauthorized, (await McpAsync(parentToken, "tools/list", "{}")).StatusCode);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await McpAsync(helperToken, "tools/list", "{}")).StatusCode);
+        using var revokedParent = await McpAsync(parentToken, "tools/list", "{}");
+        using var revokedHelper = await McpAsync(helperToken, "tools/list", "{}");
+        Assert.Equal(HttpStatusCode.Unauthorized, revokedParent.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, revokedHelper.StatusCode);
+        await _cards.DisposeAsync();
         var rows = _store.RowsAfter(parent.SessionId, 0).Where(row => row.ItemId == $"subagent:{helperId}").ToList();
         Assert.Equal(["running", "idle"], rows.Select(row => row.Payload.GetProperty("state").GetString()));
     }
@@ -117,53 +162,69 @@ public sealed class McpTests : IAsyncLifetime
     [Fact]
     public async Task Helpers_have_limits_at_work_and_between_any_two_sessions()
     {
-        var parent = _sessionStore.Create("claude", "https://github.com/o/r");
-        _sessions.For(parent.SessionId).Send("delegate twice");
+        var parent = CreateParent();
+        QueueOwner(parent, "delegate twice");
         var agent = await _launcher.NextAsync();
         var parentToken = SessionToken(await agent.StartAsync(acpSessionId: "acp-parent"));
         await agent.ReadAsync("session/prompt");
-
-        var startingFirst = CallAsync(parentToken, "start_session", new { prompt = "one" });
+        var firstReply = await CallAsync(parentToken, "start_session", new { prompt = "one", title = "One" });
+        var first = firstReply.GetProperty("sessionId").GetString()!;
         var firstToken = SessionToken(await agent.OpenAsync("acp-one"));
         var firstPrompt = await agent.ReadAsync("session/prompt");
-        Assert.False(startingFirst.IsCompleted);
-        await agent.InsertAsync(firstPrompt, "prompt-" + firstPrompt.GetProperty("id").GetRawText());
-        var first = (await startingFirst).GetProperty("sessionId").GetString()!;
-        var startingSecond = CallAsync(parentToken, "start_session", new { prompt = "two" });
+        await agent.InsertAsync(firstPrompt, "first-inserted");
+        var secondReply = await CallAsync(parentToken, "start_session", new { prompt = "two", title = "Two" });
+        var second = secondReply.GetProperty("sessionId").GetString()!;
         await agent.OpenAsync("acp-two");
         var secondPrompt = await agent.ReadAsync("session/prompt");
-        Assert.False(startingSecond.IsCompleted);
-        await agent.InsertAsync(secondPrompt, "prompt-" + secondPrompt.GetProperty("id").GetRawText());
-        var second = (await startingSecond).GetProperty("sessionId").GetString()!;
-        Assert.True((await CallResultAsync(parentToken, "start_session", new { prompt = "three" })).GetProperty("isError").GetBoolean());
+        await agent.InsertAsync(secondPrompt, "second-inserted");
+        Assert.True((await CallResultAsync(parentToken, "start_session", new { prompt = "three", title = "Three" })).GetProperty("isError").GetBoolean());
 
-        // A helper reaches its parent and its sibling.
         var listed = (await CallAsync(firstToken, "list_sessions", new { })).GetProperty("sessions").EnumerateArray()
             .Select(entry => (entry.GetProperty("sessionId").GetString(), entry.GetProperty("relation").GetString()));
         Assert.Contains((parent.SessionId, "parent"), listed);
         Assert.Contains((second, "sibling"), listed);
-
-        // The second finishes; the first may message it once.
         await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "acp-two");
         Assert.Equal("acp-two", await agent.CloseAsync());
-        var sending = CallAsync(firstToken, "send_message", new { sessionId = second, text = "What did you find?" });
+        var sent = await CallAsync(firstToken, "send_message", new { sessionId = second, text = "What did you find?" });
+        Assert.Equal("queued", sent.GetProperty("state").GetString());
         await agent.OpenAsync("acp-two");
         var delivered = await agent.ReadAsync("session/prompt");
-        Assert.False(sending.IsCompleted);
-        await agent.InsertAsync(delivered, "prompt-" + delivered.GetProperty("id").GetRawText());
-        var sent = await sending;
-        Assert.True(sent.TryGetProperty("messageId", out _));
+        await agent.InsertAsync(delivered, "sibling-inserted");
+        await MessageStateAsync(sent.GetProperty("messageId").GetString()!, "next_turn");
         Assert.Contains("What did you find?", delivered.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
-        // Its row in the receiving session says who sent it, so the page doesn't show it as the person's.
         Assert.Equal(first, _store.RowsAfter(second, 0).Last(row => row.Kind == "user").Payload.GetProperty("from").GetString());
         Assert.True((await CallResultAsync(firstToken, "send_message", new { sessionId = second, text = "again" })).GetProperty("isError").GetBoolean());
-        // The limit holds between any two sessions: the parent's prompt was its one message to the helper.
         Assert.True((await CallResultAsync(parentToken, "send_message", new { sessionId = second, text = "and you?" })).GetProperty("isError").GetBoolean());
         await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "acp-two");
+        await agent.CloseAsync();
         await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "acp-one");
+        await agent.CloseAsync();
     }
 
-    // The session's token for the Assembly MCP server, from its session/new or session/resume: kept in memory only.
+    private SessionInfo CreateParent()
+    {
+        var parent = _sessionStore.Create("claude", "https://github.com/o/r");
+        Directory.CreateDirectory(Path.Combine(_checkouts, parent.SessionId));
+        return parent;
+    }
+
+    private void QueueOwner(SessionInfo parent, string text)
+    {
+        var client = Guid.NewGuid().ToString("N");
+        var prepared = OwnerPromptFingerprint.Prepare(_runtime.Machine, new SendOwnerPrompt(parent.SessionId, text, client, [], null), default);
+        var id = OwnerPromptIdentity.MessageId(parent.SessionId, client);
+        var context = new CommandContext(OwnerPromptIdentity.CommandId(_runtime.Machine, parent.SessionId, client),
+            _runtime.Machine, new(ActorKind.Window, "owner"), id, 0, 0, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        Assert.True(((IEngineRuntime)_runtime).Write(scope => _runtime.Commands.ApplyOwnerPrompt(scope, context, prepared)).Applied);
+    }
+
+    private async Task MessageStateAsync(string id, string state)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        while (_database.QueryFirst("SELECT state FROM engine_message WHERE id=$id", r => r.Text(0), default, new SqlArg("$id", id)) != state)
+            await _events.Reader.ReadAsync(timeout.Token);
+    }
+
     private static string SessionToken(JsonElement open)
     {
         var server = Assert.Single(open.GetProperty("params").GetProperty("mcpServers").EnumerateArray());
@@ -177,7 +238,8 @@ public sealed class McpTests : IAsyncLifetime
     {
         var result = await CallResultAsync(token, tool, arguments);
         Assert.False(result.GetProperty("isError").GetBoolean(), result.GetRawText());
-        return JsonDocument.Parse(result.GetProperty("content")[0].GetProperty("text").GetString()!).RootElement;
+        using var answer = JsonDocument.Parse(result.GetProperty("content")[0].GetProperty("text").GetString()!);
+        return answer.RootElement.Clone();
     }
 
     private Task<JsonElement> CallResultAsync(string token, string tool, object arguments) =>
@@ -185,30 +247,43 @@ public sealed class McpTests : IAsyncLifetime
 
     private async Task<JsonElement> ResultAsync(string token, string method, string parameters)
     {
-        var answer = await McpAsync(token, method, parameters);
-        answer.EnsureSuccessStatusCode();
-        return JsonDocument.Parse(await answer.Content.ReadAsStringAsync()).RootElement.GetProperty("result");
+        using var response = await McpAsync(token, method, parameters);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadAsStringAsync();
+        if (response.Content.Headers.ContentType?.MediaType == "text/event-stream")
+            body = body.Split('\n').Single(line => line.StartsWith("data: ", StringComparison.Ordinal))[6..];
+        using var json = JsonDocument.Parse(body);
+        return json.RootElement.GetProperty("result").Clone();
     }
 
-    private async Task<HttpResponseMessage> McpAsync(string token, string method, string parameters)
+    private Task<HttpResponseMessage> McpAsync(string token, string method, string parameters)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp")
+        var request = new HttpRequestMessage(HttpMethod.Post, "/mcp")
         {
-            Content = new StringContent($$"""{"jsonrpc":"2.0","id":{{++_ids}},"method":"{{method}}","params":{{parameters}}}""", Encoding.UTF8, "application/json"),
+            Content = new StringContent($$"""{"jsonrpc":"2.0","id":{{Interlocked.Increment(ref _ids)}},"method":"{{method}}","params":{{parameters}}}""", Encoding.UTF8, "application/json")
         };
+        request.Headers.Accept.ParseAdd("application/json, text/event-stream");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        using var anonymous = new HttpClient { BaseAddress = _base };
-        return await anonymous.SendAsync(request);
+        return SendAsync(request);
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request)
+    {
+        using (request) return await _http.SendAsync(request);
     }
 
     public async Task DisposeAsync()
     {
         _http.Dispose();
+        var stopping = _runtime.DisposeAsync().AsTask();
+        _endpoint.Stop();
         await _app.DisposeAsync();
         await _sessions.DisposeAsync();
-        _hub.Dispose();
-        _database.Dispose();
-        _db.Dispose();
+        await stopping;
+        await _cards.DisposeAsync();
+        _subscription.Dispose();
+        await _background.DisposeAsync();
+        _hub.Dispose(); _database.Dispose(); _db.Dispose();
         Directory.Delete(_work, recursive: true);
     }
 }

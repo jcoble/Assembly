@@ -1,9 +1,15 @@
+using Assembly.Application.Common.Database;
+using Assembly.Infrastructure.Engine.Workflows;
+using Microsoft.AspNetCore.Builder;
+using Assembly.Engine.Mcp;
+using Assembly.Engine.Mcp.Tools;
+using Assembly.Infrastructure.Engine.Helpers;
+using Assembly.Infrastructure.Engine.Needs;
 using CallFailed = Assembly.Application.Common.Calls.CallFailed;
 using Assembly.Application.Features.Agents;
 using Assembly.Infrastructure.Engine.Auth;
 using Assembly.Infrastructure.Chat;
 using Assembly.Application.Features.Workflows;
-using Assembly.Application.Features.Chat.Helpers;
 using Assembly.Engine.Effects;
 using Assembly.Engine.Sessions;
 using Assembly.Infrastructure.Engine;
@@ -74,75 +80,136 @@ public static class ServeRun
         var agents = launcher is null ? AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)) : null;
         launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions(), session => SessionStore.Folder(options.Checkouts, session));
         var preferences = new PreferenceStore(db);
-        var limits = new HelperLimits();
-        // Stopped after the sessions, before the hub and the database.
         await using var work = new BackgroundWork(TimeProvider.System, Console.Out);
-        await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work, limits,
-            titler: agents is null ? null : new SessionTitler(sessionStore, store, new CliUtilityModel(AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex"),
-                () => preferences.Read("utilityModel"), TimeProvider.System, Console.Out)));
-        var attachments = new AttachmentStore(options.Attachments);
-
-        var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
-        sessions.Helpers.Delivery.Machines = machines;
-        using var hostStop = new CancellationTokenSource();
-        await using var board = new BoardTools(sessionStore, sessions, boardTransitions, boardQueries, hostStop.Token);
-        var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync);
-
-        // Sessions here join this machine's MCP server, on the API's port.
-        sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
         await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
             SessionTerminalFolders.ExistingFolder(options.Checkouts, sessionStore));
-        var sessionLimits = new SessionLimits(
-            () => SessionLimitPreferences.Depth(preferences.Read("sessions.depthLimit")),
-            () => SessionLimitPreferences.Children(preferences.Read("sessions.childLimit")));
-        var probeFolder = Path.Combine(options.Home, "probe");
-        Directory.CreateDirectory(probeFolder);
-        var challenges = new ChallengeBoard();
-        var catalogue = new AgentCatalogue(sessions, probeFolder, TimeProvider.System);
-        var runner = new SignInRunner(challenges, terminals, launcher, probeFolder, TimeProvider.System, Console.Out);
-        bool IsConfiguredProvider(string provider, string account)
+        using var hostStop = new CancellationTokenSource();
+        var tokens = new McpTokens();
+        var endpoint = new McpEndpointReady(tokens);
+        var helperCards = new EngineHelperCards(db, TimeProvider.System, Console.Out);
+        SessionRegistry? sessions = null;
+        EngineRuntime? engine = null;
+        NeedAnswers? answers = null;
+        BoardTools? board = null;
+        MachinesFeature? machinesFeature = null;
+        MachineCalls? ownerMachineCalls = null;
+        WebApplication? app = null;
+        var stopGate = new object();
+        Task? stopped = null;
+        Task BeginStop()
         {
-            try
+            lock (stopGate)
             {
-                var capture = ConfigTargetIdentity.Capture(launcher, provider);
-                var current = ConfigTargetIdentity.RequireSameConfiguration(launcher, capture.Descriptor, capture.Environment);
-                return AccountContext.Of(current, key => capture.Environment.GetValueOrDefault(key)) == account;
+                if (stopped is not null) return stopped;
+                var waits = answers?.StopWaiting() ?? Task.CompletedTask;
+                var runtime = engine?.DisposeAsync().AsTask() ?? Task.CompletedTask;
+                endpoint.Stop();
+                hostStop.Cancel();
+                return stopped = Task.WhenAll(waits, runtime);
             }
-            catch (CallFailed) { return false; }
         }
-        await using var engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits, engineEffects,
-            effectsFactory: engineEffects is null ? runtime =>
-            {
-                var signIn = new SignInEffects(db, runner, launcher, sessions, challenges, runtime, TimeProvider.System);
-                return new EffectRouter(new AdapterEffects(db, sessions, sessionStore, store))
-                    .Add("probe_provider", new ProviderEffects(db, catalogue, launcher, runtime, TimeProvider.System))
-                    .Add("begin_sign_in", signIn)
-                    .Add("cancel_sign_in", signIn);
-            }
-        : null,
-            readExpiryMinutes: MessageExpiryPreferences.ReadMinutes, isConfiguredProvider: IsConfiguredProvider);
-        await using var machineCalls = new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System);
-        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new EngineCalls(engine, TimeProvider.System), new SessionTitleCalls(engine, sessionStore), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(terminals), workflowCalls, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines), new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machineCalls], board, Engine: engine), options.Port, out _,
-            routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
-        Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
-        Console.WriteLine($"home:  {options.Home}");
-        Console.WriteLine($"token: in {options.TokenFile}");
-        if (closed > 0)
-            Console.WriteLine($"closed {closed} turn(s) the last run left unfinished");
-        using var stopping = app.Lifetime.ApplicationStopping.Register(hostStop.Cancel);
         try
         {
+            var sessionLimits = new SessionLimits(
+                () => SessionLimitPreferences.Depth(preferences.Read("sessions.depthLimit")),
+                () => SessionLimitPreferences.Children(preferences.Read("sessions.childLimit")));
+            var probeFolder = Path.Combine(options.Home, "probe");
+            Directory.CreateDirectory(probeFolder);
+            var challenges = new ChallengeBoard();
+            bool IsConfiguredProvider(string provider, string account)
+            {
+                try
+                {
+                    var capture = ConfigTargetIdentity.Capture(launcher, provider);
+                    var current = ConfigTargetIdentity.RequireSameConfiguration(launcher, capture.Descriptor, capture.Environment);
+                    return AccountContext.Of(current, key => capture.Environment.GetValueOrDefault(key)) == account;
+                }
+                catch (CallFailed) { return false; }
+            }
+            var cutover = new SessionCutover(db, sessionStore, launcher, options.Checkouts, TimeProvider.System, helperCards: helperCards);
+            engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits,
+                cutover: cutover,
+                effectsFactory: runtime =>
+                {
+                    sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work,
+                        titler: agents is null ? null : new SessionTitler(sessionStore, store, new CliUtilityModel(
+                            AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex"),
+                            () => preferences.Read("utilityModel"), TimeProvider.System, Console.Out)),
+                        feed: new EngineFeed(runtime, Console.Out, TimeProvider.System, helperCards),
+                        mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens));
+                    sessions.BindHelperWorking(helperCards.Working, helperCards.Refresh);
+                    if (engineEffects is not null) return engineEffects;
+                    var catalogue = new AgentCatalogue(sessions, probeFolder, TimeProvider.System);
+                    var runner = new SignInRunner(challenges, terminals, launcher, probeFolder, TimeProvider.System, Console.Out);
+                    var signIn = new SignInEffects(db, runner, launcher, sessions, challenges, runtime, TimeProvider.System);
+                    var proofRoot = Path.Combine(options.Home, "workflow-proof");
+                    var workspace = new WorkspaceEffects(db, runtime.Commands, runtime.Machine, proofRoot,
+                        new WorkflowWorkspace(proofRoot), TimeProvider.System);
+                    return new EffectRouter(new AdapterEffects(db, sessions, sessionStore, store))
+                        .Add("probe_provider", new ProviderEffects(db, catalogue, launcher, runtime, TimeProvider.System))
+                        .Add("begin_sign_in", signIn)
+                        .Add("cancel_sign_in", signIn)
+                        .Add("workflow_setup", workspace)
+                        .Add("workflow_workspace", workspace);
+                },
+                readExpiryMinutes: MessageExpiryPreferences.ReadMinutes, effectsReady: endpoint.Ready,
+                isConfiguredProvider: IsConfiguredProvider,
+                effectCompleted: (scope, effectId) =>
+                {
+                    var childId = scope.QueryFirst("SELECT session_id FROM engine_outbox WHERE id=$id",
+                        row => row.IsNull(0) ? null : row.Text(0), new SqlArg("$id", effectId));
+                    if (childId is not null) helperCards.Observe(scope, childId);
+                });
+            var registry = sessions!;
+            helperCards.Start(registry.Helpers.Row);
+            var gate = new McpGate(engine, sessionLimits, TimeProvider.System);
+            answers = new NeedAnswers(gate, engine, registry, TimeProvider.System);
+            var attachments = new AttachmentStore(options.Attachments);
+            var machines = new MachineSet(new LocalMachine(hub, sessionStore, registry, attachments));
+            board = new BoardTools(sessionStore, registry, boardTransitions, boardQueries, hostStop.Token);
+            var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync);
+            machinesFeature = new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System);
+            ownerMachineCalls = new MachineCalls(engine, TimeProvider.System, launcher, options.Checkouts, answers);
+            var mcp = new McpServerHost(tokens, new McpRecorder(engine, gate, TimeProvider.System),
+                [new StartSessionTool(gate, () => launcher.Agents.Select(agent => agent.Id).ToArray(), Directory.Exists),
+                    new ListSessionsTool(gate), new SendMessageTool(gate), new MessageStatusTool(gate),
+                    new AskOwnerTool(gate, answers), new AnswerNeedTool(gate, answers), new ReportTool(gate),
+                    new LinkTaskTool(gate), new GetSessionTitleTool(gate), new BoardUpdateTool(gate, board)]);
+            var door = new EngineDoor(engine, sessionStore, machines, attachments, TimeProvider.System, answers);
+            app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
+                [new EngineCalls(engine, TimeProvider.System, answers), new SessionTitleCalls(engine, sessionStore), ownerMachineCalls,
+                    new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(terminals), workflowCalls,
+                    new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+                    new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines), machinesFeature,
+                    new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(options.Home, "staging", "attachments"))],
+                board, Engine: engine, OwnerDoor: door), options.Port, out _);
+            using var stopping = app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });
             await app.StartAsync(cancellationToken);
             var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
-            sessions.Helpers.Tokens.Url = new Uri(address, "/mcp").ToString();
+            endpoint.Listening(address);
+            Console.WriteLine($"listening on {address}");
+            Console.WriteLine($"home:  {options.Home}");
+            Console.WriteLine($"token: in {options.TokenFile}");
+            if (closed > 0) Console.WriteLine($"closed {closed} turn(s) the last run left unfinished");
             started?.Invoke(address, engine);
             await app.WaitForShutdownAsync(cancellationToken);
+            return 0;
         }
         finally
         {
-            await app.StopAsync(CancellationToken.None);
-            await hostStop.CancelAsync();
+            var stopping = BeginStop();
+            if (app is not null)
+            {
+                await app.StopAsync(CancellationToken.None);
+                await app.DisposeAsync();
+            }
+            if (answers is not null) await answers.DisposeAsync();
+            if (ownerMachineCalls is not null) await ownerMachineCalls.DisposeAsync();
+            await stopping;
+            if (board is not null) await board.DisposeAsync();
+            if (machinesFeature is not null) await machinesFeature.DisposeAsync();
+            await helperCards.DisposeAsync();
+            if (sessions is not null) await sessions.DisposeAsync();
         }
-        return 0;
     }
 }
