@@ -90,6 +90,9 @@ pub struct PrDetail {
 impl EventEmitter<PrBack> for PrDetail {}
 impl EventEmitter<PrMerged> for PrDetail {}
 impl PrDetail {
+    pub fn owner(&self) -> &PrOwner {
+        &self.owner
+    }
     pub fn new(
         owner: PrOwner,
         repository: Option<String>,

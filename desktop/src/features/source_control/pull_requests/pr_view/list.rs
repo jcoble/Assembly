@@ -15,6 +15,7 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex,
 };
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::prelude::FluentBuilder as _;
 
 impl PrPane {
@@ -155,7 +156,7 @@ impl PrPane {
             .border_b_1()
             .border_color(border)
             .on_click(cx.listener(move |pane, _, _, cx| {
-                pane.select_pr(Some(repository.clone()), number, cx)
+                pane.select_row(repository.clone(), number, cx)
             }))
             .child(
                 h_flex()
@@ -197,6 +198,49 @@ impl PrPane {
                             )),
                     ),
             )
+    }
+    /// What a clicked row is waiting on: its project's machine, or the person saying which project.
+    fn opening_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let cancel = Button::new("pr-open-cancel")
+            .ghost()
+            .small()
+            .label("Cancel")
+            .on_click(cx.listener(|pane, _, _, cx| pane.cancel_open(cx)));
+        if let Some((number, _)) = &self.opening {
+            return Some(
+                h_flex()
+                    .gap_2()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(Spinner::new().small())
+                    .child(format!("Opening #{number}…"))
+                    .child(cancel)
+                    .into_any_element(),
+            );
+        }
+        let choice = self.choosing.as_ref()?;
+        let what = choice.repository.as_deref().unwrap_or("This pull request");
+        let question = format!("{what} is in more than one project. Open #{} from:", choice.number);
+        let picks = choice.projects.iter().map(|project| {
+            let id = project.id.clone();
+            Button::new(SharedString::from(format!("pr-open-from:{id}")))
+                .outline()
+                .small()
+                .label(project_place(&project.title, &project.machine))
+                .tooltip(project.root_path.clone())
+                .on_click(cx.listener(move |pane, _, _, cx| pane.choose_project(&id, cx)))
+        });
+        let picks: Vec<_> = picks.collect();
+        Some(
+            h_flex()
+                .gap_2()
+                .flex_wrap()
+                .text_sm()
+                .child(question)
+                .children(picks)
+                .child(cancel)
+                .into_any_element(),
+        )
     }
     fn more_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let queue = self.queue.read(cx);
@@ -265,6 +309,7 @@ impl PrPane {
                     ),
             )
             .child(self.filters(cx))
+            .children(self.opening_notice(cx))
             .children(missing.map(|(words, url)| {
                 h_flex().gap_2().text_sm().child(words).child(
                     Button::new("pr-missing-open")
@@ -324,6 +369,13 @@ impl PrPane {
                         }),
                 )
             }))
+    }
+}
+fn project_place(title: &str, machine: &str) -> String {
+    if machine.is_empty() || machine == "local" {
+        format!("{title} · This computer")
+    } else {
+        format!("{title} · {machine}")
     }
 }
 fn project_name(title: &str, machine: &str) -> String {

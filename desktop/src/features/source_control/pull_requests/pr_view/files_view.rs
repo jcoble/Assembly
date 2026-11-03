@@ -65,7 +65,13 @@ impl PrFiles {
                                 let openable = session.is_some();
                                 let opened = opened.clone();
                                 let copied = copied.clone();
-                                menu.item(PopupMenuItem::new("Open in editor").disabled(!openable).on_click(
+                                menu.item(PopupMenuItem::new(if openable {
+                                    "Open in editor"
+                                } else {
+                                    "Open in editor (needs a session)"
+                                })
+                                .disabled(!openable)
+                                .on_click(
                                     move |_, window, cx| {
                                         let Some(session) = session.clone() else {
                                             return;

@@ -264,7 +264,6 @@ fn project_owner() -> PrOwner {
             generation: 3,
             route_machine: Some("lane".into()),
         },
-        root: "/lane/r".into(),
     }
 }
 fn method(seen: &Mutex<Vec<Value>>, name: &str) -> Vec<Value> {
@@ -310,7 +309,7 @@ async fn a_project_write_waits_for_a_read_then_names_the_project_and_no_session(
     assert_eq!(start["action"], "merge");
     assert_eq!(start["projectId"], "project");
     assert_eq!(start["expectedRepository"], "o/r");
-    assert_eq!(start["expectedCheckoutRoot"], "/lane/r");
+    assert_eq!(start["expectedCheckoutRoot"], "/read/root");
     assert_eq!(start["expectedSource"]["machine"], "engine");
     writes.update(cx, |writes, cx| writes.cancel(cx));
     until("the cancel", &mut changes, &changed, || {
