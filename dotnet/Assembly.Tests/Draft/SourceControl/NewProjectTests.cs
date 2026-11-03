@@ -178,7 +178,7 @@ public sealed partial class NewProjectTests
             {
                 GitOperationStart start => JsonSerializer.SerializeToElement(start, GitOperationsJson.Default.GitOperationStart),
                 GitOperationArgs operation => JsonSerializer.SerializeToElement(operation, GitOperationsJson.Default.GitOperationArgs),
-                _ => JsonSerializer.SerializeToElement(args)
+                _ => JsonSerializer.SerializeToElement(args, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })
             };
             await Send(socket, JsonSerializer.Serialize(new { t = "call", id, feature = "git", method, args = payload }));
             while (true)

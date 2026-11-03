@@ -13,6 +13,7 @@ namespace Assembly.Tests.Features.Chat.Sessions;
 public sealed class SessionTitlerTests : IAsyncDisposable
 {
     private readonly TempDatabase _db = new();
+    private readonly DirectoryInfo _folder = Directory.CreateTempSubdirectory("assembly-session-title-");
     private readonly FakeTimeProvider _time = new(DateTimeOffset.FromUnixTimeMilliseconds(1_000_000));
     private readonly AppDatabase _database;
     private readonly RowStore _rows;
@@ -32,8 +33,8 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         _database = TestDatabase.Open(_db.Path);
         _rows = RowStore.Open(_database);
         _hub = new LiveHub(_rows);
-        _sessionStore = SessionStore.Open(_database, _time, "checkouts");
-        _session = _sessionStore.Create("claude", "https://github.com/o/r");
+        _sessionStore = SessionStore.Open(_database, _time, _folder.FullName);
+        _session = _sessionStore.Create("claude", "https://github.com/o/r", workingFolder: _folder.FullName);
         _adapter = new SharedAdapter(_launcher, "claude", _time, _log);
         _opener = new SessionOpener(_sessionStore, _launcher, _ => _adapter);
         _work = new BackgroundWork(_time, _log);
@@ -316,6 +317,7 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         _hub.Dispose();
         _database.Dispose();
         _db.Dispose();
+        _folder.Delete(recursive: true);
     }
 
     private sealed class FakeModel(string? answer) : IUtilityModel
