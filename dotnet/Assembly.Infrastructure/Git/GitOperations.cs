@@ -4,26 +4,30 @@ using Assembly.Application.Common;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Topics;
 using Assembly.Infrastructure.Projects;
+using Assembly.Infrastructure.Chat.SourceControl;
 using Assembly.Application.Features.Projects;
 
 namespace Assembly.Infrastructure.Git;
 
 public sealed record GitOperationStart(string InstanceId, Guid OperationId, string? Session,
-    string Action, JsonElement Args, string? Machine = null, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
+    string Action, JsonElement Args, string? Machine = null, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null, string? ProjectId = null, string? ExpectedRepository = null);
 public sealed record GitOperationStatus(Guid OperationId, string InstanceId, string Machine,
     long Version, string State, JsonElement? Result, string? Error);
 public sealed record GitOperationHost(string InstanceId, string Machine);
-public sealed record GitOperationHostArgs(string? Session = null, string? Action = null, string? Machine = null, ExpectedSource? ExpectedSource = null);
+public sealed record GitOperationHostArgs(string? Session = null, string? Action = null, string? Machine = null, ExpectedSource? ExpectedSource = null, string? ProjectId = null);
 public sealed record GitOperationArgs(Guid OperationId, string? Session = null, string? Action = null,
-    string? InstanceId = null, string? Machine = null, ExpectedSource? ExpectedSource = null);
+    string? InstanceId = null, string? Machine = null, ExpectedSource? ExpectedSource = null, string? ProjectId = null);
 
 /// <summary>One backend-owned Git operation lifetime; routes select fixed producers before Start.</summary>
 public sealed partial class GitOperations : IAsyncDisposable
 {
-    private sealed class Entry(GitOperationStart request, CancellationTokenSource deadline)
+    private sealed class Entry(GitOperationStart request, CancellationTokenSource deadline, IDisposable? executionLease, ProjectPullRequestReads.Target? projectTarget)
     {
         internal readonly GitOperationStart Request = request with { Args = request.Args.Clone() };
         internal readonly CancellationTokenSource Deadline = deadline;
+        internal readonly IDisposable? ExecutionLease = executionLease;
+        internal readonly ProjectPullRequestReads.Target? ProjectTarget = projectTarget;
+        internal readonly IExpectedSourceGuard? ProjectScope = projectTarget?.RetainOwner();
         internal readonly CancellationTokenSource UserStop = new();
         internal readonly TaskCompletionSource Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal Task Cancelled = Task.CompletedTask;
@@ -57,7 +61,20 @@ public sealed partial class GitOperations : IAsyncDisposable
         topics.Unsubscribed += Unsubscribed;
     }
 
-    public GitOperationStatus Start(GitOperationStart request, Func<CancellationToken, Task<JsonElement>> execute)
+    public GitOperationStatus Start(GitOperationStart request, Func<CancellationToken, Task<JsonElement>> execute, IDisposable? executionLease = null)
+        => StartCaptured(request, execute, executionLease, null);
+
+    internal GitOperationStatus StartProject(GitOperationStart request, Func<CancellationToken, Task<JsonElement>> execute,
+        IDisposable executionLease, ProjectPullRequestReads.Target target) => StartCaptured(request, execute, executionLease, target);
+
+    private GitOperationStatus StartCaptured(GitOperationStart request, Func<CancellationToken, Task<JsonElement>> execute,
+        IDisposable? executionLease, ProjectPullRequestReads.Target? target)
+    {
+        try { return StartOwned(request, execute, ref executionLease, target); }
+        finally { executionLease?.Dispose(); }
+    }
+
+    private GitOperationStatus StartOwned(GitOperationStart request, Func<CancellationToken, Task<JsonElement>> execute, ref IDisposable? executionLease, ProjectPullRequestReads.Target? target)
     {
         Entry entry;
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -69,24 +86,40 @@ public sealed partial class GitOperations : IAsyncDisposable
             {
                 if (prior.Request.Action != request.Action || prior.Request.Session != request.Session ||
                     prior.Request.Machine != request.Machine || prior.Request.ExpectedSource != request.ExpectedSource ||
-                    prior.Request.ExpectedCheckoutRoot != request.ExpectedCheckoutRoot || !JsonElement.DeepEquals(prior.Request.Args, request.Args))
+                    prior.Request.ExpectedCheckoutRoot != request.ExpectedCheckoutRoot || prior.Request.ProjectId != request.ProjectId ||
+                    prior.Request.ExpectedRepository != request.ExpectedRepository || !JsonElement.DeepEquals(prior.Request.Args, request.Args))
                     throw new CallFailed("operation_id_conflict");
                 return Snapshot(request.OperationId, prior);
             }
-            entry = new(request, new(TimeSpan.FromSeconds(120), _time));
+            entry = new(request, new(TimeSpan.FromSeconds(120), _time), executionLease, target);
             _entries.Add(request.OperationId, entry);
             _running.Add(entry.Completion.Task);
             // BackgroundWork records this owned task before its first await can run the producer.
-            _work.Start("git " + request.Action, async stopping =>
+            try
             {
-                await ready.Task;
-                try { await Run(request.OperationId, entry, execute, stopping); }
-                finally
+                _work.Start("git " + request.Action, async stopping =>
                 {
-                    lock (_gate) _running.Remove(entry.Completion.Task);
-                    entry.Completion.TrySetResult();
-                }
-            });
+                    await ready.Task;
+                    try { await Run(request.OperationId, entry, execute, stopping); }
+                    finally
+                    {
+                        try { entry.ExecutionLease?.Dispose(); }
+                        finally
+                        {
+                            lock (_gate) _running.Remove(entry.Completion.Task);
+                            entry.Completion.TrySetResult();
+                        }
+                    }
+                });
+            }
+            catch
+            {
+                _entries.Remove(request.OperationId);
+                _running.Remove(entry.Completion.Task);
+                entry.Deadline.Dispose(); entry.UserStop.Dispose(); entry.ProjectScope?.Dispose();
+                throw;
+            }
+            executionLease = null; // Only the accepted task owns the capture from this point.
         }
         var accepted = Snapshot(request.OperationId, entry);
         try { Publish(accepted); }
@@ -103,10 +136,18 @@ public sealed partial class GitOperations : IAsyncDisposable
             "draftCommitMessage" or "draftPr" or "draftReview" or "createProject" or "prepareProjectFolder")) throw new CallFailed("forbidden");
         if (request.Action is "createProject" or "prepareProjectFolder")
         {
-            if (request.Session is not null) throw new CallFailed("bad_args");
+            if (request.Session is not null || request.ProjectId is not null) throw new CallFailed("bad_args");
+        }
+        else if (request.ProjectId is not null)
+        {
+            if (string.IsNullOrWhiteSpace(request.ProjectId) || request.Session is not null || !ProjectPrAction(request.Action) ||
+                request.ExpectedSource is null || string.IsNullOrWhiteSpace(request.ExpectedCheckoutRoot) ||
+                string.IsNullOrWhiteSpace(request.ExpectedRepository)) throw new CallFailed("bad_args");
         }
         else if (string.IsNullOrWhiteSpace(request.Session)) throw new CallFailed("bad_args");
     }
+
+    internal static bool ProjectPrAction(string? action) => action is "draftReview" or "review" or "reply" or "comment" or "merge";
 
     public GitOperationStatus Status(Guid operationId)
     {
@@ -137,15 +178,42 @@ public sealed partial class GitOperations : IAsyncDisposable
         lock (_gate)
         {
             if (args.InstanceId is not null && args.InstanceId != InstanceId) throw new CallFailed("stale_instance");
-            if (args.Session is null && (args.InstanceId != InstanceId || args.Action is not ("createProject" or "prepareProjectFolder")))
+            if (args.ProjectId is not null && (string.IsNullOrWhiteSpace(args.ProjectId) || args.Session is not null || !ProjectPrAction(args.Action)))
+                throw new CallFailed("forbidden");
+            if (args.Session is null && (args.InstanceId != InstanceId ||
+                args.ProjectId is null && args.Action is not ("createProject" or "prepareProjectFolder")))
                 throw new CallFailed("forbidden");
             if (!_entries.TryGetValue(args.OperationId, out var entry)) return;
-            if (entry.Request.Session != args.Session ||
+            if (entry.Request.Session != args.Session || entry.Request.ProjectId != args.ProjectId ||
                 (args.Action is not null && entry.Request.Action != args.Action) ||
                 (entry.Request.Session is null && (args.InstanceId != InstanceId || args.Action != entry.Request.Action)))
                 throw new CallFailed("forbidden");
         }
     }
+    internal IExpectedSourceGuard RetainAcceptedProject(GitOperationArgs args, out ProjectPullRequestReads.Target target)
+    {
+        lock (_gate)
+        {
+            if (_entries.TryGetValue(args.OperationId, out var entry) && entry.ProjectTarget is { } local)
+            {
+                RequireScope(args);
+                if (entry.Request.ExpectedSource != args.ExpectedSource) throw new CallFailed("source_changed");
+                target = local;
+            }
+            else
+            {
+                var pair = _remoteWatches.Values.SingleOrDefault(w => w.Id == args.OperationId && w.ProjectTarget is not null &&
+                    w.ProjectTarget.Source == args.ExpectedSource && w.Request is { } request && request.InstanceId == args.InstanceId &&
+                    request.ProjectId == args.ProjectId && request.Action == args.Action);
+                if (pair?.ProjectTarget is not { } remote || pair.Latest is not { Version: > 0 } || remote.Source != args.ExpectedSource)
+                    throw new CallFailed("The accepted project operation is unavailable.", "source_changed");
+                target = remote;
+            }
+            target.EnsureOwner();
+            return target.RetainOwner();
+        }
+    }
+
     internal void RetainDirectoryClaim(Guid operationId, ProjectDirectoryClaim claim)
     {
         lock (_gate)
@@ -242,7 +310,7 @@ public sealed partial class GitOperations : IAsyncDisposable
         {
             if (!_entries.TryGetValue(operationId, out var entry)) return;
             entry.Released = true;
-            if (entry.Terminal) { _entries.Remove(operationId); claim = entry.DirectoryClaim; }
+            if (entry.Terminal) { _entries.Remove(operationId); entry.ProjectScope?.Dispose(); claim = entry.DirectoryClaim; }
         }
         claim?.Dispose();
     }
@@ -260,6 +328,7 @@ public sealed partial class GitOperations : IAsyncDisposable
                 if (_entries.TryGetValue(pair.Key, out var entry) && entry.Terminal)
                 {
                     _entries.Remove(pair.Key);
+                    entry.ProjectScope?.Dispose();
                     if (entry.DirectoryClaim is { } claim) claims.Add(claim);
                 }
             }
@@ -276,7 +345,7 @@ public sealed partial class GitOperations : IAsyncDisposable
         {
             _watchers.Remove(id);
             if (_entries.TryGetValue(id, out var entry) && entry.Terminal)
-            { _entries.Remove(id); claim = entry.DirectoryClaim; }
+            { _entries.Remove(id); entry.ProjectScope?.Dispose(); claim = entry.DirectoryClaim; }
         }
         claim?.Dispose();
     }
@@ -321,7 +390,7 @@ public sealed partial class GitOperations : IAsyncDisposable
                 entry.State = state; entry.Result = result; entry.Error = error; entry.Version++;
                 finished = Snapshot(id, entry); cancellation = entry.Cancelled;
                 if (entry.Released || !_watchers.ContainsKey(id))
-                { _entries.Remove(id); releasedClaim = entry.DirectoryClaim; }
+                { _entries.Remove(id); entry.ProjectScope?.Dispose(); releasedClaim = entry.DirectoryClaim; }
             }
             releasedClaim?.Dispose();
             await cancellation;
@@ -362,6 +431,7 @@ public sealed partial class GitOperations : IAsyncDisposable
         ProjectDirectoryClaim[] claims;
         lock (_gate)
         {
+            foreach (var entry in _entries.Values) entry.ProjectScope?.Dispose();
             claims = _entries.Values.Select(entry => entry.DirectoryClaim).OfType<ProjectDirectoryClaim>().ToArray();
             _entries.Clear(); _watchers.Clear();
         }

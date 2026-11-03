@@ -12,7 +12,7 @@ using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Draft.SourceControl;
 
-public sealed class GitSessionOperationsTests
+public sealed partial class GitSessionOperationsTests
 {
     [Fact]
     public async Task A_lost_pr_write_preserves_actual_host_machine_and_never_replays()
@@ -78,10 +78,11 @@ public sealed class GitSessionOperationsTests
     private sealed class LostGh : IGh
     {
         public int Reads, Writes;
+        internal Action? OnRead;
         public Task<GhRun> RunAsync(string root, IReadOnlyList<string> args, string? input, TimeSpan limit, CancellationToken ct)
         {
             if (args.Contains("POST")) { Writes++; throw new GhInterrupted("lost", new IOException("fixture"), ct); }
-            Reads++;
+            Reads++; OnRead?.Invoke();
             return Task.FromResult(new GhRun(0, args[0] == "pr" ? """{"number":7,"state":"OPEN","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}""" : "[]", ""));
         }
     }

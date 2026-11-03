@@ -44,7 +44,7 @@ public sealed class RowConverter
     // The run each subagent's row went into first.
     private readonly Dictionary<string, string?> _subagentRuns = new();
     // The last context pair written, and in which run: an unchanged report adds no row.
-    private (string? RunId, long Used, long Size)? _context;
+    private (string? RunId, long Used, long Size, long? InputTokens, long? OutputTokens)? _context;
 
     /// <summary>The session's total cost as the agent last reported it, or null before any report.</summary>
     public decimal? SessionCost => _sessionCost;
@@ -386,10 +386,10 @@ public sealed class RowConverter
     private void AddContext(RowBatch batch, UsageReported usage)
     {
         if (usage is not { Used: { } used, Size: { } size } || size <= 0 || (_turn?.RunId ?? _lastRunId) is not { } runId
-            || _context == (runId, used, size))
+            || _context == (runId, used, size, usage.InputTokens, usage.OutputTokens))
             return;
-        _context = (runId, used, size);
-        Add(batch, $"context:{runId}", RowKind.Context, new ContextPayload(used, size), RowJsonContext.Rows.ContextPayload, usage.At);
+        _context = (runId, used, size, usage.InputTokens, usage.OutputTokens);
+        Add(batch, $"context:{runId}", RowKind.Context, new ContextPayload(used, size, usage.InputTokens, usage.OutputTokens), RowJsonContext.Rows.ContextPayload, usage.At);
     }
 
     private void Add<T>(RowBatch batch, string? itemId, string kind, T payload, JsonTypeInfo<T> type, long at) =>

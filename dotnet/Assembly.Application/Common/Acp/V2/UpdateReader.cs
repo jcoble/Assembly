@@ -167,7 +167,7 @@ public sealed class UpdateReader
                         events.Add(new TurnEnded(at, reason, state.ReportedUsage is { } usage
                             ? new TokenUsage(usage.InputTokens, usage.OutputTokens, usage.CachedReadTokens, usage.CachedWriteTokens) : null));
                     if (state.ReportedUsage is { } report)
-                        events.Add(new UsageReported(at, report.CostUsd, report.Model, report.Used, report.Size));
+                        events.Add(new UsageReported(at, report.CostUsd, report.Model, report.Used, report.Size, report.InputTokens, report.OutputTokens));
                 }
                 else if (state.State == "unknown")
                 {

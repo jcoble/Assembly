@@ -40,11 +40,11 @@ public sealed class PullRequestWriter(IGit git, IGh gh, PullRequestReader reader
             || parts[2] != "pull" || !int.TryParse(parts[3], out var number) || number <= 0) throw Unconfirmed();
         return new(number, url, branch);
     }
-    public async Task<string> ReviewAsync(string root, int number, string expectedHead, string body, IReadOnlyList<LineComment> comments, CancellationToken ct)
+    public async Task<string> ReviewAsync(string root, int number, string expectedHead, string body, IReadOnlyList<LineComment> comments, CancellationToken ct, string? expectedRepository = null, Action? ensureCurrent = null)
     {
         Body(body, 20_000, "Write an overall review comment before submitting");
         if (comments.Count > 20) throw new CallBadArguments("Review draft is too large");
-        var detail = await Current(root, number, expectedHead, "submitting", ct);
+        var detail = await Current(root, number, expectedHead, "submitting", ct, expectedRepository);
         foreach (var comment in comments)
         {
             Body(comment.Body, 10_000, "A line comment has an invalid target or body");
@@ -53,52 +53,55 @@ public sealed class PullRequestWriter(IGit git, IGh gh, PullRequestReader reader
         }
         return await Write(root, detail, "reviews", "POST", new ReviewPayload(detail.HeadSha, body.Trim(), "COMMENT",
             comments.Select(comment => new ReviewCommentPayload(comment.Path, comment.Line, comment.Side, comment.Body.Trim())).ToArray()),
-            PullRequestsJson.Default.ReviewPayload, ct);
+            PullRequestsJson.Default.ReviewPayload, ct, ensureCurrent: ensureCurrent);
     }
-    public async Task<string> ReplyAsync(string root, int number, string expectedHead, long commentId, string body, CancellationToken ct)
+    public async Task<string> ReplyAsync(string root, int number, string expectedHead, long commentId, string body, CancellationToken ct, string? expectedRepository = null, Action? ensureCurrent = null)
     {
         Body(body, 10_000, "Invalid review reply");
-        var detail = await Current(root, number, expectedHead, "replying", ct);
+        var detail = await Current(root, number, expectedHead, "replying", ct, expectedRepository);
         if (commentId <= 0 || !detail.Comments.Any(comment => comment.Id == commentId.ToString(CultureInfo.InvariantCulture) && comment.Path is not null && comment.ReplyToId is null))
             throw new CallFailed("That review thread is no longer available. Refresh the PR.");
-        return await Write(root, detail, $"comments/{commentId}/replies", "POST", new BodyPayload(body.Trim()), PullRequestsJson.Default.BodyPayload, ct);
+        return await Write(root, detail, $"comments/{commentId}/replies", "POST", new BodyPayload(body.Trim()), PullRequestsJson.Default.BodyPayload, ct, ensureCurrent: ensureCurrent);
     }
-    public async Task<string> CommentAsync(string root, int number, string expectedHead, string body, CancellationToken ct)
+    public async Task<string> CommentAsync(string root, int number, string expectedHead, string body, CancellationToken ct, string? expectedRepository = null, Action? ensureCurrent = null)
     {
         Body(body, 20_000, "Invalid pull request comment");
-        var detail = await Current(root, number, expectedHead, "commenting", ct);
-        return await Write(root, detail, "comments", "POST", new BodyPayload(body.Trim()), PullRequestsJson.Default.BodyPayload, ct, issue: true);
+        var detail = await Current(root, number, expectedHead, "commenting", ct, expectedRepository);
+        return await Write(root, detail, "comments", "POST", new BodyPayload(body.Trim()), PullRequestsJson.Default.BodyPayload, ct, issue: true, ensureCurrent: ensureCurrent);
     }
-    public async Task<string> MergeAsync(string root, int number, string method, string expectedHead, string expectedBase, CancellationToken ct)
+    public async Task<string> MergeAsync(string root, int number, string method, string expectedHead, string expectedBase, CancellationToken ct, string? expectedRepository = null, Action? ensureCurrent = null)
     {
         if (method is not ("merge" or "squash" or "rebase") || !Sha(expectedBase) || !Sha(expectedHead))
             throw new CallBadArguments("Invalid pull request merge target or method");
-        var detail = await Current(root, number, expectedHead, "merging", ct);
+        var detail = await Current(root, number, expectedHead, "merging", ct, expectedRepository);
         if (detail.IsDraft || !string.Equals(detail.BaseSha, expectedBase, StringComparison.OrdinalIgnoreCase))
             throw new CallFailed("This pull request changed, closed, or is still a draft. Refresh it before merging.");
         if (detail.Mergeable != "MERGEABLE") throw new CallFailed("GitHub does not report this pull request as mergeable. Refresh it before trying again.");
-        var answer = await Send(root, ["api", "--method", "PUT", $"repos/{detail.Repository}/pulls/{number}/merge", "--input", "-"], new MergePayload(expectedHead, method), PullRequestsJson.Default.MergePayload, ct);
+        var answer = await Send(root, ["api", "--method", "PUT", $"repos/{detail.Repository}/pulls/{number}/merge", "--input", "-"], new MergePayload(expectedHead, method), PullRequestsJson.Default.MergePayload, ct, ensureCurrent);
         if (!answer.TryGetProperty("merged", out var merged)) throw Unconfirmed();
         if (merged.ValueKind == JsonValueKind.False) throw new CallFailed("GitHub refused to merge this pull request. Refresh it before trying again.");
         if (merged.ValueKind != JsonValueKind.True) throw Unconfirmed();
         return detail.Url;
     }
-    private async Task<PullRequestDetail> Current(string root, int number, string expectedHead, string action, CancellationToken ct)
+    private async Task<PullRequestDetail> Current(string root, int number, string expectedHead, string action, CancellationToken ct, string? expectedRepository = null)
     {
         if (number <= 0 || !Sha(expectedHead)) throw new CallBadArguments("Invalid pull request target");
-        var detail = await reader.DetailAsync(root, number, ct);
+        var detail = expectedRepository is null ? await reader.DetailAsync(root, number, ct) :
+            await reader.ProjectDetailAsync(root, expectedRepository, number, ct);
         if (detail.State != "OPEN" || !string.Equals(detail.HeadSha, expectedHead, StringComparison.OrdinalIgnoreCase))
             throw new CallFailed($"This pull request changed or closed. Refresh it before {action}.");
         return detail;
     }
-    private async Task<string> Write<TPayload>(string root, PullRequestDetail detail, string suffix, string method, TPayload payload, JsonTypeInfo<TPayload> metadata, CancellationToken ct, bool issue = false)
+    private async Task<string> Write<TPayload>(string root, PullRequestDetail detail, string suffix, string method, TPayload payload, JsonTypeInfo<TPayload> metadata, CancellationToken ct, bool issue = false, Action? ensureCurrent = null)
     {
-        var answer = await Send(root, ["api", "--method", method, $"repos/{detail.Repository}/{(issue ? "issues" : "pulls")}/{detail.Number}/{suffix}", "--input", "-"], payload, metadata, ct);
+        var answer = await Send(root, ["api", "--method", method, $"repos/{detail.Repository}/{(issue ? "issues" : "pulls")}/{detail.Number}/{suffix}", "--input", "-"], payload, metadata, ct, ensureCurrent);
         if (!answer.TryGetProperty("html_url", out var url) || url.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(url.GetString())) throw Unconfirmed();
         return url.GetString()!;
     }
-    private async Task<JsonElement> Send<TPayload>(string root, IReadOnlyList<string> args, TPayload payload, JsonTypeInfo<TPayload> metadata, CancellationToken ct)
+    private async Task<JsonElement> Send<TPayload>(string root, IReadOnlyList<string> args, TPayload payload, JsonTypeInfo<TPayload> metadata, CancellationToken ct, Action? ensureCurrent = null)
     {
+        ct.ThrowIfCancellationRequested();
+        ensureCurrent?.Invoke();
         var answer = await gh.RunAsync(root, args, JsonSerializer.Serialize(payload, metadata), Limit, ct);
         if (answer.ExitCode != 0) throw new CallFailed("GitHub refused the write: " + answer.Error.Trim());
         try { using var json = JsonDocument.Parse(answer.Output); if (json.RootElement.ValueKind != JsonValueKind.Object) throw Unconfirmed(); return json.RootElement.Clone(); }

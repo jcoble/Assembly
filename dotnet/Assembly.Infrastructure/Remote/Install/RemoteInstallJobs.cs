@@ -133,9 +133,10 @@ internal sealed class RemoteInstallJobs : IAsyncDisposable
             activated = true;
             // Once activation starts, user cancellation cannot strand the service stopped. The producer settles/rolls back.
             using var settle = new CancellationTokenSource(TimeSpan.FromMinutes(2), _time);
-            result = await _activate(entry.Request, entry.Binding, package, staged, settle.Token);
-            if (result.Commit != package.Bundle.Commit || result.Engine != entry.Binding.Engine || result.Machine != entry.Request.Machine)
+            var verified = await _activate(entry.Request, entry.Binding, package, staged, settle.Token);
+            if (verified.Commit != package.Bundle.Commit || verified.Engine != entry.Binding.Engine || verified.Machine != entry.Request.Machine)
                 throw new CallFailed("Remote activation could not be verified.", "activation_uncertain");
+            result = verified;
             state = "succeeded";
         }
         catch (OperationCanceledException) { state = activated ? "uncertain" : "cancelled"; error = activated ? "activation_uncertain" : "cancelled"; }
@@ -143,15 +144,23 @@ internal sealed class RemoteInstallJobs : IAsyncDisposable
         catch (Exception) { error = activated ? "activation_uncertain" : "install_failed"; state = activated ? "uncertain" : "failed"; }
         finally
         {
-            // Cleanup is required even if the upload was interrupted before its success reply.
-            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(20), _time);
-            try { if (attempted) await _process.CleanupAsync(entry.Request, entry.Binding, cleanup.Token); }
-            catch (Exception) { state = "uncertain"; error = "cleanup_unconfirmed"; }
-            try { snapshot?.Dispose(); }
-            catch (IOException) { state = "uncertain"; error = "cleanup_unconfirmed"; }
-            Change(entry, job => job with { State = state, ErrorCode = error, Result = result });
-            entry.Done.TrySetResult();
+            try
+            {
+                // Cleanup cannot replace a proven activation outcome or the original failure.
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(20), _time);
+                try { if (attempted) await _process.CleanupAsync(entry.Request, entry.Binding, cleanup.Token); }
+                catch (Exception) { CleanupUnconfirmed(); }
+                try { snapshot?.Dispose(); }
+                catch (Exception failed) when (failed is IOException or UnauthorizedAccessException) { CleanupUnconfirmed(); }
+            }
+            finally
+            {
+                try { Change(entry, job => job with { State = state, ErrorCode = error, Result = result }); }
+                finally { entry.Done.TrySetResult(); }
+            }
         }
+        void CleanupUnconfirmed()
+        { if (error is null && result is null) { state = "uncertain"; error = "cleanup_unconfirmed"; } }
     }
     private void Change(Entry entry, Func<RemoteInstallJob, RemoteInstallJob> change)
     {

@@ -148,8 +148,12 @@ public sealed class FirstSendCheckoutTests : IDisposable
         var utility = new Assembly.Infrastructure.Agents.AcpUtilityModel([], () => utilityPreferences.Read("utilityModel"), TimeProvider.System, TextWriter.Null);
         var routes = new SourceControlFeature(owner.Sessions, owner.Fixture.Db, operations, owner.Forwarder, hosts.Connections);
         routes.Register(registered!);
-        new GitProjectOperations(operations, new(folders, writer, writes, operations),
-            new(owner.Sessions, git, prs, writes, operations, new(git, utility), prReader, owner.Fixture.Db), routes, coordinator).Register(registered!);
+        var sessionGit = new GitSessionOperations(owner.Sessions, git, prs, writes, operations, new(git, utility), prReader, owner.Fixture.Db);
+        var projectPrReads = new ProjectPullRequestReads(owner.Fixture.Db, roots,
+            new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(owner.Fixture.Db, owner.Sessions, new MachineSet(machine), hosts.Connections),
+            owner.Runtime.Machine, prReader, owner.Forwarder, hosts.Connections);
+        new GitProjectOperations(operations, new(folders, writer, writes, operations), sessionGit, routes,
+            new(projectPrReads, operations, sessionGit, owner.Forwarder), coordinator).Register(registered!);
         var host = ApiTests.Result(await ApiTests.SocketRequestAsync(socket, 3, "git", "operation_host",
             "{\"action\":\"createProject\"}"));
         var operation = Guid.NewGuid();

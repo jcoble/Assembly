@@ -2,6 +2,8 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using System.Threading.Channels;
 using Assembly.Infrastructure.Remote;
+using Assembly.Infrastructure.Chat.SourceControl;
+using Assembly.Application.Common.Calls;
 
 namespace Assembly.Infrastructure.Git;
 
@@ -19,6 +21,8 @@ public sealed partial class GitOperations
         internal GitOperationStatus? Latest;
         internal bool Lost;
         internal GitOperationArgs? Request;
+        internal ProjectPullRequestReads.Target? ProjectTarget;
+        internal IExpectedSourceGuard? ProjectScope;
         internal readonly TaskCompletionSource Ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
     private readonly Dictionary<string, RemoteWatch> _remoteWatches = [];
@@ -47,6 +51,7 @@ public sealed partial class GitOperations
                             _running.Remove(owned.Completion.Task);
                             if (_remoteWatches.TryGetValue(key, out var current) && ReferenceEquals(current, owned)) _remoteWatches.Remove(key);
                         }
+                        owned.ProjectScope?.Dispose();
                         owned.Stop.Dispose();
                         owned.Completion.TrySetResult();
                     }
@@ -87,6 +92,7 @@ public sealed partial class GitOperations
                     {
                         GitOperationArgs? request;
                         lock (_gate) request = watch.Request;
+                        if (request?.ProjectId is not null) throw new IOException("The original project operation connection was lost. Reconciliation requires the original owner.");
                         if (request is not null)
                         {
                             var reply = await source.Machine.CallAsync("git", "operation", JsonSerializer.SerializeToElement(request, GitOperationsJson.Default.GitOperationArgs),
@@ -130,6 +136,8 @@ public sealed partial class GitOperations
             if (status is null || status.Machine != watch.Machine || status.OperationId != watch.Id) throw new IOException("Remote Git identity changed.");
             lock (_gate)
             {
+                if (watch.Request is { ProjectId: not null, InstanceId: { } expectedInstance } && status.InstanceId != expectedInstance)
+                    throw new IOException("The project operation instance changed.");
                 if (watch.Latest is { } prior && prior.InstanceId == status.InstanceId && status.Version <= prior.Version) return;
                 watch.Latest = status;
                 watch.Lost = false;
@@ -147,6 +155,8 @@ public sealed partial class GitOperations
         lock (_gate)
         {
             if (!_remoteWatches.TryGetValue(actual.Machine + "/" + actual.OperationId.ToString("D"), out var watch)) return actual;
+            if (watch.Request is { ProjectId: not null, InstanceId: { } expectedInstance } && actual.InstanceId != expectedInstance)
+                throw new IOException("The project operation instance changed.");
             if (watch.Latest is null || watch.Latest.InstanceId != actual.InstanceId || watch.Latest.Version <= actual.Version) watch.Latest = actual;
             return watch.Lost ? Unknown(actual)! : actual;
         }
@@ -163,6 +173,26 @@ public sealed partial class GitOperations
                 watch.Request = new(id, session, action);
                 ready = watch.Ready.Task;
             }
+        }
+        if (ready is not null) await ready.WaitAsync(ct);
+    }
+
+    internal async Task WaitRemoteProjectObservationAsync(string machine, GitOperationStart request, ProjectPullRequestReads.Target target, CancellationToken ct)
+    {
+        Task? ready = null;
+        lock (_gate)
+        {
+            if (_remoteWatches.TryGetValue(machine + "/" + request.OperationId.ToString("D"), out var watch))
+            {
+                if (watch.Latest is { } actual && actual.InstanceId != request.InstanceId) throw new IOException("The project operation instance changed.");
+                if (watch.ProjectTarget is { } prior && (prior.Source != target.Source || prior.Root != target.Root || prior.Repository != target.Repository))
+                    throw new IOException("The project operation target changed.");
+                if (watch.ProjectTarget is null) { watch.ProjectTarget = target; watch.ProjectScope = target.RetainOwner(); }
+                watch.Request = new(request.OperationId, null, request.Action, request.InstanceId,
+                    ExpectedSource: new(machine, 0, null), ProjectId: request.ProjectId);
+                ready = watch.Ready.Task;
+            }
+            else throw new Assembly.Application.Common.Calls.CallFailed("Subscribe to the project operation before starting it.");
         }
         if (ready is not null) await ready.WaitAsync(ct);
     }

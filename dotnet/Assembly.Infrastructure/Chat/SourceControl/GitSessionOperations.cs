@@ -30,32 +30,7 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
             throw new CallFailed("The session's owning machine changed.", "source_changed");
         var root = SourceControlWrites.RequireRoot(sessions, session, request.ExpectedCheckoutRoot, request.ExpectedSource is not null);
         var machine = operations.Machine;
-        var sync = new GitSync(git);
-        Func<string, CancellationToken, Task<JsonElement>> execute = request.Action switch
-        {
-            "fetch" => async (path, ct) => JsonSerializer.SerializeToElement(await sync.FetchAsync(path, ct), GitWritesJson.Default.GitWriteResult),
-            "pull" => Bind(request.Args, GitSessionOperationsJson.Default.SyncArgs, GitWritesJson.Default.GitWriteResult, (a, path, ct) => sync.PullAsync(path, Branch(a), ct)),
-            "push" => Bind(request.Args, GitSessionOperationsJson.Default.SyncArgs, GitWritesJson.Default.GitWriteResult, (a, path, ct) => sync.PushAsync(path, Branch(a), ct)),
-            "publish" => Bind(request.Args, GitSessionOperationsJson.Default.SyncArgs, GitWritesJson.Default.GitWriteResult, (a, path, ct) => sync.PublishAsync(path, Branch(a), a.Remote ?? throw new CallBadArguments("Choose a remote."), ct)),
-            "createPr" => Bind(request.Args, GitSessionOperationsJson.Default.CreateArgs, GitSessionOperationsJson.Default.PullRequestCreated, (a, path, ct) => prs.CreateAsync(path, a.Base, a.Title, a.Description, a.Draft, ct)),
-            "review" => Bind(request.Args, GitSessionOperationsJson.Default.ReviewArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.ReviewAsync(path, a.Number, a.ExpectedHead, a.Body, a.Comments, ct)),
-            "reply" => Bind(request.Args, GitSessionOperationsJson.Default.ReplyArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.ReplyAsync(path, a.Number, a.ExpectedHead, a.CommentId, a.Body, ct)),
-            "comment" => Bind(request.Args, GitSessionOperationsJson.Default.CommentArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.CommentAsync(path, a.Number, a.ExpectedHead, a.Body, ct)),
-            "merge" => Bind(request.Args, GitSessionOperationsJson.Default.MergeArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.MergeAsync(path, a.Number, a.Method, a.ExpectedHead, a.ExpectedBase, ct)),
-            "draftCommitMessage" => async (path, ct) => JsonSerializer.SerializeToElement(await drafts.CommitMessageAsync(path, ct), GitSessionOperationsJson.Default.String),
-            "draftPr" => Bind(request.Args, GitSessionOperationsJson.Default.DraftPrArgs, GitSessionOperationsJson.Default.PullRequestDraft, async (a, path, ct) =>
-            {
-                var draft = await drafts.PullRequestAsync(path, a.Base, ct);
-                return new PullRequestDraft(draft.Title, draft.Description);
-            }),
-            "draftReview" => Bind(request.Args, GitSessionOperationsJson.Default.DraftReviewArgs, GitSessionOperationsJson.Default.ReviewDraft, async (a, path, ct) =>
-            {
-                var detail = await reader.DetailAsync(path, a.Number, ct);
-                if (detail.HeadSha != a.ExpectedHead) throw new CallFailed("The PR head changed. Refresh and try again.");
-                return await drafts.ReviewAsync(detail, ct);
-            }),
-            _ => throw new CallFailed("forbidden")
-        };
+        var execute = BindAction(request);
         return ct => writes.RunAsync(root, async () =>
         {
             ct.ThrowIfCancellationRequested();
@@ -66,6 +41,53 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
             catch (Exception error) when (error is GhInterrupted or GhUnconfirmed)
             { throw new CallUncertain(machine, "This may have posted. Refresh before trying again."); }
         });
+    }
+    internal Func<CancellationToken, Task<JsonElement>> PrepareProject(GitOperationStart request, string root, string repository, Action ensureCurrent)
+    {
+        if (!GitOperations.ProjectPrAction(request.Action) || request.Session is not null || string.IsNullOrWhiteSpace(request.ProjectId) ||
+            request.ExpectedCheckoutRoot != root || !string.Equals(request.ExpectedRepository, repository, StringComparison.OrdinalIgnoreCase))
+            throw new CallFailed("The project repository changed. Refresh and try again.", "source_changed");
+        var execute = BindAction(request, ensureCurrent);
+        return ct => writes.RunAsync(root, async () =>
+        {
+            ct.ThrowIfCancellationRequested();
+            ensureCurrent();
+            try { return await execute(root, ct); }
+            catch (Exception error) when (error is GhInterrupted or GhUnconfirmed)
+            { throw new CallUncertain(operations.Machine, "This may have posted. Refresh before trying again."); }
+        });
+    }
+
+    private Func<string, CancellationToken, Task<JsonElement>> BindAction(GitOperationStart request, Action? ensureCurrent = null)
+    {
+        var sync = new GitSync(git);
+        return request.Action switch
+        {
+            "fetch" => async (path, ct) => JsonSerializer.SerializeToElement(await sync.FetchAsync(path, ct), GitWritesJson.Default.GitWriteResult),
+            "pull" => Bind(request.Args, GitSessionOperationsJson.Default.SyncArgs, GitWritesJson.Default.GitWriteResult, (a, path, ct) => sync.PullAsync(path, Branch(a), ct)),
+            "push" => Bind(request.Args, GitSessionOperationsJson.Default.SyncArgs, GitWritesJson.Default.GitWriteResult, (a, path, ct) => sync.PushAsync(path, Branch(a), ct)),
+            "publish" => Bind(request.Args, GitSessionOperationsJson.Default.SyncArgs, GitWritesJson.Default.GitWriteResult, (a, path, ct) => sync.PublishAsync(path, Branch(a), a.Remote ?? throw new CallBadArguments("Choose a remote."), ct)),
+            "createPr" => Bind(request.Args, GitSessionOperationsJson.Default.CreateArgs, GitSessionOperationsJson.Default.PullRequestCreated, (a, path, ct) => prs.CreateAsync(path, a.Base, a.Title, a.Description, a.Draft, ct)),
+            "review" => Bind(request.Args, GitSessionOperationsJson.Default.ReviewArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.ReviewAsync(path, a.Number, a.ExpectedHead, a.Body, a.Comments, ct, request.ProjectId is null ? null : request.ExpectedRepository, ensureCurrent)),
+            "reply" => Bind(request.Args, GitSessionOperationsJson.Default.ReplyArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.ReplyAsync(path, a.Number, a.ExpectedHead, a.CommentId, a.Body, ct, request.ProjectId is null ? null : request.ExpectedRepository, ensureCurrent)),
+            "comment" => Bind(request.Args, GitSessionOperationsJson.Default.CommentArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.CommentAsync(path, a.Number, a.ExpectedHead, a.Body, ct, request.ProjectId is null ? null : request.ExpectedRepository, ensureCurrent)),
+            "merge" => Bind(request.Args, GitSessionOperationsJson.Default.MergeArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.MergeAsync(path, a.Number, a.Method, a.ExpectedHead, a.ExpectedBase, ct, request.ProjectId is null ? null : request.ExpectedRepository, ensureCurrent)),
+            "draftCommitMessage" => async (path, ct) => JsonSerializer.SerializeToElement(await drafts.CommitMessageAsync(path, ct), GitSessionOperationsJson.Default.String),
+            "draftPr" => Bind(request.Args, GitSessionOperationsJson.Default.DraftPrArgs, GitSessionOperationsJson.Default.PullRequestDraft, async (a, path, ct) =>
+            {
+                var draft = await drafts.PullRequestAsync(path, a.Base, ct);
+                return new PullRequestDraft(draft.Title, draft.Description);
+            }),
+            "draftReview" => Bind(request.Args, GitSessionOperationsJson.Default.DraftReviewArgs, GitSessionOperationsJson.Default.ReviewDraft, async (a, path, ct) =>
+            {
+                var detail = request.ProjectId is null ? await reader.DetailAsync(path, a.Number, ct) :
+                    await reader.ProjectDetailAsync(path, request.ExpectedRepository!, a.Number, ct);
+                if (detail.HeadSha != a.ExpectedHead) throw new CallFailed("The PR head changed. Refresh and try again.");
+                ensureCurrent?.Invoke();
+                return await drafts.ReviewAsync(detail, ct);
+            }),
+            _ => throw new CallFailed("forbidden")
+        };
     }
     private static string Branch(SyncArgs args) => args.ExpectedBranch ?? throw new CallBadArguments("Refresh the current branch before continuing.");
     private static Func<string, CancellationToken, Task<JsonElement>> Bind<TArgs, TResult>(JsonElement json, JsonTypeInfo<TArgs> input, JsonTypeInfo<TResult> output,

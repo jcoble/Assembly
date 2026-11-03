@@ -210,6 +210,8 @@ public static class ServeRun
             var localFolders = new LocalProjectFolders(git);
             var projectFolders = new ProjectFolderCreation(localFolders, new GitWriter(git), checkoutWrites, gitOperations);
             var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, null, null);
+            var projectPrReads = new ProjectPullRequestReads(db, projectRoots, sessionSources, engine.Machine, prReader, null, null);
+            var projectPrActions = new ProjectPullRequestActions(projectPrReads, gitOperations, sessionGit, null);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
                 [new EngineCalls(engine, TimeProvider.System, answers, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, resolveProject: project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore), new SessionTitleCalls(engine, sessionStore), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines), ownerMachineCalls,
                     new ProvidersFeature(challenges, engine.Machine), new ProviderRuntimeCalls(engine.Machine, agents), new TerminalFeature(terminals), workflowCalls,
@@ -218,8 +220,8 @@ public static class ServeRun
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(options.Home, "staging", "attachments"), sessionSources),
                     new FilesFeature(sessionStore, new FileOwner(sessionStore, db), work, sources: sessionSources),
                     gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes),
-                    new PullRequestsFeature(sessionStore, prReader, gitRoutes, new(db, projectRoots, sessionSources, engine.Machine, prReader, null, null)), new FoldersFeature(localFolders),
-                    new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes)],
+                    new PullRequestsFeature(sessionStore, prReader, gitRoutes, projectPrReads), new FoldersFeature(localFolders),
+                    new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes, projectPrActions)],
                 board, Engine: engine), options.Port, out _);
             using var stopping = app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });
             await app.StartAsync(cancellationToken);

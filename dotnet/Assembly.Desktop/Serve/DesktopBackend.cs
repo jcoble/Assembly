@@ -365,6 +365,8 @@ public sealed class DesktopBackend : IAsyncDisposable
             var projectCoordinator = new NewProjectCoordinator(projectStore, db, localFolders, projectWriter, checkoutWrites, gitOperations, connections);
             providerRuntimeSubscriptions = new ProviderRuntimeSubscriptions(topics, connections.CaptureMirrorOwners);
             var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, machineForward, connections);
+            var projectPrReads = new ProjectPullRequestReads(db, projectRoots, sessionSources, engine.Machine, prReader, machineForward, connections);
+            var projectPrActions = new ProjectPullRequestActions(projectPrReads, gitOperations, sessionGit, machineForward);
             var fileOwners = new FileOwner(sessionStore, db);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
                 [new RemoteInstallFeature(remoteInstalls), cliUpdates, new ProviderRuntimeCalls(engine.Machine, agentsFile, machineForward, providerRuntimeSubscriptions), new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward, project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore, connections: connections), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome,
@@ -376,7 +378,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                     new Assembly.Application.Features.Workspaces.WorkspacesFeature(new Assembly.Application.Features.Workspaces.WorkspaceStore(db, TimeProvider.System)),
                     new WorktreesFeature(sessionStore),
                     gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes),
-                    new PullRequestsFeature(sessionStore, prReader, gitRoutes, new(db, projectRoots, sessionSources, engine.Machine, prReader, machineForward, connections)), new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes, projectCoordinator),
+                    new PullRequestsFeature(sessionStore, prReader, gitRoutes, projectPrReads), new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes, projectPrActions, projectCoordinator),
                     new FoldersFeature(localFolders), new ProjectsFeature(projectStore,
                         name => name == "local" ? localFolders : new RemoteProjectFolders(connections, name), db)], board, Engine: engine), port, out _);
             app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });

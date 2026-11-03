@@ -28,9 +28,25 @@ internal sealed class ProjectPullRequestReads(IAppDatabase db, IProjectRoots roo
     private async Task<TResult> Read<TArgs, TResult>(string id, ExpectedSource source, CallContext call, string method,
         Func<Target, TArgs> request, JsonTypeInfo<TArgs> input, JsonTypeInfo<TResult> output, Func<Target, Task<TResult>> local)
     {
+        using var target = await CaptureAsync(id, source, call);
+        call.SourceGuard = target.Retain();
+        TResult result;
+        if (target.Owner is null) result = await local(target);
+        else
+        {
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, target.Changed);
+            var answer = await forward!.CallAsync(target.Owner.Engine, "git", method, JsonSerializer.SerializeToElement(request(target), input), true,
+                stop.Token, target.Owner.Socket, target.Owner.Binding, target.Live);
+            result = answer.Deserialize(output) ?? throw Changed();
+        }
+        target.EnsureCurrent();
+        return result;
+    }
+
+    internal async Task<Target> CaptureAsync(string id, ExpectedSource source, CallContext call)
+    {
         if (call.Peer is not OwnerPeer || call.ExpectedSource is not null && call.ExpectedSource != source) throw Changed();
         var sourceGuard = await sources.CaptureEngineAsync(source, call.Cancellation); // Before any registry lookup.
-        var handedOff = false;
         try
         {
             ProjectRoot project;
@@ -54,30 +70,21 @@ internal sealed class ProjectPullRequestReads(IAppDatabase db, IProjectRoots roo
                     !ReferenceEquals(owner.Binding, captured.Live.OwnerBinding)) throw Changed();
                 live = captured.Live;
             }
-            void Ensure()
+            void EnsureOwner()
             {
                 sourceGuard.EnsureCurrent();
-                using var scope = db.OpenSnapshot(CancellationToken.None);
-                if (roots.Find(scope, id) != project) throw Changed();
                 if (owner is not null) connections!.RequireProjectOwner(owner, CancellationToken.None);
             }
-            call.SourceGuard = new ProjectGuard(sourceGuard, Ensure);
-            handedOff = true;
-            Ensure();
-            var target = new Target(project, repository, source);
-            TResult result;
-            if (owner is null) result = await local(target);
-            else
+            void Ensure()
             {
-                using var stop = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, sourceGuard.Changed);
-                var answer = await forward!.CallAsync(owner.Engine, "git", method, JsonSerializer.SerializeToElement(request(target), input), true,
-                    stop.Token, owner.Socket, owner.Binding, live);
-                result = answer.Deserialize(output) ?? throw Changed();
+                EnsureOwner();
+                using var scope = db.OpenSnapshot(CancellationToken.None);
+                if (roots.Find(scope, id) != project) throw Changed();
             }
             Ensure();
-            return result;
+            return new(project, repository, source, owner, live, sourceGuard, Ensure, EnsureOwner);
         }
-        catch { if (!handedOff) sourceGuard.Dispose(); throw; }
+        catch { sourceGuard.Dispose(); throw; }
     }
 
     internal async Task<PullRequestDetail> OwnerDetailAsync(OwnerDetail args, CallContext call)
@@ -92,18 +99,49 @@ internal sealed class ProjectPullRequestReads(IAppDatabase db, IProjectRoots roo
     }
     private async Task RequireOwner(string destination, string projectId, string root, string repository, ExpectedSource source, CallContext call)
     {
-        if (call.Peer is not OwnerPeer || destination != machine || source != new ExpectedSource(machine, 0, null) ||
-            string.IsNullOrWhiteSpace(projectId) || !Path.IsPathFullyQualified(root)) throw Changed();
-        GitHubRepository.Parse(repository);
-        call.SourceGuard = await sources.CaptureEngineAsync(source, call.Cancellation);
-        call.SourceGuard.EnsureCurrent();
+        using var target = await CaptureOwnerAsync(destination, projectId, root, repository, source, call);
+        call.SourceGuard = target.Retain();
     }
-    private sealed record Target(ProjectRoot Root, string Repository, ExpectedSource Source);
-    private sealed class ProjectGuard(IExpectedSourceGuard source, Action ensure) : IExpectedSourceGuard
+    internal async Task<Target> CaptureOwnerAsync(string destination, string projectId, string root, string repository, ExpectedSource source, CallContext call)
     {
-        public CancellationToken Changed => source.Changed;
-        public void EnsureCurrent() => ensure();
-        public void Dispose() => source.Dispose();
+        if (call.Peer is not OwnerPeer || destination != machine || source != new ExpectedSource(machine, 0, null) ||
+            call.ExpectedSource is not null && call.ExpectedSource != source ||
+            string.IsNullOrWhiteSpace(projectId) || !Path.IsPathFullyQualified(root)) throw Changed();
+        var actualRepository = GitHubRepository.Parse(repository);
+        var guard = await sources.CaptureEngineAsync(source, call.Cancellation);
+        try
+        {
+            guard.EnsureCurrent();
+            return new(new(projectId, "local", root, false), actualRepository, source, null, null, guard, guard.EnsureCurrent, guard.EnsureCurrent);
+        }
+        catch { guard.Dispose(); throw; }
+    }
+    internal sealed class Target(ProjectRoot root, string repository, ExpectedSource source,
+        RemoteConnections.ProjectOwner? owner, EngineMirror.LiveMirrorBinding? live, IExpectedSourceGuard guard, Action ensure, Action ensureOwner) : IDisposable
+    {
+        private int _references = 1;
+        internal ProjectRoot Root => root;
+        internal string Repository => repository;
+        internal ExpectedSource Source => source;
+        internal RemoteConnections.ProjectOwner? Owner => owner;
+        internal EngineMirror.LiveMirrorBinding? Live => live;
+        internal CancellationToken Changed => guard.Changed;
+        internal void EnsureCurrent() => ensure();
+        internal void EnsureOwner() => ensureOwner();
+        // The queued reply and accepted execution each own a reference; neither borrows CallContext lifetime.
+        internal IExpectedSourceGuard Retain() { Interlocked.Increment(ref _references); return new Reference(this, false); }
+        internal IExpectedSourceGuard RetainOwner() { Interlocked.Increment(ref _references); return new Reference(this, true); }
+        public void Dispose() { if (Interlocked.Decrement(ref _references) == 0) guard.Dispose(); }
+        private sealed class Reference : IExpectedSourceGuard
+        {
+            private readonly Target _target;
+            private readonly bool _ownerOnly;
+            private Target? _owned;
+            internal Reference(Target target, bool ownerOnly) { _target = target; _owned = target; _ownerOnly = ownerOnly; }
+            public CancellationToken Changed => _target.Changed;
+            public void EnsureCurrent() { if (_ownerOnly) _target.EnsureOwner(); else _target.EnsureCurrent(); }
+            public void Dispose() => Interlocked.Exchange(ref _owned, null)?.Dispose();
+        }
     }
     private static CallFailed Changed() => new("The selected project or its owning source changed. Refresh and try again.", "source_changed");
     internal sealed record OwnerDetail([property: JsonRequired] string TargetMachine, [property: JsonRequired] string ProjectId,
