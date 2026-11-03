@@ -356,13 +356,13 @@ internal sealed partial class RemoteMachine
                                             createdTitle.State.TrySetException(new CallFailed("The owner session metadata identity differs.", "source_changed"));
                                             continue;
                                         }
-                                        ReceiveSessionPublication(frame, socket, createdTitle.Owner, createdTitle.Live);
+                                        ReceiveSessionPublication(frame, socket, createdTitle.Owner, createdTitle.Live, createdTitle.Cancellation);
                                         createdTitle.State.TrySetResult(_sessionPublication!.Items.TryGetValue(session, out var item) ? item.Resolution?.Work : null);
                                     }
                                 }
                                 else if (frame.TryGetProperty("item", out var update) &&
                                     update.GetProperty("sessionId").GetString() == createdTitle.SessionId)
-                                    ReceiveSessionPublication(frame, socket, createdTitle.Owner, createdTitle.Live);
+                                    ReceiveSessionPublication(frame, socket, createdTitle.Owner, createdTitle.Live, createdTitle.Cancellation);
                             }
                             else if (sub.GetInt64() == _sessionsSub)
                             {

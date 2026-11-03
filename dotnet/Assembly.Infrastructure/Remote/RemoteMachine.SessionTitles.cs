@@ -33,7 +33,7 @@ internal sealed partial class RemoteMachine
                     item.Resolution = null;
                     if (error is CallFailed { Message: "title_changed" or "unknown session" } &&
                         item.Ordinal > resolution.IssuedOrdinal && item.Ordinal > item.AttemptedOrdinal &&
-                        SameTitleKey(item.Reference!, resolution.Reference)) QueueResolution(owner, item, resolution.ExpectedOwner, resolution.Live);
+                        SameTitleKey(item.Reference!, resolution.Reference)) QueueResolution(owner, item, resolution.ExpectedOwner, resolution.Live, resolution.RequestCancellation);
                 }
             }
             finally { _socketSend.Release(); }
@@ -73,10 +73,11 @@ internal sealed partial class RemoteMachine
         private readonly OwnerConnectionBinding _binding;
         private readonly string _title;
         private readonly EngineMirror.LiveMirrorBinding? _live;
+        private readonly OwnerConnectionBinding? _expectedOwner;
         private VerifiedSessionTitle(RemoteMachine machine, SessionPublicationOwner owner, SessionPublication item,
-            SessionTitleResolution resolution, OwnerConnectionBinding binding, string title, EngineMirror.LiveMirrorBinding? live)
+            SessionTitleResolution resolution, OwnerConnectionBinding binding, string title, EngineMirror.LiveMirrorBinding? live, OwnerConnectionBinding? expectedOwner)
         {
-            _machine = machine; _owner = owner; _item = item; _resolution = resolution; _binding = binding; _title = title; _live = live;
+            _machine = machine; _owner = owner; _item = item; _resolution = resolution; _binding = binding; _title = title; _live = live; _expectedOwner = expectedOwner;
         }
         internal static async Task<VerifiedSessionTitle> ReadAsync(RemoteMachine machine, string sessionId, CancellationToken ct,
             CancellationToken? expectedResolution, OwnerConnectionBinding? expectedOwner = null,
@@ -136,7 +137,7 @@ internal sealed partial class RemoteMachine
                 part.Data.CopyTo(bytes, checked((int)offset)); offset = end;
             }
             if (SessionTitleHash.Compute(bytes) != resolution.Reference.Sha256) throw new IOException("legacy title hash differs");
-            return new(machine, owner, item, resolution, binding, new UTF8Encoding(false, true).GetString(bytes), live);
+            return new(machine, owner, item, resolution, binding, new UTF8Encoding(false, true).GetString(bytes), live, expectedOwner);
         }
         internal async Task CommitAsync(RemoteMachine machine, CancellationToken ct)
         {
@@ -149,7 +150,7 @@ internal sealed partial class RemoteMachine
                 machine.RequirePublication(_owner, _item, _resolution); machine.RequireOwnerBinding(_binding);
                 RequireLiveMirror(_binding, _live);
                 // SAME-key pushes replace metadata and ordinal, never the verified content or its prefix.
-                machine.ApplySession(ResolvedSessionItem(_item.Notice!.Value, _title));
+                machine.ApplySession(ResolvedSessionItem(_item.Notice!.Value, _title), _expectedOwner, _live, ct);
                 _item.Resolution = null; _item.Notice = null; _item.Reference = null;
             }
             finally { machine._socketSend.Release(); }

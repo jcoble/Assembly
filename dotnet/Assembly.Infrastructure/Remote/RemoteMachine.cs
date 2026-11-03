@@ -166,7 +166,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
     }
 
     private sealed record CreatedTitleSubscription(string SessionId, ClientWebSocket Socket, OwnerConnectionBinding Owner,
-        EngineMirror.LiveMirrorBinding? Live, TaskCompletionSource<Task?> State);
+        EngineMirror.LiveMirrorBinding? Live, CancellationToken Cancellation, TaskCompletionSource<Task?> State);
     private readonly Dictionary<long, CreatedTitleSubscription> _createdTitles = [];
 
     private async Task RefreshCreatedSessionTitleAsync(string sessionId, OwnerConnectionBinding owner,
@@ -182,7 +182,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         {
             if (!ReferenceEquals(RequireOwnerBinding(owner), socket)) throw new CallFailed("The accepting owner connection changed.", "source_changed");
             RequireLiveMirror(owner, live);
-            _createdTitles.Add(id, new(sessionId, socket, owner, live, state));
+            _createdTitles.Add(id, new(sessionId, socket, owner, live, ct, state));
             await SendFrameAsync(socket, $"{{\"t\":\"sub\",\"id\":{id},\"topic\":\"sessions\",\"key\":{JsonSerializer.Serialize(sessionId, RowJsonContext.Rows.String)},\"sessionTitleParts\":1}}", ct);
         }
         catch { _createdTitles.Remove(id); throw; }
