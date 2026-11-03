@@ -426,6 +426,35 @@ fn a_questions_form_sends_the_choices_picked(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+fn a_check_box_in_a_form_answers_as_a_boolean(cx: &mut TestAppContext) {
+    let schema = json!({ "type": "object", "properties": {
+        "agree": { "type": "boolean" },
+        "keep": { "type": "boolean" },
+    } });
+    let ask = row(
+        2,
+        "ask",
+        Some("ask:a1"),
+        json!({ "kind": "question", "state": "open", "schema": schema }),
+    );
+    let (pane, client, cx) = opened(vec![user(1, "go"), ask], cx);
+    act(
+        &pane,
+        SessionAction::Flag { ask_id: "a1".into(), field: "agree".into(), on: true },
+        cx,
+    );
+    client.queue_answer(Ok(json!({ "ok": true })));
+    act(&pane, SessionAction::SubmitAsk { ask_id: "a1".into() }, cx);
+    assert_eq!(
+        calls_after(&client, 1),
+        [(
+            "send/answer".to_string(),
+            json!({ "session": "s1", "ask": "a1", "answer": { "action": "accept", "content": { "agree": true, "keep": false } } })
+        )]
+    );
+}
+
 // An open ask whose answer arrives shrinks shut; one already answered when drawn is drawn shut.
 // Pins: g0-session#16, g0-session#34
 #[gpui::test]

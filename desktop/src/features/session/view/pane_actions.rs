@@ -44,7 +44,7 @@ impl SessionPane {
             self.status = "The captured session source is unavailable. Open the session again.".into(); cx.notify(); return;
         }
         if self.read_only && matches!(&action,
-            SessionAction::RetryPrompt { .. } | SessionAction::Pick { .. }
+            SessionAction::RetryPrompt { .. } | SessionAction::Pick { .. } | SessionAction::Flag { .. }
             | SessionAction::SubmitAsk { .. } | SessionAction::Answer { .. } | SessionAction::StopTask { .. } | SessionAction::StopNative { .. } | SessionAction::StopEngineChild { .. }) {
             self.status = "This recorded transcript is read-only.".into(); cx.notify(); return;
         }
@@ -105,6 +105,14 @@ impl SessionPane {
                 self.refresh_ask(&ask_id, cx);
                 cx.notify();
             }
+            SessionAction::Flag { ask_id, field, on } => {
+                let Some(form) = self.forms.get_mut(&ask_id) else {
+                    return;
+                };
+                form.set_flag(field, on);
+                self.refresh_ask(&ask_id, cx);
+                cx.notify();
+            }
             SessionAction::SubmitAsk { ask_id } => {
                 let Some(form) = self.forms.get(&ask_id) else {
                     return;
@@ -118,13 +126,16 @@ impl SessionPane {
                     ItemKind::Ask { ask_id: id, ask } if *id == ask_id => Some(ask),
                     _ => None,
                 });
-                if let Some(label) = asked.and_then(|ask| AskForm::missing(ask, &form.picked, &texts)) {
-                    self.status = format!("{label} is required.").into();
-                    cx.notify();
+                let Some(asked) = asked else {
                     return;
+                };
+                match AskForm::answer(asked, &form.picked, texts) {
+                    Ok(answer) => self.on_action(SessionAction::Answer { ask_id, answer }, window, cx),
+                    Err(why) => {
+                        self.status = why.into();
+                        cx.notify();
+                    }
                 }
-                let answer = AskForm::content(&form.picked, texts);
-                self.on_action(SessionAction::Answer { ask_id, answer }, window, cx);
             }
             SessionAction::Answer { ask_id, answer } => {
                 // A settled ask still shows its controls while it shrinks; they answer nothing more.
