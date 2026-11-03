@@ -15,6 +15,7 @@ use crate::core::ui::markdown::view::MarkdownView;
 use gpui_kit::component::Icon;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::gpui_base::StyledExt as _;
 
 /// Below this the side column moves under the main one.
 const TWO_COLUMNS: f32 = 1180.;
@@ -106,7 +107,7 @@ impl PrDetail {
                 )
                 .children(side.map(|side| {
                     div()
-                        .flex_shrink()
+                        .flex_shrink(1.)
                         .w(px(300.))
                         .min_w(px(220.))
                         .h_full()

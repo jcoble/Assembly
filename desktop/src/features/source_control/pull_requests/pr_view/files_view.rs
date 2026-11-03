@@ -13,6 +13,7 @@ use gpui_kit::component::list::ListItem;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::gpui_base::StyledExt as _;
 
 impl PrFiles {
     fn diff(&self, cx: &mut Context<Self>) -> Diff {

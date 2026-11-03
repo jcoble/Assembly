@@ -4,6 +4,7 @@ use super::super::{post_confirm, post_confirm::PostRequest, review_draft::LineCo
 use super::*;
 use gpui_kit::component::diff::{DiffLinePosition, DiffSide};
 use gpui_kit::component::input::{InputEvent, Textarea};
+use gpui_kit::gpui_base::StyledExt as _;
 use serde::Deserialize;
 
 #[derive(Deserialize)]

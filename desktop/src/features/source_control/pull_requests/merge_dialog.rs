@@ -4,6 +4,7 @@ use super::{
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::gpui_base::StyledExt as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
