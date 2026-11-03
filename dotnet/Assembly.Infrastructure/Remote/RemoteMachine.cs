@@ -1,3 +1,4 @@
+using Assembly.Infrastructure.Engine;
 using Assembly.Application.Common.Agents;
 using System.Security.Cryptography;
 using System.Net.WebSockets;
@@ -98,24 +99,131 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         finally { _socketSend.Release(); }
     }
 
-    public async Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken,
-        InitialSessionConfig? initialConfig = null, string? workingFolder = null)
+    internal async Task<SessionsFeature.Created> CreateBoundSessionAsync(SessionsFeature.CreateArgs request,
+        SessionsFeature.CreateAtRootArgs? descriptor, OwnerConnectionBinding owner, ClientWebSocket socket,
+        EngineMirror.LiveMirrorBinding? live, CancellationToken ct,
+        Action<Assembly.Application.Common.Database.IWriteScope, SessionsFeature.Created>? accepted = null)
     {
-        var initial = initialConfig is null ? null : initialConfig with { TargetId = UnwrapTarget(initialConfig.TargetId) };
-        var args = new SessionsFeature.CreateArgs(agent, repoUrl, InitialConfig: initial, WorkingFolder: workingFolder);
-        var created = initial is null
-            ? await CallAsync("sessions", "create", args, cancellationToken)
-            : await ConfiguredCallAsync("sessions", "create", JsonSerializer.SerializeToElement(args, SessionsJson.Default.CreateArgs), cancellationToken);
-        return _sessionStore.Add(created.GetProperty("sessionId").GetString()!, agent, repoUrl, _name, workingFolder: workingFolder);
+        var initial = request.InitialConfig is null ? null
+            : request.InitialConfig with { TargetId = UnwrapTarget(request.InitialConfig.TargetId) };
+        var normalized = request with
+        {
+            Machine = null,
+            InitialConfig = initial,
+            ExpectedSource = request.ExpectedSource is null ? null : new(owner.Machine, 0, null)
+        };
+        var args = descriptor is null
+            ? JsonSerializer.SerializeToElement(normalized, SessionsJson.Default.CreateArgs)
+            : JsonSerializer.SerializeToElement(descriptor with { Create = normalized }, SessionsJson.Default.CreateAtRootArgs);
+        var reply = await CallAsync("sessions", descriptor is null ? "create" : "create_at_root", args, false, ct,
+            owner.Machine, socket, expectedOwner: owner, expectedMirror: live);
+        var created = reply.Deserialize(SessionsJson.Default.Created);
+        if (created is null || string.IsNullOrWhiteSpace(created.SessionId))
+            throw new CallFailed("The owner returned no accepted session.", "configuration_unavailable");
+        await AcceptCreatedSessionAsync(created, owner, socket, live, ct,
+            accepted is null ? null : scope => accepted(scope, created));
+        return created;
     }
 
-    public async Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken)
+    internal async Task<SessionsFeature.ByClientReply> ReadBoundCreatedSessionAsync(string clientId,
+        bool qualified, OwnerConnectionBinding owner, ClientWebSocket socket,
+        EngineMirror.LiveMirrorBinding? live, CancellationToken ct,
+        Action<Assembly.Application.Common.Database.IWriteScope, SessionsFeature.ByClientReply>? accepted = null)
     {
-        var created = await CallAsync("sessions", "create", new SessionsFeature.CreateArgs(agent, parent.RepoUrl, ParentSessionId: parent.SessionId, Title: title), cancellationToken);
-        var sessionId = created.GetProperty("sessionId").GetString()!;
-        _sessionStore.Add(sessionId, agent, parent.RepoUrl, _name, parent.SessionId, helper: true);
-        _sessionStore.SetTitle(sessionId, title, "prompt");
-        return _sessionStore.Get(sessionId)!;
+        var args = new SessionsFeature.ByClientArgs(clientId,
+            ExpectedSource: qualified ? new(owner.Machine, 0, null) : null);
+        var reply = await CallAsync("sessions", "byClient", JsonSerializer.SerializeToElement(args, SessionsJson.Default.ByClientArgs),
+            false, ct, owner.Machine, socket, expectedOwner: owner, expectedMirror: live);
+        var known = reply.Deserialize(SessionsJson.Default.ByClientReply)
+            ?? throw new CallFailed("The owner returned no creation correlation.", "configuration_unavailable");
+        if (known.SessionId is not null)
+            await AcceptCreatedSessionAsync(new(known.SessionId, known.CheckoutOperationId, known.ProjectId, known.AcceptedRoot, known.Facts),
+                owner, socket, live, ct, accepted is null ? null : scope => accepted(scope, known));
+        return known;
+    }
+
+    private async Task AcceptCreatedSessionAsync(SessionsFeature.Created created, OwnerConnectionBinding owner,
+        ClientWebSocket socket, EngineMirror.LiveMirrorBinding? live, CancellationToken ct,
+        Action<Assembly.Application.Common.Database.IWriteScope>? accepted)
+    {
+        // Older peers may acknowledge acceptance without certifying copied metadata. Never invent it.
+        if (created.Facts is not { } facts) return;
+        if (facts.Machine != owner.Machine) throw new CallFailed("The accepted session owner changed.", "source_changed");
+        await _socketSend.WaitAsync(ct);
+        try
+        {
+            void Validate(Assembly.Application.Common.Database.IWriteScope _)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (!ReferenceEquals(RequireOwnerBinding(owner), socket))
+                    throw new CallFailed("The accepting owner connection changed.", "source_changed");
+                RequireLiveMirror(owner, live);
+            }
+            _sessionStore.AcceptCopiedCreation(created.SessionId, facts, _name, created.ProjectId, Validate, accepted);
+        }
+        finally { _socketSend.Release(); }
+        await RefreshCreatedSessionTitleAsync(created.SessionId, owner, socket, live, ct);
+    }
+
+    private sealed record CreatedTitleSubscription(string SessionId, ClientWebSocket Socket, OwnerConnectionBinding Owner,
+        EngineMirror.LiveMirrorBinding? Live, TaskCompletionSource<Task?> State);
+    private readonly Dictionary<long, CreatedTitleSubscription> _createdTitles = [];
+
+    private async Task RefreshCreatedSessionTitleAsync(string sessionId, OwnerConnectionBinding owner,
+        ClientWebSocket socket, EngineMirror.LiveMirrorBinding? live, CancellationToken cancellation)
+    {
+        using var stop = live is null ? CancellationTokenSource.CreateLinkedTokenSource(cancellation, owner.Invalidated)
+            : CancellationTokenSource.CreateLinkedTokenSource(cancellation, owner.Invalidated, live.Invalidated);
+        var ct = stop.Token;
+        var id = Interlocked.Increment(ref _nextSub);
+        var state = new TaskCompletionSource<Task?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await _socketSend.WaitAsync(ct);
+        try
+        {
+            if (!ReferenceEquals(RequireOwnerBinding(owner), socket)) throw new CallFailed("The accepting owner connection changed.", "source_changed");
+            RequireLiveMirror(owner, live);
+            _createdTitles.Add(id, new(sessionId, socket, owner, live, state));
+            await SendFrameAsync(socket, $"{{\"t\":\"sub\",\"id\":{id},\"topic\":\"sessions\",\"key\":{JsonSerializer.Serialize(sessionId, RowJsonContext.Rows.String)},\"sessionTitleParts\":1}}", ct);
+        }
+        catch { _createdTitles.Remove(id); throw; }
+        finally { _socketSend.Release(); }
+        Task? resolution = null;
+        try
+        {
+            resolution = await state.Task.WaitAsync(ct);
+            if (resolution is not null) await resolution.WaitAsync(ct);
+        }
+        catch (Exception error) when (!cancellation.IsCancellationRequested &&
+            error is IOException or CallFailed or OperationCanceledException)
+        {
+            // Acceptance remains committed. Keep metadata pending rather than resending creation or fabricating a title.
+            await _socketSend.WaitAsync(cancellation);
+            try { RequireOwnerBinding(owner); RequireLiveMirror(owner, live); }
+            finally { _socketSend.Release(); }
+            SessionTitleFailure(error);
+        }
+        finally
+        {
+            Task? cleanup = null;
+            await _socketSend.WaitAsync(CancellationToken.None);
+            try
+            {
+                _createdTitles.Remove(id);
+                if (_sessionPublication is { } publication && publication.Items.TryGetValue(sessionId, out var item) &&
+                    item.Resolution is { } pending && ReferenceEquals(pending.ExpectedOwner, owner) &&
+                    ReferenceEquals(pending.Live, live) && !pending.Work.IsCompleted)
+                {
+                    cleanup = pending.Work;
+                    CancelResolution(publication, item);
+                }
+                if (_socket is { State: WebSocketState.Open } current && ReferenceEquals(current, socket) && !owner.IsInvalidated)
+                    try { await SendFrameAsync(socket, $"{{\"t\":\"unsub\",\"id\":{id}}}", _socketStop.Token); }
+                    catch (Exception error) when (error is WebSocketException or OperationCanceledException) { socket.Abort(); }
+            }
+            finally { _socketSend.Release(); }
+            if (cleanup is not null) await cleanup;
+            if (resolution is not null && !ReferenceEquals(resolution, cleanup)) await resolution;
+        }
     }
 
     public async Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken)

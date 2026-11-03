@@ -1,6 +1,6 @@
 using Assembly.Application.Common.Git;
 
-namespace Assembly.Application.Features.Projects;
+namespace Assembly.Application.Common.Projects;
 
 public interface IProjectFolders
 {

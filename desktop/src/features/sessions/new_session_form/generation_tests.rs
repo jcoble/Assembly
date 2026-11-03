@@ -20,7 +20,7 @@ fn a_missing_generation_clears_the_current_agent_and_auth_owner_even_if_state_sa
         assert!(form.agent.is_none());
         assert!(form.agents.is_empty());
         assert!(form.config.is_none());
-        assert_eq!(form.folder.read(cx).value(), "/kept-draft");
+        assert!(form.cwd.is_none(), "a lost generation cannot retain cwd authority");
         assert!(form.auth_machine.is_none());
         assert!(form.sign_in_target().is_none());
     });

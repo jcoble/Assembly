@@ -22,6 +22,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
     private readonly TempDatabase _remoteFile = new();
+    private readonly string _owningHome = Directory.CreateTempSubdirectory("assembly-remote-owner-").FullName;
     private readonly TempDatabase _localFile = new();
     private readonly CountingTime _time = new();
     private readonly TaskCompletionSource _legacy = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -61,7 +62,6 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         var machines = new MachineSet(_remoteMachine);
         var calls = new SocketDispatcher(_remoteDb.Writer, topics, TimeProvider.System, NullLogger.Instance);
         new RowsFeature(_remoteHub, _remoteStore, sessions, machines).Register(calls);
-        new SessionsFeature(sessions, machines).Register(calls);
         var answers = new Assembly.Tests.Infrastructure.Socket.AnswerDoor
         {
             Owner = OwnerDoor(sessions, machines, topics),
@@ -71,6 +71,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
                 return Task.FromResult<Func<Assembly.Application.Common.Database.IWriteScope, bool>>(_ => !_remoteMachine.Refuses);
             }
         };
+        new SessionsFeature(sessions, machines, owningMachine: _ownerEngine.Machine, owningHome: _owningHome).Register(calls);
         new Assembly.Infrastructure.Engine.EngineCalls(_ownerEngine, TimeProvider.System, _ownerAnswers).Register(calls);
         new Assembly.Infrastructure.Engine.Titles.SessionTitleCalls(_ownerEngine, sessions).Register(calls);
         new SendFeature(sessions, machines, _remoteHub, answers).Register(calls);
@@ -296,6 +297,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         _remoteDb.Dispose();
         _localFile.Dispose();
         _remoteFile.Dispose();
+        Directory.Delete(_owningHome, true);
     }
 
     private sealed class CountingTime : FakeTimeProvider

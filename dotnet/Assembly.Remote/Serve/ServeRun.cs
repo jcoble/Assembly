@@ -85,7 +85,7 @@ public static class ServeRun
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
         AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
         var agents = launcher is null ? new AgentsFile(options.AgentsFile) : null;
-        launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions(), session => SessionStore.Folder(options.Checkouts, session));
+        launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions());
         var preferences = new PreferenceStore(db);
         await using var work = new BackgroundWork(TimeProvider.System, Console.Out);
         await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
@@ -135,7 +135,10 @@ public static class ServeRun
                 }
                 catch (CallFailed) { return false; }
             }
-            var cutover = new SessionCutover(db, sessionStore, launcher, options.Checkouts, TimeProvider.System, helperCards: helperCards);
+            var owningHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var projectRoots = new ProjectRoots(projectStore);
+            var cutover = new SessionCutover(db, sessionStore, launcher, options.Checkouts, TimeProvider.System, helperCards: helperCards,
+                projectRoots: projectRoots, projectUse: projectRoots, owningHome: owningHome);
             var checkoutWrites = new CheckoutWrites();
             engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits,
                 cutover: cutover,
@@ -211,7 +214,7 @@ public static class ServeRun
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
                 [new EngineCalls(engine, TimeProvider.System, answers, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, resolveProject: project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore), new SessionTitleCalls(engine, sessionStore), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines), ownerMachineCalls,
                     new ProvidersFeature(challenges, engine.Machine), new ProviderRuntimeCalls(engine.Machine, agents), new TerminalFeature(terminals), workflowCalls,
-                    new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources),
+                    new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(options.Home, "staging", "attachments"), sessionSources),
                     new FilesFeature(sessionStore, new FileOwner(sessionStore, db), work, sources: sessionSources),

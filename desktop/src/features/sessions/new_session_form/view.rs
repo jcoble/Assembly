@@ -3,7 +3,6 @@ use crate::features::session::composer::config_menu::{
     ConfigMenu, ConfigSettings, OnSelect, inline,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::Textarea;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -35,6 +34,7 @@ impl Render for NewSessionForm {
                     .when(picked, |button| button.primary())
                     .when(!picked, |button| button.ghost())
                     .label(label)
+                    .disabled(self.attempt.is_some())
                     .on_click(
                         cx.listener(move |form, _, _, cx| form.pick_machine(machine.clone(), cx)),
                     ),
@@ -50,6 +50,7 @@ impl Render for NewSessionForm {
                     .when(picked, |button| button.primary())
                     .when(!picked, |button| button.ghost())
                     .label(name)
+                    .disabled(self.attempt.is_some())
                     .on_click(cx.listener(move |form, _, _, cx| {
                         form.pick_agent(&id, cx);
                     })),
@@ -62,7 +63,7 @@ impl Render for NewSessionForm {
                     .compact()
                     .ghost()
                     .label("Sign in")
-                    .disabled(target.is_none() || self.starting)
+                    .disabled(target.is_none() || self.starting || self.attempt.is_some())
                     .on_click(cx.listener(move |form, _, window, cx| {
                         if let Some(target) = target.clone() {
                             form.open_sign_in(target, window, cx);
@@ -98,7 +99,7 @@ impl Render for NewSessionForm {
                         .collect(),
                     current: current.into(),
                     on_select: on_select.clone(),
-                    disabled: self.starting,
+                    disabled: self.starting || self.attempt.is_some(),
                 });
             }
             if !settings.is_empty() {
@@ -108,7 +109,7 @@ impl Render for NewSessionForm {
                         .map(|(o, v)| (o.clone(), v.into()))
                         .collect(),
                     on_select,
-                    disabled: self.starting,
+                    disabled: self.starting || self.attempt.is_some(),
                 });
             }
         }
@@ -129,7 +130,15 @@ impl Render for NewSessionForm {
                         .child(self.auth_error.clone()),
                 )
             })
-            .child(Textarea::new(&self.folder).disabled(self.starting))
+            .child(div().track_focus(&self.chooser_focus).child(
+                Button::new("new:project-choice").label(self.selected_project.as_ref().map_or_else(||"No project".to_string(),|project|format!("{} · {}",project.title,if project.machine=="local"{"This computer"}else{&project.machine})))
+                    .disabled(self.attempt.is_some())
+                    .on_click(cx.listener(|form,_,window,cx| {
+                        form.chooser_open=true;
+                        form.project_chooser.update(cx,|chooser,cx|chooser.focus_search(window,cx));cx.notify();
+                    })),
+            ))
+            .when(self.chooser_open,|view|view.child(self.project_chooser.clone()))
             .child(controls)
             .when(self.discovering, |form| {
                 form.child(
@@ -147,22 +156,10 @@ impl Render for NewSessionForm {
                         .child(self.error.clone()),
                 )
             })
-            .child(
-                Button::new("new:create")
-                    .primary()
-                    .compact()
-                    .label(if self.starting {
-                        "Starting…"
-                    } else {
-                        "Start session"
-                    })
-                    .disabled(
-                        self.starting
-                            || (std::path::Path::new(self.folder.read(cx).value().trim())
-                                .is_absolute()
-                                && !self.config.as_ref().is_some_and(DraftConfig::ready)),
-                    )
-                    .on_click(cx.listener(|form, _, _, cx| form.create(cx))),
-            )
+            .when(self.attempt.is_some() && !self.starting, |view| view.child(
+                Button::new("new:reconcile").ghost().label("Reconcile original start")
+                    .on_click(cx.listener(|form, _, _, cx| form.reconcile_start(cx))),
+            ))
+            .child(self.start_composer.clone())
     }
 }

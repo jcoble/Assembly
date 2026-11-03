@@ -52,6 +52,8 @@ public sealed class SessionWarmConfigTests : IAsyncDisposable
         _store.SetAgentConfig("claude", "[]");
         _store.SetAcpSession(_session.SessionId, "saved-B");
         var before = _store.Get(_session.SessionId)!;
+        var untouched = Path.Combine(_folder, "uncommitted.txt");
+        await File.WriteAllTextAsync(untouched, "owner draft");
         var warm = _host.WarmConfigAsync(Target, CancellationToken.None);
         var agent = await _launcher.NextAsync();
         var open = await agent.StartAsync(acpSessionId: "saved-B", configOptions: Options);
@@ -61,8 +63,10 @@ public sealed class SessionWarmConfigTests : IAsyncDisposable
         var result = await warm.WaitAsync(Wait);
         Assert.Equal(Options, result.Options);
         Assert.Equal(before, _store.Get(_session.SessionId));
+        Assert.Equal("owner draft", await File.ReadAllTextAsync(untouched));
+        Assert.Equal(["uncommitted.txt"], Directory.EnumerateFileSystemEntries(_folder).Select(Path.GetFileName));
         Assert.True(agent.Disposed);
-        Assert.Empty(_launcher.CheckedOut);
+
         Assert.Null(_host.ActiveRunId);
         // No native session/close, rename or prompt was received: disposal ended this private read.
     }

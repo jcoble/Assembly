@@ -27,6 +27,7 @@ pub(super) fn open(
     let subscription = cx.update(|_, cx| {
         cx.subscribe(&composer, move |_, event: &ComposerEvent, _| {
             seen.borrow_mut().push(match event {
+                ComposerEvent::StartRequested{..} => "start requested".to_string(),
                 ComposerEvent::Sending => "sending".to_string(),
                 ComposerEvent::Accepted{receipt,..} => format!("queued {}", receipt.session_id),
                 ComposerEvent::PendingChanged => "pending".into(),

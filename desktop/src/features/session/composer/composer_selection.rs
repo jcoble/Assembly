@@ -28,6 +28,7 @@ impl Composer {
         self.read_config(cx);self.read_pending(cx);cx.notify();
     }
     pub fn invalidate_source(&mut self,cx:&mut Context<Self>) {
+        if self.start_draft.is_some(){cx.notify();return;}
         self.source_valid=false;self.source_serial+=1;self.target_generation+=1;
         self._target=None;self._warm=None;self._config=None;self._pending_read=None;
         self.message_subscriptions.clear();self.uploads.clear();self.config=None;

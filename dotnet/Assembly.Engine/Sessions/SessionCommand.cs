@@ -1,3 +1,5 @@
+using Assembly.Application.Common.Projects;
+using Assembly.Application.Common.Engine;
 using Assembly.Engine.Contracts;
 using System.Text.Json.Serialization;
 
@@ -7,7 +9,9 @@ public abstract record SessionCommand : EngineCommand;
 public sealed record StartSession(string Provider, string? Model, string Folder, string Title,
     string? ParentId, string? RunId, string? TaskUrl,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RepoUrl = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ManagedCheckout = null) : SessionCommand;
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ManagedCheckout = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ProjectId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] CheckoutIntent? Checkout = null) : SessionCommand;
 public sealed record RegisterForeignSession(string Machine, string Provider, string Title) : SessionCommand;
 public sealed record SetSessionState(string State, string? ProviderSessionId, string? Reason) : SessionCommand;
 public sealed record StopSession() : SessionCommand;

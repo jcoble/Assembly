@@ -1,3 +1,4 @@
+using Assembly.Infrastructure.Engine;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Assembly.Application.Common.Engine;
@@ -36,10 +37,18 @@ internal sealed partial class RemoteMachine
         internal readonly CancellationTokenSource Stop;
         internal readonly CancellationToken Token;
         internal long IssuedOrdinal;
-        internal SessionTitleResolution(SessionPublicationOwner owner, LegacySessionTitleRef reference, long ordinal)
+        internal readonly OwnerConnectionBinding? ExpectedOwner;
+        internal readonly EngineMirror.LiveMirrorBinding? Live;
+        internal Task Work = Task.CompletedTask;
+        internal SessionTitleResolution(SessionPublicationOwner owner, LegacySessionTitleRef reference, long ordinal,
+            OwnerConnectionBinding? expectedOwner = null, EngineMirror.LiveMirrorBinding? live = null)
         {
             Reference = reference; IssuedOrdinal = ordinal;
-            Stop = CancellationTokenSource.CreateLinkedTokenSource(owner.Stop.Token); Token = Stop.Token;
+            ExpectedOwner = expectedOwner; Live = live;
+            Stop = expectedOwner is null ? CancellationTokenSource.CreateLinkedTokenSource(owner.Stop.Token)
+                : live is null ? CancellationTokenSource.CreateLinkedTokenSource(owner.Stop.Token, expectedOwner.Invalidated)
+                : CancellationTokenSource.CreateLinkedTokenSource(owner.Stop.Token, expectedOwner.Invalidated, live.Invalidated);
+            Token = Stop.Token;
         }
         internal Task Cancellation = Task.CompletedTask;
         internal bool Revoked;
@@ -85,23 +94,27 @@ internal sealed partial class RemoteMachine
         resolution.Cancellation = CancelPublicationAfter(ready.Task, resolution.Stop);
         owner.Work.Add(resolution.Cancellation); ready.SetResult();
     }
-    private void QueueResolution(SessionPublicationOwner owner, SessionPublication item)
+    private void QueueResolution(SessionPublicationOwner owner, SessionPublication item,
+        OwnerConnectionBinding? expectedOwner = null, EngineMirror.LiveMirrorBinding? live = null)
     {
-        var resolution = new SessionTitleResolution(owner, item.Reference!, item.Ordinal);
+        var resolution = new SessionTitleResolution(owner, item.Reference!, item.Ordinal, expectedOwner, live);
         item.Resolution = resolution; item.AttemptedOrdinal = item.Ordinal;
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         owner.Work.RemoveAll(task => task.IsCompletedSuccessfully);
-        owner.Work.Add(ResolveSessionTitleAfter(ready.Task, owner, item, resolution));
+        resolution.Work = ResolveSessionTitleAfter(ready.Task, owner, item, resolution);
+        owner.Work.Add(resolution.Work);
         ready.SetResult();
     }
 
-    private void ReceiveSessionPublication(JsonElement frame, ClientWebSocket socket)
+    private void ReceiveSessionPublication(JsonElement frame, ClientWebSocket socket,
+        OwnerConnectionBinding? expectedOwner = null, EngineMirror.LiveMirrorBinding? live = null)
     {
-        try { ReceiveSessionPublicationCore(frame, socket); }
+        try { ReceiveSessionPublicationCore(frame, socket, expectedOwner, live); }
         catch (Exception error) when (error is JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException)
         { throw new IOException("invalid session title publication", error); }
     }
-    private void ReceiveSessionPublicationCore(JsonElement frame, ClientWebSocket socket)
+    private void ReceiveSessionPublicationCore(JsonElement frame, ClientWebSocket socket,
+        OwnerConnectionBinding? expectedOwner, EngineMirror.LiveMirrorBinding? live)
     {
         var owner = _sessionPublication;
         if (owner is null || owner.Revoked || !ReferenceEquals(owner.Socket, socket)) throw new IOException("session publication owner changed");
@@ -111,10 +124,11 @@ internal sealed partial class RemoteMachine
             if (frame.TryGetProperty("sessionTitleParts", out version) && version.GetInt32() != 1) throw new IOException("invalid sessions title negotiation");
         }
         if (frame.TryGetProperty("items", out var items))
-            foreach (var entry in items.EnumerateArray()) ReceiveSessionItem(owner, entry.GetProperty("item"));
-        else if (frame.TryGetProperty("item", out var item)) ReceiveSessionItem(owner, item);
+            foreach (var entry in items.EnumerateArray()) ReceiveSessionItem(owner, entry.GetProperty("item"), expectedOwner, live);
+        else if (frame.TryGetProperty("item", out var item)) ReceiveSessionItem(owner, item, expectedOwner, live);
     }
-    private void ReceiveSessionItem(SessionPublicationOwner owner, JsonElement json)
+    private void ReceiveSessionItem(SessionPublicationOwner owner, JsonElement json,
+        OwnerConnectionBinding? expectedOwner, EngineMirror.LiveMirrorBinding? live)
     {
         if (json.ValueKind != JsonValueKind.Object) throw new IOException("invalid session publication");
         var id = json.GetProperty("sessionId").GetString() ?? throw new IOException("invalid session identity");
@@ -144,11 +158,18 @@ internal sealed partial class RemoteMachine
             CancelResolution(owner, item); item.Notice = null; item.Reference = null;
             ApplySession(inline); return;
         }
-        if (item.Resolution is not null && SameTitleKey(item.Reference!, reference!))
+        // A global push may arrive between seeding and the keyed state. Preserve an active pin,
+        // and never treat a legacy task as though it captured the new caller's owner/generation.
+        if (expectedOwner is null && item.Resolution?.ExpectedOwner is { } pinned)
+        {
+            expectedOwner = pinned; live = item.Resolution.Live;
+        }
+        if (item.Resolution is { } current && SameTitleKey(item.Reference!, reference!) &&
+            (expectedOwner is null || ReferenceEquals(current.ExpectedOwner, expectedOwner) && ReferenceEquals(current.Live, live)))
         {
             item.Reference = reference; item.Notice = json.Clone(); return;
         }
-        CancelResolution(owner, item); item.Reference = reference; item.Notice = json.Clone(); QueueResolution(owner, item);
+        CancelResolution(owner, item); item.Reference = reference; item.Notice = json.Clone(); QueueResolution(owner, item, expectedOwner, live);
     }
     private void ApplySession(SessionItem item)
     {

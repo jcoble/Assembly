@@ -1,5 +1,6 @@
 use super::projects::Projects;
 use crate::core::intents::open_new_project::OpenNewProject;
+use crate::core::intents::open_project::OpenProject;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -38,9 +39,20 @@ impl Render for ProjectsView {
             let mut rows = v_flex().gap_2().id("projects-registry").max_h(px(480.)).overflow_y_scroll();
             for project in data.rows() {
                 let machine = if project.machine == "local" { "This computer" } else { &project.machine };
+                let intent = OpenProject { project_id: project.id.clone(), machine: project.machine.clone(), root_path: project.root_path.clone() };
+                let row_intent = intent.clone();
                 rows = rows.child(
-                    v_flex().gap_1().p_2()
-                        .child(project.title.clone())
+                    v_flex().gap_1().p_2().id(SharedString::from(format!("project-row:{}", project.id)))
+                        .cursor_pointer().on_click(move |_, window, cx| {
+                            window.close_dialog(cx);
+                            window.dispatch_action(Box::new(row_intent.clone()), cx);
+                        })
+                        .child(Button::new(SharedString::from(format!("open-project:{}", project.id)))
+                            .ghost().label(project.title.clone()).on_click(move |_, window, cx| {
+                                cx.stop_propagation();
+                                window.close_dialog(cx);
+                                window.dispatch_action(Box::new(intent.clone()), cx);
+                            }))
                         .child(div().text_sm().child(project.root_path.clone()))
                         .child(div().text_sm().child(machine.to_string()))
                         .children(project.repo_key.clone().map(|repo| div().text_sm().child(repo))),

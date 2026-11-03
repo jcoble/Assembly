@@ -22,6 +22,10 @@ public sealed partial class EngineHostTests
     public async Task Actual_default_auth_composition_only_produces_three_auth_kinds_and_owns_cancel_cleanup(string host, bool privateHome)
     {
         var home = Directory.CreateTempSubdirectory("assembly-auth-host-").FullName;
+        // Both actual host compositions use home/sessions for Assembly checkout storage.
+        var checkoutRoot = Directory.CreateDirectory(Path.Combine(home, "sessions")).FullName;
+        var sentinel = Path.Combine(checkoutRoot, "notes.md");
+        await File.WriteAllTextAsync(sentinel, "owner draft");
         var launcher = new FakeLauncher();
         const string rawHome = "/private/HOST_AUTH_HOME_CANARY";
         if (privateHome)
@@ -94,7 +98,9 @@ public sealed partial class EngineHostTests
             var kinds = ((IEngineRuntime)running.Runtime).Read(scope => scope.Query(
                 "SELECT DISTINCT kind FROM engine_outbox ORDER BY kind", row => row.Text(0)), default);
             Assert.Equal(["begin_sign_in", "cancel_sign_in", "probe_provider"], kinds);
-            Assert.Empty(launcher.CheckedOut);
+
+            Assert.Equal("owner draft", await File.ReadAllTextAsync(sentinel));
+            Assert.Equal(["notes.md"], Directory.EnumerateFileSystemEntries(checkoutRoot).Select(Path.GetFileName));
             Assert.Equal(["claude", "claude", "claude", "claude"], launcher.Launched);
             Assert.False(refreshed.Disposed); // Cancelling the dedicated attempt preserves the unrelated shared adapter.
             Assert.True(probe.Disposed); // Successful sign-in retired the exact idle shared probe instance.
@@ -129,7 +135,6 @@ public sealed partial class EngineHostTests
         public IReadOnlyList<AgentDescriptor> Agents => inner.Agents;
         public bool CanRunTerminalAuthentication => inner.CanRunTerminalAuthentication;
         public void ValidateFolder(string folder) => inner.ValidateFolder(folder);
-        public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken ct) => inner.CheckoutAsync(session, stages, ct);
         public Task<IAgentLink> LaunchAsync(string agent, StageTimes stages, CancellationToken ct) => inner.LaunchAsync(agent, stages, ct);
         public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> environment, StageTimes stages, CancellationToken ct)
         {

@@ -49,6 +49,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         private readonly IEngineEffects? _effects;
         private readonly Func<string, string, bool>? _isConfiguredProvider;
         public Action<ICallRegistry>? AdditionalFeatures { get; set; }
+        public Func<Host, IFeature>? SessionFeature { get; set; }
         public IRowSourceBindings? SessionSources { get; set; }
         public Assembly.Application.Common.Engine.IEngineDoor? ChatDoor { get; set; }
         public Action? CommandCommitted { get; set; }
@@ -116,7 +117,7 @@ internal sealed class TwoHosts : IAsyncDisposable
                 _machineCalls = new(Runtime, Fixture.Time, _machineLauncher, _checkouts!, Needs);
                 _machineCalls.Register(new IdentityGate(calls, this, machineReads: true));
             }
-            new SessionsFeature(Sessions, new MachineSet(new FakeMachine(null, Sessions)), SessionSources).Register(calls);
+            (SessionFeature?.Invoke(this) ?? new SessionsFeature(Sessions, new MachineSet(new FakeMachine(null, Sessions)), SessionSources, owningMachine: Runtime.Machine)).Register(calls);
             AdditionalFeatures?.Invoke(calls);
             var builder = WebApplication.CreateSlimBuilder(); builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, port));

@@ -2,6 +2,7 @@ use super::*;
 impl Composer {
     /// Sends the draft once every attachment has uploaded; one whose upload failed is removed first.
     pub(super) fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.start_draft.is_some(){self.send_start(cx);return;}
         if !self.operational(){return;}
         let Some(session) = self.session.clone() else {
             return;
@@ -104,7 +105,7 @@ impl Composer {
         self.read_pending(cx);
     }
 
-    fn submit(
+    pub(super) fn submit(
         &mut self,
         session: String,
         request: PromptRequest,

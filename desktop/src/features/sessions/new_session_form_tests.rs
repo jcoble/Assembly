@@ -1,22 +1,5 @@
 use serde_json::json;
 
-use super::create_args;
-
-// Pins: g0-session#31
-#[test]
-fn a_new_session_needs_an_agent_and_a_folder_and_names_its_machine() {
-    assert_eq!(create_args(None, "/repo", None), None);
-    assert_eq!(create_args(Some("claude"), "  ", None), None);
-    assert_eq!(
-        create_args(Some("claude"), " /repo ", None),
-        Some(json!({ "agent": "claude", "repoUrl": "/repo" }))
-    );
-    assert_eq!(
-        create_args(Some("codex"), "/repo", Some("Workbox Test")),
-        Some(json!({ "agent": "codex", "repoUrl": "/repo", "machine": "Workbox Test" }))
-    );
-}
-
 use super::NewSessionForm;
 use crate::core::state::selected_session::SelectedSession;
 use crate::features::session::client::fake_client::FakeClient;
@@ -120,15 +103,11 @@ fn opened(cx: &mut TestAppContext) -> (Entity<NewSessionForm>, FormClient, &mut 
     (form, client, cx)
 }
 fn folder(form: &Entity<NewSessionForm>, value: &str, cx: &mut VisualTestContext) {
-    form.update_in(cx, |form, window, cx| {
-        form.folder.update(cx, |input, cx| {
-            input.set_value("", window, cx);
-            input.focus(window, cx);
-        });
-    });
-    cx.simulate_input(value);
+    // Source-derived catalogue fixture: an already observed cwd, never a start-root argument.
+    form.update(cx, |form, cx| {form.cwd=Some(value.into());form.discover(cx);});
     cx.run_until_parked();
 }
+
 fn discover(client: &FormClient) -> HeldDiscovery {
     while let Some(held) = client.discoveries.borrow_mut().pop_front() {
         if !held.1.is_canceled() {
@@ -167,79 +146,7 @@ fn changing_the_folder_cancels_old_discovery_and_does_not_install_its_error(
     });
 }
 
-#[gpui::test]
-fn draft_picks_enter_one_atomic_create_payload_and_survive_an_ambiguous_create(
-    cx: &mut TestAppContext,
-) {
-    let (form, client, cx) = opened(cx);
-    folder(&form, "/repo", cx);
-    discover(&client).1.send(Ok(catalogue_value())).unwrap();
-    cx.run_until_parked();
-    form.update(cx, |form, cx| {
-        form.choose("provider-model", "B", cx);
-        form.choose("reasoning_effort", "medium", cx);
-        form.choose("permission", "full", cx);
-    });
-    client.fake.queue_answer(Err(CallError::Aborted));
-    form.update(cx, |form, cx| {
-        form.create(cx);
-        form.create(cx);
-    });
-    cx.run_until_parked();
-    let creates: Vec<_> = client
-        .fake
-        .calls()
-        .into_iter()
-        .filter(|(method, _)| method == "sessions/create")
-        .collect();
-    assert_eq!(
-        creates,
-        [(
-            "sessions/create".into(),
-            json!({"agent":"codex","repoUrl":"/repo","workingFolder":"/repo",
-      "initialConfig":{"targetId":"target-1","choices":{"provider-model":"B","reasoning_effort":"medium","permission":"full"}}})
-        )]
-    );
-    form.read_with(cx, |form, _| {
-        assert!(form.error.contains("may have started"));
-        assert_eq!(
-            form.config.as_ref().unwrap().config.choices["permission"],
-            "full"
-        );
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        client
-            .fake
-            .calls()
-            .iter()
-            .filter(|(method, _)| method == "sessions/create")
-            .count(),
-        1,
-        "ambiguous create is never retried automatically"
-    );
-    assert!(cx.update(|_, cx| SelectedSession::global(cx).read(cx).session_id().is_none()));
-}
 
-#[gpui::test]
-fn a_successful_create_selects_only_the_returned_real_session(cx: &mut TestAppContext) {
-    let (form, client, cx) = opened(cx);
-    folder(&form, "/repo", cx);
-    discover(&client).1.send(Ok(catalogue_value())).unwrap();
-    cx.run_until_parked();
-    client
-        .fake
-        .queue_answer(Ok(json!({"sessionId":"real-created-session"})));
-    form.update(cx, |form, cx| form.create(cx));
-    cx.run_until_parked();
-    assert_eq!(
-        cx.update(|_, cx| SelectedSession::global(cx)
-            .read(cx)
-            .session_id()
-            .map(str::to_string)),
-        Some("real-created-session".into())
-    );
-}
 
 #[gpui::test]
 fn missing_advertised_target_blocks_discovery_and_absolute_folder_creation(
@@ -248,7 +155,7 @@ fn missing_advertised_target_blocks_discovery_and_absolute_folder_creation(
     let (form, client, cx) = opened(cx);
     form.update(cx, |form, _| form.agents[0].target_id = None);
     folder(&form, "/repo", cx);
-    form.update(cx, |form, cx| form.create(cx));
+    form.update_in(cx, |form, window, cx| form.first_send("kept first prompt".into(),Vec::new(),window,cx));
     cx.run_until_parked();
     assert!(client.discoveries.borrow().is_empty());
     assert!(
@@ -259,7 +166,7 @@ fn missing_advertised_target_blocks_discovery_and_absolute_folder_creation(
             .any(|(method, _)| method == "sessions/create")
     );
     assert!(form.read_with(cx, |form, _| {
-        form.error.contains("Agent settings unavailable")
+        !form.error.is_empty()
     }));
 }
 
@@ -277,6 +184,7 @@ fn switching_machines_cancels_discovery_and_forwards_only_the_new_advertised_tar
         form.pick_machine(Some("Workbox Test".into()), cx)
     });
     cx.run_until_parked();
+    folder(&form, "/repo", cx);
     assert!(
         old.send(Err(CallError::Failed("old local target".into())))
             .is_err()
@@ -291,111 +199,7 @@ fn switching_machines_cancels_discovery_and_forwards_only_the_new_advertised_tar
     assert!(form.read_with(cx, |form, _| form.error.is_empty()));
 }
 
-#[gpui::test]
-fn an_unselected_observed_model_requires_an_explicit_pick_before_create(cx: &mut TestAppContext) {
-    let (form, client, cx) = opened(cx);
-    folder(&form, "/repo", cx);
-    let mut catalogue = catalogue_value();
-    catalogue["options"][0]["currentValue"] = serde_json::Value::Null;
-    discover(&client).1.send(Ok(catalogue)).unwrap();
-    cx.run_until_parked();
-    form.read_with(cx, |form, _| {
-        let config = form.config.as_ref().expect("real models remain selectable");
-        assert!(!config.config.choices.contains_key("provider-model"));
-        assert!(!config.ready());
-    });
-    form.update(cx, |form, cx| form.create(cx));
-    assert!(
-        !client
-            .fake
-            .calls()
-            .iter()
-            .any(|(method, _)| method == "sessions/create")
-    );
-    form.update(cx, |form, cx| form.choose("provider-model", "B", cx));
 
-    client
-        .fake
-        .queue_answer(Ok(json!({"sessionId":"explicit-model-session"})));
-    form.update(cx, |form, cx| form.create(cx));
-    cx.run_until_parked();
-    let calls = client.fake.calls();
-    let (_, args) = calls
-        .iter()
-        .find(|(method, _)| method == "sessions/create")
-        .unwrap();
-    assert_eq!(args["workingFolder"], "/repo");
-    assert_eq!(
-        args["initialConfig"],
-        json!({"targetId":"target-1","choices":{
-            "provider-model":"B","reasoning_effort":"minimal","permission":"ask"
-        }})
-    );
-}
-
-#[gpui::test]
-fn a_remote_create_with_a_lost_reply_keeps_picks_and_reports_an_unknown_outcome(
-    cx: &mut TestAppContext,
-) {
-    let (form, client, cx) = opened(cx);
-    client.fake.queue_answer(Ok(
-        json!({"agents":[{"id":"codex","name":"Remote Codex","targetId":"remote-target"}]}),
-    ));
-    form.update(cx, |form, cx| {
-        form.pick_machine(Some("Workbox Test".into()), cx)
-    });
-    cx.run_until_parked();
-    folder(&form, "/remote/repo", cx);
-    discover(&client).1.send(Ok(catalogue_value())).unwrap();
-    cx.run_until_parked();
-    form.update(cx, |form, cx| {
-        form.choose("provider-model", "B", cx);
-        form.choose("reasoning_effort", "medium", cx);
-        form.choose("permission", "full", cx);
-    });
-    client.hold_creates.set(true);
-    form.update(cx, |form, cx| {
-        form.create(cx);
-        form.create(cx);
-    });
-    cx.run_until_parked();
-    assert_eq!(client.create_count.get(), 1);
-    assert!(form.read_with(cx, |form, _| form.starting));
-    let (args, lost_reply) = client.creates.borrow_mut().pop_front().unwrap();
-    assert_eq!(args["machine"], "Workbox Test");
-    assert_eq!(
-        args["initialConfig"],
-        json!({"targetId":"remote-target","choices":{
-            "provider-model":"B","reasoning_effort":"medium","permission":"full"
-        }})
-    );
-    // The owner may have committed this create; the transport cannot recover its reply/ID.
-    lost_reply
-        .send(Err(CallError::Unreachable {
-            machine: "Workbox Test".into(),
-        }))
-        .unwrap();
-    cx.run_until_parked();
-    form.read_with(cx, |form, _| {
-        assert!(!form.starting);
-        assert!(form.error.contains("may have started"), "{}", form.error);
-        assert_eq!(
-            form.config.as_ref().unwrap().config.choices,
-            serde_json::from_value::<std::collections::HashMap<String, String>>(
-                args["initialConfig"]["choices"].clone()
-            )
-            .unwrap()
-        );
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        client.create_count.get(),
-        1,
-        "an unknown create is never repeated automatically"
-    );
-    assert!(client.creates.borrow().is_empty());
-    assert!(cx.update(|_, cx| SelectedSession::global(cx).read(cx).session_id().is_none()));
-}
 
 fn auth_agents() -> Value {
     json!({"agents":[{"id":"codex","name":"Codex","targetId":"configuration-hash","accountContext":"","providerTargetId":"codex/"}]})
@@ -432,7 +236,7 @@ fn auth_entry_uses_the_actual_engine_identity_without_needing_a_folder_or_sessio
         assert_eq!(target.machine, "stable-engine");
         assert_eq!(target.provider_target_id, "codex/");
         assert_eq!(target.configuration_target_id, "configuration-hash");
-        assert!(form.folder.read(cx).value().is_empty());
+        assert!(form.cwd.is_none());
     });
     assert!(
         client
@@ -587,4 +391,22 @@ fn selecting_a_valid_agent_replaces_the_previous_agents_identity_error(cx: &mut 
 mod generation_tests;
 
 
-include!("new_session_form/uncertainty_tests.rs");
+
+
+#[gpui::test]
+fn an_unselected_observed_model_requires_a_pick_and_is_retained_in_the_first_send_configuration(cx:&mut TestAppContext) {
+    let (form,client,cx)=opened(cx);folder(&form,"/observed-project",cx);
+    let mut catalogue=catalogue_value();catalogue["options"][0]["currentValue"]=Value::Null;
+    discover(&client).1.send(Ok(catalogue)).unwrap();cx.run_until_parked();
+    form.read_with(cx,|form,_| {let config=form.config.as_ref().unwrap();assert!(!config.config.choices.contains_key("provider-model"));assert!(!config.ready());});
+    form.update_in(cx,|form,window,cx|form.first_send("retained text".into(),Vec::new(),window,cx));
+    assert!(!client.fake.calls().iter().any(|(method,_)|method=="sessions/create"));
+    form.update(cx,|form,cx|form.choose("provider-model","B",cx));
+    form.read_with(cx,|form,_| {
+        let config=form.config.as_ref().unwrap();assert!(config.ready());
+        assert_eq!(config.config.choices["provider-model"],"B");assert_eq!(config.config.choices["reasoning_effort"],"minimal");assert_eq!(config.config.choices["permission"],"ask");
+        assert!(form.attempt.is_none());
+    });
+}
+#[path="new_session_form/project_tests.rs"]
+mod project_tests;

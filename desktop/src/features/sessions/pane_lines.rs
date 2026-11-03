@@ -134,11 +134,8 @@ impl SessionsPane {
                     count,
                     folded,
                 } => {
-                    let machine = machines
-                        .first()
-                        .and_then(|machine| (machine != "local").then(|| machine.clone()));
                     let (toggle_pane, key) = (pane.clone(), fold_key.clone());
-                    let (new_pane, at) = (pane.clone(), repo_url.clone());
+                    let new_pane = pane.clone();
                     ProjectHeader::new(
                         label,
                         repo_url,
@@ -156,7 +153,7 @@ impl SessionsPane {
                         move |_, window, cx| {
                             new_pane
                                 .update(cx, |pane, cx| {
-                                    pane.new_in(&at, machine.clone(), window, cx)
+                                    pane.open_form(window, cx);
                                 })
                                 .ok();
                         },

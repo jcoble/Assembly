@@ -13,6 +13,8 @@ pub struct Attachment {
 }
 
 pub enum AttachmentState {
+    /// Selected local bytes with no session upload or remote path authority.
+    Staged { image:std::sync::Arc<Image>, mime:&'static str },
     Uploading,
     /// Saved where the session's agent runs, at this path.
     Saved {
@@ -121,7 +123,7 @@ impl Attachment {
 const PREFIX: &str = "Attached image: ";
 /// The backend checks the same; checking here turns a file away when it's attached.
 const IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
-const MAX_BYTES: u64 = 20 * 1024 * 1024;
+pub(crate) const MAX_BYTES: u64 = 20 * 1024 * 1024;
 
 /// The name with each run of line breaks as one space, so it can't break its line.
 fn one_line(name: &str) -> String {

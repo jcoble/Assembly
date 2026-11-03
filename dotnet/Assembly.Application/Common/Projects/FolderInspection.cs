@@ -1,4 +1,4 @@
-namespace Assembly.Application.Features.Projects;
+namespace Assembly.Application.Common.Projects;
 
 public sealed record FolderInspection(string RootPath, string Title, string? RepoKey, bool IsGit, string? CommonDir, bool Unborn);
 public sealed record FolderListing(string Path, IReadOnlyList<string> Directories, bool Truncated);

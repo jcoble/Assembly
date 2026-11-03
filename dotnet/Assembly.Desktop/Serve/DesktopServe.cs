@@ -25,7 +25,7 @@ public static class DesktopServe
 
         var token = TokenFile.ReadOrCreate(options.TokenFile);
         var agents = new AgentsFile(options.AgentsFile);
-        var launcher = new AdapterLauncher(agents, options.Checkouts, new UnclaimedPermissions(), session => SessionStore.Folder(options.Checkouts, session));
+        var launcher = new AdapterLauncher(agents, options.Checkouts, new UnclaimedPermissions());
         var profile = options.Remote is { } host ? new SavedMachine(host, host, options.RemotePort, options.RemoteTokenFile) : null;
         await using var backend = await DesktopBackend.StartAsync(options.Home, token, options.Port, launcher, Console.Out,
             utilityClis: (AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex")), savedRemote: profile, agentsFile: agents);

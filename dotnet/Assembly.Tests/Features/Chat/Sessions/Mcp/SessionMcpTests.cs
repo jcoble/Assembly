@@ -15,6 +15,7 @@ public sealed class SessionMcpTests : IAsyncDisposable
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
     private readonly TempDatabase _file = new();
+    private readonly string _home = Directory.CreateTempSubdirectory("assembly-mcp-checkouts-").FullName;
     private readonly FakeTimeProvider _time = new();
     private readonly AppDatabase _db;
     private readonly SessionStore _store;
@@ -29,7 +30,7 @@ public sealed class SessionMcpTests : IAsyncDisposable
         var time = _time;
         _db = TestDatabase.Open(_file.Path);
         RowStore.Open(_db);
-        _store = SessionStore.Open(_db, time, "checkouts");
+        _store = SessionStore.Open(_db, time, Path.Combine(_home, "checkouts"));
         _id = _store.Create("claude", "https://github.com/o/r").SessionId;
         _adapter = new(_launcher, "claude", time, TextWriter.Null);
         _observed = new(_id, null, null, null, 9);
@@ -38,15 +39,22 @@ public sealed class SessionMcpTests : IAsyncDisposable
     [Fact]
     public async Task Cancel_before_ready_never_checks_out_or_acquires_adapter()
     {
+        var checkoutRoot = Directory.CreateDirectory(Path.Combine(_home, "checkouts")).FullName;
+        var sentinel = Path.Combine(checkoutRoot, "notes.md");
+        await File.WriteAllTextAsync(sentinel, "owner draft");
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var opener = Opener(ready.Task);
         using var cancel = new CancellationTokenSource();
         var opening = opener.OpenAsync(_id, "first", new(TimeProvider.System), cancel.Token, _observed);
-        Assert.Empty(_launcher.CheckedOut);
+
+        Assert.Equal("owner draft", await File.ReadAllTextAsync(sentinel));
+        Assert.Equal(["notes.md"], Directory.EnumerateFileSystemEntries(checkoutRoot).Select(Path.GetFileName));
         Assert.Equal(0, _launcher.Launches);
         cancel.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => opening);
-        Assert.Empty(_launcher.CheckedOut);
+
+        Assert.Equal("owner draft", await File.ReadAllTextAsync(sentinel));
+        Assert.Equal(["notes.md"], Directory.EnumerateFileSystemEntries(checkoutRoot).Select(Path.GetFileName));
         Assert.Equal(0, _launcher.Launches);
     }
 
@@ -144,5 +152,6 @@ public sealed class SessionMcpTests : IAsyncDisposable
         await _adapter.DisposeAsync();
         _db.Dispose();
         _file.Dispose();
+        Directory.Delete(_home, true);
     }
 }

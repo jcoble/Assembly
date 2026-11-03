@@ -541,8 +541,6 @@ public sealed class SignInEffectsTests
             _shared.Writer.TryWrite(link);
             return Task.FromResult<IAgentLink>(link);
         }
-        public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken ct) =>
-            Task.FromResult("/fixture-checkout");
         public void ValidateFolder(string folder) { }
     }
 

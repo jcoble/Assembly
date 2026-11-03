@@ -1,14 +1,10 @@
 using Assembly.Application.Common.Acp;
-using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Common.Agents;
 
-/// <summary>Checks out a session's repo and starts adapter processes. Tests swap in a scripted agent.</summary>
+/// <summary>Starts configured adapter processes and validates existing folders. Checkout belongs to the Engine.</summary>
 public interface IAgentLauncher
 {
-    /// <summary>Clones the session's repo into its own folder if it isn't there yet, and returns the folder. Marks the clone.</summary>
-    Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken);
-
     /// <summary>Validates an absolute existing direct working folder, using the ordinary plain folder failure.</summary>
     void ValidateFolder(string folder);
 

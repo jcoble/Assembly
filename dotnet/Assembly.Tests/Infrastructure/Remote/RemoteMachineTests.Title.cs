@@ -42,11 +42,21 @@ public sealed partial class RemoteMachineTests
         var topics = new global::Assembly.Infrastructure.Topics.Topics();
         using var file = new TempDatabase();
         using var db = AppDatabase.Open(file.Path, TimeProvider.System, topics);
+        Assembly.Engine.Persistence.EngineSchema.Open(db, TimeProvider.System.GetUtcNow().ToUnixTimeMilliseconds());
         var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
         using var hub = new LiveHub(RowStore.Open(db));
         await using var machine = new RemoteMachine(Box, _box.Address, BoxToken, hub, sessions, _log, new MachineStatus(topics, [Box]));
         await machine.ProbeAsync(CancellationToken.None);
-        var session = await machine.CreateSessionAsync("claude", "https://github.com/o/r", CancellationToken.None);
+        var read = await machine.CaptureOwnerReadAsync(null, CancellationToken.None);
+        var owner = await machine.CaptureOwnerBindingAsync(read.Identity, CancellationToken.None);
+        var accepted = await machine.CreateBoundSessionAsync(new("claude", Guid.NewGuid().ToString("N")), null,
+            owner, read.Socket, null, CancellationToken.None);
+        var session = sessions.Get(accepted.SessionId);
+        Assert.NotNull(session);
+        Assert.Equal(Box, session.Machine);
+        Assert.NotNull(accepted.Facts);
+        Assert.Equal(accepted.Facts.Agent, session.Agent);
+        Assert.Equal(accepted.Facts.ParentSessionId, session.ParentSessionId);
         sessions.SetTitle(session.SessionId, local.Title, local.Source);
         // The next change to the session here is the refresh after its turn: its title, or only its time.
         var refreshed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Projects;
 namespace Assembly.Application.Features.Projects;
 
 public sealed record ProjectFolderCreate(string ParentPath, string Name, string Kind, string? Source);

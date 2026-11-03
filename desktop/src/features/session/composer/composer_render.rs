@@ -63,6 +63,7 @@ impl Render for Composer {
         let waiting = !self.all_saved();
         let running = self.running.is_some();
         let offline = self.offline.is_some() || !self.operational();
+        let send_disabled=if self.start_draft.is_some(){empty||!self.start_ready()}else{empty||waiting||offline};
         let settings_disabled =
             offline || !self.backend_connected || self.advertised_target.is_none();
         let composer = cx.weak_entity();
@@ -108,6 +109,7 @@ impl Render for Composer {
             .gap_1p5()
             .child(
                 Button::new("composer:attach")
+                    .disabled(self.start_busy())
                     .outline()
                     .small()
                     .icon(Glyph::Plus)
@@ -146,7 +148,7 @@ impl Render for Composer {
                     .icon(Glyph::ArrowUp)
                     .rounded(pill)
                     .with_size(ROUND_BUTTON)
-                    .disabled(empty || waiting || offline)
+                    .disabled(send_disabled)
                     .tooltip(if running { "Steer" } else { "Send" })
                     .on_click(cx.listener(|composer, _, window, cx| composer.send(window, cx))),
             );
@@ -185,6 +187,7 @@ impl Render for Composer {
         let composer = cx.weak_entity();
         // The mock's draft: 13.5 px, the kit's smallest inset so it sits near the box's edge.
         let draft = Textarea::new(&self.draft)
+            .disabled(self.start_busy())
             .appearance(false)
             .xsmall()
             .text_size(px(13.5))

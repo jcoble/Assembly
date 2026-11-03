@@ -12,6 +12,7 @@ public sealed class ProviderAdapterTests : IAsyncDisposable
 {
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(5);
     private readonly TempDatabase _db = new();
+    private readonly string _home = Directory.CreateTempSubdirectory("assembly-provider-probe-").FullName;
     private readonly AppDatabase _database;
     private readonly RowStore _rows;
     private readonly LiveHub _hub;
@@ -26,7 +27,7 @@ public sealed class ProviderAdapterTests : IAsyncDisposable
         _database = TestDatabase.Open(_db.Path);
         _rows = RowStore.Open(_database);
         _hub = new LiveHub(_rows);
-        _sessions = SessionStore.Open(_database, _time, "checkouts");
+        _sessions = SessionStore.Open(_database, _time, Path.Combine(_home, "checkouts"));
         _work = new BackgroundWork(_time, TextWriter.Null);
         _registry = new(_hub, _sessions, _launcher, _time, TextWriter.Null, _work);
     }
@@ -41,12 +42,16 @@ public sealed class ProviderAdapterTests : IAsyncDisposable
     [Fact]
     public async Task Probe_borrows_one_temporary_ACP_session_without_creating_an_Assembly_session()
     {
+        var checkoutRoot = Directory.CreateDirectory(Path.Combine(_home, "checkouts")).FullName;
+        var sentinel = Path.Combine(checkoutRoot, "notes.md");
+        await File.WriteAllTextAsync(sentinel, "owner draft");
+        var probeFolder = Directory.CreateDirectory(Path.Combine(_home, "probe")).FullName;
         var providers = Providers;
         var target = Target();
-        var probing = providers.ProbeAsync(target.Descriptor, target.Target, "/isolated-data/probe", default);
+        var probing = providers.ProbeAsync(target.Descriptor, target.Target, probeFolder, default);
         var link = await _launcher.NextAsync();
         var opened = await link.StartAsync("probe-only");
-        Assert.Equal("/isolated-data/probe", opened.GetProperty("params").GetProperty("cwd").GetString());
+        Assert.Equal(probeFolder, opened.GetProperty("params").GetProperty("cwd").GetString());
         Assert.Empty(opened.GetProperty("params").GetProperty("mcpServers").EnumerateArray());
         Assert.Equal("probe-only", await link.CloseAsync());
         var result = await probing.WaitAsync(Limit);
@@ -56,7 +61,10 @@ public sealed class ProviderAdapterTests : IAsyncDisposable
         Assert.Null(result.ProblemCode);
         Assert.Empty(_registry.OpenSessions);
         Assert.Empty(_sessions.List(null, 10).Sessions);
-        Assert.Empty(_launcher.CheckedOut);
+
+        Assert.Equal("owner draft", await File.ReadAllTextAsync(sentinel));
+        Assert.Equal(["notes.md"], Directory.EnumerateFileSystemEntries(checkoutRoot).Select(Path.GetFileName));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(probeFolder));
         Assert.False(link.Disposed);
     }
 
@@ -150,5 +158,6 @@ public sealed class ProviderAdapterTests : IAsyncDisposable
         _hub.Dispose();
         _database.Dispose();
         _db.Dispose();
+        Directory.Delete(_home, true);
     }
 }

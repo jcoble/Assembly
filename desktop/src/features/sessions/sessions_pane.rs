@@ -89,6 +89,7 @@ impl SessionsPane {
     /// registration for a name wins.
     pub fn register(cx: &mut App) {
         super::search_keys::register_search_keys(cx);
+        NewSessionForm::register_projects(cx);
         register_panel(cx, "Sessions", |_, window, cx| {
             panel_handle(cx.new(|cx| SessionsPane::new(window, cx)))
         });

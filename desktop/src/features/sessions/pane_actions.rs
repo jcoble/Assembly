@@ -37,22 +37,6 @@ impl SessionsPane {
         cx.notify();
     }
 
-    /// A project header's New session: the form, open with the project's folder and machine.
-    pub(super) fn new_in(
-        &mut self,
-        folder: &str,
-        machine: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let form = match &self.creating {
-            Some((form, _)) => form.clone(),
-            None => self.open_form(window, cx),
-        };
-        form.update(cx, |form, cx| form.fill(folder, machine, window, cx));
-        cx.notify();
-    }
-
     pub(super) fn open_form(
         &mut self,
         window: &mut Window,

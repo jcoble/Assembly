@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Projects;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Projects;
 using Assembly.Infrastructure.Git;

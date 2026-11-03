@@ -25,6 +25,7 @@ pub struct AttachmentChip {
     pub name: SharedString,
     pub size: u64,
     pub uploading: bool,
+    pub preview:Option<std::sync::Arc<Image>>,
     /// Why its upload failed.
     pub failed: Option<SharedString>,
     pub on_remove: OnRemove,
@@ -36,6 +37,7 @@ impl AttachmentChip {
             id: attachment.id,
             name: attachment.name.clone(),
             size: attachment.size,
+            preview:match &attachment.state {AttachmentState::Staged{image,..}=>Some(image.clone()),_=>None},
             uploading: matches!(attachment.state, AttachmentState::Uploading),
             failed: match &attachment.state {
                 AttachmentState::Failed(why) => Some(why.clone()),
@@ -57,6 +59,7 @@ impl RenderOnce for AttachmentChip {
         let on_remove = self.on_remove;
         let failed = self.failed.clone();
         h_flex()
+            .when_some(self.preview,|chip,image|chip.child(img(image).size(px(18.))))
             .id(("attachment", self.id))
             .h(px(22.))
             .pl_2()

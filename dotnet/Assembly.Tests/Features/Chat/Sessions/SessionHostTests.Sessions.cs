@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common;
 using Microsoft.Extensions.Time.Testing;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
@@ -488,5 +489,51 @@ public sealed partial class SessionHostTests
         await agent.UpdateAsync("""{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"context","description":"Show context usage","input":null}]}""");
 
         await Until(() => _sessionStore.Config(_session.SessionId).Commands?.Contains("\"context\"") == true);
+    }
+
+    [Fact]
+    public async Task A_grandchild_s_agent_works_in_the_top_session_s_checkout()
+    {
+        var folder = Directory.CreateTempSubdirectory("assembly-grandchild-folder-").FullName;
+        try
+        {
+            var git = new Assembly.Infrastructure.Git.GitCli();
+            Assert.Equal(0, (await git.RunAsync(folder, ["init", "--quiet"], null, null, default)).ExitCode);
+            await File.WriteAllTextAsync(Path.Combine(folder, "notes.md"), "uncommitted owner draft");
+            using var fixture = new Assembly.Tests.Engine.EngineFixture(limits: new(() => 5, () => 5));
+            var cloneRoot = Path.Combine(folder, "historic-checkouts");
+            var store = SessionStore.Open(fixture.Db, fixture.Time, cloneRoot);
+            var launcher = new FakeLauncher();
+            using var hub = new LiveHub(RowStore.Open(fixture.Db));
+            await using var runtime = Assembly.Infrastructure.Engine.EngineRuntime.Start(fixture.Db, new Assembly.Infrastructure.Topics.Topics(), fixture.Time, fixture.Limits,
+                cutover: new Assembly.Infrastructure.Engine.SessionCutover(fixture.Db, store, launcher, cloneRoot, fixture.Time));
+            void Start(string id, string? parent)
+            {
+                // SOURCE-DERIVED ready Engine records: these are actual Engine children, not manufactured native children.
+                Assert.True(fixture.Db.Writer.Write("test.grandchild-start", scope => runtime.Commands.Apply(scope,
+                    new(Guid.NewGuid(), runtime.Machine, new(Assembly.Engine.Contracts.ActorKind.Window, "owner"), id, 0, 0, 1000),
+                    new Assembly.Engine.Sessions.StartSession("claude", null, folder, id, parent, null, null))).Applied);
+                Assert.True(fixture.Db.Writer.Write("test.grandchild-ready", scope => runtime.Commands.Apply(scope,
+                    new(Guid.NewGuid(), runtime.Machine, new(Assembly.Engine.Contracts.ActorKind.System, "fixture"), id, 1, 0, 1000),
+                    new Assembly.Engine.Sessions.SetSessionState("idle", null, null))).Applied);
+            }
+            Start("parent", null); Start("child", "parent"); Start("grandchild", "child");
+            await using var work = new BackgroundWork(fixture.Time, TextWriter.Null);
+            await using var adapter = new SharedAdapter(launcher, "claude", fixture.Time, TextWriter.Null);
+            var opener = new SessionOpener(store, launcher, _ => adapter);
+            var host = new SessionHost("grandchild", hub, store, opener, fixture.Time, TextWriter.Null, work);
+            Assert.NotNull(host.Send("hi"));
+            var agent = await launcher.NextAsync();
+            var opened = await agent.StartAsync();
+            Assert.Equal(folder, opened.GetProperty("params").GetProperty("cwd").GetString());
+            var prompt = await agent.ReadAsync("session/prompt");
+            Assert.Equal(folder, store.Root(store.Get("parent")!));
+            Assert.Equal(folder, store.Root(store.Get("grandchild")!));
+            Assert.Equal("uncommitted owner draft", await File.ReadAllTextAsync(Path.Combine(folder, "notes.md")));
+            Assert.False(Directory.Exists(cloneRoot));
+            await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
+            await Until(() => host.ActiveRunId is null);
+        }
+        finally { Directory.Delete(folder, true); }
     }
 }

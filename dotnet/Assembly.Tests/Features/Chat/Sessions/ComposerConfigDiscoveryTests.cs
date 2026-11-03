@@ -19,31 +19,39 @@ public sealed class ComposerConfigDiscoveryTests
     [Fact]
     public async Task Private_ACP2_discovery_preserves_raw_options_and_real_per_model_defaults_then_stops()
     {
-        var launcher = new FakeLauncher();
-        var discovering = new ComposerConfigDiscovery(launcher, TimeProvider.System).DiscoverAsync("claude", Target(launcher), "/tmp", default);
-        var link = await launcher.NextAsync();
-        var initialize = await link.ReadAsync("initialize");
-        Assert.Equal(2, initialize.GetProperty("params").GetProperty("protocolVersion").GetInt32());
-        Assert.False(initialize.GetProperty("params").TryGetProperty("air", out _));
-        await link.ReplyAsync(initialize, "{\"protocolVersion\":2}");
-        var opening = await link.OpenAsync(configOptions: Options("a", "high"));
-        Assert.Equal("/tmp", opening.GetProperty("params").GetProperty("cwd").GetString());
-        Assert.Empty(opening.GetProperty("params").GetProperty("mcpServers").EnumerateArray());
-        var set = await link.ReadAsync("session/set_config_option");
-        Assert.Equal("raw/model", set.GetProperty("params").GetProperty("configId").GetString());
-        Assert.Equal("b", set.GetProperty("params").GetProperty("value").GetString());
-        await link.ReplyAsync(set, $$"""{"configOptions":{{Options("b", "minimal")}}}""");
-        var result = await discovering.WaitAsync(Wait);
-        using var initial = JsonDocument.Parse(result.Config.Options!);
-        using var alternate = JsonDocument.Parse(result.ModelOptions["b"]);
-        Assert.Equal("模型", initial.RootElement[0].GetProperty("custom").GetProperty("label").GetString());
-        Assert.Equal("high", initial.RootElement[1].GetProperty("currentValue").GetString());
-        Assert.Equal("minimal", alternate.RootElement[1].GetProperty("currentValue").GetString());
-        Assert.Null(result.Config.Commands);
-        Assert.Empty(result.Config.Choices);
-        Assert.Empty(launcher.CheckedOut);
-        Assert.True(link.Disposed);
-        Assert.True(link.Exited.IsCompleted);
+        var folder = Directory.CreateTempSubdirectory("assembly-composer-cwd-").FullName;
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(folder, "notes.md"), "owner draft");
+            var launcher = new FakeLauncher();
+            var discovering = new ComposerConfigDiscovery(launcher, TimeProvider.System).DiscoverAsync("claude", Target(launcher), folder, default);
+            var link = await launcher.NextAsync();
+            var initialize = await link.ReadAsync("initialize");
+            Assert.Equal(2, initialize.GetProperty("params").GetProperty("protocolVersion").GetInt32());
+            Assert.False(initialize.GetProperty("params").TryGetProperty("air", out _));
+            await link.ReplyAsync(initialize, "{\"protocolVersion\":2}");
+            var opening = await link.OpenAsync(configOptions: Options("a", "high"));
+            Assert.Equal(folder, opening.GetProperty("params").GetProperty("cwd").GetString());
+            Assert.Empty(opening.GetProperty("params").GetProperty("mcpServers").EnumerateArray());
+            var set = await link.ReadAsync("session/set_config_option");
+            Assert.Equal("raw/model", set.GetProperty("params").GetProperty("configId").GetString());
+            Assert.Equal("b", set.GetProperty("params").GetProperty("value").GetString());
+            await link.ReplyAsync(set, $$"""{"configOptions":{{Options("b", "minimal")}}}""");
+            var result = await discovering.WaitAsync(Wait);
+            using var initial = JsonDocument.Parse(result.Config.Options!);
+            using var alternate = JsonDocument.Parse(result.ModelOptions["b"]);
+            Assert.Equal("模型", initial.RootElement[0].GetProperty("custom").GetProperty("label").GetString());
+            Assert.Equal("high", initial.RootElement[1].GetProperty("currentValue").GetString());
+            Assert.Equal("minimal", alternate.RootElement[1].GetProperty("currentValue").GetString());
+            Assert.Null(result.Config.Commands);
+            Assert.Empty(result.Config.Choices);
+
+            Assert.True(link.Disposed);
+            Assert.True(link.Exited.IsCompleted);
+            Assert.Equal("owner draft", await File.ReadAllTextAsync(Path.Combine(folder, "notes.md")));
+            Assert.Equal(["notes.md"], Directory.EnumerateFileSystemEntries(folder).Select(Path.GetFileName));
+        }
+        finally { Directory.Delete(folder, true); }
     }
 
     [Fact]
@@ -92,22 +100,30 @@ public sealed class ComposerConfigDiscoveryTests
     [Fact]
     public async Task Ordered_command_metadata_is_preserved_as_raw_JSON_without_private_chat_rows()
     {
-        var launcher = new FakeLauncher();
-        var task = new ComposerConfigDiscovery(launcher, TimeProvider.System).DiscoverAsync("claude", Target(launcher), "/tmp", default);
-        var link = await launcher.NextAsync();
-        await link.ReplyAsync(await link.ReadAsync("initialize"), "{\"protocolVersion\":2}");
-        var opening = await link.ReadAsync("session/new");
-        await link.UpdateAsync("{\"sessionUpdate\":\"available_commands_update\",\"availableCommands\":[{\"name\":\"actual\",\"description\":\"命令\",\"custom\":{\"x\":1}}]}", "private");
-        await link.ReplyAsync(opening, "{\"sessionId\":\"private\",\"configOptions\":[]}");
-        var result = await task.WaitAsync(Wait);
-        using var commands = JsonDocument.Parse(result.Config.Commands!);
-        Assert.Equal("actual", commands.RootElement[0].GetProperty("name").GetString());
-        Assert.Equal(1, commands.RootElement[0].GetProperty("custom").GetProperty("x").GetInt32());
-        var wire = ComposerConfigJson.Json(result.Config, result.ModelOptions);
-        Assert.Equal(JsonValueKind.Array, wire.GetProperty("commands").ValueKind);
-        Assert.Equal(JsonValueKind.Array, wire.GetProperty("options").ValueKind);
-        Assert.True(link.Disposed);
-        Assert.Empty(launcher.CheckedOut);
+        var folder = Directory.CreateTempSubdirectory("assembly-composer-cwd-").FullName;
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(folder, "notes.md"), "owner draft");
+            var launcher = new FakeLauncher();
+            var task = new ComposerConfigDiscovery(launcher, TimeProvider.System).DiscoverAsync("claude", Target(launcher), folder, default);
+            var link = await launcher.NextAsync();
+            await link.ReplyAsync(await link.ReadAsync("initialize"), "{\"protocolVersion\":2}");
+            var opening = await link.ReadAsync("session/new");
+            Assert.Equal(folder, opening.GetProperty("params").GetProperty("cwd").GetString());
+            await link.UpdateAsync("{\"sessionUpdate\":\"available_commands_update\",\"availableCommands\":[{\"name\":\"actual\",\"description\":\"命令\",\"custom\":{\"x\":1}}]}", "private");
+            await link.ReplyAsync(opening, "{\"sessionId\":\"private\",\"configOptions\":[]}");
+            var result = await task.WaitAsync(Wait);
+            using var commands = JsonDocument.Parse(result.Config.Commands!);
+            Assert.Equal("actual", commands.RootElement[0].GetProperty("name").GetString());
+            Assert.Equal(1, commands.RootElement[0].GetProperty("custom").GetProperty("x").GetInt32());
+            var wire = ComposerConfigJson.Json(result.Config, result.ModelOptions);
+            Assert.Equal(JsonValueKind.Array, wire.GetProperty("commands").ValueKind);
+            Assert.Equal(JsonValueKind.Array, wire.GetProperty("options").ValueKind);
+            Assert.True(link.Disposed);
+            Assert.Equal("owner draft", await File.ReadAllTextAsync(Path.Combine(folder, "notes.md")));
+            Assert.Equal(["notes.md"], Directory.EnumerateFileSystemEntries(folder).Select(Path.GetFileName));
+        }
+        finally { Directory.Delete(folder, true); }
     }
 
     [Fact]

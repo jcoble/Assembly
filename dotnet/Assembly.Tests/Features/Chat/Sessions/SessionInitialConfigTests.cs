@@ -6,6 +6,10 @@ using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Engine;
+using Assembly.Application.Common.Projects;
+using Assembly.Infrastructure.Engine;
+using Assembly.Engine.Sessions;
+using TopicSet = Assembly.Infrastructure.Topics.Topics;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Persistence;
@@ -20,6 +24,9 @@ public sealed class SessionInitialConfigTests : IDisposable
     private readonly AppDatabase _db;
     private readonly SessionStore _store;
     private readonly FakeTimeProvider _time = new();
+    private readonly DirectoryInfo _home = Directory.CreateTempSubdirectory("assembly-initial-config-");
+    private EngineRuntime? _engine;
+    private readonly FakeLauncher _launcher = new();
     public SessionInitialConfigTests()
     {
         _db = TestDatabase.Open(_file.Path);
@@ -30,12 +37,14 @@ public sealed class SessionInitialConfigTests : IDisposable
     public void Initial_raw_choices_target_and_folder_commit_together_and_survive_idempotent_open()
     {
         var choices = new Dictionary<string, string> { ["raw/模型\"selector"] = "model/β", ["effort"] = "medium" };
-        var created = _store.Create("custom", "repo", new("opaque-target", choices), "/actual/project");
+        var target = StartOwningEngine();
+        var created = _db.Writer.Write("test.owner-create", scope => _store.Create(scope, "claude", "initial_raw",
+            _home.FullName, null, null, initialConfig: new(target, choices)));
         var reopened = SessionStore.Open(_db, _time, "/managed");
         Assert.Equal(created, reopened.Get(created.SessionId));
-        Assert.Equal("/actual/project", reopened.Get(created.SessionId)!.WorkingFolder);
-        Assert.Equal(new SessionLocation("/actual/project", false), reopened.Location(created));
-        Assert.Equal("opaque-target", reopened.Config(created.SessionId).ConfigTarget);
+        Assert.Equal(_home.FullName, reopened.Get(created.SessionId)!.WorkingFolder);
+        Assert.Equal(new SessionLocation(_home.FullName, false, false), _store.Location(created));
+        Assert.Equal(target, reopened.Config(created.SessionId).ConfigTarget);
         Assert.Equal(choices, reopened.Config(created.SessionId).Choices);
         Assert.Null(reopened.Config(created.SessionId).PendingModel);
         Assert.Null(created.AcpSessionId);
@@ -47,11 +56,16 @@ public sealed class SessionInitialConfigTests : IDisposable
     [Fact]
     public void Config_insert_failure_rolls_back_the_session_and_all_choices()
     {
+        var target = StartOwningEngine();
         _db.Writer.Write("test.reject", scope => scope.Execute("CREATE TRIGGER reject_initial BEFORE INSERT ON session_config BEGIN SELECT RAISE(ABORT,'fixture refusal'); END;"));
-        Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => _store.Create("custom", "repo", new("target", new Dictionary<string, string> { ["model"] = "wire" })));
+        Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => _db.Writer.Write("test.owner-create", scope =>
+            _store.Create(scope, "claude", "rollback_raw", _home.FullName, null, null,
+                initialConfig: new(target, new Dictionary<string, string> { ["model"] = "wire" }))));
         Assert.Equal(0L, Count("session_info"));
         Assert.Equal(0L, Count("session_config"));
         Assert.Empty(_store.List(null, 10).Sessions);
+        Assert.Equal(0L, Count("engine_session"));
+        Assert.Equal(0L, Count("engine_outbox"));
     }
 
     [Fact]
@@ -89,7 +103,7 @@ public sealed class SessionInitialConfigTests : IDisposable
     }
 
     [Fact]
-    public async Task Create_keeps_the_captured_target_when_ambient_environment_changes_before_the_writer()
+    public void Create_keeps_the_captured_target_when_ambient_environment_changes_before_the_writer()
     {
         const string key = "ASSEMBLY_C3_CREATE_CAPTURE_FIXTURE";
         var prior = Environment.GetEnvironmentVariable(key);
@@ -99,11 +113,10 @@ public sealed class SessionInitialConfigTests : IDisposable
             var actual = new FakeLauncher();
             var target = ConfigTargetIdentity.Capture(actual, "claude").TargetId;
             var launcher = new MutatingLauncher(actual, () => Environment.SetEnvironmentVariable(key, "late-fixture"));
-            await using var work = new BackgroundWork(_time, TextWriter.Null);
-            await using var registry = new SessionRegistry(new LiveHub(RowStore.Open(_db)), _store, launcher,
-                _time, TextWriter.Null, work);
-            var created = registry.CreateSession("claude", "repo", default,
-                new(target, new Dictionary<string, string> { ["model"] = "wire" }), "/tmp");
+            StartOwningEngine(launcher);
+            var created = _db.Writer.Write("test.captured-owner-create", scope => _store.Create(scope,
+                "claude", "captured_target", _home.FullName, null, null,
+                initialConfig: new(target, new Dictionary<string, string> { ["model"] = "wire" })));
             Assert.Equal("late-fixture", Environment.GetEnvironmentVariable(key));
             Assert.Equal(target, _store.Config(created.SessionId).ConfigTarget);
             Assert.NotEqual(target, ConfigTargetIdentity.Capture(actual, "claude").TargetId);
@@ -117,7 +130,6 @@ public sealed class SessionInitialConfigTests : IDisposable
         public IReadOnlyList<AgentDescriptor> Agents => inner.Agents;
         public bool CanRunTerminalAuthentication => inner.CanRunTerminalAuthentication;
         public void ValidateFolder(string folder) { inner.ValidateFolder(folder); mutate(); }
-        public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken ct) => inner.CheckoutAsync(session, stages, ct);
         public Task<IAgentLink> LaunchAsync(string agent, StageTimes stages, CancellationToken ct) => inner.LaunchAsync(agent, stages, ct);
         public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> environment, StageTimes stages, CancellationToken ct) =>
             inner.LaunchConfiguredAsync(descriptor, environment, stages, ct);
@@ -143,7 +155,8 @@ public sealed class SessionInitialConfigTests : IDisposable
     private sealed class Observer : IEngineSessions
     {
         public int Starts; public string? FolderValue;
-        public void Started(IWriteScope scope, SessionInfo session, string? initiatingSessionId) => Starts++;
+        public void Started(IWriteScope scope, SessionInfo session, string? initiatingSessionId, string? projectId = null,
+            CheckoutIntent? checkout = null, SessionCreationPreparation? preparation = null) => Starts++;
         public void Titled(IWriteScope scope, string sessionId, string title, ReadOnlyMemory<byte> utf8) { }
         public void Configured(IWriteScope scope, string sessionId, string? model) { }
         public SessionLocation? Location(string sessionId) => FolderValue is { } folder ? new(folder, false) : null;
@@ -151,5 +164,16 @@ public sealed class SessionInitialConfigTests : IDisposable
         public string? Folder(string sessionId) => FolderValue;
         public string? Folder(IReadScope scope, string sessionId) => FolderValue;
     }
-    public void Dispose() { _db.Dispose(); _file.Dispose(); }
+    private string StartOwningEngine(IAgentLauncher? launcher = null)
+    {
+        var actual = launcher ?? _launcher;
+        var cutover = new SessionCutover(_db, _store, actual, "/managed", _time, owningHome: _home.FullName);
+        _engine = EngineRuntime.Start(_db, new TopicSet(), _time, new SessionLimits(() => 5, () => 10), cutover: cutover);
+        return ConfigTargetIdentity.Capture(actual, "claude").TargetId;
+    }
+    public void Dispose()
+    {
+        _engine?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        _db.Dispose(); _file.Dispose(); _home.Delete(true);
+    }
 }

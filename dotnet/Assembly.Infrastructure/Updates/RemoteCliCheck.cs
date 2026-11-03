@@ -43,7 +43,6 @@ internal sealed class AgentsOnlyLauncher(Func<IReadOnlyList<AgentDescriptor>> re
 {
     public IReadOnlyList<AgentDescriptor> Agents => read();
     public bool CanRunTerminalAuthentication => false;
-    public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken) => throw new NotSupportedException();
     public void ValidateFolder(string folder) => throw new NotSupportedException();
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken) => throw new NotSupportedException();
     public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,

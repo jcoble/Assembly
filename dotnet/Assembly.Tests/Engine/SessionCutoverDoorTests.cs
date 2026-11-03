@@ -45,7 +45,7 @@ public sealed class SessionCutoverDoorTests
         Assert.Equal(2, h.F.Count("engine_session"));
         Assert.Equal(2, h.F.Events().Count(e => e.Kind == "session.started"));
         Assert.Equal(2, h.F.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='start'"));
-        Assert.Equal(0, h.F.Count("engine_message")); Assert.Equal(0, h.Launcher.Launches); Assert.Empty(h.Launcher.CheckedOut);
+        Assert.Equal(0, h.F.Count("engine_message")); Assert.Equal(0, h.Launcher.Launches);
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public sealed class SessionCutoverDoorTests
         Assert.Equal(h.Home, session.RepoUrl); Assert.Equal(h.Home, h.Store.Root(session)); Assert.Equal(h.Home, h.Store.Item(session).Root);
         Assert.Equal(JsonValueKind.Null, h.Runtime.Reader.Entity("session", "engine-root", default)!.Value.GetProperty("model").ValueKind);
         Assert.Equal(1, h.F.Count("engine_session")); Assert.Equal(0, h.F.Count("engine_message"));
-        Assert.Equal(0, h.Launcher.Launches); Assert.Empty(h.Launcher.CheckedOut);
+        Assert.Equal(0, h.Launcher.Launches);
     }
 
     [Theory]

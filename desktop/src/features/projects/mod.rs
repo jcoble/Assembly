@@ -17,3 +17,5 @@ pub mod folder_browser;
 pub mod projects;
 
 pub mod projects_view;
+
+pub mod project_chooser;

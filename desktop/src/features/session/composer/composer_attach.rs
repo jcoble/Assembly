@@ -16,7 +16,8 @@ use crate::features::session::composer::upload::{UploadSource, size_of, upload_i
 impl Composer {
     /// Asks for images with the system's file picker.
     pub(super) fn pick_images(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.operational(){return;}
+        if self.start_busy(){return;}
+        if !self.operational()&&self.start_draft.is_none(){return;}
         let generation=self.source_serial;
         let session = self.session_key.clone();
         let picked = cx.prompt_for_paths(PathPromptOptions {
@@ -34,7 +35,7 @@ impl Composer {
                 // Not if another session was picked meanwhile.
                 composer
                     .update(cx, |composer, cx| {
-                        if composer.session_key == session && composer.source_serial==generation && composer.operational() {
+                        if !composer.start_busy() && (composer.start_draft.is_some() || (composer.session_key == session && composer.source_serial==generation && composer.operational())) {
                             composer.attach_paths(&paths, cx)
                         }
                     })
@@ -44,6 +45,7 @@ impl Composer {
 
     /// Attaches each file, by its name's type and its size on disk.
     pub(super) fn attach_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        if self.start_busy(){return;}
         for path in paths {
             let name = path
                 .file_name()
@@ -63,6 +65,7 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.start_busy(){return;}
         let (images, others): (Vec<PathBuf>, Vec<PathBuf>) = paths
             .iter()
             .cloned()
@@ -89,7 +92,8 @@ impl Composer {
 
     /// A paste with an image attaches it and pastes no text; `false` leaves any other paste to the draft.
     pub(super) fn pasted(&mut self, item: &ClipboardItem, cx: &mut Context<Self>) -> bool {
-        if self.session.is_none() {
+        if self.start_busy(){return true;}
+        if self.session.is_none() && self.start_draft.is_none() {
             return false;
         }
         let mut taken = false;
@@ -104,15 +108,20 @@ impl Composer {
                 ImageFormat::Webp => ("image/webp", ".webp"),
                 _ => ("", ""),
             };
-            let bytes = UploadSource::Bytes(Arc::from(image.bytes.as_slice()));
             let name = format!("Pasted image{extension}");
-            self.attach(name, mime, image.bytes.len() as u64, bytes, cx);
+            if self.start_draft.is_some() {
+                self.stage_image(name.into(),mime,Arc::new(Image::from_bytes(image.format,image.bytes.clone())),cx);
+            } else {
+                let bytes = UploadSource::Bytes(Arc::from(image.bytes.as_slice()));
+                self.attach(name, mime, image.bytes.len() as u64, bytes, cx);
+            }
             taken = true;
         }
         taken
     }
 
     pub(super) fn remove_attachment(&mut self, id: u64, cx: &mut Context<Self>) {
+        if self.start_busy(){return;}
         self.attachments.retain(|attachment| attachment.id != id);
         self.uploads.remove(&id);
         cx.notify();
@@ -127,6 +136,7 @@ impl Composer {
         source: UploadSource,
         cx: &mut Context<Self>,
     ) {
+        if self.start_draft.is_some(){self.stage_source(name,mime,size,source,cx);return;}
         if !self.operational(){return;}
         let generation=self.source_serial;
         let Some(session) = self.session.clone() else {
@@ -145,7 +155,8 @@ impl Composer {
             size,
             state: AttachmentState::Uploading,
         });
-        let upload = upload_image(self.client.clone(), session, source, mime, cx);
+        let Some(binding)=self.expected_source.clone()else{return;};
+        let upload = upload_image(self.client.clone(), session, source, mime, Some(binding), cx);
         self.uploads.retain(|_, task| !task.is_ready());
         self.uploads.insert(
             id,

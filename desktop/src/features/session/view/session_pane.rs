@@ -180,6 +180,7 @@ impl SessionPane {
         let header = cx.new(|_| Header::default());
         let heard = [
             cx.subscribe(&composer, |pane, _, event, cx| match event {
+                ComposerEvent::StartRequested{..} => {}
                 ComposerEvent::Sending => {
                     pane.refresh(Change::Nothing, cx);
                     pane.timeline

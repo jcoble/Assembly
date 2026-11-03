@@ -8,7 +8,7 @@ use crate::core::{engine::SessionKey,intents::session_open::{SessionOpenRequest,
 use crate::features::{session::client::socket_session_client::SocketSessionClient,workspaces::workspace_coordinator::WorkspaceCoordinator};
 use super::SessionPane;
 #[derive(Default)]
-struct Server {rows:HashMap<String,Vec<Value>>,subscriptions:HashMap<String,Value>,workspaces:HashMap<String,(u64,Value)>,calls:Vec<Value>,hold:bool,held:Option<Value>,operational:bool,owner:Option<String>,fail_warm:bool}
+struct Server {rows:HashMap<String,Vec<Value>>,subscriptions:HashMap<String,Value>,workspaces:HashMap<String,(u64,Value)>,calls:Vec<Value>,hold:bool,held:Option<Value>,operational:bool,owner:Option<String>,fail_warm:bool,start_displays:HashMap<String,Value>,start_reply:Option<Value>,engine_subscriptions:Vec<Value>,held_prompt:Option<Value>}
 pub(crate) struct NavigationFixture {
     pub pane:Entity<SessionPane>,pub main:Entity<SocketClient>,bulk:Entity<SocketClient>,
     _backend:FakeBackend,_dock:Entity<DockArea>,_heard:Vec<Subscription>,
@@ -31,9 +31,37 @@ impl NavigationFixture {
                 (Some("hello"),..)=>vec![Reply::Frame(json!({"t":"welcome","protocol":1,"machine":"box","engine":state.owner.as_deref().unwrap_or("owner")}))],
                 (Some("call"),Some("sessions"),Some("resolve_source"),_)=>vec![result(json!({"machine":"owner","generation":0,"routeMachine":null}))],
                 (Some("call"),Some("engine"),Some("entities"),_)=>{
-                    let items=args["refs"].as_array().unwrap().iter().map(|reference|json!({"entityKind":"session","id":reference["id"],"machine":"owner","version":0,"provider":"source-derived-fixture","folder":"/display-only","state":if state.operational{"idle"}else{"ended"},"activityState":"idle","epoch":0})).collect::<Vec<_>>();
+                    let items=args["refs"].as_array().unwrap().iter().map(|reference|state.start_displays.get(reference["id"].as_str().unwrap()).cloned().unwrap_or_else(||json!({"entityKind":"session","id":reference["id"],"machine":"owner","version":0,"provider":"source-derived-fixture","folder":"/display-only","state":if state.operational{"idle"}else{"ended"},"activityState":"idle","epoch":0}))).collect::<Vec<_>>();
                     vec![result(json!({"items":items,"next":null}))]
                 },
+                (Some("sub"),_,_,Some("sessions")) if !state.start_displays.is_empty()=>{
+                    state.engine_subscriptions.push(id.clone());
+                    let through=state.start_displays.values().map(|row|row["version"].as_i64().unwrap()).max().unwrap();
+                    vec![Reply::Frame(json!({"t":"engine_snapshot","id":id,"machine":"owner","through":through,"items":state.start_displays.values().cloned().collect::<Vec<_>>(),"more":false}))]
+                },
+                (Some("call"),Some("sessions"),Some("create"),_) if state.start_reply.is_some()=>vec![result(state.start_reply.clone().unwrap())],
+                (Some("call"),Some("send"),Some("send"),_) if state.start_reply.is_some()=>{
+                    assert!(state.held_prompt.is_none(),"one actual initial prompt only");
+                    state.held_prompt=Some(json!({"t":"result","id":id,"result":{"sessionId":args["session"],"clientId":args["clientId"],
+                        "messageId":format!("prompt/{}/{}",args["session"].as_str().unwrap(),args["clientId"].as_str().unwrap()),"state":"queued","messageVersion":2,"seq":42,"epoch":1,"runId":null}}));vec![]
+                },
+                (Some("call"),Some("engine"),Some("command"),_) if state.start_reply.is_some()=>{
+                    assert_eq!(args["command"],json!({"kind":"change_checkout","checkoutKind":"current"}));
+                    let session=args["entityId"].as_str().unwrap();let mut row=state.start_displays[session].clone();
+                    assert_eq!(row["state"],"starting");assert_eq!(row["checkoutState"],"refused");
+                    let after=row["version"].as_i64().unwrap();assert_eq!(args["expectedVersion"],after);
+                    row["version"]=json!(after+1);row["checkoutState"]=json!("pending");row["checkoutReason"]=Value::Null;row["checkoutOperationId"]=args["commandId"].clone();
+                    state.start_displays.insert(session.into(),row.clone());
+                    let mut answer=vec![result(json!({"applied":true,"late":false,"error":null,"version":after+1,"seq":after+1,"epoch":1}))];
+                    answer.extend(start_events(&state.engine_subscriptions,after,&row));answer
+                },
+                (Some("call"),Some("fixture"),Some("start_display"),_)=>{
+                    let row=args["row"].clone();let session=row["id"].as_str().unwrap();
+                    let after=state.start_displays[session]["version"].as_i64().unwrap();assert_eq!(row["version"],after+1);
+                    state.start_displays.insert(session.into(),row.clone());let mut answer=vec![result(Value::Null)];
+                    answer.extend(start_events(&state.engine_subscriptions,after,&row));answer
+                },
+                (Some("call"),Some("fixture"),Some("release_prompt"),_)=>vec![Reply::Frame(state.held_prompt.take().expect("actual held prompt receipt")),result(Value::Null)],
                 (Some("call"),Some("sessions"),Some("open_target"),_)=>{
                     let session=&args["session"];let root=checkout.then(||format!("/source-derived/{}",session.as_str().unwrap()));
                     let reply=json!({"t":"result","id":id,"result":{"kind":args["kind"],"machine":"owner","generation":0,"routeMachine":null,"sessionId":session,"parentSessionId":null,"itemId":null,"seq":null,"payloadSessionId":null,"readOnly":args["kind"]!="engine","hasHistoryRows":true,"originalKey":{"machine":"owner","id":session},"requestId":args["requestId"],"checkoutRoot":root,"expectedSource":{"machine":"owner","generation":0,"routeMachine":null},"transcriptOnly":!checkout}});
@@ -93,6 +121,10 @@ impl NavigationFixture {
     pub async fn request(&mut self,id:&str,cx:&mut VisualTestContext) {
         self.results.borrow_mut().clear();self.pane.update_in(cx,|pane,window,cx|pane.request_open(SessionOpenRequest{key:SessionKey{machine:"owner".into(),id:id.into()},request_id:format!("fixture:{id}"),target:SessionOpenTarget::Historical},window,cx));self.opened(id,cx).await;
     }
+    /// Supply a source-derived start row/reply to the same server used by real navigation.
+    pub fn start_case(&self,row:Value,reply:Value) {
+        let mut state=self.state.lock().unwrap();state.start_displays.insert(row["id"].as_str().unwrap().into(),row);state.start_reply=Some(reply);
+    }
     pub fn fail_next_warm(&self){self.state.lock().unwrap().fail_warm=true;}
     pub fn operational(&self){self.state.lock().unwrap().operational=true;}
     pub fn replace_owner(&self){self.state.lock().unwrap().owner=Some("replacement-owner".into());}
@@ -121,3 +153,9 @@ impl NavigationFixture {
     }
 }
 fn row(session:&str,seq:i64)->Value {json!({"sessionId":session,"seq":seq,"itemId":null,"runId":null,"kind":"user","payload":{"text":format!("{session}:{seq}")},"createdAt":seq})}
+
+fn start_events(subscriptions:&[Value],after:i64,row:&Value)->Vec<Reply> {
+    subscriptions.iter().map(|id|Reply::Frame(json!({"t":"engine_events","id":id,"machine":"owner","after":after,"through":row["version"],"events":[
+        {"machine":"owner","seq":row["version"],"entityKind":"session","entityId":row["id"],"version":row["version"]}
+    ]}))).collect()
+}

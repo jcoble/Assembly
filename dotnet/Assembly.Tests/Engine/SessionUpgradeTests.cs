@@ -158,8 +158,7 @@ public sealed class SessionUpgradeTests
     private sealed class NoLauncher : IAgentLauncher
     {
         public IReadOnlyList<AgentDescriptor> Agents => [];
-        public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken) => throw new InvalidOperationException("No checkout during migration");
-        public void ValidateFolder(string folder) => new Assembly.Infrastructure.Agents.AdapterLauncher([], "", new UnclaimedPermissions(), _ => null).ValidateFolder(folder);
+        public void ValidateFolder(string folder) => new Assembly.Infrastructure.Agents.AdapterLauncher([], "", new UnclaimedPermissions()).ValidateFolder(folder);
         public bool CanRunTerminalAuthentication => false;
         public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
             StageTimes stages, CancellationToken cancellationToken) => LaunchAsync(descriptor.Id, stages, cancellationToken);

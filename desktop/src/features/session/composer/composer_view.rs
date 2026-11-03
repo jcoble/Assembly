@@ -20,6 +20,8 @@ use crate::features::session::client::session_client::{CallError, SessionClient}
 
 pub struct Composer {
     client: Rc<dyn SessionClient>,
+    start_draft: Option<start::StartDraft>,
+    initial_upload:Option<std::rc::Weak<()>>,
     session: Option<String>,
     session_key: Option<crate::core::engine::SessionKey>,
     expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
@@ -86,6 +88,8 @@ pub struct Composer {
 
 /// What the composer tells the session pane.
 pub enum ComposerEvent {
+    /// Local draft intent; the form owns creation and checkout, and the draft remains intact.
+    StartRequested { text:String, images:Vec<StagedAttachment> },
     /// A local pending prompt was captured before the call.
     Sending,
     /// The owner committed the prompt. Its provider turn arrives later through rows.
@@ -144,6 +148,7 @@ impl Composer {
         });
         Composer {
             client,
+            start_draft:None,initial_upload:None,
             session: None,
             session_key:None,expected_source:None,source_valid:false,source_serial:0,
             target_generation: 0,
@@ -313,3 +318,13 @@ mod send;
 #[cfg(test)]
 #[path="qualified_tests.rs"]
 mod qualified_tests;
+
+#[path="composer_start.rs"]
+mod start;
+pub use start::StagedAttachment;
+#[cfg(test)]
+#[path="tests/start_tests.rs"]
+mod start_tests;
+
+#[path="composer_initial.rs"]
+mod initial;

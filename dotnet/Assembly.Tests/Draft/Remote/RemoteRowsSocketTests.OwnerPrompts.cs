@@ -24,7 +24,7 @@ public sealed partial class RemoteRowsSocketTests
         _ownerWork = new BackgroundWork(TimeProvider.System, TextWriter.Null);
         _ownerHosts = new SessionRegistry(_remoteHub, sessions, launcher, TimeProvider.System, TextWriter.Null, _ownerWork);
         _ownerEngine = EngineRuntime.Start(_remoteDb, topics, TimeProvider.System, limits,
-            cutover: new SessionCutover(_remoteDb, sessions, launcher, "checkouts", TimeProvider.System));
+            cutover: new SessionCutover(_remoteDb, sessions, launcher, "checkouts", TimeProvider.System, owningHome: _owningHome));
         _ownerAnswers = new NeedAnswers(new McpGate(_ownerEngine, limits, TimeProvider.System),
             _ownerEngine, _ownerHosts, TimeProvider.System);
         return new EngineDoor(_ownerEngine, sessions, machines, new AttachmentStore(_remoteFile.Path + ".attachments"),

@@ -6,7 +6,7 @@ using Assembly.Domain.Sessions;
 
 namespace Assembly.Tests.Features.Chat.Sessions;
 
-/// <summary>Checks every session out at <c>/work/session</c>, and hands out a new <see cref="FakeLink"/> per launch, or runs <see cref="Launch"/> in its place.</summary>
+/// <summary>Hands out a new <see cref="FakeLink"/> per configured launch, or runs <see cref="Launch"/> in its place.</summary>
 internal sealed class FakeLauncher : IAgentLauncher
 {
     public const string Checkout = "/work/session";
@@ -27,17 +27,7 @@ internal sealed class FakeLauncher : IAgentLauncher
     /// <summary>The agent of each launch, in order.</summary>
     public List<string> Launched { get; } = [];
 
-    /// <summary>The id of each session checked out, in order.</summary>
-    public List<string> CheckedOut { get; } = [];
-
-    public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken)
-    {
-        lock (CheckedOut)
-            CheckedOut.Add(session.SessionId);
-        return Task.FromResult(Checkout);
-    }
-
-    public void ValidateFolder(string folder) => new AdapterLauncher([], "", new UnclaimedPermissions(), _ => null).ValidateFolder(folder);
+    public void ValidateFolder(string folder) => new AdapterLauncher([], "", new UnclaimedPermissions()).ValidateFolder(folder);
 
     public bool CanRunTerminalAuthentication => false;
     public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
