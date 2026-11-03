@@ -37,3 +37,14 @@ fn warm_at_a_quarter_left_hot_at_a_tenth() {
     assert_eq!(at(75), (true, false));
     assert_eq!(at(90), (true, true));
 }
+
+#[test]
+fn only_reported_counts_show_and_a_missing_one_is_not_zero() {
+    let meter = ContextMeter::of(51_285, 1_000_000).unwrap();
+    assert_eq!((meter.input.as_deref(), meter.output.as_deref()), (None, None));
+    let meter = meter.with_tokens(Some(40_000), None);
+    assert_eq!(meter.input.as_deref(), Some("40,000"));
+    assert_eq!(meter.output, None);
+    let zero = ContextMeter::of(1, 10).unwrap().with_tokens(None, Some(0));
+    assert_eq!(zero.output.as_deref(), Some("0"));
+}

@@ -472,7 +472,7 @@ impl SessionPane {
             (false, true) => (self._clock, self.now, self.plan_open) = (None, None, false),
             _ => {}
         }
-        let context = self.view.context.map(|(_, used, size)| (used, size));
+        let context = self.view.context;
         let running = active.is_some();
         let branch = latest_branch(&self.view.stats);
         let lock = pending_answer(&self.view.items);

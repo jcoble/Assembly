@@ -17,6 +17,7 @@ use super::agent_config::AgentConfig;
 use super::answer_panel::AnswerPanel;
 use super::attachment::{Attachment, AttachmentState};
 use super::context_meter::ContextMeter;
+use crate::features::session::model::session_view::ContextReport;
 use super::shape::{Lock, hint};
 use crate::core::engine::EngineFeed;
 use crate::features::session::client::session_client::{CallError, SessionClient};
@@ -285,9 +286,12 @@ impl Composer {
         }
     }
 
-    /// The newest context report as (used, size), or `None` before the agent sends one.
-    pub fn set_context(&mut self, context: Option<(i64, i64)>, cx: &mut Context<Self>) {
-        let meter = context.and_then(|(used, size)| ContextMeter::of(used, size));
+    /// The newest context report, or `None` before the agent sends one.
+    pub fn set_context(&mut self, context: Option<ContextReport>, cx: &mut Context<Self>) {
+        let meter = context.and_then(|report| {
+            ContextMeter::of(report.used, report.size)
+                .map(|meter| meter.with_tokens(report.input_tokens, report.output_tokens))
+        });
         if self.meter != meter {
             self.meter = meter;
             cx.notify();

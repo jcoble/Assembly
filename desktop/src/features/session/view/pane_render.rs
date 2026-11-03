@@ -21,7 +21,7 @@ use crate::core::ui::ask::form::AskForm;
 use crate::features::session::composer::answer_panel::AnswerPanel;
 use crate::features::session::composer::shape::next_answer;
 use crate::features::session::view::ask_row::AskRow;
-use crate::features::session::view::plan_card::PlanCard;
+use crate::features::session::view::plan_card::{PlanCard, turn_file_changes};
 use crate::features::session::view::session_action::SessionAction;
 
 impl SessionPane {
@@ -102,6 +102,19 @@ impl Panel for SessionPane {
 
 impl SessionPane {
     /// The ask the box answers next, its form made the first time it's drawn: text fields need the window.
+    /// The chip shows for a plan, or for a turn that changed files without one.
+    fn plan_chip(&self) -> Option<PlanCard> {
+        let items = (self.view.plan.as_ref()).map_or_else(Vec::new, |(_, items)| items.clone());
+        let changes = turn_file_changes(&self.view.items);
+        (!items.is_empty() || changes.is_some()).then(|| PlanCard {
+            items,
+            changes,
+            open: self.plan_open,
+            running: self.view.active_run(self.known_run.as_deref()).is_some(),
+            on_action: self.on_action.clone(),
+        })
+    }
+
     fn answer_panel(&mut self, window: &mut Window, cx: &mut App) -> Option<AnswerPanel> {
         let (ask_id, ask, count) = next_answer(&self.view.items)
             .map(|(ask_id, ask, count)| (ask_id.to_string(), ask.clone(), count))?;
@@ -140,21 +153,15 @@ impl Render for SessionPane {
             .size_full()
             .flex()
             .flex_col()
+            .on_key_down(cx.listener(|pane, event: &KeyDownEvent, _, cx| {
+                if pane.plan_open && event.keystroke.key == "escape" {
+                    pane.plan_open = false;
+                    cx.notify();
+                }
+            }))
             .child(self.header.clone())
             .child(div().flex_1().min_h_0().child(self.timeline.clone()))
-            .when_some(
-                self.view
-                    .plan
-                    .as_ref()
-                    .filter(|(_, items)| !items.is_empty()),
-                |pane, (_, items)| {
-                    pane.child(PlanCard {
-                        items: items.clone(),
-                        open: self.plan_open,
-                        on_action: self.on_action.clone(),
-                    })
-                },
-            )
+            .when_some(self.plan_chip(), |pane, chip| pane.child(chip))
             .when(!self.status.is_empty(), |pane| {
                 let on_action = self.on_action.clone();
                 pane.child(

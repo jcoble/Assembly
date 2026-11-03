@@ -5,7 +5,7 @@
 
 use std::f32::consts::TAU;
 
-use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::*;
 
@@ -20,6 +20,8 @@ const SLICE: f32 = 0.7;
 #[derive(IntoElement)]
 pub struct ContextGauge {
     pub meter: ContextMeter,
+    /// Names who didn't report a count, rather than showing a zero it never sent.
+    pub provider: SharedString,
 }
 
 impl RenderOnce for ContextGauge {
@@ -32,6 +34,11 @@ impl RenderOnce for ContextGauge {
         };
         let spent = 100 - self.meter.arc.min(100);
         let headline = SharedString::from(self.meter.headline);
+        let absent = SharedString::from(format!("not reported by {}", self.provider));
+        let rows: [(&'static str, SharedString); 2] = [
+            ("In", self.meter.input.map_or_else(|| absent.clone(), Into::into)),
+            ("Out", self.meter.output.map_or(absent, Into::into)),
+        ];
         div()
             .id("composer:context")
             .flex()
@@ -40,7 +47,11 @@ impl RenderOnce for ContextGauge {
             .justify_center()
             .size(CELL)
             .mr(px(6.))
-            .tooltip(move |window, cx| Tooltip::new(headline.clone()).build(window, cx))
+            .tooltip(move |window, cx| {
+                let (headline, rows) = (headline.clone(), rows.clone());
+                Tooltip::element(move |_, cx| popover(headline.clone(), rows.clone(), cx))
+                    .build(window, cx)
+            })
             .child(
                 canvas(
                     |_, _, _| {},
@@ -49,6 +60,25 @@ impl RenderOnce for ContextGauge {
                 .size(DISC),
             )
     }
+}
+
+fn popover(
+    headline: SharedString,
+    rows: [(&'static str, SharedString); 2],
+    cx: &App,
+) -> impl IntoElement + use<> {
+    let muted = cx.theme().muted_foreground;
+    v_flex()
+        .gap(px(4.))
+        .text_size(px(12.))
+        .child(div().font_weight(FontWeight::MEDIUM).child(headline))
+        .children(rows.into_iter().map(|(label, value)| {
+            h_flex()
+                .justify_between()
+                .gap(px(16.))
+                .child(div().text_color(muted).child(label))
+                .child(value)
+        }))
 }
 
 fn paint(bounds: Bounds<Pixels>, spent: u8, color: Hsla, window: &mut Window) {
