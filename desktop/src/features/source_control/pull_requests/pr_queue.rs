@@ -1,35 +1,14 @@
+use super::pr_search::{PrScope, PrState, pr_query};
 use super::pull_request::PullRequestPage;
 use crate::core::socket::{client::SocketClient, outcome::Outcome, row_source::ExpectedRowSource};
 use gpui_kit::*;
 use serde_json::json;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub enum QueueState {
-    #[default]
-    Open,
-    Mine,
-    Review,
-}
-impl QueueState {
-    pub fn wire(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Mine => "mine",
-            Self::Review => "review",
-        }
-    }
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Open => "Open",
-            Self::Mine => "Mine",
-            Self::Review => "Needs review",
-        }
-    }
-}
 /// One visible queue owns its pending request; hiding it cancels reads, and no timer refreshes it.
 pub struct PrQueue {
     pub page: PullRequestPage,
-    pub state: QueueState,
+    pub state: PrState,
+    pub scope: PrScope,
     pub search: String,
     pub failure: Option<String>,
     pub loading: bool,
@@ -45,7 +24,8 @@ impl PrQueue {
     pub fn new(session: Option<String>, repositories: Vec<String>) -> Self {
         Self {
             page: PullRequestPage::default(),
-            state: QueueState::Open,
+            state: PrState::Open,
+            scope: PrScope::Everyone,
             search: String::new(),
             failure: None,
             loading: false,
@@ -72,9 +52,15 @@ impl PrQueue {
         }
         cx.notify();
     }
-    pub fn select_state(&mut self, state: QueueState, cx: &mut Context<Self>) {
+    pub fn select_state(&mut self, state: PrState, cx: &mut Context<Self>) {
         if self.state != state {
             self.state = state;
+            self.refresh(cx);
+        }
+    }
+    pub fn select_scope(&mut self, scope: PrScope, cx: &mut Context<Self>) {
+        if self.scope != scope {
+            self.scope = scope;
             self.refresh(cx);
         }
     }
@@ -132,7 +118,8 @@ impl PrQueue {
         self.failure = None;
         self.revision += 1;
         let revision = self.revision;
-        let mut args = json!({"session":self.session,"repositories":self.repositories,"state":self.state.wire(),"search":self.search,"cursor":if more{self.page.cursor.clone()}else{None}});
+        let query = pr_query(self.state, self.scope, &self.search);
+        let mut args = json!({"session":self.session,"repositories":self.repositories,"state":query.state,"search":query.search,"cursor":if more{self.page.cursor.clone()}else{None}});
         if let Some(source) = &self.expected_source {
             args["expectedSource"] = json!(source);
         }

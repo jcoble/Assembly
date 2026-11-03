@@ -1,48 +1,52 @@
 use super::{
-    pr_detail::PrDetail,
-    pr_queue::{PrQueue, QueueState},
+    pr_detail::{PrBack, PrDetail},
+    pr_queue::PrQueue,
+    pr_search::PrState,
     pull_request::PrTarget,
 };
 use crate::core::{
-    intents::open_pull_requests::OpenPullRequests,
-    ui::{
-        center_panes::CenterPanes,
-        filter_pills::{FilterGroup, FilterOption, FilterPills, FilterPillsChanged},
-    },
+    intents::open_pull_requests::OpenPullRequests, state::selected_session::SelectedSession,
+    ui::center_panes::CenterPanes,
 };
 use crate::features::projects::projects::Projects;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, panel_handle, register_panel,
 };
-use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::*;
 use serde_json::json;
+use std::time::Duration;
+
+#[path = "pr_view/list.rs"]
+mod list;
 
 gpui_kit::actions!(pull_requests, [ShowPullRequests]);
 const NAME: &str = "Pull requests";
 const KEY: &str = "pull-requests";
+const MAX_SEARCH: usize = 150;
 struct OpenPane(Option<WeakEntity<PrPane>>);
 impl Global for OpenPane {}
 pub struct PrPane {
     focus: FocusHandle,
     active: bool,
     session: Option<String>,
+    /// The tab shows the selected session's project until the person picks one.
+    follows_selection: bool,
     project: Option<String>,
     scope: Vec<String>,
     queue: Entity<PrQueue>,
     detail: Option<Entity<PrDetail>>,
     search: Entity<InputState>,
-    filters: Entity<FilterPills>,
+    search_wait: Option<Task<()>>,
     projects: Option<Entity<Projects>>,
     failure: Option<String>,
+    /// A pasted link to a repository Assembly doesn't have, and the words saying so.
+    missing_link: Option<(String, String)>,
     _queue: Subscription,
+    _detail: Option<Subscription>,
     _projects: Option<Subscription>,
     _search: Subscription,
-    _filters: Subscription,
+    _selection: Option<Subscription>,
 }
 impl PrPane {
     pub fn workspace_key(state: &PanelState, session: &str) -> Result<String, String> {
@@ -122,53 +126,38 @@ impl PrPane {
         }
     }
     fn new(session: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let queue = cx.new(|_| PrQueue::new(session.clone(), vec![]));
+        let selected = SelectedSession::try_global(cx);
+        let session = session.or_else(|| {
+            let selected = selected.as_ref()?.read(cx);
+            selected.session_id().map(String::from)
+        });
+        let queue = cx.new(|_| {
+            let mut queue = PrQueue::new(session.clone(), vec![]);
+            queue.state = PrState::All;
+            queue
+        });
         let queue_heard = cx.observe(&queue, |_, _, cx| cx.notify());
         let search = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Search or paste a PR link, then Enter")
+            InputState::new(window, cx).placeholder("Search title, branch, author or #number")
         });
         let search_heard =
             cx.subscribe(&search, |pane: &mut Self, input, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    pane.search(input.read(cx).value().to_string(), cx);
+                let text = input.read(cx).value().to_string();
+                match event {
+                    InputEvent::PressEnter { .. } => pane.search(text, cx),
+                    InputEvent::Change => pane.search_after_pause(text, cx),
+                    _ => {}
                 }
             });
-        let mut group = FilterGroup::new(
-            "State",
-            [QueueState::Open, QueueState::Mine, QueueState::Review]
-                .into_iter()
-                .map(|state| FilterOption {
-                    value: state.wire().into(),
-                    label: state.label().into(),
-                })
-                .collect(),
-        );
-        group.picked = vec!["open".into()];
-        let filters = cx.new(|cx| FilterPills::new(vec![group], cx));
-        let filter_heard = cx.subscribe(
-            &filters,
-            |pane: &mut Self, pills, _: &FilterPillsChanged, cx| {
-                let previous = pane.queue.read(cx).state.wire();
-                let picked = pills.read(cx).state.groups[0].picked.clone();
-                let selected = picked
-                    .iter()
-                    .find(|value| value.as_str() != previous)
-                    .or_else(|| picked.first())
-                    .map_or("open", String::as_str)
-                    .to_string();
-                pills.update(cx, |pills, cx| {
-                    pills.state.groups[0].picked = vec![selected.clone()];
-                    cx.notify();
-                });
-                let state = match selected.as_str() {
-                    "mine" => QueueState::Mine,
-                    "review" => QueueState::Review,
-                    _ => QueueState::Open,
-                };
-                pane.queue
-                    .update(cx, |queue, cx| queue.select_state(state, cx));
-            },
-        );
+        let selection_heard = selected.as_ref().map(|selected| {
+            cx.observe(selected, |pane: &mut Self, selected, cx| {
+                let session = selected.read(cx).session_id().map(String::from);
+                if pane.follows_selection && session.is_some() && session != pane.session {
+                    pane.session = session;
+                    pane.show_session(cx);
+                }
+            })
+        });
         let projects = Projects::get(cx);
         let project_heard = projects.as_ref().map(|projects| {
             cx.observe(projects, |pane: &mut Self, _, cx| {
@@ -180,21 +169,52 @@ impl PrPane {
             focus: cx.focus_handle(),
             active: true,
             session,
+            follows_selection: true,
             project: None,
             scope: Vec::new(),
             queue,
             detail: None,
             search,
-            filters,
+            search_wait: None,
             projects,
             failure: None,
+            missing_link: None,
             _queue: queue_heard,
+            _detail: None,
             _projects: project_heard,
             _search: search_heard,
-            _filters: filter_heard,
+            _selection: selection_heard,
         };
         pane.sync_scope(cx);
         pane
+    }
+    /// A new queue for a new place, keeping the person's filters.
+    fn replace_queue(&mut self, cx: &mut Context<Self>) {
+        let current = self.queue.read(cx);
+        let (state, scope, search) = (current.state, current.scope, current.search.clone());
+        let session = self.session.clone();
+        let queue = cx.new(|_| {
+            let mut queue = PrQueue::new(session, vec![]);
+            queue.state = state;
+            queue.scope = scope;
+            queue.search = search;
+            queue
+        });
+        self._queue = cx.observe(&queue, |_, _, cx| cx.notify());
+        self.queue = queue;
+        self.scope.clear();
+    }
+    fn show_session(&mut self, cx: &mut Context<Self>) {
+        self.close_detail(cx);
+        self.project = None;
+        self.replace_queue(cx);
+        self.sync_scope(cx);
+        cx.notify();
+    }
+    fn close_detail(&mut self, cx: &mut Context<Self>) {
+        self.detail = None;
+        self._detail = None;
+        cx.notify();
     }
     fn sync_scope(&mut self, cx: &mut Context<Self>) {
         if self.session.is_some() {
@@ -237,13 +257,12 @@ impl PrPane {
             .update(cx, |queue, cx| queue.set_active(self.active, cx));
     }
     fn apply_intent(&mut self, intent: OpenPullRequests, cx: &mut Context<Self>) {
-        if self.session != intent.session_id {
-            self.session = intent.session_id;
-            self.detail = None;
-            let queue = cx.new(|_| PrQueue::new(self.session.clone(), vec![]));
-            self._queue = cx.observe(&queue, |_, _, cx| cx.notify());
-            self.queue = queue;
-            self.scope.clear();
+        if let Some(session) = intent.session_id {
+            self.follows_selection = true;
+            if self.session.as_ref() != Some(&session) {
+                self.session = Some(session);
+                self.show_session(cx);
+            }
         }
         self.sync_scope(cx);
         if let Some(number) = intent.number {
@@ -251,7 +270,24 @@ impl PrPane {
         }
         cx.notify();
     }
+    /// Typing searches after a short pause; a link waits for Enter.
+    fn search_after_pause(&mut self, text: String, cx: &mut Context<Self>) {
+        self.search_wait = None;
+        if text.trim().starts_with("https://") {
+            return;
+        }
+        self.search_wait = Some(cx.spawn(async move |pane, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(350))
+                .await;
+            _ = pane.update(cx, |pane, cx| {
+                pane.search_wait = None;
+                pane.search(text, cx);
+            });
+        }));
+    }
     fn search(&mut self, text: String, cx: &mut Context<Self>) {
+        self.search_wait = None;
         if text.trim().starts_with("https://") {
             let mut known = self.scope.clone();
             known.extend(
@@ -277,12 +313,26 @@ impl PrPane {
                 PrTarget::from_url(&text, &known)
             };
             // A session target is checked against the backend's actual origin before any detail is displayed.
+            self.missing_link = None;
             match target {
                 Ok(target) => self.select_pr(Some(target.repository), target.number, cx),
-                Err(error) => self.failure = Some(error),
+                Err(error) => match PrTarget::parse_url(&text) {
+                    Ok(target) => {
+                        self.missing_link = Some((
+                            format!(
+                                "github.com/{} is not a project in Assembly, so #{} cannot open here. Add the repository as a project, or open it on GitHub.",
+                                target.repository, target.number
+                            ),
+                            text.trim().to_string(),
+                        ));
+                    }
+                    Err(_) => self.failure = Some(error),
+                },
             }
         } else {
             self.failure = None;
+            self.missing_link = None;
+            let text: String = text.chars().take(MAX_SEARCH).collect();
             self.queue
                 .update(cx, |queue, cx| queue.set_search(text, cx));
         }
@@ -298,19 +348,21 @@ impl PrPane {
             return;
         };
         self.failure = None;
-        self.detail =
-            Some(cx.new(|cx| PrDetail::new(session, repository, number, self.active, cx)));
+        let active = self.active;
+        let detail = cx.new(|cx| PrDetail::new(session, repository, number, active, cx));
+        self._detail = Some(cx.subscribe(&detail, |pane: &mut Self, _, _: &PrBack, cx| {
+            pane.close_detail(cx)
+        }));
+        self.detail = Some(detail);
         cx.notify();
     }
     fn select_project(&mut self, project: Option<String>, cx: &mut Context<Self>) {
         self.session = None;
+        self.follows_selection = false;
         self.project = project;
-        self.detail = None;
         self.failure = None;
-        let queue = cx.new(|_| PrQueue::new(None, vec![]));
-        self._queue = cx.observe(&queue, |_, _, cx| cx.notify());
-        self.queue = queue;
-        self.scope.clear();
+        self.close_detail(cx);
+        self.replace_queue(cx);
         self.sync_scope(cx);
         cx.notify();
     }
@@ -355,172 +407,14 @@ impl Panel for PrPane {
 }
 impl Render for PrPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let danger = cx.theme().danger;
-        let projects = self
-            .projects
-            .as_ref()
-            .map(|projects| projects.read(cx).rows().to_vec())
-            .unwrap_or_default();
-        let label = if self.session.is_some() {
-            "Selected checkout".to_string()
-        } else {
-            self.project
-                .as_ref()
-                .and_then(|id| projects.iter().find(|project| project.id == *id))
-                .map_or("All projects".to_string(), |project| project.title.clone())
+        let page = match self.detail.clone() {
+            Some(detail) => detail.into_any_element(),
+            None => self.list_page(cx).into_any_element(),
         };
-        let target = cx.entity().downgrade();
-        let all = target.clone();
-        let picker = Button::new("pr-project")
-            .ghost()
-            .compact()
-            .label(label)
-            .dropdown_menu(move |menu, _, _| {
-                let menu = menu.item(PopupMenuItem::new("All projects").on_click({
-                    let all = all.clone();
-                    move |_, _, cx| {
-                        _ = all.update(cx, |pane, cx| pane.select_project(None, cx));
-                    }
-                }));
-                projects
-                    .iter()
-                    .filter(|project| project.github_repository().is_some())
-                    .fold(menu, |menu, project| {
-                        let id = project.id.clone();
-                        let target = target.clone();
-                        menu.item(
-                            PopupMenuItem::new(format!("{} · {}", project.title, project.machine))
-                                .on_click(move |_, _, cx| {
-                                    _ = target.update(cx, |pane, cx| {
-                                        pane.select_project(Some(id.clone()), cx)
-                                    });
-                                }),
-                        )
-                    })
-            });
-        let queue = self.queue.read(cx);
-        let count = queue.page.items.len();
-        let more = queue.page.cursor.is_some();
-        let loading = queue.loading;
-        let total = queue.page.total;
-        let queue_error = queue.failure.clone();
-        let projects_loading = self
-            .projects
-            .as_ref()
-            .is_some_and(|projects| projects.read(cx).loading);
-        let projects_error = self
-            .projects
-            .as_ref()
-            .and_then(|projects| projects.read(cx).failure.clone());
-        let mut left =
-            v_flex()
-                .w(px(320.))
-                .min_h_0()
-                .gap_1()
-                .child(picker)
-                .child(Input::new(&self.search).small())
-                .child(self.filters.clone())
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(format!("{total} pull requests"))
-                        .child(
-                            Button::new("pr-queue-refresh")
-                                .ghost()
-                                .compact()
-                                .label("Refresh")
-                                .disabled(loading)
-                                .on_click(cx.listener(|pane, _, _, cx| {
-                                    pane.queue.update(cx, |queue, cx| queue.refresh(cx))
-                                })),
-                        ),
-                )
-                .children(
-                    self.failure
-                        .clone()
-                        .or(queue_error)
-                        .or(projects_error)
-                        .map(|error| div().px_2().text_sm().text_color(danger).child(error)),
-                )
-                .when(loading || projects_loading, |left| {
-                    left.child("Reading pull requests…")
-                })
-                .child(
-                    uniform_list(
-                        "pr-queue-items",
-                        count,
-                        cx.processor(|pane, range: std::ops::Range<usize>, _, cx| {
-                            let items = pane
-                                .queue
-                                .read(cx)
-                                .page
-                                .items
-                                .iter()
-                                .skip(range.start)
-                                .take(range.len())
-                                .cloned()
-                                .collect::<Vec<_>>();
-                            items
-                                .into_iter()
-                                .map(|pr| {
-                                    Button::new(SharedString::from(format!(
-                                        "queue:{}:{}",
-                                        pr.repository, pr.number
-                                    )))
-                                    .ghost()
-                                    .label(format!(
-                                        "{} #{} · {}{}",
-                                        pr.repository,
-                                        pr.number,
-                                        pr.title,
-                                        if pr.is_draft { " · Draft" } else { "" }
-                                    ))
-                                    .on_click(cx.listener(move |pane, _, _, cx| {
-                                        pane.select_pr(Some(pr.repository.clone()), pr.number, cx)
-                                    }))
-                                })
-                                .collect()
-                        }),
-                    )
-                    .flex_1()
-                    .min_h_0(),
-                )
-                .when(more, |left| {
-                    left.child(
-                        Button::new("pr-more")
-                            .ghost()
-                            .label("Load more")
-                            .disabled(loading)
-                            .on_click(cx.listener(|pane, _, _, cx| {
-                                pane.queue.update(cx, |queue, cx| queue.load_more(cx))
-                            })),
-                    )
-                });
-        if let Some(projects) = &self.projects {
-            if projects.read(cx).next.is_some() {
-                let projects = projects.clone();
-                left = left.child(
-                    Button::new("pr-more-projects")
-                        .ghost()
-                        .label("Load more projects")
-                        .disabled(projects_loading)
-                        .on_click(move |_, _, cx| {
-                            projects.update(cx, |projects, cx| projects.load_more(cx))
-                        }),
-                );
-            }
-        }
-        h_flex()
+        div()
             .track_focus(&self.focus)
             .size_full()
             .min_h_0()
-            .child(left)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .size_full()
-                    .children(self.detail.clone()),
-            )
+            .child(page)
     }
 }

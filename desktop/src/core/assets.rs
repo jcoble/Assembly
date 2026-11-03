@@ -44,7 +44,13 @@ gpui_kit::assets::icon_assets!(
         Rocket,
         ListFilter,
         MessageCircle,
-        LayoutDashboard
+        LayoutDashboard,
+        GitPullRequest,
+        GitPullRequestClosed,
+        GitPullRequestDraft,
+        GitMerge,
+        GitCommitHorizontal,
+        MessageSquare
     ]
 );
 

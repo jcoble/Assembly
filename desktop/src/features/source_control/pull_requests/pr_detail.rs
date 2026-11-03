@@ -1,4 +1,7 @@
+//! One pull request: its read, its review draft and the page bar over Summary and Changes.
+use super::super::git_operation::GitOperation;
 use super::{
+    pr_activity::change_totals,
     pr_files::PrFiles,
     pull_request::PullRequestDetail,
     review_draft::{ReviewDraft, ReviewIdentity},
@@ -6,20 +9,36 @@ use super::{
 use crate::core::{
     intents::open_url::OpenUrl,
     socket::{client::SocketClient, outcome::Outcome},
-    ui::markdown::view::MarkdownView,
 };
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
+use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonGroup, ButtonRounded, ButtonVariants as _};
+use gpui_kit::component::diff::DiffMode;
+use gpui_kit::component::input::TextareaState;
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::json;
+use std::time::Duration;
+
+#[path = "pr_view/composer.rs"]
+mod composer;
+#[path = "pr_view/summary.rs"]
+mod summary;
 
 #[derive(Clone, Copy, PartialEq)]
-enum Tab {
-    Conversation,
-    Checks,
-    Files,
+enum Page {
+    Summary,
+    Changes,
+}
+/// The person asked to go back to the list.
+pub struct PrBack;
+struct ReplyTarget {
+    id: u64,
+    author: String,
+    path: String,
+    line: Option<usize>,
 }
 pub struct PrDetail {
     session: String,
@@ -34,10 +53,26 @@ pub struct PrDetail {
     review: Option<Entity<ReviewDraft>>,
     files: Option<Entity<PrFiles>>,
     review_input: Option<(Entity<TextareaState>, Subscription)>,
-    tab: Tab,
+    /// Text the next render puts in the comment box; setting an input needs a window.
+    pending_body: Option<String>,
+    /// Counts edits to the comment box, so a generated draft can't land on newer words.
+    edits: u64,
+    reply: Option<ReplyTarget>,
+    reply_input: Option<Entity<TextareaState>>,
+    drafter: Entity<GitOperation>,
+    drafting_at: Option<(ReviewIdentity, u64)>,
+    merge_method: &'static str,
+    posted: Option<String>,
+    merged: Option<String>,
+    copied: Option<Task<()>>,
+    page: Page,
+    mode: DiffMode,
+    width: Pixels,
     read: Option<Task<()>>,
     _review: Option<Subscription>,
+    _drafter: Subscription,
 }
+impl EventEmitter<PrBack> for PrDetail {}
 impl PrDetail {
     pub fn new(
         session: String,
@@ -46,6 +81,8 @@ impl PrDetail {
         active: bool,
         cx: &mut Context<Self>,
     ) -> Self {
+        let drafter = cx.new(|_| GitOperation::default());
+        let drafter_heard = cx.observe(&drafter, |view: &mut Self, _, cx| view.draft_changed(cx));
         let mut detail = Self {
             session,
             repository,
@@ -59,9 +96,22 @@ impl PrDetail {
             review: None,
             files: None,
             review_input: None,
-            tab: Tab::Conversation,
+            pending_body: None,
+            edits: 0,
+            reply: None,
+            reply_input: None,
+            drafter,
+            drafting_at: None,
+            merge_method: "merge",
+            posted: None,
+            merged: None,
+            copied: None,
+            page: Page::Summary,
+            mode: DiffMode::Unified,
+            width: px(0.),
             read: None,
             _review: None,
+            _drafter: drafter_heard,
         };
         if active {
             detail.refresh(cx);
@@ -83,7 +133,7 @@ impl PrDetail {
         }
         if let Some(files) = &self.files {
             files.update(cx, |files, cx| {
-                files.set_active(active && self.tab == Tab::Files, cx)
+                files.set_active(active && self.page == Page::Changes, cx)
             });
         }
         cx.notify();
@@ -150,344 +200,249 @@ impl PrDetail {
             base: detail.base_sha.clone(),
         })
     }
-    fn ensure_review_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.review_input.is_some() {
-            return;
-        }
-        let Some(review) = self.review.clone() else {
-            return;
-        };
-        let body = review.read(cx).body.clone();
-        let input = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .default_value(body)
-                .placeholder("Overall review comment")
-                .auto_grow(3, 8)
-        });
-        let heard = cx.subscribe(&input, move |_, input, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                let body = input.read(cx).value().to_string();
-                review.update(cx, |review, cx| {
-                    review.body = body;
-                    cx.notify();
-                });
-            }
-        });
-        self.review_input = Some((input, heard));
-    }
-    fn preview_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let request = self
-            .current_identity()
-            .ok_or_else(|| "Refresh first. Your review draft is kept.".to_string())
-            .and_then(|identity| {
-                self.review
-                    .as_ref()
-                    .ok_or_else(|| "Start a review first.".to_string())
-                    .and_then(|review| {
-                        super::post_confirm::PostRequest::review(review.read(cx), &identity)
-                    })
-            });
-        match request {
-            Ok(request) => super::post_confirm::open(
-                self.session.clone(),
-                request,
-                cx.entity().downgrade(),
-                window,
-                cx,
-            ),
-            Err(error) => {
-                self.failure = Some(error);
-                cx.notify();
-            }
-        }
-    }
     fn sync_files(&mut self, cx: &mut Context<Self>) {
-        if self.tab != Tab::Files {
+        if self.page != Page::Changes {
             return;
         }
         if self.files.is_none() {
             if let (Some(detail), Some(review)) = (&self.detail, &self.review) {
                 let session = self.session.clone();
                 let review = review.clone();
-                self.files = Some(cx.new(|cx| PrFiles::new(session, detail, review, cx)));
+                let mode = self.mode;
+                self.files = Some(cx.new(|cx| {
+                    let mut files = PrFiles::new(session, detail, review, cx);
+                    files.set_mode(mode, cx);
+                    files
+                }));
             }
         }
         if let Some(files) = &self.files {
             files.update(cx, |files, cx| files.set_active(self.active, cx));
         }
     }
-    fn select_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
-        self.tab = tab;
+    fn select_page(&mut self, page: Page, cx: &mut Context<Self>) {
+        self.page = page;
         if let Some(files) = &self.files {
             files.update(cx, |files, cx| {
-                files.set_active(self.active && tab == Tab::Files, cx)
+                files.set_active(self.active && page == Page::Changes, cx)
             });
         }
         self.sync_files(cx);
         cx.notify();
     }
-}
-impl Render for PrDetail {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.ensure_review_input(window, cx);
-        let danger = cx.theme().danger;
-        let mut root = v_flex()
-            .size_full()
-            .min_h_0()
+    fn select_mode(&mut self, mode: DiffMode, cx: &mut Context<Self>) {
+        self.mode = mode;
+        if let Some(files) = &self.files {
+            files.update(cx, |files, cx| files.set_mode(mode, cx));
+        }
+        cx.notify();
+    }
+    fn copy_link(&mut self, cx: &mut Context<Self>) {
+        let Some(url) = self.detail.as_ref().map(|detail| detail.url.clone()) else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(url));
+        self.copied = Some(cx.spawn(async move |view, cx| {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            _ = view.update(cx, |view, cx| {
+                view.copied = None;
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+    fn page_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let border = cx.theme().border;
+        let (success, danger) = (cx.theme().success, cx.theme().danger);
+        let (added, removed) = self
+            .detail
+            .as_ref()
+            .map_or((0, 0), |detail| change_totals(&detail.files));
+        let on_changes = self.page == Page::Changes;
+        let url = self.detail.as_ref().map(|detail| detail.url.clone());
+        let posting = self.drafter.read(cx).busy;
+        h_flex()
+            .px_3()
+            .py_2()
             .gap_2()
+            .border_b_1()
+            .border_color(border)
+            .child(
+                Button::new("pr-back")
+                    .ghost()
+                    .small()
+                    .icon(IconName::ChevronLeft)
+                    .tooltip("All pull requests")
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PrBack))),
+            )
+            .child(
+                ButtonGroup::new("pr-page")
+                    .compact()
+                    .outline()
+                    .small()
+                    .child(
+                        Button::new("pr-page-summary")
+                            .rounded(ButtonRounded::Size(px(999.)))
+                            .label("Summary")
+                            .selected(!on_changes),
+                    )
+                    .child(
+                        Button::new("pr-page-changes")
+                            .rounded(ButtonRounded::Size(px(999.)))
+                            .selected(on_changes)
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child("Changes")
+                                    .child(div().text_color(success).child(format!("+{added}")))
+                                    .child(div().text_color(danger).child(format!("−{removed}"))),
+                            ),
+                    )
+                    .on_click(cx.listener(|view, picked: &Vec<usize>, _, cx| {
+                        let page = if picked.first() == Some(&1) {
+                            Page::Changes
+                        } else {
+                            Page::Summary
+                        };
+                        view.select_page(page, cx);
+                    })),
+            )
+            .child(div().flex_1())
+            .when(on_changes, |bar| {
+                bar.child(
+                    ButtonGroup::new("pr-mode")
+                        .compact()
+                        .outline()
+                        .small()
+                        .child(
+                            Button::new("pr-mode-unified")
+                                .label("Unified")
+                                .selected(self.mode == DiffMode::Unified),
+                        )
+                        .child(
+                            Button::new("pr-mode-split")
+                                .label("Side by side")
+                                .selected(self.mode == DiffMode::Split),
+                        )
+                        .on_click(cx.listener(|view, picked: &Vec<usize>, _, cx| {
+                            let mode = if picked.first() == Some(&1) {
+                                DiffMode::Split
+                            } else {
+                                DiffMode::Unified
+                            };
+                            view.select_mode(mode, cx);
+                        })),
+                )
+            })
+            .child(
+                Button::new("pr-copy-link")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Link)
+                    .tooltip(if self.copied.is_some() {
+                        "Link copied"
+                    } else {
+                        "Copy link"
+                    })
+                    .disabled(url.is_none())
+                    .on_click(cx.listener(|view, _, _, cx| view.copy_link(cx))),
+            )
             .child(
                 Button::new("pr-refresh")
                     .ghost()
-                    .compact()
-                    .label(if self.loading {
-                        "Refreshing…"
-                    } else {
-                        "Refresh"
-                    })
-                    .disabled(self.loading)
+                    .small()
+                    .icon(IconName::RefreshCw)
+                    .tooltip("Refresh this pull request")
+                    .disabled(self.loading || posting)
                     .on_click(cx.listener(|view, _, _, cx| view.refresh(cx))),
             )
-            .children(
-                self.failure
-                    .clone()
-                    .map(|error| div().text_sm().text_color(danger).child(error)),
-            );
-        let Some(detail) = self.detail.clone() else {
-            return root.into_any_element();
-        };
-        let url = detail.url.clone();
-        root = root
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(format!("#{} {}", detail.number, detail.title)),
-                    )
-                    .child(
-                        Button::new("pr-open-web")
-                            .ghost()
-                            .compact()
-                            .label("Open on GitHub")
-                            .on_click(move |_, _, cx| {
-                                cx.dispatch_action(&OpenUrl { url: url.clone() })
-                            }),
-                    ),
+                Button::new("pr-open-web")
+                    .ghost()
+                    .small()
+                    .icon(IconName::ExternalLink)
+                    .tooltip("Open on GitHub")
+                    .disabled(url.is_none())
+                    .on_click(move |_, _, cx| {
+                        if let Some(url) = &url {
+                            cx.dispatch_action(&OpenUrl { url: url.clone() });
+                        }
+                    }),
             )
-            .child(div().text_sm().child(format!(
-                "{} · {} → {}{}",
-                detail.state,
-                detail.head_branch,
-                detail.base_branch,
-                if detail.is_draft { " · Draft" } else { "" }
-            )))
-            .child(
-                div()
-                    .text_sm()
-                    .child(format!("{} / {}", detail.head_sha, detail.base_sha)),
-            );
-        let can_post = self.current_identity().is_some();
-        let mut actions = h_flex().gap_2().child(
-            Button::new("pr-comment")
-                .ghost()
-                .compact()
-                .label("Comment")
-                .disabled(!can_post)
-                .on_click(cx.listener(|view, _, window, cx| {
-                    if let Some(identity) = view.current_identity() {
-                        super::post_composer::open(
-                            view.session.clone(),
-                            identity,
-                            None,
-                            cx.entity().downgrade(),
-                            window,
-                            cx,
-                        );
-                    }
-                })),
-        );
-        if super::merge_dialog::MergeRequest::available(
-            &detail.state,
-            detail.is_draft,
-            &detail.mergeable,
-        ) {
-            actions = actions.child(
-                Button::new("pr-merge")
-                    .ghost()
-                    .compact()
-                    .label("Merge…")
-                    .disabled(!can_post)
-                    .on_click(cx.listener(|view, _, window, cx| {
-                        if let Some(detail) = view.detail.clone() {
-                            super::merge_dialog::open(
-                                view.session.clone(),
-                                detail,
-                                cx.entity().downgrade(),
-                                window,
-                                cx,
-                            );
-                        }
-                    })),
-            );
-        }
-        root = root.child(actions);
-        if let Some((input, _)) = &self.review_input {
-            let reviewable = self.current_identity().is_some_and(|identity| {
-                self.review
-                    .as_ref()
-                    .is_some_and(|review| review.read(cx).can_post(&identity))
-            });
-            root = root.child(Textarea::new(input)).child(
-                Button::new("pr-review-preview")
-                    .ghost()
-                    .label("Preview review")
-                    .disabled(!reviewable)
-                    .on_click(cx.listener(|view, _, window, cx| view.preview_review(window, cx))),
-            );
-            if self.current_identity().is_some_and(|identity| {
-                self.review
-                    .as_ref()
-                    .is_some_and(|review| review.read(cx).identity != identity)
-            }) {
-                root=root.child("The pull request changed. Your review draft is kept at its original head; inspect it before posting.");
-            }
-        }
-        let mut tabs = h_flex().gap_1();
-        for (label, tab) in [
-            ("Conversation", Tab::Conversation),
-            ("Checks", Tab::Checks),
-            ("Files changed", Tab::Files),
-        ] {
-            tabs = tabs.child(
-                Button::new(label)
-                    .ghost()
-                    .compact()
-                    .label(label)
-                    .disabled(self.tab == tab)
-                    .on_click(cx.listener(move |view, _, _, cx| view.select_tab(tab, cx))),
-            );
-        }
-        root = root.child(tabs);
-        match self.tab {
-            Tab::Files => {
-                if let Some(files) = &self.files {
-                    root = root.child(files.clone());
-                }
-                if detail.more_files {
-                    root=root.child("Only the first 100 files are listed. Open the pull request on GitHub to see all files.");
-                }
-            }
-            Tab::Checks => {
-                root = root.children(detail.checks.into_iter().map(|check| {
-                    let url = check.url.clone();
-                    h_flex()
-                        .gap_2()
-                        .child(format!(
-                            "{} · {} {}",
-                            check.name, check.status, check.conclusion
-                        ))
-                        .child(
-                            Button::new(SharedString::from(format!("check:{}", check.name)))
-                                .ghost()
-                                .compact()
-                                .label("Open")
-                                .disabled(url.is_empty())
-                                .on_click(move |_, _, cx| {
-                                    cx.dispatch_action(&OpenUrl { url: url.clone() })
-                                }),
-                        )
-                }));
-            }
-            Tab::Conversation => {
-                let mut conversation = v_flex().gap_2().child(MarkdownView {
-                    id: "pr-body".into(),
-                    blocks: detail.body_blocks.clone(),
-                    session: None,
-                    expected_source: None,
-                });
-                for (index, event) in detail.timeline.iter().enumerate() {
-                    let blocks = if event.kind == "comment" {
-                        detail
-                            .comments
-                            .iter()
-                            .find(|comment| Some(&comment.id) == event.comment_id.as_ref())
-                            .map(|comment| comment.body_blocks.clone())
-                    } else if event.kind == "review" {
-                        detail
-                            .reviews
-                            .iter()
-                            .find(|review| {
-                                review.author == event.author
-                                    && review.body == event.body
-                                    && review.submitted_at == event.created_at
-                            })
-                            .map(|review| review.body_blocks.clone())
-                    } else {
-                        None
-                    };
-                    let mut row = v_flex().gap_1().child(format!(
-                        "{} · {} · {}",
-                        event.author, event.kind, event.created_at
-                    ));
-                    row = if let Some(blocks) = blocks {
-                        row.child(MarkdownView {
-                            id: SharedString::from(format!("pr-timeline:{index}")),
-                            blocks,
-                            session: None,
-                            expected_source: None,
-                        })
-                    } else {
-                        row.child(event.body.clone())
-                    };
-                    if event.kind == "comment" {
-                        if let Some(comment) = detail
-                            .comments
-                            .iter()
-                            .find(|comment| Some(&comment.id) == event.comment_id.as_ref())
-                        {
-                            if comment.path.is_some() && comment.reply_to_id.is_none() {
-                                if let Ok(id) = comment.id.parse::<u64>() {
-                                    row =
-                                        row.child(
-                                            Button::new(SharedString::from(format!(
-                                                "reply:{}",
-                                                comment.id
-                                            )))
-                                            .ghost()
-                                            .compact()
-                                            .label("Reply")
-                                            .disabled(!can_post)
-                                            .on_click(cx.listener(move |view, _, window, cx| {
-                                                if let Some(identity) = view.current_identity() {
-                                                    super::post_composer::open(
-                                                        view.session.clone(),
-                                                        identity,
-                                                        Some(id),
-                                                        cx.entity().downgrade(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            })),
-                                        );
-                                }
-                            }
-                        }
-                    }
-                    conversation = conversation.child(row);
-                }
-                root = root.child(
+    }
+    fn changes_page(&self, detail: &PullRequestDetail, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let lines = self
+            .review
+            .as_ref()
+            .map_or(0, |review| review.read(cx).comments.len());
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .when(detail.more_files, |page| {
+                page.child(
                     div()
-                        .id("pr-conversation")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .child(conversation),
-                );
-            }
-        }
-        root.into_any_element()
+                        .px_3()
+                        .py_1()
+                        .text_sm()
+                        .text_color(muted)
+                        .child("Showing the first 100 files. Open GitHub to see the rest."),
+                )
+            })
+            .when(lines > 0, |page| {
+                page.child(
+                    h_flex()
+                        .px_3()
+                        .py_1()
+                        .gap_1()
+                        .text_sm()
+                        .text_color(muted)
+                        .child(if lines == 1 {
+                            "1 line comment in your review.".to_string()
+                        } else {
+                            format!("{lines} line comments in your review.")
+                        })
+                        .child(
+                            Button::new("pr-post-from-summary")
+                                .link()
+                                .small()
+                                .label(if lines == 1 {
+                                    "Post it from Summary."
+                                } else {
+                                    "Post them from Summary."
+                                })
+                                .on_click(cx.listener(|view, _, _, cx| {
+                                    view.select_page(Page::Summary, cx)
+                                })),
+                        ),
+                )
+            })
+            .children(self.files.clone())
+            .into_any_element()
+    }
+}
+impl Render for PrDetail {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_composer(window, cx);
+        let danger = cx.theme().danger;
+        let detail = self.detail.clone();
+        let page = match (&detail, self.page) {
+            (Some(detail), Page::Changes) => self.changes_page(detail, cx),
+            (detail, _) => self.summary_page(detail.as_ref(), cx),
+        };
+        v_flex()
+            .size_full()
+            .min_h_0()
+            .child(self.page_bar(cx))
+            .children(self.failure.clone().map(|error| {
+                div()
+                    .px_3()
+                    .py_1()
+                    .text_sm()
+                    .text_color(danger)
+                    .child(error)
+            }))
+            .child(page)
     }
 }
 #[cfg(test)]
