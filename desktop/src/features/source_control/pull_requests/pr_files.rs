@@ -1,6 +1,7 @@
 //! The Changes page: every changed file stacked in one diff, with a filter and file tree beside it. Comments stay on
 //! the review draft, and a comment started here waits for "Add to review" before the Summary page counts on it.
 use super::{
+    pr_owner::PrOwner,
     pr_stack::{file_patch, matches_filter, no_lines_note},
     pull_request::{PullRequestComment, PullRequestDetail, PullRequestFile},
     review_draft::{DraftComment, ReviewDraft, ReviewIdentity},
@@ -48,7 +49,7 @@ enum AnnotationContent {
     Posted(PullRequestComment),
 }
 pub struct PrFiles {
-    session: String,
+    owner: PrOwner,
     identity: ReviewIdentity,
     open: bool,
     files: Vec<PullRequestFile>,
@@ -82,7 +83,7 @@ fn identity_of(detail: &PullRequestDetail) -> ReviewIdentity {
 }
 impl PrFiles {
     pub fn new(
-        session: String,
+        owner: PrOwner,
         detail: &PullRequestDetail,
         draft: Entity<ReviewDraft>,
         cx: &mut Context<Self>,
@@ -90,7 +91,7 @@ impl PrFiles {
         let state = cx.new(|cx| DiffState::new([], cx));
         let heard = cx.observe(&draft, |_, _, cx| cx.notify());
         let mut files = Self {
-            session,
+            owner,
             identity: identity_of(detail),
             open: detail.state == "OPEN",
             files: detail.files.clone(),
@@ -231,7 +232,7 @@ impl PrFiles {
         let call = socket.read(cx).call::<FileContext>(
             "git",
             "prFile",
-            json!({"session":self.session,"number":self.identity.number,"path":path,"baseSha":self.identity.base,"headSha":self.identity.head}),
+            self.owner.read_args(json!({"number":self.identity.number,"path":path,"baseSha":self.identity.base,"headSha":self.identity.head})),
             None,
         );
         self.read = Some(cx.spawn(async move |viewer, cx| {

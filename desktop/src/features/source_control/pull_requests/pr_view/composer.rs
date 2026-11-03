@@ -221,11 +221,16 @@ impl PrDetail {
             cx.notify();
             return;
         };
+        let shown = (self.detail.as_ref()).map(|detail| (detail.repository.as_str(), detail.local_root.as_str()));
+        let Some(scope) = self.owner.scope(shown) else {
+            self.failure = Some("Refresh first. Your comment is kept.".into());
+            cx.notify();
+            return;
+        };
         let args = json!({"number":identity.number,"expectedHead":identity.head});
         self.drafting_at = Some((identity, self.edits));
-        let session = self.session.clone();
         self.drafter.update(cx, |drafter, cx| {
-            drafter.start("draftReview", Some(session), args, cx)
+            drafter.start_scope("draftReview", scope, args, cx)
         });
         cx.notify();
     }

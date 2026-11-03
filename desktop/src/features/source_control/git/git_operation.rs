@@ -1,5 +1,5 @@
 //! The existing backend operation owns execution. This view owns one subscription, never a replay or poller.
-use super::git_target::GitTarget;
+use super::git_target::{GitTarget, OperationScope};
 use crate::core::socket::{
     client::SocketClient, error_code::ErrorCode, outcome::Outcome, update::Update,
 };
@@ -39,7 +39,7 @@ struct Owner {
     id: String,
     session: Option<String>,
     action: &'static str,
-    target: Option<GitTarget>,
+    target: Option<OperationScope>,
 }
 impl Owner {
     /// Reconcile and cancel forward the source captured at start; they never take a new one.
@@ -88,14 +88,23 @@ impl GitOperation {
         args: Value,
         cx: &mut Context<Self>,
     ) {
-        let session = Some(target.session.clone());
-        self.launch(action, session, Some(target.clone()), args, cx);
+        self.start_scope(action, OperationScope::Session(target.clone()), args, cx);
+    }
+    /// Start for a session's or a project's read, forwarding what that read captured.
+    pub fn start_scope(
+        &mut self,
+        action: &'static str,
+        scope: OperationScope,
+        args: Value,
+        cx: &mut Context<Self>,
+    ) {
+        self.launch(action, scope.session(), Some(scope), args, cx);
     }
     fn launch(
         &mut self,
         action: &'static str,
         session: Option<String>,
-        target: Option<GitTarget>,
+        target: Option<OperationScope>,
         args: Value,
         cx: &mut Context<Self>,
     ) {

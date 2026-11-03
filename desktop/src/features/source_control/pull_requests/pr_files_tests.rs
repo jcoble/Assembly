@@ -2,11 +2,12 @@ use super::super::{
     pull_request::PullRequestDetail,
     review_draft::{ReviewDraft, ReviewIdentity},
 };
-use super::PrFiles;
+use super::{PrFiles, PrOwner};
 use crate::core::socket::{
     client::SocketClient,
     endpoint::Endpoint,
     fake_backend::{FakeBackend, Reply, hello},
+    row_source::ExpectedRowSource,
     test_wait::until,
 };
 use futures_channel::mpsc::unbounded;
@@ -15,6 +16,12 @@ use gpui_kit::AppContext as _;
 use gpui_kit::component::diff::{DiffLinePosition, DiffMode, DiffSide};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
+fn session() -> PrOwner {
+    PrOwner::Session {
+        id: "session".into(),
+        source: None,
+    }
+}
 #[gpui::test]
 async fn every_file_shows_at_once_and_a_left_out_file_reads_at_the_exact_revisions(
     cx: &mut TestAppContext,
@@ -61,7 +68,7 @@ async fn every_file_shows_at_once_and_a_left_out_file_reads_at_the_exact_revisio
             base: detail.base_sha.clone(),
         })
     });
-    let files = cx.new(|cx| PrFiles::new("session".into(), &detail, draft.clone(), cx));
+    let files = cx.new(|cx| PrFiles::new(session(), &detail, draft.clone(), cx));
     cx.run_until_parked();
     assert!(seen.lock().unwrap().is_empty());
     let shown = |files: &gpui::Entity<PrFiles>, cx: &mut TestAppContext| {
@@ -134,9 +141,73 @@ fn a_closed_pull_request_takes_no_new_line_comments(cx: &mut TestAppContext) {
             base: detail.base_sha.clone(),
         })
     });
-    let files = cx.new(|cx| PrFiles::new("session".into(), &detail, draft.clone(), cx));
+    let files = cx.new(|cx| PrFiles::new(session(), &detail, draft.clone(), cx));
     files.update(cx, |files, cx| {
         files.comment(&DiffLinePosition::new("a.rs", DiffSide::Modified, 1), cx)
     });
     cx.update(|cx| assert!(draft.read(cx).comments.is_empty()));
+}
+#[gpui::test]
+async fn a_project_file_reads_by_project_with_its_source(cx: &mut TestAppContext) {
+    let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let observed = seen.clone();
+    let (changed, mut changes) = unbounded();
+    let sent = changed.clone();
+    let backend = FakeBackend::start(move |frame| {
+        if let Some(reply) = hello(frame) {
+            return reply;
+        }
+        if frame["t"] == "call" {
+            observed.lock().unwrap().push(frame.clone());
+            let _ = sent.unbounded_send(());
+        }
+        vec![]
+    });
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        SocketClient::start_bulk(
+            Endpoint {
+                port: backend.port,
+                token: "secret".into(),
+            },
+            cx,
+        );
+    });
+    let detail:PullRequestDetail=serde_json::from_value(json!({"repository":"o/r","localRoot":"/fixture","number":7,"title":"PR","body":"","bodyBlocks":[],"url":"https://github.com/o/r/pull/7","author":"author","headBranch":"feature","baseBranch":"main","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseSha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","reviewDecision":"","createdAt":"","mergedAt":"","mergedBy":"","closedAt":"","commits":[],"comments":[],"reviews":[],"reviewers":[],"checks":[],"files":[{"path":"a.rs","previousPath":null,"status":"modified","additions":1,"deletions":1,"patch":"@@ -1 +1 @@\n-old\n+new","patchOmitted":false},{"path":"b.rs","previousPath":null,"status":"modified","additions":1,"deletions":1,"patch":null,"patchOmitted":true}],"moreFiles":false,"timeline":[]})).unwrap();
+    let draft = cx.new(|_| {
+        ReviewDraft::new(ReviewIdentity {
+            repository: "o/r".into(),
+            number: 7,
+            head: detail.head_sha.clone(),
+            base: detail.base_sha.clone(),
+        })
+    });
+    let owner = PrOwner::Project {
+        id: "project".into(),
+        source: ExpectedRowSource {
+            machine: "engine".into(),
+            generation: 3,
+            route_machine: Some("lane".into()),
+        },
+        root: "/lane/r".into(),
+    };
+    let path = detail.files[0].path.clone();
+    let files = cx.new(|cx| PrFiles::new(owner, &detail, draft, cx));
+    files.update(cx, |files, cx| {
+        files.set_active(true, cx);
+        files.read_full(path.clone(), cx);
+    });
+    until("the file read", &mut changes, &changed, || {
+        cx.run_until_parked();
+        !seen.lock().unwrap().is_empty()
+    })
+    .await;
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0]["method"], "prFile");
+    let args = &seen[0]["args"];
+    assert_eq!(args["session"], Value::Null);
+    assert_eq!(args["projectId"], "project");
+    assert_eq!(args["path"], path.as_str());
+    assert_eq!(args["expectedSource"]["routeMachine"], "lane");
 }

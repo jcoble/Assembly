@@ -1,11 +1,12 @@
 use super::super::{
     merge_dialog::MergeRequest, post_confirm::PostRequest, review_draft::ReviewIdentity,
 };
-use super::{PrWrites, WriteDone};
+use super::{PrOwner, PrWrites, WriteDone};
 use crate::core::socket::{
     client::SocketClient,
     endpoint::Endpoint,
     fake_backend::{FakeBackend, Reply, hello},
+    row_source::ExpectedRowSource,
     test_wait::until,
 };
 use futures_channel::mpsc::unbounded;
@@ -96,7 +97,21 @@ fn writes(
     changed: &futures_channel::mpsc::UnboundedSender<()>,
     cx: &mut TestAppContext,
 ) -> (Entity<PrWrites>, gpui::Subscription) {
-    let writes = cx.new(|cx| PrWrites::new("session".into(), cx));
+    owned_writes(
+        PrOwner::Session {
+            id: "session".into(),
+            source: None,
+        },
+        changed,
+        cx,
+    )
+}
+fn owned_writes(
+    owner: PrOwner,
+    changed: &futures_channel::mpsc::UnboundedSender<()>,
+    cx: &mut TestAppContext,
+) -> (Entity<PrWrites>, gpui::Subscription) {
+    let writes = cx.new(|cx| PrWrites::new(owner, cx));
     let sent = changed.clone();
     let heard = cx.update(|cx| {
         cx.observe(&writes, move |_, _| {
@@ -240,4 +255,105 @@ async fn success_without_a_github_link_is_not_confirmed_and_blocks_the_next_writ
         cx.update(|cx| writes.read(cx).post_error(cx)).as_deref(),
         Some("The post was not confirmed. Refresh before trying again.")
     );
+}
+fn project_owner() -> PrOwner {
+    PrOwner::Project {
+        id: "project".into(),
+        source: ExpectedRowSource {
+            machine: "engine".into(),
+            generation: 3,
+            route_machine: Some("lane".into()),
+        },
+        root: "/lane/r".into(),
+    }
+}
+fn method(seen: &Mutex<Vec<Value>>, name: &str) -> Vec<Value> {
+    (seen.lock().unwrap().iter())
+        .filter(|frame| frame["method"] == name)
+        .map(|frame| frame["args"].clone())
+        .collect()
+}
+#[gpui::test]
+async fn a_project_write_waits_for_a_read_then_names_the_project_and_no_session(
+    cx: &mut TestAppContext,
+) {
+    let (_backend, seen, changed, mut changes) =
+        start_backend("running", json!({"result":null}), cx);
+    let (writes, _heard) = owned_writes(project_owner(), &changed, cx);
+    assert!(
+        writes
+            .update(cx, |writes, cx| writes.merge(&merge(), cx))
+            .is_err()
+    );
+    cx.run_until_parked();
+    assert!(!seen.lock().unwrap().iter().any(|frame| frame["t"] == "call"));
+    writes.update(cx, |writes, _| {
+        writes.show_read("o/r".into(), "/read/root".into())
+    });
+    writes
+        .update(cx, |writes, cx| writes.merge(&merge(), cx))
+        .unwrap();
+    until("the started merge", &mut changes, &changed, || {
+        cx.run_until_parked();
+        !method(&seen, "start").is_empty() && cx.update(|cx| {
+            writes.read(cx).operation.read(cx).status.is_some()
+        })
+    })
+    .await;
+    let host = &method(&seen, "operation_host")[0];
+    assert_eq!(host["session"], Value::Null);
+    assert_eq!(host["projectId"], "project");
+    assert_eq!(host["expectedSource"]["routeMachine"], "lane");
+    assert!(host.get("expectedRepository").is_none());
+    let start = &method(&seen, "start")[0];
+    assert_eq!(start["session"], Value::Null);
+    assert_eq!(start["action"], "merge");
+    assert_eq!(start["projectId"], "project");
+    assert_eq!(start["expectedRepository"], "o/r");
+    assert_eq!(start["expectedCheckoutRoot"], "/lane/r");
+    assert_eq!(start["expectedSource"]["machine"], "engine");
+    writes.update(cx, |writes, cx| writes.cancel(cx));
+    until("the cancel", &mut changes, &changed, || {
+        cx.run_until_parked();
+        !method(&seen, "cancel").is_empty()
+    })
+    .await;
+    let cancel = &method(&seen, "cancel")[0];
+    assert_eq!(cancel["session"], Value::Null);
+    assert_eq!(cancel["projectId"], "project");
+    assert_eq!(cancel["operationId"], start["operationId"]);
+    assert_eq!(cancel["expectedSource"]["routeMachine"], "lane");
+    assert!(cancel.get("expectedRepository").is_none());
+    assert!(cancel.get("expectedCheckoutRoot").is_none());
+}
+#[gpui::test]
+async fn a_session_write_sends_back_the_source_and_root_its_read_showed(cx: &mut TestAppContext) {
+    let (_backend, seen, changed, mut changes) =
+        start_backend("running", json!({"result":null}), cx);
+    let source = ExpectedRowSource {
+        machine: "box".into(),
+        generation: 0,
+        route_machine: None,
+    };
+    let owner = PrOwner::Session {
+        id: "session".into(),
+        source: Some(source),
+    };
+    let (writes, _heard) = owned_writes(owner, &changed, cx);
+    writes.update(cx, |writes, _| {
+        writes.show_read("o/r".into(), "/read/root".into())
+    });
+    writes
+        .update(cx, |writes, cx| writes.merge(&merge(), cx))
+        .unwrap();
+    until("the started merge", &mut changes, &changed, || {
+        cx.run_until_parked();
+        !method(&seen, "start").is_empty()
+    })
+    .await;
+    let start = &method(&seen, "start")[0];
+    assert_eq!(start["session"], "session");
+    assert_eq!(start["expectedCheckoutRoot"], "/read/root");
+    assert_eq!(start["expectedSource"]["machine"], "box");
+    assert!(start.get("projectId").is_none());
 }
