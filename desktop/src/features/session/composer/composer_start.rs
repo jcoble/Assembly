@@ -18,6 +18,18 @@ impl StagedAttachment {
     }
 }
 pub(super) struct StartDraft {pub(super) ready:bool,pub(super) busy:bool}
+/// A new session's own controls in the shared box. The form owns what they do; the composer only places them.
+#[derive(Clone)]
+pub struct StartSlots {
+    /// Who the message goes to, for the draft's hint.
+    pub provider:std::rc::Rc<dyn Fn(&App)->Option<SharedString>>,
+    /// Ahead of the settings: the agent picker.
+    pub footer:std::rc::Rc<dyn Fn(&mut Window,&mut App)->AnyElement>,
+    /// The settings pills; the argument says the composer is narrow enough to fold them.
+    pub settings:std::rc::Rc<dyn Fn(bool,&mut Window,&mut App)->AnyElement>,
+    /// Directly below the box: the machine and checkout.
+    pub sub_bar:std::rc::Rc<dyn Fn(&mut Window,&mut App)->AnyElement>,
+}
 impl Composer {
     pub fn new_start_draft(client:std::rc::Rc<dyn crate::features::session::client::session_client::SessionClient>,window:&mut Window,cx:&mut Context<Self>)->Self {
         let mut composer=Self::new(client,window,cx);composer.start_draft=Some(StartDraft{ready:false,busy:false});composer
@@ -26,6 +38,7 @@ impl Composer {
     pub fn set_start_state(&mut self,ready:bool,busy:bool,error:Option<String>,cx:&mut Context<Self>) {
         let Some(start)=self.start_draft.as_mut()else{return;};start.ready=ready;start.busy=busy;self.error=error.map(Into::into);cx.notify();
     }
+    pub fn set_start_slots(&mut self,slots:StartSlots,cx:&mut Context<Self>){self.start_slots=Some(slots);cx.notify();}
     pub fn focus_input(&self,window:&mut Window,cx:&mut Context<Self>){self.draft.read(cx).focus_handle(cx).focus(window,cx);}
     pub(super) fn start_busy(&self)->bool {self.start_draft.as_ref().is_some_and(|start|start.busy)}
     pub(super) fn start_ready(&self)->bool {
@@ -45,7 +58,7 @@ impl Composer {
     pub(super) fn stage_image(&mut self,name:SharedString,mime:&'static str,image:Arc<Image>,cx:&mut Context<Self>) {
         if self.start_draft.is_none()||self.start_busy(){return;}
         match StagedAttachment::of(name,mime,image) {
-            Ok(image)=>{let size=image.size();self.attached+=1;self.attachments.push(Attachment{id:self.attached,name:image.name,size,state:AttachmentState::Staged{image:image.image,mime:image.mime}});},
+            Ok(image)=>{let size=image.size();self.attached+=1;self.attachments.push(Attachment{id:self.attached,name:image.name,size,state:AttachmentState::Staged{image:image.image,mime:image.mime},preview:None});},
             Err(error)=>self.error=Some(error.into()),
         }
         cx.notify();
@@ -54,7 +67,7 @@ impl Composer {
         if self.start_busy(){return;}
         if let Some(reason)=Attachment::rejection(mime,size){self.error=Some(format!("{name} is {reason}.").into());cx.notify();return;}
         self.attached+=1;let id=self.attached;let name:SharedString=name.into();
-        self.attachments.push(Attachment{id,name:name.clone(),size,state:AttachmentState::Uploading});
+        self.attachments.push(Attachment{id,name:name.clone(),size,state:AttachmentState::Uploading,preview:None});
         let read=cx.background_spawn(async move {
             use std::io::Read as _;
             let bytes=match source {

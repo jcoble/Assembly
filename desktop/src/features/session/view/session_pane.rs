@@ -26,6 +26,7 @@ use crate::features::session::client::session_client::{
     RowUpdate, RowsSink, SessionClient,
 };
 use crate::features::session::composer::composer_view::{Composer, ComposerEvent};
+use crate::features::session::composer::shape::pending_answer;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::entries::{Entry, entry_key};
 use crate::features::session::model::fold::Fold;
@@ -475,12 +476,12 @@ impl SessionPane {
         let context = self.view.context.map(|(_, used, size)| (used, size));
         let running = active.is_some();
         let branch = latest_branch(&self.view.stats);
-        let messages = !self.view.items.is_empty();
+        let lock = pending_answer(&self.view.items);
         self.composer.update(cx, |composer, cx| {
             composer.set_running(active, cx);
             composer.set_context(context, cx);
             composer.set_branch(branch, cx);
-            composer.set_messages(messages, cx);
+            composer.set_locked(lock, cx);
         });
         self.tell_read(running, cx);
         cx.notify();

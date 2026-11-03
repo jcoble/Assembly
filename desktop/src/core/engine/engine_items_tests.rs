@@ -121,6 +121,31 @@ fn engine_session_projection_keeps_recorded_working_folder_and_operational_field
 }
 
 #[test]
+fn only_a_recorded_steer_grant_lets_a_session_take_a_message_mid_turn() {
+    let row = |steer: Option<bool>| {
+        let mut value = json!({"machine":"owner","entityKind":"session","id":"s","version":1,
+            "provider":"any","model":null,"folder":"/f","title":null,"state":"running",
+            "activityState":"running","epoch":1,"parentId":null,"parentMachine":null,"runId":"r"});
+        if let Some(steer) = steer {
+            value["canSteer"] = json!(steer);
+        }
+        EngineItem {
+            key: EngineKey {
+                machine: "owner".into(),
+                kind: "session".into(),
+                id: "s".into(),
+            },
+            version: 1,
+            value,
+        }
+    };
+    let can = |steer| super::engine_items::SessionItem::of(&row(steer)).unwrap().can_steer;
+    assert!(can(Some(true)));
+    assert!(!can(Some(false)));
+    assert!(!can(None));
+}
+
+#[test]
 fn need_addressee_requires_its_actual_exported_owner() {
     let mut row=item("child-owner");row.value["addresseeSessionId"]=json!("same");
     assert!(NeedItem::of(&row).unwrap().addressee().is_none());

@@ -65,6 +65,7 @@ impl Composer {
             .map_or(config_id.clone(), |(option, _)| option.name.clone());
         let generation = self.target_generation;
         self.picks += 1;
+        self.picking += 1;
         self._config = None;
         self._warm = None;
         let mut args = self.source_args(json!({ "session": session, "configId": config_id, "value": value }));
@@ -82,6 +83,7 @@ impl Composer {
                         return;
                     }
                     composer.picks += 1;
+                    composer.picking = composer.picking.saturating_sub(1);
                     if let Err(error)=&answer{composer.source_refused(error,cx);}
                     match parse(answer) {
                         Ok(config) => {

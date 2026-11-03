@@ -1,0 +1,44 @@
+//! A temporary development control for putting a local backend bundle on the owned test machine: a palette command that
+//! opens one dialog. The backend's `remoteInstall` feature owns the install and every check on it; this folder only asks
+//! for it and shows how it went. It's built to come out whole: this folder, its line in `features/mod.rs` and its `init`
+//! in `main.rs`. The real product install and connect flow is separate work.
+
+pub mod deploy_form;
+mod deploy_view;
+pub mod job;
+
+use deploy_form::DeployForm;
+use gpui_kit::component::WindowExt as _;
+use gpui_kit::*;
+
+use crate::core::commands::command_registry::CommandRegistry;
+
+gpui_kit::actions!(remote_install, [OpenRemoteInstall]);
+
+pub const TITLE: &str = "Deploy remote backend (development)";
+
+/// Lists the command in the palette, and opens the dialog when it's picked.
+pub fn init(cx: &mut App) {
+    CommandRegistry::add(TITLE, Box::new(OpenRemoteInstall), cx);
+    cx.on_action(|_: &OpenRemoteInstall, cx| {
+        if let Some(window) = cx
+            .active_window()
+            .or_else(|| cx.windows().into_iter().next())
+        {
+            cx.defer(move |cx| {
+                _ = window.update(cx, |_, window, cx| open(window, cx));
+            });
+        }
+    });
+}
+
+fn open(window: &mut Window, cx: &mut App) {
+    let form = cx.new(|cx| DeployForm::new(window, cx));
+    window.open_dialog(cx, move |dialog, _, _| {
+        dialog
+            .title(TITLE)
+            .w(px(600.))
+            .footer(Empty)
+            .child(form.clone())
+    });
+}

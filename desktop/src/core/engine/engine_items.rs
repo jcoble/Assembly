@@ -164,6 +164,8 @@ pub struct SessionItem {
     pub state: String,
     pub activity_state: String,
     pub epoch: i64,
+    /// The agent reported it can take a message mid-turn. An older owner that never said reads as no.
+    pub can_steer: bool,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,6 +180,8 @@ struct SessionFields {
     state: String,
     activity_state: String,
     epoch: i64,
+    #[serde(default)]
+    can_steer: bool,
 }
 impl SessionItem {
     pub fn of(item: &EngineItem) -> Option<Self> {
@@ -203,6 +207,7 @@ impl SessionItem {
             state: row.state,
             activity_state: row.activity_state,
             epoch: row.epoch,
+            can_steer: row.can_steer,
         })
     }
     pub fn session_key(&self) -> SessionKey {

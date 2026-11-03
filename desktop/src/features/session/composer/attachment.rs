@@ -1,5 +1,5 @@
-//! `Attachment` is an image attached to the draft: its name and size for the chip, and where its upload is.
-//! G0 makes no thumbnails; a sent message's lines may still name one, from the old app. A sent message carries each as an "Attached image: <path> (<name>) thumbnail: <path>" line after the
+//! `Attachment` is an image attached to the draft: its name, size and picture for the card, and where its upload is.
+//! The picture stays through the upload. A sent message carries each as an "Attached image: <path> (<name>) thumbnail: <path>" line after the
 //! text, which the history reads back. Only png, jpeg, gif and webp up to 20 MB attach. Replaces attachments.ts.
 
 use gpui_kit::*;
@@ -10,6 +10,8 @@ pub struct Attachment {
     pub name: SharedString,
     pub size: u64,
     pub state: AttachmentState,
+    /// Its picture once read here; one restored from a failed send's saved path has none until it's opened.
+    pub preview: Option<std::sync::Arc<Image>>,
 }
 
 pub enum AttachmentState {
@@ -24,6 +26,14 @@ pub enum AttachmentState {
 }
 
 impl Attachment {
+    /// The picture the card shows and a click opens.
+    pub fn shown_image(&self) -> Option<std::sync::Arc<Image>> {
+        match &self.state {
+            AttachmentState::Staged { image, .. } => Some(image.clone()),
+            _ => self.preview.clone(),
+        }
+    }
+
     /// Why a file can't attach: "not a supported image" or "larger than 20 MB"; `None` when it can.
     pub fn rejection(mime: &str, size: u64) -> Option<&'static str> {
         if !IMAGE_TYPES.contains(&mime) {
