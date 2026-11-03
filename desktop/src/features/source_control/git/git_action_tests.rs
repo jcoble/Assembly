@@ -69,9 +69,10 @@ async fn a_pending_write_refuses_a_second_write_and_a_lost_reply_is_never_replay
 #[gpui::test]
 async fn a_running_operation_refuses_a_short_write(cx: &mut TestAppContext) {
     use super::super::git_operation::GitOperation;
-    let operation = cx.new(|_| GitOperation {
-        busy: true,
-        ..GitOperation::default()
+    let operation = cx.new(|_| {
+        let mut operation = GitOperation::default();
+        operation.busy = true;
+        operation
     });
     let action = cx.new(|_| GitAction::paired(operation));
     action.update(cx, |action, cx| {
