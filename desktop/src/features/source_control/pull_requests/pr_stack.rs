@@ -1,6 +1,7 @@
 //! The Changes page's single scrolling diff and its file tree, as plain data. GitHub lists each file's hunks without a
 //! header, so each gets the header the diff parser needs; a file with nothing to compare becomes a note instead.
 use super::pull_request::PullRequestFile;
+use gpui_kit::component::diff::DiffSide;
 use std::collections::BTreeMap;
 
 /// The whole patch for one file, or nothing when GitHub sent no lines for it.
@@ -27,6 +28,40 @@ pub fn file_patch(file: &PullRequestFile) -> Option<String> {
     ))
 }
 /// Why a file with no lines shows none. An omitted file can still be read whole on request.
+/// The last line a patch shows, and the side it's on: where a file's comments gather, under its code.
+pub fn patch_end(patch: &str) -> Option<(DiffSide, usize)> {
+    let mut lines = None;
+    let mut end = None;
+    for text in patch.lines() {
+        if let Some(hunk) = text.strip_prefix("@@ -") {
+            let (old, rest) = hunk.split_once(" +")?;
+            let new = rest.split_once(" @@")?.0;
+            let start = |range: &str| range.split(',').next()?.parse::<usize>().ok();
+            lines = Some((start(old)?, start(new)?));
+            continue;
+        }
+        let Some((old, new)) = lines.as_mut() else {
+            continue;
+        };
+        match text.as_bytes().first() {
+            Some(b'-') => {
+                end = Some((DiffSide::Original, *old));
+                *old += 1;
+            }
+            Some(b'+') => {
+                end = Some((DiffSide::Modified, *new));
+                *new += 1;
+            }
+            Some(b'\\') => {}
+            _ => {
+                end = Some((DiffSide::Modified, *new));
+                *old += 1;
+                *new += 1;
+            }
+        }
+    }
+    end
+}
 pub fn no_lines_note(file: &PullRequestFile) -> &'static str {
     if file.patch_omitted {
         return "GitHub left this file's changes out because they're large.";

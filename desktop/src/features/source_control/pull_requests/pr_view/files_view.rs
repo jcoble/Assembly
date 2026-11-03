@@ -214,10 +214,7 @@ fn annotation_card(
                                 .label("Add to review")
                                 .disabled(comment.target.body.trim().is_empty())
                                 .on_click(move |_, _, cx| {
-                                    _ = add.update(cx, |viewer, cx| {
-                                        viewer.adding.remove(&added);
-                                        cx.notify();
-                                    });
+                                    _ = add.update(cx, |viewer, cx| viewer.add_comment(&added, cx));
                                 }),
                         )
                         .child(

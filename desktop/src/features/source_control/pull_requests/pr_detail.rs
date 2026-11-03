@@ -6,6 +6,7 @@ use super::{
     pr_activity::change_totals,
     pr_files::PrFiles,
     pr_owner::PrOwner,
+    pr_parts::loading_line,
     pr_writes::{PrWrites, WriteDone},
     pull_request::{PullRequestDetail, PullRequestSummary},
     review_draft::{ReviewDraft, ReviewIdentity},
@@ -92,8 +93,16 @@ pub struct PrDetail {
 impl EventEmitter<PrBack> for PrDetail {}
 impl EventEmitter<PrMerged> for PrDetail {}
 impl PrDetail {
-    pub fn show_row(&mut self, row: Option<PullRequestSummary>) {
+    /// What the person already saw of this pull request before its read: its row, and which tab they were on.
+    pub fn show_row(&mut self, row: Option<PullRequestSummary>, on_changes: bool) {
         self.row = row;
+        if on_changes {
+            self.page = Page::Changes;
+        }
+    }
+    #[cfg(test)]
+    pub fn on_changes(&self) -> bool {
+        self.page == Page::Changes
     }
     pub fn row(&self) -> Option<&PullRequestSummary> {
         self.row.as_ref()
@@ -472,6 +481,12 @@ impl Render for PrDetail {
         let post_error = self.writes.read(cx).post_error(cx);
         let page = match (&detail, self.page) {
             (Some(detail), Page::Changes) => self.changes_page(detail, cx),
+            (None, Page::Changes) => v_flex()
+                .flex_1()
+                .min_h_0()
+                .p_3()
+                .when(self.loading, |page| page.child(loading_line(cx)))
+                .into_any_element(),
             (detail, _) => self.summary_page(detail.as_ref(), cx),
         };
         v_flex()

@@ -2,7 +2,7 @@
 //! the review draft, and a comment started here waits for "Add to review" before the Summary page counts on it.
 use super::{
     pr_owner::PrOwner,
-    pr_stack::{file_patch, matches_filter, no_lines_note},
+    pr_stack::{file_patch, matches_filter, no_lines_note, patch_end},
     pull_request::{PullRequestComment, PullRequestDetail, PullRequestFile},
     review_draft::{DraftComment, ReviewDraft, ReviewIdentity},
 };
@@ -57,6 +57,8 @@ pub struct PrFiles {
     draft: Entity<ReviewDraft>,
     state: Entity<DiffState>,
     parsed: Vec<DiffFile>,
+    /// Each shown file's last line, which its comments sit under.
+    ends: HashMap<String, (DiffSide, usize)>,
     notes: Vec<FileNote>,
     full: HashMap<String, FullFile>,
     viewed: HashSet<String>,
@@ -99,6 +101,7 @@ impl PrFiles {
             draft,
             state,
             parsed: Vec::new(),
+            ends: HashMap::new(),
             notes: Vec::new(),
             full: HashMap::new(),
             viewed: HashSet::new(),
@@ -156,6 +159,7 @@ impl PrFiles {
     /// Parses every file on its own, so one bad patch costs a note rather than the page.
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         self.parsed.clear();
+        self.ends.clear();
         self.notes.clear();
         for file in &self.files {
             let (patch, truncated) = match self.full.get(&file.path) {
@@ -187,7 +191,12 @@ impl PrFiles {
                 continue;
             };
             match parse_patch(&patch, truncated) {
-                Ok(parsed) => self.parsed.extend(parsed),
+                Ok(parsed) => {
+                    self.parsed.extend(parsed);
+                    if let Some(end) = patch_end(&patch) {
+                        self.ends.insert(file.path.clone(), end);
+                    }
+                }
                 Err(_) => self.notes.push(FileNote {
                     path: file.path.clone(),
                     note: "This file's changes couldn't be read. Open it on GitHub.",
@@ -282,6 +291,10 @@ impl PrFiles {
             cx.notify();
             return;
         }
+        // One comment is written at a time; starting another drops what wasn't added to the review.
+        for unfinished in std::mem::take(&mut self.adding) {
+            self.remove_comment(&unfinished, cx);
+        }
         let result = self.draft.update(cx, |draft, cx| {
             let result = draft.start_comment(position);
             cx.notify();
@@ -294,6 +307,18 @@ impl PrFiles {
             Err(error) => self.failure = Some(error),
         }
         cx.notify();
+    }
+    /// The comment goes on the review, without the space around it.
+    fn add_comment(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.adding.remove(id);
+        self.draft.update(cx, |draft, cx| {
+            let body = (draft.comments.iter().find(|comment| comment.id == id))
+                .map(|comment| comment.target.body.trim().to_string());
+            if let Some(body) = body {
+                draft.update_comment(id, body);
+            }
+            cx.notify();
+        });
     }
     fn remove_comment(&mut self, id: &str, cx: &mut Context<Self>) {
         self.adding.remove(id);
@@ -367,18 +392,19 @@ impl PrFiles {
         let mut contents = Vec::new();
         let draft = self.draft.read(cx);
         let current = draft.identity == self.identity;
+        // All under the file's last line; the one being written is always the newest, so it comes last.
         for comment in draft.comments.iter().filter(|_| current) {
             let key = format!("draft:{}", comment.id);
             let id: ElementId = SharedString::from(key.clone()).into();
-            let position = DiffLinePosition::new(
-                comment.target.path.clone(),
+            let (side, line) = self.ends.get(&comment.target.path).copied().unwrap_or((
                 if comment.target.side == "LEFT" {
                     DiffSide::Original
                 } else {
                     DiffSide::Modified
                 },
                 comment.target.line,
-            );
+            ));
+            let position = DiffLinePosition::new(comment.target.path.clone(), side, line);
             annotations.push(DiffAnnotation::line(id.clone(), position));
             let content = match self.inputs.get(&comment.id) {
                 Some(input) if self.adding.contains(&comment.id) => {
