@@ -1,4 +1,5 @@
 //! The existing backend operation owns execution. This view owns one subscription, never a replay or poller.
+use super::git_target::GitTarget;
 use crate::core::socket::{
     client::SocketClient, error_code::ErrorCode, outcome::Outcome, update::Update,
 };
@@ -38,10 +39,16 @@ struct Owner {
     id: String,
     session: Option<String>,
     action: &'static str,
+    target: Option<GitTarget>,
 }
 impl Owner {
+    /// Reconcile and cancel forward the source captured at start; they never take a new one.
     fn args(&self) -> Value {
-        json!({"operationId":self.id,"instanceId":self.host.instance_id,"session":self.session,"action":self.action})
+        let args = json!({"operationId":self.id,"instanceId":self.host.instance_id,"session":self.session,"action":self.action});
+        match &self.target {
+            Some(target) => target.read_args(args),
+            None => args,
+        }
     }
 }
 #[derive(Default)]
@@ -50,12 +57,20 @@ pub struct GitOperation {
     pub error: Option<String>,
     pub busy: bool,
     pub unconfirmed: bool,
+    /// The machine that didn't answer, when that is why it failed, for Connect.
+    pub unreachable: Option<String>,
+    /// What the running or last operation was asked to do.
+    pub action: Option<&'static str>,
     owner: Option<Owner>,
     observing: Option<Task<()>>,
     cancelling: Option<Task<()>>,
     reconciling: Option<Task<()>>,
 }
 impl GitOperation {
+    /// Running, or finished with an outcome nobody has confirmed: either way no other write may start.
+    pub fn occupied(&self) -> bool {
+        self.busy || self.unconfirmed
+    }
     pub fn start(
         &mut self,
         action: &'static str,
@@ -63,7 +78,28 @@ impl GitOperation {
         args: Value,
         cx: &mut Context<Self>,
     ) {
-        if self.busy || self.unconfirmed {
+        self.launch(action, session, None, args, cx);
+    }
+    /// Start for a read the pane showed: host, start, reconcile and cancel all forward the captured target.
+    pub fn start_target(
+        &mut self,
+        action: &'static str,
+        target: &GitTarget,
+        args: Value,
+        cx: &mut Context<Self>,
+    ) {
+        let session = Some(target.session.clone());
+        self.launch(action, session, Some(target.clone()), args, cx);
+    }
+    fn launch(
+        &mut self,
+        action: &'static str,
+        session: Option<String>,
+        target: Option<GitTarget>,
+        args: Value,
+        cx: &mut Context<Self>,
+    ) {
+        if self.occupied() {
             return;
         }
         let Some(socket) = SocketClient::try_global(cx) else {
@@ -71,26 +107,35 @@ impl GitOperation {
             cx.notify();
             return;
         };
+        let host_args = json!({"session":session,"action":action});
         let host_call = socket.read(cx).call::<Host>(
             "git",
             "operation_host",
-            json!({"session":session,"action":action}),
+            match &target {
+                Some(target) => target.read_args(host_args),
+                None => host_args,
+            },
             None,
         );
         let id = Uuid::new_v4().to_string();
         self.status = None;
         self.error = None;
         self.owner = None;
+        self.unreachable = None;
+        self.action = Some(action);
         self.busy = true;
         self.unconfirmed = false;
         self.observing=Some(cx.spawn(async move|operation,cx|{
             let host=match host_call.await {
                 Outcome::Ok(host)=>host,
-                Outcome::Failed(error)=>{Self::fail(&operation,error.message,false,false,cx);return;},
+                Outcome::Failed(error)=>{
+                    if let ErrorCode::Unreachable{machine}=&error.code {let machine=machine.clone();_=operation.update(cx,|operation,_|operation.unreachable=Some(machine));}
+                    Self::fail(&operation,error.message,false,false,cx);return;
+                },
                 Outcome::Aborted=>{Self::fail(&operation,"The operation owner did not answer.".into(),false,false,cx);return;},
             };
             if host.instance_id.is_empty()||host.machine.is_empty(){Self::fail(&operation,"Invalid operation owner.".into(),false,false,cx);return;}
-            let owner=Owner{host,id,session,action};
+            let owner=Owner{host,id,session,action,target};
             let key=format!("{}/{}",owner.host.machine,owner.id);
             let mut subscription=cx.update(|cx|socket.read(cx).subscribe("gitOperation",Some(&key)));
             // The first state is the server's acknowledgement that the watcher exists, even with no operation yet.
@@ -103,6 +148,7 @@ impl GitOperation {
             }
             if operation.update(cx,|operation,cx|{operation.owner=Some(owner.clone());cx.notify();}).is_err(){return;}
             let start_args=json!({"instanceId":owner.host.instance_id,"operationId":owner.id,"session":owner.session,"action":action,"args":args});
+            let start_args=match &owner.target {Some(target)=>target.write_args(start_args),None=>start_args};
             let start=cx.update(|cx|socket.read(cx).call::<OperationStatus>("git","start",start_args,None));
             match start.await {
                 Outcome::Ok(status)=>{if Self::accept(&operation,&owner,status,cx){return;}},

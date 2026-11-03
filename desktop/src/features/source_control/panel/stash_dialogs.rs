@@ -1,8 +1,8 @@
 use super::git_action::GitAction;
+use super::git_labels::age_of_millis;
+use super::git_target::GitTarget;
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
 use serde::Deserialize;
@@ -48,7 +48,7 @@ impl DropApproval {
 }
 #[derive(Clone)]
 struct DropDialog {
-    session: String,
+    target: GitTarget,
     action: Entity<GitAction>,
     stash: Stash,
     approval: Rc<RefCell<DropApproval>>,
@@ -72,14 +72,10 @@ impl DropDialog {
                 .on_ok(move |_, window, cx| {
                     let target = captured.approval.borrow_mut().confirm();
                     if let Some(sha) = target {
-                        let session = captured.session.clone();
+                        let target = captured.target.clone();
                         captured.action.update(cx, |action, cx| {
-                            action.run(
-                                session.clone(),
-                                "dropStash",
-                                json!({"session":session,"sha":sha}),
-                                cx,
-                            );
+                            let args = json!({"session":target.session,"sha":sha});
+                            action.run(&target, "dropStash", args, cx);
                         });
                     } else if !captured.approval.borrow().sent() {
                         let handle = window.window_handle();
@@ -93,83 +89,8 @@ impl DropDialog {
         });
     }
 }
-struct StashForm {
-    session: String,
-    input: Entity<InputState>,
-    include_new: bool,
-    action: Entity<GitAction>,
-    submitted: bool,
-    _heard: Vec<Subscription>,
-}
-pub fn create(session: String, action: Entity<GitAction>, window: &mut Window, cx: &mut App) {
-    let form = cx.new(|cx| {
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Message (optional)"));
-        let heard = vec![
-            cx.subscribe(&input, |_: &mut StashForm, _, _: &InputEvent, cx| {
-                cx.notify()
-            }),
-            cx.observe(&action, |_, _, cx| cx.notify()),
-        ];
-        StashForm {
-            session,
-            input,
-            include_new: false,
-            action,
-            submitted: false,
-            _heard: heard,
-        }
-    });
-    window.open_dialog(cx, move |dialog, _, _| {
-        dialog
-            .title("Stash changes")
-            .footer(Empty)
-            .child(form.clone())
-    });
-}
-impl Render for StashForm {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let busy = self.action.read(cx).pending.is_some();
-        let danger = cx.theme().danger;
-        let mut root = v_flex()
-            .gap_2()
-            .child(Input::new(&self.input).disabled(busy))
-            .child(
-                Checkbox::new("stash-new-files")
-                    .label("Include new files")
-                    .checked(self.include_new)
-                    .disabled(busy)
-                    .on_click(cx.listener(|view, value, _, cx| {
-                        view.include_new = *value;
-                        cx.notify();
-                    })),
-            );
-        if self.submitted {
-            root = root
-                .children(
-                    self.action
-                        .read(cx)
-                        .failure
-                        .clone()
-                        .map(|error| div().text_color(danger).child(error)),
-                )
-                .children(
-                    self.action
-                        .read(cx)
-                        .message
-                        .clone()
-                        .map(|message| div().child(message)),
-                );
-        }
-        root.child(h_flex().gap_2().child(Button::new("stash-close").ghost().label("Close").on_click(|_,window,cx|window.close_dialog(cx)))
-            .child(Button::new("stash-submit").primary().label("Stash changes").disabled(busy||self.submitted)
-                .on_click(cx.listener(|view,_,_,cx|{
-                    let session=view.session.clone();let message=view.input.read(cx).value().to_string();let include=view.include_new;
-                    view.submitted=view.action.update(cx,|action,cx|action.run(session.clone(),"stash",json!({"session":session,"message":message,"includeUntracked":include}),cx));cx.notify();
-                }))))
-    }
-}
 struct StashList {
-    session: String,
+    target: GitTarget,
     action: Entity<GitAction>,
     items: Vec<Stash>,
     loading: bool,
@@ -177,16 +98,15 @@ struct StashList {
     read: Option<Task<()>>,
     completed: u64,
     revision: u64,
-    now_ms: i64,
     _action: Subscription,
 }
-pub fn list(session: String, action: Entity<GitAction>, window: &mut Window, cx: &mut App) {
+pub fn list(target: GitTarget, action: Entity<GitAction>, window: &mut Window, cx: &mut App) {
     let view = cx.new(|cx| {
         let completed = action.read(cx).completed;
         let heard = cx.observe(&action, |view: &mut StashList, _, cx| {
             let action = view.action.read(cx);
             let completed = action.completed;
-            let own = action.session.as_deref() == Some(view.session.as_str());
+            let own = action.target.as_ref() == Some(&view.target);
             if own && completed > view.completed {
                 view.completed = completed;
                 view.refresh(cx);
@@ -194,7 +114,7 @@ pub fn list(session: String, action: Entity<GitAction>, window: &mut Window, cx:
             cx.notify();
         });
         let mut view = StashList {
-            session,
+            target,
             action,
             items: Vec::new(),
             loading: false,
@@ -202,7 +122,6 @@ pub fn list(session: String, action: Entity<GitAction>, window: &mut Window, cx:
             read: None,
             completed,
             revision: 0,
-            now_ms: chrono::Utc::now().timestamp_millis(),
             _action: heard,
         };
         view.refresh(cx);
@@ -228,7 +147,7 @@ impl StashList {
         let call = socket.read(cx).call::<Vec<Stash>>(
             "git",
             "stashes",
-            json!({"session":self.session}),
+            self.target.read_args(json!({"session":self.target.session})),
             None,
         );
         self.read = Some(cx.spawn(async move |view, cx| {
@@ -240,10 +159,7 @@ impl StashList {
                 view.loading = false;
                 view.read = None;
                 match answer {
-                    Outcome::Ok(items) => {
-                        view.items = items;
-                        view.now_ms = chrono::Utc::now().timestamp_millis();
-                    }
+                    Outcome::Ok(items) => view.items = items,
                     Outcome::Failed(error) => view.error = Some(error.message),
                     Outcome::Aborted => view.error = Some("The stash read was cancelled.".into()),
                 }
@@ -267,8 +183,7 @@ impl Render for StashList {
             .children(
                 self.action
                     .read(cx)
-                    .failure
-                    .clone()
+                    .failure_sentence()
                     .map(|error| div().text_color(danger).child(error)),
             )
             .child(
@@ -287,14 +202,7 @@ impl Render for StashList {
                         items
                             .into_iter()
                             .map(|stash| {
-                                let seconds = (view.now_ms - stash.created_ms).max(0) / 1000;
-                                let age = if seconds < 3600 {
-                                    format!("{}m ago", seconds / 60)
-                                } else if seconds < 86400 {
-                                    format!("{}h ago", seconds / 3600)
-                                } else {
-                                    format!("{}d ago", seconds / 86400)
-                                };
+                                let age = age_of_millis(stash.created_ms);
                                 let applied = stash.sha.clone();
                                 let dropped = stash.clone();
                                 h_flex()
@@ -327,14 +235,10 @@ impl Render for StashList {
                                         .disabled(busy)
                                         .on_click(
                                             cx.listener(move |view, _, _, cx| {
-                                                let session = view.session.clone();
+                                                let target = view.target.clone();
                                                 view.action.update(cx, |action, cx| {
-                                                    action.run(
-                                                        session.clone(),
-                                                        "applyStash",
-                                                        json!({"session":session,"sha":applied}),
-                                                        cx,
-                                                    );
+                                                    let args = json!({"session":target.session,"sha":applied});
+                                                    action.run(&target, "applyStash", args, cx);
                                                 });
                                             }),
                                         ),
@@ -351,7 +255,7 @@ impl Render for StashList {
                                         .on_click(
                                             cx.listener(move |view, _, window, cx| {
                                                 DropDialog {
-                                                    session: view.session.clone(),
+                                                    target: view.target.clone(),
                                                     action: view.action.clone(),
                                                     approval: Rc::new(RefCell::new(
                                                         DropApproval::new(

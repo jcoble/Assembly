@@ -1,5 +1,5 @@
 //! `GitStatus` is a project's status as `git/status` answers it, with what the Source control tab makes of it: the
-//! branch line (scm#9), the Staged, Changes and Untracked lists with each file's letter (scm#10), and what the
+//! branch name and how far it is from its remote (scm#9), the Staged, Changes and Untracked lists with each file's letter (scm#10), and what the
 //! 1000-file cap leaves out (scm#11). Replaces sourceControlSections.ts and the status half of gitPanelStore.svelte.ts.
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,9 @@ pub struct GitStatus {
     #[serde(default)]
     pub total_staged: Option<usize>,
     pub fingerprint: String,
+    /// The root the read actually came from; writes send it back unchanged.
+    #[serde(default)]
+    pub checkout_root: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -33,7 +36,7 @@ pub struct ChangedFile {
     pub worktree: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Section {
     Staged,
     Changes,
@@ -66,7 +69,7 @@ impl ChangedFile {
     fn letter_in(&self, section: Section) -> Option<char> {
         let letter = |side: &str| side.chars().next().filter(|&c| c != '.');
         match section {
-            Section::Untracked => self.untracked().then_some('U'),
+            Section::Untracked => self.untracked().then_some('?'),
             _ if self.untracked() => None,
             Section::Changes if self.conflicted() => Some('!'),
             Section::Staged if self.conflicted() => None,
@@ -85,20 +88,6 @@ impl ChangedFile {
 }
 
 impl GitStatus {
-    /// "lane/scm ↑2 ↓1", or "detached 0123456, no upstream".
-    pub fn branch_line(&self) -> String {
-        let name = match (&self.branch, &self.head) {
-            (Some(branch), _) => branch.clone(),
-            (None, Some(head)) => format!("detached {}", &head[..head.len().min(7)]),
-            (None, None) => "detached".into(),
-        };
-        if self.has_upstream {
-            format!("{name} ↑{} ↓{}", self.ahead, self.behind)
-        } else {
-            format!("{name}, no upstream")
-        }
-    }
-
     /// The section's files with their letters, sorted by path.
     pub fn section(&self, section: Section) -> Vec<(char, &ChangedFile)> {
         let mut files: Vec<(char, &ChangedFile)> = self
@@ -125,13 +114,36 @@ impl GitStatus {
         self.staged_total().is_some_and(|total| total > 0)
     }
 
-    /// What the cap leaves out, said as a line under the lists; `None` when every file is listed.
+    /// What the cap leaves out, said above the lists; `None` when every file is listed.
     pub fn more_line(&self) -> Option<String> {
-        match self.total_files.saturating_sub(self.files.len()) {
-            0 => None,
-            1 => Some("1 more file isn't listed.".into()),
-            more => Some(format!("{more} more files aren't listed.")),
+        (self.total_files > self.files.len()).then(|| {
+            format!(
+                "Showing {} of {} changed files. Commit, stash or ignore files to see the rest.",
+                self.files.len(),
+                self.total_files
+            )
+        })
+    }
+    /// The branch menu's hover text: the whole name, what switching does, and how far it is from its remote.
+    pub fn branch_title(&self) -> String {
+        let commits = |count: u32| if count == 1 { "commit" } else { "commits" };
+        let mut lines = vec![
+            format!("Checked-out branch: {}", self.branch_name()),
+            "Switching here changes this working directory.".to_string(),
+        ];
+        if self.behind > 0 {
+            lines.push(format!("{} {} behind its remote.", self.behind, commits(self.behind)));
         }
+        if self.ahead > 0 {
+            lines.push(format!("{} {} ahead of its remote.", self.ahead, commits(self.ahead)));
+        }
+        lines.join("\n")
+    }
+    /// The trigger's short name: the branch, or the plain words for having none.
+    pub fn branch_name(&self) -> String {
+        self.branch
+            .clone()
+            .unwrap_or_else(|| "no branch checked out".to_string())
     }
 }
 

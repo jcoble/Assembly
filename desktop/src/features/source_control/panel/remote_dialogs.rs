@@ -1,4 +1,5 @@
 use super::git_action::GitAction;
+use super::git_target::GitTarget;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, WindowExt as _, h_flex, v_flex};
@@ -11,14 +12,14 @@ fn remote_args(session: &str, name: &str, url: &str) -> Result<Value, String> {
     Ok(json!({"session":session,"name":name,"url":url}))
 }
 struct RemoteDialog {
-    session: String,
+    target: GitTarget,
     name: Entity<InputState>,
     url: Entity<InputState>,
     action: Entity<GitAction>,
     submitted: bool,
     _heard: Vec<Subscription>,
 }
-pub fn add(session: String, action: Entity<GitAction>, window: &mut Window, cx: &mut App) {
+pub fn add(target: GitTarget, action: Entity<GitAction>, window: &mut Window, cx: &mut App) {
     let form = cx.new(|cx| {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("Remote name"));
         let url = cx.new(|cx| InputState::new(window, cx).placeholder("Repository URL"));
@@ -32,7 +33,7 @@ pub fn add(session: String, action: Entity<GitAction>, window: &mut Window, cx: 
             cx.observe(&action, |_, _, cx| cx.notify()),
         ];
         RemoteDialog {
-            session,
+            target,
             name,
             url,
             action,
@@ -57,8 +58,7 @@ impl Render for RemoteDialog {
             .children(
                 self.action
                     .read(cx)
-                    .failure
-                    .clone()
+                    .failure_sentence()
                     .filter(|_| self.submitted)
                     .map(|error| div().text_sm().text_color(danger).child(error)),
             )
@@ -83,14 +83,14 @@ impl Render for RemoteDialog {
                         Button::new("remote-add")
                             .primary()
                             .label("Add remote")
-                            .disabled(busy || remote_args(&self.session, &name, &url).is_err())
+                            .disabled(busy || remote_args(&self.target.session, &name, &url).is_err())
                             .on_click(cx.listener(|view, _, _, cx| {
                                 let name = view.name.read(cx).value().to_string();
                                 let url = view.url.read(cx).value().to_string();
-                                if let Ok(args) = remote_args(&view.session, &name, &url) {
-                                    let session = view.session.clone();
+                                if let Ok(args) = remote_args(&view.target.session, &name, &url) {
+                                    let target = view.target.clone();
                                     view.submitted = view.action.update(cx, |action, cx| {
-                                        action.run(session, "addRemote", args, cx)
+                                        action.run(&target, "addRemote", args, cx)
                                     });
                                 }
                             })),

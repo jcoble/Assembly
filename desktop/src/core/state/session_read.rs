@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use super::selected_session::SelectedSession;
 use super::sessions::Sessions;
 use crate::core::socket::client::SocketClient;
+use crate::core::socket::error_code::ErrorCode;
 use crate::core::socket::outcome::Outcome;
 
 /// What the tab shows.
@@ -33,6 +34,10 @@ pub struct SessionRead<T> {
     read_for: Option<String>,
     source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     shown: Shown<T>,
+    /// Why the shown failure failed, for a next step such as Connect.
+    failure_code: Option<ErrorCode>,
+    /// Counts answers from the backend. A status a write returned through `show` isn't one.
+    answers: u64,
     reading: bool,
     /// The read on its way; dropping it cancels the call on the backend.
     _read: Option<Task<()>>,
@@ -56,6 +61,8 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
             read_for: None,
             source: None,
             shown: Shown::NoSession,
+            failure_code: None,
+            answers: 0,
             reading: false,
             _read: None,
             _selected: selected,
@@ -116,6 +123,27 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         self.reading
     }
 
+    pub fn answers(&self) -> u64 {
+        self.answers
+    }
+
+    /// The machine that didn't answer, when that is why the read failed.
+    pub fn unreachable_machine(&self) -> Option<&str> {
+        match &self.failure_code {
+            Some(ErrorCode::Unreachable { machine }) => Some(machine),
+            _ => None,
+        }
+    }
+
+    /// Shows what a write returned with no second read. A read on its way is older, so it stops.
+    pub fn show(&mut self, value: T, cx: &mut Context<Self>) {
+        self.reading = false;
+        self._read = None;
+        self.failure_code = None;
+        self.shown = Shown::Read(value);
+        cx.notify();
+    }
+
     /// Shown, it reads again, since what it shows may have changed while hidden; hidden, a read on its way stops.
     pub fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
         self.active = active;
@@ -164,6 +192,7 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         let Some(socket) = SocketClient::try_global(cx) else {
             self.reading = false;
             self._read = None;
+            self.failure_code = None;
             self.shown = Shown::Failed("The backend isn't running.".into());
             cx.notify();
             return;
@@ -182,6 +211,11 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
             _ = read.update(cx, |read, cx| {
                 if read.read_for.as_deref() != Some(session.as_str()) || read.source != source { return; }
                 read.reading = false;
+                read.answers += 1;
+                read.failure_code = match &outcome {
+                    Outcome::Failed(failure) => Some(failure.code.clone()),
+                    _ => None,
+                };
                 read.shown = match outcome {
                     Outcome::Ok(result) => match serde_json::from_value(result) {
                         Ok(answer) => Shown::Read(answer),

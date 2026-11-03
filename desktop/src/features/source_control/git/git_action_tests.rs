@@ -1,4 +1,4 @@
-use super::GitAction;
+use super::{GitAction, GitTarget};
 use crate::core::socket::{
     client::SocketClient,
     endpoint::Endpoint,
@@ -43,13 +43,13 @@ async fn a_pending_write_refuses_a_second_write_and_a_lost_reply_is_never_replay
     let action = cx.new(|_| GitAction::default());
     action.update(cx, |action, cx| {
         assert!(action.run(
-            "s1".into(),
+            &GitTarget::new("s1"),
             "stage",
             json!({"session":"s1","paths":["a"]}),
             cx
         ));
         assert!(!action.run(
-            "s1".into(),
+            &GitTarget::new("s1"),
             "commit",
             json!({"session":"s1","message":"must not send"}),
             cx
@@ -64,4 +64,18 @@ async fn a_pending_write_refuses_a_second_write_and_a_lost_reply_is_never_replay
     drop(backend);
     cx.run_until_parked();
     assert_eq!(*seen.lock().unwrap(), 1);
+}
+// Pins: g9#10
+#[gpui::test]
+async fn a_running_operation_refuses_a_short_write(cx: &mut TestAppContext) {
+    use super::super::git_operation::GitOperation;
+    let operation = cx.new(|_| GitOperation {
+        busy: true,
+        ..GitOperation::default()
+    });
+    let action = cx.new(|_| GitAction::paired(operation));
+    action.update(cx, |action, cx| {
+        assert!(!action.run(&GitTarget::new("s1"), "stage", json!({"session":"s1"}), cx));
+        assert!(action.pending.is_none());
+    });
 }

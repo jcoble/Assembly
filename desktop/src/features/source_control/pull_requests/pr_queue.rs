@@ -1,5 +1,5 @@
 use super::pull_request::PullRequestPage;
-use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::socket::{client::SocketClient, outcome::Outcome, row_source::ExpectedRowSource};
 use gpui_kit::*;
 use serde_json::json;
 
@@ -35,6 +35,7 @@ pub struct PrQueue {
     pub loading: bool,
     session: Option<String>,
     repositories: Vec<String>,
+    expected_source: Option<ExpectedRowSource>,
     active: bool,
     loaded: bool,
     revision: u64,
@@ -50,6 +51,7 @@ impl PrQueue {
             loading: false,
             session,
             repositories,
+            expected_source: None,
             active: false,
             loaded: false,
             revision: 0,
@@ -79,6 +81,13 @@ impl PrQueue {
     pub fn set_search(&mut self, text: String, cx: &mut Context<Self>) {
         if self.search != text {
             self.search = text;
+            self.refresh(cx);
+        }
+    }
+    /// A session's queue reads the source its pane read, and refuses rather than answering from anywhere else.
+    pub fn set_source(&mut self, source: Option<ExpectedRowSource>, cx: &mut Context<Self>) {
+        if self.expected_source != source {
+            self.expected_source = source;
             self.refresh(cx);
         }
     }
@@ -123,7 +132,10 @@ impl PrQueue {
         self.failure = None;
         self.revision += 1;
         let revision = self.revision;
-        let args = json!({"session":self.session,"repositories":self.repositories,"state":self.state.wire(),"search":self.search,"cursor":if more{self.page.cursor.clone()}else{None}});
+        let mut args = json!({"session":self.session,"repositories":self.repositories,"state":self.state.wire(),"search":self.search,"cursor":if more{self.page.cursor.clone()}else{None}});
+        if let Some(source) = &self.expected_source {
+            args["expectedSource"] = json!(source);
+        }
         let call = socket
             .read(cx)
             .call::<PullRequestPage>("git", "prs", args, None);

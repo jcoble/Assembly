@@ -26,16 +26,6 @@ fn listed(status: &GitStatus, section: Section) -> Vec<(char, String)> {
         .collect()
 }
 
-// Pins: scm#9
-#[test]
-fn the_branch_line_says_the_branch_and_its_upstream_counts() {
-    assert_eq!(status(json!([]), 0).branch_line(), "lane/scm ↑2 ↓1");
-    let mut detached = status(json!([]), 0);
-    detached.branch = None;
-    detached.has_upstream = false;
-    assert_eq!(detached.branch_line(), "detached 0123456, no upstream");
-}
-
 // Pins: scm#10
 #[test]
 fn files_go_in_staged_changes_and_untracked_sorted_with_their_letters() {
@@ -70,7 +60,7 @@ fn files_go_in_staged_changes_and_untracked_sorted_with_their_letters() {
     );
     assert_eq!(
         listed(&status, Section::Untracked),
-        vec![('U', "new folder/x.txt".to_string())]
+        vec![('?', "new folder/x.txt".to_string())]
     );
 }
 
@@ -93,7 +83,7 @@ fn the_pane_says_how_many_files_the_cap_leaves_out() {
         status(json!([file("a", "M", ".")]), 1201)
             .more_line()
             .as_deref(),
-        Some("1200 more files aren't listed.")
+        Some("Showing 1 of 1201 changed files. Commit, stash or ignore files to see the rest.")
     );
 }
 
