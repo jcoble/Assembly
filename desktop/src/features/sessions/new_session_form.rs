@@ -36,7 +36,7 @@ pub struct NewSessionForm {
     _folder: Subscription,
     route: String,
     backend_connected: bool,
-    backend_generation: u64,
+    backend_generation: Option<u64>,
     _connection: Option<Subscription>,
     _preferences: Option<Subscription>,
     folder: Entity<TextareaState>,
@@ -121,10 +121,11 @@ impl NewSessionForm {
                     crate::core::socket::connection_state::ConnectionState::Connected { .. }
                 )
             })
-            .unwrap_or(true);
+            .unwrap_or(false);
         let backend_generation = crate::core::socket::client::SocketClient::try_global(cx)
-            .map(|socket| socket.read(cx).connection_generation())
-            .unwrap_or(0);
+            .and_then(|socket| socket.read(cx).connection_generation())
+            .filter(|_| backend_connected);
+        let backend_connected = backend_connected && backend_generation.is_some();
         let connection = crate::core::socket::client::SocketClient::try_global(cx).map(|socket| {
             cx.observe(&socket, |form: &mut Self, socket, cx| {
                 let socket = socket.read(cx);
@@ -221,6 +222,13 @@ impl NewSessionForm {
 
     /// The selected machine advertises opaque target IDs; no provider/account identity is inferred.
     fn load_agents(&mut self, cx: &mut Context<Self>) {
+        if !self.backend_connected || self.backend_generation.is_none() {
+            self._load = None;
+            self.loading = false;
+            self.retry_agents = true;
+            cx.notify();
+            return;
+        }
         self.list_generation += 1;
         self.auth_machine = None;
         self._auth_machine = None;
@@ -267,7 +275,14 @@ impl NewSessionForm {
         }));
     }
 
-    fn observe_connection(&mut self, connected: bool, generation: u64, cx: &mut Context<Self>) {
+    fn observe_connection(
+        &mut self,
+        connected: bool,
+        generation: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
+        let connected = connected && generation.is_some();
+        let generation = if connected { generation } else { None };
         if connected == self.backend_connected && generation == self.backend_generation {
             return;
         }
@@ -277,8 +292,12 @@ impl NewSessionForm {
         self._load = None;
         self.loading = false;
         self.agents.clear();
+        if !connected {
+            self.agent = None;
+        }
         self.auth_machine = None;
         self._auth_machine = None;
+        self._sign_in = None;
         self.discover(cx);
         if connected {
             self.load_agents(cx);
@@ -286,6 +305,9 @@ impl NewSessionForm {
     }
 
     fn load_auth_machine(&mut self, cx: &mut Context<Self>) {
+        if !self.backend_connected || self.backend_generation.is_none() {
+            return;
+        }
         if self.machine.is_some() {
             return;
         }

@@ -44,6 +44,15 @@ impl SessionClient for FormClient {
     fn subscribe_rows(&self, _: &str, _: Option<i64>, _: RowsSink, _: &App) -> Subscription {
         Subscription::new(|| {})
     }
+    fn subscribe_message(
+        &self,
+        message: &str,
+        machine: Option<&str>,
+        sink: crate::features::session::client::session_client::MessageSink,
+        cx: &App,
+    ) -> Subscription {
+        self.fake.subscribe_message(message, machine, sink, cx)
+    }
     fn clock(&self, _: ClockSink, _: &mut App) -> Subscription {
         Subscription::new(|| {})
     }
@@ -79,6 +88,16 @@ impl SessionClient for FormClient {
             .spawn(async move { receiver.await.unwrap_or(Err(CallError::Aborted)) })
     }
 }
+// Source-derived unit fixture: explicitly deliver a connected socket generation; no provider/native proof.
+fn connected_form(
+    client: Rc<dyn SessionClient>,
+    window: &mut gpui_kit::Window,
+    cx: &mut gpui_kit::Context<NewSessionForm>,
+) -> NewSessionForm {
+    let mut form = NewSessionForm::with_client(client, window, cx);
+    form.observe_connection(true, Some(1), cx);
+    form
+}
 fn opened(cx: &mut TestAppContext) -> (Entity<NewSessionForm>, FormClient, &mut VisualTestContext) {
     cx.update(gpui_kit::init);
     cx.update(SelectedSession::init);
@@ -87,8 +106,8 @@ fn opened(cx: &mut TestAppContext) -> (Entity<NewSessionForm>, FormClient, &mut 
         json!({"agents":[{"id":"codex","name":"Codex","targetId":"target-1"}]}),
     ));
     let held = client.clone();
-    let (form, cx) = cx
-        .add_window_view(move |window, cx| NewSessionForm::with_client(Rc::new(held), window, cx));
+    let (form, cx) =
+        cx.add_window_view(move |window, cx| connected_form(Rc::new(held), window, cx));
     cx.run_until_parked();
     (form, client, cx)
 }
@@ -381,8 +400,8 @@ fn opened_auth(
     let client = FormClient::default();
     client.fake.queue_answer(Ok(auth_agents()));
     let held = client.clone();
-    let (form, cx) = cx
-        .add_window_view(move |window, cx| NewSessionForm::with_client(Rc::new(held), window, cx));
+    let (form, cx) =
+        cx.add_window_view(move |window, cx| connected_form(Rc::new(held), window, cx));
     cx.run_until_parked();
     (form, client, cx)
 }
@@ -487,7 +506,7 @@ fn a_coalesced_reconnect_replaces_the_auth_owner_even_while_still_connected(
     let (form, client, cx) = opened_auth(cx);
     let (_, obsolete) = client.auth_machines.borrow_mut().pop_front().unwrap();
     client.fake.queue_answer(Ok(auth_agents()));
-    form.update(cx, |form, cx| form.observe_connection(true, 1, cx));
+    form.update(cx, |form, cx| form.observe_connection(true, Some(2), cx));
     cx.run_until_parked();
     let _ = obsolete.send(Ok(json!({"machine":"obsolete-owner","through":0})));
     cx.run_until_parked();
@@ -504,7 +523,7 @@ fn a_coalesced_reconnect_replaces_the_auth_owner_even_while_still_connected(
         form.read_with(cx, |form, _| form.sign_in_target().unwrap().machine),
         "fresh-owner"
     );
-    form.update(cx, |form, cx| form.observe_connection(true, 1, cx));
+    form.update(cx, |form, cx| form.observe_connection(true, Some(2), cx));
     cx.run_until_parked();
     assert!(
         client.auth_machines.borrow().is_empty(),
@@ -526,8 +545,8 @@ fn selecting_a_valid_agent_replaces_the_previous_agents_identity_error(cx: &mut 
         {"id":"codex","name":"Codex","targetId":"configuration-hash","accountContext":"","providerTargetId":"codex/"}
     ]})));
     let held = client.clone();
-    let (form, cx) = cx
-        .add_window_view(move |window, cx| NewSessionForm::with_client(Rc::new(held), window, cx));
+    let (form, cx) =
+        cx.add_window_view(move |window, cx| connected_form(Rc::new(held), window, cx));
     cx.run_until_parked();
     let (_, answer) = client.auth_machines.borrow_mut().pop_front().unwrap();
     answer
@@ -555,3 +574,6 @@ fn selecting_a_valid_agent_replaces_the_previous_agents_identity_error(cx: &mut 
         assert!(form.auth_error.contains("identity did not match"));
     });
 }
+
+#[path = "new_session_form/generation_tests.rs"]
+mod generation_tests;

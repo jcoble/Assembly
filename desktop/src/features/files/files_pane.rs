@@ -289,7 +289,7 @@ impl FilesPane {
                             .child(entry.name.clone()),
                     )
                     .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
-                    .on_click(cx.listener(move |pane, event, window, cx| {
+                    .on_click(cx.listener(move |pane, event: &ClickEvent, window, cx| {
                         pane.clicked(path.clone(), folder, cx);
                         if let (false, Some(session)) = (folder, pane.session.clone()) {
                             FileView::open_at(

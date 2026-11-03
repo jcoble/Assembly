@@ -3,7 +3,7 @@ use crate::core::intents::open_commit_diff::OpenCommitDiff;
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
 use crate::features::source_control::git_history::GitHistory;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::json;
