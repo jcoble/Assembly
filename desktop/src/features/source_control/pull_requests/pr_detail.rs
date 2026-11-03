@@ -415,9 +415,9 @@ impl PrDetail {
                     .icon(IconName::ExternalLink)
                     .tooltip("Open on GitHub")
                     .disabled(url.is_none())
-                    .on_click(move |_, _, cx| {
+                    .on_click(move |_, window, cx| {
                         if let Some(url) = &url {
-                            cx.dispatch_action(&OpenUrl { url: url.clone() });
+                            window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx);
                         }
                     }),
             )

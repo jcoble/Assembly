@@ -47,7 +47,9 @@ fn link_notice(id: &'static str, text: &'static str, url: String, cx: &App) -> i
                 .link()
                 .small()
                 .label("View it on GitHub")
-                .on_click(move |_, _, cx| cx.dispatch_action(&OpenUrl { url: url.clone() })),
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
+                }),
         )
 }
 impl PrDetail {
@@ -401,8 +403,8 @@ impl PrDetail {
                             .link()
                             .small()
                             .label(word)
-                            .on_click(move |_, _, cx| {
-                                cx.dispatch_action(&OpenUrl { url: url.clone() })
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
                             })
                             .into_any_element()
                     })

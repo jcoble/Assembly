@@ -67,6 +67,7 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly EngineHelperCards _helperCards;
     private readonly MachineCalls _ownerMachineCalls;
     private readonly MachineRelay _relay;
+    private readonly SignInRelay _signInRelay;
     private readonly AppDatabase _db;
     private readonly BoardTools _board;
     private readonly CancellationTokenSource _hostStop;
@@ -89,7 +90,7 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly RemoteInstallJobs _remoteInstalls;
 
     private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteConnections connections,
-        WebApplication app, TurnActivity activity, MachinesFeature machinesFeature, TerminalHost terminals, RoutedTerminals routedTerminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop, Func<Task> beginStop, NeedAnswers answers, EngineHelperCards helperCards, MachineCalls ownerMachineCalls, MachineRelay relay, HttpClient cliHttp, GitOperations gitOperations, ProviderRuntimeSubscriptions providerRuntimeSubscriptions, RemoteInstallJobs remoteInstalls)
+        WebApplication app, TurnActivity activity, MachinesFeature machinesFeature, TerminalHost terminals, RoutedTerminals routedTerminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop, Func<Task> beginStop, NeedAnswers answers, EngineHelperCards helperCards, MachineCalls ownerMachineCalls, MachineRelay relay, HttpClient cliHttp, GitOperations gitOperations, ProviderRuntimeSubscriptions providerRuntimeSubscriptions, RemoteInstallJobs remoteInstalls, SignInRelay signInRelay)
     {
         _cliHttp = cliHttp;
         _gitOperations = gitOperations;
@@ -100,6 +101,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         _helperCards = helperCards;
         _ownerMachineCalls = ownerMachineCalls;
         _relay = relay;
+        _signInRelay = signInRelay;
         _homeLock = homeLock;
         _terminals = terminals;
         _routedTerminals = routedTerminals;
@@ -168,6 +170,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         BackgroundWork? work = null;
         LiveHub? hub = null;
         RemoteConnections? connections = null;
+        SignInRelay? signInRelay = null;
         MachinesFeature? machinesFeature = null;
         TerminalHost? terminals = null;
         RoutedTerminals? routedTerminals = null;
@@ -346,7 +349,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             });
             boardMirror?.Reconnect();
             var machineForward = new MachineForward(machine => connections.ByEngineMachine(db, machine));
-            var signInRelay = new SignInRelay(machineForward);
+            signInRelay = new SignInRelay(machineForward, connections, engine, db);
             var starts = new MachineStarts(engine, machineForward, connections, sessionLimits, TimeProvider.System);
             var foreignStubs = new ForeignStubs(engine, connections, machineForward, TimeProvider.System);
             relay = new MachineRelay(engine, machineForward, connections, topics, TimeProvider.System, log, answers);
@@ -394,7 +397,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                         name => name == "local" ? localFolders : new RemoteProjectFolders(connections, name), db)], board, Engine: engine), port, out _);
             app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });
             await app.StartAsync();
-            var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, routedTerminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp, gitOperations, providerRuntimeSubscriptions, remoteInstalls);
+            var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, routedTerminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp, gitOperations, providerRuntimeSubscriptions, remoteInstalls, signInRelay);
             endpoint.Listening(backend.Address);
             relay.Start();
             return backend;
@@ -418,6 +421,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             if (gitOperations is not null) await gitOperations.DisposeAsync();
             if (providerRuntimeSubscriptions is not null) await providerRuntimeSubscriptions.DisposeAsync();
             if (routedTerminals is not null) await routedTerminals.DisposeAsync();
+            if (signInRelay is not null) await signInRelay.DisposeAsync();
             if (connections is not null) await connections.DisposeAsync();
             if (machinesFeature is not null) await machinesFeature.DisposeAsync();
             if (terminals is not null) await terminals.DisposeAsync();
@@ -467,6 +471,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         // Before the remote, so no probe is still out on it.
         await _providerRuntimeSubscriptions.DisposeAsync();
         await _routedTerminals.DisposeAsync();
+        await _signInRelay.DisposeAsync();
         await _connections.DisposeAsync();
         await _machinesFeature.DisposeAsync();
         await _terminals.DisposeAsync();

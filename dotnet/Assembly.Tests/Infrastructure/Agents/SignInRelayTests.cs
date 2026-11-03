@@ -64,7 +64,8 @@ public sealed class SignInRelayTests
     {
         var board = new ChallengeBoard();
         await using var h = await Started(board);
-        var relay = new SignInRelay(h.Mac.Forwarder!);
+        await using var relay = new SignInRelay(h.Mac.Forwarder!, h.Connections, h.Mac.Runtime, h.Mac.Fixture.Db);
+        var remoteOperations = h.Remote.Fixture.Count("engine_sign_in");
         Assert.Null(await relay.ChallengeAsync(h.Remote.Runtime.Machine, "operation", default));
         const string original = "https://example.invalid/%2f?fixture=exact%2Bvalue";
         var consent = board.RequestUrlConsentAsync("operation", new Uri(original), default).AsTask();
@@ -87,7 +88,7 @@ public sealed class SignInRelayTests
             Assert.Equal("challenge_consumed", consumed.Reason);
             Assert.Null(board.Current("operation"));
             Assert.Equal(0, h.Mac.Fixture.Count("engine_sign_in"));
-            Assert.Equal(0, h.Remote.Fixture.Count("engine_sign_in"));
+            Assert.Equal(remoteOperations, h.Remote.Fixture.Count("engine_sign_in"));
             Assert.DoesNotContain(original, h.MirrorLog.ToString(), StringComparison.Ordinal);
         }
         finally { board.Clear("operation"); }
@@ -98,7 +99,7 @@ public sealed class SignInRelayTests
     {
         var board = new ChallengeBoard();
         await using var h = await Started(board);
-        var relay = new SignInRelay(h.Mac.Forwarder!);
+        await using var relay = new SignInRelay(h.Mac.Forwarder!, h.Connections, h.Mac.Runtime, h.Mac.Fixture.Db);
         var oldInput = new Input();
         var old = board.Post("operation", null, null, null, true, null, oldInput);
         var input = new Input();
@@ -132,7 +133,7 @@ public sealed class SignInRelayTests
     {
         var board = new ChallengeBoard();
         await using var h = await Started(board);
-        var relay = new SignInRelay(h.Mac.Forwarder!);
+        await using var relay = new SignInRelay(h.Mac.Forwarder!, h.Connections, h.Mac.Runtime, h.Mac.Fixture.Db);
         Assert.NotEqual("workbox-test", h.Remote.Runtime.Machine);
         await Assert.ThrowsAsync<KeyNotFoundException>(() => relay.ChallengeAsync("workbox-test", "operation", default));
         await h.DisconnectMirror();
@@ -147,7 +148,7 @@ public sealed class SignInRelayTests
     {
         var board = new ChallengeBoard();
         await using var h = await Started(board);
-        var relay = new SignInRelay(h.Mac.Forwarder!);
+        await using var relay = new SignInRelay(h.Mac.Forwarder!, h.Connections, h.Mac.Runtime, h.Mac.Fixture.Db);
         var input = new WaitingInput();
         var challenge = board.Post("operation", null, null, null, true, null, input);
         using var cancellation = new CancellationTokenSource();
@@ -166,9 +167,17 @@ public sealed class SignInRelayTests
 
     private static async Task<TwoHosts> Started(ChallengeBoard board)
     {
-        var hosts = new TwoHosts(windowCalls: true, forwardCommands: true);
+        var hosts = new TwoHosts(windowCalls: true, forwardCommands: true, isConfiguredProvider: (p, a) => p == "codex" && a == "");
         hosts.Remote.AdditionalFeatures = routes => new ProvidersFeature(board, hosts.Remote.Runtime.Machine).Register(routes);
-        try { await hosts.Start(); await hosts.StartMirror(); return hosts; }
+        try
+        {
+            await hosts.Start(); await hosts.StartMirror();
+            var started = hosts.Remote.Runtime.Submit(new(Guid.NewGuid(), hosts.Remote.Runtime.Machine,
+                new(ActorKind.Window, "inert-owner"), "operation", 0, 0, hosts.Remote.Fixture.Time.GetUtcNow().ToUnixTimeMilliseconds()),
+                new StartSignIn("codex", "", null, null));
+            Assert.True(started.Applied, started.Error); await hosts.Reached(started.Seq);
+            return hosts;
+        }
         catch { await hosts.DisposeAsync(); throw; }
     }
 

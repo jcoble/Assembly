@@ -279,7 +279,7 @@ fn starting_another_comment_drops_the_one_not_added_to_the_review(cx: &mut TestA
 }
 
 #[gpui::test]
-fn posted_comments_keep_their_own_lines_and_a_file_without_lines_keeps_its_draft_comment(
+fn posted_comments_stay_out_of_the_diff_and_a_file_without_lines_keeps_its_draft_comment(
     cx: &mut TestAppContext,
 ) {
     cx.update(gpui_kit::init);
@@ -317,7 +317,6 @@ fn posted_comments_keep_their_own_lines_and_a_file_without_lines_keeps_its_draft
             anchored,
             [
                 ("logo.png".to_string(), DiffSide::Original, 4),
-                ("a.rs".to_string(), DiffSide::Original, 1),
             ]
         );
     });

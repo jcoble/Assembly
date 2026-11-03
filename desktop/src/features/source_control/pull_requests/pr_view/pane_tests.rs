@@ -1,13 +1,18 @@
 use super::{PrMerged, PrPane};
+use crate::core::intents::open_pull_requests::OpenPullRequests;
 use crate::core::socket::{
     client::SocketClient,
     endpoint::Endpoint,
     fake_backend::{FakeBackend, Reply, hello},
     test_wait::until,
 };
+use crate::core::ui::center_panes::CenterPanes;
+use crate::features::palette::palette_view::PaletteView;
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
 use gpui_kit::AppContext as _;
+use gpui_kit::component::WindowExt as _;
+use gpui_kit::component::dock::DockArea;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -476,4 +481,73 @@ async fn merging_on_the_page_takes_the_row_off_the_list_behind_it(cx: &mut TestA
     });
     window.run_until_parked();
     window.update(|_, cx| assert!(queue.read(cx).page.items.is_empty()));
+}
+
+/// The window as the app has it: the kit's root over the dock, in front, with the palette and this pane registered.
+fn registered_window(
+    cx: &mut TestAppContext,
+) -> (gpui_kit::Entity<DockArea>, &mut gpui_kit::VisualTestContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        PaletteView::init(cx);
+        PrPane::register(cx);
+        crate::core::intents::open_url::register(cx);
+    });
+    let dock = std::rc::Rc::new(std::cell::OnceCell::new());
+    let holder = dock.clone();
+    let (_, cx) = cx.add_window_view(move |window, cx| {
+        let area = cx.new(|cx| DockArea::new("pull-requests", None, window, cx));
+        CenterPanes::init(&area, cx);
+        let _ = holder.set(area.clone());
+        gpui_kit::base::Root::new(area, window, cx)
+    });
+    cx.simulate_resize(gpui_kit::size(gpui_kit::px(1000.), gpui_kit::px(800.)));
+    cx.update(|window, _| window.activate_window());
+    settle(cx);
+    (dock.get().expect("the window's dock").clone(), cx)
+}
+
+fn settle(cx: &mut gpui_kit::VisualTestContext) {
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+}
+
+#[gpui::test]
+fn the_palette_command_opens_the_tab_with_no_session_or_project(cx: &mut TestAppContext) {
+    let (_dock, cx) = registered_window(cx);
+    cx.simulate_keystrokes("secondary-k");
+    settle(cx);
+    cx.simulate_input("Pull requests");
+    settle(cx);
+    cx.simulate_keystrokes("enter");
+    settle(cx);
+    cx.update(|window, cx| {
+        assert!(!window.has_active_dialog(cx), "choosing the command closes the palette");
+        let pane = CenterPanes::find::<PrPane>(super::KEY, cx).expect("the Pull requests tab");
+        assert!(pane.read(cx).active, "the tab is in front");
+        assert!(pane.read(cx).selected.is_none(), "it shows the list, not an opened page");
+    });
+}
+
+#[gpui::test]
+fn a_link_clicked_on_the_page_opens_its_address(cx: &mut TestAppContext) {
+    let (_dock, cx) = registered_window(cx);
+    cx.update(|window, cx| {
+        window.dispatch_action(
+            Box::new(OpenPullRequests { session_id: None, repo: None, number: None }),
+            cx,
+        )
+    });
+    settle(cx);
+    let pane = cx.update(|_, cx| CenterPanes::find::<PrPane>(super::KEY, cx).expect("the tab"));
+    let url = "https://github.com/o/r/pull/7";
+    pane.update(cx, |pane, cx| {
+        pane.missing_link = Some(("Not a project.".into(), url.into()));
+        cx.notify();
+    });
+    settle(cx);
+    let at = cx.debug_bounds("pr-missing-open").expect("the link is drawn");
+    cx.simulate_click(at.center(), gpui_kit::Modifiers::none());
+    settle(cx);
+    assert_eq!(cx.opened_url().as_deref(), Some(url));
 }

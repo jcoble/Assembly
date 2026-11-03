@@ -6,11 +6,10 @@ using Assembly.Infrastructure.Engine;
 namespace Assembly.Infrastructure.Agents;
 
 /// <summary>Ephemeral challenge calls over the selected engine's existing owner connection.</summary>
-public sealed class SignInRelay
+public sealed partial class SignInRelay
 {
     private readonly MachineForward _forward;
 
-    internal SignInRelay(MachineForward forward) => _forward = forward;
 
     public async Task<JsonElement?> ChallengeAsync(string machine, string operationId, CancellationToken ct)
     {
@@ -26,7 +25,13 @@ public sealed class SignInRelay
     internal async Task<ChallengeReply?> ReadChallengeAsync(string machine, string operationId, CallContext call)
     {
         Validate(machine, operationId, call.Cancellation);
-        try { return await _forward.SignInChallengeAsync(machine, operationId, call); }
+        try
+        {
+            var scope = await ScopeAsync(machine, operationId, call.Cancellation);
+            var reply = await scope.ReadAsync(call.Cancellation);
+            scope.Guard(call, challenge: true, expected: reply);
+            return reply;
+        }
         catch (CallFailed error) { throw SafeRefusal(error); }
     }
 
@@ -41,7 +46,15 @@ public sealed class SignInRelay
     {
         Validate(args.Machine!, args.OperationId, call.Cancellation);
         if (args.ExpectedGeneration <= 0 || args.Code is null) throw Refusal();
-        try { return await _forward.SignInCodeAsync(args, call); }
+        try
+        {
+            var scope = await ScopeAsync(args.Machine!, args.OperationId, call.Cancellation);
+            await scope.ReadAsync(call.Cancellation);
+            scope.EnsureInput(args.ExpectedGeneration);
+            var reply = await _forward.SignInCodeAsync(args, call, scope.Target);
+            scope.Guard(call);
+            return reply;
+        }
         catch (CallFailed error) { throw SafeRefusal(error); }
     }
 
@@ -56,7 +69,15 @@ public sealed class SignInRelay
     {
         Validate(args.Machine!, args.OperationId, call.Cancellation);
         if (args.ExpectedGeneration <= 0 || args.OriginalUrl is null) throw Refusal();
-        try { return await _forward.SignInUrlAsync(args, call); }
+        try
+        {
+            var scope = await ScopeAsync(args.Machine!, args.OperationId, call.Cancellation);
+            await scope.ReadAsync(call.Cancellation);
+            scope.EnsureInput(args.ExpectedGeneration);
+            var reply = await _forward.SignInUrlAsync(args, call, scope.Target);
+            scope.Guard(call);
+            return reply;
+        }
         catch (CallFailed error) { throw SafeRefusal(error); }
     }
 

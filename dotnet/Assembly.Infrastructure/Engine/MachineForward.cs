@@ -172,9 +172,9 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
             expectedConnection: owner.Socket, expectedOwner: owner.Binding);
     }
 
-    internal async Task<ChallengeReply?> SignInChallengeAsync(string machine, string operationId, CallContext call)
+    internal async Task<ChallengeReply?> SignInChallengeAsync(string machine, string operationId, CallContext call, SignInTarget? held = null)
     {
-        var (remote, original, source) = await CaptureSignInSourceAsync(machine, call);
+        var (remote, original, source) = await CaptureSignInSourceAsync(machine, call, held);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, original.Invalidated);
         var args = JsonSerializer.SerializeToElement(new ChallengeArgs(operationId), ProvidersJson.Default.ChallengeArgs);
         var result = await remote.CallAsync("providers", "challenge", args, false, linked.Token, machine, expectedOwner: original);
@@ -198,10 +198,10 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
         return challenge;
     }
 
-    internal async Task<ProviderInputReply> SignInCodeAsync(SubmitCodeArgs request, CallContext call)
+    internal async Task<ProviderInputReply> SignInCodeAsync(SubmitCodeArgs request, CallContext call, SignInTarget? held = null)
     {
         var machine = request.Machine!;
-        var (remote, original, source) = await CaptureSignInSourceAsync(machine, call);
+        var (remote, original, source) = await CaptureSignInSourceAsync(machine, call, held);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, original.Invalidated);
         var args = JsonSerializer.SerializeToElement(request with { Machine = null }, ProvidersJson.Default.SubmitCodeArgs);
         var result = await remote.CallAsync("providers", "submitCode", args, false, linked.Token, machine, expectedOwner: original);
@@ -209,10 +209,10 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
         return ReadSignInInputReply(result);
     }
 
-    internal async Task<ProviderInputReply> SignInUrlAsync(AcknowledgeUrlArgs request, CallContext call)
+    internal async Task<ProviderInputReply> SignInUrlAsync(AcknowledgeUrlArgs request, CallContext call, SignInTarget? held = null)
     {
         var machine = request.Machine!;
-        var (remote, original, source) = await CaptureSignInSourceAsync(machine, call);
+        var (remote, original, source) = await CaptureSignInSourceAsync(machine, call, held);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, original.Invalidated);
         var args = JsonSerializer.SerializeToElement(request with { Machine = null }, ProvidersJson.Default.AcknowledgeUrlArgs);
         var result = await remote.CallAsync("providers", "acknowledgeUrl", args, false, linked.Token, machine, expectedOwner: original);
@@ -220,17 +220,52 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
         return ReadSignInInputReply(result);
     }
 
+    internal async Task CancelSignInAsync(SignInTarget target, string operation, long version, CancellationToken ct)
+    {
+        target.EnsureCurrent();
+        var machine = target.Binding.Machine;
+        var command = new WindowCommand(Guid.NewGuid(), operation, version, 0, new CancelSignIn(), machine);
+        var args = JsonSerializer.SerializeToElement(command, EngineSocketJson.Default.WindowCommand);
+        var result = await target.Remote.CallAsync("engine", "command", args, false, ct, machine, expectedOwner: target.Binding);
+        target.EnsureCurrent();
+        if (result.Deserialize(EngineJson.Default.CommandResult) is not { Applied: true })
+            throw new CallFailed("The original sign-in cancellation is unconfirmed.", "signin_cancel_unconfirmed");
+    }
+
+    internal sealed class SignInTarget(RemoteMachine remote, RemoteMachine.OwnerConnectionBinding binding, Func<bool> sameOwner)
+    {
+        internal RemoteMachine Remote => remote;
+        internal RemoteMachine.OwnerConnectionBinding Binding => binding;
+        internal void EnsureCurrent()
+        {
+            try { if (binding.IsInvalidated || !sameOwner()) throw SignInSourceChanged(); }
+            catch (Exception error) when (error is KeyNotFoundException or MachineUnreachable or ObjectDisposedException)
+            { throw SignInSourceChanged(); }
+        }
+    }
+
+    internal async Task<SignInTarget> CaptureSignInTargetAsync(string machine, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var remote = byMachineId(machine) ?? throw new MachineUnreachable(machine, "Remote engine machine is disconnected");
+        var original = await remote.CaptureOwnerBindingAsync(machine, ct);
+        var target = new SignInTarget(remote, original, () => ReferenceEquals(byMachineId(machine), remote));
+        target.EnsureCurrent();
+        return target;
+    }
+
     private async Task<(RemoteMachine Remote, RemoteMachine.OwnerConnectionBinding Original, SignInReplySource Source)>
-        CaptureSignInSourceAsync(string machine, CallContext call)
+        CaptureSignInSourceAsync(string machine, CallContext call, SignInTarget? held)
     {
         call.Cancellation.ThrowIfCancellationRequested();
         if (call.SourceGuard is not null) throw SignInSourceChanged();
-        var remote = byMachineId(machine) ?? throw new MachineUnreachable(machine, "Remote engine machine is disconnected");
-        var original = await remote.CaptureOwnerBindingAsync(machine, call.Cancellation);
-        var source = new SignInReplySource(original, () => ReferenceEquals(byMachineId(machine), remote));
+        var target = held ?? await CaptureSignInTargetAsync(machine, call.Cancellation);
+        if (target.Binding.Machine != machine) throw SignInSourceChanged();
+        target.EnsureCurrent();
+        var source = new SignInReplySource(target.Binding, () => { target.EnsureCurrent(); return true; });
         call.SourceGuard = source;
         source.EnsureCurrent();
-        return (remote, original, source);
+        return (target.Remote, target.Binding, source);
     }
 
     private static ProviderInputReply ReadSignInInputReply(JsonElement result)

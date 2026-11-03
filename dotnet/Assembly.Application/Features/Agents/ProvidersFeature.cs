@@ -22,7 +22,7 @@ public sealed class ProvidersFeature(ChallengeBoard board, string localEngineMac
                     : (await readRemoteChallenge(args.Machine, args.OperationId, call))!;
             var current = board.Current(args.OperationId);
             return current is null ? null! : new ChallengeReply(current.OperationId, current.Generation,
-                current.Link?.OriginalString, current.CallbackHost, current.CallbackPort, current.WantsCode, current.TerminalId);
+                current.Link?.OriginalString, current.CallbackHost, current.CallbackPort, current.WantsCode, current.TerminalId, Ready: true);
         });
         calls.Read("providers", "submitCode", json.SubmitCodeArgs, json.ProviderInputReply, async (args, call) =>
         {
@@ -81,6 +81,6 @@ public sealed record SubmitCodeArgs([property: JsonRequired] string OperationId,
 public sealed record AcknowledgeUrlArgs([property: JsonRequired] string OperationId, [property: JsonRequired] long ExpectedGeneration,
     [property: JsonRequired] string OriginalUrl, string? Machine = null);
 public sealed record ChallengeReply(string OperationId, long Generation, string? Link, string? CallbackHost,
-    int? CallbackPort, bool WantsCode, string? TerminalId);
+    int? CallbackPort, bool WantsCode, string? TerminalId, bool? Ready = null, bool LinkLost = false);
 
 public sealed record ProviderInputReply;

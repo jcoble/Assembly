@@ -21,6 +21,7 @@ public sealed class SignInTerminalRelayTests
     public async Task Registered_challenge_qualifies_the_real_program_and_fixed_read_needs_no_terminal_start_or_list()
     {
         await using var f = await Fixture.Start();
+        var remoteOperations = f.Hosts.Remote.Fixture.Count("engine_sign_in");
         using var socket = await ApiTests.OpenOwnerSocketAsync(f.Hosts.Mac.Address, "isolated-token");
         var result = ApiTests.Result(await ApiTests.SocketRequestAsync(socket, 1, "providers", "challenge",
             JsonSerializer.Serialize(new { operationId = "operation", machine = f.Hosts.Remote.Runtime.Machine })));
@@ -41,7 +42,7 @@ public sealed class SignInTerminalRelayTests
         Assert.Equal(0, f.OwnerCalls.Starts); Assert.Equal(0, f.OwnerCalls.Lists);
         Assert.Single(f.RemotePty.Started); Assert.Empty(f.LocalPty.Started);
         Assert.Equal(0, f.Hosts.Mac.Fixture.Count("engine_sign_in"));
-        Assert.Equal(0, f.Hosts.Remote.Fixture.Count("engine_sign_in"));
+        Assert.Equal(remoteOperations, f.Hosts.Remote.Fixture.Count("engine_sign_in"));
     }
 
     [Fact]
@@ -140,7 +141,7 @@ public sealed class SignInTerminalRelayTests
 
     internal sealed class Fixture : IAsyncDisposable
     {
-        internal readonly TwoHosts Hosts = new(forwardCommands: true);
+        internal readonly TwoHosts Hosts = new(forwardCommands: true, isConfiguredProvider: (p, a) => p == "codex" && a == "");
         internal readonly ChallengeBoard Board = new(), LocalBoard = new();
         internal readonly FakePtyStarter RemotePty = new(), LocalPty = new();
         internal readonly string Folder = Directory.CreateTempSubdirectory("assembly-inert-challenge-").FullName;
@@ -160,7 +161,7 @@ public sealed class SignInTerminalRelayTests
             {
                 f.Owner = new(f.RemotePty, f.Hosts.Remote.Topics, TimeProvider.System, ("/bin/sh", null));
                 f.Local = new(f.LocalPty, f.Hosts.Mac.Topics, TimeProvider.System, ("/bin/sh", null));
-                f.OwnerCalls = new(f.Owner); f.Relay = new(f.Hosts.Mac.Forwarder!);
+                f.OwnerCalls = new(f.Owner);
                 f.Hosts.Remote.AdditionalFeatures = calls =>
                 {
                     new TerminalFeature(f.OwnerCalls).Register(calls);
@@ -172,11 +173,16 @@ public sealed class SignInTerminalRelayTests
                             (_, _) => Task.FromResult(invalidReply(f.Challenge)));
                 };
                 f.Hosts.Mac.AdditionalFeatures = calls => new ProvidersFeature(f.LocalBoard,
-                    localEngineMachine: f.Hosts.Mac.Runtime.Machine, readRemoteChallenge: f.Relay.ReadChallengeAsync,
-                    submitRemoteCode: f.Relay.SubmitCodeAsync, acknowledgeRemoteUrl: f.Relay.AcknowledgeUrlAsync).Register(
+                    localEngineMachine: f.Hosts.Mac.Runtime.Machine, readRemoteChallenge: (m, o, c) => f.Relay.ReadChallengeAsync(m, o, c),
+                    submitRemoteCode: (a, c) => f.Relay.SubmitCodeAsync(a, c), acknowledgeRemoteUrl: (a, c) => f.Relay.AcknowledgeUrlAsync(a, c)).Register(
                         macReading is null && macPeer is null ? calls
                             : new MessageReadGate(calls, macReading ?? ((_, _) => Task.CompletedTask), macPeer));
                 await f.Hosts.Start(); await f.Hosts.StartMirror();
+                f.Relay = new(f.Hosts.Mac.Forwarder!, f.Hosts.Connections, f.Hosts.Mac.Runtime, f.Hosts.Mac.Fixture.Db);
+                var started = f.Hosts.Remote.Runtime.Submit(new(Guid.NewGuid(), f.Hosts.Remote.Runtime.Machine,
+                    new(Assembly.Engine.Contracts.ActorKind.Window, "inert-owner"), "operation", 0, 0,
+                    f.Hosts.Remote.Fixture.Time.GetUtcNow().ToUnixTimeMilliseconds()), new Assembly.Engine.Providers.StartSignIn("codex", "", null, null));
+                Assert.True(started.Applied, started.Error); await f.Hosts.Reached(started.Seq);
                 f.Routed = new(f.Local, f.Hosts.Mac.Sessions, new MachineSet(f.Hosts.ConnectedMachine, f.Hosts.ConnectedMachine), f.Hosts.Mac.Topics, f.Work);
                 f.Program = await f.Owner.StartProgramAsync(new ProgramStart("/inert/program", [], new Dictionary<string, string?>(), f.Folder, "signin:operation"), default);
                 f.Challenge = f.Board.Post("operation", null, null, null, false, f.Program.Id, null);
@@ -186,6 +192,7 @@ public sealed class SignInTerminalRelayTests
         }
         public async ValueTask DisposeAsync()
         {
+            if (Relay is not null) await Relay.DisposeAsync();
             if (Routed is not null) await Routed.DisposeAsync();
             await Hosts.DisposeAsync();
             if (Owner is not null) await Owner.DisposeAsync();

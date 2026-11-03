@@ -65,6 +65,7 @@ public sealed class ProvidersSocketTests : IAsyncLifetime
         {
             var answer = (await Call(socket, "challenge", new { operationId = "op" })).GetProperty("result");
             Assert.Equal(url, answer.GetProperty("link").GetString());
+            Assert.True(answer.GetProperty("ready").GetBoolean());
             Assert.False(consent.IsCompleted);
             Assert.Equal(_board.Current("op")!.Generation, answer.GetProperty("generation").GetInt64());
             Assert.DoesNotContain(_log.Entries, entry => entry.Message.Contains("URL_CANARY", StringComparison.Ordinal));
