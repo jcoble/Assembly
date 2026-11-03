@@ -1,4 +1,4 @@
-use super::PrDetail;
+use super::{PrDetail, PrOwner};
 use crate::core::socket::{
     client::SocketClient,
     endpoint::Endpoint,
@@ -44,7 +44,10 @@ async fn detail_is_a_bulk_read_and_a_different_repository_cannot_replace_the_req
     });
     let detail = cx.new(|cx| {
         PrDetail::new(
-            "actual-session".into(),
+            PrOwner::Session {
+                id: "actual-session".into(),
+                source: None,
+            },
             Some("expected/repository".into()),
             7,
             false,

@@ -5,6 +5,7 @@ use super::{
     post_confirm::PostRequest,
     pr_activity::change_totals,
     pr_files::PrFiles,
+    pr_owner::PrOwner,
     pr_writes::{PrWrites, WriteDone},
     pull_request::PullRequestDetail,
     review_draft::{ReviewDraft, ReviewIdentity},
@@ -51,7 +52,7 @@ struct ReplyTarget {
     line: Option<usize>,
 }
 pub struct PrDetail {
-    session: String,
+    owner: PrOwner,
     repository: Option<String>,
     number: u64,
     active: bool,
@@ -90,7 +91,7 @@ impl EventEmitter<PrBack> for PrDetail {}
 impl EventEmitter<PrMerged> for PrDetail {}
 impl PrDetail {
     pub fn new(
-        session: String,
+        owner: PrOwner,
         repository: Option<String>,
         number: u64,
         active: bool,
@@ -98,7 +99,7 @@ impl PrDetail {
     ) -> Self {
         let drafter = cx.new(|_| GitOperation::default());
         let drafter_heard = cx.observe(&drafter, |view: &mut Self, _, cx| view.draft_changed(cx));
-        let writes = cx.new(|cx| PrWrites::new(session.clone(), cx));
+        let writes = cx.new(|cx| PrWrites::new(owner.clone(), cx));
         let writes_heard = [
             cx.observe(&writes, |_, _, cx| cx.notify()),
             cx.subscribe(&writes, |view: &mut Self, _, done: &WriteDone, cx| {
@@ -106,7 +107,7 @@ impl PrDetail {
             }),
         ];
         let mut detail = Self {
-            session,
+            owner,
             repository,
             number,
             active,
@@ -184,7 +185,7 @@ impl PrDetail {
         let call = socket.read(cx).call::<PullRequestDetail>(
             "git",
             "pr",
-            json!({"session":self.session,"number":self.number}),
+            self.owner.read_args(json!({"number":self.number})),
             None,
         );
         self.read=Some(cx.spawn(async move|view,cx|{
@@ -199,6 +200,7 @@ impl PrDetail {
                             view.failure=Some("GitHub did not confirm this pull request's revisions. Refresh before trying again.".into());
                         }else {
                             view.repository=Some(detail.repository.clone());view.needs_refresh=false;
+                            view.writes.update(cx,|writes,_|writes.show_read(detail.repository.clone(),detail.local_root.clone()));
                             if view.review.is_none(){
                                 let review=cx.new(|_|ReviewDraft::new(ReviewIdentity{repository:detail.repository.clone(),number:detail.number,head:detail.head_sha.clone(),base:detail.base_sha.clone()}));
                                 view._review=Some(cx.observe(&review,|_,_,cx|cx.notify()));view.review=Some(review);
@@ -233,11 +235,11 @@ impl PrDetail {
         }
         if self.files.is_none() {
             if let (Some(detail), Some(review)) = (&self.detail, &self.review) {
-                let session = self.session.clone();
+                let owner = self.owner.clone();
                 let review = review.clone();
                 let mode = self.mode;
                 self.files = Some(cx.new(|cx| {
-                    let mut files = PrFiles::new(session, detail, review, cx);
+                    let mut files = PrFiles::new(owner, detail, review, cx);
                     files.set_mode(mode, cx);
                     files
                 }));

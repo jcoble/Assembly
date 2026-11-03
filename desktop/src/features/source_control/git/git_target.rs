@@ -32,6 +32,55 @@ impl GitTarget {
         args
     }
 }
+/// A project's pull request action: the project, the source it was read through, and what that read showed.
+/// There is no session here, so nothing stands in for one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProjectTarget {
+    pub project_id: String,
+    pub source: ExpectedRowSource,
+    pub repository: String,
+    pub checkout_root: String,
+}
+/// Where an operation runs. Its host, start, status and cancel all forward this unchanged.
+#[derive(Clone, Debug, PartialEq)]
+pub enum OperationScope {
+    Session(GitTarget),
+    Project(ProjectTarget),
+}
+impl OperationScope {
+    pub fn session(&self) -> Option<String> {
+        match self {
+            Self::Session(target) => Some(target.session.clone()),
+            Self::Project(_) => None,
+        }
+    }
+    pub fn read_args(&self, mut args: Value) -> Value {
+        match self {
+            Self::Session(target) => target.read_args(args),
+            Self::Project(target) => {
+                if let Some(fields) = args.as_object_mut() {
+                    fields.insert("projectId".into(), json!(target.project_id));
+                    fields.insert("expectedSource".into(), json!(target.source));
+                }
+                args
+            }
+        }
+    }
+    /// Only a start names the repository and root; status and cancel go by the operation.
+    pub fn write_args(&self, args: Value) -> Value {
+        match self {
+            Self::Session(target) => target.write_args(args),
+            Self::Project(target) => {
+                let mut args = self.read_args(args);
+                if let Some(fields) = args.as_object_mut() {
+                    fields.insert("expectedCheckoutRoot".into(), json!(target.checkout_root));
+                    fields.insert("expectedRepository".into(), json!(target.repository));
+                }
+                args
+            }
+        }
+    }
+}
 #[cfg(test)]
 #[path = "git_target_tests.rs"]
 mod tests;

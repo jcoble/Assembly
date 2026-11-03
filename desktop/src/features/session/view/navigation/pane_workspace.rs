@@ -86,7 +86,7 @@ impl SessionPane {
         self._rows=pending.rows.take();self._page=None;self._loads.clear();
         self._source_connections.clear();self.active_source_cut=None;
         // Another session opening takes the pane from a draft; the same one reopening after a reconnect doesn't.
-        if self.session.as_ref()!=Some(&key.id){self.draft=None;}
+        if !self.shows(&key){self.draft=None;}
         self.session=Some(key.id.clone());self.row_source=Some(source.clone());self.read_only=read_only;self.active_provider=provider;
         self.active_open_serial=Some(serial);self.view=prepared.view;self.known_run=prepared.known_run;
         self.read_to=0;self.held=None;self.loading=false;self.retry_first=None;self.failed_before=None;self.status=SharedString::default();

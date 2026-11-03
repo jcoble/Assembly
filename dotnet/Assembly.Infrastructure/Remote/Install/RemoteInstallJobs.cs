@@ -110,7 +110,7 @@ internal sealed class RemoteInstallJobs : IAsyncDisposable
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(10), _time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(entry.Cancel.Token, hostStop, _stop.Token, deadline.Token);
         var ct = linked.Token;
-        bool attempted = false, activated = false;
+        bool attempted = false, activated = false, cleanupFailed = false;
         string state = "failed";
         string? error = null;
         RemoteInstallResult? result = null;
@@ -149,18 +149,22 @@ internal sealed class RemoteInstallJobs : IAsyncDisposable
                 // Cleanup cannot replace a proven activation outcome or the original failure.
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(20), _time);
                 try { if (attempted) await _process.CleanupAsync(entry.Request, entry.Binding, cleanup.Token); }
-                catch (Exception) { CleanupUnconfirmed(); }
+                catch (Exception) { cleanupFailed = true; }
                 try { snapshot?.Dispose(); }
-                catch (Exception failed) when (failed is IOException or UnauthorizedAccessException) { CleanupUnconfirmed(); }
+                catch (Exception failed) when (failed is IOException or UnauthorizedAccessException) { cleanupFailed = true; }
             }
             finally
             {
-                try { Change(entry, job => job with { State = state, ErrorCode = error, Result = result }); }
+                try
+                {
+                    try { Change(entry, job => job with { State = state, ErrorCode = error, Result = result }); }
+                    catch (Exception) when (cleanupFailed)
+                    { throw new IOException("Remote install cleanup unconfirmed; terminal publication failed."); }
+                }
                 finally { entry.Done.TrySetResult(); }
             }
         }
-        void CleanupUnconfirmed()
-        { if (error is null && result is null) { state = "uncertain"; error = "cleanup_unconfirmed"; } }
+        if (cleanupFailed) throw new IOException("Remote install cleanup unconfirmed.");
     }
     private void Change(Entry entry, Func<RemoteInstallJob, RemoteInstallJob> change)
     {

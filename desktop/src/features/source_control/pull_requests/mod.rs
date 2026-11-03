@@ -4,6 +4,7 @@ pub mod post_confirm;
 pub mod pr_activity;
 pub mod pr_detail;
 pub mod pr_files;
+pub mod pr_owner;
 pub mod pr_pane;
 mod pr_parts;
 pub mod pr_queue;

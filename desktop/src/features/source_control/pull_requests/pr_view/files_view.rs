@@ -21,7 +21,7 @@ impl PrFiles {
         let adder = target.clone();
         let header = target.clone();
         let viewed = self.viewed.clone();
-        let session = self.session.clone();
+        let session = self.owner.session_id().map(String::from);
         let mut diff = Diff::new(&self.state)
             .annotations(annotations)
             .render_header_suffix(move |file, _, _| {
@@ -62,10 +62,14 @@ impl PrFiles {
                             .tooltip("More for this file")
                             .dropdown_menu(move |menu, _, _| {
                                 let session = session.clone();
+                                let openable = session.is_some();
                                 let opened = opened.clone();
                                 let copied = copied.clone();
-                                menu.item(PopupMenuItem::new("Open in editor").on_click(
+                                menu.item(PopupMenuItem::new("Open in editor").disabled(!openable).on_click(
                                     move |_, window, cx| {
+                                        let Some(session) = session.clone() else {
+                                            return;
+                                        };
                                         let selected = SelectedSession::global(cx).read(cx);
                                         let expected_source = (selected.session_id()
                                             == Some(session.as_str()))
@@ -73,7 +77,7 @@ impl PrFiles {
                                         .flatten();
                                         window.dispatch_action(
                                             Box::new(OpenFile {
-                                                session_id: session.clone(),
+                                                session_id: session,
                                                 path: opened.clone(),
                                                 expected_source,
                                                 line: None,

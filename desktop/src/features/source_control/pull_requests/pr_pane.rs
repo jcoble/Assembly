@@ -1,10 +1,12 @@
 use super::{
     pr_detail::{PrBack, PrDetail, PrMerged},
+    pr_owner::{PrOwner, project_for, resolve},
     pr_queue::PrQueue,
     pr_search::PrState,
     pull_request::PrTarget,
 };
 use crate::core::{
+    socket::row_source::ExpectedRowSource,
     intents::open_pull_requests::OpenPullRequests, state::selected_session::SelectedSession,
     ui::center_panes::CenterPanes,
 };
@@ -36,6 +38,8 @@ pub struct PrPane {
     scope: Vec<String>,
     queue: Entity<PrQueue>,
     detail: Option<Entity<PrDetail>>,
+    /// Asking who owns a project's machine, before its pull request can open.
+    opening: Option<Task<()>>,
     search: Entity<InputState>,
     search_wait: Option<Task<()>>,
     projects: Option<Entity<Projects>>,
@@ -136,6 +140,8 @@ impl PrPane {
             queue.state = PrState::All;
             queue
         });
+        let source = selected_source(session.as_deref(), cx);
+        queue.update(cx, |queue, cx| queue.set_source(source, cx));
         let queue_heard = cx.observe(&queue, |_, _, cx| cx.notify());
         let search = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Search title, branch, author or #number")
@@ -174,6 +180,7 @@ impl PrPane {
             scope: Vec::new(),
             queue,
             detail: None,
+            opening: None,
             search,
             search_wait: None,
             projects,
@@ -200,6 +207,8 @@ impl PrPane {
             queue.search = search;
             queue
         });
+        let source = selected_source(self.session.as_deref(), cx);
+        queue.update(cx, |queue, cx| queue.set_source(source, cx));
         self._queue = cx.observe(&queue, |_, _, cx| cx.notify());
         self.queue = queue;
         self.scope.clear();
@@ -212,6 +221,7 @@ impl PrPane {
         cx.notify();
     }
     fn close_detail(&mut self, cx: &mut Context<Self>) {
+        self.opening = None;
         self.detail = None;
         self._detail = None;
         cx.notify();
@@ -339,17 +349,50 @@ impl PrPane {
         cx.notify();
     }
     fn select_pr(&mut self, repository: Option<String>, number: u64, cx: &mut Context<Self>) {
-        let Some(session) = self.session.clone() else {
-            // Project-only target admission needs the actual owning-host bridge; never reuse another session's root.
-            self.failure = Some(
-                "Open this project's checkout in Source control to view this pull request.".into(),
-            );
-            cx.notify();
-            return;
-        };
+        self.opening = None;
         self.failure = None;
+        if let Some(id) = self.session.clone() {
+            let source = selected_source(Some(&id), cx);
+            self.open_detail(PrOwner::Session { id, source }, repository, number, cx);
+            return;
+        }
+        let rows = self.projects.as_ref().map(|projects| projects.read(cx).rows());
+        let project = project_for(
+            rows.unwrap_or_default(),
+            self.project.as_deref(),
+            repository.as_deref(),
+        );
+        let resolving = match project {
+            Ok(project) => resolve(&project, cx),
+            Err(error) => {
+                self.failure = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        self.opening = Some(cx.spawn(async move |pane, cx| {
+            let owner = resolving.await;
+            _ = pane.update(cx, |pane, cx| {
+                pane.opening = None;
+                match owner {
+                    Ok(owner) => pane.open_detail(owner, repository, number, cx),
+                    Err(error) => {
+                        pane.failure = Some(error);
+                        cx.notify();
+                    }
+                }
+            });
+        }));
+    }
+    fn open_detail(
+        &mut self,
+        owner: PrOwner,
+        repository: Option<String>,
+        number: u64,
+        cx: &mut Context<Self>,
+    ) {
         let active = self.active;
-        let detail = cx.new(|cx| PrDetail::new(session, repository, number, active, cx));
+        let detail = cx.new(|cx| PrDetail::new(owner, repository, number, active, cx));
         self._detail = Some([
             cx.subscribe(&detail, |pane: &mut Self, _, _: &PrBack, cx| {
                 pane.close_detail(cx)
@@ -373,6 +416,17 @@ impl PrPane {
         cx.notify();
     }
 }
+/// The source the selection read this session through, when it is the selected one.
+fn selected_source(session: Option<&str>, cx: &App) -> Option<ExpectedRowSource> {
+    let selected = SelectedSession::try_global(cx)?;
+    let selected = selected.read(cx);
+    (session.is_some() && selected.session_id() == session)
+        .then(|| selected.source().cloned())
+        .flatten()
+}
+#[cfg(test)]
+#[path = "pr_view/pane_tests.rs"]
+mod tests;
 impl EventEmitter<PanelEvent> for PrPane {}
 impl Focusable for PrPane {
     fn focus_handle(&self, _: &App) -> FocusHandle {

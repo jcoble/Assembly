@@ -2,7 +2,10 @@
 //! the old screen's did, so the operation and what it came to live here. An outcome nobody can confirm blocks the next
 //! write until the page has read the pull request again, and that read is what lets the person try again.
 use super::super::git_operation::GitOperation;
-use super::{merge_dialog::MergeRequest, post_confirm::PostRequest, review_draft::ReviewIdentity};
+use super::{
+    merge_dialog::MergeRequest, post_confirm::PostRequest, pr_owner::PrOwner,
+    review_draft::ReviewIdentity,
+};
 use gpui_kit::*;
 use serde_json::Value;
 
@@ -17,7 +20,9 @@ pub enum WriteDone {
     Merged { url: String },
 }
 pub struct PrWrites {
-    session: String,
+    owner: PrOwner,
+    /// The repository and root the shown read reported, sent back unchanged with a write.
+    shown: Option<(String, String)>,
     operation: Entity<GitOperation>,
     kind: Option<WriteKind>,
     /// A write was started and its outcome hasn't been taken yet.
@@ -37,10 +42,11 @@ fn github_url(result: Option<&Value>) -> Option<String> {
         .map(String::from)
 }
 impl PrWrites {
-    pub fn new(session: String, cx: &mut Context<Self>) -> Self {
+    pub fn new(owner: PrOwner, cx: &mut Context<Self>) -> Self {
         let (operation, heard) = Self::fresh_operation(cx);
         Self {
-            session,
+            owner,
+            shown: None,
             operation,
             kind: None,
             waiting: false,
@@ -54,6 +60,9 @@ impl PrWrites {
             writes.operation_changed(cx)
         });
         (operation, heard)
+    }
+    pub fn show_read(&mut self, repository: String, root: String) {
+        self.shown = Some((repository, root));
     }
     fn operation_changed(&mut self, cx: &mut Context<Self>) {
         let operation = self.operation.read(cx);
@@ -88,14 +97,12 @@ impl PrWrites {
         let kind = WriteKind::Post {
             reply: request.is_reply(),
         };
-        self.start(kind, request.action(), args, cx);
-        Ok(())
+        self.start(kind, request.action(), args, cx)
     }
     pub fn merge(&mut self, request: &MergeRequest, cx: &mut Context<Self>) -> Result<(), String> {
         self.refuse_if_occupied(cx)?;
         let args = request.args()?;
-        self.start(WriteKind::Merge, "merge", args, cx);
-        Ok(())
+        self.start(WriteKind::Merge, "merge", args, cx)
     }
     fn refuse_if_occupied(&self, cx: &App) -> Result<(), String> {
         if self.free(cx) {
@@ -110,14 +117,16 @@ impl PrWrites {
         action: &'static str,
         args: Value,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<(), String> {
+        let shown = (self.shown.as_ref()).map(|(repository, root)| (repository.as_str(), root.as_str()));
+        let scope = (self.owner.scope(shown)).ok_or("Refresh this pull request before trying again.")?;
         self.kind = Some(kind);
         self.waiting = true;
         self.not_confirmed = false;
-        let session = self.session.clone();
         self.operation.update(cx, |operation, cx| {
-            operation.start(action, Some(session), args, cx)
+            operation.start_scope(action, scope, args, cx)
         });
+        Ok(())
     }
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
         self.operation

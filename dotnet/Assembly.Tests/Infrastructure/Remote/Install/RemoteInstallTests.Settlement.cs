@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Calls;
 using Assembly.Infrastructure.Remote.Install;
 
@@ -12,12 +13,15 @@ public sealed partial class RemoteInstallTests
     [InlineData("uncertain", "uncertain", "activation_uncertain")]
     [InlineData("mismatch", "uncertain", "activation_uncertain")]
     [InlineData("ssh_unavailable", "failed", "ssh_unavailable")]
+    [InlineData("activation_ssh_unavailable", "uncertain", "ssh_unavailable")]
     [InlineData("succeeded", "succeeded", null)]
     public async Task Settlement_preserves_primary_outcome_when_remote_cleanup_fails(string outcome, string state, string? error)
     {
         var process = new SettlementProcess(outcome) { FailCleanup = true };
         var activation = new RemoteInstallActivation(process);
-        var jobs = new RemoteInstallJobs(_work, _topics, TimeProvider.System, Staging,
+        using var log = new StringWriter();
+        await using var work = new BackgroundWork(TimeProvider.System, log);
+        var jobs = new RemoteInstallJobs(work, _topics, TimeProvider.System, Staging,
             (_, _, _) => Task.FromResult(Binding), process, (request, binding, package, staged, ct) => outcome == "mismatch"
                 ? Task.FromResult(new RemoteInstallResult(package.Bundle.Commit, request.Machine, "unverified-engine"))
                 : activation.ActivateAsync(request, binding, package, staged, ct));
@@ -39,6 +43,9 @@ public sealed partial class RemoteInstallTests
             else Assert.Null(settled.Result);
             Assert.Equal(settled, jobs.Status(request.OperationId));
             Assert.False(File.Exists(process.Snapshot));
+            await jobs.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(0, await work.StopAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal("background remote install: Remote install cleanup unconfirmed." + Environment.NewLine, log.ToString());
         }
         finally { await jobs.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)); }
     }
@@ -48,7 +55,9 @@ public sealed partial class RemoteInstallTests
     {
         var process = new SettlementProcess("succeeded") { DenySnapshotCleanup = true };
         var activation = new RemoteInstallActivation(process);
-        var jobs = new RemoteInstallJobs(_work, _topics, TimeProvider.System, Staging,
+        using var log = new StringWriter();
+        await using var work = new BackgroundWork(TimeProvider.System, log);
+        var jobs = new RemoteInstallJobs(work, _topics, TimeProvider.System, Staging,
             (_, _, _) => Task.FromResult(Binding), process, activation.ActivateAsync);
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var request = await SettlementRequest();
@@ -71,6 +80,8 @@ public sealed partial class RemoteInstallTests
             Assert.Equal(1, process.Cleanups);
             if (!OperatingSystem.IsWindows())
                 Assert.Throws<UnauthorizedAccessException>(() => Directory.GetFileSystemEntries(Path.GetDirectoryName(process.Snapshot)!));
+            Assert.Equal(0, await work.StopAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal("background remote install: Remote install cleanup unconfirmed; terminal publication failed." + Environment.NewLine, log.ToString());
         }
         finally
         {
@@ -100,8 +111,11 @@ public sealed partial class RemoteInstallTests
             return Task.FromResult(new RemoteInstallStaged(123, new('a', 64)));
         }
         internal override Task<JsonElement> ActivateAsync(RemoteInstallStart request, RemoteInstallBinding binding,
-            RemoteInstallPackage.Checked package, RemoteInstallStaged staged, CancellationToken ct) => Task.FromResult(
-                JsonSerializer.SerializeToElement(new { state = outcome, commit = package.Bundle.Commit, engine = binding.Engine, protocol = 1, format = 5 }));
+            RemoteInstallPackage.Checked package, RemoteInstallStaged staged, CancellationToken ct)
+        {
+            if (outcome == "activation_ssh_unavailable") throw new CallFailed("Fixture activation SSH failure.", "ssh_unavailable");
+            return Task.FromResult(JsonSerializer.SerializeToElement(new { state = outcome, commit = package.Bundle.Commit, engine = binding.Engine, protocol = 1, format = 5 }));
+        }
         internal override Task CleanupAsync(RemoteInstallStart request, RemoteInstallBinding binding, CancellationToken ct)
         {
             Cleanups++;
