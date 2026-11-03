@@ -28,6 +28,16 @@ pub enum Row<'a> {
     },
 }
 
+pub enum RevealStep {
+    Load {
+        dir: String,
+        cursor: Option<PageCursor>,
+    },
+    Waiting,
+    Ready,
+    Missing,
+}
+
 /// The root folder is "", as `files/list` takes it.
 #[derive(Default)]
 pub struct FileTree {
@@ -104,6 +114,105 @@ impl FileTree {
                 self.failed.insert(dir.to_string(), message);
             }
         }
+    }
+
+    pub fn entry_state(&self, path: &str) -> Option<(bool, bool)> {
+        self.rows().into_iter().find_map(|row| match row {
+            Row::Entry { entry, open, .. } if entry.path == path => {
+                Some((entry.is_directory, open))
+            }
+            _ => None,
+        })
+    }
+
+    pub fn adjacent(&self, selected: Option<&str>, delta: i32) -> Option<(String, bool, usize)> {
+        let entries: Vec<_> = self
+            .rows()
+            .into_iter()
+            .enumerate()
+            .filter_map(|(ix, row)| match row {
+                Row::Entry { entry, .. } => Some((entry.path.clone(), entry.is_directory, ix)),
+                _ => None,
+            })
+            .collect();
+        if entries.is_empty() {
+            return None;
+        }
+        let at =
+            selected.and_then(|selected| entries.iter().position(|(path, _, _)| path == selected));
+        let index = at
+            .map(|at| (at as i64 + i64::from(delta)).clamp(0, entries.len() as i64 - 1) as usize)
+            .unwrap_or(0);
+        Some(entries[index].clone())
+    }
+
+    pub fn reveal_failed(&self, path: &str) -> bool {
+        self.failed.keys().any(|failed| {
+            failed.is_empty() || path == failed || path.starts_with(&(failed.clone() + "/"))
+        })
+    }
+
+    pub fn expanded_paths(&self) -> Vec<String> {
+        let mut paths: Vec<_> = self.open.iter().cloned().collect();
+        paths.sort();
+        paths
+    }
+
+    /// Loads only the pages needed to reveal a folder, keeping its ancestors expanded.
+    pub fn reveal(&mut self, path: &str) -> RevealStep {
+        self.reveal_path(path, true)
+    }
+    pub fn reveal_entry(&mut self, path: &str) -> RevealStep {
+        self.reveal_path(path, false)
+    }
+    fn reveal_path(&mut self, path: &str, expand_last: bool) -> RevealStep {
+        let mut parent = String::new();
+        let mut parts = path.split('/').filter(|part| !part.is_empty()).peekable();
+        while let Some(part) = parts.next() {
+            if self.loading.contains(&parent) {
+                return RevealStep::Waiting;
+            }
+            let Some(listing) = self.loaded.get(&parent) else {
+                return RevealStep::Missing;
+            };
+            let target = if parent.is_empty() {
+                part.to_string()
+            } else {
+                format!("{parent}/{part}")
+            };
+            let last = parts.peek().is_none();
+            if !listing
+                .entries
+                .iter()
+                .any(|entry| entry.path == target && (entry.is_directory || (last && !expand_last)))
+            {
+                return match self.more(&parent) {
+                    Some(cursor) => RevealStep::Load {
+                        dir: parent,
+                        cursor: Some(cursor),
+                    },
+                    None => RevealStep::Missing,
+                };
+            }
+            if last && !expand_last {
+                return RevealStep::Ready;
+            }
+            self.open.insert(target.clone());
+            if self.failed.contains_key(&target) {
+                return RevealStep::Missing;
+            }
+            if !self.loaded.contains_key(&target) {
+                if !self.loading.insert(target.clone()) {
+                    return RevealStep::Waiting;
+                }
+                return RevealStep::Load {
+                    dir: target,
+                    cursor: None,
+                };
+            }
+            parent = target;
+        }
+        RevealStep::Ready
     }
 
     /// Whether the root's load failed, so showing the tree again retries it (its folder may exist by now).

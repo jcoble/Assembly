@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Database;
 
 namespace Assembly.Application.Features.Chat.Rows;
 
@@ -14,6 +15,10 @@ public abstract class RowSourceBinding : IExpectedSourceGuard
     public abstract bool Remote { get; }
     public abstract CancellationToken Changed { get; }
     public abstract void EnsureCurrent();
+    // A display-cache write needs its own identity certification on the caller's transaction.
+    // A read binding alone does not certify a copied facade.
+    public virtual void EnsureDisplayCurrent(IReadScope? scope = null) =>
+        throw new CallFailed("The selected display source cannot be certified.", "source_changed");
     public abstract void Watch();
     public abstract string? ActiveRun { get; }
     public abstract Task<JsonElement> PageAsync(long before, int limit, CancellationToken ct);

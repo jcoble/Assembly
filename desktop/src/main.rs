@@ -53,6 +53,8 @@ fn main() {
             features::sessions::history::history_pane::HistoryPane::register(cx);
             features::source_control::source_control_pane::SourceControlPane::register(cx);
             features::source_control::history_pane::HistoryPane::register(cx);
+            features::source_control::pull_requests::pr_pane::PrPane::register(cx);
+            features::projects::new_project_dialog::register(cx);
             features::worktrees::worktrees_pane::WorktreesPane::register(cx);
             features::changes::changes_pane::ChangesPane::register(cx);
             features::board::board_pane::BoardPane::register(cx);

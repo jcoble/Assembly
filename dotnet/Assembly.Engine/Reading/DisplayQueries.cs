@@ -17,7 +17,8 @@ internal static class DisplayQueries
         "needs_me" => "session_id,run_id,step_id,kind,text,options_json,state,deadline_ms,answered_by,answered_ms,addressee_session_id",
         "message" => "from_session_id,sender_kind,to_session_id,run_id,step_id,text,mode,state,reason,expires_ms",
         "handoff" => "session_id,old_holder,new_holder,old_epoch,next_epoch,state,reason",
-        "pr" => "run_id,repo,number,head,state,reported_by,reported_state,observed_head,observed_ms,url",
+        "pr" => "run_id,owner_session_id,repo,number,head,state,reported_by,reported_state,observed_head,observed_ms,url",
+        "pr_observation" => "origin_machine,coordinator_machine,session_id,run_id,step_id,epoch,state,coordinator_seq",
         "tool_call" => "session_id,run_id,step_id,attempt,epoch,tool,input_preview,output_preview,input_bytes,output_bytes,started_ms,ended_ms,outcome,late",
         "usage" => "session_id,run_id,step_id,attempt,epoch,input_tokens,output_tokens,cached_tokens,cost_nanodollars,duration_ms,late",
         "provider" => "provider,account_context,installation,auth_state,reason,facts_json,checked_ms",
@@ -70,6 +71,8 @@ internal static class DisplayQueries
         }
         return $"json_object('entityKind','{kind}',{string.Join(",", fields)})";
     }
+
+    internal static string ObservationDetails => Json("pr_observation")[..^1] + ",'facts',json(t.facts_json))";
 
     internal static string MirrorJson(string kind) => kind == "handoff"
         ? Json(kind)[..^1] + ",'runId',(SELECT run_id FROM engine_session WHERE id=t.session_id))"
@@ -159,12 +162,12 @@ internal static class DisplayQueries
 
     internal static string[] Kinds(string topic) => topic switch
     {
-        "mirror" => ["session", "run", "step", "needs_me", "message", "handoff", "pr", "provider", "sign_in"],
+        "mirror" => ["session", "run", "step", "needs_me", "message", "handoff", "pr", "pr_observation", "provider", "sign_in"],
         "runs" => ["run", "step", "handoff"],
         "sessions" => ["session", "handoff"],
         "needs_me" => ["needs_me"],
         "messages" => ["message"],
-        "prs" => ["pr"],
+        "prs" => ["pr", "pr_observation"],
         "usage" => ["usage", "tool_call"],
         "providers" => ["provider", "sign_in"],
         _ => throw new ArgumentException("Unknown topic", nameof(topic))

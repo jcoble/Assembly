@@ -80,7 +80,11 @@ internal sealed class FilesFeature(SessionStore sessions, FileOwner owners) : IF
         }, bulk: true);
         calls.Write(Feature, "action", FilesJson.Default.FileActionArgs, FilesJson.Default.ActionResult, async (args, call) =>
         {
-            var result = await FileActions.ExecuteAsync(LocalRoot(args.Session, call.Cancellation), args, call.Cancellation);
+            var root = LocalRoot(args.Session, call.Cancellation);
+            var result = await FileActions.ExecuteAsync(root, args, call.Cancellation, () =>
+            {
+                if (LocalRoot(args.Session, call.Cancellation) != root) throw new CallFailed("the session's checkout changed; no further file action was performed");
+            });
             return _ => result;
         }, order: args => "files:" + SessionPaths.ResolveFile(LocalRoot(args.Session, CancellationToken.None), args.Path));
         calls.Closed(uploads.Close);

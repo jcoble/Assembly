@@ -8,6 +8,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::selected_session::SelectedSession;
+use super::sessions::Sessions;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 
@@ -35,6 +36,8 @@ pub struct SessionRead<T> {
     /// The read on its way; dropping it cancels the call on the backend.
     _read: Option<Task<()>>,
     _selected: Subscription,
+    _settled: Option<Subscription>,
+    settled_state: Option<(String, String)>,
 }
 
 impl<T: DeserializeOwned + 'static> SessionRead<T> {
@@ -54,7 +57,44 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
             reading: false,
             _read: None,
             _selected: selected,
+            _settled: None,
+            settled_state: None,
         }
+    }
+
+    /// Refreshes on the selected session's actual running-to-settled transition; never polls.
+    pub fn refresh_on_settle(&mut self, cx: &mut Context<Self>) {
+        if self._settled.is_some() {
+            return;
+        }
+        let Some(sessions) = Sessions::try_global(cx) else {
+            return;
+        };
+        self.settled_state = Self::selected_state(cx);
+        self._settled = Some(cx.observe(&sessions, |read, _, cx| {
+            let current = Self::selected_state(cx);
+            let ended = match (&read.settled_state, &current) {
+                (Some((prior_id, prior)), Some((id, state))) => {
+                    prior_id == id && prior == "running" && state != "running"
+                }
+                _ => false,
+            };
+            read.settled_state = current;
+            if read.active && ended {
+                read.read(true, cx);
+            }
+        }));
+    }
+    fn selected_state(cx: &App) -> Option<(String, String)> {
+        let selected = SelectedSession::global(cx);
+        let id = selected.read(cx).session_id()?;
+        let sessions = Sessions::try_global(cx)?;
+        sessions
+            .read(cx)
+            .items()
+            .iter()
+            .find(|item| item.session_id == id)
+            .map(|item| (item.session_id.clone(), item.state.clone()))
     }
 
     pub fn shown(&self) -> &Shown<T> {
@@ -85,7 +125,9 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
 
     /// Reads again (a Refresh or Try again button).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.read(true, cx);
+        if self.active {
+            self.read(true, cx);
+        }
     }
 
     /// Reads the selected session, unless it's already shown or on its way and `again` isn't set.
@@ -109,6 +151,7 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         if !same {
             self.shown = Shown::Reading;
         }
+        self.settled_state = Self::selected_state(cx);
         self.read_for = Some(session.clone());
         let Some(socket) = SocketClient::try_global(cx) else {
             self.reading = false;

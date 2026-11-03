@@ -160,6 +160,7 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
             "needs_me" => "SELECT n.version FROM engine_needs_me n JOIN engine_session s ON s.id=n.session_id WHERE n.id=$id AND s.machine=$machine AND s.state<>'foreign'",
             "tool_call" => "SELECT version FROM engine_tool_call WHERE id=$id AND machine=$machine",
             "usage" => "SELECT version FROM engine_usage WHERE id=$id AND machine=$machine",
+            "pr_observation" => "SELECT version FROM engine_pr_observation WHERE id=$id AND machine=$machine",
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
         var version = scope.QueryFirst(sql, r => (long?)r.Long(0), new SqlArg("$id", entityId), new SqlArg("$machine", Machine));
@@ -168,6 +169,7 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
             global::Assembly.Engine.NeedsMe.OpenNeed open when kind == "needs_me" => open.SessionId,
             ToolStarted start when kind == "tool_call" => start.Attribution.SessionId,
             TurnUsage usage when kind == "usage" => usage.Attribution.SessionId,
+            global::Assembly.Engine.Prs.RecordPrObservation observation when kind == "pr_observation" => observation.Facts.SessionId,
             _ => null
         };
         if (version is null && (parent is null || scope.QueryFirst(

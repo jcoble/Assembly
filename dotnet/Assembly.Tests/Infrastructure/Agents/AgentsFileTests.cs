@@ -23,7 +23,59 @@ public sealed class AgentsFileTests : IDisposable
     private AgentsFile Open()
     {
         File.WriteAllText(FilePath, Original);
-        return new(FilePath, "engine-owner-7", _topics);
+        return Bound(FilePath);
+    }
+
+    private AgentsFile Bound(string path)
+    {
+        var source = new AgentsFile(path);
+        source.BindOwner("engine-owner-7", _topics);
+        return source;
+    }
+
+    [Fact]
+    public void Unbound_bootstrap_catalogue_is_readable_but_owner_operations_refuse_before_file_access()
+    {
+        File.WriteAllText(FilePath, Original);
+        var source = new AgentsFile(FilePath);
+        var revision = source.Revision;
+        File.Delete(FilePath);
+
+        Assert.Equal(["codex", "other"], source.Select(agent => agent.Id));
+        Assert.Equal("configuration_unavailable", Assert.Throws<CallFailed>(() => source.Read("codex")).Reason);
+        Assert.Equal("configuration_unavailable", Assert.Throws<CallFailed>(() => source.Save("codex", revision, new(null, null, null, []))).Reason);
+        Assert.Equal("configuration_unavailable", Assert.Throws<CallFailed>(() => source.Reload()).Reason);
+        Assert.Equal("configuration_unavailable", Assert.Throws<CallFailed>(() => source.Current()).Reason);
+        Assert.False(File.Exists(FilePath));
+        Assert.Empty(Directory.GetFiles(_home, "*.tmp"));
+    }
+
+    [Fact]
+    public void Binding_is_immutable_except_an_identical_machine_and_same_topic_instance_repeat()
+    {
+        File.WriteAllText(FilePath, Original);
+        var source = new AgentsFile(FilePath);
+        var changes = new List<string>();
+        using var subscription = _topics.Subscribe(AgentsFile.Topic, "engine-owner-7", _ => { }, (_, json) => changes.Add(json));
+        source.BindOwner("engine-owner-7", _topics);
+        source.BindOwner("engine-owner-7", _topics);
+
+        Assert.Equal("configuration_unavailable", Assert.Throws<CallFailed>(() => source.BindOwner("another-engine", _topics)).Reason);
+        Assert.Equal("configuration_unavailable", Assert.Throws<CallFailed>(() => source.BindOwner("engine-owner-7", new Topics())).Reason);
+        Assert.Equal("engine-owner-7", source.Current().Machine);
+        Assert.Empty(changes);
+        Assert.Equal(Original, File.ReadAllText(FilePath));
+    }
+
+    [Fact]
+    public void Bound_topic_snapshot_never_takes_a_file_lock_or_reads_the_file()
+    {
+        var source = Open();
+        var revision = source.Revision;
+        File.Delete(FilePath);
+        using var held = new FileStream(source.LockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        Assert.Equal(new ProviderRuntimeChanged("engine-owner-7", revision), source.Current());
     }
 
     [Fact]
@@ -68,7 +120,7 @@ public sealed class AgentsFileTests : IDisposable
     public void Exact_source_revision_CAS_refuses_a_second_writer_without_losing_the_first_save()
     {
         var first = Open();
-        var second = new AgentsFile(FilePath, "engine-owner-7", _topics);
+        var second = Bound(FilePath);
         var read = first.Read("codex");
         var accepted = first.Save("codex", read.Revision, read.Settings with { ConfigHome = "/fixture/first" });
         var committed = File.ReadAllBytes(FilePath);
@@ -127,7 +179,7 @@ public sealed class AgentsFileTests : IDisposable
         var document = JsonNode.Parse(File.ReadAllText(FilePath))!.AsArray();
         document[0]!["vendorFamily"] = "custom-family";
         File.WriteAllText(FilePath, document.ToJsonString());
-        var source = new AgentsFile(FilePath, "engine-owner-7", _topics);
+        var source = Bound(FilePath);
         var before = source.Read("codex");
         var bytes = File.ReadAllBytes(FilePath);
 
@@ -148,7 +200,7 @@ public sealed class AgentsFileTests : IDisposable
         document[0]!["env"]!["CODEX_PATH"] = "/fixture/explicit-codex";
         document[0]!["env"]!["CLAUDE_CODE_EXECUTABLE"] = "/fixture/explicit-claude";
         File.WriteAllText(FilePath, document.ToJsonString());
-        var source = new AgentsFile(FilePath, "engine-owner-7", _topics);
+        var source = Bound(FilePath);
         var launcher = new AdapterLauncher(source, _home, new UnclaimedPermissions(), _ => _home);
         var captured = ConfigTargetIdentity.Capture(launcher, "codex");
         var before = source.Read("codex");
@@ -177,7 +229,7 @@ public sealed class AgentsFileTests : IDisposable
         document[0]!["cliArgs"] = new JsonArray("--saved-cli-argument");
         document[0]!["shadowHome"] = "/fixture/existing-shadow";
         File.WriteAllText(FilePath, document.ToJsonString());
-        var source = new AgentsFile(FilePath, "engine-owner-7", _topics);
+        var source = Bound(FilePath);
         var before = source.Read("codex");
 
         var after = source.Save("codex", before.Revision, before.Settings with { ConfigHome = "/fixture/new" });
@@ -230,7 +282,7 @@ public sealed class AgentsFileTests : IDisposable
         var source = Open();
         var alias = Path.Combine(_home, "alias");
         Directory.CreateSymbolicLink(alias, _home);
-        var other = new AgentsFile(Path.Combine(alias, "agents.json"), "engine-owner-7", _topics);
+        var other = Bound(Path.Combine(alias, "agents.json"));
 
         Assert.Equal(source.Path, other.Path);
         Assert.Equal(source.LockPath, other.LockPath);

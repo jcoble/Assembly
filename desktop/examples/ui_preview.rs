@@ -4,6 +4,8 @@ mod core;
 #[allow(dead_code)]
 #[path = "../src/components/inline_field/mod.rs"]
 mod inline_field;
+#[path = "../src/features/source_control/git_operation.rs"]
+mod git_operation;
 #[path = "../src/features/projects/mod.rs"]
 mod projects;
 #[path = "../src/features/settings/preview/mod.rs"]
@@ -13,6 +15,9 @@ mod settings_preview;
 mod preview_screen;
 mod features {
     pub(crate) use crate::projects;
+    pub(crate) mod source_control {
+        pub(crate) use crate::git_operation;
+    }
     pub(crate) mod settings {
         pub(crate) use crate::settings_preview as preview;
     }

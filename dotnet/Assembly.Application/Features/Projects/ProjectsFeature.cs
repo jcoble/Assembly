@@ -12,6 +12,8 @@ internal sealed class ProjectsFeature(ProjectStore store, Func<string, IProjectF
             (_, c) => [new ProjectsRevision(db.QueryFirst("SELECT revision FROM projects_meta", r => r.Long(0), c.Cancellation))]);
         calls.Read("projects", "list", ProjectsJson.Default.ProjectListArgs, ProjectsJson.Default.ProjectPage,
             (a, c) => Task.FromResult(store.List(a.Filter, a.Machine, a.After, a.Limit, c.Cancellation)));
+        calls.Read("projects", "recentParent", ProjectsJson.Default.ProjectMachineArgs, ProjectsJson.Default.ProjectRecentParent,
+            (a, c) => Task.FromResult(new ProjectRecentParent(store.RecentParent(a.Machine, c.Cancellation))));
         calls.Read("projects", "folders", ProjectsJson.Default.ProjectPathArgs, ProjectsJson.Default.FolderListing,
             (a, c) => Folders(a.Machine).ListAsync(a.Path, c.Cancellation));
         calls.Read("projects", "inspect", ProjectsJson.Default.ProjectIdArgs, ProjectsJson.Default.FolderInspection,

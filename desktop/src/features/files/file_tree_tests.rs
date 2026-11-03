@@ -1,7 +1,7 @@
 //! The tree shows what's loaded under each open folder, asks for a folder only the first time it opens, and keeps a
 //! folder's failure on that folder.
 
-use super::{FileTree, Row};
+use super::{FileTree, RevealStep, Row};
 use crate::features::files::entry::{FileEntry, FileListing};
 
 fn entry(path: &str, folder: bool) -> FileEntry {
@@ -169,4 +169,102 @@ fn collapse_refuses_a_late_descendant_answer() {
     tree.loaded("src/lib", listing(vec![entry("src/lib/stale", false)]));
     assert_eq!(shape(&tree), ["src/"]);
     assert_eq!(tree.toggle("src"), Some("src".into()));
+}
+
+#[test]
+fn revealing_a_folder_loads_its_ancestors_and_the_needed_continuation_without_closing_them() {
+    use super::RevealStep;
+    use crate::features::files::entry::PageCursor;
+    let mut tree = FileTree::default();
+    tree.start();
+    let cursor = PageCursor {
+        generation: "g".into(),
+        after: "first-page".into(),
+    };
+    tree.loaded(
+        "",
+        Ok(FileListing {
+            entries: vec![entry("earlier", true)],
+            truncated: true,
+            next_cursor: Some(cursor.clone()),
+        }),
+    );
+    assert!(
+        matches!(tree.reveal("dir/nested"), RevealStep::Load { dir, cursor: Some(_) } if dir.is_empty())
+    );
+    tree.loaded("", listing(vec![entry("dir", true)]));
+    assert!(
+        matches!(tree.reveal("dir/nested"), RevealStep::Load { dir, cursor: None } if dir == "dir")
+    );
+    tree.loaded("dir", listing(vec![entry("dir/nested", true)]));
+    assert!(
+        matches!(tree.reveal("dir/nested"), RevealStep::Load { dir, cursor: None } if dir == "dir/nested")
+    );
+    tree.loaded("dir/nested", listing(vec![]));
+    assert!(matches!(tree.reveal("dir/nested"), RevealStep::Ready));
+    assert!(shape(&tree).contains(&"  nested/ v".into()));
+    assert!(matches!(tree.reveal("missing"), RevealStep::Missing));
+}
+
+#[test]
+fn keyboard_navigation_visits_visible_entries_and_skips_loading_rows() {
+    let mut tree = FileTree::default();
+    tree.start();
+    tree.loaded("", listing(vec![entry("dir", true), entry("last", false)]));
+    tree.toggle("dir");
+    assert_eq!(tree.adjacent(None, 1).unwrap().0, "dir");
+    assert_eq!(tree.adjacent(Some("dir"), 1).unwrap().0, "last");
+    tree.loaded("dir", listing(vec![entry("dir/first", false)]));
+    assert_eq!(tree.adjacent(Some("dir"), 1).unwrap().0, "dir/first");
+    assert_eq!(tree.adjacent(Some("last"), -1).unwrap().0, "dir/first");
+    assert_eq!(tree.adjacent(Some("dir"), -1).unwrap().0, "dir");
+}
+
+#[test]
+fn a_failed_reveal_directory_does_not_automatically_replay_the_read() {
+    let mut tree = FileTree::default();
+    tree.start();
+    tree.loaded(
+        "",
+        Ok(FileListing {
+            entries: vec![FileEntry {
+                path: "blocked".into(),
+                name: "blocked".into(),
+                is_directory: true,
+                excluded: false,
+            }],
+            truncated: false,
+            next_cursor: None,
+        }),
+    );
+    assert!(matches!(tree.reveal("blocked"), RevealStep::Load { .. }));
+    tree.loaded("blocked", Err("Traversal denied".into()));
+    assert!(matches!(tree.reveal("blocked"), RevealStep::Missing));
+    assert!(matches!(tree.reveal("blocked"), RevealStep::Missing));
+}
+
+#[test]
+fn revealing_a_file_uses_existing_pages_without_loading_it_as_a_directory() {
+    let mut tree = FileTree::default();
+    tree.start();
+    tree.loaded(
+        "",
+        Ok(FileListing {
+            entries: vec![entry("src", true)],
+            truncated: false,
+            next_cursor: None,
+        }),
+    );
+    assert!(matches!(tree.reveal_entry("src/λ.rs"),RevealStep::Load {dir,..} if dir=="src"));
+    tree.loaded(
+        "src",
+        Ok(FileListing {
+            entries: vec![entry("src/λ.rs", false)],
+            truncated: false,
+            next_cursor: None,
+        }),
+    );
+    assert!(matches!(tree.reveal_entry("src/λ.rs"), RevealStep::Ready));
+    assert_eq!(tree.expanded_paths(), vec!["src"]);
+    assert!(!tree.reveal_failed("src/λ.rs"));
 }

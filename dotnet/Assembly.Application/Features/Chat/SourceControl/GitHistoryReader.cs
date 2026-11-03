@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Git;
 
@@ -28,6 +29,7 @@ public sealed class GitHistoryReader(IGit git)
         List<GitCommit> commits = [];
         var record = new LogRecord();
         var bytes = 0;
+        var more = false;
         await foreach (var piece in git.ReadAsync(root, args, null, ct))
         {
             record.Append(piece);
@@ -35,15 +37,16 @@ public sealed class GitHistoryReader(IGit git)
             if (piece.Length == 1024 * 1024) continue;
             var commit = record.Take();
             if (commit is null) continue;
+            if (commits.Count == Page) { more = true; break; }
             bytes += Encoding.UTF8.GetByteCount(commit.ShortSha + commit.Sha + commit.Subject + commit.Body + commit.Author +
                 commit.CommittedAt + string.Concat(commit.Refs) + string.Concat(commit.Parents));
             if (bytes > PageBytes) throw new CallFailed("This Git history page exceeds the size limit.");
             commits.Add(commit);
-            if (commits.Count == Page + 1) break;
         }
-        var more = commits.Count > Page;
-        if (more) commits.RemoveAt(Page);
-        return new(commits, more ? (skip + Page).ToString(CultureInfo.InvariantCulture) : null);
+        var result = new GitHistoryPage(commits, more ? (skip + Page).ToString(CultureInfo.InvariantCulture) : null);
+        if (JsonSerializer.SerializeToUtf8Bytes(result, GitHistoryJson.Default.GitHistoryPage).Length > PageBytes)
+            throw new CallFailed("This Git history page exceeds the size limit.");
+        return result;
     }
 
     private sealed class LogRecord

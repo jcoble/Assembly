@@ -13,6 +13,7 @@ internal sealed class GitHistoryTestRepository : IDisposable
         await Run("init", "-b", "main");
         await Run("config", "user.name", "History Test");
         await Run("config", "user.email", "history@example.invalid");
+        await Run("config", "commit.gpgsign", "false");
     }
 
     public async Task Run(params string[] args)

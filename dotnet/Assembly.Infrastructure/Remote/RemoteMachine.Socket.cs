@@ -62,9 +62,10 @@ internal sealed partial class RemoteMachine
 
     private readonly HashSet<Task> _gitCallDrains = [];
     internal async Task<JsonElement> CallGitWriteAsync(string method, JsonElement args, string expectedEngineId,
-        ClientWebSocket expectedConnection, CancellationToken ct)
+        ClientWebSocket expectedConnection, CancellationToken ct, OwnerConnectionBinding? expectedOwner = null,
+        Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? expectedMirror = null)
     {
-        if (method is not ("start" or "cancel" or "release")) throw new CallFailed("forbidden");
+        if (Assembly.Infrastructure.Chat.SourceControl.GitCallKinds.KindOf(method) != Assembly.Application.Common.Calls.CallKind.Write) throw new CallFailed("forbidden");
         var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await _socketSend.WaitAsync(ct);
         try
@@ -73,7 +74,7 @@ internal sealed partial class RemoteMachine
             _gitCallDrains.Add(drained.Task);
         }
         finally { _socketSend.Release(); }
-        try { return await CallCoreAsync("git", method, args, false, ct, expectedEngineId, expectedConnection, null, null, null, true); }
+        try { return await CallCoreAsync("git", method, args, false, ct, expectedEngineId, expectedConnection, expectedOwner, expectedMirror, null, true); }
         finally
         {
             await _socketSend.WaitAsync(CancellationToken.None);
@@ -316,6 +317,7 @@ internal sealed partial class RemoteMachine
                         {
                             if (!engineFrames.Writer.TryWrite(frame)) throw new IOException("remote engine queue is full");
                         }
+                        else if (ReceiveProviderRuntime(frame, socket)) { }
                         else if ((frame.TryGetProperty("sub", out var gitId) || frame.TryGetProperty("id", out gitId)) &&
                             _gitSubscriptions.TryGetValue(gitId.GetInt64(), out var git) && ReferenceEquals(git.Socket, socket))
                         {

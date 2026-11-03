@@ -4,7 +4,9 @@
 //! force from the start, and as they change.
 
 use super::intents::open_file::OpenFile;
+use super::intents::reveal_file_folder::RevealFileFolder;
 use crate::features::files::file_view::FileView;
+use crate::features::files::files_pane::FilesPane;
 use gpui_kit::*;
 
 use super::native_views::views::NativeViews;
@@ -58,6 +60,9 @@ impl Render for WindowRoot {
                     window,
                     cx,
                 )
+            })
+            .on_action(|action: &RevealFileFolder, window, cx| {
+                FilesPane::reveal_folder(&action.session_id, &action.path, window, cx)
             })
             .size_full()
             .child(self.content.clone())

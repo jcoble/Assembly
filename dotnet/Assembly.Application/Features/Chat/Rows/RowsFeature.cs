@@ -102,7 +102,7 @@ internal sealed class RowsFeature : IFeature
                 bound.EnsureCurrent(); return remote;
             }
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
-            var page = _store.Subagents(args.Session, args.After, args.Limit, call.Cancellation);
+            var page = _store.Subagents(args.Session, args.After, args.Limit, call.Cancellation, args.ExpectedSource ?? call.ExpectedSource);
             if (bound is not null) { bound.Watch(); bound.EnsureCurrent(); }
             else _machines.Named(session.Machine)?.Watch(session);
             return page;

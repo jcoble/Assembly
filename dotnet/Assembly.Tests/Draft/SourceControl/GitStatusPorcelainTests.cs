@@ -94,6 +94,16 @@ public sealed class GitStatusPorcelainTests
         Assert.Equal(new ChangedFile("both added", null, 'U', 'U'), Assert.Single(status.Files));
     }
 
+    [Fact]
+    public async Task Staged_total_counts_hidden_entries_but_excludes_untracked_and_unmerged_conflicts()
+    {
+        var prefix = string.Concat(Enumerable.Range(0, 1000).Select(i => $"1 .M N... 100644 100644 100644 a b file{i}\0"));
+        var status = await Parse(prefix + "2 R. N... 100644 100644 100644 a b R100 renamed\0original\0u AA N... 100644 100644 100644 100644 a b c conflict\0? untracked\0");
+        Assert.Equal(1000, status.Files.Count); Assert.Equal(1003, status.TotalFiles); Assert.Equal(1, status.TotalStaged);
+        Assert.All(status.Files, file => Assert.Equal('.', file.Index));
+        Assert.Equal(0, (await Parse(prefix + "u UU N... 100644 100644 100644 100644 a b c conflict\0? untracked\0")).TotalStaged);
+    }
+
     private static Task<GitStatus> Parse(string output) => GitStatusPorcelain.ParseAsync(Records(output));
 
     private static async IAsyncEnumerable<string> Records(string output)

@@ -563,6 +563,7 @@ impl NewSessionForm {
                         });
                         cx.emit(Created);
                     }
+                    Err(error @ CallError::Uncertain { .. }) => form.error = error.reason().into(),
                     Err(CallError::Aborted | CallError::Unreachable { .. }) => {
                         form.error = "The connection dropped; the session may have started.".into()
                     }

@@ -8,7 +8,7 @@ use super::{GitStatus, Section};
 fn status(files: serde_json::Value, total: usize) -> GitStatus {
     serde_json::from_value(json!({
         "branch": "lane/scm", "head": "0123456789abcdef", "ahead": 2, "behind": 1, "hasUpstream": true,
-        "files": files, "totalFiles": total
+        "files": files, "totalFiles": total, "fingerprint": "fixture-fingerprint"
     }))
     .unwrap()
 }
@@ -94,5 +94,36 @@ fn the_pane_says_how_many_files_the_cap_leaves_out() {
             .more_line()
             .as_deref(),
         Some("1200 more files aren't listed.")
+    );
+}
+
+#[test]
+fn actual_staged_total_controls_clipped_actions_and_old_partial_payload_remains_unknown() {
+    let clipped = status(json!([file("visible.txt", ".", "M")]), 1001);
+    assert_eq!(clipped.staged_total(), None);
+    assert!(!clipped.has_staged_files());
+    let staged = GitStatus {
+        total_staged: Some(1),
+        ..clipped.clone()
+    };
+    assert_eq!(staged.staged_total(), Some(1));
+    assert!(staged.has_staged_files());
+    let unstaged = GitStatus {
+        total_staged: Some(0),
+        ..clipped
+    };
+    assert_eq!(unstaged.staged_total(), Some(0));
+    assert!(!unstaged.has_staged_files());
+    assert_eq!(
+        status(json!([file("staged.rs", "M", ".")]), 1).staged_total(),
+        Some(1)
+    );
+    assert_eq!(
+        status(
+            json!([file("conflict.rs", "U", "U"), file("new.txt", "?", "?")]),
+            2
+        )
+        .staged_total(),
+        Some(0)
     );
 }

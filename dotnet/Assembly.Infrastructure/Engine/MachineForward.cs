@@ -1,3 +1,5 @@
+using Assembly.Infrastructure.Engine.Workflows;
+using Assembly.Infrastructure.Chat.SourceControl;
 using Assembly.Application.Common.Calls;
 using Assembly.Engine.Handoffs;
 using System.IO;
@@ -52,7 +54,9 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
         return result.Deserialize(EngineJson.Default.CommandResult) ?? throw new IOException("Invalid machine command result");
     }
 
-    public async Task<JsonElement> CallAsync(string machine, string feature, string method, JsonElement args, bool bulk, CancellationToken ct)
+    public async Task<JsonElement> CallAsync(string machine, string feature, string method, JsonElement args, bool bulk, CancellationToken ct,
+        ClientWebSocket? expectedConnection = null, RemoteMachine.OwnerConnectionBinding? expectedOwner = null,
+        EngineMirror.LiveMirrorBinding? expectedMirror = null, bool gitWrite = false)
     {
         ct.ThrowIfCancellationRequested();
         var remote = byMachineId(machine) ?? throw new MachineUnreachable(machine, "Remote engine machine is disconnected");
@@ -60,7 +64,9 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
         {
             return feature == "engine" && method is "session_title" or "session_title_chunk" or "entities"
             ? await remote.ReadOwnerPromptAsync(method, args, bulk, machine, ct)
-            : await remote.CallAsync(feature, method, args, bulk, ct, machine);
+            : gitWrite && feature == "git" && expectedConnection is not null
+                ? await remote.CallGitWriteAsync(method, args, machine, expectedConnection, ct, expectedOwner, expectedMirror)
+                : await remote.CallAsync(feature, method, args, bulk, ct, machine, expectedConnection, expectedOwner, expectedMirror);
         }
         catch (MachineUnreachable) when (feature == "engine" && method is "session_title" or "session_title_chunk" or "entities")
         { throw new Assembly.Application.Common.Calls.CallFailed(method == "entities" ? "entities_changed" : "title_changed"); }
@@ -133,5 +139,26 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
     {
         var ack = result.Deserialize(EngineSocketJson.Default.HandoffAck) ?? throw new IOException("Invalid handoff acknowledgment");
         return ack.Identity == identity ? ack : throw new IOException("Handoff acknowledgment identity changed");
+    }
+
+    // One fixed host-derived read; public project IDs are never reinterpreted as owner paths or IDs.
+    internal Task<JsonElement> WorkflowDefinitionsAtRootAsync(RemoteConnections.ProjectOwner owner,
+        WorkflowDefinitionsAtRootArgs args, CancellationToken ct)
+    {
+        if (args.Machine != owner.Engine) throw new ArgumentException("wrong_machine", nameof(args));
+        return CallAsync(owner.Engine, "workflow", "definitions_at_root",
+            JsonSerializer.SerializeToElement(args, WorkflowReadCallsJson.Default.WorkflowDefinitionsAtRootArgs), true, ct,
+            expectedConnection: owner.Socket, expectedOwner: owner.Binding);
+    }
+}
+
+/// <summary>Only a named read registered on its actual channel may cross the machine read door.</summary>
+internal static class MachineReads
+{
+    internal static bool AllowRead(ICallRegistry registry, string feature, string method, bool bulk)
+    {
+        var expected = GitCallKinds.KindOf(method);
+        return feature == "git" && expected == (bulk ? CallKind.BulkRead : CallKind.Read) &&
+            registry.KindOf(feature, method) == expected;
     }
 }

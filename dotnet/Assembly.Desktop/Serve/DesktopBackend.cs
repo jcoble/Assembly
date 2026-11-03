@@ -48,6 +48,9 @@ using Assembly.Infrastructure.Clock;
 using Assembly.Application.Features.Terminal;
 using Assembly.Infrastructure.Terminal;
 using Assembly.Infrastructure.Updates;
+using Assembly.Infrastructure.Git;
+using Assembly.Infrastructure.Projects;
+using Assembly.Application.Features.Chat.SourceControl.PullRequests;
 
 namespace Assembly.Desktop.Serve;
 
@@ -78,11 +81,15 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly MachinesFeature _machinesFeature;
     private readonly TerminalHost _terminals;
     private readonly HttpClient _cliHttp;
+    private readonly GitOperations _gitOperations;
+    private readonly ProviderRuntimeSubscriptions _providerRuntimeSubscriptions;
 
     private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteConnections connections,
-        WebApplication app, TurnActivity activity, MachinesFeature machinesFeature, TerminalHost terminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop, Func<Task> beginStop, NeedAnswers answers, EngineHelperCards helperCards, MachineCalls ownerMachineCalls, MachineRelay relay, HttpClient cliHttp)
+        WebApplication app, TurnActivity activity, MachinesFeature machinesFeature, TerminalHost terminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop, Func<Task> beginStop, NeedAnswers answers, EngineHelperCards helperCards, MachineCalls ownerMachineCalls, MachineRelay relay, HttpClient cliHttp, GitOperations gitOperations, ProviderRuntimeSubscriptions providerRuntimeSubscriptions)
     {
         _cliHttp = cliHttp;
+        _gitOperations = gitOperations;
+        _providerRuntimeSubscriptions = providerRuntimeSubscriptions;
         _beginStop = beginStop;
         _answers = answers;
         _helperCards = helperCards;
@@ -121,7 +128,7 @@ public sealed class DesktopBackend : IAsyncDisposable
     /// </summary>
     public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null,
         RemoteTunnel? tunnel = null, (string Claude, string Codex)? utilityClis = null, SavedMachine? savedRemote = null,
-        IEngineEffects? engineEffects = null, Action<EngineRuntime>? engineStarted = null)
+        IEngineEffects? engineEffects = null, Action<EngineRuntime>? engineStarted = null, AgentsFile? agentsFile = null)
     {
         Directory.CreateDirectory(home);
         // Before the database opens, so a second backend on this home writes nothing into the live one's; released if
@@ -129,7 +136,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         var homeLock = HomeLock.Take(home);
         try
         {
-            return await StartAsync(homeLock, home, token, port, launcher, log, remote, tunnel, utilityClis, savedRemote, engineEffects, engineStarted);
+            return await StartAsync(homeLock, home, token, port, launcher, log, remote, tunnel, utilityClis, savedRemote, engineEffects, engineStarted, agentsFile);
         }
         catch
         {
@@ -140,7 +147,7 @@ public sealed class DesktopBackend : IAsyncDisposable
 
     private static async Task<DesktopBackend> StartAsync(FileStream homeLock, string home, string token, int port, IAgentLauncher launcher, TextWriter log,
         RemoteConfig? remote, RemoteTunnel? tunnel, (string Claude, string Codex)? utilityClis, SavedMachine? savedRemote,
-        IEngineEffects? engineEffects, Action<EngineRuntime>? engineStarted)
+        IEngineEffects? engineEffects, Action<EngineRuntime>? engineStarted, AgentsFile? agentsFile)
     {
         var database = Path.Combine(home, "assembly.db");
         var topics = new Topics();
@@ -163,6 +170,8 @@ public sealed class DesktopBackend : IAsyncDisposable
         MachineCalls? ownerMachineCalls = null;
         MachineRelay? relay = null;
         HttpClient? cliHttp = null;
+        GitOperations? gitOperations = null;
+        ProviderRuntimeSubscriptions? providerRuntimeSubscriptions = null;
         var activity = new TurnActivity();
         var tokens = new McpTokens();
         var endpoint = new McpEndpointReady(tokens);
@@ -198,7 +207,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             // Filled before recovery, whose closing rows go through the hub and so update it.
             var summaries = SessionSummaries.Load(store);
             var sessionStore = SessionStore.Open(db, TimeProvider.System, checkouts, summaries);
-            _ = new ProjectStore(db, TimeProvider.System);
+            var projectStore = new ProjectStore(db, TimeProvider.System);
             // App Nap is held while any session has a run open, here or on a remote.
             hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: session =>
             {
@@ -238,6 +247,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                 cutover: cutover,
                 effectsFactory: runtime =>
                 {
+                    agentsFile?.BindOwner(runtime.Machine, topics);
                     sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work,
                         titler: utilityClis is { } clis
                             ? new SessionTitler(sessionStore, store, new CliUtilityModel(clis.Claude, clis.Codex, () => preferences.Read("utilityModel"), TimeProvider.System, log))
@@ -329,17 +339,34 @@ public sealed class DesktopBackend : IAsyncDisposable
             cliHttp = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
             var cliUpdates = new UpdateCalls(launcher, engine.Machine, cliHttp, TimeProvider.System, hostStop.Token,
                 (machine, ct) => connections.CliLocator(db, machine, ct), new RemoteCliClient(cliHttp, TimeProvider.System));
+            var git = new GitCli();
+            var gh = new GhCli();
+            var checkoutWrites = new CheckoutWrites();
+            gitOperations = new GitOperations(work, topics, TimeProvider.System, engine.Machine);
+            var patches = new GitTextPatch(git);
+            var prReader = new PullRequestReader(git, gh, home, patches);
+            var prWriter = new PullRequestWriter(git, gh, prReader);
+            var sessionGit = new GitSessionOperations(sessionStore, git, prWriter, checkoutWrites, gitOperations);
+            var localFolders = new LocalProjectFolders(git);
+            var projectWriter = new GitWriter(git);
+            var projectFolders = new ProjectFolderCreation(localFolders, projectWriter, checkoutWrites, gitOperations);
+            var projectCoordinator = new NewProjectCoordinator(projectStore, db, localFolders, projectWriter, checkoutWrites, gitOperations, connections);
+            providerRuntimeSubscriptions = new ProviderRuntimeSubscriptions(topics, connections.CaptureMirrorOwners);
+            var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, machineForward, connections);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
-                [cliUpdates, new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(db, sessionStore, machines, connections)), new SessionsFeature(sessionStore, machines),
+                [cliUpdates, new ProviderRuntimeCalls(engine.Machine, agentsFile, machineForward, providerRuntimeSubscriptions), new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward, project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore, connections: connections), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(db, sessionStore, machines, connections)), new SessionsFeature(sessionStore, machines, new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(db, sessionStore, machines, connections)),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(home, "staging", "attachments")),
                     new FilesFeature(sessionStore, new FileOwner(sessionStore, db)),
                     new Assembly.Application.Features.Workspaces.WorkspacesFeature(new Assembly.Application.Features.Workspaces.WorkspaceStore(db, TimeProvider.System)),
                     new WorktreesFeature(sessionStore),
-                    new SourceControlFeature(sessionStore)], board, Engine: engine), port, out _);
+                    gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes),
+                    new PullRequestsFeature(sessionStore, prReader, gitRoutes), new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes, projectCoordinator),
+                    new FoldersFeature(localFolders), new ProjectsFeature(projectStore,
+                        name => name == "local" ? localFolders : new RemoteProjectFolders(connections, name), db)], board, Engine: engine), port, out _);
             app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });
             await app.StartAsync();
-            var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp);
+            var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp, gitOperations, providerRuntimeSubscriptions);
             endpoint.Listening(backend.Address);
             relay.Start();
             return backend;
@@ -359,6 +386,8 @@ public sealed class DesktopBackend : IAsyncDisposable
             if (boardMachines is not null) topics.Unsubscribe(boardMachines);
             if (boardMirror is not null) await boardMirror.DisposeAsync();
             if (board is not null) await board.DisposeAsync();
+            if (gitOperations is not null) await gitOperations.DisposeAsync();
+            if (providerRuntimeSubscriptions is not null) await providerRuntimeSubscriptions.DisposeAsync();
             if (connections is not null) await connections.DisposeAsync();
             if (machinesFeature is not null) await machinesFeature.DisposeAsync();
             if (terminals is not null) await terminals.DisposeAsync();
@@ -402,8 +431,10 @@ public sealed class DesktopBackend : IAsyncDisposable
         if (_boardMachines is not null) _topics.Unsubscribe(_boardMachines);
         if (_boardMirror is not null) await _boardMirror.DisposeAsync();
         await _board.DisposeAsync();
+        await _gitOperations.DisposeAsync();
         _hostStop.Dispose();
         // Before the remote, so no probe is still out on it.
+        await _providerRuntimeSubscriptions.DisposeAsync();
         await _connections.DisposeAsync();
         await _machinesFeature.DisposeAsync();
         await _terminals.DisposeAsync();

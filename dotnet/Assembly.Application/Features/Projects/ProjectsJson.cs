@@ -4,6 +4,8 @@ namespace Assembly.Application.Features.Projects;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(ProjectListArgs))]
+[JsonSerializable(typeof(ProjectMachineArgs))]
+[JsonSerializable(typeof(ProjectRecentParent))]
 [JsonSerializable(typeof(ProjectPathArgs))]
 [JsonSerializable(typeof(ProjectIdArgs))]
 [JsonSerializable(typeof(ProjectRefsArgs))]

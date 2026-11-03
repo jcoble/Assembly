@@ -5,14 +5,16 @@
 
 use std::collections::HashMap;
 
-use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
-use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::json;
+
+#[path = "files_pane_actions.rs"]
+mod actions;
+#[path = "files_pane_render.rs"]
+mod render;
+#[path = "files_pane_workspace.rs"]
+mod workspace;
 
 use super::entry::{FileListing, ObservedRoot, PageCursor};
 use super::file_tree::{FileTree, Row};
@@ -42,14 +44,26 @@ pub struct FilesPane {
     lease: Option<String>,
     observing: Option<Task<()>>,
     pub(super) selected: Option<String>,
+    revealing: Option<String>,
+    workspace_key: Option<crate::core::state::workspace_panes::WorkspaceKey>,
+    workspace_checked: bool,
+    restoring_tree: Option<workspace::TreeRestore>,
     /// Each folder's load, by folder; dropping one cancels its call.
     pub(super) loads: HashMap<String, Task<()>>,
     list: UniformListScrollHandle,
+    action_event: Option<Subscription>,
+    action_loading: Option<Task<()>>,
+    action_error: Option<String>,
     _heard: Subscription,
 }
 
 impl FilesPane {
     pub fn register(cx: &mut App) {
+        crate::core::state::workspace_panes::WorkspacePanes::register(
+            Box::new(super::tree_codec::TreeCodec),
+            cx,
+        )
+        .expect("one tree codec registration");
         register_panel(cx, FILES, |_, _, cx| panel_handle(cx.new(FilesPane::new)));
     }
 
@@ -67,8 +81,15 @@ impl FilesPane {
             lease: None,
             observing: None,
             selected: None,
+            revealing: None,
+            workspace_key: None,
+            workspace_checked: false,
+            restoring_tree: None,
             loads: HashMap::new(),
             list: UniformListScrollHandle::new(),
+            action_event: None,
+            action_loading: None,
+            action_error: None,
             _heard: heard,
         };
         pane.follow(cx);
@@ -85,11 +106,17 @@ impl FilesPane {
             return;
         }
         self.release_watch(cx);
+        self.action_loading = None;
+        self.action_error = None;
         self.generation = self.generation.wrapping_add(1);
         self.session = session;
+        self.workspace_key = None;
+        self.workspace_checked = false;
+        self.restoring_tree = None;
         self.tree = FileTree::default();
         self.loads.clear();
         self.selected = None;
+        self.revealing = None;
         self.started = false;
         self.start(cx);
         cx.notify();
@@ -97,6 +124,15 @@ impl FilesPane {
 
     fn start(&mut self, cx: &mut Context<Self>) {
         if !self.shown || self.session.is_none() {
+            return;
+        }
+        if crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::try_global(cx)
+            .is_some()
+            && crate::core::state::workspace_panes::WorkspacePanes::key(cx).is_none()
+        {
+            return;
+        }
+        if !self.validate_workspace_owner(cx) {
             return;
         }
         if self.lease.is_none() {
@@ -214,10 +250,87 @@ impl FilesPane {
                     }
                 };
                 pane.tree.loaded(&at, answer);
+                pane.continue_reveal(cx);
+                pane.continue_workspace_tree(cx);
                 cx.notify();
             });
         });
         self.loads.insert(dir, task);
+    }
+
+    pub fn reveal_folder(session: &str, path: &str, window: &mut Window, cx: &mut App) {
+        use crate::core::ui::center_panes::CenterPanes;
+        use gpui_kit::component::dock::{DockPlacement, PaneRef, PanelHandle};
+        if SelectedSession::global(cx).read(cx).session_id() != Some(session) {
+            return;
+        }
+        let Some(dock) = CenterPanes::dock(cx) else {
+            return;
+        };
+        let mut found = None;
+        for placement in [
+            DockPlacement::Left,
+            DockPlacement::Center,
+            DockPlacement::Right,
+            DockPlacement::Bottom,
+        ] {
+            if let Some(tree) = dock.read(cx).layout(placement) {
+                tree.root().walk(&mut |node| {
+                    if let PaneRef::Tabs { panels, .. } = node.kind() {
+                        for id in panels {
+                            if let Some(panel) = dock.read(cx).panel(*id)
+                                && let Some(handle) = PanelHandle::of(panel)
+                                && let Ok(view) = handle.view().downcast::<Self>()
+                            {
+                                found = Some((*id, placement, view));
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        let Some((id, placement, view)) = found else {
+            return;
+        };
+        view.update(cx, |pane, cx| {
+            pane.revealing = Some(path.to_string());
+            pane.continue_reveal(cx);
+        });
+        dock.update(cx, |dock, cx| {
+            dock.select_panel(id, window, cx);
+            if placement != DockPlacement::Center && !dock.is_dock_open(placement) {
+                dock.toggle_dock(placement, window, cx);
+            }
+        });
+    }
+
+    fn continue_reveal(&mut self, cx: &mut Context<Self>) {
+        use super::file_tree::RevealStep;
+        let Some(path) = self.revealing.clone() else {
+            return;
+        };
+        if !self.shown || !self.started {
+            return;
+        }
+        match self.tree.reveal(&path) {
+            RevealStep::Load { dir, cursor } => self.load(dir, cursor, cx),
+            RevealStep::Waiting => {}
+            RevealStep::Ready => {
+                self.selected = Some(path.clone());
+                self.revealing = None;
+                if let Some(ix) =
+                    self.tree.rows().iter().position(
+                        |row| matches!(row, Row::Entry { entry, .. } if entry.path == path),
+                    )
+                {
+                    self.list.scroll_to_item(ix, ScrollStrategy::Center);
+                }
+            }
+            RevealStep::Missing => {
+                self.revealing = None;
+            }
+        }
+        cx.notify();
     }
 
     /// A click on a row selects it, and opens or closes a folder.
@@ -233,106 +346,55 @@ impl FilesPane {
             }
         }
         self.selected = Some(path);
+        self.restoring_tree = None;
+        crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
         cx.notify();
     }
 
-    fn row(&self, row: Row<'_>, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
-        let (muted, danger) = (theme.muted_foreground, theme.danger);
-        let line = |depth: usize| {
-            h_flex()
-                .h(TREE_LINE)
-                .pl(px(8.) + INDENT * depth as f32)
-                .pr_2()
-                .gap_1()
-                .text_size(TREE_TEXT)
-                .line_height(TREE_LINE)
-                .whitespace_nowrap()
-                .overflow_hidden()
-        };
-        match row {
-            Row::Entry { entry, depth, open } => {
-                let picked = self.selected.as_deref() == Some(entry.path.as_str());
-                let (path, folder) = (entry.path.clone(), entry.is_directory);
-                let full_path = path.clone();
-                let (accent, secondary, foreground) =
-                    (theme.accent, theme.secondary, theme.foreground);
-                let glyph = match (folder, open) {
-                    (true, true) => IconName::FolderOpen,
-                    (true, false) => IconName::Folder,
-                    _ => IconName::File,
-                };
-                line(depth)
-                    .id(ix)
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .text_color(if entry.excluded { muted } else { foreground })
-                    .when(picked, |row| row.bg(secondary))
-                    .when(!picked, |row| row.hover(|row| row.bg(accent)))
-                    .child(div().w(px(12.)).flex_none().when(folder, |chevron| {
-                        chevron.child(
-                            Icon::new(if open {
-                                IconName::ChevronDown
-                            } else {
-                                IconName::ChevronRight
-                            })
-                            .size(px(12.))
-                            .text_color(muted),
-                        )
-                    }))
-                    .child(Icon::new(glyph).size(px(14.)).text_color(muted))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .child(entry.name.clone()),
-                    )
-                    .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
-                    .on_click(cx.listener(move |pane, event: &ClickEvent, window, cx| {
-                        pane.clicked(path.clone(), folder, cx);
-                        if let (false, Some(session)) = (folder, pane.session.clone()) {
-                            FileView::open_at(
-                                session,
-                                path.clone(),
-                                None,
-                                None,
-                                event.click_count() > 1,
-                                window,
-                                cx,
-                            );
-                        }
-                    }))
-                    .into_any_element()
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event.keystroke.key.as_str() {
+            "up" | "down" => {
+                if let Some((path, _, ix)) = self.tree.adjacent(
+                    self.selected.as_deref(),
+                    if event.keystroke.key == "up" { -1 } else { 1 },
+                ) {
+                    self.selected = Some(path);
+                    self.list.scroll_to_item(ix, ScrollStrategy::Center);
+                }
             }
-            Row::Loading { depth } => line(depth)
-                .text_color(muted)
-                .child("Loading…")
-                .into_any_element(),
-            Row::Failed { depth, message } => line(depth)
-                .text_color(danger)
-                .child(
-                    div()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .child(message.to_string()),
-                )
-                .into_any_element(),
-            Row::Truncated { depth, dir } => {
-                let dir = dir.to_owned();
-                line(depth)
-                    .id(ix)
-                    .text_color(muted)
-                    .cursor_pointer()
-                    .child("Load more")
-                    .on_click(cx.listener(move |pane, _, _, cx| {
-                        if let Some(cursor) = pane.tree.more(&dir) {
-                            pane.load(dir.clone(), Some(cursor), cx);
-                        }
-                    }))
-                    .into_any_element()
+            "enter" | "right" => {
+                if let Some(path) = self.selected.clone()
+                    && let Some((folder, open)) = self.tree.entry_state(&path)
+                {
+                    if folder && !open {
+                        self.clicked(path, true, cx);
+                    } else if !folder
+                        && event.keystroke.key == "enter"
+                        && let Some(session) = &self.session
+                    {
+                        FileView::open_at(session.clone(), path, None, None, true, window, cx);
+                    }
+                }
             }
+            "left" => {
+                if let Some(path) = self.selected.clone() {
+                    if self.tree.entry_state(&path) == Some((true, true)) {
+                        self.clicked(path, true, cx);
+                    } else if let Some((parent, _)) = path.rsplit_once('/') {
+                        self.selected = Some(parent.to_string());
+                    }
+                }
+            }
+            "f2" => {
+                if let Some(path) = self.selected.clone() {
+                    self.open_action("rename", path, None, None, window, cx);
+                }
+            }
+            _ => return,
         }
+        crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
+        cx.stop_propagation();
+        cx.notify();
     }
 }
 
@@ -358,12 +420,15 @@ impl BasePanel for FilesPane {
     fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
         self.shown = active;
         if !active {
+            self.workspace_checked = false;
             self.generation = self.generation.wrapping_add(1);
             self.loads.clear();
             self.release_watch(cx);
+            self.action_loading = None;
             self.started = false;
         } else {
             self.start(cx);
+            self.continue_reveal(cx);
         }
         cx.notify();
     }
@@ -372,78 +437,5 @@ impl BasePanel for FilesPane {
 impl Panel for FilesPane {
     fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         FILES
-    }
-}
-
-impl Render for FilesPane {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let muted = cx.theme().muted_foreground;
-        let pane = v_flex().track_focus(&self.focus).size_full();
-        if self.session.is_none() {
-            return pane.child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .text_sm()
-                    .text_color(muted)
-                    .child("Pick a session to see its files."),
-            );
-        }
-        let count = self.tree.rows().len();
-        pane.child(
-            h_flex()
-                .px_2()
-                .py_1()
-                .gap_1()
-                .child(
-                    Button::new("files-excluded")
-                        .ghost()
-                        .label(if self.include_excluded {
-                            "Hide excluded"
-                        } else {
-                            "Show excluded"
-                        })
-                        .on_click(cx.listener(|pane, _, _, cx| {
-                            pane.include_excluded = !pane.include_excluded;
-                            pane.refresh(cx);
-                        })),
-                )
-                .child(
-                    Button::new("files-sort")
-                        .ghost()
-                        .label(if self.descending { "Z–A" } else { "A–Z" })
-                        .on_click(cx.listener(|pane, _, _, cx| {
-                            pane.descending = !pane.descending;
-                            pane.refresh(cx);
-                        })),
-                )
-                .child(
-                    Button::new("files-refresh")
-                        .ghost()
-                        .label("Refresh")
-                        .on_click(cx.listener(|pane, _, _, cx| pane.refresh(cx))),
-                ),
-        )
-        .child(
-            uniform_list(
-                "files",
-                count,
-                cx.processor(|pane, range: std::ops::Range<usize>, _window, cx| {
-                    let pane = &*pane;
-                    pane.tree
-                        .rows()
-                        .into_iter()
-                        .enumerate()
-                        .skip(range.start)
-                        .take(range.len())
-                        .map(|(ix, row)| pane.row(row, ix, cx))
-                        .collect()
-                }),
-            )
-            .track_scroll(&self.list)
-            .flex_1()
-            .px_1()
-            .py_1(),
-        )
     }
 }

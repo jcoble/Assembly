@@ -2,9 +2,16 @@
 //! from `git/status`, read only while the tab is shown (`SessionRead`, scm#12). The files are in Staged, Changes and
 //! Untracked, each with its letter (scm#10). Picking a file opens its diff, and Branch diff opens the branch's diff
 //! against its base (scm#13, scm#18). Replaces SourceControlPanel.svelte's status lists. Staging, commits and
-//! branches aren't ported yet.
+//! branches use the shared Git producers.
 
+use super::git_action::GitAction;
+use super::sync_controls::{SyncCompleted, SyncControls};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use serde_json::json;
+#[path = "source_control_actions.rs"]
+mod actions;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -12,6 +19,7 @@ use gpui_kit::*;
 
 use super::commit_timeline::CommitTimeline;
 use super::git_status::{GitStatus, Section};
+use super::pull_requests::pr_section::PrSection;
 use crate::core::intents::open_branch_diff::OpenBranchDiff;
 use crate::core::intents::open_diff::OpenDiff;
 use crate::core::intents::open_git_history::OpenGitHistory;
@@ -24,38 +32,151 @@ pub struct SourceControlPane {
     focus: FocusHandle,
     read: Entity<SessionRead<GitStatus>>,
     _heard: Subscription,
+    _activation: Subscription,
+    window_active: bool,
     active: bool,
+    pull_requests: Option<(String, Entity<PrSection>)>,
+    sync: Option<(String, Entity<SyncControls>, Subscription)>,
     history_open: bool,
     history: Option<(String, Entity<CommitTimeline>)>,
+    message: Entity<InputState>,
+    amend: bool,
+    action: Entity<GitAction>,
+    action_revision: u64,
+    edit_revision: u64,
+    submitted_revision: Option<u64>,
+    _action_heard: Subscription,
+    _message_heard: Subscription,
 }
 
 impl SourceControlPane {
     /// Registers the pane under the drawer's Source control name, after the placeholders, since the last registration
     /// wins.
     pub fn register(cx: &mut App) {
-        register_panel(cx, SOURCE_CONTROL, |_, _, cx| {
-            panel_handle(cx.new(SourceControlPane::new))
+        register_panel(cx, SOURCE_CONTROL, |_, window, cx| {
+            panel_handle(cx.new(|cx| SourceControlPane::new(window, cx)))
         });
     }
 
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        let read = cx.new(|cx| SessionRead::new("git", "status", cx));
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let read = cx.new(|cx| {
+            let mut read = SessionRead::new("git", "status", cx);
+            read.refresh_on_settle(cx);
+            read
+        });
+        let activation = cx.observe_window_activation(window, |pane: &mut Self, window, cx| {
+            let active = window.is_window_active();
+            let regained = active && !pane.window_active;
+            pane.window_active = active;
+            if regained && pane.active {
+                pane.read.update(cx, |read, cx| read.refresh(cx));
+            }
+        });
         let heard = cx.observe(&read, |pane: &mut Self, _, cx| {
             pane.sync_history(cx);
             cx.notify();
         });
+        let message =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Message (⌘Enter to commit)"));
+        let action = cx.new(|_| GitAction::default());
+        let handle = window.window_handle();
+        let action_heard = cx.observe(&action, move |pane: &mut Self, _, cx| {
+            let action = pane.action.read(cx);
+            let completed = action.completed;
+            let succeeded = action.succeeded;
+            let session = action.session.clone();
+            if completed > pane.action_revision {
+                pane.action_revision = completed;
+                if session.as_deref() == pane.read.read(cx).session() {
+                    pane.read.update(cx, |read, cx| read.refresh(cx));
+                    if let Some((_, timeline)) = &pane.history {
+                        timeline.update(cx, |timeline, cx| timeline.refresh(cx));
+                    }
+                    if succeeded && pane.submitted_revision == Some(pane.edit_revision) {
+                        let input = pane.message.clone();
+                        cx.defer(move |cx| {
+                            _ = handle.update(cx, |_, window, cx| {
+                                input.update(cx, |input, cx| input.set_value("", window, cx))
+                            });
+                        });
+                    }
+                }
+                pane.submitted_revision = None;
+            }
+            cx.notify();
+        });
+        let message_window = window.window_handle();
+        let message_heard = cx.subscribe(
+            &message,
+            move |pane: &mut Self, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    pane.edit_revision += 1;
+                    cx.notify();
+                }
+                if matches!(
+                    event,
+                    InputEvent::PressEnter {
+                        secondary: true,
+                        ..
+                    }
+                ) {
+                    let pane = cx.entity().downgrade();
+                    cx.defer(move |cx| {
+                        _ = message_window.update(cx, |_, window, cx| {
+                            pane.update(cx, |pane, cx| pane.commit(window, cx))
+                        });
+                    });
+                }
+            },
+        );
         Self {
             focus: cx.focus_handle(),
             read,
             _heard: heard,
+            _activation: activation,
+            window_active: window.is_window_active(),
             active: false,
+            pull_requests: None,
+            sync: None,
             history_open: false,
             history: None,
+            message,
+            amend: false,
+            action,
+            action_revision: 0,
+            edit_revision: 0,
+            submitted_revision: None,
+            _action_heard: action_heard,
+            _message_heard: message_heard,
         }
     }
 
     fn sync_history(&mut self, cx: &mut Context<Self>) {
         let session = self.read.read(cx).session().map(String::from);
+        if self.sync.as_ref().map(|(session, _, _)| session) != session.as_ref() {
+            self.sync = session.as_ref().map(|session| {
+                let controls = cx.new(|cx| SyncControls::new(session.clone(), self.active, cx));
+                let heard = cx.subscribe(&controls, |pane, _, _: &SyncCompleted, cx| {
+                    pane.read.update(cx, |read, cx| read.refresh(cx))
+                });
+                (session.clone(), controls, heard)
+            });
+        }
+        if let Some((_, controls, _)) = &self.sync {
+            let status = match self.read.read(cx).shown() {
+                Shown::Read(status) => Some(status.clone()),
+                _ => None,
+            };
+            controls.update(cx, |controls, cx| controls.set_status(status, cx));
+        }
+        if self.pull_requests.as_ref().map(|(session, _)| session) != session.as_ref() {
+            self.pull_requests = session.as_ref().map(|session| {
+                (
+                    session.clone(),
+                    cx.new(|cx| PrSection::new(session.clone(), self.active, cx)),
+                )
+            });
+        }
         if self.history.as_ref().map(|(session, _)| session) != session.as_ref() {
             self.history = None;
             if self.history_open {
@@ -82,7 +203,13 @@ impl SourceControlPane {
 }
 
 /// The lists, each under its name and count; an empty one is left out. Picking a file opens its diff (scm#13).
-fn lists(status: &GitStatus, session: &str, cx: &App) -> Div {
+fn lists(
+    status: &GitStatus,
+    session: &str,
+    pane: WeakEntity<SourceControlPane>,
+    busy: bool,
+    cx: &App,
+) -> Div {
     let theme = cx.theme();
     let muted = theme.muted_foreground;
     v_flex()
@@ -111,6 +238,32 @@ fn lists(status: &GitStatus, session: &str, cx: &App) -> Div {
                     path: file.path.clone(),
                     original_path: file.original_path.clone(),
                 };
+                let stage_target = pane.clone();
+                let discard_target = pane.clone();
+                let staged = section == Section::Staged;
+                let method = if staged { "unstage" } else { "stage" };
+                let args = json!({"session":session,"paths":[file.path.clone()]});
+                let discarded = file.clone();
+                let action = Button::new(SharedString::from(format!(
+                    "{method}:{}:{}",
+                    section.label(),
+                    file.path
+                )))
+                .ghost()
+                .compact()
+                .label(if staged {
+                    "Unstage"
+                } else if letter == '!' {
+                    "Mark resolved"
+                } else {
+                    "Stage"
+                })
+                .disabled(busy)
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    _ = stage_target
+                        .update(cx, |pane, cx| pane.start_write(method, args.clone(), cx));
+                });
                 h_flex()
                     .id(SharedString::from(format!(
                         "{}:{}",
@@ -134,7 +287,29 @@ fn lists(status: &GitStatus, session: &str, cx: &App) -> Div {
                             .text_color(color)
                             .child(letter.to_string()),
                     )
-                    .child(div().min_w_0().truncate().child(file.label()))
+                    .child(div().flex_1().min_w_0().truncate().child(file.label()))
+                    .child(action)
+                    .when(!staged && letter != '!', |row| {
+                        row.child(
+                            Button::new(SharedString::from(format!("discard:{}", file.path)))
+                                .ghost()
+                                .compact()
+                                .label("Discard")
+                                .disabled(busy)
+                                .on_click(move |_, window, cx| {
+                                    cx.stop_propagation();
+                                    _ = discard_target.update(cx, |pane, cx| {
+                                        pane.ask_discard(
+                                            vec![discarded.clone()],
+                                            None,
+                                            0,
+                                            window,
+                                            cx,
+                                        )
+                                    });
+                                }),
+                        )
+                    })
             });
             Some(v_flex().child(heading).children(rows))
         }))
@@ -161,6 +336,12 @@ impl BasePanel for SourceControlPane {
     fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
         self.active = active;
         self.read.update(cx, |read, cx| read.set_active(active, cx));
+        if let Some((_, controls, _)) = &self.sync {
+            controls.update(cx, |controls, cx| controls.set_active(active, cx));
+        }
+        if let Some((_, section)) = &self.pull_requests {
+            section.update(cx, |section, cx| section.set_active(active, cx));
+        }
         if let Some((_, timeline)) = &self.history {
             timeline.update(cx, |timeline, cx| {
                 timeline.set_active(active && self.history_open, cx)
@@ -175,138 +356,9 @@ impl Panel for SourceControlPane {
     }
 }
 
-impl Render for SourceControlPane {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (muted, danger) = (theme.muted_foreground, theme.danger);
-        let line = |text: String| div().px_3().text_sm().text_color(muted).child(text);
-        let (shown, reading, session) = {
-            let read = self.read.read(cx);
-            let session = read.session().unwrap_or_default().to_string();
-            (read.shown().clone(), read.reading(), session)
-        };
-        let header = h_flex()
-            .px_3()
-            .py_2()
-            .gap_2()
-            .justify_between()
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(SOURCE_CONTROL),
-            )
-            .child(
-                Button::new("source-control-refresh")
-                    .ghost()
-                    .compact()
-                    .label(if reading { "Reading…" } else { "Refresh" })
-                    .disabled(reading || shown == Shown::NoSession)
-                    .on_click(cx.listener(|pane, _, _, cx| {
-                        pane.read.update(cx, |read, cx| read.refresh(cx))
-                    })),
-            );
-        let body = match shown {
-            Shown::NoSession => {
-                line("Pick a session to see its project's changes.".into()).into_any_element()
-            }
-            Shown::Reading => line("Reading the changes…".into()).into_any_element(),
-            Shown::Failed(message) => v_flex()
-                .px_3()
-                .gap_2()
-                .items_start()
-                .child(div().text_sm().text_color(danger).child(message))
-                .child(
-                    Button::new("source-control-retry")
-                        .ghost()
-                        .compact()
-                        .label("Try again")
-                        .on_click(cx.listener(|pane, _, _, cx| {
-                            pane.read.update(cx, |read, cx| read.refresh(cx))
-                        })),
-                )
-                .into_any_element(),
-            Shown::Read(status) => div()
-                .id("source-control")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .px_1()
-                .child(
-                    h_flex()
-                        .px_2()
-                        .pb_2()
-                        .gap_2()
-                        .justify_between()
-                        .child(
-                            div()
-                                .min_w_0()
-                                .text_sm()
-                                .truncate()
-                                .child(status.branch_line()),
-                        )
-                        .child({
-                            let open = OpenBranchDiff {
-                                session_id: session.clone(),
-                            };
-                            Button::new("source-control-branch-diff")
-                                .ghost()
-                                .compact()
-                                .label("Branch diff")
-                                .on_click(move |_, window, cx| {
-                                    window.dispatch_action(Box::new(open.clone()), cx)
-                                })
-                        }),
-                )
-                .map(|pane| {
-                    if status.files.is_empty() {
-                        return pane.child(line("No changes.".into()));
-                    }
-                    pane.child(lists(&status, &session, cx))
-                })
-                .when_some(status.more_line(), |pane, more| pane.child(line(more)))
-                .into_any_element(),
-        };
-        let open_history = OpenGitHistory {
-            session_id: session,
-            path: None,
-        };
-        let history = v_flex()
-            .child(
-                h_flex()
-                    .px_2()
-                    .gap_2()
-                    .child(
-                        Button::new("history-section")
-                            .ghost()
-                            .compact()
-                            .label(if self.history_open {
-                                "▾ History"
-                            } else {
-                                "▸ History"
-                            })
-                            .on_click(cx.listener(|pane, _, _, cx| pane.toggle_history(cx))),
-                    )
-                    .child(
-                        Button::new("open-git-history")
-                            .ghost()
-                            .compact()
-                            .label("Open history")
-                            .disabled(open_history.session_id.is_empty())
-                            .on_click(move |_, window, cx| {
-                                window.dispatch_action(Box::new(open_history.clone()), cx)
-                            }),
-                    ),
-            )
-            .when(self.history_open, |section| match &self.history {
-                Some((_, timeline)) => section.child(div().h(px(240.)).child(timeline.clone())),
-                None => section.child(line("Pick a session to see its history.".into())),
-            });
-        v_flex()
-            .track_focus(&self.focus)
-            .size_full()
-            .child(header)
-            .child(body)
-            .child(history)
-    }
-}
+#[path = "source_control_pane/render.rs"]
+mod rendering;
+
+#[cfg(test)]
+#[path = "source_refresh_tests.rs"]
+mod refresh_tests;

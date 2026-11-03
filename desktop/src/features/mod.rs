@@ -15,3 +15,4 @@ pub mod terminal;
 pub mod worktrees;
 
 pub mod preview_screen;
+pub mod workspaces;

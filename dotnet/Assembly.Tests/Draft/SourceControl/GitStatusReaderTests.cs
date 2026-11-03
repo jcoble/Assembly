@@ -119,4 +119,19 @@ public sealed class GitStatusReaderTests : IDisposable
     {
         if (Directory.Exists(_temp)) Directory.Delete(_temp, recursive: true);
     }
+
+    [Fact]
+    public async Task The_actual_index_staged_total_survives_the_display_cap_and_returns_zero_after_unstage()
+    {
+        await Init();
+        for (var index = 0; index < 1001; index++) await File.WriteAllTextAsync(Path.Combine(Root, $"file-{index:D4}"), "original");
+        await Git(Root, "add", "."); await Commit("Many files");
+        for (var index = 0; index < 1001; index++) await File.WriteAllTextAsync(Path.Combine(Root, $"file-{index:D4}"), "edited");
+        await Git(Root, "add", "file-1000");
+        var staged = await Read();
+        Assert.Equal(1001, staged.TotalFiles); Assert.Equal(1000, staged.Files.Count); Assert.Equal(1, staged.TotalStaged);
+        Assert.All(staged.Files, file => Assert.Equal('.', file.Index));
+        await Git(Root, "reset", "HEAD", "--", "file-1000");
+        var unstaged = await Read(); Assert.Equal(1001, unstaged.TotalFiles); Assert.Equal(1000, unstaged.Files.Count); Assert.Equal(0, unstaged.TotalStaged);
+    }
 }

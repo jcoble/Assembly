@@ -1,4 +1,5 @@
 using Assembly.Engine.Handoffs;
+using Assembly.Engine.Prs;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Hosting;
@@ -61,7 +62,10 @@ public sealed partial class MachineCalls(EngineRuntime runtime, TimeProvider tim
     {
         if (args.CommandId == Guid.Empty || args.ExpectedVersion < 0 || args.Epoch < 0 || !EntityId(args.EntityId, args.Command))
             return "bad_args";
-        if (args.Command is not (RegisterForeignSession or StartSession or SendMessage or MessageOutcome))
+        if (args.Command is not (RegisterForeignSession or StartSession or SendMessage or MessageOutcome or ApplyPrObservation or PrObservationRecorded))
+            return "forbidden";
+        if (args.Command is ApplyPrObservation apply && (args.FromMachine != apply.OriginMachine || args.EntityId != apply.ObservationId) ||
+            args.Command is PrObservationRecorded ack && (args.FromMachine != ack.CoordinatorMachine || args.EntityId != ack.ObservationId))
             return "forbidden";
         if (args.Command is not StartSession start) return null;
         if (!launcher.Agents.Any(agent => agent.Id == start.Provider)) return "bad_args";

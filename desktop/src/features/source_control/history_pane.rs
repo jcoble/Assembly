@@ -6,7 +6,7 @@ use gpui_kit::component::dock::{
 };
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use serde_json::json;
 use std::collections::HashMap;
@@ -26,9 +26,63 @@ pub struct HistoryPane {
 fn key(session: &str) -> String {
     format!("git-history:{session}")
 }
+gpui_kit::actions!(git_history, [ShowGitHistory]);
 impl HistoryPane {
+    pub fn workspace_key(state: &PanelState, session: &str) -> Result<String, String> {
+        let invalid = || "Invalid saved Git history target.".to_string();
+        if state.panel_name.as_str() != HISTORY {
+            return Err(invalid());
+        }
+        let PanelInfo::Panel(info) = &state.info else {
+            return Err(invalid());
+        };
+        if !info.is_object() || info["session"].as_str() != Some(session) {
+            return Err(invalid());
+        }
+        if let Some(value) = info.get("path").filter(|value| !value.is_null()) {
+            if value
+                .as_str()
+                .is_none_or(|path| path.is_empty() || path.contains('\0'))
+            {
+                return Err(invalid());
+            }
+        }
+        Ok(key(session))
+    }
+
     pub fn register(cx: &mut App) {
         cx.set_global(OpenHistory(HashMap::new()));
+        crate::core::commands::command_registry::CommandRegistry::add(
+            "Git history",
+            Box::new(ShowGitHistory),
+            cx,
+        );
+        cx.on_action(|_: &ShowGitHistory, cx| {
+            let session = crate::core::state::selected_session::SelectedSession::global(cx)
+                .read(cx)
+                .session_id()
+                .map(String::from);
+            if let Some(session_id) = session {
+                if let Some(window) = cx
+                    .active_window()
+                    .or_else(|| cx.windows().into_iter().next())
+                {
+                    cx.defer(move |cx| {
+                        _ = window.update(cx, |_, window, cx| {
+                            Self::open(
+                                OpenGitHistory {
+                                    session_id,
+                                    path: None,
+                                },
+                                window,
+                                cx,
+                            )
+                        });
+                    });
+                }
+            }
+        });
+
         register_panel(cx, HISTORY, |build, window, cx| {
             let saved = match build.state().info.clone() {
                 PanelInfo::Panel(saved) => saved,

@@ -6,9 +6,10 @@ namespace Assembly.Infrastructure.Chat.Files;
 /// <summary>Checkout-contained actions. Copies publish one private staged target; moves never copy/delete across devices.</summary>
 public static class FileActions
 {
-    public static async Task<ActionResult> ExecuteAsync(string root, FileActionArgs args, CancellationToken ct)
+    public static async Task<ActionResult> ExecuteAsync(string root, FileActionArgs args, CancellationToken ct, Action? validateOwner = null)
     {
         ct.ThrowIfCancellationRequested();
+        validateOwner?.Invoke();
         var source = SessionPaths.ResolveFile(root, args.Path);
         var destination = args.Destination is null ? null : SessionPaths.ResolveFile(root, args.Destination);
         var paths = new[] { source, destination }.OfType<string>().Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
@@ -19,12 +20,13 @@ public static class FileActions
             source = SessionPaths.ResolveFile(root, args.Path);
             if (destination is not null) destination = SessionPaths.ResolveFile(root, args.Destination!);
             if (args.Kind is "createFile" or "createFolder")
-                return await CreateAsync(source, args.Path, args.Kind == "createFolder", ct);
+                return await CreateAsync(source, args.Path, args.Kind == "createFolder", ct, validateOwner);
             if (!File.Exists(source) && !Directory.Exists(source)) return Failed("missing", "The source item is missing.");
             if (args.Revision is not null && File.Exists(source) && await FileSave.RevisionAsync(source, ct) != args.Revision)
                 return Failed("revision_changed", "The source file changed on disk.");
             if (args.Kind == "trash")
             {
+                validateOwner?.Invoke();
                 var trashed = await new FileTrash().TrashAsync(source, ct);
                 return trashed with { Path = args.Path };
             }
@@ -37,6 +39,7 @@ public static class FileActions
             if (args.Kind is "rename" or "move")
             {
                 ct.ThrowIfCancellationRequested();
+                validateOwner?.Invoke();
                 var fault = MoveExclusive(source, destination);
                 return fault is null ? new ActionResult("applied", args.Destination, null) : new ActionResult("failed", null, fault);
             }
@@ -48,6 +51,7 @@ public static class FileActions
                 ct.ThrowIfCancellationRequested();
                 SessionPaths.ResolveFile(root, args.Path);
                 SessionPaths.ResolveFile(root, args.Destination!);
+                validateOwner?.Invoke();
                 var fault = MoveExclusive(stage, destination);
                 return fault is null ? new ActionResult("applied", args.Destination, null) : new ActionResult("failed", null, fault);
             }
@@ -56,7 +60,7 @@ public static class FileActions
         finally { for (var i = locks.Count - 1; i >= 0; i--) locks[i].Dispose(); }
     }
 
-    private static async Task<ActionResult> CreateAsync(string target, string relative, bool directory, CancellationToken ct)
+    private static async Task<ActionResult> CreateAsync(string target, string relative, bool directory, CancellationToken ct, Action? validateOwner)
     {
         if (File.Exists(target) || Directory.Exists(target)) return Failed("collision", "The destination already exists.");
         if (!Directory.Exists(Path.GetDirectoryName(target))) return Failed("missing", "The destination folder is missing.");
@@ -66,6 +70,7 @@ public static class FileActions
             if (directory) Directory.CreateDirectory(stage);
             else { await using var file = new FileStream(stage, FileMode.CreateNew, FileAccess.Write, FileShare.None); await file.FlushAsync(ct); }
             ct.ThrowIfCancellationRequested();
+            validateOwner?.Invoke();
             var fault = MoveExclusive(stage, target);
             return fault is null ? new ActionResult("applied", relative, null) : new ActionResult("failed", null, fault);
         }

@@ -5,7 +5,7 @@ using Assembly.Application.Features.Chat.SourceControl;
 namespace Assembly.Infrastructure.Git;
 
 /// <summary>One bounded supplied-version comparison. Git owns differences; temporary files never touch a checkout.</summary>
-public sealed class GitTextPatch(IGit git)
+public sealed class GitTextPatch(IGit git) : IGitTextPatch
 {
     public async Task<GitFileDiff> ReadAsync(string path, string? originalPath, ReadOnlyMemory<byte>? original, ReadOnlyMemory<byte>? modified, CancellationToken ct)
     {
@@ -23,6 +23,8 @@ public sealed class GitTextPatch(IGit git)
         }
         finally { temporary.Delete(true); }
     }
+    void IGitTextPatch.ValidatePath(string path) => ValidatePath(path);
+
     public static void ValidatePath(string path)
     {
         if (string.IsNullOrEmpty(path) || Path.IsPathRooted(path) || path.Contains('\0') || path.Split('/').Any(part => part.Length == 0 || part is "." or ".."))

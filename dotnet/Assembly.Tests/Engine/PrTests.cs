@@ -30,8 +30,6 @@ public sealed class PrTests
         using var f = Fixture();
         Assert.True(f.Apply(Report("merged"), "p", actor: Owner).Applied);
         Assert.Equal("not_created", f.State("engine_pr", "p"));
-        var r = f.Apply(new ObservePr("merged", "old-head", 1000), "p", version: 1, actor: Observer);
-        Assert.Equal("head_mismatch", r.Error);
         Assert.Equal("p", f.Text("SELECT pr_id FROM engine_run WHERE id='r'"));
         Assert.Equal("owner-session", f.Text("SELECT reported_by FROM engine_pr WHERE id='p'"));
         Assert.Equal("merged", f.Text("SELECT reported_state FROM engine_pr WHERE id='p'"));

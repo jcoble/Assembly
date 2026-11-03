@@ -322,12 +322,13 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         var relayLeases = StopRelayLeases();
-        Task[] gitLifetimes;
+        Task[] gitLifetimes, runtimeLifetimes;
         await _socketSend.WaitAsync();
         try
         {
             _ownerStopping = true; InvalidateEngine();
             gitLifetimes = _gitSubscriptions.Values.Select(subscription => subscription.Closed.Task).Concat(_gitCallDrains).ToArray();
+            runtimeLifetimes = _runtimeSubscriptions.Values.Select(subscription => subscription.Closed.Task).ToArray();
         }
         finally { _socketSend.Release(); }
         await Terminals.DisposeAsync();
@@ -337,6 +338,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         await JoinSessionPublications();
         await Task.WhenAll(relayLeases);
         await Task.WhenAll(gitLifetimes);
+        await Task.WhenAll(runtimeLifetimes);
         _bulkSocket?.Dispose();
         await Task.WhenAll(_ownerCancellations);
         _socketStop.Dispose();

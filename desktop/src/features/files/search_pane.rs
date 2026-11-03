@@ -16,6 +16,7 @@ use serde_json::json;
 use super::entry::{ContentMatch, NameMatch, SearchResult};
 use super::file_view::FileView;
 use super::files_pane::{TREE_LINE, TREE_TEXT};
+use crate::core::intents::reveal_file_folder::RevealFileFolder;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::selected_session::SelectedSession;
@@ -269,8 +270,18 @@ impl SearchPane {
             )
             .on_click(cx.listener(move |pane, _, window, cx| {
                 pane.selected = Some(path.clone());
-                if let (false, Some(session)) = (folder_hit, pane.session.clone()) {
-                    FileView::open(session, path.clone(), window, cx);
+                if let Some(session) = pane.session.clone() {
+                    if folder_hit {
+                        window.dispatch_action(
+                            Box::new(RevealFileFolder {
+                                session_id: session,
+                                path: path.clone(),
+                            }),
+                            cx,
+                        );
+                    } else {
+                        FileView::open(session, path.clone(), window, cx);
+                    }
                 }
                 cx.notify();
             }))

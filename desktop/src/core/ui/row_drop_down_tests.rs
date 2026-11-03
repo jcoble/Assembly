@@ -3,7 +3,10 @@ use super::row_drop_down::RowDropDowns;
 use crate::core::theme::grow::GROW;
 use gpui::TestAppContext;
 use gpui_kit::component::v_flex;
-use gpui_kit::*;
+use gpui_kit::{
+    AnyElement, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _,
+    Render, SharedString, Styled as _, Subscription, VisualTestContext, Window, div, px,
+};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 

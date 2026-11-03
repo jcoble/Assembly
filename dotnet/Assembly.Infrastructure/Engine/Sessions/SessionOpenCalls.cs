@@ -15,8 +15,13 @@ internal sealed class SessionOpenCalls(IAppDatabase db, EngineRuntime runtime, S
     private readonly SessionOpenTargets _targets = new(db, sessions);
     private readonly SessionRowSources _sources = new(db, sessions, machines, connections);
 
-    public void Register(ICallRegistry calls) => calls.Read("sessions", "open_target", SessionOpenJson.Default.SessionOpenTarget,
-        SessionOpenJson.Default.SessionOpenTargetRead, ResolveAsync);
+    public void Register(ICallRegistry calls)
+    {
+        calls.Read("sessions", "open_target", SessionOpenJson.Default.SessionOpenTarget,
+            SessionOpenJson.Default.SessionOpenTargetRead, ResolveAsync);
+        calls.Read("sessions", "resolve_source", SessionOpenJson.Default.ResolveSessionSourceArgs,
+            SessionOpenJson.Default.ExpectedSource, new SessionOpenSources(db, runtime, connections).ResolveAsync);
+    }
 
     private async Task<SessionOpenTargetRead> ResolveAsync(SessionOpenTarget target, CallContext call)
     {
@@ -74,4 +79,6 @@ internal sealed class SessionOpenCalls(IAppDatabase db, EngineRuntime runtime, S
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(SessionOpenTarget))]
 [JsonSerializable(typeof(SessionOpenTargetRead))]
+[JsonSerializable(typeof(ResolveSessionSourceArgs))]
+[JsonSerializable(typeof(ExpectedSource))]
 internal sealed partial class SessionOpenJson : JsonSerializerContext;

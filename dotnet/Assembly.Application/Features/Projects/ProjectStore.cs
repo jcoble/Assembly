@@ -24,6 +24,16 @@ public sealed partial class ProjectStore
         new SqlArg("$machine", machine), new SqlArg("$root", rootPath));
     public long Revision(CancellationToken ct) => _db.QueryFirst("SELECT revision FROM projects_meta", r => r.Long(0), ct);
 
+    public string? RecentParent(string machine, CancellationToken ct)
+    {
+        var root = _db.QueryFirst("""
+            SELECT root_path FROM projects
+            WHERE machine=$machine AND removed_at IS NULL AND last_used_at IS NOT NULL
+            ORDER BY last_used_at DESC,created_at,id LIMIT 1
+            """, row => row.Text(0), ct, new SqlArg("$machine", machine));
+        return root is null ? null : Path.GetDirectoryName(root);
+    }
+
     public ProjectPage List(string? filter, string? machine, ProjectCursor? after, int limit, CancellationToken ct)
     {
         if (limit is < 1 or > 100) throw new CallBadArguments("limit must be between 1 and 100.");

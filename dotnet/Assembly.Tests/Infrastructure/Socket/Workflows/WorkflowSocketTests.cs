@@ -47,7 +47,7 @@ public sealed partial class EngineForwardTests
         await Send(bulk, WorkflowReadCall(++id, "run", new { runId = local.Run, hidden = true }));
         Assert.Equal("bad_args", (await Read(bulk)).GetProperty("code").GetString());
         await Send(bulk, WorkflowReadCall(++id, "definitions", new { }));
-        Assert.Equal("not_found", (await Read(bulk)).GetProperty("code").GetString());
+        Assert.Equal("project_required", (await Read(bulk)).GetProperty("code").GetString());
     }
 
     [Fact]

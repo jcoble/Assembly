@@ -35,11 +35,12 @@ public static class EngineSchema
                 VALUES(1,12,$machine,1,0,0);
                 """, new SqlArg("$machine", machine));
             UpgradeNeedPresentation(scope);
+            PrSchemaUpgrade.Apply(scope);
             return new(machine, null);
         }
-        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10 or 11 or 12))
+        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13))
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
-        if (meta.Version is 6 or 7 or 8 or 9 or 10 or 11 or 12)
+        if (meta.Version is 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13)
         {
             projectionSchema?.Invoke(scope);
             if (meta.Version == 6) NeedsMe.RoutedNeedSchemaUpgrade.Apply(scope);
@@ -49,6 +50,7 @@ public static class EngineSchema
             if (meta.Version < 11) WorkflowSchema.Upgrade(scope);
             if (meta.Version < 11) scope.Execute("UPDATE engine_meta SET schema_version=11 WHERE singleton=1");
             if (meta.Version < 12) UpgradeNeedPresentation(scope);
+            if (meta.Version < 13) PrSchemaUpgrade.Apply(scope);
             return new(meta.Machine, meta.Version);
         }
         if (meta.Version == 1)
@@ -71,6 +73,7 @@ public static class EngineSchema
         SessionProjectSchemaUpgrade.Apply(scope);
         WorkflowSchema.Upgrade(scope);
         UpgradeNeedPresentation(scope);
+        PrSchemaUpgrade.Apply(scope);
         return new(meta.Machine, meta.Version);
     }
 

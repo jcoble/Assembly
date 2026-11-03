@@ -8,7 +8,11 @@ public static class GitErrors
 {
     public static CallFailed From(string verb, GitRun run)
     {
-        var text = (string.IsNullOrWhiteSpace(run.Error) ? run.Output : run.Error).Trim();
+        return From(verb, string.IsNullOrWhiteSpace(run.Error) ? run.Output : run.Error);
+    }
+    public static CallFailed From(string verb, string details)
+    {
+        var text = details.Trim();
         var sentence = text switch
         {
             _ when text.Contains("not a git repository", StringComparison.Ordinal) => "This folder isn't a git repository yet.",

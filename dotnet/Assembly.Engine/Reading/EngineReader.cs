@@ -160,6 +160,7 @@ public sealed partial class EngineReader(IAppDatabase db, string machine)
                 """, r => r.Text(0), new("$machine", source), new("$kind", entityKind), new("$id", entityId));
             return mirrored is null ? null : DisplayQueries.Parse(mirrored);
         }
+        if (entityKind == "pr_observation") projection = DisplayQueries.ObservationDetails;
         var json = read.QueryFirst($"SELECT {projection},{DisplayQueries.PrefixColumns(entityKind)} FROM engine_{entityKind} t WHERE t.id=$id AND t.machine=$machine",
             r => (JsonElement?)DisplayQueries.Project(r, 0), new("$id", entityId), new("$machine", machine));
         return json;

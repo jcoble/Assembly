@@ -24,11 +24,11 @@ public static class DesktopServe
         }
 
         var token = TokenFile.ReadOrCreate(options.TokenFile);
-        var agents = AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile));
+        var agents = new AgentsFile(options.AgentsFile);
         var launcher = new AdapterLauncher(agents, options.Checkouts, new UnclaimedPermissions(), session => SessionStore.Folder(options.Checkouts, session));
         var profile = options.Remote is { } host ? new SavedMachine(host, host, options.RemotePort, options.RemoteTokenFile) : null;
         await using var backend = await DesktopBackend.StartAsync(options.Home, token, options.Port, launcher, Console.Out,
-            utilityClis: (AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex")), savedRemote: profile);
+            utilityClis: (AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex")), savedRemote: profile, agentsFile: agents);
         // The window's launcher waits for this line's "listening on " prefix: it comes once /socket takes a hello and
         // the MCP url is set. Remote connection attempts run independently of local startup.
         Console.WriteLine($"listening on {backend.Address}");

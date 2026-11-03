@@ -110,11 +110,15 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAn
                     .Deserialize(EngineSocketJson.Default.UsageTotals)!
                 : runtime.Usage.Sum(args.EntityKind, args.EntityId, call.Cancellation));
         calls.Read("engine", "entity", EngineSocketJson.Default.EngineEntityArgs, EngineSocketJson.Default.NullableJsonElement,
-            async (args, call) => IsRemote(args.Machine) && args.EntityKind is "tool_call" or "usage"
+            async (args, call) =>
+            {
+                if (args.EntityKind == "pr_observation" && call.Peer is not OwnerPeer) throw new CallFailed("forbidden");
+                return IsRemote(args.Machine) && args.EntityKind is "tool_call" or "usage" or "pr_observation"
                 ? (await Forward.CallAsync(args.Machine!, "engine", "entity",
                     JsonSerializer.SerializeToElement(args with { Machine = null }, EngineSocketJson.Default.EngineEntityArgs), true, call.Cancellation))
                     .Deserialize(EngineSocketJson.Default.NullableJsonElement)
-                : runtime.Reader.Entity(args.EntityKind, args.EntityId, call.Cancellation, args.Machine), bulk: true);
+                : runtime.Reader.Entity(args.EntityKind, args.EntityId, call.Cancellation, args.Machine);
+            }, bulk: true);
         calls.Read("engine", "entities", EngineSocketJson.Default.EngineEntitiesArgs, EngineSocketJson.Default.EngineEntitiesPage,
             async (args, call) =>
             {

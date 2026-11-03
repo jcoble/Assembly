@@ -15,19 +15,31 @@ namespace Assembly.Infrastructure.Agents;
 public sealed class AgentsFile : IReadOnlyList<AgentDescriptor>
 {
     private sealed record Snapshot(string Revision, IReadOnlyList<AgentDescriptor> Agents);
+    private sealed record Owner(string Machine, ITopics Topics);
     private Snapshot _snapshot = new("", []);
-    private readonly string _machine;
-    private readonly ITopics _topics;
+    private Owner? _owner;
     public const string Topic = "provider_runtime";
 
-    public AgentsFile(string path, string machine, ITopics topics)
+    public AgentsFile(string path)
     {
-        if (string.IsNullOrEmpty(machine)) throw new ArgumentException("An owning Engine machine is required.", nameof(machine));
         Path = CanonicalPath(path);
-        _machine = machine;
-        _topics = topics;
-        Reload();
+        using var held = TakeLock();
+        var (_, snapshot) = ReadCurrent();
+        Volatile.Write(ref _snapshot, snapshot);
     }
+
+    public void BindOwner(string machine, ITopics topics)
+    {
+        if (string.IsNullOrEmpty(machine) || topics is null) throw Refusal("configuration_unavailable");
+        var bound = Interlocked.CompareExchange(ref _owner, new Owner(machine, topics), null);
+        if (bound is not null && (bound.Machine != machine || !ReferenceEquals(bound.Topics, topics)))
+            throw Refusal("configuration_unavailable");
+    }
+
+    /// <summary>Safe in-memory topic state; never takes the descriptor file lock.</summary>
+    public ProviderRuntimeChanged Current() => new(RequireOwner().Machine, Revision);
+
+    private Owner RequireOwner() => Volatile.Read(ref _owner) ?? throw Refusal("configuration_unavailable");
 
     public string Path { get; }
     public string LockPath => Path + ".lock";
@@ -40,6 +52,7 @@ public sealed class AgentsFile : IReadOnlyList<AgentDescriptor>
     /// <summary>Refresh after the owning install/update operation publishes under the same sidecar lock.</summary>
     public string Reload()
     {
+        RequireOwner();
         using var held = TakeLock();
         var (_, snapshot) = ReadCurrent();
         SetSnapshot(snapshot);
@@ -48,6 +61,7 @@ public sealed class AgentsFile : IReadOnlyList<AgentDescriptor>
 
     public ProviderRuntimeReply Read(string provider, CancellationToken ct = default)
     {
+        RequireOwner();
         ct.ThrowIfCancellationRequested();
         using var held = TakeLock();
         var (_, snapshot) = ReadCurrent();
@@ -60,6 +74,7 @@ public sealed class AgentsFile : IReadOnlyList<AgentDescriptor>
     public ProviderRuntimeReply Save(string provider, string expectedRevision, ProviderRuntimeSettings settings,
         CancellationToken ct = default)
     {
+        RequireOwner();
         ct.ThrowIfCancellationRequested();
         using var held = TakeLock();
         var (document, current) = ReadCurrent();
@@ -113,17 +128,18 @@ public sealed class AgentsFile : IReadOnlyList<AgentDescriptor>
         var variable = AccountContext.ConfigHomeVariable(agent.VendorFamily);
         var home = variable is not null && agent.Env?.TryGetValue(variable, out var value) == true ? value : null;
         var environment = ConfigTargetIdentity.EnvironmentOf(agent);
-        return new(_machine, agent.Id, revision, ConfigTargetIdentity.Of(agent, environment),
+        return new(RequireOwner().Machine, agent.Id, revision, ConfigTargetIdentity.Of(agent, environment),
             AccountContext.Of(agent, key => environment.GetValueOrDefault(key)),
             new(agent.Cli, home, agent.ShadowHome, agent.CliArgs?.ToArray() ?? []));
     }
 
     private void SetSnapshot(Snapshot snapshot)
     {
+        var owner = RequireOwner();
         var previous = Volatile.Read(ref _snapshot);
         Volatile.Write(ref _snapshot, snapshot);
         if (previous.Revision != snapshot.Revision)
-            _topics.Publish(Topic, _machine, JsonSerializer.Serialize(new ProviderRuntimeChanged(_machine, snapshot.Revision),
+            owner.Topics.Publish(Topic, owner.Machine, JsonSerializer.Serialize(new ProviderRuntimeChanged(owner.Machine, snapshot.Revision),
                 ProviderRuntimeJson.Default.ProviderRuntimeChanged));
     }
 

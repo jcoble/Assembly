@@ -16,13 +16,13 @@ public sealed class SubagentPageTests
         using var fixture = new EngineFixture(); var store = RowStore.Open(fixture.Db);
         Add(store, "parent", "a", "running"); Add(store, "parent", "B", "running"); Add(store, "parent", "a", "idle");
         var first = store.Subagents("parent", null, 1, default);
-        Assert.Equal("B", Assert.Single(first.Items).ItemId); Assert.Equal("B", first.Next);
+        Assert.Equal("B", Assert.Single(first.Items).ItemId); Assert.NotNull(first.Next); Assert.NotEqual("B", first.Next);
         var second = store.Subagents("parent", first.Next, 1, default);
         var card = Assert.Single(second.Items);
         Assert.Equal(("a", 3L, "parent", "idle"), (card.ItemId, card.Seq, card.SessionId, card.State));
         Assert.Null(second.Next);
         Add(store, "parent", "😀", "running"); Add(store, "parent", "\uE000", "running");
-        Assert.Equal(["\uE000", "😀"], store.Subagents("parent", "a", 2, default).Items.Select(item => item.ItemId));
+        Assert.Equal(["B", "a", "\uE000", "😀"], store.Subagents("parent", null, 4, default).Items.Select(item => item.ItemId));
         Assert.Equal(0, fixture.Number("SELECT COUNT(*) FROM engine_session"));
     }
 
@@ -40,15 +40,39 @@ public sealed class SubagentPageTests
     }
 
     [Fact]
-    public void Updates_during_paging_keep_the_cursor_and_read_the_latest_unconsumed_card()
+    public void Updates_during_paging_keep_one_cut_before_new_versions_helper_flags_and_cards()
     {
         using var fixture = new EngineFixture(); var store = RowStore.Open(fixture.Db);
         Add(store, "p", "a", "running"); Add(store, "p", "b", "running");
         var first = store.Subagents("p", null, 1, default);
-        Add(store, "p", "a", "idle"); Add(store, "p", "b", "idle");
+        Add(store, "p", "a", "idle"); Add(store, "p", "b", "idle", helper: true); Add(store, "p", "c", "running");
         var next = store.Subagents("p", first.Next, 1, default);
-        Assert.Equal(("b", 4L, "idle"), (next.Items[0].ItemId, next.Items[0].Seq, next.Items[0].State));
+        Assert.Equal(("b", 2L, "running"), (next.Items[0].ItemId, next.Items[0].Seq, next.Items[0].State));
         Assert.Null(next.Next); Assert.Equal("a", Assert.Single(first.Items).ItemId);
+        var refreshed = store.Subagents("p", null, 50, default);
+        Assert.Equal([("a", 3L, "idle"), ("c", 5L, "running")], refreshed.Items.Select(item => (item.ItemId, item.Seq, item.State)));
+    }
+
+    [Fact]
+    public void Continuations_refuse_different_parent_source_generation_route_and_unavailable_cut()
+    {
+        using var fixture = new EngineFixture(); var store = RowStore.Open(fixture.Db);
+        Add(store, "p", "a", "running"); Add(store, "p", "b", "idle");
+        var source = new ExpectedSource(fixture.Machine, 0, null);
+        var first = store.Subagents("p", null, 1, default, source);
+        Assert.Equal("bad_args", Assert.Throws<CallFailed>(() => store.Subagents("other", first.Next, 1, default, source)).Reason);
+        foreach (var changed in new[] { source with { Machine = "other" }, source with { Generation = 1 }, source with { RouteMachine = "other" } })
+            Assert.Equal("source_changed", Assert.Throws<CallFailed>(() => store.Subagents("p", first.Next, 1, default, changed)).Reason);
+        Assert.Equal("source_changed", Assert.Throws<CallFailed>(() => store.Subagents("p", first.Next, 1, default)).Reason);
+        Assert.Equal("bad_args", Assert.Throws<CallFailed>(() => store.Subagents("p", "a", 1, default, source)).Reason);
+        var future = SubagentCursor.Write("p", source, store.LastSeq("p") + 1, "a");
+        Assert.Equal("source_changed", Assert.Throws<CallFailed>(() => store.Subagents("p", future, 1, default, source)).Reason);
+        var owner = new ExpectedSource(source.Machine, 0, null);
+        var desktop = new ExpectedSource(source.Machine, 7, "workbox-test");
+        var routed = SubagentCursor.Rebind(first.Next, "p", owner, desktop);
+        Assert.Equal(first.Next, SubagentCursor.Rebind(routed, "p", desktop, owner));
+        Assert.Equal("source_changed", Assert.Throws<CallFailed>(() => SubagentCursor.Rebind(routed, "p", desktop with { Generation = 8 }, owner)).Reason);
+        Assert.Equal(0, fixture.Number("SELECT COUNT(*) FROM engine_session"));
     }
 
     [Fact]
@@ -78,7 +102,7 @@ public sealed class SubagentPageTests
             Assert.InRange(JsonSerializer.SerializeToUtf8Bytes(page, RowJsonContext.Rows.SubagentPage).Length, 1, SubagentPage.MaxBytes);
             foreach (var item in page.Items)
                 Assert.InRange(JsonSerializer.SerializeToUtf8Bytes(item, RowJsonContext.Rows.SubagentDisplay).Length, 1, SubagentPage.ItemMaxBytes);
-            if (page.Next is not null) Assert.Equal(page.Items[^1].ItemId, page.Next);
+            if (page.Next is not null) Assert.NotEqual(page.Items[^1].ItemId, page.Next);
             Assert.NotEqual(after, page.Next ?? "finished");
             seen.AddRange(page.Items.Select(item => item.ItemId)); after = page.Next;
         } while (after is not null);
@@ -110,7 +134,7 @@ public sealed class SubagentPageTests
         Add(store, "p", "a", "idle");
         Add(store, "p", escaping ? "z" : new string('z', 40 * 1024), escaping ? new string('\0', 6000) : "idle");
         var first = store.Subagents("p", null, 1, default);
-        Assert.Equal("a", Assert.Single(first.Items).ItemId); Assert.Equal("a", first.Next);
+        Assert.Equal("a", Assert.Single(first.Items).ItemId); Assert.NotNull(first.Next);
         Assert.Equal("subagent_too_large", Assert.Throws<CallFailed>(() => store.Subagents("p", first.Next, 1, default)).Reason);
     }
 
@@ -124,6 +148,12 @@ public sealed class SubagentPageTests
         foreach (var row in source.RowsAfter("p", 0)) Assert.True(copy.Copy(row));
         var expected = source.Subagents("p", null, 1, default); var actual = copy.Subagents("p", null, 1, default);
         Assert.Equal(expected.Items, actual.Items); Assert.Equal(expected.Next, actual.Next);
+        Add(source, "p", "b", "idle");
+        foreach (var row in source.RowsAfter("p", copy.LastSeq("p"))) Assert.True(copy.Copy(row));
+        var ownerNext = source.Subagents("p", expected.Next, 1, default);
+        var replicaNext = copy.Subagents("p", actual.Next, 1, default);
+        Assert.Equal(ownerNext.Items, replicaNext.Items); Assert.Equal(ownerNext.Next, replicaNext.Next);
+        Assert.Equal(("b", 3L, "running"), (replicaNext.Items[0].ItemId, replicaNext.Items[0].Seq, replicaNext.Items[0].State));
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
         Assert.ThrowsAny<OperationCanceledException>(() => copy.Subagents("p", null, 50, cancelled.Token));
         Assert.Equal(0, owner.Number("SELECT COUNT(*) FROM engine_session"));

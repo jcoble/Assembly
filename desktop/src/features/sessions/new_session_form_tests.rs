@@ -584,3 +584,6 @@ fn selecting_a_valid_agent_replaces_the_previous_agents_identity_error(cx: &mut 
 
 #[path = "new_session_form/generation_tests.rs"]
 mod generation_tests;
+
+
+include!("new_session_form/uncertainty_tests.rs");

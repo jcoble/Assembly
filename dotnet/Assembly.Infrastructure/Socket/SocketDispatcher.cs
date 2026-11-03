@@ -33,6 +33,9 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private readonly Dictionary<string, TopicFrames> _topics = [];
     private readonly List<Action<string>> _closedHooks = [];
 
+    public CallKind? KindOf(string feature, string method) => _calls.TryGetValue($"{feature}/{method}", out var call)
+        ? call.Writes ? CallKind.Write : call.Bulk ? CallKind.BulkRead : CallKind.Read : null;
+
     public void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, CallContext, Task<TResult>> handler, bool bulk = false) =>
         _calls.Add($"{feature}/{method}", new Call(Writes: false, json => json.Deserialize(args),
@@ -106,6 +109,13 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     public void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
         Action<string, CallContext>? opened = null) =>
         RegisterRows(topic, state, opened, null);
+
+    public void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<TItem, string> key,
+        Func<string?, CallContext, IReadOnlyList<TItem>> state, Action<string, CallContext> opened,
+        Func<string?, CallContext, IExpectedSourceGuard?> source) =>
+        _topics.Add(topic, new TopicFrames(NeedsKey: true, (sub, frame, context) =>
+            ([StateFrame(sub, state(frame.Key, context), item, key)], (changed, json) => ChangeFrame(sub, changed, json)),
+            Opened: opened, Source: source));
 
     public void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
         Action<string, CallContext>? opened, IRowSourceBindings sources) => RegisterRows(topic, state, opened, sources);
@@ -226,7 +236,9 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             {
                 self = subscription;
                 bound?.EnsureCurrent();
+                if (topic.Source is not null) context.SourceGuard = topic.Source(frame.Key, context);
                 (var snapshot, change) = topic.Open(id, frame, context);
+                var delivery = Delivery(subscription, context.SourceGuard);
                 if (titlePartsEnabled)
                 {
                     if (snapshot.Count != 1) throw new CallFailed("sessions requires one complete state");
@@ -238,15 +250,17 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
                 foreach (var part in snapshot)
                 {
                     bound?.EnsureCurrent();
-                    connection.Send(part, bound ?? (ISocketSubscription)subscription);
+                    connection.Send(part, bound ?? delivery);
                 }
             }, (key, json) =>
             {
-                try { bound?.EnsureCurrent(); }
+                IExpectedSourceGuard? source;
+                try { bound?.EnsureCurrent(); source = topic.Source?.Invoke(key, context); }
                 catch (Exception error) when (error is CallFailed or OperationCanceledException) { return; }
+                if (topic.Source is not null && source is null) return;
                 if (change!(key, json) is { } changed)
                     connection.Send(titlePartsEnabled ? SessionItemWireCodec.Adapt(changed, connection.EngineMachine ?? "") : changed,
-                        bound ?? (ISocketSubscription?)self);
+                        bound ?? (self is null ? null : Delivery(self, source)));
             });
             bound?.Attach(opened);
             // Out of the Topics lock: it may take the hub's lock, which comes before Topics, or start work. The sub is
@@ -279,6 +293,18 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     }
 
     internal void Unsubscribe(ISocketSubscription subscription) => subscription.Dispose();
+
+    private static ISocketSubscription Delivery(ISocketSubscription subscription, IExpectedSourceGuard? source) =>
+        source is null ? subscription : new TopicDelivery(subscription, source);
+
+    private sealed class TopicDelivery(ISocketSubscription subscription, IExpectedSourceGuard source) : ISocketSubscription, IExpectedSourceGuard
+    {
+        public CancellationToken Closed => subscription.Closed;
+        public CancellationToken Changed => source.Changed;
+        public Task Completion => subscription.Completion;
+        public void EnsureCurrent() => source.EnsureCurrent();
+        public void Dispose() { } // The subscription and producer own their lifetimes; a queued frame owns neither.
+    }
 
     public void Closed(Action<string> connection) => _closedHooks.Add(connection);
 
@@ -519,7 +545,8 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     // published becomes, (key, JSON) to a frame, or null for none.
     private sealed record TopicFrames(bool NeedsKey,
         Func<long, InFrame, CallContext, (IReadOnlyList<ReadOnlyMemory<byte>> State, Func<string?, string, ReadOnlyMemory<byte>?> Change)> Open,
-        Action<string, CallContext>? Opened = null, bool Terminal = false, IRowSourceBindings? Sources = null);
+        Action<string, CallContext>? Opened = null, bool Terminal = false, IRowSourceBindings? Sources = null,
+        Func<string?, CallContext, IExpectedSourceGuard?>? Source = null);
 
     private sealed record Call(bool Writes, Func<JsonElement, object?> ReadArgs, Func<object, CallContext, Task<JsonElement>> RunAsync,
         Func<object, string?>? Order = null, bool Bulk = false);

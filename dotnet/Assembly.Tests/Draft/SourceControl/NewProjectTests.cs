@@ -5,6 +5,8 @@ using Assembly.Application.Common;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Git;
 using Assembly.Application.Features.Projects;
+using Assembly.Application.Features.Chat.SourceControl.PullRequests;
+using Assembly.Infrastructure.Chat.SourceControl;
 using Assembly.Infrastructure.Git;
 using Assembly.Infrastructure.Projects;
 using Assembly.Tests.Infrastructure.Remote;
@@ -75,6 +77,26 @@ public sealed partial class NewProjectTests
         Assert.Equal(0, h.Hosts.Mac.Fixture.Count("projects"));
     }
 
+    [Fact]
+    public async Task Remote_folder_reads_resolve_the_saved_profile_to_its_actual_engine_and_socket()
+    {
+        await using var h = await Harness.Start();
+        var child = Path.Combine(h.RemoteParent, "remote child ü");
+        Directory.CreateDirectory(child);
+        var folders = new RemoteProjectFolders(h.Hosts.Connections, "workbox-test");
+        var listing = await folders.ListAsync(h.RemoteParent, default);
+        Assert.Equal(h.RemoteParent, listing.Path);
+        Assert.Contains(child, listing.Directories);
+        Assert.False(listing.Truncated);
+        var inspected = await folders.InspectAsync(child, default);
+        Assert.Equal(child, inspected.RootPath);
+        Assert.False(inspected.IsGit);
+        // A provider's engine identity is not a saved connection name.
+        Assert.NotEqual("workbox-test", h.Hosts.Remote.Fixture.Machine);
+        await Assert.ThrowsAsync<Assembly.Application.Common.Machines.MachineUnreachable>(() => new RemoteProjectFolders(h.Hosts.Connections,
+            h.Hosts.Remote.Fixture.Machine).ListAsync(h.RemoteParent, default));
+    }
+
     private sealed class Harness : IAsyncDisposable
     {
         internal readonly TwoHosts Hosts = new(forwardCommands: true);
@@ -103,12 +125,24 @@ public sealed partial class NewProjectTests
                 h.Hosts.Remote.AdditionalFeatures = calls =>
                 {
                     new FoldersFeature(remoteFolders).Register(calls);
-                    new GitProjectOperations(h.RemoteOperations, new(remoteFolders, remoteWriter, remoteWrites, h.RemoteOperations)).Register(calls);
+                    var gh = new GhCli();
+                    var prs = new PullRequestWriter(remoteGit, gh, new(remoteGit, gh, h.RemoteParent, new GitTextPatch(remoteGit)));
+                    var sessionOperations = new GitSessionOperations(h.Hosts.Remote.Sessions, remoteGit, prs, remoteWrites, h.RemoteOperations);
+                    var routes = new SourceControlFeature(h.Hosts.Remote.Sessions, h.Hosts.Remote.Fixture.Db, h.RemoteOperations, null, null);
+                    routes.Register(calls);
+                    new SourceControlWrites(h.Hosts.Remote.Sessions, remoteGit, remoteWrites, TimeProvider.System, routes).Register(calls);
+                    new GitProjectOperations(h.RemoteOperations, new(remoteFolders, remoteWriter, remoteWrites, h.RemoteOperations), sessionOperations, routes).Register(calls);
                 };
                 await h.Hosts.Start(); await h.Hosts.StartMirror();
                 h.Store = new(h.Hosts.Mac.Fixture.Db, TimeProvider.System);
                 var coordinator = new NewProjectCoordinator(h.Store, h.Hosts.Mac.Fixture.Db, localFolders, localWriter, localWrites, h.LocalOperations, h.Hosts.Connections);
-                new GitProjectOperations(h.LocalOperations, new(localFolders, localWriter, localWrites, h.LocalOperations), coordinator).Register(localCalls!);
+                var localGh = new GhCli();
+                var localPrs = new PullRequestWriter(localGit, localGh, new(localGit, localGh, h.LocalParent, new GitTextPatch(localGit)));
+                var localSessionOperations = new GitSessionOperations(h.Hosts.Mac.Sessions, localGit, localPrs, localWrites, h.LocalOperations);
+                var routes = new SourceControlFeature(h.Hosts.Mac.Sessions, h.Hosts.Mac.Fixture.Db, h.LocalOperations, h.Hosts.Mac.Forwarder, h.Hosts.Connections);
+                routes.Register(localCalls!);
+                new SourceControlWrites(h.Hosts.Mac.Sessions, localGit, localWrites, TimeProvider.System, routes).Register(localCalls!);
+                new GitProjectOperations(h.LocalOperations, new(localFolders, localWriter, localWrites, h.LocalOperations), localSessionOperations, routes, coordinator).Register(localCalls!);
                 return h;
             }
             catch { await h.DisposeAsync(); throw; }
@@ -130,9 +164,9 @@ public sealed partial class NewProjectTests
             await Send(socket, """{"t":"hello","protocol":1,"token":"isolated-token"}"""); await Read(socket);
             return socket;
         }
-        internal async Task Subscribe(ClientWebSocket socket, Guid id)
+        internal async Task Subscribe(ClientWebSocket socket, Guid id, string? machine = null)
         {
-            await Send(socket, JsonSerializer.Serialize(new { t = "sub", id = 100, topic = "gitOperation", key = LocalOperations.Key(id) }));
+            await Send(socket, JsonSerializer.Serialize(new { t = "sub", id = 100, topic = "gitOperation", key = machine is null ? LocalOperations.Key(id) : machine + "/" + id.ToString("D") }));
             Assert.Equal("state", (await Read(socket)).GetProperty("t").GetString());
         }
         internal async Task<JsonElement> Call(ClientWebSocket socket, int id, string method, object args)

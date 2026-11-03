@@ -1,7 +1,6 @@
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Projects;
-using Assembly.Infrastructure.Engine;
 using Assembly.Infrastructure.Git;
 using Assembly.Infrastructure.Projects;
 using Assembly.Tests.Draft.Files;
@@ -15,12 +14,11 @@ public sealed class RemoteFoldersTests
     {
         using var repo = new GitFolder("keep"); GitFolder.Commit(repo.Root);
         GitFolder.Run(repo.Root, "remote", "add", "origin", "https://github.com/test/owner.git");
-        await using var hosts = new TwoHosts();
+        await using var hosts = new TwoHosts(forwardCommands: true);
         var reads = new CountingFolders(new LocalProjectFolders(new GitCli()));
         hosts.Remote.AdditionalFeatures = calls => new FoldersFeature(reads).Register(calls);
         await hosts.Start(); await hosts.StartMirror();
-        var forward = new MachineForward(machine => machine == hosts.Remote.Runtime.Machine ? hosts.ConnectedMachine : null);
-        var remote = new RemoteProjectFolders(forward, hosts.Remote.Runtime.Machine);
+        var remote = new RemoteProjectFolders(hosts.Connections, "workbox-test");
         var inspection = await remote.InspectAsync(repo.Root, default);
         Assert.Equal(repo.Root, inspection.RootPath); Assert.Equal("github.com/test/owner", inspection.RepoKey);
         Assert.Equal(repo.Root, (await remote.ListAsync(repo.Root, default)).Path);
@@ -31,7 +29,10 @@ public sealed class RemoteFoldersTests
     [Fact]
     public async Task Disconnected_owner_fails_unreachable_without_registry_or_local_fallback()
     {
-        var forward = new MachineForward(_ => null); var remote = new RemoteProjectFolders(forward, "workbox-test");
+        await using var hosts = new TwoHosts(forwardCommands: true);
+        await hosts.Start(); await hosts.StartMirror();
+        await hosts.Connections.ConnectionAsync("workbox-test", false, default);
+        var remote = new RemoteProjectFolders(hosts.Connections, "workbox-test");
         var error = await Assert.ThrowsAsync<MachineUnreachable>(() => remote.InspectAsync("/exists-only-on-owner", default));
         Assert.Equal("workbox-test", error.Machine);
     }

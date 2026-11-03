@@ -2,9 +2,9 @@
 //! branch line (scm#9), the Staged, Changes and Untracked lists with each file's letter (scm#10), and what the
 //! 1000-file cap leaves out (scm#11). Replaces sourceControlSections.ts and the status half of gitPanelStore.svelte.ts.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStatus {
     /// `None` when detached.
@@ -17,9 +17,12 @@ pub struct GitStatus {
     /// At most 1000.
     pub files: Vec<ChangedFile>,
     pub total_files: usize,
+    #[serde(default)]
+    pub total_staged: Option<usize>,
+    pub fingerprint: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangedFile {
     pub path: String,
@@ -105,6 +108,21 @@ impl GitStatus {
             .collect();
         files.sort_by(|a, b| a.1.path.cmp(&b.1.path));
         files
+    }
+
+    /// Older payloads establish a total only when every changed file is present.
+    pub fn staged_total(&self) -> Option<usize> {
+        self.total_staged.or_else(|| {
+            (self.total_files == self.files.len()).then(|| {
+                self.files
+                    .iter()
+                    .filter(|file| file.letter_in(Section::Staged).is_some())
+                    .count()
+            })
+        })
+    }
+    pub fn has_staged_files(&self) -> bool {
+        self.staged_total().is_some_and(|total| total > 0)
     }
 
     /// What the cap leaves out, said as a line under the lists; `None` when every file is listed.

@@ -17,7 +17,7 @@ public sealed record GitOperationArgs(Guid OperationId, string? Session = null, 
     string? InstanceId = null, string? Machine = null);
 
 /// <summary>One backend-owned Git operation lifetime; routes select fixed producers before Start.</summary>
-public sealed class GitOperations : IAsyncDisposable
+public sealed partial class GitOperations : IAsyncDisposable
 {
     private sealed class Entry(GitOperationStart request, CancellationTokenSource deadline)
     {
@@ -246,6 +246,7 @@ public sealed class GitOperations : IAsyncDisposable
     }
     internal void Closed(string connection)
     {
+        CloseRemote(connection);
         List<ProjectDirectoryClaim> claims = [];
         lock (_gate)
         {
@@ -265,6 +266,7 @@ public sealed class GitOperations : IAsyncDisposable
     }
     private void Unsubscribed(string topic, string? key)
     {
+        if (topic == "gitOperation" && key is not null) StopRemote(key);
         if (topic != "gitOperation" || key is null || !key.StartsWith(_machine + "/", StringComparison.Ordinal) ||
             !Guid.TryParseExact(key[(_machine.Length + 1)..], "D", out var id)) return;
         ProjectDirectoryClaim? claim = null;

@@ -62,20 +62,27 @@ public sealed partial class RowStore
 
     public int StoredFormatVersion => (int)_db.QueryFirst("PRAGMA user_version;", row => row.Long(0), CancellationToken.None);
 
-    /// <summary>Latest native cards, keyset by immutable parent-row item id; never reads operational sessions.</summary>
-    public SubagentPage Subagents(string session, string? after, int limit, CancellationToken ct)
+    /// <summary>Native cards at one persisted parent highwater, with an opaque source-bound continuation.</summary>
+    public SubagentPage Subagents(string session, string? after, int limit, CancellationToken ct, ExpectedSource? source = null)
     {
         ct.ThrowIfCancellationRequested();
         limit = Math.Clamp(limit, 1, SubagentPage.MaxLimit);
+        using var snapshot = _db.OpenSnapshot(ct);
+        var highwater = snapshot.QueryFirst("SELECT next_seq-1 FROM sessions WHERE session_id=$session",
+            row => row.Long(0), new SqlArg("$session", session));
+        var cursor = after is null ? null : SubagentCursor.Read(after, session, source);
+        var cut = cursor?.Cut ?? highwater;
+        if (cut > highwater) throw new CallFailed("The subagent history changed.", "source_changed");
         // Materialize only limit+1 candidates in SQL. Bound text as bytes before crossing into managed memory;
         // identity fields remain complete or explicitly refuse. BLOB prefixes preserve embedded NUL text.
-        var rows = _db.Query("""
+        var rows = snapshot.Query("""
             WITH selected AS MATERIALIZED (
                 SELECT r.rowid row_key,r.item_id,r.seq FROM rows r
                 WHERE r.session_id=$session AND r.kind='subagent' AND r.item_id IS NOT NULL
+                  AND r.seq<=$cut
                   AND ($after IS NULL OR r.item_id COLLATE BINARY>$after)
                   AND NOT EXISTS(SELECT 1 FROM rows newer WHERE newer.session_id=r.session_id
-                    AND newer.kind='subagent' AND newer.item_id=r.item_id AND newer.seq>r.seq)
+                    AND newer.kind='subagent' AND newer.item_id=r.item_id AND newer.seq>r.seq AND newer.seq<=$cut)
                   AND json_extract(r.payload,'$.helper') IS NOT 1
                 ORDER BY r.item_id COLLATE BINARY LIMIT $limit
             ), projected AS (
@@ -102,8 +109,8 @@ public sealed partial class RowStore
                 return (Large: false, Item: (SubagentDisplay?)new SubagentDisplay(r.Text(1), r.Long(2),
                     r.IsNull(3) ? null! : r.Text(3), SubagentPreview(r, 4)!, SubagentPreview(r, 5),
                     r.IsNull(6) ? null! : r.Text(6), Text(r, 7), SubagentPreview(r, 8), Text(r, 9)));
-            }, ct,
-            new SqlArg("$session", session), new SqlArg("$after", after), new SqlArg("$limit", limit + 1),
+            },
+            new SqlArg("$session", session), new SqlArg("$after", cursor?.After), new SqlArg("$cut", cut), new SqlArg("$limit", limit + 1),
             new SqlArg("$preview", SubagentPage.PreviewBytes), new SqlArg("$item_cap", SubagentPage.ItemMaxBytes));
         List<SubagentDisplay> items = [];
         var itemBytes = 0;
@@ -118,8 +125,10 @@ public sealed partial class RowStore
                 throw new CallFailed("invalid subagent display", "bad_args");
             var size = JsonSerializer.SerializeToUtf8Bytes(item, RowJsonContext.Rows.SubagentDisplay).Length;
             if (size > SubagentPage.ItemMaxBytes) throw SubagentTooLarge();
-            var candidateNext = index + 1 < rows.Count ? item.ItemId : null;
+            var candidateNext = index + 1 < rows.Count ? SubagentCursor.Write(session, source, cut, item.ItemId) : null;
             var envelope = JsonSerializer.SerializeToUtf8Bytes(new SubagentPage([], candidateNext), RowJsonContext.Rows.SubagentPage).Length;
+            // A pinned remote rebinds only the source tuple. Reserve its bounded token space here too.
+            if (candidateNext is not null) envelope += SubagentCursor.MaxChars - candidateNext.Length;
             if (envelope + itemBytes + size + items.Count > SubagentPage.MaxBytes)
             {
                 if (items.Count == 0) throw SubagentTooLarge();

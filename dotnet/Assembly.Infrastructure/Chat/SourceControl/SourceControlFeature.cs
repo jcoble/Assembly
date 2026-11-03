@@ -3,14 +3,18 @@ using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat.SourceControl;
 using Assembly.Infrastructure.Git;
+using Assembly.Application.Common.Database;
+using Assembly.Infrastructure.Engine;
+using Assembly.Infrastructure.Remote;
 
 namespace Assembly.Infrastructure.Chat.SourceControl;
 
 /// <summary>Reads a session's git status, file diffs and branch diff over the socket from its local folder.</summary>
-internal sealed class SourceControlFeature(SessionStore sessions) : IFeature
+internal sealed partial class SourceControlFeature(SessionStore sessions, IAppDatabase db, GitOperations operations, MachineForward? forward, RemoteConnections? connections) : IFeature
 {
     public void Register(ICallRegistry calls)
     {
+        calls = Route(calls);
         calls.Read("git", "status", SourceControlJson.Default.Args, SourceControlJson.Default.GitStatus, async (args, call) =>
             await new GitStatusReader(new GitCli()).ReadAsync(SessionPaths.RootOf(sessions, args.Session), call.Cancellation));
         calls.Read("git", "diff", SourceControlJson.Default.DiffArgs, SourceControlJson.Default.GitFileDiff, async (args, call) =>
@@ -24,6 +28,10 @@ internal sealed class SourceControlFeature(SessionStore sessions) : IFeature
         });
         calls.Read("git", "branchDiff", SourceControlJson.Default.Args, SourceControlJson.Default.GitBranchDiff, async (args, call) =>
             await new GitBranchDiffReader(new GitCli()).ReadAsync(SessionPaths.RootOf(sessions, args.Session), call.Cancellation));
+        calls.Read("git", "branches", SourceControlJson.Default.Args, SourceControlJson.Default.GitBranchList, async (args, call) =>
+            await new GitBranches(new GitCli()).ListAsync(SessionPaths.RootOf(sessions, args.Session), call.Cancellation));
+        calls.Read("git", "stashes", SourceControlJson.Default.Args, SourceControlJson.Default.IReadOnlyListGitStash, async (args, call) =>
+            await new GitStashes(new GitCli(), TimeProvider.System).ListAsync(SessionPaths.RootOf(sessions, args.Session), call.Cancellation));
         calls.Read("git", "history", SourceControlJson.Default.HistoryArgs, SourceControlJson.Default.GitHistoryPage, async (args, call) =>
         {
             var root = SessionPaths.RootOf(sessions, args.Session);
@@ -63,5 +71,7 @@ internal sealed class SourceControlFeature(SessionStore sessions) : IFeature
 [JsonSerializable(typeof(SourceControlFeature.CommitArgs))]
 [JsonSerializable(typeof(SourceControlFeature.CommitDiffArgs))]
 [JsonSerializable(typeof(GitHistoryPage))]
+[JsonSerializable(typeof(GitBranchList))]
+[JsonSerializable(typeof(IReadOnlyList<GitStash>))]
 [JsonSerializable(typeof(IReadOnlyList<GitCommitFile>))]
 internal sealed partial class SourceControlJson : JsonSerializerContext;

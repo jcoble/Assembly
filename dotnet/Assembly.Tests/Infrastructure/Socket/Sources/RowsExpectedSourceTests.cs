@@ -91,15 +91,38 @@ public sealed class RowsExpectedSourceTests
     public async Task Remote_reads_use_actual_owner_with_local_marker_and_never_the_poisoned_display_copy()
     {
         await using var f = await RemoteFixture.Start();
+        Child(f.OwnerHub, f.Session, "z-owner-child");
+        var secondAtCut = RowStore.Open(f.Hosts.Remote.Fixture.Db).RowsAfter(f.Session, 0)
+            .Single(row => row.ItemId == "subagent:z-owner-child");
         using var bulk = await f.Socket.Open(bulk: true);
         await Call(bulk, 1, "page", f.Session, f.Expected);
         var page = await Read(bulk); Assert.Equal("result", Type(page));
         Assert.Contains("OWNER_ONLY", page.GetRawText()); Assert.DoesNotContain("POISONED_COPY", page.GetRawText());
-        await Call(bulk, 2, "subagents", f.Session, f.Expected);
+        await Send(bulk, new { t = "call", id = 2, feature = "rows", method = "subagents", args = new { session = f.Session, limit = 1, expectedSource = f.Expected } });
         var children = await Read(bulk); Assert.Equal("result", Type(children));
+        var first = children.GetProperty("result").Deserialize(RowJsonContext.Rows.SubagentPage)!;
+        Assert.Equal("subagent:owner-child", Assert.Single(first.Items).ItemId);
+        Assert.NotNull(first.Next);
         Assert.Contains("owner-child", children.GetRawText()); Assert.DoesNotContain("poison-child", children.GetRawText());
+        var changed = new RowBatch();
+        changed.Rows.Add(new(null, "subagent:z-owner-child", RowKind.Subagent, JsonSerializer.SerializeToElement(
+            new SubagentPayload("z-owner-child", "UPDATED_AFTER_FIRST_PAGE", null, "running", null, null, false, null), RowJsonContext.Rows.SubagentPayload), 1001));
+        f.OwnerHub.Publish(f.Session, changed);
+        await Send(bulk, new { t = "call", id = 3, feature = "rows", method = "subagents", args = new { session = f.Session, after = first.Next, limit = 1, expectedSource = f.Expected } });
+        var continuation = await Read(bulk); Assert.Equal("result", Type(continuation));
+        var second = continuation.GetProperty("result").Deserialize(RowJsonContext.Rows.SubagentPage)!;
+        var original = Assert.Single(second.Items);
+        Assert.Equal(secondAtCut.ItemId, original.ItemId); Assert.Equal(secondAtCut.Seq, original.Seq);
+        Assert.Equal("z-owner-child", original.Title); Assert.Equal("idle", original.State);
+        Assert.NotEqual(first.Items.Single().ItemId, original.ItemId); Assert.Null(second.Next);
+        Assert.DoesNotContain("UPDATED_AFTER_FIRST_PAGE", continuation.GetRawText());
+        Assert.DoesNotContain("poison-child", continuation.GetRawText());
         Assert.All(f.OwnerSources.Captures, source => Assert.Equal(new(f.Expected.Machine, 0, null), source));
-        Assert.Equal(2, f.OwnerSources.Captures.Count);
+        Assert.Equal(3, f.OwnerSources.Captures.Count);
+        await Send(bulk, new { t = "call", id = 4, feature = "rows", method = "subagents", args = new { session = f.Session, after = first.Next, limit = 1, expectedSource = f.Expected with { Generation = f.Expected.Generation + 1 } } });
+        var refused = await Read(bulk); AssertRefused(refused); Assert.DoesNotContain("poison", refused.GetRawText());
+        Assert.Equal(3, f.OwnerSources.Captures.Count);
+        Assert.All(f.Sources.Captures, source => Assert.Equal(f.Expected, source));
         using var control = await f.Socket.Open();
         await Subscribe(control, f.Session, f.Expected);
         var replay = await ReplayThrough(control, RowStore.Open(f.Hosts.Remote.Fixture.Db).LastSeq(f.Session));

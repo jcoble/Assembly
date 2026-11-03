@@ -16,7 +16,6 @@ use gpui_kit::component::dock::{
 };
 use gpui_kit::component::input::{Editor, EditorState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
@@ -104,6 +103,47 @@ pub struct ChangesPane {
     _preferences: Option<Subscription>,
 }
 impl ChangesPane {
+    /// Validates saved target metadata before a workspace coordinator rebuilds this registered pane.
+    /// Folder containment remains the existing backend SessionPaths authority.
+    pub fn workspace_key(state: &PanelState, session: &str) -> Result<String, String> {
+        let invalid = || "Invalid saved Changes target.".to_string();
+        if state.panel_name.as_str() != CHANGES {
+            return Err(invalid());
+        }
+        let PanelInfo::Panel(info) = &state.info else {
+            return Err(invalid());
+        };
+        if info.is_null() {
+            return Ok(CHANGES.into());
+        }
+        if !info.is_object() || info["session"].as_str() != Some(session) {
+            return Err(invalid());
+        }
+        for field in ["path", "originalPath"] {
+            if let Some(value) = info.get(field).filter(|value| !value.is_null()) {
+                if value
+                    .as_str()
+                    .is_none_or(|path| path.is_empty() || path.contains('\0'))
+                {
+                    return Err(invalid());
+                }
+            }
+        }
+        if let Some(split) = info.get("split") {
+            if !split.is_boolean() {
+                return Err(invalid());
+            }
+        }
+        if let Some(sha) = info.get("sha") {
+            if sha.as_str().is_none_or(|sha| {
+                sha.len() != 40 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+            }) || info["path"].as_str().is_none()
+            {
+                return Err(invalid());
+            }
+        }
+        Ok(CHANGES.into())
+    }
     pub fn register(cx: &mut App) {
         register_panel(cx, CHANGES, |build, _, cx| {
             let saved = match build.state().info.clone() {

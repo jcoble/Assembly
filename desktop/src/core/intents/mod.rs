@@ -11,3 +11,9 @@ pub mod open_git_history;
 pub mod open_session;
 pub mod open_settings;
 pub mod open_url;
+
+pub mod open_new_project;
+
+pub mod open_pull_requests;
+
+pub mod reveal_file_folder;

@@ -45,4 +45,21 @@ public sealed class FileActionsTests
         Assert.False(Directory.Exists(Path.Combine(folder.Root, "copy")));
         Assert.Equal("keep", File.ReadAllText(Path.Combine(folder.Root, ".assembly-action-unrelated")));
     }
+    [Fact]
+    public async Task Ownership_change_before_publish_removes_only_the_private_copy_stage()
+    {
+        using var folder = new GitFolder("a");
+        await File.WriteAllTextAsync(Path.Combine(folder.Root, "a"), "exact source");
+        var validations = 0;
+        await Assert.ThrowsAsync<CallFailed>(() => FileActions.ExecuteAsync(folder.Root,
+            new FileActionArgs("s", "copy", "a", "copy", null), CancellationToken.None, () =>
+            {
+                if (++validations == 2) throw new CallFailed("checkout changed");
+            }));
+        Assert.Equal(2, validations);
+        Assert.Equal("exact source", await File.ReadAllTextAsync(Path.Combine(folder.Root, "a")));
+        Assert.False(File.Exists(Path.Combine(folder.Root, "copy")));
+        Assert.Empty(Directory.GetFileSystemEntries(folder.Root, ".assembly-action-*"));
+    }
+
 }

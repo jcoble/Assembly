@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
+using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Sessions;
@@ -26,11 +27,13 @@ internal sealed class SessionsFeature : IFeature
 
     private readonly SessionStore _store;
     private readonly MachineSet _machines;
+    private readonly IRowSourceBindings? _sources;
 
-    public SessionsFeature(SessionStore store, MachineSet machines)
+    public SessionsFeature(SessionStore store, MachineSet machines, IRowSourceBindings? sources = null)
     {
         _store = store;
         _machines = machines;
+        _sources = sources;
     }
 
     public void Register(ICallRegistry calls)
@@ -64,16 +67,43 @@ internal sealed class SessionsFeature : IFeature
             var bounded = args with { Limit = Math.Clamp(args.Limit, 1, ListLimit) };
             return Task.FromResult(_store.Rail(bounded, call.Cancellation));
         });
-        // Only the database: no order key, as nothing outside it can hang.
-        calls.Write(Topic, "read", SessionsJson.Default.ReadArgs, SessionsJson.Default.Done, (args, _) =>
+        // An explicit receipt captures the actual source before the one database write; legacy calls stay unqualified.
+        calls.Write(Topic, "read", SessionsJson.Default.ReadArgs, SessionsJson.Default.Done, async (args, call) =>
         {
-            if (_store.Get(args.Session) is null)
-                throw new CallFailed("unknown session");
-            return Task.FromResult<Func<IWriteScope, SendFeature.Done>>(scope =>
+            if (args.ExpectedSource is not null && call.ExpectedSource is not null && args.ExpectedSource != call.ExpectedSource)
+                throw new CallBadArguments("The session source arguments contradict the frame.");
+            var expected = args.ExpectedSource ?? call.ExpectedSource;
+            RowSourceBinding? binding = null;
+            if (expected is not null)
             {
+                if (call.Peer is not OwnerPeer) throw new CallFailed("Forbidden.", "forbidden");
+                if (_sources is null) throw new CallFailed("Source-bound session reads are unavailable.", "source_changed");
+                binding = await _sources.CaptureAsync(expected, args.Session, call.Cancellation);
+                call.SourceGuard = binding;
+                call.Cancellation.ThrowIfCancellationRequested();
+                binding.EnsureDisplayCurrent();
+            }
+            var session = _store.Get(args.Session);
+            RequireFacade(session);
+            if (session is null)
+                throw new CallFailed("unknown session");
+            return scope =>
+            {
+                if (binding is not null)
+                {
+                    call.Cancellation.ThrowIfCancellationRequested();
+                    binding.EnsureDisplayCurrent(scope);
+                    RequireFacade(_store.Get(scope, args.Session));
+                }
                 _store.MarkRead(scope, args.Session, args.Seq);
                 return new SendFeature.Done(true);
-            });
+            };
+
+            void RequireFacade(SessionInfo? actual)
+            {
+                if (expected is not null && (actual is null || actual.SessionId != args.Session || actual.Machine != expected.RouteMachine))
+                    throw new CallFailed("The selected session source changed.", "source_changed");
+            }
         });
         calls.Write(Topic, "mark", SessionsJson.Default.MarkArgs, SessionsJson.Default.Done, (args, _) =>
         {
@@ -122,7 +152,8 @@ internal sealed class SessionsFeature : IFeature
 
     internal sealed record Created(string SessionId);
 
-    internal sealed record ReadArgs([property: JsonRequired] string Session, [property: JsonRequired] long Seq);
+    internal sealed record ReadArgs([property: JsonRequired] string Session, [property: JsonRequired] long Seq,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExpectedSource? ExpectedSource = null);
 
     internal sealed record MarkArgs([property: JsonRequired] string Session, [property: JsonRequired] string State);
 

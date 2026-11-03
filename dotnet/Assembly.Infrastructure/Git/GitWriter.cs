@@ -5,7 +5,7 @@ using Assembly.Application.Features.Chat.SourceControl;
 namespace Assembly.Infrastructure.Git;
 
 /// <summary>The normal Git writer; New Project preparation consumes these same initialization and clone methods.</summary>
-public sealed class GitWriter(IGit git)
+public sealed partial class GitWriter(IGit git)
 {
     public async Task<GitWriteResult> InitAsync(string root, CancellationToken ct)
     {
