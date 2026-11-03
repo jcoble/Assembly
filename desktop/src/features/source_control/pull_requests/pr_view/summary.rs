@@ -250,10 +250,7 @@ impl PrDetail {
                     Some(line) => format!("{path}:{line}"),
                     None => path.clone(),
                 });
-                let can_reply = open
-                    && comment.path.is_some()
-                    && comment.reply_to_id.is_none()
-                    && comment.id.parse::<u64>().is_ok();
+                let can_reply = open && comment.reply_id().is_some();
                 let id = format!("pr-comment-body:{index}");
                 let reply = can_reply.then(|| {
                     let target = comment.clone();
@@ -322,8 +319,8 @@ impl PrDetail {
             }
         }
     }
-    fn start_reply(&mut self, comment: &PullRequestComment, cx: &mut Context<Self>) {
-        let (Ok(id), Some(path)) = (comment.id.parse::<u64>(), comment.path.clone()) else {
+    pub(super) fn start_reply(&mut self, comment: &PullRequestComment, cx: &mut Context<Self>) {
+        let (Some(id), Some(path)) = (comment.reply_id(), comment.path.clone()) else {
             return;
         };
         self.reply = Some(ReplyTarget {

@@ -167,6 +167,15 @@ pub struct PullRequestComment {
     pub side: Option<String>,
     pub reply_to_id: Option<u64>,
 }
+impl PullRequestComment {
+    /// GitHub takes a reply only on the comment that opened a thread on a file, by its number. A comment no longer on
+    /// a line of the diff still qualifies.
+    pub fn reply_id(&self) -> Option<u64> {
+        (self.path.is_some() && self.reply_to_id.is_none())
+            .then(|| self.id.parse().ok())
+            .flatten()
+    }
+}
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestReview {
