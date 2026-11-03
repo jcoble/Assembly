@@ -46,7 +46,8 @@ pub fn outcome(ask: &AskPayload) -> String {
         Some("cancel") => return "Cancelled".to_string(),
         _ => {}
     }
-    let content = answer["content"].as_object();
+    let shown = AskForm::shown(ask.schema.as_ref(), answer);
+    let content = shown["content"].as_object();
     let picked: Vec<String> = content
         .into_iter()
         .flatten()
@@ -196,6 +197,7 @@ impl AskRow {
             let action=match action {
                 ControlAction::Answer(answer)=>SessionAction::Answer{ask_id:ask_id.clone(),answer},
                 ControlAction::Pick{field,value,many}=>SessionAction::Pick{ask_id:ask_id.clone(),field,value,many},
+                ControlAction::Flag{field,on}=>SessionAction::Flag{ask_id:ask_id.clone(),field,on},
                 ControlAction::Submit=>SessionAction::SubmitAsk{ask_id:ask_id.clone()},
             };on_action(action,window,cx);
         })

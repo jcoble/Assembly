@@ -93,10 +93,15 @@ impl NeedRow {
         if matches!(self.state,NeedRowState::Sending)||!self.available||!self.reconciled{return;}
         match action {
             ControlAction::Pick{field,value,many}=>{if let Some(form)=self.form.as_mut(){form.pick(field,value,many);cx.notify();}},
+            ControlAction::Flag{field,on}=>{if let Some(form)=self.form.as_mut(){form.set_flag(field,on);cx.notify();}},
             ControlAction::Submit=>{
                 let Some(form)=&self.form else{return;};
+                let Some(asked)=self.need.presentation.as_ref().and_then(|presentation|presentation.provider_payload("open",self.need.text.clone(),None)) else{return;};
                 let texts=form.texts.iter().map(|(name,input)|(name.clone(),input.read(cx).value().to_string())).collect();
-                self.answer(NeedAnswer::Answer(AskForm::content(&form.picked,texts)),cx);
+                match AskForm::answer(&asked,&form.picked,texts) {
+                    Ok(answer)=>self.answer(NeedAnswer::Answer(answer),cx),
+                    Err(message)=>{self.state=NeedRowState::Failed{message};cx.notify();},
+                }
             },
             ControlAction::Answer(answer)=>self.answer(NeedAnswer::Answer(answer),cx),
         }
@@ -177,7 +182,7 @@ impl Render for NeedRow {
         if let Some(label)=label {column=column.child(div().text_color(theme.muted_foreground).child(label));}
         if !self.available {return column.child("The current owning source is unavailable.");}
         if self.need.state!="open" {
-            if let Some(answer)=&self.need.answer {column=column.child(self.need.answer_text.clone().unwrap_or_else(||answer.to_string()));}
+            if let Some(answer)=&self.need.answer {column=column.child(self.need.answer_text.clone().unwrap_or_else(||AskForm::shown(self.need.presentation.as_ref().and_then(|presentation|presentation.schema.as_ref()),answer).to_string()));}
             return column;
         }
         if matches!(self.state,NeedRowState::Sending){return column;}

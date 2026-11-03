@@ -316,7 +316,18 @@ impl AnswerPanel {
             let answer = match field.input() {
                 AskInput::One(choices) => self.one_of(&name, choices, picked, needed, cx),
                 AskInput::Many(choices) => self.many_of(&name, choices, picked, cx),
-                AskInput::Text => match form.texts.iter().find(|(text, _)| *text == name) {
+                AskInput::Flag => {
+                    let on = picked.and_then(Value::as_bool).unwrap_or(false);
+                    let action = ControlAction::Flag { field: name.clone(), on: !on };
+                    let on_action = self.on_action.clone();
+                    div().mt(px(7.)).child(
+                        Checkbox::new(SharedString::from(format!("answer:{}:{name}", self.ask_id)))
+                            .checked(on)
+                            .label("Yes")
+                            .on_click(move |_, window, cx| on_action(action.clone(), window, cx)),
+                    )
+                }
+                AskInput::Text | AskInput::Secret => match form.texts.iter().find(|(text, _)| *text == name) {
                     Some((_, input)) => {
                         let on_action = self.on_action.clone();
                         div()

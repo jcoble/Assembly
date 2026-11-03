@@ -51,6 +51,7 @@ pub struct SessionPane {
     _source_connections: Vec<Subscription>,
     active_source_cut: Option<opening::ConnectionCut>,
     focus: FocusHandle,
+    draft: Option<AnyView>,
     session: Option<String>,
     row_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     view: SessionView,
@@ -216,6 +217,7 @@ impl SessionPane {
             _source_connections: Vec::new(),
             active_source_cut: None,
             focus: cx.focus_handle(),
+            draft: None,
             session: None,
             row_source: None,
             view: SessionView::default(),
@@ -472,7 +474,7 @@ impl SessionPane {
             (false, true) => (self._clock, self.now, self.plan_open) = (None, None, false),
             _ => {}
         }
-        let context = self.view.context.map(|(_, used, size)| (used, size));
+        let context = self.view.context;
         let running = active.is_some();
         let branch = latest_branch(&self.view.stats);
         let lock = pending_answer(&self.view.items);

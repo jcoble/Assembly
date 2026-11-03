@@ -1,4 +1,4 @@
-use super::{Created, NewSessionForm};
+use super::{Created, DraftEvent, NewSessionForm};
 use super::start_request::{CheckoutIntent, StartRequest};
 use super::start_source::StartSource;
 use super::create_reply::{AcceptedCreate, CreateReply};
@@ -192,6 +192,7 @@ impl NewSessionForm {
         self.starting=false;self.error=error.to_string().into();
         let requires_reconcile=self.attempt.as_ref().is_some_and(|attempt|attempt.accepted.is_none()&&!attempt.lookup_absent||attempt.prompt_dispatched||attempt.retry_operation.is_some());
         self.start_composer.update(cx,|composer,cx|composer.set_start_state(!requires_reconcile,requires_reconcile,Some(error.into()),cx));
+        cx.emit(DraftEvent::Failed);
         cx.notify();
     }
 }

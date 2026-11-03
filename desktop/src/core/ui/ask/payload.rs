@@ -82,6 +82,10 @@ pub struct AskField {
     pub choices: Option<Vec<String>>,
     /// A multi-select's choices.
     pub items: Option<AskItems>,
+    /// `password` marks a text field whose answer stays hidden, as `writeOnly` does.
+    pub format: Option<String>,
+    pub write_only: Option<bool>,
+    pub default: Option<Value>,
 }
 
 /// How a form field is answered.
@@ -92,11 +96,24 @@ pub enum AskInput {
     /// Any of these.
     Many(Vec<AskChoice>),
     Text,
+    /// Text that's masked while typed, sent exactly as typed and never shown again.
+    Secret,
+    /// A true or false answer.
+    Flag,
 }
 
 impl AskField {
-    /// A multi-select's choices for an array, else its one-of or enum choices, else text, as the web form reads them.
+    /// Whether a typed answer goes back as a JSON number.
+    pub fn numeric(&self) -> bool {
+        matches!(self.kind.as_deref(), Some("number" | "integer"))
+    }
+
+    /// A check box for a boolean; a multi-select's choices for an array, else its one-of or enum choices, else text,
+    /// hidden when the schema marks it so.
     pub fn input(&self) -> AskInput {
+        if self.kind.as_deref() == Some("boolean") {
+            return AskInput::Flag;
+        }
         let listed = |values: &Option<Vec<String>>| {
             values.as_ref().map(|values| {
                 values
@@ -119,6 +136,7 @@ impl AskField {
         }
         match self.one_of.clone().or_else(|| listed(&self.choices)) {
             Some(choices) => AskInput::One(choices),
+            None if self.format.as_deref() == Some("password") || self.write_only == Some(true) => AskInput::Secret,
             None => AskInput::Text,
         }
     }

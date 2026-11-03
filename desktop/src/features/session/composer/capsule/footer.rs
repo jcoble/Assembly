@@ -195,7 +195,11 @@ impl Composer {
             .gap_1()
             .children(footer)
             .when_some(self.meter.clone(), |trail, meter| {
-                trail.child(ContextGauge { meter })
+                let provider = self
+                    .agent_name
+                    .clone()
+                    .unwrap_or_else(|| "the agent".into());
+                trail.child(ContextGauge { meter, provider })
             })
             .children(settings)
             .child(

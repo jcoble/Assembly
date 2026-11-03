@@ -21,7 +21,7 @@ use crate::core::ui::ask::form::AskForm;
 use crate::features::session::composer::answer_panel::AnswerPanel;
 use crate::features::session::composer::shape::next_answer;
 use crate::features::session::view::ask_row::AskRow;
-use crate::features::session::view::plan_card::PlanCard;
+use crate::features::session::view::plan_card::{PlanCard, turn_file_changes};
 use crate::features::session::view::session_action::SessionAction;
 
 impl SessionPane {
@@ -39,6 +39,7 @@ impl SessionPane {
             let Some(handle)=cx.active_window().or_else(||cx.windows().into_iter().next()) else {return;};
             cx.defer(move|cx|{let _=handle.update(cx,|_,window,cx| {
                 if let Some(pane)=CenterPanes::find::<SessionPane>("Chat",cx) {
+                    pane.update(cx,|pane,_|pane.uncover(&request.id));
                     pane.update(cx,|pane,cx|pane.request_current_route(request.route_machine,request.id,request.request_id,
                         if request.historical {crate::core::intents::session_open::SessionOpenTarget::Historical} else {crate::core::intents::session_open::SessionOpenTarget::Engine},window,cx));
                 } else {
@@ -53,6 +54,7 @@ impl SessionPane {
             let Some(handle)=cx.active_window().or_else(||cx.windows().into_iter().next()) else {return;};
             cx.defer(move|cx|{let _=handle.update(cx,|_,window,cx| {
                 if let Some(pane)=CenterPanes::find::<SessionPane>("Chat",cx) {
+                    pane.update(cx,|pane,_|pane.uncover(&request.key.id));
                     pane.update(cx,|pane,cx|pane.request_open(request,window,cx));
                 } else {
                     SelectedSession::global(cx).update(cx,|_,cx|cx.emit(crate::core::intents::session_open::SessionOpenResult {
@@ -101,7 +103,54 @@ impl Panel for SessionPane {
 }
 
 impl SessionPane {
+    /// Puts a new session's draft in the Chat pane, in front. False when there's no Chat pane to hold it.
+    pub fn open_draft(draft: AnyView, window: &mut Window, cx: &mut App) -> bool {
+        CenterPanes::open("Chat", window, cx, |window, cx| {
+            cx.new(|cx| SessionPane::chat(Rc::new(SocketSessionClient), window, cx))
+        });
+        let Some(pane) = CenterPanes::find::<SessionPane>("Chat", cx) else {
+            return false;
+        };
+        pane.update(cx, |pane, cx| {
+            pane.draft = Some(draft);
+            cx.notify();
+        });
+        true
+    }
+
+    /// Takes this draft back out, showing the session under it.
+    pub fn close_draft(draft: EntityId, cx: &mut App) {
+        if let Some(pane) = CenterPanes::find::<SessionPane>("Chat", cx) {
+            pane.update(cx, |pane, cx| {
+                if pane.draft.as_ref().is_some_and(|shown| shown.entity_id() == draft) {
+                    pane.draft = None;
+                    cx.notify();
+                }
+            });
+        }
+    }
+
+    /// Going to the session already under the draft uncovers it; it opens no differently, so nothing else would.
+    fn uncover(&mut self, session: &str) {
+        if self.session.as_deref() == Some(session) {
+            self.draft = None;
+        }
+    }
+
     /// The ask the box answers next, its form made the first time it's drawn: text fields need the window.
+    /// The chip shows for a plan, or for a turn that changed files without one.
+    fn plan_chip(&self) -> Option<PlanCard> {
+        let items = (self.view.plan.as_ref()).map_or_else(Vec::new, |(_, items)| items.clone());
+        let changes = turn_file_changes(&self.view.items);
+        (!items.is_empty() || changes.is_some()).then(|| PlanCard {
+            items,
+            changes,
+            open: self.plan_open,
+            running: self.view.active_run(self.known_run.as_deref()).is_some(),
+            on_action: self.on_action.clone(),
+        })
+    }
+
     fn answer_panel(&mut self, window: &mut Window, cx: &mut App) -> Option<AnswerPanel> {
         let (ask_id, ask, count) = next_answer(&self.view.items)
             .map(|(ask_id, ask, count)| (ask_id.to_string(), ask.clone(), count))?;
@@ -126,6 +175,9 @@ impl Render for SessionPane {
     /// The header, the timeline, the plan card, the status (why the last call failed, or "Offline, showing the saved
     /// session") and the composer, top to bottom.
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(draft) = self.draft.clone() {
+            return div().size_full().child(draft).into_any_element();
+        }
         if self.reveal.is_some() && !self.frame_asked {
             self.frame_asked = true;
             cx.on_next_frame(window, |pane, window, cx| pane.reveal_frame(window, cx));
@@ -140,21 +192,15 @@ impl Render for SessionPane {
             .size_full()
             .flex()
             .flex_col()
+            .on_key_down(cx.listener(|pane, event: &KeyDownEvent, _, cx| {
+                if pane.plan_open && event.keystroke.key == "escape" {
+                    pane.plan_open = false;
+                    cx.notify();
+                }
+            }))
             .child(self.header.clone())
             .child(div().flex_1().min_h_0().child(self.timeline.clone()))
-            .when_some(
-                self.view
-                    .plan
-                    .as_ref()
-                    .filter(|(_, items)| !items.is_empty()),
-                |pane, (_, items)| {
-                    pane.child(PlanCard {
-                        items: items.clone(),
-                        open: self.plan_open,
-                        on_action: self.on_action.clone(),
-                    })
-                },
-            )
+            .when_some(self.plan_chip(), |pane, chip| pane.child(chip))
             .when(!self.status.is_empty(), |pane| {
                 let on_action = self.on_action.clone();
                 pane.child(
@@ -179,5 +225,10 @@ impl Render for SessionPane {
                 )
             })
             .when(!self.read_only, |pane| pane.child(self.composer.clone()))
+            .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "navigation/draft_tests.rs"]
+mod draft_tests;

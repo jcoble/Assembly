@@ -83,7 +83,7 @@ fn each_field_answers_by_its_choices_or_as_text() {
             .iter()
             .map(|choice| choice.value.clone())
             .collect::<Vec<_>>(),
-        AskInput::Text => vec![],
+        _ => vec![],
     };
     assert!(matches!(inputs[0], AskInput::One(_)));
     assert_eq!(values(&inputs[0]), ["east", "west"]);
@@ -91,4 +91,15 @@ fn each_field_answers_by_its_choices_or_as_text() {
     assert_eq!(values(&inputs[1]), ["a"]);
     assert!(matches!(inputs[2], AskInput::One(_)));
     assert_eq!(inputs[3], AskInput::Text);
+}
+
+#[test]
+fn a_field_is_read_as_its_type_and_marked_hidden_only_by_the_schema() {
+    use super::payload::{AskField, AskInput};
+    let input = |field: serde_json::Value| serde_json::from_value::<AskField>(field).unwrap().input();
+    assert_eq!(input(json!({ "type": "boolean" })), AskInput::Flag);
+    assert_eq!(input(json!({ "type": "string", "format": "password" })), AskInput::Secret);
+    assert_eq!(input(json!({ "type": "string", "writeOnly": true })), AskInput::Secret);
+    assert_eq!(input(json!({ "type": "string", "format": "email" })), AskInput::Text);
+    assert_eq!(input(json!({ "type": "string", "writeOnly": false })), AskInput::Text);
 }
