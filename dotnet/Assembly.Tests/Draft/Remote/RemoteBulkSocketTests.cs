@@ -1,16 +1,19 @@
 using System.Net;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
+using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Terminal;
 using Assembly.Domain.Rows;
 using Assembly.Infrastructure.Persistence;
+using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Infrastructure.Remote;
 using Assembly.Infrastructure.Socket;
 using Assembly.Tests.Draft.Base.Chat;
@@ -29,6 +32,10 @@ public sealed class RemoteBulkSocketTests : IAsyncLifetime
     private readonly TempDatabase _ownerFile = new(), _desktopFile = new();
     private readonly List<SocketEndpoint> _endpoints = [];
     private readonly Gate _gate = new();
+    private readonly DirectoryInfo _ownerImageRoot = Directory.CreateTempSubdirectory("remote-bulk-owner-images-");
+    private readonly DirectoryInfo _desktopImageRoot = Directory.CreateTempSubdirectory("remote-bulk-desktop-images-");
+    private AttachmentStore _ownerImages = null!, _desktopImages = null!;
+    private FakeMachine _ownerLocal = null!, _desktopLocal = null!;
     private AppDatabase _ownerDb = null!, _desktopDb = null!;
     private LiveHub _ownerHub = null!, _desktopHub = null!;
     private RowStore _ownerRows = null!;
@@ -52,10 +59,14 @@ public sealed class RemoteBulkSocketTests : IAsyncLifetime
         ownerSessions.Add("s", "claude", "repo", null!);
         _desktopSessions = SessionStore.Open(_desktopDb, TimeProvider.System, "checkouts");
         _desktopSessions.Add("s", "claude", "repo", "box");
-        var ownerMachines = new MachineSet(new FakeMachine(null, ownerSessions));
+        _ownerImages = new AttachmentStore(_ownerImageRoot.FullName);
+        _desktopImages = new AttachmentStore(_desktopImageRoot.FullName);
+        _ownerLocal = new FakeMachine(null, ownerSessions) { Attachments = _ownerImages };
+        var ownerMachines = new MachineSet(_ownerLocal);
         var ownerCalls = new SocketDispatcher(_ownerDb.Writer, ownerTopics, TimeProvider.System, NullLogger.Instance);
         new RowsFeature(_ownerHub, _ownerRows, ownerSessions, ownerMachines).Register(new GatedRegistry(ownerCalls, _gate));
         new SessionsFeature(ownerSessions, ownerMachines).Register(ownerCalls);
+        new AttachmentsFeature(ownerSessions, ownerMachines, Path.Combine(_ownerImageRoot.FullName, "staging")).Register(ownerCalls);
         _terminals = new TerminalHost(new FakePtyStarter(), ownerTopics, TimeProvider.System);
         new TerminalFeature(_terminals).Register(ownerCalls);
         _ownerApp = CreateApp();
@@ -72,9 +83,10 @@ public sealed class RemoteBulkSocketTests : IAsyncLifetime
         _ownerAddress = new Uri(_ownerApp.Urls.Single());
         _machine = new RemoteMachine("box", _ownerAddress, "token", _desktopHub, _desktopSessions, TextWriter.Null,
             new MachineStatus(desktopTopics, ["box"]));
-        var desktopMachines = new MachineSet(new FakeMachine(null, _desktopSessions), _machine);
+        var desktopMachines = new MachineSet(_desktopLocal = new FakeMachine(null, _desktopSessions) { Attachments = _desktopImages }, _machine);
         var desktopCalls = new SocketDispatcher(_desktopDb.Writer, desktopTopics, TimeProvider.System, NullLogger.Instance);
         new RowsFeature(_desktopHub, RowStore.Open(_desktopDb), _desktopSessions, desktopMachines).Register(desktopCalls);
+        new AttachmentsFeature(_desktopSessions, desktopMachines, Path.Combine(_desktopImageRoot.FullName, "staging")).Register(desktopCalls);
         _desktopApp = CreateApp();
         Map(_desktopApp, desktopCalls, "/socket/bulk", bulk: true);
         await _desktopApp.StartAsync();
@@ -191,6 +203,94 @@ public sealed class RemoteBulkSocketTests : IAsyncLifetime
         await _gate.Settled.Task.WaitAsync(Wait);
     }
 
+    [Fact]
+    public async Task Remote_image_read_reassembles_only_the_owner_original()
+    {
+        var (name, original, _) = await SeedImageAsync();
+        using var socket = await OpenAsync(_desktopAddress, "/socket/bulk");
+        using var assembled = new MemoryStream();
+        long id = 1;
+        while (assembled.Length < original.Length)
+        {
+            await ImageAsync(socket, id++, name, assembled.Length);
+            var answer = await ReadAsync(socket);
+            Assert.Equal("result", answer.GetProperty("t").GetString());
+            var piece = answer.GetProperty("result");
+            Assert.Equal(original.Length, piece.GetProperty("size").GetInt64());
+            Assert.Equal("image/png", piece.GetProperty("mime").GetString());
+            var data = piece.GetProperty("data").GetBytesFromBase64();
+            Assert.InRange(data.Length, 1, AttachmentsFeature.ChunkBytes);
+            assembled.Write(data);
+        }
+        Assert.Equal(SHA256.HashData(original), SHA256.HashData(assembled.ToArray()));
+        await ImageAsync(socket, id, name, original.Length);
+        var end = (await ReadAsync(socket)).GetProperty("result");
+        Assert.Empty(end.GetProperty("data").GetBytesFromBase64());
+        Assert.Equal(original.Length, end.GetProperty("size").GetInt64());
+        Assert.Equal("image/png", end.GetProperty("mime").GetString());
+        Assert.Empty(_desktopLocal.Asked);
+        Assert.Equal(0, _legacyToolHits);
+    }
+
+    [Fact]
+    public async Task Remote_image_read_rejects_invalid_windows_and_missing_owner_without_local_fallback()
+    {
+        var (name, original, ownerPath) = await SeedImageAsync();
+        using var socket = await OpenAsync(_desktopAddress, "/socket/bulk");
+        await ImageAsync(socket, 1, "../" + name, 0);
+        Assert.Equal("not an attachment name", (await ReadAsync(socket)).GetProperty("message").GetString());
+        await ImageAsync(socket, 2, name, -1);
+        Assert.Equal("the offset is outside the attachment", (await ReadAsync(socket)).GetProperty("message").GetString());
+        await ImageAsync(socket, 3, name, original.Length + 1);
+        Assert.Equal("the offset is outside the attachment", (await ReadAsync(socket)).GetProperty("message").GetString());
+        File.Delete(ownerPath);
+        Assert.True(File.Exists(_desktopImages.PathOf("s", name)));
+        await ImageAsync(socket, 4, name, 0);
+        var missing = await ReadAsync(socket);
+        Assert.Equal("error", missing.GetProperty("t").GetString());
+        Assert.Equal("no such attachment", missing.GetProperty("message").GetString());
+        Assert.False(missing.TryGetProperty("result", out _));
+        Assert.Empty(_desktopLocal.Asked);
+        Assert.Equal(0, _legacyToolHits);
+    }
+
+    [Fact]
+    public async Task Remote_image_read_reports_offline_owner_without_local_fallback()
+    {
+        var (name, _, _) = await SeedImageAsync();
+        await _ownerApp.StopAsync();
+        Assert.True(File.Exists(_desktopImages.PathOf("s", name)));
+        using var socket = await OpenAsync(_desktopAddress, "/socket/bulk");
+        await ImageAsync(socket, 1, name, 0);
+        var answer = await ReadAsync(socket);
+        Assert.Equal("error", answer.GetProperty("t").GetString());
+        Assert.Equal("unreachable", answer.GetProperty("code").GetString());
+        Assert.Equal("box", answer.GetProperty("machine").GetString());
+        Assert.False(answer.TryGetProperty("result", out _));
+        Assert.Empty(_desktopLocal.Asked);
+        Assert.Equal(0, _legacyToolHits);
+    }
+
+    private async Task<(string Name, byte[] Original, string Path)> SeedImageAsync()
+    {
+        var png = ImageType.ForExtension("png")!;
+        var original = new byte[2 * AttachmentsFeature.ChunkBytes + 47];
+        Array.Fill(original, (byte)0x31);
+        png.Magic.CopyTo(original, 0);
+        var ownerPath = await _ownerImages.SaveAsync("s", png, original, CancellationToken.None);
+        var name = Path.GetFileName(ownerPath);
+        var desktopPath = _desktopImages.PathOf("s", name);
+        Directory.CreateDirectory(Path.GetDirectoryName(desktopPath)!);
+        await File.WriteAllBytesAsync(desktopPath, [.. png.Magic, 0x44, 0x45, 0x46]);
+        return (name, original, ownerPath);
+    }
+
+    private static Task ImageAsync(WebSocket socket, long id, string name, long offset)
+    {
+        var args = JsonSerializer.Serialize(new AttachmentsFeature.ReadArgs("s", name, offset), AttachmentsJson.Default.ReadArgs);
+        return SendAsync(socket, $$$"""{"t":"call","id":{{{id}}},"feature":"attachments","method":"read","args":{{{args}}}}""");
+    }
+
     private void Seed(string? output, string? diff, string input = "input")
     {
         var batch = new RowBatch();
@@ -221,6 +321,7 @@ public sealed class RemoteBulkSocketTests : IAsyncLifetime
         var endpoint = new SocketEndpoint("token", calls, "box", TimeProvider.System, bulk, terminal);
         _endpoints.Add(endpoint);
         app.Map(path, endpoint.HandleAsync);
+        app.Lifetime.ApplicationStopping.Register(endpoint.CloseAll);
     }
 
     private static async Task<ClientWebSocket> OpenAsync(Uri address, string path)
@@ -269,6 +370,8 @@ public sealed class RemoteBulkSocketTests : IAsyncLifetime
         _ownerDb.Dispose();
         _desktopFile.Dispose();
         _ownerFile.Dispose();
+        _desktopImageRoot.Delete(recursive: true);
+        _ownerImageRoot.Delete(recursive: true);
     }
 
     private sealed class Gate

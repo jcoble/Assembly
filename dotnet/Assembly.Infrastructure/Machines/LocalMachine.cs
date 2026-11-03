@@ -66,6 +66,9 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
     public Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken) =>
         attachments.SaveAsync(session.SessionId, type, bytes, cancellationToken);
 
+    public Task<AttachmentPiece> ReadAttachmentAsync(SessionInfo session, string name, long offset, CancellationToken cancellationToken) =>
+        attachments.ReadAsync(session.SessionId, name, offset, cancellationToken);
+
     public Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken)
     {
         var config = sessionStore.Config(session.SessionId);

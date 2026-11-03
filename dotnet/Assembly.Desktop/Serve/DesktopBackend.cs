@@ -253,7 +253,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
                 [new EngineCalls(engine, TimeProvider.System, machineForward), new SessionTitleCalls(engine, sessionStore, machineForward), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                     new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
-                    new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
+                    new AttachmentsFeature(sessionStore, machines, Path.Combine(home, "staging", "attachments")),
                     new FilesFeature(sessionStore),
                     new WorktreesFeature(sessionStore),
                     new SourceControlFeature(sessionStore),

@@ -67,7 +67,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         new MachinesFeature(machines, new MachineStatus(topics, ["box"]), () => { }, TimeProvider.System).Register(calls);
         new PreferencesFeature(_db).Register(calls);
         _attachments = new AttachmentStore(Path.Combine(_home.FullName, "attachments"));
-        new AttachmentsFeature(_sessions, machines, _attachments, Staging).Register(calls);
+        new AttachmentsFeature(_sessions, machines, Staging).Register(calls);
         calls.Closed(connection => _socketClosed.TrySetResult(connection));
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();

@@ -1,3 +1,4 @@
+using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Application.Common.Agents;
 using System.Text.Json;
 using Assembly.Application.Common.Machines;
@@ -32,6 +33,7 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     /// <summary>The run <see cref="ActiveRun"/> answers.</summary>
     public string? Running { get; set; }
     public StoredToolCall? Tool { get; set; }
+    public AttachmentStore? Attachments { get; set; }
     /// <summary>The last image saved here.</summary>
     public byte[]? Saved { get; private set; }
 
@@ -92,6 +94,13 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
             Saved = bytes.ToArray();
             return $"/{name ?? "here"}/image.{type.Extension}";
         }, cancellationToken);
+
+    public async Task<AttachmentPiece> ReadAttachmentAsync(SessionInfo session, string name, long offset, CancellationToken cancellationToken)
+    {
+        await Remote($"read {session.SessionId} {name} {offset}", () => 0, cancellationToken);
+        return await (Attachments ?? throw new InvalidOperationException("The test machine's attachment store was not configured."))
+            .ReadAsync(session.SessionId, name, offset, cancellationToken);
+    }
 
     public Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken) =>
         Remote("config", () => Config, cancellationToken);

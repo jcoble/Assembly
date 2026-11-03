@@ -197,6 +197,27 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         return saved.GetProperty("path").GetString()!;
     }
 
+    public async Task<AttachmentPiece> ReadAttachmentAsync(SessionInfo session, string name, long offset, CancellationToken cancellationToken)
+    {
+        var type = string.IsNullOrEmpty(name) ? null : AttachmentStore.TypeOfName(name);
+        if (type is null) throw new CallFailed("not an attachment name");
+        if (offset < 0) throw new CallFailed("the offset is outside the attachment");
+        var args = JsonSerializer.SerializeToElement(new AttachmentsFeature.ReadArgs(session.SessionId, name, offset),
+            AttachmentsJson.Default.ReadArgs);
+        JsonElement value;
+        try { value = await CallAsync("attachments", "read", args, bulk: true, cancellationToken); }
+        catch (Exception error) when (error is WebSocketException or IOException)
+        {
+            throw Unreachable("machine socket closed", $"{_name}: machine socket closed", error);
+        }
+        var piece = value.Deserialize(AttachmentsJson.Default.AttachmentPiece)
+            ?? throw new CallFailed("invalid attachment reply");
+        if (piece.Size is < 1 or > AttachmentStore.MaxBytes || offset > piece.Size || piece.Data is null ||
+            piece.Data.Length != Math.Min(AttachmentsFeature.ChunkBytes, piece.Size - offset) || piece.Mime != type.ContentType)
+            throw new CallFailed("invalid attachment reply");
+        return piece;
+    }
+
     public async Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken) =>
         ReadConfig(await CallAsync("config", "get", new ConfigFeature.GetArgs(session.SessionId), cancellationToken));
 

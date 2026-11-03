@@ -48,6 +48,9 @@ public interface IMachine
     /// <summary>Stores the image where the agent can read it and returns its path there.</summary>
     Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken);
 
+    /// <summary>Reads one bounded image piece from the session's owning machine.</summary>
+    Task<AttachmentPiece> ReadAttachmentAsync(SessionInfo session, string name, long offset, CancellationToken cancellationToken);
+
     /// <summary>
     /// The session's config: the options its agent reported (before its first session, the ones the agent's
     /// latest new session had, if any), and the values chosen for it.
