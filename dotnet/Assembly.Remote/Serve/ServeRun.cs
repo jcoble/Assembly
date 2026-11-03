@@ -39,6 +39,7 @@ using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Topics;
 using Assembly.Application.Features.Preferences;
 using Assembly.Application.Features.Terminal;
+using Assembly.Application.Common.Terminals;
 using Assembly.Infrastructure.Terminal;
 using Assembly.Infrastructure.Git;
 using Assembly.Infrastructure.Projects;
@@ -65,7 +66,9 @@ public static class ServeRun
     }
 
     internal static async Task<int> RunAsync(ServeOptions options, IAgentLauncher? launcher,
-        IEngineEffects? engineEffects, Action<Uri, EngineRuntime>? started, CancellationToken cancellationToken)
+        IEngineEffects? engineEffects, Action<Uri, EngineRuntime>? started, CancellationToken cancellationToken,
+        Func<CancellationToken, Task<(string? Path, string? Error)>>? loginShell = null,
+        Action<IProgramTerminals>? programTerminals = null)
     {
         Directory.CreateDirectory(options.Home);
         // Before the database opens, so a second host on this home writes nothing into the live one's; disposed last.
@@ -89,8 +92,10 @@ public static class ServeRun
         var preferences = new PreferenceStore(db);
         var utility = new AcpUtilityModel(agents is not null ? agents : launcher.Agents, () => preferences.Read("utilityModel"), TimeProvider.System, Console.Out);
         await using var work = new BackgroundWork(TimeProvider.System, Console.Out);
-        await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
+        var accountShell = await (loginShell is null ? AccountLoginShell.ReadAsync(cancellationToken) : loginShell(cancellationToken));
+        await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, accountShell,
             SessionTerminalFolders.ExistingFolder(options.Checkouts, sessionStore));
+        programTerminals?.Invoke(terminals);
         using var hostStop = new CancellationTokenSource();
         var tokens = new McpTokens();
         var endpoint = new McpEndpointReady(tokens);
@@ -213,7 +218,7 @@ public static class ServeRun
             var projectPrReads = new ProjectPullRequestReads(db, projectRoots, sessionSources, engine.Machine, prReader, null, null);
             var projectPrActions = new ProjectPullRequestActions(projectPrReads, gitOperations, sessionGit, null);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
-                [new EngineCalls(engine, TimeProvider.System, answers, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, resolveProject: project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore), new SessionTitleCalls(engine, sessionStore), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines), ownerMachineCalls,
+                [new Assembly.Infrastructure.Engine.Messages.MessagesCalls(engine, db), new EngineCalls(engine, TimeProvider.System, answers, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, resolveProject: project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore), new SessionTitleCalls(engine, sessionStore), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines), ownerMachineCalls,
                     new ProvidersFeature(challenges, engine.Machine), new ProviderRuntimeCalls(engine.Machine, agents), new TerminalFeature(terminals), workflowCalls,
                     new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome, remoteFolders: localFolders),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,

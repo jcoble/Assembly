@@ -43,6 +43,9 @@ internal sealed class TwoHosts : IAsyncDisposable
         public Uri Address { get; private set; } = null!;
         public SocketEndpoint Endpoint { get; private set; } = null!;
         public SocketEndpoint BulkEndpoint { get; private set; } = null!;
+        public SocketEndpoint TerminalEndpoint { get; private set; } = null!;
+        public int TerminalConnections;
+        public Func<Task>? OpeningTerminal { get; set; }
         private bool _running;
         public int MachineCalls;
         public event Action? RetentionCommitted;
@@ -124,13 +127,20 @@ internal sealed class TwoHosts : IAsyncDisposable
             App = builder.Build(); App.UseWebSockets();
             Endpoint = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, engineMachine: Runtime.Machine);
             var bulk = BulkEndpoint = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, bulk: true, engineMachine: OmitBulkIdentity ? null : BulkIdentity ?? Runtime.Machine);
+            var terminal = TerminalEndpoint = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, terminal: true, engineMachine: Runtime.Machine);
             App.Map("/socket", Endpoint.HandleAsync);
+            App.Map("/socket/terminal", async context =>
+            {
+                Interlocked.Increment(ref TerminalConnections);
+                if (OpeningTerminal is { } opening) await opening().WaitAsync(context.RequestAborted);
+                await terminal.HandleAsync(context);
+            });
             App.Map("/socket/bulk", async context =>
             {
                 if (OpeningBulk is { } opening) await opening().WaitAsync(context.RequestAborted);
                 await bulk.HandleAsync(context);
             });
-            App.Lifetime.ApplicationStopping.Register(Endpoint.CloseAll); App.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
+            App.Lifetime.ApplicationStopping.Register(Endpoint.CloseAll); App.Lifetime.ApplicationStopping.Register(bulk.CloseAll); App.Lifetime.ApplicationStopping.Register(terminal.CloseAll);
             await App.StartAsync();
             _running = true;
             Address = new(App.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());

@@ -190,7 +190,6 @@ async fn a_project_file_reads_by_project_with_its_source(cx: &mut TestAppContext
             generation: 3,
             route_machine: Some("lane".into()),
         },
-        root: "/lane/r".into(),
     };
     let path = detail.files[0].path.clone();
     let files = cx.new(|cx| PrFiles::new(owner, &detail, draft, cx));

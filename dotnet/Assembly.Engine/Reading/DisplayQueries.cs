@@ -70,6 +70,13 @@ internal static class DisplayQueries
             fields = fields.Select(field => field == "'text',t.text"
                 ? "'text',CASE WHEN t.framed=0 THEN substr(t.text,1,256) ELSE '' END" : field);
             return $"json_object('entityKind','{kind}',{string.Join(",", fields)}," +
+                "'originMachine',t.origin_machine,'messageCreatedSeq',t.message_created_seq,'delivery',t.delivery," +
+                "'fromMachine',CASE WHEN t.from_session_id IS NULL THEN t.origin_machine ELSE (SELECT machine FROM engine_session WHERE id=t.from_session_id) END," +
+                "'toMachine',(SELECT machine FROM engine_session WHERE id=t.to_session_id)," +
+                "'senderName',substr(t.sender_label,1,256),'receiverName',(SELECT substr(title,1,256) FROM engine_session WHERE id=t.to_session_id)," +
+                "'runMachine',(SELECT machine FROM engine_run WHERE id=t.run_id)," +
+                "'runOwnerMachine',(SELECT s.machine FROM engine_run r JOIN engine_session s ON s.id=r.owner_session_id WHERE r.id=t.run_id)," +
+                "'runOwnerSessionId',(SELECT owner_session_id FROM engine_run WHERE id=t.run_id)," +
                 "'framed',t.framed,'clientId',t.client_id,'providerTurnId',t.provider_turn_id,'inFlight',t.in_flight," +
                 "'textComplete',CASE WHEN t.framed=0 AND length(CAST(substr(t.text,1,256) AS BLOB))=length(CAST(t.text AS BLOB)) THEN 1 ELSE 0 END," +
                 "'textUtf8Bytes',length(CAST(t.text AS BLOB)),'attachmentJsonUtf8Bytes',length(CAST(t.attachment_ids_json AS BLOB))," +

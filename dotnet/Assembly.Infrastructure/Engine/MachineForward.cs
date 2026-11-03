@@ -62,6 +62,12 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
         var remote = byMachineId(machine) ?? throw new MachineUnreachable(machine, "Remote engine machine is disconnected");
         try
         {
+            if (feature == "messages" && method is "body" or "match")
+            {
+                if (!bulk) throw new Assembly.Application.Common.Calls.CallBadArguments("Message authority reads require bulk.");
+                var captured = await remote.CaptureOwnerReadAsync(machine, ct).ConfigureAwait(false);
+                return await remote.CallAsync(feature, method, args, true, ct, machine, captured.Socket, expectedOwner, expectedMirror).ConfigureAwait(false);
+            }
             return feature == "engine" && method is "session_title" or "session_title_chunk" or "entities"
             ? await remote.ReadOwnerPromptAsync(method, args, bulk, machine, ct)
             : gitWrite && feature == "git" && expectedConnection is not null
@@ -75,6 +81,20 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
             throw new MachineUnreachable(remote.Name!, $"{remote.Name}: machine socket closed", error);
         }
     }
+    internal async Task<bool> MessageSourceAvailableAsync(string machine, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        try
+        {
+            var remote = byMachineId(machine);
+            if (remote is null) return false;
+            await remote.CaptureOwnerReadAsync(machine, ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception error) when (error is MachineUnreachable or KeyNotFoundException or IOException or ObjectDisposedException or WebSocketException)
+        { return false; }
+    }
+
     internal Task<HandoffAck> HandoffAckAsync(EngineMirror.LiveMirrorBinding live, HandoffIdentity identity, CancellationToken ct) =>
         HandoffAckAsync(HandoffOwner(live, ct), live.OwnerBinding, identity, ct, live);
 
@@ -157,6 +177,8 @@ internal static class MachineReads
 {
     internal static bool AllowRead(ICallRegistry registry, string feature, string method, bool bulk)
     {
+        if (feature == "messages")
+            return bulk && method is ("body" or "match") && registry.KindOf(feature, method) == CallKind.BulkRead;
         var expected = GitCallKinds.KindOf(method);
         return feature == "git" && expected == (bulk ? CallKind.BulkRead : CallKind.Read) &&
             registry.KindOf(feature, method) == expected;

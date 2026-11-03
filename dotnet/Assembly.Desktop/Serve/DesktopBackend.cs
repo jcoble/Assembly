@@ -47,6 +47,7 @@ using Assembly.Infrastructure.Topics;
 using Assembly.Application.Features.Preferences;
 using Assembly.Infrastructure.Clock;
 using Assembly.Application.Features.Terminal;
+using Assembly.Application.Common.Terminals;
 using Assembly.Infrastructure.Terminal;
 using Assembly.Infrastructure.Updates;
 using Assembly.Infrastructure.Git;
@@ -81,13 +82,14 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly TurnActivity _activity;
     private readonly MachinesFeature _machinesFeature;
     private readonly TerminalHost _terminals;
+    private readonly RoutedTerminals _routedTerminals;
     private readonly HttpClient _cliHttp;
     private readonly GitOperations _gitOperations;
     private readonly ProviderRuntimeSubscriptions _providerRuntimeSubscriptions;
     private readonly RemoteInstallJobs _remoteInstalls;
 
     private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteConnections connections,
-        WebApplication app, TurnActivity activity, MachinesFeature machinesFeature, TerminalHost terminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop, Func<Task> beginStop, NeedAnswers answers, EngineHelperCards helperCards, MachineCalls ownerMachineCalls, MachineRelay relay, HttpClient cliHttp, GitOperations gitOperations, ProviderRuntimeSubscriptions providerRuntimeSubscriptions, RemoteInstallJobs remoteInstalls)
+        WebApplication app, TurnActivity activity, MachinesFeature machinesFeature, TerminalHost terminals, RoutedTerminals routedTerminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop, Func<Task> beginStop, NeedAnswers answers, EngineHelperCards helperCards, MachineCalls ownerMachineCalls, MachineRelay relay, HttpClient cliHttp, GitOperations gitOperations, ProviderRuntimeSubscriptions providerRuntimeSubscriptions, RemoteInstallJobs remoteInstalls)
     {
         _cliHttp = cliHttp;
         _gitOperations = gitOperations;
@@ -100,6 +102,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         _relay = relay;
         _homeLock = homeLock;
         _terminals = terminals;
+        _routedTerminals = routedTerminals;
         _board = board;
         _hostStop = hostStop;
         _boardMirror = boardMirror;
@@ -131,7 +134,9 @@ public sealed class DesktopBackend : IAsyncDisposable
     /// </summary>
     public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null,
         RemoteTunnel? tunnel = null, (string Claude, string Codex)? utilityClis = null, SavedMachine? savedRemote = null,
-        IEngineEffects? engineEffects = null, Action<EngineRuntime>? engineStarted = null, AgentsFile? agentsFile = null)
+        IEngineEffects? engineEffects = null, Action<EngineRuntime>? engineStarted = null, AgentsFile? agentsFile = null,
+        Func<CancellationToken, Task<(string? Path, string? Error)>>? loginShell = null,
+        Action<IProgramTerminals>? programTerminals = null)
     {
         Directory.CreateDirectory(home);
         // Before the database opens, so a second backend on this home writes nothing into the live one's; released if
@@ -139,7 +144,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         var homeLock = HomeLock.Take(home);
         try
         {
-            return await StartAsync(homeLock, home, token, port, launcher, log, remote, tunnel, utilityClis, savedRemote, engineEffects, engineStarted, agentsFile);
+            return await StartAsync(homeLock, home, token, port, launcher, log, remote, tunnel, utilityClis, savedRemote, engineEffects, engineStarted, agentsFile, loginShell, programTerminals);
         }
         catch
         {
@@ -150,7 +155,8 @@ public sealed class DesktopBackend : IAsyncDisposable
 
     private static async Task<DesktopBackend> StartAsync(FileStream homeLock, string home, string token, int port, IAgentLauncher launcher, TextWriter log,
         RemoteConfig? remote, RemoteTunnel? tunnel, (string Claude, string Codex)? utilityClis, SavedMachine? savedRemote,
-        IEngineEffects? engineEffects, Action<EngineRuntime>? engineStarted, AgentsFile? agentsFile)
+        IEngineEffects? engineEffects, Action<EngineRuntime>? engineStarted, AgentsFile? agentsFile,
+        Func<CancellationToken, Task<(string? Path, string? Error)>>? loginShell, Action<IProgramTerminals>? programTerminals)
     {
         var database = Path.Combine(home, "assembly.db");
         var topics = new Topics();
@@ -164,6 +170,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         RemoteConnections? connections = null;
         MachinesFeature? machinesFeature = null;
         TerminalHost? terminals = null;
+        RoutedTerminals? routedTerminals = null;
         BoardTools? board = null;
         RemoteWorkflowMirror? boardMirror = null;
         Topics.Subscription? boardMachines = null;
@@ -231,7 +238,9 @@ public sealed class DesktopBackend : IAsyncDisposable
             var status = new MachineStatus(topics, []);
 
             var clock = new BackendClock(topics, TimeProvider.System, work);
-            terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, SessionTerminalFolders.ExistingFolder(checkouts, sessionStore));
+            var accountShell = await (loginShell is null ? AccountLoginShell.ReadAsync(default) : loginShell(default));
+            terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, accountShell, SessionTerminalFolders.ExistingFolder(checkouts, sessionStore));
+            programTerminals?.Invoke(terminals);
             var probeFolder = Path.Combine(home, "probe");
             Directory.CreateDirectory(probeFolder);
             var challenges = new ChallengeBoard();
@@ -368,8 +377,9 @@ public sealed class DesktopBackend : IAsyncDisposable
             var projectPrReads = new ProjectPullRequestReads(db, projectRoots, sessionSources, engine.Machine, prReader, machineForward, connections);
             var projectPrActions = new ProjectPullRequestActions(projectPrReads, gitOperations, sessionGit, machineForward);
             var fileOwners = new FileOwner(sessionStore, db);
+            routedTerminals = new RoutedTerminals(terminals, sessionStore, machines, topics, work);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
-                [new RemoteInstallFeature(remoteInstalls), cliUpdates, new ProviderRuntimeCalls(engine.Machine, agentsFile, machineForward, providerRuntimeSubscriptions), new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward, project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore, connections: connections), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome,
+                [new RemoteInstallFeature(remoteInstalls), cliUpdates, new ProviderRuntimeCalls(engine.Machine, agentsFile, machineForward, providerRuntimeSubscriptions), new Assembly.Infrastructure.Engine.Messages.MessagesCalls(engine, db, machineForward), new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward, project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore, connections: connections), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(routedTerminals), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome,
                         (args, call) => connections.CreateSessionAsync(db, projectStore, engine.Machine, args, call),
                         (args, call) => connections.ReadCreatedSessionAsync(db, projectStore, args, call)),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
@@ -383,7 +393,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                         name => name == "local" ? localFolders : new RemoteProjectFolders(connections, name), db)], board, Engine: engine), port, out _);
             app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });
             await app.StartAsync();
-            var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp, gitOperations, providerRuntimeSubscriptions, remoteInstalls);
+            var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, routedTerminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp, gitOperations, providerRuntimeSubscriptions, remoteInstalls);
             endpoint.Listening(backend.Address);
             relay.Start();
             return backend;
@@ -406,6 +416,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             if (board is not null) await board.DisposeAsync();
             if (gitOperations is not null) await gitOperations.DisposeAsync();
             if (providerRuntimeSubscriptions is not null) await providerRuntimeSubscriptions.DisposeAsync();
+            if (routedTerminals is not null) await routedTerminals.DisposeAsync();
             if (connections is not null) await connections.DisposeAsync();
             if (machinesFeature is not null) await machinesFeature.DisposeAsync();
             if (terminals is not null) await terminals.DisposeAsync();
@@ -454,6 +465,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         _hostStop.Dispose();
         // Before the remote, so no probe is still out on it.
         await _providerRuntimeSubscriptions.DisposeAsync();
+        await _routedTerminals.DisposeAsync();
         await _connections.DisposeAsync();
         await _machinesFeature.DisposeAsync();
         await _terminals.DisposeAsync();

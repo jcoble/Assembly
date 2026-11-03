@@ -5,17 +5,17 @@ namespace Assembly.Infrastructure.Chat;
 
 public static class SessionTerminalFolders
 {
-    /// <summary>
-    /// A session's checkout folder, once it exists: what its terminal starts in. Fails for a session on another
-    /// machine (a helper is on its parent's): its folder is there, and its terminal can't be reached from here yet.
-    /// </summary>
+    /// <summary>Only an owning session's ready, recorded directory may host its terminal; never creates a checkout.</summary>
     public static Func<string, string?> ExistingFolder(string checkouts, SessionStore sessions) => id =>
-        sessions.Get(id) switch
-        {
-            { Machine: { Length: > 0 } machine } => throw new CallFailed($"The terminal for a session on {machine} can't be opened here yet."),
-            { } session when sessions.Root(session) is { } folder && Directory.Exists(folder) => folder,
-            null => throw new CallFailed($"Unknown terminal owner: {id}"),
-            _ => null,
-        };
-
+    {
+        var session = sessions.Get(id) ?? throw new CallFailed($"Unknown terminal owner: {id}");
+        if (session.Machine is { Length: > 0 } machine)
+            throw new CallFailed($"The terminal for a session on {machine} cannot be opened here.");
+        var location = sessions.Location(session);
+        if (location is null || !location.Ready)
+            throw new CallFailed($"The terminal folder for session {id} is not ready: {location?.Folder ?? "not materialized"}.");
+        if (!Path.IsPathFullyQualified(location.Folder) || !Directory.Exists(location.Folder))
+            throw new CallFailed($"The terminal folder for session {id} is unavailable: {location.Folder}.");
+        return location.Folder;
+    };
 }

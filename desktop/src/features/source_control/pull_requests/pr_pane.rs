@@ -1,6 +1,6 @@
 use super::{
     pr_detail::{PrBack, PrDetail, PrMerged},
-    pr_owner::{PrOwner, project_for, resolve},
+    pr_owner::{PrOwner, ProjectChoice, holders, resolve},
     pr_queue::PrQueue,
     pr_search::PrState,
     pull_request::PrTarget,
@@ -10,7 +10,7 @@ use crate::core::{
     intents::open_pull_requests::OpenPullRequests, state::selected_session::SelectedSession,
     ui::center_panes::CenterPanes,
 };
-use crate::features::projects::projects::Projects;
+use crate::features::projects::projects::{ProjectRecord, Projects};
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, panel_handle, register_panel,
 };
@@ -38,8 +38,10 @@ pub struct PrPane {
     scope: Vec<String>,
     queue: Entity<PrQueue>,
     detail: Option<Entity<PrDetail>>,
-    /// Asking who owns a project's machine, before its pull request can open.
-    opening: Option<Task<()>>,
+    /// The number being opened while its project's machine says who owns it. Dropping the task forgets the answer.
+    opening: Option<(u64, Task<()>)>,
+    /// A repository more than one project holds, waiting for the person to say which.
+    choosing: Option<ProjectChoice>,
     search: Entity<InputState>,
     search_wait: Option<Task<()>>,
     projects: Option<Entity<Projects>>,
@@ -181,6 +183,7 @@ impl PrPane {
             queue,
             detail: None,
             opening: None,
+            choosing: None,
             search,
             search_wait: None,
             projects,
@@ -220,8 +223,13 @@ impl PrPane {
         self.sync_scope(cx);
         cx.notify();
     }
-    fn close_detail(&mut self, cx: &mut Context<Self>) {
+    fn cancel_open(&mut self, cx: &mut Context<Self>) {
         self.opening = None;
+        self.choosing = None;
+        cx.notify();
+    }
+    fn close_detail(&mut self, cx: &mut Context<Self>) {
+        self.cancel_open(cx);
         self.detail = None;
         self._detail = None;
         cx.notify();
@@ -239,10 +247,9 @@ impl PrPane {
         let mut repositories: Vec<String> = projects
             .rows()
             .iter()
-            .filter(|project| {
-                self.project
-                    .as_ref()
-                    .is_none_or(|selected| selected == &project.id)
+            .filter(|project| match &self.project {
+                Some(selected) => selected == &project.id,
+                None => project.machine == "local",
             })
             .filter_map(|project| project.github_repository().map(String::from))
             .collect();
@@ -349,28 +356,72 @@ impl PrPane {
         cx.notify();
     }
     fn select_pr(&mut self, repository: Option<String>, number: u64, cx: &mut Context<Self>) {
-        self.opening = None;
+        self.open_pr(repository, number, false, cx);
+    }
+    fn select_row(&mut self, repository: String, number: u64, cx: &mut Context<Self>) {
+        self.open_pr(Some(repository), number, self.project.is_none(), cx);
+    }
+    fn open_pr(
+        &mut self,
+        repository: Option<String>,
+        number: u64,
+        listed_local: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.cancel_open(cx);
         self.failure = None;
         if let Some(id) = self.session.clone() {
             let source = selected_source(Some(&id), cx);
             self.open_detail(PrOwner::Session { id, source }, repository, number, cx);
             return;
         }
+        if let Some(owner) = self.same_project(repository.as_deref(), cx) {
+            self.open_detail(owner, repository, number, cx);
+            return;
+        }
+        // The list carries what happens next, and a notice can't show over another pull request.
+        self.close_detail(cx);
         let rows = self.projects.as_ref().map(|projects| projects.read(cx).rows());
-        let project = project_for(
+        let found = holders(
             rows.unwrap_or_default(),
             self.project.as_deref(),
             repository.as_deref(),
+            listed_local,
         );
-        let resolving = match project {
-            Ok(project) => resolve(&project, cx),
-            Err(error) => {
-                self.failure = Some(error);
-                cx.notify();
-                return;
+        match found {
+            Err(error) => self.failure = Some(error),
+            Ok(mut projects) if projects.len() == 1 => {
+                let project = projects.remove(0);
+                self.resolve_project(&project, repository, number, cx);
             }
-        };
-        self.opening = Some(cx.spawn(async move |pane, cx| {
+            Ok(projects) => {
+                self.choosing = Some(ProjectChoice {
+                    projects,
+                    repository,
+                    number,
+                })
+            }
+        }
+        cx.notify();
+    }
+    /// A pull request open from a project keeps answering for that repository, so moving along its stack asks nothing.
+    fn same_project(&self, repository: Option<&str>, cx: &App) -> Option<PrOwner> {
+        let detail = self.detail.as_ref()?.read(cx);
+        let shown = detail.detail.as_ref()?;
+        let owner = detail.owner();
+        (matches!(owner, PrOwner::Project { .. })
+            && repository.is_none_or(|repository| repository.eq_ignore_ascii_case(&shown.repository)))
+        .then(|| owner.clone())
+    }
+    fn resolve_project(
+        &mut self,
+        project: &ProjectRecord,
+        repository: Option<String>,
+        number: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let resolving = resolve(project, cx);
+        let task = cx.spawn(async move |pane, cx| {
             let owner = resolving.await;
             _ = pane.update(cx, |pane, cx| {
                 pane.opening = None;
@@ -382,7 +433,19 @@ impl PrPane {
                     }
                 }
             });
-        }));
+        });
+        self.opening = Some((number, task));
+    }
+    /// The person said which project; the same source question follows.
+    fn choose_project(&mut self, project_id: &str, cx: &mut Context<Self>) {
+        let Some(choice) = self.choosing.take() else {
+            return;
+        };
+        let Some(project) = choice.projects.iter().find(|project| project.id == project_id) else {
+            return;
+        };
+        self.resolve_project(project, choice.repository, choice.number, cx);
+        cx.notify();
     }
     fn open_detail(
         &mut self,

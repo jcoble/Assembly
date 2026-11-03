@@ -18,7 +18,6 @@ pub enum PrOwner {
     Project {
         id: String,
         source: ExpectedRowSource,
-        root: String,
     },
 }
 impl PrOwner {
@@ -37,7 +36,7 @@ impl PrOwner {
                         fields.insert("expectedSource".into(), json!(source));
                     }
                 }
-                Self::Project { id, source, .. } => {
+                Self::Project { id, source } => {
                     fields.insert("session".into(), Value::Null);
                     fields.insert("projectId".into(), json!(id));
                     fields.insert("expectedSource".into(), json!(source));
@@ -54,25 +53,32 @@ impl PrOwner {
                 source: source.clone(),
                 checkout_root: shown.map(|(_, root)| root.to_string()),
             })),
-            Self::Project { id, source, root } => {
-                let (repository, _) = shown?;
+            Self::Project { id, source } => {
+                let (repository, root) = shown?;
                 Some(OperationScope::Project(ProjectTarget {
                     project_id: id.clone(),
                     source: source.clone(),
                     repository: repository.to_string(),
-                    checkout_root: root.clone(),
+                    checkout_root: root.to_string(),
                 }))
             }
         }
     }
 }
-/// The project a pull request opens under: the one the person chose, else the one holding that repository, this
-/// computer's first.
-pub fn project_for(
+/// A repository held by more than one project: which one answers is the person's to say.
+pub struct ProjectChoice {
+    pub projects: Vec<ProjectRecord>,
+    pub repository: Option<String>,
+    pub number: u64,
+}
+/// The projects a pull request could open under: the one the person chose, else those holding its repository. A row
+/// under "All local projects" was listed from this computer, so only this computer's copies can answer for it.
+pub fn holders(
     rows: &[ProjectRecord],
     chosen: Option<&str>,
     repository: Option<&str>,
-) -> Result<ProjectRecord, String> {
+    listed_local: bool,
+) -> Result<Vec<ProjectRecord>, String> {
     let holds = |project: &&ProjectRecord| {
         repository.is_none_or(|repository| {
             (project.github_repository()).is_some_and(|held| held.eq_ignore_ascii_case(repository))
@@ -83,18 +89,21 @@ pub fn project_for(
         return live()
             .filter(|project| project.id == chosen)
             .find(holds)
-            .cloned()
+            .map(|project| vec![project.clone()])
             .ok_or("This pull request isn't in the chosen project's repository.".into());
     }
     if repository.is_none() {
         return Err("Choose a project to open this pull request.".into());
     }
-    let holding = || live().filter(holds);
-    holding()
-        .find(|project| project.machine == LOCAL)
-        .or_else(|| holding().next())
+    let found: Vec<ProjectRecord> = live()
+        .filter(holds)
+        .filter(|project| !listed_local || project.machine == LOCAL)
         .cloned()
-        .ok_or("That PR's repository isn't a project in Assembly.".into())
+        .collect();
+    if found.is_empty() {
+        return Err("That PR's repository isn't a project in Assembly.".into());
+    }
+    Ok(found)
 }
 /// Asks which Engine owns this project's machine right now; every later read and action asserts that answer.
 pub fn resolve(project: &ProjectRecord, cx: &App) -> Task<Result<PrOwner, String>> {
@@ -110,12 +119,12 @@ pub fn resolve(project: &ProjectRecord, cx: &App) -> Task<Result<PrOwner, String
     let call = socket
         .read(cx)
         .call::<Value>("sessions", "resolve_source", args, None);
-    let (id, root) = (project.id.clone(), project.root_path.clone());
+    let id = project.id.clone();
     cx.spawn(async move |_| match call.await {
         Outcome::Ok(value) => {
             let source = source_resolution::parse_reply(value, route.as_deref(), local.as_deref())
                 .map_err(|error| error.message)?;
-            Ok(PrOwner::Project { id, source, root })
+            Ok(PrOwner::Project { id, source })
         }
         Outcome::Failed(error) => Err(error.message),
         Outcome::Aborted => Err("The project's machine did not answer.".into()),

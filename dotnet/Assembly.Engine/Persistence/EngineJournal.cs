@@ -8,7 +8,11 @@ using Assembly.Engine.Handoffs;
 namespace Assembly.Engine.Persistence;
 
 public sealed record EventDraft(string Kind, string EntityKind, string EntityId,
-    long Version, bool Late, EngineEventData Data);
+    long Version, bool Late, EngineEventData Data)
+{
+    // Transaction-only creation provenance; never part of the published EngineEvent.
+    public bool MessageCreated { get; init; }
+}
 public sealed record EffectDraft(string Id, string Kind, string? SessionId,
     string? RunId, JsonElement Payload, string? OrderKey = null);
 
@@ -74,6 +78,8 @@ public static partial class EngineJournal
                 new("$machine", context.Machine), new("$now", context.NowMs), new("$seq", next), new("$kind", draft.Kind),
                 new("$entityKind", draft.EntityKind), new("$entityId", draft.EntityId), new("$late", draft.Late ? 1 : 0),
                 new("$data", JsonSerializer.Serialize(draft.Data, EngineJson.Default.EngineEventData)));
+            if (draft.EntityKind == "message" && draft.Kind == "message.changed" && draft.MessageCreated)
+                Messages.Reading.MessageReadProvenance.OnMessageCreated(scope, draft.EntityId, next, context.Machine);
             last = next;
             next = checked(next + 1);
         }

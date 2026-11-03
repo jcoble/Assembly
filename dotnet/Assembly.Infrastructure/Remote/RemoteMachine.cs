@@ -38,7 +38,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         Action<string>? turnEnded = null, Assembly.Application.Common.Topics.ITopics? topics = null, TimeProvider? time = null, string? connectionIdentity = null)
     {
         _connectionIdentity = connectionIdentity ?? "";
-        Terminals = new RemoteTerminalSocket(name, address, token, topics ?? new Topics.Topics());
+        Terminals = new RemoteTerminalSocket(name, address, token, topics ?? new Topics.Topics(), CaptureTerminalOwnerAsync);
         _address = address;
         _token = token;
         _time = time ?? TimeProvider.System;

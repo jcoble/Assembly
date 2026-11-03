@@ -94,8 +94,11 @@ public sealed class WelcomeSocketTests
         if (failure == "wrong_format") welcome["format"] = RowStore.FormatVersion + 1;
         if (failure == "missing_protocol") welcome.Remove("protocol");
         if (failure == "wrong_protocol") welcome["protocol"] = 2;
+        await using var owner = new global::Assembly.Tests.Infrastructure.Remote.TwoHosts();
+        await owner.Start(); await owner.StartMirror();
         await using var host = await Host.Start(JsonSerializer.Serialize(welcome));
-        await using var terminal = new RemoteTerminalSocket("test-box", host.Address("/"), "token", new global::Assembly.Infrastructure.Topics.Topics());
+        await using var terminal = new RemoteTerminalSocket("test-box", host.Address("/"), "token", new global::Assembly.Infrastructure.Topics.Topics(),
+            (_, ct) => owner.ConnectedMachine.CaptureOwnerBindingAsync(owner.Remote.Runtime.Machine, ct));
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var error = await Assert.ThrowsAsync<CallFailed>(() => terminal.CallAsync("list", new ListArgs(),
             TerminalJson.Default.ListArgs, TerminalJson.Default.IReadOnlyListTerminalInfo, bound.Token));
@@ -112,8 +115,11 @@ public sealed class WelcomeSocketTests
     [Fact]
     public async Task A_different_commit_does_not_prevent_a_compatible_terminal_call()
     {
-        await using var host = await Host.Start($$"""{"t":"welcome","protocol":1,"machine":"owner-host","format":{{RowStore.FormatVersion}},"commit":"different-build"}""");
-        await using var terminal = new RemoteTerminalSocket("test-box", host.Address("/"), "token", new global::Assembly.Infrastructure.Topics.Topics());
+        await using var owner = new global::Assembly.Tests.Infrastructure.Remote.TwoHosts();
+        await owner.Start(); await owner.StartMirror();
+        await using var host = await Host.Start($$"""{"t":"welcome","protocol":1,"machine":"owner-host","engine":"{{owner.Remote.Runtime.Machine}}","format":{{RowStore.FormatVersion}},"commit":"different-build"}""");
+        await using var terminal = new RemoteTerminalSocket("test-box", host.Address("/"), "token", new global::Assembly.Infrastructure.Topics.Topics(),
+            (_, ct) => owner.ConnectedMachine.CaptureOwnerBindingAsync(owner.Remote.Runtime.Machine, ct));
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var result = await terminal.CallAsync("list", new ListArgs(), TerminalJson.Default.ListArgs,
             TerminalJson.Default.IReadOnlyListTerminalInfo, bound.Token);

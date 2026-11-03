@@ -1,4 +1,4 @@
-use super::{PrOwner, project_for, resolve};
+use super::{PrOwner, holders, resolve};
 use crate::core::socket::{
     client::SocketClient,
     endpoint::Endpoint,
@@ -30,7 +30,6 @@ fn owned() -> PrOwner {
     PrOwner::Project {
         id: "p".into(),
         source: source(),
-        root: "/p".into(),
     }
 }
 
@@ -67,19 +66,19 @@ fn a_session_read_names_only_the_session_and_any_source_it_was_shown_through() {
 }
 
 #[test]
-fn a_project_cannot_act_until_it_has_read_and_then_uses_its_own_registry_root() {
+fn a_project_cannot_act_until_it_has_read_and_then_uses_the_root_that_read_showed() {
     assert!(owned().scope(None).is_none());
-    let scope = owned().scope(Some(("o/r", "/reported"))).unwrap();
+    let scope = owned().scope(Some(("o/r", "/shown"))).unwrap();
     let OperationScope::Project(target) = &scope else {
         panic!("a project scope");
     };
     assert_eq!(target.repository, "o/r");
-    assert_eq!(target.checkout_root, "/p");
+    assert_eq!(target.checkout_root, "/shown");
     assert_eq!(scope.session(), None);
     assert!(scope.read_args(json!({})).get("expectedRepository").is_none());
     let start = scope.write_args(json!({}));
     assert_eq!(start["expectedRepository"], "o/r");
-    assert_eq!(start["expectedCheckoutRoot"], "/p");
+    assert_eq!(start["expectedCheckoutRoot"], "/shown");
     assert_eq!(start["projectId"], "p");
 }
 
@@ -98,26 +97,31 @@ fn a_session_acts_on_the_root_its_read_reported() {
 }
 
 #[test]
-fn a_pull_request_opens_under_the_chosen_project_or_this_computers_copy() {
+fn a_pull_request_opens_under_the_chosen_project_and_no_owner_is_guessed() {
     let rows = [
         project("remote", "lane", "o/r"),
         project("here", "local", "O/R"),
         project("other", "local", "o/other"),
     ];
-    let id = |chosen, repository| project_for(&rows, chosen, repository).map(|project| project.id);
-    assert_eq!(id(None, Some("o/r")).as_deref(), Ok("here"));
-    assert_eq!(id(Some("remote"), Some("o/r")).as_deref(), Ok("remote"));
-    assert_eq!(id(Some("other"), None).as_deref(), Ok("other"));
-    assert!(id(Some("other"), Some("o/r")).is_err());
-    assert!(id(None, Some("missing/repo")).is_err());
-    assert!(id(None, None).is_err());
+    let ids = |chosen, repository, listed_local| {
+        holders(&rows, chosen, repository, listed_local)
+            .map(|found| found.into_iter().map(|project| project.id).collect::<Vec<_>>())
+    };
+    let one = |id: &str| Ok(vec![id.to_string()]);
+    assert_eq!(ids(None, Some("o/r"), false), Ok(vec!["remote".to_string(), "here".to_string()]));
+    assert_eq!(ids(None, Some("o/r"), true), one("here"));
+    assert_eq!(ids(Some("remote"), Some("o/r"), true), one("remote"));
+    assert_eq!(ids(Some("other"), None, false), one("other"));
+    assert!(ids(Some("other"), Some("o/r"), false).is_err());
+    assert!(ids(None, Some("missing/repo"), false).is_err());
+    assert!(ids(None, None, false).is_err());
 }
 
 #[test]
 fn a_removed_project_never_answers() {
     let mut removed = project("gone", "local", "o/r");
     removed.removed_at = Some(1);
-    assert!(project_for(&[removed], None, Some("o/r")).is_err());
+    assert!(holders(&[removed], None, Some("o/r"), false).is_err());
 }
 
 #[gpui::test]
@@ -172,7 +176,6 @@ async fn resolving_asks_for_the_projects_route_and_refuses_another_engines_answe
                 generation: 0,
                 route_machine: None
             },
-            root: "/here".into(),
         })
     );
     let remote = cx.update(|cx| resolve(&project("away", "lane", "o/r"), cx)).await;
@@ -181,7 +184,6 @@ async fn resolving_asks_for_the_projects_route_and_refuses_another_engines_answe
         Ok(PrOwner::Project {
             id: "away".into(),
             source: source(),
-            root: "/away".into()
         })
     );
     assert!(
