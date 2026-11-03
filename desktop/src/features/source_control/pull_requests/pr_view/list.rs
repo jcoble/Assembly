@@ -15,6 +15,7 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex,
 };
+use gpui_kit::gpui_base::StyledExt as _;
 use gpui_kit::prelude::FluentBuilder as _;
 
 impl PrPane {
