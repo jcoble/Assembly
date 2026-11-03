@@ -3,7 +3,7 @@
 use super::{
     pr_owner::PrOwner,
     pr_stack::{file_patch, matches_filter, no_lines_note, patch_end},
-    pull_request::{PullRequestComment, PullRequestDetail, PullRequestFile},
+    pull_request::{PullRequestDetail, PullRequestFile},
     review_draft::{DraftComment, ReviewDraft, ReviewIdentity},
 };
 use crate::core::{
@@ -46,14 +46,12 @@ struct FileNote {
 enum AnnotationContent {
     Adding(String, DraftComment, Entity<TextareaState>),
     Added(String, DraftComment),
-    Posted(PullRequestComment),
 }
 pub struct PrFiles {
     owner: PrOwner,
     identity: ReviewIdentity,
     open: bool,
     files: Vec<PullRequestFile>,
-    posted: Vec<PullRequestComment>,
     draft: Entity<ReviewDraft>,
     state: Entity<DiffState>,
     parsed: Vec<DiffFile>,
@@ -97,7 +95,6 @@ impl PrFiles {
             identity: identity_of(detail),
             open: detail.state == "OPEN",
             files: detail.files.clone(),
-            posted: detail.comments.clone(),
             draft,
             state,
             parsed: Vec::new(),
@@ -132,7 +129,6 @@ impl PrFiles {
         self.identity = identity;
         self.open = detail.state == "OPEN";
         self.files = detail.files.clone();
-        self.posted = detail.comments.clone();
         self.rebuild(cx);
         cx.notify();
     }
@@ -413,29 +409,6 @@ impl PrFiles {
                 _ => AnnotationContent::Added(key, comment.clone()),
             };
             contents.push((id, content));
-        }
-        for comment in &self.posted {
-            if let (Some(path), Some(line), Some(side)) =
-                (&comment.path, comment.line, &comment.side)
-            {
-                if line == 0 || !matches!(side.as_str(), "LEFT" | "RIGHT") {
-                    continue;
-                }
-                let id: ElementId = SharedString::from(format!("posted:{}", comment.id)).into();
-                annotations.push(DiffAnnotation::line(
-                    id.clone(),
-                    DiffLinePosition::new(
-                        path.clone(),
-                        if side == "LEFT" {
-                            DiffSide::Original
-                        } else {
-                            DiffSide::Modified
-                        },
-                        line,
-                    ),
-                ));
-                contents.push((id, AnnotationContent::Posted(comment.clone())));
-            }
         }
         (annotations, contents)
     }

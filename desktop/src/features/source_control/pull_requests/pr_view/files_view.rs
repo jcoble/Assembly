@@ -1,10 +1,7 @@
 //! How the Changes page looks: the stacked diff with its file header buttons, comment cards and the file tree.
 use super::super::pr_stack::changed_tree;
 use super::*;
-use crate::core::{
-    intents::open_file::OpenFile, state::selected_session::SelectedSession,
-    ui::markdown::view::MarkdownView,
-};
+use crate::core::{intents::open_file::OpenFile, state::selected_session::SelectedSession};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::diff::Diff;
@@ -266,21 +263,6 @@ fn annotation_card(
                 )
                 .into_any_element()
         }
-        Some(AnnotationContent::Posted(comment)) => v_flex()
-            .m_2()
-            .p_3()
-            .gap_1()
-            .rounded(theme.radius_lg)
-            .border_1()
-            .border_color(border)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(comment.author.clone()))
-            .child(MarkdownView {
-                id: SharedString::from(format!("pr-comment:{}", comment.id)),
-                blocks: comment.body_blocks.clone(),
-                session: None,
-                expected_source: None,
-            })
-            .into_any_element(),
         None => Empty.into_any_element(),
     }
 }
