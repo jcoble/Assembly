@@ -218,7 +218,7 @@ public static class ServeRun
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(options.Home, "staging", "attachments"), sessionSources),
                     new FilesFeature(sessionStore, new FileOwner(sessionStore, db), work, sources: sessionSources),
                     gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes),
-                    new PullRequestsFeature(sessionStore, prReader, gitRoutes), new FoldersFeature(localFolders),
+                    new PullRequestsFeature(sessionStore, prReader, gitRoutes, new(db, projectRoots, sessionSources, engine.Machine, prReader, null, null)), new FoldersFeature(localFolders),
                     new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes)],
                 board, Engine: engine), options.Port, out _);
             using var stopping = app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });

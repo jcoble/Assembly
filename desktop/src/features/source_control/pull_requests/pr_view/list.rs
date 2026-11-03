@@ -15,7 +15,6 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex,
 };
-use gpui_kit::gpui_base::StyledExt as _;
 use gpui_kit::prelude::FluentBuilder as _;
 
 impl PrPane {
@@ -252,7 +251,7 @@ impl PrPane {
                 h_flex()
                     .gap_2()
                     .justify_between()
-                    .child(div().text_lg().font_semibold().child("Pull requests"))
+                    .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Pull requests"))
                     .child(
                         Button::new("pr-queue-refresh")
                             .ghost()

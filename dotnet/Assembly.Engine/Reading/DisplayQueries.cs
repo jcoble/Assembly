@@ -58,6 +58,7 @@ internal static class DisplayQueries
         if (kind == "session") fields = fields.Select(field => field == "'title',t.title" ? "'title',NULL" : field);
         if (kind == "needs_me") fields = fields.Select(field => field == "'text',t.text" ? "'text',NULL" : field);
         if (kind == "session") return $"json_object('entityKind','{kind}',{string.Join(",", fields)}," +
+            "'canSteer',json(CASE WHEN t.can_steer=1 THEN 'true' ELSE 'false' END)," +
             "'parentMachine',(SELECT parent.machine FROM engine_session parent WHERE parent.id=t.parent_id)," +
             "'checkoutReason',(SELECT CASE WHEN json_type(o.receipt_json,'$.data.reason')='text' AND " +
             "length(CAST(json_extract(o.receipt_json,'$.data.reason') AS BLOB))<=1024 THEN json_extract(o.receipt_json,'$.data.reason') END " +

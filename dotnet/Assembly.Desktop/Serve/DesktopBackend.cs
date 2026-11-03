@@ -371,7 +371,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                     new Assembly.Application.Features.Workspaces.WorkspacesFeature(new Assembly.Application.Features.Workspaces.WorkspaceStore(db, TimeProvider.System)),
                     new WorktreesFeature(sessionStore),
                     gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes),
-                    new PullRequestsFeature(sessionStore, prReader, gitRoutes), new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes, projectCoordinator),
+                    new PullRequestsFeature(sessionStore, prReader, gitRoutes, new(db, projectRoots, sessionSources, engine.Machine, prReader, machineForward, connections)), new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes, projectCoordinator),
                     new FoldersFeature(localFolders), new ProjectsFeature(projectStore,
                         name => name == "local" ? localFolders : new RemoteProjectFolders(connections, name), db)], board, Engine: engine), port, out _);
             app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });

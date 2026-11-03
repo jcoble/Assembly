@@ -1,10 +1,9 @@
 //! The Summary page's comment box and reply box. One box writes the review draft's text: alone it posts a comment,
 //! with line comments it posts a review. Posting always goes through the confirm dialog.
-use super::super::{post_confirm, post_confirm::PostRequest, review_draft::LineComment};
+use super::super::{post_confirm, review_draft::LineComment};
 use super::*;
 use gpui_kit::component::diff::{DiffLinePosition, DiffSide};
 use gpui_kit::component::input::{InputEvent, Textarea};
-use gpui_kit::gpui_base::StyledExt as _;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -58,13 +57,7 @@ impl PrDetail {
         cx: &mut Context<Self>,
     ) {
         match request {
-            Ok(request) => post_confirm::open(
-                self.session.clone(),
-                request,
-                cx.entity().downgrade(),
-                window,
-                cx,
-            ),
+            Ok(request) => post_confirm::open(request, cx.entity().downgrade(), window, cx),
             Err(error) => {
                 self.failure = Some(error);
                 cx.notify();
@@ -98,8 +91,96 @@ impl PrDetail {
         };
         self.open_post(request, window, cx);
     }
+    pub fn writes_free(&self, cx: &App) -> bool {
+        self.writes.read(cx).free(cx)
+    }
+    /// Starts a post the person just confirmed. Refused, it says why and nothing was sent.
+    pub fn start_post(
+        &mut self,
+        request: &PostRequest,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let identity = self
+            .current_identity()
+            .ok_or_else(|| "Refresh before posting. Your draft is kept.".to_string())?;
+        self.posted = None;
+        self.writes
+            .update(cx, |writes, cx| writes.post(request, &identity, cx))
+    }
+    /// Starts a merge the person just confirmed. Refused, it says why and nothing was sent.
+    pub fn start_merge(
+        &mut self,
+        request: &MergeRequest,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if self.current_identity().is_none() {
+            return Err("Refresh before merging.".into());
+        }
+        self.writes
+            .update(cx, |writes, cx| writes.merge(request, cx))
+    }
+    pub(super) fn write_done(&mut self, done: &WriteDone, cx: &mut Context<Self>) {
+        match done {
+            WriteDone::Posted { reply, url } => self.post_finished(*reply, url.clone(), cx),
+            WriteDone::Merged { url } => {
+                self.merge_finished(url.clone(), cx);
+                if let Some(repository) = self.repository.clone() {
+                    cx.emit(PrMerged {
+                        repository,
+                        number: self.number,
+                    });
+                }
+            }
+        }
+    }
+    /// The read a page just took in. A draft tied to a head that moved is cleared, as is a reply to it; words the
+    /// person only typed stay and go with the new head. Line comments can't outlive an open pull request.
+    pub(super) fn page_read(&mut self, writes_settled: bool, cx: &mut Context<Self>) {
+        if writes_settled {
+            self.writes.update(cx, |writes, cx| writes.page_read(cx));
+        }
+        let Some(detail) = self.detail.as_ref() else {
+            return;
+        };
+        let identity = ReviewIdentity {
+            repository: detail.repository.clone(),
+            number: detail.number,
+            head: detail.head_sha.clone(),
+            base: detail.base_sha.clone(),
+        };
+        let open = detail.state == "OPEN";
+        let Some(review) = self.review.clone() else {
+            return;
+        };
+        let held = review.read(cx);
+        let moved = held.identity.head != identity.head;
+        let tied_to_old_head = !held.comments.is_empty()
+            || self
+                .drafted_head
+                .as_ref()
+                .is_some_and(|head| *head != identity.head);
+        if moved {
+            self.reply = None;
+            self.reply_input = None;
+        }
+        if moved && tied_to_old_head {
+            self.clear_draft(cx);
+            self.failure = Some(
+                "The PR changed. Your unposted comment was cleared; look at the new changes before commenting."
+                    .into(),
+            );
+        }
+        review.update(cx, |review, cx| {
+            review.identity = identity;
+            if !open {
+                review.comments.clear();
+            }
+            cx.notify();
+        });
+    }
     /// The draft is spent or thrown away; the next one belongs to the head on screen.
     fn clear_draft(&mut self, cx: &mut Context<Self>) {
+        self.drafted_head = None;
         let identity = self.current_identity();
         if let Some(review) = &self.review {
             review.update(cx, |review, cx| {
@@ -166,6 +247,7 @@ impl PrDetail {
         });
         if let (true, Some(answer), Some(review)) = (unchanged, answer, self.review.clone()) {
             self.pending_body = Some(answer.body.clone());
+            self.drafted_head = self.current_identity().map(|identity| identity.head);
             review.update(cx, |review, cx| {
                 review.body = answer.body;
                 for comment in &answer.comments {
@@ -199,35 +281,28 @@ impl PrDetail {
             theme.danger,
             theme.radius_lg,
         );
+        let writes_free = self.writes_free(cx);
         let has_text = !review.body.trim().is_empty();
         let lines: Vec<_> = review.comments.clone();
-        let stale = self
-            .current_identity()
-            .is_some_and(|identity| review.identity != identity);
         let label = super::super::pr_activity::post_label(lines.len());
         let drafter = self.drafter.read(cx);
         let drafting = drafter.busy;
         let draft_error = drafter.error.clone();
         let review_entity = self.review.clone();
-        let can_post = has_text && self.current_identity().is_some();
+        let can_post = has_text && writes_free && self.current_identity().is_some();
         v_flex()
             .gap_2()
             .p_3()
             .rounded(radius)
             .bg(surface)
             .child(Textarea::new(input))
-            .when(stale, |composer| {
-                composer.child(div().text_sm().text_color(muted).child(
-                    "The pull request changed. Your line comments are kept at their original head; look at the new changes, then discard them to start again.",
-                ))
-            })
             .children(lines.into_iter().map(|line| {
                 let id = line.id.clone();
                 let review = review_entity.clone();
                 h_flex()
                     .gap_2()
                     .text_sm()
-                    .child(div().flex_none().font_semibold().child(format!(
+                    .child(div().flex_none().font_weight(FontWeight::SEMIBOLD).child(format!(
                         "{}:{}",
                         line.target.path, line.target.line
                     )))
@@ -303,7 +378,9 @@ impl PrDetail {
             None => reply.path.clone(),
         };
         let can_send =
-            !input.read(cx).value().trim().is_empty() && self.current_identity().is_some();
+            !input.read(cx).value().trim().is_empty()
+                && self.writes_free(cx)
+                && self.current_identity().is_some();
         Some(
             v_flex()
                 .gap_2()
@@ -313,7 +390,7 @@ impl PrDetail {
                 .child(
                     div()
                         .text_sm()
-                        .font_semibold()
+                        .font_weight(FontWeight::SEMIBOLD)
                         .child(format!("Reply to {} on {place}", reply.author)),
                 )
                 .child(Textarea::new(input))

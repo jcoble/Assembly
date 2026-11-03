@@ -40,10 +40,15 @@ public sealed partial class PullRequestReader(IGit git, IGh gh, string applicati
         var info = Required(found, "pageInfo");
         return new(items, Bool(info, "hasNextPage") ? Text(info, "endCursor") : null, Number(found, "issueCount"));
     }
-    public async Task<PullRequestDetail> DetailAsync(string root, int number, CancellationToken ct)
+    public Task<PullRequestDetail> DetailAsync(string root, int number, CancellationToken ct) => DetailCore(root, null, number, ct);
+    public Task<PullRequestDetail> ProjectDetailAsync(string root, string repository, int number, CancellationToken ct) =>
+        DetailCore(root, GitHubRepository.Parse(repository), number, ct);
+    private async Task<PullRequestDetail> DetailCore(string root, string? expectedRepository, int number, CancellationToken ct)
     {
         if (number <= 0) throw new CallBadArguments("Pull request number must be positive.");
         var repository = await Repository(root, ct);
+        if (expectedRepository is not null && !string.Equals(repository, expectedRepository, StringComparison.OrdinalIgnoreCase))
+            throw new CallFailed("The project repository changed. Refresh and try again.", "source_changed");
         var view = await Json(root, ["pr", "view", number.ToString(CultureInfo.InvariantCulture), "-R", repository, "--json", ViewFields], null, ct);
         if (Number(view, "number") != number) throw new CallFailed("GitHub returned the wrong pull request.");
         var changed = await Json(root, ["api", $"repos/{repository}/pulls/{number}/files?per_page=100&page=1"], null, ct);

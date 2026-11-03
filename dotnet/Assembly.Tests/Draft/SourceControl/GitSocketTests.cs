@@ -48,7 +48,11 @@ public sealed partial class GitSocketTests : IAsyncLifetime
         routes.Register(calls);
         new SourceControlWrites(_sessions, new GitCli(), new CheckoutWrites(), TimeProvider.System, routes).Register(calls);
         var prGit = new GitCli();
-        new PullRequestsFeature(_sessions, new PullRequestReader(prGit, new SocketGh(), _checkouts.FullName, new GitTextPatch(prGit)), routes).Register(calls);
+        var prReader = new PullRequestReader(prGit, new SocketGh(), _checkouts.FullName, new GitTextPatch(prGit));
+        var projectRoots = new Assembly.Infrastructure.Projects.ProjectRoots(new Assembly.Application.Features.Projects.ProjectStore(_db, TimeProvider.System));
+        var sources = new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(_db, _sessions,
+            new Assembly.Application.Common.Machines.MachineSet(new Assembly.Tests.Draft.Base.Chat.FakeMachine(null, _sessions)));
+        new PullRequestsFeature(_sessions, prReader, routes, new(_db, projectRoots, sources, machine, prReader, null, null)).Register(calls);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));

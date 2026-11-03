@@ -1,5 +1,5 @@
 use super::{
-    pr_detail::{PrBack, PrDetail},
+    pr_detail::{PrBack, PrDetail, PrMerged},
     pr_queue::PrQueue,
     pr_search::PrState,
     pull_request::PrTarget,
@@ -43,7 +43,7 @@ pub struct PrPane {
     /// A pasted link to a repository Assembly doesn't have, and the words saying so.
     missing_link: Option<(String, String)>,
     _queue: Subscription,
-    _detail: Option<Subscription>,
+    _detail: Option<[Subscription; 2]>,
     _projects: Option<Subscription>,
     _search: Subscription,
     _selection: Option<Subscription>,
@@ -350,9 +350,15 @@ impl PrPane {
         self.failure = None;
         let active = self.active;
         let detail = cx.new(|cx| PrDetail::new(session, repository, number, active, cx));
-        self._detail = Some(cx.subscribe(&detail, |pane: &mut Self, _, _: &PrBack, cx| {
-            pane.close_detail(cx)
-        }));
+        self._detail = Some([
+            cx.subscribe(&detail, |pane: &mut Self, _, _: &PrBack, cx| {
+                pane.close_detail(cx)
+            }),
+            cx.subscribe(&detail, |pane: &mut Self, _, merged: &PrMerged, cx| {
+                pane.queue
+                    .update(cx, |queue, cx| queue.merged(&merged.repository, merged.number, cx))
+            }),
+        ]);
         self.detail = Some(detail);
         cx.notify();
     }

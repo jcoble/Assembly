@@ -3,10 +3,14 @@ namespace Assembly.Application.Features.Chat.SourceControl.PullRequests;
 
 public sealed partial class PullRequestReader
 {
-    public async Task<PrFileContext> FileAsync(string root, int number, string path, string baseSha, string headSha, CancellationToken ct)
+    public Task<PrFileContext> FileAsync(string root, int number, string path, string baseSha, string headSha, CancellationToken ct) =>
+        FileCore(root, null, number, path, baseSha, headSha, ct);
+    public Task<PrFileContext> ProjectFileAsync(string root, string repository, int number, string path, string baseSha, string headSha, CancellationToken ct) =>
+        FileCore(root, GitHubRepository.Parse(repository), number, path, baseSha, headSha, ct);
+    private async Task<PrFileContext> FileCore(string root, string? repository, int number, string path, string baseSha, string headSha, CancellationToken ct)
     {
         ValidatePath(path); ValidateRevision(baseSha); ValidateRevision(headSha);
-        var detail = await DetailAsync(root, number, ct);
+        var detail = repository is null ? await DetailAsync(root, number, ct) : await ProjectDetailAsync(root, repository, number, ct);
         if (detail.BaseSha != baseSha || detail.HeadSha != headSha) throw new CallFailed("This pull request changed. Refresh it before reading the file.");
         var file = detail.Files.FirstOrDefault(file => file.Path == path) ?? throw new CallFailed("That file is not in this pull request.");
         var oldPath = file.PreviousPath ?? file.Path; ValidatePath(oldPath);

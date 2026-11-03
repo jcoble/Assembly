@@ -23,6 +23,9 @@ internal sealed partial class SourceControlFeature
             kind != CallKind.Write && !MachineReads.AllowRead(registry, "git", method, kind == CallKind.BulkRead))
             throw new CallFailed("forbidden");
         var json = JsonSerializer.SerializeToElement(args, argsType);
+        if (json.TryGetProperty("projectId", out var project) && project.ValueKind != JsonValueKind.Null &&
+            json.TryGetProperty("session", out var projectSession) && projectSession.ValueKind != JsonValueKind.Null)
+            throw new CallBadArguments("Choose exactly one session or project.");
         if (json.TryGetProperty("machine", out var machine) && machine.ValueKind != JsonValueKind.Null)
             throw new CallFailed("forbidden");
         if (!json.TryGetProperty("session", out var sessionValue) || sessionValue.ValueKind == JsonValueKind.Null)

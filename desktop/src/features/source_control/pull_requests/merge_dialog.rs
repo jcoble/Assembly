@@ -1,10 +1,8 @@
-use super::super::git_operation::GitOperation;
 use super::{
     pr_activity::merge_method_label, pr_detail::PrDetail, pull_request::PullRequestDetail,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, WindowExt as _, h_flex, v_flex};
-use gpui_kit::gpui_base::StyledExt as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
@@ -35,28 +33,23 @@ impl MergeRequest {
             json!({"number":self.number,"method":self.method,"expectedHead":self.head,"expectedBase":self.base}),
         )
     }
-    fn current(&self, detail: &PullRequestDetail) -> bool {
+    pub fn current(&self, detail: &PullRequestDetail) -> bool {
         Self::available(&detail.state, detail.is_draft, &detail.mergeable)
             && self.number == detail.number
             && self.head == detail.head_sha
             && self.base == detail.base_sha
     }
 }
+/// What will be merged, and the go-ahead. Confirming closes this; the merge card shows it running and how it went.
 struct MergeDialog {
-    session: String,
     request: MergeRequest,
     repository: String,
     title: String,
     has_draft: bool,
-    closing: bool,
     detail: WeakEntity<PrDetail>,
-    operation: Entity<GitOperation>,
-    submitted: bool,
     failure: Option<String>,
-    _operation: Subscription,
 }
 pub fn open(
-    session: String,
     detail: PullRequestDetail,
     method: &str,
     has_draft: bool,
@@ -67,8 +60,6 @@ pub fn open(
     if !MergeRequest::available(&detail.state, detail.is_draft, &detail.mergeable) {
         return;
     }
-    let repository = detail.repository;
-    let title = detail.title;
     let request = MergeRequest {
         number: detail.number,
         head: detail.head_sha,
@@ -77,47 +68,13 @@ pub fn open(
         base_branch: detail.base_branch,
         method: method.into(),
     };
-    let form = cx.new(|cx| {
-        let operation = cx.new(|_| GitOperation::default());
-        let heard = cx.observe(&operation, |view: &mut MergeDialog, _, cx| {
-            if let Some(status) = &view.operation.read(cx).status {
-                if status.state == "succeeded" {
-                    let url = status
-                        .result
-                        .as_ref()
-                        .and_then(Value::as_str)
-                        .filter(|value| {
-                            url::Url::parse(value).is_ok_and(|url| {
-                                url.scheme() == "https" && url.host_str() == Some("github.com")
-                            })
-                        });
-                    if let Some(url) = url {
-                        let url = url.to_string();
-                        let owner = view.detail.clone();
-                        _ = owner.update(cx, |detail, cx| detail.merge_finished(url, cx));
-                        view.closing = true;
-                    } else {
-                        view.failure = Some(
-                            "The merge was not confirmed. Refresh before trying again.".into(),
-                        );
-                    }
-                }
-            }
-            cx.notify();
-        });
-        MergeDialog {
-            session,
-            request,
-            repository,
-            title,
-            has_draft,
-            closing: false,
-            detail: owner,
-            operation,
-            submitted: false,
-            failure: None,
-            _operation: heard,
-        }
+    let form = cx.new(|_| MergeDialog {
+        request,
+        repository: detail.repository,
+        title: detail.title,
+        has_draft,
+        detail: owner,
+        failure: None,
     });
     window.open_dialog(cx, move |dialog, _, _| {
         dialog
@@ -131,58 +88,44 @@ impl MergeDialog {
         self.detail.upgrade().is_some_and(|owner| {
             let owner = owner.read(cx);
             owner.current_identity().is_some()
+                && owner.writes_free(cx)
                 && owner
                     .detail
                     .as_ref()
                     .is_some_and(|detail| self.request.current(detail))
         })
     }
-    fn confirm(&mut self, cx: &mut Context<Self>) {
-        if self.submitted {
-            return;
-        }
+    fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.is_current(cx) {
             self.failure = Some("This pull request changed. Refresh before merging.".into());
             cx.notify();
             return;
         }
-        match self.request.args() {
-            Ok(args) => {
-                self.submitted = true;
-                let session = self.session.clone();
-                self.operation.update(cx, |operation, cx| {
-                    operation.start("merge", Some(session), args, cx)
-                });
+        let request = self.request.clone();
+        let started = self
+            .detail
+            .update(cx, |detail, cx| detail.start_merge(&request, cx));
+        match started {
+            Ok(Err(error)) => {
+                self.failure = Some(error);
+                cx.notify();
             }
-            Err(error) => self.failure = Some(error),
+            _ => window.close_dialog(cx),
         }
-        cx.notify();
     }
 }
 impl Render for MergeDialog {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.closing {
-            self.closing = false;
-            cx.defer_in(window, |_, window, cx| window.close_dialog(cx));
-        }
-        let busy = self.operation.read(cx).busy;
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (danger, muted) = (theme.danger, theme.muted_foreground);
         let current = self.is_current(cx);
-        let uncertain = self
-            .operation
-            .read(cx)
-            .status
-            .as_ref()
-            .is_some_and(|status| status.state == "uncertain");
         let short = |sha: &str| sha.chars().take(10).collect::<String>();
         v_flex()
             .gap_2()
-            .child(
-                div()
-                    .font_semibold()
-                    .child(format!("{} #{} · {}", self.repository, self.request.number, self.title)),
-            )
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(format!(
+                "{} #{} · {}",
+                self.repository, self.request.number, self.title
+            )))
             .child(format!(
                 "{} into {} using {}.",
                 self.request.head_branch,
@@ -207,21 +150,9 @@ impl Render for MergeDialog {
                     .clone()
                     .map(|error| div().text_color(danger).child(error)),
             )
-            .children(
-                self.operation
-                    .read(cx)
-                    .error
-                    .clone()
-                    .map(|error| div().text_color(danger).child(error)),
-            )
-            .children((!current && !self.submitted).then(|| {
+            .children((!current).then(|| {
                 div().text_sm().child(
                     "Refresh before merging: the pull request changed or is no longer mergeable.",
-                )
-            }))
-            .children(uncertain.then(|| {
-                div().text_sm().child(
-                    "Refresh this PR to check whether the merge completed before trying again.",
                 )
             }))
             .child(
@@ -234,23 +165,21 @@ impl Render for MergeDialog {
                             .label("Cancel")
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
-                    .children((uncertain || !current).then(|| {
+                    .children((!current).then(|| {
                         Button::new("merge-refresh")
                             .ghost()
                             .label("Refresh this pull request")
                             .on_click(cx.listener(|view, _, window, cx| {
-                                if let Some(detail) = view.detail.upgrade() {
-                                    detail.update(cx, |detail, cx| detail.refresh(cx));
-                                }
+                                _ = view.detail.update(cx, |detail, cx| detail.refresh(cx));
                                 window.close_dialog(cx);
                             }))
                     }))
                     .child(
                         Button::new("merge-confirm")
                             .primary()
-                            .label(if busy { "Merging…" } else { "Merge on GitHub" })
-                            .disabled(self.submitted || !current || self.request.args().is_err())
-                            .on_click(cx.listener(|view, _, _, cx| view.confirm(cx))),
+                            .label("Merge on GitHub")
+                            .disabled(!current || self.request.args().is_err())
+                            .on_click(cx.listener(|view, _, window, cx| view.confirm(window, cx))),
                     ),
             )
     }

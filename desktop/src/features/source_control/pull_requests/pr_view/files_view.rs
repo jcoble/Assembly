@@ -13,7 +13,6 @@ use gpui_kit::component::list::ListItem;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
-use gpui_kit::gpui_base::StyledExt as _;
 
 impl PrFiles {
     fn diff(&self, cx: &mut Context<Self>) -> Diff {
@@ -186,7 +185,7 @@ fn annotation_card(
                 .rounded(theme.radius_lg)
                 .border_1()
                 .border_color(border)
-                .child(div().font_semibold().child(format!(
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(format!(
                     "Comment on line {} ({} side)",
                     comment.target.line,
                     if comment.target.side == "LEFT" {
@@ -238,7 +237,7 @@ fn annotation_card(
                 .child(
                     div()
                         .flex_none()
-                        .font_semibold()
+                        .font_weight(FontWeight::SEMIBOLD)
                         .child(format!("Line {}", comment.target.line)),
                 )
                 .child(
@@ -267,7 +266,7 @@ fn annotation_card(
             .rounded(theme.radius_lg)
             .border_1()
             .border_color(border)
-            .child(div().font_semibold().child(comment.author.clone()))
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(comment.author.clone()))
             .child(MarkdownView {
                 id: SharedString::from(format!("pr-comment:{}", comment.id)),
                 blocks: comment.body_blocks.clone(),
