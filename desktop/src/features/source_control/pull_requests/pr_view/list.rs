@@ -264,13 +264,15 @@ impl PrPane {
             .child(self.filters(cx))
             .children(missing.map(|(words, url)| {
                 h_flex().gap_2().text_sm().child(words).child(
-                    Button::new("pr-missing-open")
-                        .ghost()
-                        .small()
-                        .label("Open on GitHub")
-                        .on_click(move |_, _, cx| {
-                            cx.dispatch_action(&OpenUrl { url: url.clone() })
-                        }),
+                    div().debug_selector(|| "pr-missing-open".into()).child(
+                        Button::new("pr-missing-open")
+                            .ghost()
+                            .small()
+                            .label("Open on GitHub")
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
+                            }),
+                    ),
                 )
             }))
             .children(error.map(|error| div().text_sm().text_color(danger).child(error)))

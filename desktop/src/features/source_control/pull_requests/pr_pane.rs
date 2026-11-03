@@ -96,12 +96,16 @@ impl PrPane {
             Box::new(ShowPullRequests),
             cx,
         );
+        // An action runs while its window is being updated, so a second `cx.dispatch_action` here would be dropped.
         cx.on_action(|_: &ShowPullRequests, cx| {
-            cx.dispatch_action(&OpenPullRequests {
-                session_id: None,
-                repo: None,
-                number: None,
-            })
+            Self::open_when_free(
+                OpenPullRequests {
+                    session_id: None,
+                    repo: None,
+                    number: None,
+                },
+                cx,
+            )
         });
         register_panel(cx, NAME, |build, window, cx| {
             let saved = match build.state().info.clone() {
@@ -113,17 +117,17 @@ impl PrPane {
             Self::remember(&pane, cx);
             panel_handle(pane)
         });
-        cx.on_action(|intent: &OpenPullRequests, cx| {
-            let intent = intent.clone();
-            if let Some(window) = cx
-                .active_window()
-                .or_else(|| cx.windows().into_iter().next())
-            {
-                cx.defer(move |cx| {
-                    _ = window.update(cx, |_, window, cx| Self::open(intent, window, cx));
-                });
-            }
-        });
+        cx.on_action(|intent: &OpenPullRequests, cx| Self::open_when_free(intent.clone(), cx));
+    }
+    fn open_when_free(intent: OpenPullRequests, cx: &mut App) {
+        if let Some(window) = cx
+            .active_window()
+            .or_else(|| cx.windows().into_iter().next())
+        {
+            cx.defer(move |cx| {
+                _ = window.update(cx, |_, window, cx| Self::open(intent, window, cx));
+            });
+        }
     }
     fn remember(pane: &Entity<Self>, cx: &mut App) {
         CenterPanes::remember(KEY, PanelId::from(pane.entity_id()), cx);

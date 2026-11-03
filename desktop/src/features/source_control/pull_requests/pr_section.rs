@@ -100,12 +100,15 @@ impl PrSection {
         let (repository, number, title) = (pr.repository.clone(), pr.number, pr.title.clone());
         ListItem::new(SharedString::from(format!("session-pr:{id}")))
             .px_2()
-            .on_click(move |_, _, cx| {
-                cx.dispatch_action(&OpenPullRequests {
-                    session_id: Some(session.clone()),
-                    repo: Some(repository.clone()),
-                    number: Some(number),
-                })
+            .on_click(move |_, window, cx| {
+                window.dispatch_action(
+                    Box::new(OpenPullRequests {
+                        session_id: Some(session.clone()),
+                        repo: Some(repository.clone()),
+                        number: Some(number),
+                    }),
+                    cx,
+                )
             })
             .child(
                 h_flex()
@@ -132,9 +135,9 @@ impl PrSection {
                             .compact()
                             .icon(Icon::new(IconName::ExternalLink).size(px(14.)))
                             .tooltip("Open on GitHub")
-                            .on_click(move |_, _, cx| {
+                            .on_click(move |_, window, cx| {
                                 cx.stop_propagation();
-                                cx.dispatch_action(&OpenUrl { url: url.clone() })
+                                window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
                             }),
                     ),
             )

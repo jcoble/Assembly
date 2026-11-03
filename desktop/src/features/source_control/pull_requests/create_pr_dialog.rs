@@ -381,11 +381,14 @@ impl Render for CreatePrForm {
                     .label("Refresh pull requests")
                     .on_click(move |_, window, cx| {
                         window.close_dialog(cx);
-                        cx.dispatch_action(&OpenPullRequests {
-                            session_id: Some(unconfirmed_session.clone()),
-                            repo: None,
-                            number: None,
-                        });
+                        window.dispatch_action(
+                            Box::new(OpenPullRequests {
+                                session_id: Some(unconfirmed_session.clone()),
+                                repo: None,
+                                number: None,
+                            }),
+                            cx,
+                        );
                     })
             }))
             .children(created.map(|pr| {
@@ -397,8 +400,8 @@ impl Render for CreatePrForm {
                         Button::new("created-pr-browser")
                             .ghost()
                             .label("Open on GitHub")
-                            .on_click(move |_, _, cx| {
-                                cx.dispatch_action(&OpenUrl { url: url.clone() })
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
                             }),
                     )
                     .child(
@@ -407,11 +410,14 @@ impl Render for CreatePrForm {
                             .label("Open in Pull requests")
                             .on_click(move |_, window, cx| {
                                 window.close_dialog(cx);
-                                cx.dispatch_action(&OpenPullRequests {
-                                    session_id: Some(session.clone()),
-                                    repo: None,
-                                    number: Some(pr.number),
-                                });
+                                window.dispatch_action(
+                                    Box::new(OpenPullRequests {
+                                        session_id: Some(session.clone()),
+                                        repo: None,
+                                        number: Some(pr.number),
+                                    }),
+                                    cx,
+                                );
                             }),
                     )
             }))

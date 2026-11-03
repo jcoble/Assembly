@@ -62,6 +62,7 @@ fn main() {
             features::workspaces::init(cx).expect("one workspace registry after concrete pane registration");
             let (read_layout, write_layout) = start_backend(cx);
             PaletteView::init(cx);
+            core::intents::open_url::register(cx);
             features::settings::init(cx);
             features::remote_install::init(cx);
             features::meter::start_if_on(cx);
