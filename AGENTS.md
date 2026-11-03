@@ -38,3 +38,7 @@ Use isolated app data and realistic seed data from a safe database backup. Never
 Cover four provider/host cases: Claude Code local, Codex local, Claude Code on Workbox Test, and Codex on Workbox Test. Use `scripts/check4.sh` for baseline checks on the completed feature build; report each result with evidence or its exact blocker.
 
 The script does not drive the native UI. In the same acceptance verification, exercise the changed feature in the real native app with realistic data, covering affected provider/host and phone flows. Chat checks alone do not prove another feature; a browser preview is not native-app proof. Follow the global verification and Drive upload rules.
+
+## Shared UI components
+
+Before building UI, use the components in `desktop/src/components/`; see the [component catalog](<link>). Build a missing one there, on GPUI Kit, rather than inside a feature. Rows and cards expand with `core/ui/row_drop_down.rs`; don't write another grower.
