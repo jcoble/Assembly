@@ -248,7 +248,15 @@ public sealed partial class RowStore
         Query($"SELECT {Columns} FROM rows WHERE session_id = $session AND run_id = $run AND kind = 'message' AND seq > $after ORDER BY seq LIMIT 1;",
             reader => ReadRow(reader), new SqlArg("$session", sessionId), new SqlArg("$run", runId), new SqlArg("$after", after)).FirstOrDefault();
 
-    public StoredToolCall? ToolCall(string sessionId, string itemId) => ReadToolCall(sessionId, itemId);
+    public StoredToolCall? ToolCall(string sessionId, string itemId) =>
+        ReadToolCall(sessionId, itemId, int.MaxValue, int.MaxValue, CancellationToken.None);
+
+    public StoredToolCall? ToolCallPrefix(string sessionId, string itemId, int outputMaxBytes, int diffMaxBytes, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        _ = new RowsFeature.RawToolArgs(sessionId, itemId, outputMaxBytes, diffMaxBytes);
+        return ReadToolCall(sessionId, itemId, outputMaxBytes, diffMaxBytes, ct);
+    }
 
     /// <summary>
     /// The files the session's tool calls edited, deleted or moved, newest first (<c>rows/files</c>). Each call counts once,

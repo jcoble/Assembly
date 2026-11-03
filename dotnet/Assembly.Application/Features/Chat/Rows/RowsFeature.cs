@@ -96,6 +96,12 @@ internal sealed class RowsFeature : IFeature
             using var result = JsonDocument.Parse("{\"rows\":[" + string.Join(',', json) + "]}");
             return Task.FromResult(result.RootElement.Clone());
         }, bulk: true);
+        calls.Read(Topic, "toolRaw", RowJsonContext.Rows.RawToolArgs, RowJsonContext.Rows.StoredToolCall, (args, call) =>
+        {
+            if (_sessions.Get(args.Session) is not { Machine: null }) throw new KeyNotFoundException("unknown tool");
+            return Task.FromResult(_store.ToolCallPrefix(args.Session, args.Item, args.OutputMaxBytes, args.DiffMaxBytes, call.Cancellation)
+                ?? throw new KeyNotFoundException("unknown tool"));
+        }, bulk: true);
         calls.Read(Topic, "tool", RowJsonContext.Rows.ToolArgs, RowJsonContext.Rows.ToolDetail, async (args, call) =>
         {
             var tool = _sessions.Get(args.Session) is { } session
@@ -103,10 +109,10 @@ internal sealed class RowsFeature : IFeature
                 : null;
             if (tool is null)
                 throw new CallFailed("unknown tool call");
-            var (output, outputBytes) = Cut(tool.Output);
-            var (diff, diffBytes) = Cut(tool.Diff);
-            return new ToolDetail(tool.Summary, tool.Input, output, diff, tool.Path, tool.OutputTruncated || output != tool.Output || diff != tool.Diff,
-                tool.OutputBytes ?? outputBytes, diffBytes, tool.Terminals);
+            var (output, outputBytes) = Cut(tool.Output, tool.OutputBytes);
+            var (diff, diffBytes) = Cut(tool.Diff, tool.DiffBytes);
+            return new ToolDetail(tool.Summary, tool.Input, output, diff, tool.Path, tool.OutputTruncated || outputBytes != Encoding.UTF8.GetByteCount(output ?? "") || diffBytes != Encoding.UTF8.GetByteCount(diff ?? ""),
+                outputBytes, diffBytes, tool.Terminals);
         }, bulk: true);
         // The drawer's Context tab: what the session's tool calls changed, from this machine's copy of its rows.
         calls.Read(Topic, "files", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.IReadOnlyListFileTouched, (args, call) =>
@@ -125,18 +131,12 @@ internal sealed class RowsFeature : IFeature
     }
 
     // The text cut to at most ToolCap bytes, at a whole character, and its full size in bytes.
-    internal static (string? Text, long Bytes) Cut(string? text)
+    internal static (string? Text, long Bytes) Cut(string? text, long originalBytes)
     {
-        if (text is null)
-            return (null, 0);
-        var size = Encoding.UTF8.GetByteCount(text);
-        if (size <= ToolCap)
-            return (text, size);
-        var bytes = Encoding.UTF8.GetBytes(text);
-        var end = ToolCap;
-        while ((bytes[end] & 0xC0) == 0x80)
-            end--;
-        return (Encoding.UTF8.GetString(bytes, 0, end), bytes.Length);
+        if (text is null || Encoding.UTF8.GetByteCount(text) <= ToolCap) return (text, originalBytes);
+        var bytes = new byte[ToolCap];
+        Encoding.UTF8.GetEncoder().Convert(text.AsSpan(), bytes, true, out _, out var used, out _);
+        return (Encoding.UTF8.GetString(bytes, 0, used), originalBytes);
     }
 
     // {rows, hasBefore, before, activeRunId}, as GET /sessions/{id}/rows answers it.
@@ -166,6 +166,23 @@ internal sealed class RowsFeature : IFeature
     internal sealed record PageArgs([property: JsonRequired] string Session, long Before = long.MaxValue, int Limit = 50);
 
     internal sealed record ToolArgs([property: JsonRequired] string Session, [property: JsonRequired] string Item);
+
+    internal sealed record RawToolArgs
+    {
+        public string Session { get; }
+        public string Item { get; }
+        public int OutputMaxBytes { get; }
+        public int DiffMaxBytes { get; }
+
+        [JsonConstructor]
+        public RawToolArgs(string session, string item, int outputMaxBytes, int diffMaxBytes)
+        {
+            if (string.IsNullOrEmpty(session) || string.IsNullOrEmpty(item) ||
+                outputMaxBytes is < 1 or > ToolCap || diffMaxBytes is < 1 or > ToolCap)
+                throw new JsonException("expected session, item and byte windows from 1 to 1048576");
+            (Session, Item, OutputMaxBytes, DiffMaxBytes) = (session, item, outputMaxBytes, diffMaxBytes);
+        }
+    }
 
     internal sealed record SessionArgs([property: JsonRequired] string Session);
 

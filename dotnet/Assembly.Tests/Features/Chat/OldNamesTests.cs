@@ -73,7 +73,7 @@ public sealed class OldNamesTests : IDisposable
             Assert.Equal([1L, 2L, 3L], rows.RowsAfter("s1", 0).Select(row => row.Seq));
             Assert.Equal("""{"title":"Child","state":"idle","canStop":false,"sessionId":"s2"}""",
                 rows.RowsAfter("s1", 2).Single().Payload.GetRawText());
-            Assert.Equal(new StoredToolCall("ls", "ls -la", "a.txt", null, null), rows.ToolCall("s1", "t"));
+            Assert.Equal(new StoredToolCall("ls", "ls -la", "a.txt", null, null, 5, 0), rows.ToolCall("s1", "t"));
             Assert.Equal("opus", sessions.Config("s1").Choices["model"]);
             Assert.Equal("""[{"name":"context"}]""", sessions.Config("s1").Commands);
             Assert.Equal(("s1", "s2"), (sessions.Message("m1")!.From, sessions.Message("m1")!.To));

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Engine.Relays;
+using Assembly.Infrastructure.Socket;
 
 namespace Assembly.Infrastructure.Remote;
 
@@ -53,7 +54,29 @@ internal sealed partial class RemoteMachine
                 startIntent?.FrameOrdered();
             }
             finally { _socketSend.Release(); }
-            var frame = await ReadFrameAsync(_bulkSocket, ct);
+            // Keep the established receive alive while forwarding cancellation, then join its
+            // settlement before another call can take the bulk exchange.
+            var response = ReadFrameAsync(_bulkSocket, _socketStop.Token);
+            JsonElement frame;
+            try { frame = await response.WaitAsync(ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                using var settlement = new CancellationTokenSource(SocketDispatcher.Limit, _time);
+                using var stopping = CancellationTokenSource.CreateLinkedTokenSource(settlement.Token, _socketStop.Token);
+                try
+                {
+                    await SendFrameAsync(_bulkSocket, $"{{\"t\":\"cancel\",\"id\":{id}}}", stopping.Token);
+                    await response.WaitAsync(stopping.Token);
+                }
+                catch (Exception error) when (error is WebSocketException or IOException or OperationCanceledException or ObjectDisposedException)
+                {
+                    _bulkSocket.Abort();
+                }
+                // Aborting a peer that did not settle also joins this call's one receive task.
+                try { await response; }
+                catch (Exception error) when (error is WebSocketException or IOException or OperationCanceledException or ObjectDisposedException) { }
+                throw;
+            }
             if (frame.GetProperty("id").GetInt64() != id) throw new IOException("remote bulk response id differs");
             var succeeded = frame.GetProperty("t").GetString() == "result";
             if (!succeeded && relayBinding is null) throw new CallFailed(frame.GetProperty("message").GetString()!);
@@ -74,6 +97,8 @@ internal sealed partial class RemoteMachine
             if (!succeeded) throw new CallFailed(frame.GetProperty("message").GetString()!);
             return frame.GetProperty("result");
         }
+        // A refused call is a completed exchange, so both machine connections remain usable.
+        catch (CallFailed) { startIntent?.SendFailed(); throw; }
         catch (Exception error)
         {
             startIntent?.SendFailed();
