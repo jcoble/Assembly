@@ -273,11 +273,16 @@ impl Composer {
         let Some(run) = self.running.clone().filter(|_| self.offline.is_none()) else {
             return;
         };
-        let call = self
-            .client
-            .call("send", "stop", json!({ "runId": run }), None, cx);
+        let Some(session)=self.session.clone()else{return;};
+        let source_serial=self.source_serial;
+        let args=self.source_args(json!({"runId":run,"session":session}));
+        let call=self.client.call("send","stop",args,None,cx);
         self._tasks.retain(|task| !task.is_ready());
-        self._tasks.push(cx.spawn(async move |_, _| _ = call.await));
+        self._tasks.push(cx.spawn(async move |composer,cx| {
+            if let Err(error)=call.await {let _=composer.update(cx,|composer,cx| {
+                if composer.source_serial==source_serial {composer.source_refused(&error,cx);composer.error=Some(error.reason().into());cx.notify();}
+            });}
+        }));
     }
 
 

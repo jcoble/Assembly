@@ -86,6 +86,8 @@ impl SessionPane {
     fn workspace_activated(&mut self,serial:u64,event:&WorkspaceActivated,cx:&mut Context<Self>) {
         if !self.pending_open.as_ref().is_some_and(|pending|pending.serial==serial&&pending.committed&&pending.workspace.as_ref()==Some(&(event.generation,event.target.clone()))){return;}
         let pending=self.pending_open.take().expect("matching activated session");
+        self.active_reopen=Some((pending.request.as_ref().expect("activated canonical request").clone(),pending.window));
+        self.reopen_queued=None;
         self._source_connections=pending.connections;
         self.active_source_cut=Some(pending.cut);
         let result=if matches!(&event.target,WorkspaceTarget::Checkout(_))&&!event.restored {

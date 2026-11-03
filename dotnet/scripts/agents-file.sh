@@ -20,6 +20,14 @@ bundle_root="$adapters/bundles"
 mkdir -p "$bundle_root"
 out_dir=$(cd "$(dirname "$out")" && pwd)
 out="$out_dir/$(basename "$out")"
+out=$(python3 -I - "$out" <<'PY'
+import os, sys
+path = os.path.realpath(sys.argv[1])
+if not os.path.isdir(os.path.dirname(path)):
+    raise ValueError("agents file physical parent is unavailable")
+print(path)
+PY
+)
 work=$(mktemp -d "$bundle_root/.install.XXXXXX")
 descriptor_tmp=
 published_bundle=
@@ -197,64 +205,102 @@ PY
   bundle=$final_bundle
 fi
 
-# Render and parse the replacement descriptor before publishing either artifact. A bad TOML file or an
-# invalid descriptor leaves the old descriptor and all referenced bundle files untouched.
-descriptor_tmp=$(mktemp "$out_dir/.$(basename "$out").tmp.XXXXXX")
+# Downloads and bundle validation above do not hold the descriptor writer lock.
+# The permanent physical-file sidecar is shared with the runtime settings writer.
 ASSEMBLY_NODE=$(command -v node) ASSEMBLY_CLAUDE=$(command -v claude || true) ASSEMBLY_CODEX=$(command -v codex || true) \
   ASSEMBLY_ADAPTERS=$bundle ASSEMBLY_USER_MCP=${ASSEMBLY_USER_MCP:-off} \
-  ASSEMBLY_CLAUDEAI_MCP=${ASSEMBLY_CLAUDEAI_MCP:-off} python3 -I - >"$descriptor_tmp" <<'PY'
-import json, os, tomllib
-codex = {"model": "gpt-5.6-luna", "tools": {"update_plan": {"enabled": True}}}
-if os.environ["ASSEMBLY_USER_MCP"] == "off":
-    codex_home = os.environ.get("CODEX_HOME")
-    if codex_home is None:
-        codex_home = os.path.expanduser("~/.codex")
-    elif codex_home == "":
-        raise ValueError("CODEX_HOME must not be empty when configured")
-    path = os.path.join(codex_home, "config.toml")
-    config = tomllib.load(open(path, "rb")) if os.path.exists(path) else {}
-    codex["mcp_servers"] = {name: {"enabled": False} for name in sorted(config.get("mcp_servers", {}))}
-claude_env = {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
-if os.environ["ASSEMBLY_CLAUDEAI_MCP"] == "off":
-    claude_env["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false"
-node, adapters = os.environ["ASSEMBLY_NODE"], os.environ["ASSEMBLY_ADAPTERS"]
-acp = lambda name: f"{adapters}/node_modules/@agentclientprotocol/{name}/dist/index.js"
-agents = [
-    {"id": "claude", "vendorFamily": "claude", "name": "Claude Code", "command": node, "args": [f"{adapters}/claude-launcher.ts"], "env": claude_env},
-    {"id": "codex", "vendorFamily": "codex", "name": "Codex", "command": node, "args": [acp("codex-acp")], "env": {"CODEX_CONFIG": json.dumps(codex)}},
-]
-for agent in agents:
-    if cli := os.environ[f"ASSEMBLY_{agent['id'].upper()}"]:
-        agent["cli"] = cli
-print(json.dumps(agents, indent=2))
+  ASSEMBLY_CLAUDEAI_MCP=${ASSEMBLY_CLAUDEAI_MCP:-off} python3 -I - "$out" "$bundle_root" "$bundle" "${stage:-}" "${final_bundle:-}" <<'PY'
+import fcntl, hashlib, json, os, shutil, sys, tempfile, tomllib
+out, root, bundle, stage, final_bundle = sys.argv[1:]
+root = os.path.realpath(root)
+lock = os.open(out + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+temporary = None
+moved = published = False
+try:
+    try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError: sys.exit("agents file unavailable: writer busy")
+    def read_source():
+        try:
+            with open(out, "rb") as source: return source.read()
+        except FileNotFoundError: return None
+    original = read_source()
+    revision = hashlib.sha256(original).hexdigest() if original is not None else None
+    current = json.loads(original) if original is not None else []
+    if not isinstance(current, list) or any(not isinstance(a, dict) or not isinstance(a.get("id"), str) for a in current):
+        raise ValueError("invalid current agents file")
+    prior = {a["id"]: a for a in current}
+    if len(prior) != len(current): raise ValueError("duplicate configured provider identity")
+    old_codex_env = prior.get("codex", {}).get("env")
+    if old_codex_env is None: old_codex_env = {}
+    if not isinstance(old_codex_env, dict): raise ValueError("invalid configured provider environment")
+    codex = {"model": "gpt-5.6-luna", "tools": {"update_plan": {"enabled": True}}}
+    if os.environ["ASSEMBLY_USER_MCP"] == "off":
+        codex_home = old_codex_env.get("CODEX_HOME") if "CODEX_HOME" in old_codex_env else os.environ.get("CODEX_HOME")
+        if codex_home is None and "CODEX_HOME" not in old_codex_env:
+            codex_home = os.path.expanduser("~/.codex")
+        elif codex_home == "":
+            raise ValueError("CODEX_HOME must not be empty when configured")
+        if not isinstance(codex_home, str): raise ValueError("invalid configured provider home")
+        path = os.path.join(codex_home, "config.toml")
+        config = tomllib.load(open(path, "rb")) if os.path.exists(path) else {}
+        codex["mcp_servers"] = {name: {"enabled": False} for name in sorted(config.get("mcp_servers", {}))}
+    claude_env = {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
+    if os.environ["ASSEMBLY_CLAUDEAI_MCP"] == "off": claude_env["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false"
+    node, adapters = os.environ["ASSEMBLY_NODE"], os.environ["ASSEMBLY_ADAPTERS"]
+    generated = [
+        {"id": "claude", "vendorFamily": "claude", "name": "Claude Code", "command": node,
+         "args": [os.path.join(adapters, "claude-launcher.ts")], "env": claude_env},
+        {"id": "codex", "vendorFamily": "codex", "name": "Codex", "command": node,
+         "args": [os.path.join(adapters, "node_modules/@agentclientprotocol/codex-acp/dist/index.js")], "env": {"CODEX_CONFIG": json.dumps(codex)}},
+    ]
+    installer_fields = {"id", "vendorFamily", "name", "command", "args", "env"}
+    installer_env = {"codex": {"CODEX_CONFIG"}, "claude": {"CLAUDE_CODE_ENABLE_TODO_TOOLS", "ENABLE_CLAUDEAI_MCP_SERVERS"}}
+    for agent in generated:
+        old = prior.get(agent["id"])
+        if old is None:
+            if cli := os.environ[f"ASSEMBLY_{agent['id'].upper()}"]: agent["cli"] = cli
+            continue
+        old_env = old.get("env")
+        if old_env is None: old_env = {}
+        if not isinstance(old_env, dict): raise ValueError("invalid configured provider environment")
+        agent["env"] = {**{key: value for key, value in old_env.items() if key not in installer_env[agent["id"]]}, **agent["env"]}
+        agent.update({key: value for key, value in old.items() if key not in installer_fields})
+    generated_by_id = {a["id"]: a for a in generated}
+    agents = [generated_by_id.get(a["id"], a) for a in current]
+    agents.extend(a for a in generated if a["id"] not in prior)
+    encoded = (json.dumps(agents, indent=2) + "\n").encode("utf-8")
+    validated = {a["id"]: a for a in json.loads(encoded)}
+    for name, relative in [("claude", "claude-launcher.ts"), ("codex", "node_modules/@agentclientprotocol/codex-acp/dist/index.js")]:
+        if validated[name]["args"] != [os.path.join(bundle, relative)]: raise ValueError("descriptor entry mismatch")
+        if not os.path.isfile(os.path.join(stage if final_bundle else bundle, relative)): raise ValueError("validated bundle is unavailable")
+    if "air" in validated["codex"]: raise ValueError("Codex descriptor must not opt into AIR")
+    descriptor, temporary = tempfile.mkstemp(prefix="." + os.path.basename(out) + ".tmp.", dir=os.path.dirname(out))
+    with os.fdopen(descriptor, "wb") as output:
+        output.write(encoded); output.flush(); os.fsync(output.fileno())
+    latest = read_source()
+    if revision != (hashlib.sha256(latest).hexdigest() if latest is not None else None):
+        raise ValueError("agents file changed before publication")
+    if final_bundle:
+        os.rename(stage, final_bundle); moved = True
+    os.replace(temporary, out); temporary = None; published = True
+    directory = os.open(os.path.dirname(out), os.O_RDONLY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
+    # Retain all bundles referenced by either descriptor, including unrelated providers.
+    keep = {os.path.realpath(bundle)}
+    for agent in current + agents:
+        for value in [agent.get("command"), *(agent.get("args") or [])]:
+            if not isinstance(value, str): continue
+            relative = os.path.relpath(os.path.realpath(value), root)
+            first = relative.split(os.sep)[0]
+            if first not in (".", ".."): keep.add(os.path.join(root, first))
+    for name in os.listdir(root):
+        old = os.path.join(root, name)
+        if name.startswith(("assembly-providers-", "local-sha256-")) and os.path.isdir(old) and not os.path.islink(old) and old not in keep:
+            try: shutil.rmtree(old)
+            except OSError: print("could not remove inactive adapter bundle", file=sys.stderr)
+finally:
+    if temporary is not None: os.unlink(temporary)
+    if moved and not published: shutil.rmtree(final_bundle)
+    os.close(lock)
 PY
-python3 -I - "$descriptor_tmp" "$bundle" <<'PY'
-import json, os, sys
-path, bundle = sys.argv[1:]
-agents = {agent["id"]: agent for agent in json.load(open(path, encoding="utf-8"))}
-expected = {
-    "claude": os.path.join(bundle, "claude-launcher.ts"),
-    "codex": os.path.join(bundle, "node_modules/@agentclientprotocol/codex-acp/dist/index.js"),
-}
-for name, entry in expected.items():
-    if agents[name]["args"] != [entry]: raise ValueError("descriptor entry mismatch: " + name)
-if "air" in agents["codex"]: raise ValueError("Codex descriptor must not opt into AIR")
-PY
-
-if [[ "$bundle" != "$active_bundle" ]]; then
-  mv "$stage" "$final_bundle"
-  remove_published_bundle=$final_bundle
-  bundle=$final_bundle
-fi
-mv -f "$descriptor_tmp" "$out"
-descriptor_tmp=
-remove_published_bundle=
-
-# Keep only the just-active immutable tree and its immediately previous active tree. Older directories are our
-# own provider bundles and no longer have a descriptor pointing to them.
-for old_bundle in "$bundle_root"/assembly-providers-* "$bundle_root"/local-sha256-*; do
-  [[ -d "$old_bundle" ]] || continue
-  if [[ "$old_bundle" != "$bundle" && "$old_bundle" != "$active_bundle" ]]; then
-    rm -rf "$old_bundle" || echo "could not remove inactive adapter bundle $old_bundle" >&2
-  fi
-done

@@ -8,7 +8,7 @@ use crate::core::{engine::SessionKey,intents::session_open::{SessionOpenRequest,
 use crate::features::{session::client::socket_session_client::SocketSessionClient,workspaces::workspace_coordinator::WorkspaceCoordinator};
 use super::SessionPane;
 #[derive(Default)]
-struct Server {rows:HashMap<String,Vec<Value>>,subscriptions:HashMap<String,Value>,workspaces:HashMap<String,(u64,Value)>,calls:Vec<Value>,hold:bool,held:Option<Value>}
+struct Server {rows:HashMap<String,Vec<Value>>,subscriptions:HashMap<String,Value>,workspaces:HashMap<String,(u64,Value)>,calls:Vec<Value>,hold:bool,held:Option<Value>,operational:bool,owner:Option<String>,fail_warm:bool}
 pub(crate) struct NavigationFixture {
     pub pane:Entity<SessionPane>,pub main:Entity<SocketClient>,bulk:Entity<SocketClient>,
     _backend:FakeBackend,_dock:Entity<DockArea>,_heard:Vec<Subscription>,
@@ -28,15 +28,15 @@ impl NavigationFixture {
             let id=&frame["id"];let args=&frame["args"];
             let result=|value|Reply::Frame(json!({"t":"result","id":id,"result":value}));
             match(frame["t"].as_str(),frame["feature"].as_str(),frame["method"].as_str(),frame["topic"].as_str()) {
-                (Some("hello"),..)=>vec![Reply::Frame(json!({"t":"welcome","protocol":1,"machine":"box","engine":"owner"}))],
+                (Some("hello"),..)=>vec![Reply::Frame(json!({"t":"welcome","protocol":1,"machine":"box","engine":state.owner.as_deref().unwrap_or("owner")}))],
                 (Some("call"),Some("sessions"),Some("resolve_source"),_)=>vec![result(json!({"machine":"owner","generation":0,"routeMachine":null}))],
                 (Some("call"),Some("engine"),Some("entities"),_)=>{
-                    let items=args["refs"].as_array().unwrap().iter().map(|reference|json!({"entityKind":"session","id":reference["id"],"machine":"owner","version":0,"provider":"source-derived-fixture","folder":"/display-only","state":"ended","activityState":"idle","epoch":0})).collect::<Vec<_>>();
+                    let items=args["refs"].as_array().unwrap().iter().map(|reference|json!({"entityKind":"session","id":reference["id"],"machine":"owner","version":0,"provider":"source-derived-fixture","folder":"/display-only","state":if state.operational{"idle"}else{"ended"},"activityState":"idle","epoch":0})).collect::<Vec<_>>();
                     vec![result(json!({"items":items,"next":null}))]
                 },
                 (Some("call"),Some("sessions"),Some("open_target"),_)=>{
                     let session=&args["session"];let root=checkout.then(||format!("/source-derived/{}",session.as_str().unwrap()));
-                    let reply=json!({"t":"result","id":id,"result":{"kind":args["kind"],"machine":"owner","generation":0,"routeMachine":null,"sessionId":session,"parentSessionId":null,"itemId":null,"seq":null,"payloadSessionId":null,"readOnly":true,"hasHistoryRows":true,"originalKey":{"machine":"owner","id":session},"requestId":args["requestId"],"checkoutRoot":root,"expectedSource":{"machine":"owner","generation":0,"routeMachine":null},"transcriptOnly":!checkout}});
+                    let reply=json!({"t":"result","id":id,"result":{"kind":args["kind"],"machine":"owner","generation":0,"routeMachine":null,"sessionId":session,"parentSessionId":null,"itemId":null,"seq":null,"payloadSessionId":null,"readOnly":args["kind"]!="engine","hasHistoryRows":true,"originalKey":{"machine":"owner","id":session},"requestId":args["requestId"],"checkoutRoot":root,"expectedSource":{"machine":"owner","generation":0,"routeMachine":null},"transcriptOnly":!checkout}});
                     if std::mem::take(&mut state.hold){state.held=Some(reply);vec![]}else{vec![Reply::Frame(reply)]}
                 },
                 (Some("sub"),_,_,Some("rows"))=>{
@@ -54,6 +54,11 @@ impl NavigationFixture {
                     let key=args["sessionId"].as_str().unwrap().to_string();let revision=state.workspaces.get(&key).map_or(0,|entry|entry.0);
                     assert_eq!(args["expectedRevision"],revision);state.workspaces.insert(key,(revision+1,args["snapshot"].clone()));vec![result(json!({"revision":revision+1}))]
                 },
+                (Some("call"),Some("config"),Some("warm"),_) if std::mem::take(&mut state.fail_warm)=>vec![Reply::Frame(json!({"t":"error","id":id,"code":"failed","message":"provider setup required"}))],
+                (Some("call"),Some("config"),_,_)=>vec![result(json!({"options":null,"choices":{},"commands":null}))],
+                (Some("call"),Some("engine"),Some("owner_prompts"),_)=>vec![result(json!({"engineMachine":"owner","items":[]}))],
+                (Some("call"),Some("machines"),Some("agents"),_)=>vec![result(json!({"agents":[{"id":"source-derived-fixture","name":"Fixture","targetId":"fixture-target"}]}))],
+                (Some("call"),Some("fixture"),Some("drop"),_)=>vec![Reply::Drop],
                 (Some("call"),Some("sessions"),Some("read"),_)=>vec![result(Value::Null)],
                 (Some("call"),Some("fixture"),Some("release_target"),_)=>vec![Reply::Frame(state.held.take().expect("held descriptor")),result(Value::Null)],
                 (Some("call"),Some("fixture"),Some("push"),_)=>{
@@ -87,6 +92,20 @@ impl NavigationFixture {
     }
     pub async fn request(&mut self,id:&str,cx:&mut VisualTestContext) {
         self.results.borrow_mut().clear();self.pane.update_in(cx,|pane,window,cx|pane.request_open(SessionOpenRequest{key:SessionKey{machine:"owner".into(),id:id.into()},request_id:format!("fixture:{id}"),target:SessionOpenTarget::Historical},window,cx));self.opened(id,cx).await;
+    }
+    pub fn fail_next_warm(&self){self.state.lock().unwrap().fail_warm=true;}
+    pub fn operational(&self){self.state.lock().unwrap().operational=true;}
+    pub fn replace_owner(&self){self.state.lock().unwrap().owner=Some("replacement-owner".into());}
+    pub async fn request_engine(&mut self,id:&str,cx:&mut VisualTestContext) {
+        self.results.borrow_mut().clear();self.pane.update_in(cx,|pane,window,cx|pane.request_open(SessionOpenRequest{key:SessionKey{machine:"owner".into(),id:id.into()},request_id:format!("engine:{id}"),target:SessionOpenTarget::Engine},window,cx));self.opened(id,cx).await;
+    }
+    pub async fn drop_main(&mut self,cx:&mut VisualTestContext) {
+        self.results.borrow_mut().clear();
+        let call=cx.read(|cx|self.main.read(cx).call::<Value>("fixture","drop",json!({}),None));
+        assert!(matches!(call.await,Outcome::Aborted|Outcome::Failed(_)));
+    }
+    pub async fn calls_at_least(&mut self,method:&str,count:usize) {
+        until("correlated reconnect read",&mut self.changes,&self.changed,||self.state.lock().unwrap().calls.iter().filter(|call|call["method"]==method).count()>=count).await;
     }
     pub fn rows(&self,id:&str,rows:Vec<Value>){self.state.lock().unwrap().rows.insert(id.into(),rows);}
     pub fn hold_target(&self){self.state.lock().unwrap().hold=true;}

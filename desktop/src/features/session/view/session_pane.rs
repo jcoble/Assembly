@@ -43,6 +43,8 @@ pub struct SessionPane {
     open_serial: u64,
     pending_open: Option<opening::PendingOpen>,
     active_open_serial: Option<u64>,
+    active_reopen:Option<(crate::core::intents::session_open::SessionOpenRequest,AnyWindowHandle)>,
+    reopen_queued:Option<u64>,
     read_only: bool,
     active_provider:Option<String>,
     _source_connections: Vec<Subscription>,
@@ -207,6 +209,8 @@ impl SessionPane {
             open_serial: 0,
             pending_open: None,
             active_open_serial: None,
+            active_reopen:None,
+            reopen_queued:None,
             read_only: false,active_provider:None,
             _source_connections: Vec::new(),
             active_source_cut: None,
@@ -584,3 +588,9 @@ pub(crate) mod test_navigation;
 #[cfg(test)]
 #[path="navigation/navigation_switch_tests.rs"]
 mod navigation_switch_tests;
+
+#[path="navigation/pane_reconnect.rs"]
+mod reconnect;
+#[cfg(test)]
+#[path="navigation/reconnect_tests.rs"]
+mod reconnect_tests;

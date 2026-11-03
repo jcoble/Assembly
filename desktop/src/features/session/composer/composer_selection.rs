@@ -38,6 +38,13 @@ impl Composer {
         }
         cx.notify();
     }
+    pub(super) fn source_args(&self,mut args:serde_json::Value)->serde_json::Value {
+        if let Some(source)=&self.expected_source{args["expectedSource"]=serde_json::json!(source);}
+        args
+    }
+    pub(super) fn source_refused(&mut self,error:&crate::features::session::client::session_client::CallError,cx:&mut Context<Self>) {
+        if matches!(error,crate::features::session::client::session_client::CallError::Refused{code,..} if code=="source_changed"){self.invalidate_source(cx);}
+    }
     pub(super) fn operational(&self)->bool {self.source_valid&&self.session_key.is_some()}
     /// Legacy unit fixture setup names its simulated owner explicitly; production uses set_target.
     #[cfg(test)]

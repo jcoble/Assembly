@@ -5,7 +5,7 @@ use crate::features::session::{client::{open_target::{self,OpenTarget},session_c
 use super::SessionPane;
 
 pub(super) struct ConnectionCut {
-    main:Entity<SocketClient>, bulk:Entity<SocketClient>, main_generation:u64, bulk_generation:u64,
+    main:Entity<SocketClient>, bulk:Entity<SocketClient>, main_generation:u64, bulk_generation:u64,local_owner:String,
 }
 impl ConnectionCut {
     pub(super) fn capture(cx:&App)->Result<Self,EngineRefusal> {
@@ -13,9 +13,10 @@ impl ConnectionCut {
         let bulk=SocketClient::try_bulk(cx).ok_or_else(||refused("disconnected","The bulk connection is not ready."))?;
         let main_generation=main.read(cx).connection_generation().ok_or_else(||refused("disconnected","The backend is not ready."))?;
         let bulk_generation=bulk.read(cx).connection_generation().ok_or_else(||refused("disconnected","The bulk connection is not ready."))?;
-        Ok(Self{main,bulk,main_generation,bulk_generation})
+        let local_owner=main.read(cx).engine_machine().ok_or_else(||refused("disconnected","The backend has not named its Engine owner."))?;
+        Ok(Self{main,bulk,main_generation,bulk_generation,local_owner})
     }
-    pub(super) fn local_engine(&self,cx:&App)->Option<String>{self.main.read(cx).engine_machine()}
+    pub(super) fn local_engine(&self,_:&App)->Option<String>{Some(self.local_owner.clone())}
     pub(super) fn current(&self,cx:&App)->bool {
         SocketClient::try_global(cx).is_some_and(|socket|socket==self.main)
             && SocketClient::try_bulk(cx).is_some_and(|socket|socket==self.bulk)
@@ -77,12 +78,15 @@ impl SessionPane {
     }
     pub(super) fn install_pending(&mut self,request:Option<SessionOpenRequest>,request_id:String,cut:ConnectionCut,serial:u64,window:&mut Window,cx:&mut Context<Self>) {
         let sockets=[cut.main.clone(),cut.bulk.clone()];
-        let connections=sockets.into_iter().map(|socket|cx.subscribe(&socket,move|pane,_,_,cx|{
+        let connections=sockets.into_iter().map(|socket|cx.subscribe(&socket,move|pane,_,event:&crate::core::socket::connection_state::ConnectionState,cx|{
             if pane.pending_open.as_ref().is_some_and(|pending|pending.serial==serial&&!pending.cut.current(cx)) {
                 pane.cancel_preparation(refused("source_changed","The captured session connection changed."),cx);
             }
             if pane.active_open_serial==Some(serial)&&pane.active_source_cut.as_ref().is_some_and(|cut|!cut.current(cx)) {
                 pane.on_rows(RowUpdate::Refused{code:"source_changed".into(),message:"The captured session connection changed.".into()},cx);
+            }
+            if matches!(event,crate::core::socket::connection_state::ConnectionState::Connected{..}) {
+                pane.reopen_after_connection(serial,cx);
             }
         })).collect();
         let classify_online=request.as_ref().is_some_and(|request|matches!(&request.target,SessionOpenTarget::Engine));

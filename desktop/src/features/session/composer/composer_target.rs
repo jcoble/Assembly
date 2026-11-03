@@ -102,7 +102,7 @@ impl Composer {
         let call = self.client.call(
             "config",
             "warm",
-            json!({"session":session,"targetId":target,"machine":owner.1}),
+            self.source_args(json!({"session":session,"targetId":target,"machine":owner.1})),
             None,
             cx,
         );
@@ -116,6 +116,7 @@ impl Composer {
                 {
                     return;
                 }
+                if let Err(error)=&answer{composer.source_refused(error,cx);}
                 match answer.map_err(|e| e.reason()).and_then(|v| {
                     serde_json::from_value::<AgentConfig>(v).map_err(|e| e.to_string())
                 }) {

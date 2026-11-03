@@ -25,7 +25,7 @@ impl Composer {
         let generation = self.target_generation;
         let picks = self.picks;
         let key = format!("config/get:{session}");
-        let args = json!({ "session": session });
+        let args = self.source_args(json!({ "session": session }));
         let call = self.client.call("config", "get", args, Some(&key), cx);
         self._config = Some(cx.spawn(async move |composer, cx| {
             let answer = call.await;
@@ -34,6 +34,7 @@ impl Composer {
                     let current = composer.target_generation == generation
                         && composer.session == Some(session)
                         && composer.picks == picks;
+                    if current {if let Err(error)=&answer{composer.source_refused(error,cx);}}
                     if let (true, Ok(config)) = (current, parse(answer)) {
                         composer.config = Some(config);
                         cx.notify();
@@ -66,7 +67,7 @@ impl Composer {
         self.picks += 1;
         self._config = None;
         self._warm = None;
-        let mut args = json!({ "session": session, "configId": config_id, "value": value });
+        let mut args = self.source_args(json!({ "session": session, "configId": config_id, "value": value }));
         if let Some(target) = &self.advertised_target {
             args["targetId"] = json!(target);
         }
@@ -81,6 +82,7 @@ impl Composer {
                         return;
                     }
                     composer.picks += 1;
+                    if let Err(error)=&answer{composer.source_refused(error,cx);}
                     match parse(answer) {
                         Ok(config) => {
                             if let Some((agent, _, _)) = &composer.owner {

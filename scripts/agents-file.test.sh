@@ -86,6 +86,17 @@ if (action === "list") {
   if (process.env.FAKE_FAIL_DOWNLOAD) { console.error("fake release download unavailable"); process.exit(17); }
   const dir = args[args.indexOf("--dir") + 1], patterns = args.flatMap((arg, i) => arg === "--pattern" ? [args[i + 1]] : []);
   for (const name of patterns) fs.copyFileSync(path.join(process.env.FAKE_ASSET_ROOT, tag, name), path.join(dir, name));
+  if (process.env.FAKE_EDIT_DESCRIPTOR) require("node:child_process").execFileSync("python3", ["-I", "-c", `
+import fcntl,json,os,sys,tempfile
+p=sys.argv[1]; lock=os.open(p+'.lock',os.O_CREAT|os.O_RDWR,0o600)
+try:
+ fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+ data=json.load(open(p)); next(a for a in data if a['id']=='codex')['cli']='/fixture/during-download'
+ fd,tmp=tempfile.mkstemp(dir=os.path.dirname(p))
+ with os.fdopen(fd,'w') as out: json.dump(data,out); out.flush(); os.fsync(out.fileno())
+ os.replace(tmp,p)
+finally: os.close(lock)
+`, process.env.FAKE_EDIT_DESCRIPTOR]);
 } else throw Error("unexpected gh release operation " + action);
 JS
 chmod +x "$tmp/bin/gh"
@@ -242,3 +253,102 @@ PY
 [[ -e "$active_bundle/obsolete-upstream-file.txt" ]]
 [[ "$(cat "$new_bundle/claude-launcher.ts")" == "export const launcher = 'replacement';" ]]
 echo "ok   atomic version switch removes obsolete upstream files and retains previous bundle"
+
+# A settings save owns the exact existing provider ID; the installer replaces only its ACP invocation/defaults.
+mkdir "$tmp/owner-codex"
+printf '[mcp_servers.owner_only]\ncommand = "private-fixture"\n' >"$tmp/owner-codex/config.toml"
+python3 -I - "$tmp/agents.json" "$tmp/owner-codex" <<'PY'
+import fcntl, json, os, sys
+path, private = sys.argv[1:]
+lock = os.open(path + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+try:
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    agents = json.load(open(path))
+    for agent in agents:
+        agent.update(cli=None if agent["id"] == "claude" else "/fixture/selected-codex", cliArgs=["--owner-option"], shadowHome="", ownerExtra={"keep": True})
+        agent["env"]["OWNER_EXTRA"] = "keep"
+        agent["env"]["CODEX_HOME" if agent["id"] == "codex" else "CLAUDE_CONFIG_DIR"] = private if agent["id"] == "codex" else ""
+    agents.append({"id": "unrelated", "name": "Owner provider", "command": "/fixture/unrelated", "args": ["unchanged"], "env": {"KEEP": "unchanged"}})
+    with open(path, "w") as output: json.dump(agents, output)
+finally: os.close(lock)
+PY
+run_agents
+python3 -I - "$tmp/agents.json" "$tmp/owner-codex" <<'PY'
+import json, sys
+agents={a["id"]:a for a in json.load(open(sys.argv[1]))}
+for name in ("claude", "codex"):
+    a=agents[name]
+    assert a["cli"] == (None if name == "claude" else "/fixture/selected-codex")
+    assert a["cliArgs"] == ["--owner-option"] and a["shadowHome"] == "" and a["ownerExtra"] == {"keep": True}
+    assert a["env"]["OWNER_EXTRA"] == "keep"
+    assert a["args"][0].endswith("claude-launcher.ts" if name == "claude" else "codex-acp/dist/index.js")
+assert agents["claude"]["env"]["CLAUDE_CONFIG_DIR"] == ""
+assert agents["codex"]["env"]["CODEX_HOME"] == sys.argv[2]
+assert json.loads(agents["codex"]["env"]["CODEX_CONFIG"])["mcp_servers"] == {"owner_only": {"enabled": False}}
+assert agents["unrelated"] == {"id": "unrelated", "name": "Owner provider", "command": "/fixture/unrelated", "args": ["unchanged"], "env": {"KEEP": "unchanged"}}
+PY
+echo "ok   final locked render preserves owner runtime fields and unrelated providers"
+
+# Alias paths contend on the same permanent physical sidecar; a busy writer cannot be bypassed by a symlink.
+ln -s "$tmp/agents.json" "$tmp/agents-alias.json"
+ln -s "$tmp" "$tmp/directory-alias"
+env -u CODEX_HOME HOME="$tmp/home" PATH="$tmp/bin:/usr/bin:/bin" FAKE_RELEASES_FILE="$tmp/releases.json" \
+  FAKE_ASSET_ROOT="$tmp/releases" FAKE_GH_CALLS="$tmp/gh-calls.jsonl" \
+  python3 -I - "$tmp/agents.json" "$tmp/directory-alias/agents-alias.json" "$here/../dotnet/scripts/agents-file.sh" "$tmp/adapters" <<'PY'
+import fcntl, os, stat, subprocess, sys
+path, alias, script, adapters = sys.argv[1:]
+before = open(path, "rb").read()
+lock = os.open(path + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+try:
+    inode = os.fstat(lock).st_ino
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    busy = subprocess.run(["bash", script, adapters, alias], capture_output=True, text=True)
+    assert busy.returncode != 0 and "agents file unavailable: writer busy" in busy.stderr
+    assert open(path, "rb").read() == before and os.path.islink(alias)
+finally: os.close(lock)
+completed = subprocess.run(["bash", script, adapters, alias], capture_output=True, text=True)
+assert completed.returncode == 0, completed.stderr
+assert os.path.islink(alias) and os.stat(path + ".lock").st_ino == inode
+assert stat.S_IMODE(os.stat(path + ".lock").st_mode) == 0o600
+assert not os.path.exists(alias + ".lock")
+PY
+echo "ok   physical-file advisory lock refuses concurrent publication and survives atomic replacement"
+
+# The runtime can finish a save while the unlocked download is in progress.
+make_asset assembly-providers-210-1 0.99.7 2.5.6 after-owner-save no
+python3 - "$tmp/releases.json" <<'PY'
+import json, sys
+p=sys.argv[1]; releases=json.load(open(p)); releases.append({"tagName":"assembly-providers-210-1","isDraft":False,"isPrerelease":False,"publishedAt":"2026-11-13T00:00:00Z","assets":["assembly-adapters-linux-x64.tar.gz","assembly-adapters-linux-x64.json"]}); json.dump(releases,open(p,"w"))
+PY
+run_agents FAKE_EDIT_DESCRIPTOR="$tmp/agents.json"
+python3 -I - "$tmp/agents.json" <<'PY'
+import json, sys
+agents={a["id"]:a for a in json.load(open(sys.argv[1]))}
+assert agents["codex"]["cli"] == "/fixture/during-download"
+assert "assembly-providers-210-1" in agents["codex"]["args"][0]
+assert agents["unrelated"]["env"] == {"KEEP": "unchanged"}
+PY
+echo "ok   final reread retains the runtime save completed during the unlocked download"
+
+python3 -I - "$tmp/agents.json" <<'PY'
+import json, sys
+path=sys.argv[1]; agents=json.load(open(path)); next(a for a in agents if a["id"] == "codex")["env"].pop("CODEX_HOME")
+with open(path, "w") as output: json.dump(agents, output)
+PY
+run_agents
+python3 -I - "$tmp/agents.json" <<'PY'
+import json, sys
+assert "CODEX_HOME" not in next(a for a in json.load(open(sys.argv[1])) if a["id"] == "codex")["env"]
+PY
+echo "ok   removed home override remains absent rather than becoming an installer default"
+
+python3 -I - "$tmp/agents.json" <<'PY'
+import json, sys
+path=sys.argv[1]; agents=json.load(open(path)); next(a for a in agents if a["id"] == "codex")["env"]["CODEX_HOME"]=""
+with open(path, "w") as output: json.dump(agents, output)
+PY
+empty_owner_descriptor=$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)
+if run_agents 2>"$tmp/empty-owner-home.err"; then echo "FAIL empty owner home unexpectedly succeeded"; exit 1; fi
+rg -q 'CODEX_HOME must not be empty when configured' "$tmp/empty-owner-home.err"
+[[ "$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)" == "$empty_owner_descriptor" ]]
+echo "ok   explicit empty owner CODEX_HOME refuses without default lookup or output replacement"

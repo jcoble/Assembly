@@ -56,3 +56,30 @@ fn pending_reads_carry_the_prepared_source_and_a_refusal_disables_writes_without
     cx.run_until_parked();let calls=client.engine_calls();assert_eq!(calls.len(),1);assert_eq!(calls[0].0,"owner_prompts");assert_eq!(calls[0].1["expectedSource"],json!(source("a")));
     composer.read_with(cx,|composer,cx|{assert!(!composer.operational());assert_eq!(composer.draft.read(cx).value().as_ref(),"kept");});assert!(client.calls().is_empty());
 }
+
+#[gpui::test]
+fn prompt_stop_and_config_keep_the_prepared_source_and_refusal_never_retries_unqualified(cx:&mut TestAppContext) {
+    use serde_json::json;
+    use crate::features::session::client::session_client::CallError;
+    let(composer,client,_,cx)=super::tests::open(cx);
+    composer.update_in(cx,|composer,window,cx| {
+        composer.set_target(Some(key("a")),Some(source("a")),window,cx);
+        composer.running=Some("actual-run".into());composer.stop(cx);
+    });
+    cx.run_until_parked();
+    let stop=client.calls().into_iter().find(|(method,_)|method=="send/stop").unwrap().1;
+    assert_eq!(stop,json!({"runId":"actual-run","session":"same","expectedSource":source("a")}));
+    assert!(client.config_calls().iter().all(|(_,args)|args["expectedSource"]==json!(source("a"))));
+    client.queue_answer(Err(CallError::Refused{code:"source_changed".into(),message:"Captured owner replaced".into()}));
+    composer.update_in(cx,|composer,window,cx| {
+        composer.draft.update(cx,|draft,cx|draft.set_value("keep exact draft",window,cx));composer.send(window,cx);
+    });
+    cx.run_until_parked();
+    let sent=client.calls().into_iter().filter(|(method,_)|method=="send/send").collect::<Vec<_>>();
+    assert_eq!(sent.len(),1);assert_eq!(sent[0].1["expectedSource"],json!(source("a")));
+    composer.update_in(cx,|composer,window,cx| {
+        assert!(!composer.operational());assert_eq!(composer.draft.read(cx).value().as_ref(),"keep exact draft");
+        composer.send(window,cx);composer.stop(cx);
+    });
+    cx.run_until_parked();assert_eq!(client.calls().iter().filter(|(method,_)|method=="send/send").count(),1);
+}

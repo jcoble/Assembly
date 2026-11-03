@@ -288,7 +288,9 @@ impl SessionPane {
     }
 
     /// One of the `send` feature's calls, `task` naming what it's for; a failure says why under the timeline.
-    fn send(&mut self, task: String, method: &'static str, args: Value, cx: &mut Context<Self>) {
+    fn send(&mut self, task: String, method: &'static str, mut args: Value, cx: &mut Context<Self>) {
+        let source=self.row_source.clone();
+        if let Some(source)=&source{args["expectedSource"]=json!(source);}
         let call = self.client.call("send", method, args, None, cx);
         let session = self.session.clone();
         self._writes.insert(
@@ -298,8 +300,13 @@ impl SessionPane {
                 pane.update(cx, |pane, cx| match answer {
                     Ok(_) | Err(CallError::Aborted) => {}
                     // Said only where it was sent from: the reader may have switched away since.
-                    Err(_) if pane.session != session => {}
-                    Err(error) => pane.say_failed("That didn't go through", error, cx),
+                    Err(_) if pane.session != session || pane.row_source!=source => {}
+                    Err(error) => {
+                        if matches!(&error,CallError::Refused{code,..} if code=="source_changed") {
+                            pane._rows=None;pane.active_source_cut=None;pane.composer.update(cx,|composer,cx|composer.invalidate_source(cx));
+                        }
+                        pane.say_failed("That didn't go through", error, cx);
+                    },
                 })
                 .ok();
             }),

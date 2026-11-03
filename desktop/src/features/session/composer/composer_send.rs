@@ -113,9 +113,9 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let args = json!({ "session": session, "text": request.text,
+        let args = self.source_args(json!({ "session": session, "text": request.text,
             "clientId": request.client_id, "attachmentIds": request.attachment_ids,
-            "epoch": request.epoch });
+            "epoch": request.epoch }));
         let Some(prompt_key)=self.session_key.clone().filter(|key|key.id==session && self.operational())else{return;};
         let pending = self.pending.entry(prompt_key.clone()).or_default();
         if !pending
@@ -199,6 +199,7 @@ impl Composer {
                             }
                             cx.emit(ComposerEvent::PendingChanged);
                             if selected {
+                                composer.source_refused(&error,cx);
                                 let hint = if matches!(error, CallError::Unreachable { .. }) {
                                     " Check Settings > Connections."
                                 } else {
