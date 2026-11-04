@@ -121,12 +121,31 @@ fn every_posted_comment_stays_in_the_activity_and_only_a_numbered_root_on_a_file
             _ => None,
         })
         .collect();
-    let expected = [("1", None), ("2", Some(2)), ("3", Some(3)), ("4", None), ("IC_node", None)]
-        .map(|(id, reply)| (id.to_string(), reply));
+    let expected = [
+        ("1", None),
+        ("2", Some(2)),
+        ("3", Some(3)),
+        ("4", None),
+        ("IC_node", None),
+    ]
+    .map(|(id, reply)| (id.to_string(), reply));
     assert_eq!(listed, expected);
 }
 #[test]
 fn the_side_column_raises_each_words_first_letter() {
-    assert_eq!(capitalized(&words_of("CHANGES_REQUESTED")), "Changes Requested");
+    assert_eq!(
+        capitalized(&words_of("CHANGES_REQUESTED")),
+        "Changes Requested"
+    );
     assert_eq!(capitalized(""), "");
+}
+#[test]
+fn a_merge_says_who_or_someone_when_github_does_not() {
+    assert_eq!(merged_words("ana"), "ana merged this pull request");
+    assert_eq!(merged_words(""), "Someone merged this pull request");
+}
+#[test]
+fn a_repository_shows_by_its_short_name() {
+    assert_eq!(repo_name("jcoble/Assembly"), "Assembly");
+    assert_eq!(repo_name("Assembly"), "Assembly");
 }

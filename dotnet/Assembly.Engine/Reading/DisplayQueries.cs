@@ -28,6 +28,8 @@ internal static class DisplayQueries
 
     internal static string Json(string kind)
     {
+        // Step 5 Task 1b permits structured permission/form answers only with their recorded presentation.
+        // An arbitrary historical object has no display contract; never publish it as an answered body.
         if (kind == "needs_me") return """
             json_object('entityKind','needs_me','id',t.id,'version',t.version,'machine',t.machine,
                 'sessionId',t.session_id,'runId',t.run_id,'stepId',t.step_id,'addresseeSessionId',t.addressee_session_id,
@@ -37,8 +39,8 @@ internal static class DisplayQueries
                 'title',json_extract(t.presentation_json,'$.title'),'recommendation',json_extract(t.presentation_json,'$.recommendation'),
                 'displayNumber',t.display_number,'inputMode',json_extract(t.presentation_json,'$.inputMode'),
                 'schema',json_extract(t.presentation_json,'$.schema'),'options',json_extract(t.presentation_json,'$.options'),
-                'freeText',json(CASE json_extract(t.presentation_json,'$.freeText') WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE 'null' END),'state',t.state,'answer',json(CASE WHEN length(CAST(t.answer_json AS BLOB))<=32768 THEN t.answer_json END),
-                'answerComplete',json(CASE WHEN t.answer_json IS NULL THEN 'null' WHEN length(CAST(t.answer_json AS BLOB))<=32768 THEN 'true' ELSE 'false' END),
+                'freeText',json(CASE json_extract(t.presentation_json,'$.freeText') WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE 'null' END),'state',t.state,'answer',json(CASE WHEN length(CAST(t.answer_json AS BLOB))<=32768 AND (json_type(t.answer_json)='text' OR json_type(t.answer_json)='object' AND json_extract(t.presentation_json,'$.inputMode') IN ('permission','form')) THEN t.answer_json END),
+                'answerComplete',json(CASE WHEN t.answer_json IS NULL THEN 'null' WHEN length(CAST(t.answer_json AS BLOB))<=32768 AND (json_type(t.answer_json)='text' OR json_type(t.answer_json)='object' AND json_extract(t.presentation_json,'$.inputMode') IN ('permission','form')) THEN 'true' ELSE 'false' END),
                 'answerUtf8Bytes',length(CAST(t.answer_json AS BLOB)),
                 'answerText',CASE WHEN length(CAST(t.answer_json AS BLOB))<=32768 AND json_type(t.answer_json)='text' THEN json_extract(t.answer_json,'$') END,
                 'answeredBy',t.answered_by,'answeredMs',t.answered_ms,'answeredOrigin',json(t.answered_origin_json))

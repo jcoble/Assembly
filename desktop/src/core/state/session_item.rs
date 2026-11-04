@@ -3,12 +3,18 @@
 
 use serde::Deserialize;
 
+/// What a session in no project is filed under.
+pub const NO_PROJECT: &str = "No project";
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionItem {
     pub session_id: String,
     pub agent: String,
     pub repo_url: String,
+    /// The project it was started in; `None` for a session in no project, whatever folder it runs in.
+    #[serde(default)]
+    pub project_id: Option<String>,
     /// Existing owning-machine paths; a remote root is never resolved on this Mac.
     pub root: Option<String>,
     pub checkout_root: Option<String>,

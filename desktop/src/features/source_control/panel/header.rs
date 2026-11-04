@@ -1,5 +1,4 @@
 //! The one header row: the branch menu at the left, how many files changed, and the more-actions menu at the right.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::SourceControlPane;
 use crate::core::ui::reasoned_item::reasoned_item;
 use crate::features::source_control::actions_menu::{MenuAction, PublishRow, READ_ONLY_SCOPE};

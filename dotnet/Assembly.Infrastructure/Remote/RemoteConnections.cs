@@ -240,6 +240,7 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
                     catch (Exception error) { scoped.Unreachable(name, error.Message); }
                     finally { if (tunnel is not null) await tunnel.DisposeAsync(); }
                 }
+                catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
                 finally
                 {
                     lock (_gate)

@@ -540,7 +540,7 @@ async fn using_it_as_the_session_checkout_moves_the_session_through_the_engine(c
         .await;
     assert_eq!(
         open.seen.lock().unwrap().commands[0]["command"],
-        json!({"kind":"change_checkout","checkoutKind":"folder","folder":LINKED})
+        json!({"kind":"change_checkout","checkoutKind":"folder","branch":null,"base":null,"folder":LINKED})
     );
     open.until("it landed and this reads the session's own again", |pane, cx, seen| {
         let landed = cx.update(|_, cx| pane.read(cx).checkout.is_none() && pane.read(cx).selection(cx).is_none());

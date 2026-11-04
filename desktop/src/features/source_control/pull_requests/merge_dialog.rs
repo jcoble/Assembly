@@ -3,7 +3,9 @@ use super::{
     pr_activity::merge_method_label, pr_detail::PrDetail, pull_request::PullRequestDetail,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
+};
 use gpui_kit::*;
 use serde_json::{Value, json};
 
@@ -118,21 +120,52 @@ impl MergeDialog {
 impl Render for MergeDialog {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (danger, muted) = (theme.danger, theme.muted_foreground);
+        let (danger, muted, mono) = (
+            theme.danger,
+            theme.muted_foreground,
+            theme.mono_font_family.clone(),
+        );
         let current = self.is_current(cx);
         let short = |sha: &str| sha.chars().take(10).collect::<String>();
         v_flex()
             .gap_2()
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(format!(
-                "{} #{} · {}",
-                self.repository, self.request.number, self.title
-            )))
-            .child(format!(
-                "{} into {} using {}.",
-                self.request.head_branch,
-                self.request.base_branch,
-                merge_method_label(&self.request.method)
-            ))
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(muted)
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("{} #{}", self.repository, self.request.number)),
+                    )
+                    .child(format!("· {}", self.title)),
+            )
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(muted)
+                    .child(
+                        div()
+                            .text_role(TextRole::Meta, cx)
+                            .font_family(mono.clone())
+                            .child(self.request.head_branch.clone()),
+                    )
+                    .child("into")
+                    .child(
+                        div()
+                            .text_role(TextRole::Meta, cx)
+                            .font_family(mono)
+                            .child(self.request.base_branch.clone()),
+                    )
+                    .child(format!(
+                        "using {}.",
+                        merge_method_label(&self.request.method)
+                    )),
+            )
             .child(div().text_role(TextRole::Body, cx).text_color(muted).child(format!(
                 "Head {} · base {}",
                 short(&self.request.head),
@@ -141,6 +174,7 @@ impl Render for MergeDialog {
             .children(self.has_draft.then(|| {
                 div()
                     .text_role(TextRole::Body, cx)
+                    .text_color(muted)
                     .child("Your unposted comment will be cleared if the merge succeeds.")
             }))
             .child(div().text_role(TextRole::Body, cx).text_color(muted).child(
@@ -158,17 +192,20 @@ impl Render for MergeDialog {
             }))
             .child(
                 h_flex()
+                    .mt_1()
                     .gap_2()
                     .justify_end()
                     .child(
                         Button::new("merge-close")
                             .ghost()
+                            .small()
                             .label("Cancel")
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .children((!current).then(|| {
                         Button::new("merge-refresh")
                             .ghost()
+                            .small()
                             .label("Refresh this pull request")
                             .on_click(cx.listener(|view, _, window, cx| {
                                 _ = view.detail.update(cx, |detail, cx| detail.refresh(cx));
@@ -178,6 +215,7 @@ impl Render for MergeDialog {
                     .child(
                         Button::new("merge-confirm")
                             .primary()
+                            .small()
                             .label("Merge on GitHub")
                             .disabled(!current || self.request.args().is_err())
                             .on_click(cx.listener(|view, _, window, cx| view.confirm(window, cx))),

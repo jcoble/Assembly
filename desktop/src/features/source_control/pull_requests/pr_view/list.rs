@@ -1,7 +1,7 @@
 //! The Pull requests list: a heading, the filters, a note when something's wrong, and one row per pull request.
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::{
-    pr_activity::pr_state,
+    pr_activity::{pr_state, repo_name},
     pr_parts::{age_label, avatar, state_icon, tone_color},
     pr_search::{PrScope, PrState},
     pull_request::PullRequestSummary,
@@ -13,6 +13,7 @@ use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex,
 };
@@ -175,7 +176,11 @@ impl PrPane {
                                     .min_w_0()
                                     .text_role(TextRole::Body, cx)
                                     .text_color(muted)
-                                    .child(format!("{} #{} ·", pr.repository, pr.number))
+                                    .child(format!(
+                                        "{} #{} ·",
+                                        repo_name(&pr.repository),
+                                        pr.number
+                                    ))
                                     .child(div().truncate().child(pr.head_branch.clone()))
                                     .child(Icon::new(IconName::ArrowRight).size(px(11.)))
                                     .child(div().truncate().child(pr.base_branch.clone())),
@@ -277,11 +282,13 @@ impl PrPane {
                 )
             }))
             .children(error.map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)))
-            .when(loading || projects_loading, |page| {
+            .when((loading || projects_loading) && count == 0, |page| {
                 page.child(
-                    div()
+                    h_flex()
+                        .gap_2()
                         .text_role(TextRole::Body, cx)
                         .text_color(muted)
+                        .child(Spinner::new().small())
                         .child("Loading pull requests…"),
                 )
             })

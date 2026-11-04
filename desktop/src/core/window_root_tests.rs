@@ -65,7 +65,7 @@ async fn preferences_loaded_before_the_root_is_made_are_in_force(cx: &mut TestAp
     let tell = changed.clone();
     let _heard = cx.update(|cx| cx.observe(&preferences, move |_, _| _ = tell.unbounded_send(())));
     until("the saved state", &mut changes, &changed, || {
-        cx.update(|cx| Preferences::read(cx, |appearance| appearance.number(&UI_FONT_SIZE))) == 16.
+        cx.update(|cx| Preferences::read(cx, |appearance| appearance.theme())) == ThemeId::Houston
     })
     .await;
 

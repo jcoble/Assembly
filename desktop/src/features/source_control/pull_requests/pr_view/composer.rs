@@ -1,5 +1,6 @@
 //! The Summary page's comment box and reply box. One box writes the review draft's text: alone it posts a comment,
 //! with line comments it posts a review. Posting always goes through the confirm dialog.
+use crate::core::theme::text::TextRole;
 use super::super::{post_confirm, review_draft::LineComment};
 use super::*;
 use gpui_kit::component::diff::{DiffLinePosition, DiffSide};
@@ -43,11 +44,7 @@ impl PrDetail {
             input.update(cx, |input, cx| input.set_value(text, window, cx));
         }
         if self.reply.is_some() && self.reply_input.is_none() {
-            self.reply_input = Some(cx.new(|cx| {
-                TextareaState::new(window, cx)
-                    .placeholder("Write a reply")
-                    .auto_grow(2, 8)
-            }));
+            self.reply_input = Some(cx.new(|cx| TextareaState::new(window, cx).auto_grow(3, 8)));
         }
     }
     fn open_post(
@@ -272,7 +269,7 @@ impl PrDetail {
         }
         cx.notify();
     }
-    pub(super) fn composer(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn composer(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let Some((input, _)) = &self.review_input else {
             return Empty.into_any_element();
         };
@@ -280,12 +277,15 @@ impl PrDetail {
             return Empty.into_any_element();
         };
         let theme = cx.theme();
-        let (surface, muted, danger, radius) = (
+        let (surface, muted, danger, radius, mono, ring) = (
             theme.secondary,
             theme.muted_foreground,
             theme.danger,
             theme.radius_lg,
+            theme.mono_font_family.clone(),
+            theme.ring,
         );
+        let focused = input.focus_handle(cx).contains_focused(window, cx);
         let writes_free = self.writes_free(cx);
         let has_text = !review.body.trim().is_empty();
         let lines: Vec<_> = review.comments.clone();
@@ -300,25 +300,24 @@ impl PrDetail {
             .p_3()
             .rounded(radius)
             .bg(surface)
-            .child(Textarea::new(input))
+            .border_1()
+            .border_color(if focused { ring } else { transparent_black() })
+            .child(Textarea::new(input).appearance(false))
             .children(lines.into_iter().map(|line| {
                 let id = line.id.clone();
                 let review = review_entity.clone();
                 h_flex()
                     .gap_2()
                     .text_role(TextRole::Body, cx)
-                    .child(div().flex_none().font_weight(FontWeight::SEMIBOLD).child(format!(
-                        "{}:{}",
-                        line.target.path, line.target.line
-                    )))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
+                            .flex_none()
+                            .text_role(TextRole::Meta, cx)
+                            .font_family(mono.clone())
                             .text_color(muted)
-                            .child(line.target.body),
+                            .child(format!("{}:{}", line.target.path, line.target.line)),
                     )
+                    .child(div().flex_1().min_w_0().truncate().child(line.target.body))
                     .child(
                         Button::new(SharedString::from(format!("draft-line:{}", line.id)))
                             .ghost()
@@ -345,9 +344,9 @@ impl PrDetail {
                             .small()
                             .label(label)
                             .disabled(!can_post)
-                            .on_click(cx.listener(|view, _, window, cx| {
-                                view.preview_post(window, cx)
-                            })),
+                            .on_click(
+                                cx.listener(|view, _, window, cx| view.preview_post(window, cx)),
+                            ),
                     )
                     .child(
                         Button::new("pr-draft")
@@ -373,32 +372,34 @@ impl PrDetail {
             )
             .into_any_element()
     }
-    pub(super) fn reply_box(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn reply_box(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let reply = self.reply.as_ref()?;
         let input = self.reply_input.as_ref()?;
         let theme = cx.theme();
-        let (surface, radius) = (theme.secondary, theme.radius_lg);
+        let (surface, radius, ring) = (theme.secondary, theme.radius_lg, theme.ring);
+        let focused = input.focus_handle(cx).contains_focused(window, cx);
         let place = match reply.line {
             Some(line) => format!("{}:{line}", reply.path),
             None => reply.path.clone(),
         };
-        let can_send =
-            !input.read(cx).value().trim().is_empty()
-                && self.writes_free(cx)
-                && self.current_identity().is_some();
+        let can_send = !input.read(cx).value().trim().is_empty()
+            && self.writes_free(cx)
+            && self.current_identity().is_some();
         Some(
             v_flex()
                 .gap_2()
                 .p_3()
                 .rounded(radius)
                 .bg(surface)
+                .border_1()
+                .border_color(if focused { ring } else { transparent_black() })
                 .child(
                     div()
                         .text_role(TextRole::Body, cx)
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(format!("Reply to {} on {place}", reply.author)),
                 )
-                .child(Textarea::new(input))
+                .child(Textarea::new(input).appearance(false))
                 .child(
                     h_flex()
                         .gap_2()

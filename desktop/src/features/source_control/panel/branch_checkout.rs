@@ -11,6 +11,14 @@ use crate::features::source_control::git_failure::{GitFailure, Recovery};
 use gpui_kit::*;
 use serde_json::{Value, json};
 
+/// The backend requires every field of its command, so the ones that don't apply go as null.
+pub(super) fn branch_wire(branch: &str, create: bool, head: &str) -> Value {
+    json!({"kind":"change_checkout","checkoutKind":"branch","branch":branch,"base":null,"folder":null,"createBranch":create,"expectedHead":head})
+}
+pub(super) fn folder_wire(folder: &str) -> Value {
+    json!({"kind":"change_checkout","checkoutKind":"folder","branch":null,"base":null,"folder":folder})
+}
+
 /// A checkout command on its way, holding the Engine scope that will tell us how it ended.
 pub(super) struct PendingCheckout {
     key: SessionKey,
@@ -81,7 +89,7 @@ impl SourceControlPane {
             return;
         };
         let done = format!("Switched to {name}.");
-        let wire = json!({"kind":"change_checkout","checkoutKind":"branch","branch":name,"createBranch":false,"expectedHead":head});
+        let wire = branch_wire(&name, false, &head);
         self.change_checkout(wire, None, done, cx);
     }
     pub(super) fn create_branch(&mut self, name: String, cx: &mut Context<Self>) {
@@ -92,12 +100,12 @@ impl SourceControlPane {
             return;
         };
         let done = format!("Created and switched to {name}.");
-        let wire = json!({"kind":"change_checkout","checkoutKind":"branch","branch":name,"createBranch":true,"expectedHead":head});
+        let wire = branch_wire(&name, true, &head);
         self.change_checkout(wire, Some(name), done, cx);
     }
     pub(super) fn move_to_folder(&mut self, folder: String, cx: &mut Context<Self>) {
         let done = format!("Moved to {folder}.");
-        let wire = json!({"kind":"change_checkout","checkoutKind":"folder","folder":folder});
+        let wire = folder_wire(&folder);
         self.change_checkout(wire, None, done, cx);
     }
     fn change_checkout(

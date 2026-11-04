@@ -7,6 +7,9 @@
 // (machines/connect) reaches it and answers it reachable; on this machine, there's nothing to connect to. node
 // scripts/features/sessions-list.ts, with CHECK4_API, CHECK4_TOKEN, CHECK4_SESSION and CHECK4_REPO set (scripts/features/README.md).
 // The token goes in the hello frame, never in argv or output.
+import { randomUUID } from 'node:crypto';
+import { newSession } from './new-session.ts';
+
 const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_MACHINE: machine, CHECK4_AGENT: agent } =
   process.env;
 
@@ -191,16 +194,18 @@ async function main() {
 
   // The case's turn started before this scenario could watch the rail, so a session of its own takes one turn.
   step = "while its own session's turn runs, Running lists and counts it";
-  const created = ++ids;
-  const where = machine === 'local' ? null : machine;
-  const args = { agent, repoUrl: process.env.CHECK4_REPO, machine: where, parentSessionId: null, title: null };
-  socket.send(JSON.stringify({ t: 'call', id: created, feature: 'sessions', method: 'create', args }));
-  const made = await frame((got) => got.id === created && (got.t === 'result' || got.t === 'error'), 30_000, step);
-  if (made.t !== 'result') fail(step, `it wasn't created: ${made.message ?? JSON.stringify(made)}`);
-  const own = (made.result as { sessionId: string }).sessionId;
+  const call = async (feature: string, method: string, args: object) => {
+    const id = ++ids;
+    socket.send(JSON.stringify({ t: 'call', id, feature, method, args }));
+    const made = await frame((got) => got.id === id && (got.t === 'result' || got.t === 'error'), 30_000, step);
+    if (made.t !== 'result') fail(step, `it wasn't created: ${made.message ?? JSON.stringify(made)}`);
+    return made.result;
+  };
+  const where = machine === 'local' ? null : machine!;
+  const own = (await newSession({ call }, agent!, process.env.CHECK4_REPO!, where)).sessionId;
   [watched, railNamed] = [own, false];
   const sent = ++ids;
-  socket.send(JSON.stringify({ t: 'call', id: sent, feature: 'send', method: 'send', args: { session: own, text: 'Reply with only the word ok.' } }));
+  socket.send(JSON.stringify({ t: 'call', id: sent, feature: 'send', method: 'send', args: { session: own, clientId: randomUUID(), text: 'Reply with only the word ok.' } }));
   const started = await frame((got) => got.id === sent && (got.t === 'result' || got.t === 'error'), 30_000, step);
   if (started.t !== 'result') fail(step, `the turn didn't start: ${started.message ?? JSON.stringify(started)}`);
   await untilRail(step, 60_000, (page) => entry(page, own)?.running === true);

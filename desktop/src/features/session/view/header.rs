@@ -15,7 +15,7 @@ use gpui_kit::*;
 use crate::core::{engine::SessionKey,intents::session_open::{SessionOpenRequest,SessionOpenTarget}};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::update::Update;
-use crate::core::state::session_item::SessionItem;
+use crate::core::state::session_item::{NO_PROJECT, SessionItem};
 use crate::core::ui::center_panes::CenterPanes;
 
 /// The project a session is in: its folder's or repo's last name ("Assembly" for `https://github.com/me/Assembly`).
@@ -23,6 +23,11 @@ pub fn project(repo_url: &str) -> &str {
     let url = repo_url.trim_end_matches(['/', '\\']);
     let url = url.strip_suffix(".git").unwrap_or(url);
     url.rsplit(['/', '\\']).next().unwrap_or(url)
+}
+
+/// What the header calls the session's project.
+fn project_name(item: &SessionItem) -> &str {
+    item.project_id.as_ref().map_or(NO_PROJECT, |_| project(&item.repo_url))
 }
 
 #[derive(Default)]
@@ -130,7 +135,7 @@ impl Render for Header {
                         .min_w_0()
                         .gap_2()
                         .text_color(faint)
-                        .child(div().flex_none().child(project(&item.repo_url).to_string()))
+                        .child(div().flex_none().child(project_name(item).to_string()))
                         .child(Icon::new(IconName::ChevronRight).size(px(14.)))
                         .child(
                             div()

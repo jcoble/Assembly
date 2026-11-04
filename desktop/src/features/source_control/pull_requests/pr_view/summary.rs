@@ -1,8 +1,9 @@
 //! The Summary page: what the pull request is, everything that happened on it, the comment box and merge card, and
 //! the side column of threads, comments, reviews and checks.
+use crate::core::theme::text::TextRole;
 use super::super::{
-    pr_activity::{ActivityRow, activity_rows, words_of},
-    pr_parts::{PrHeading, age_label, avatar, loading_line},
+    pr_activity::{ActivityRow, PrTone, activity_rows, capitalized, merged_words, words_of},
+    pr_parts::{PrHeading, age_label, avatar, loading_line, tone_color},
     pull_request::PullRequestComment,
 };
 use super::*;
@@ -39,6 +40,7 @@ impl PrDetail {
     pub(super) fn summary_page(
         &self,
         detail: Option<&PullRequestDetail>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let wide = self.width == px(0.) || self.width >= px(TWO_COLUMNS);
@@ -56,7 +58,7 @@ impl PrDetail {
         )
         .absolute()
         .size_full();
-        let main = self.main_column(detail, wide, cx);
+        let main = self.main_column(detail, wide, window, cx);
         let side = detail.map(|detail| self.side_column(detail, cx));
         let page = if wide {
             h_flex()
@@ -140,6 +142,7 @@ impl PrDetail {
         &self,
         detail: Option<&PullRequestDetail>,
         wide: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let column = v_flex()
@@ -158,7 +161,7 @@ impl PrDetail {
         let border = theme.border;
         let heading = PrHeading::of_detail(detail).view(cx);
         let body = if detail.body.trim().is_empty() {
-            quiet("No description.", cx).into_any_element()
+            div().child("No description.").into_any_element()
         } else {
             MarkdownView {
                 id: "pr-body".into(),
@@ -171,10 +174,15 @@ impl PrDetail {
         let open = detail.state == "OPEN";
         let activity = v_flex()
             .gap_2()
-            .pt_3()
+            .pt_4()
             .border_t_1()
             .border_color(border)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child("Activity"))
+            .child(
+                div()
+                    .text_role(TextRole::Title, cx)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Activity"),
+            )
             .children(
                 activity_rows(detail)
                     .into_iter()
@@ -196,10 +204,10 @@ impl PrDetail {
             )
             .child(body)
             .child(activity)
-            .children(self.reply_box(cx))
+            .children(self.reply_box(window, cx))
             .when(open, |column| {
                 column
-                    .child(self.composer(cx))
+                    .child(self.composer(window, cx))
                     .child(self.merge_card(detail, cx))
             })
             .into_any_element()
@@ -212,49 +220,83 @@ impl PrDetail {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.theme();
-        let (surface, muted, radius) = (theme.secondary, theme.muted_foreground, theme.radius_lg);
-        let age = |at: &str| age_label(format!("pr-activity-age:{index}").into(), at, " ago");
-        let event = |who: &str, words: &str, at: &str| {
+        let (surface, muted, text, radius, mono, success, danger) = (
+            theme.secondary,
+            theme.muted_foreground,
+            theme.foreground,
+            theme.radius_lg,
+            theme.mono_font_family.clone(),
+            theme.success,
+            theme.danger,
+        );
+        let merged = tone_color(PrTone::Merged, cx);
+        let age = |at: &str| {
+            age_label(format!("pr-activity-age:{index}").into(), at, "")
+                .map(|age| age.text_role(TextRole::Meta, cx).text_color(muted))
+        };
+        let entry_age = |at: &str| age(at).map(|age| age.ml_auto());
+        let event = |icon: IconName, color: Hsla, words: String| {
             h_flex()
-                .gap_2()
+                .gap_3()
                 .min_h(px(38.))
                 .px_3()
+                .py_2()
+                .text_role(TextRole::Body, cx)
+                .rounded(radius)
+                .bg(surface)
+                .child(Icon::new(icon).size(px(15.)).text_color(color))
+                .child(div().flex_1().min_w_0().truncate().child(words))
+        };
+        let entry = || v_flex().rounded(radius).bg(surface).overflow_hidden();
+        let head = |who: &str| {
+            h_flex()
+                .flex_wrap()
+                .gap_2()
+                .px_3()
+                .py_2()
                 .text_role(TextRole::Body, cx)
                 .text_color(muted)
                 .children(avatar(who))
-                .child(div().font_weight(FontWeight::SEMIBOLD).child(who.to_string()))
-                .child(words.to_string())
-                .children(age(at))
-                .into_any_element()
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(text)
+                        .child(who.to_string()),
+                )
         };
+        let body = || div().pl(px(40.)).pr_3().pb_3();
         match row {
-            ActivityRow::Opened { at, author } => event(&author, "opened this pull request", &at),
-            ActivityRow::Merged { at, author } => event(&author, "merged this pull request", &at),
-            ActivityRow::Closed { at } => h_flex()
-                .gap_2()
-                .min_h(px(38.))
-                .px_3()
-                .text_role(TextRole::Body, cx)
-                .text_color(muted)
-                .child("This pull request was closed")
-                .children(age(&at))
-                .into_any_element(),
+            ActivityRow::Opened { at, author } => event(
+                IconName::GitPullRequest,
+                success,
+                format!("{author} opened this pull request"),
+            )
+            .children(age(&at))
+            .into_any_element(),
+            ActivityRow::Merged { at, author } => {
+                event(IconName::GitMerge, merged, merged_words(&author))
+                    .children(age(&at))
+                    .into_any_element()
+            }
+            ActivityRow::Closed { at } => event(
+                IconName::GitPullRequestClosed,
+                danger,
+                "This pull request was closed".to_string(),
+            )
+            .children(age(&at))
+            .into_any_element(),
             ActivityRow::Commit {
                 at,
                 author,
                 oid,
                 headline,
-            } => h_flex()
-                .gap_2()
-                .min_h(px(38.))
-                .px_3()
-                .text_role(TextRole::Body, cx)
-                .text_color(muted)
-                .child(Icon::new(IconName::GitCommitHorizontal).size(px(14.)))
-                .child(div().flex_1().min_w_0().truncate().child(headline))
+            } => event(IconName::GitCommitHorizontal, muted, headline)
                 .child(
                     div()
                         .flex_none()
+                        .text_role(TextRole::Meta, cx)
+                        .text_color(muted)
+                        .font_family(mono)
                         .child(oid.chars().take(7).collect::<String>()),
                 )
                 .children(avatar(&author))
@@ -275,55 +317,39 @@ impl PrDetail {
                         .label("Reply")
                         .on_click(cx.listener(move |view, _, _, cx| view.start_reply(&target, cx)))
                 });
-                v_flex()
-                    .gap_1()
-                    .p_3()
-                    .rounded(radius)
-                    .bg(surface)
+                entry()
                     .child(
-                        h_flex()
-                            .gap_2()
-                            .text_role(TextRole::Body, cx)
-                            .text_color(muted)
-                            .children(avatar(&comment.author))
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child(comment.author.clone()))
+                        head(&comment.author)
                             .child(if place.is_some() {
                                 "commented on"
                             } else {
                                 "commented"
                             })
-                            .children(place)
-                            .children(age(&at)),
+                            .children(
+                                place.map(|place| div().text_role(TextRole::Meta, cx).font_family(mono).child(place)),
+                            )
+                            .children(entry_age(&at)),
                     )
-                    .child(div().pl(px(40.)).child(MarkdownView {
+                    .child(body().child(MarkdownView {
                         id: id.into(),
                         blocks: comment.body_blocks.clone(),
                         session: None,
                         expected_source: None,
                     }))
-                    .children(reply.map(|reply| div().pl(px(40.)).child(reply)))
+                    .children(reply.map(|reply| div().pl(px(36.)).mb_2().child(reply)))
                     .into_any_element()
             }
             ActivityRow::Review { at, review } => {
                 let id = format!("pr-review-body:{index}");
                 let has_body = !review.body.trim().is_empty();
-                v_flex()
-                    .gap_1()
-                    .p_3()
-                    .rounded(radius)
-                    .bg(surface)
+                entry()
                     .child(
-                        h_flex()
-                            .gap_2()
-                            .text_role(TextRole::Body, cx)
-                            .text_color(muted)
-                            .children(avatar(&review.author))
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child(review.author.clone()))
-                            .child(words_of(&review.state))
-                            .children(age(&at)),
+                        head(&review.author)
+                            .child(capitalized(&words_of(&review.state)))
+                            .children(entry_age(&at)),
                     )
                     .when(has_body, |card| {
-                        card.child(div().pl(px(40.)).child(MarkdownView {
+                        card.child(body().child(MarkdownView {
                             id: id.into(),
                             blocks: review.body_blocks.clone(),
                             session: None,

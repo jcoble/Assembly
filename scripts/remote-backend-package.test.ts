@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { writeRemoteBackendPackage } from './remote-backend-package.ts';
+import { writeRemoteBackendPackage, writeRemoteBackendDirectory, sameBackendFiles } from './remote-backend-package.ts';
 const exec = promisify(execFile);
 const commit = 'a'.repeat(40), hash = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
 async function fixture(t: any) {
@@ -96,4 +96,34 @@ test('actual publish mutation after inventory is refused and staging is cleaned'
   });
   await assert.rejects(writeRemoteBackendPackage(input), /changed while packaging/);
   assert(changed); assert.deepEqual(await fs.readdir(path.dirname(input.outputFile)), []);
+});
+
+test('manifest staging reuses unchanged files, copies changed files and drops removed files', async t => {
+  const input = await fixture(t);
+  await fs.writeFile(path.join(input.publishDir,'unchanged.dll'),'unchanged dependency');
+  await fs.writeFile(path.join(input.publishDir,'obsolete.dll'),'removed dependency');
+  const first=path.join(input.root,'first');
+  const initial=await writeRemoteBackendDirectory({...input,outputDir:first});
+  assert.equal(initial.reusedFiles,0);assert.equal(initial.changedFiles,5);
+  await fs.writeFile(path.join(input.publishDir,'Assembly.Remote.dll'),'updated backend');
+  await fs.unlink(path.join(input.publishDir,'obsolete.dll'));
+  const second=path.join(input.root,'second');
+  const next=await writeRemoteBackendDirectory({...input,outputDir:second},first);
+  assert.equal(next.reusedFiles,3);assert.equal(next.changedFiles,1);assert.equal(next.removedFiles,1);
+  assert.equal(next.changedBytes,Buffer.byteLength('updated backend'));
+  assert.equal(await fs.readFile(path.join(second,'backend/Assembly.Remote.dll'),'utf8'),'updated backend');
+  assert.equal(await fs.readFile(path.join(first,'backend/Assembly.Remote.dll'),'utf8'),'disposable fake assembly bytes');
+  assert.equal((await fs.stat(path.join(second,'backend/unchanged.dll'))).nlink,1);
+  await assert.rejects(fs.stat(path.join(second,'backend/obsolete.dll')),{code:'ENOENT'});
+  assert.equal(sameBackendFiles(initial.manifest.files,next.manifest.files),false);
+  assert.equal(sameBackendFiles(next.manifest.files,[...next.manifest.files].reverse()),true);
+  assert.equal(sameBackendFiles(next.manifest.files,next.manifest.files.map(file=>({...file,mode:'0755'}))),false);
+});
+test('a corrupt unchanged host file refuses atomic directory publication', async t=>{
+  const input=await fixture(t),first=path.join(input.root,'first'),second=path.join(input.root,'second');
+  await writeRemoteBackendDirectory({...input,outputDir:first});
+  const backend=path.join(first,'backend/Assembly.Remote.dll');
+  const before=await fs.readFile(backend);await fs.writeFile(backend,Buffer.alloc(before.length,120));
+  await assert.rejects(writeRemoteBackendDirectory({...input,outputDir:second},first),/Cached backend file differs/);
+  await assert.rejects(fs.stat(second),{code:'ENOENT'});
 });

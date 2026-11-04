@@ -94,7 +94,7 @@ public sealed class BoardSocketTests
         public Uri Address { get; private set; } = null!;
         public Host()
         {
-            Sessions = SessionStore.Open(F.Db, F.Time, "unused");
+            Sessions = SessionStore.Open(F.Db, F.Time, F.Folder);
             Rows = RowStore.Open(F.Db);
             _hub = new LiveHub(Rows);
             _work = new BackgroundWork(F.Time, TextWriter.Null);

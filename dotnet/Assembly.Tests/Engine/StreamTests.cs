@@ -18,16 +18,20 @@ public sealed class StreamTests
         using var f = new EngineFixture();
         f.SeedSession(); f.SeedRun();
         f.SeedSession("other-session"); f.SeedRun("other", "other-session");
-        Assert.True(f.Apply(new RequestHandoff("s", "target"), "h").Applied);
+        using var owner = new EngineFixture();
+        f.Db.Writer.Write("test.native", scope => scope.Execute("UPDATE engine_session SET provider_session_id='native' WHERE id='s'"));
+        Assert.True(f.Apply(new RequestHandoff("s", owner.Machine), "h").Applied);
         var reader = new EngineReader(f.Db, f.Machine);
         var requested = Assert.Single(reader.Since("runs", "r", 0, default).Events, e => e.EntityKind == "handoff");
         Assert.Equal("handoff.requested", requested.Kind);
         Assert.Equal("h", requested.EntityId);
         Assert.True(EngineReader.Matches(requested, "runs", "r"));
         Assert.False(EngineReader.Matches(requested, "runs", "other"));
-        var target = new EngineActor(ActorKind.System, "target");
-        Assert.True(f.Apply(new HandoffOutcome("accepted", 1, null), "h", version: 1, epoch: 1, actor: target).Applied);
-        Assert.True(f.Apply(new HandoffOutcome(outcome, 1, null), "h", version: 2, epoch: 1, actor: target).Applied);
+        var identity = new HandoffIdentity("h", f.Machine, "s", owner.Machine, 0, 1);
+        HandoffTests.CompleteRelease(f, identity);
+        Assert.True(HandoffTests.Phase(f, identity, HandoffPhase.Accept).Receipt!.Applied);
+        Assert.True(HandoffTests.Phase(f, identity, outcome == "failed" ? HandoffPhase.Failed : HandoffPhase.Resumed,
+            outcome == "failed" ? "refused" : null, outcome == "failed" ? HandoffTests.Seal(owner, identity) : null).Receipt?.Applied == true);
         f.Reopen();
         reader = new EngineReader(f.Db, f.Machine);
         var handoffs = reader.Since("runs", "r", 0, default).Events.Where(e => e.EntityKind == "handoff").ToArray();
