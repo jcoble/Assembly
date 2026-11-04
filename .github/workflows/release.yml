@@ -12,6 +12,8 @@ concurrency:
 
 jobs:
   version:
+    permissions:
+      contents: read
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.release.outputs.version }}
@@ -24,8 +26,10 @@ jobs:
         with:
           node-version: 24
 
-      - name: Refuse a tag that is not the app's version
+      - name: Refuse a tag that is not the source's version, or a version with no bump
         id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: node scripts/release-version.ts
 
   desktop:
