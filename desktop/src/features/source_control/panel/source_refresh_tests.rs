@@ -126,3 +126,60 @@ fn a_session_comes_back_with_its_own_open_sections_and_place(cx: &mut TestAppCon
         assert_eq!(pane.scroll.offset(), at(-40.));
     });
 }
+// Pins: g9#9
+#[gpui::test]
+async fn a_plain_folder_offers_initialize(cx: &mut TestAppContext) {
+    let (changed, mut changes) = unbounded();
+    let backend = FakeBackend::start(move |frame| {
+        if let Some(reply) = hello(frame) {
+            return reply;
+        }
+        if frame["t"] == "sub" {
+            return vec![Reply::Frame(
+                json!({"t":"state","sub":frame["id"],"items":[]}),
+            )];
+        }
+        if frame["t"] != "call" {
+            return vec![];
+        }
+        if frame["method"] == "status" {
+            return vec![Reply::Frame(json!({
+                "t":"error","id":frame["id"],"code":"git_failed",
+                "message":"This folder isn't a git repository yet.","machine":"machine"
+            }))];
+        }
+        vec![Reply::Frame(
+            json!({"t":"result","id":frame["id"],"result":{"remotes":[]}}),
+        )]
+    });
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        SelectedSession::init(cx);
+        SocketClient::start(
+            Endpoint {
+                port: backend.port,
+                token: "secret".into(),
+            },
+            cx,
+        );
+        Sessions::start(cx);
+        SelectedSession::global(cx)
+            .update(cx, |selected, cx| selected.select(Some("s1".into()), cx));
+    });
+    let (pane, visual) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    let tell = changed.clone();
+    let _heard = visual.update(|_, cx| {
+        cx.observe(&pane, move |_, _| {
+            let _ = tell.unbounded_send(());
+        })
+    });
+    visual.update(|window, _| window.activate_window());
+    pane.update_in(visual, |pane, window, cx| pane.set_active(true, window, cx));
+    until("the folder is told apart", &mut changes, &changed, || {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.debug_bounds("git-initialize").is_some()
+    })
+    .await;
+}

@@ -85,16 +85,18 @@ impl SourceControlPane {
                 .items_center()
                 .gap_2()
                 .child(
-                    Button::new("git-initialize")
-                        .primary()
-                        .small()
-                        .label(if initializing {
-                            "Initializing…"
-                        } else {
-                            "Initialize repository"
-                        })
-                        .disabled(busy)
-                        .on_click(cx.listener(|pane, _, _, cx| pane.initialize(cx))),
+                    div().debug_selector(|| "git-initialize".into()).child(
+                        Button::new("git-initialize")
+                            .primary()
+                            .small()
+                            .label(if initializing {
+                                "Initializing…"
+                            } else {
+                                "Initialize repository"
+                            })
+                            .disabled(busy)
+                            .on_click(cx.listener(|pane, _, _, cx| pane.initialize(cx))),
+                    ),
                 )
                 .children(result)
                 .into_any_element();
