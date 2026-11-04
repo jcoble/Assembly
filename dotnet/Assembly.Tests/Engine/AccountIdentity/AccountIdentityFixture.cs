@@ -20,11 +20,27 @@ internal sealed class AccountIdentityFixture : IDisposable
     internal static string Opaque => "acct-v1:" + new string('a', 64);
     internal global::Assembly.Infrastructure.Topics.Topics Topics { get; } = new();
     internal EngineFixture Core { get; }
+    private readonly Dictionary<string, string[]> _originalColumns;
     internal AccountIdentityFixture(bool seed = true)
     {
-        Core = new(topics: Topics);
-        Core.Db.Writer.Write("test.frozen-account-eight", scope => scope.Execute("UPDATE engine_meta SET schema_version=8"));
+        Core = new(topics: Topics, predecessor: LoadEight);
         if (seed) Seed();
+        _originalColumns = Core.Db.Query("SELECT name FROM sqlite_master WHERE type='table' AND substr(name,1,7)='engine_' ORDER BY name", r => r.Text(0), default)
+            .ToDictionary(table => table, table => Core.Db.Query($"PRAGMA table_info({table})", r => r.Text(1), default)
+                .Where(name => table != "engine_meta" || name != "schema_version").OrderBy(name => name, StringComparer.Ordinal).ToArray());
+    }
+    internal static void LoadEight(IWriteScope scope)
+    {
+        // The recorded ten producer has the same core/account schema as eight, plus project columns.
+        // Start from its actual DDL, rather than relabelling today's workflow/needs/PR schema as eight.
+        scope.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,
+            "Engine", "Workflows", "Fixtures", "schema10", "actual-v10.sql")));
+        scope.Execute("PRAGMA defer_foreign_keys=ON");
+        foreach (var table in scope.Query("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'engine_%' AND name<>'engine_meta'", r => r.Text(0)))
+            scope.Execute($"DELETE FROM {table}");
+        foreach (var column in new[] { "project_id", "branch", "checkout_state", "checkout_operation_id", "checkout_intent_json" })
+            scope.Execute($"ALTER TABLE engine_session DROP COLUMN {column}");
+        scope.Execute("UPDATE engine_meta SET schema_version=8,next_seq=1,retained_after=0,snapshot_seq=0");
     }
     private void Seed()
     {
@@ -67,11 +83,10 @@ internal sealed class AccountIdentityFixture : IDisposable
     }
     internal void Version(int version) => Core.Db.Writer.Write("test.account-schema-version", scope => scope.Execute("UPDATE engine_meta SET schema_version=$version", new SqlArg("$version", version)));
     internal EngineSchemaInitialization Initialize() => Core.Db.Writer.Write("test.account-initialize", scope => EngineSchema.Initialize(scope, 1001));
-    internal string Digest() => Core.Db.Query("SELECT name FROM sqlite_master WHERE type='table' AND substr(name,1,7)='engine_' ORDER BY name", r => r.Text(0), default)
-        .Aggregate(new StringBuilder(), (body, table) =>
+    internal string Digest() => _originalColumns.Aggregate(new StringBuilder(), (body, pair) =>
         {
-            var columns = Core.Db.Query($"PRAGMA table_info({table})", r => r.Text(1), default).Where(name => table != "engine_meta" || name != "schema_version").OrderBy(name => name, StringComparer.Ordinal);
-            foreach (var value in Core.Db.Query($"SELECT json_array({string.Join(',', columns.Select(name => '"' + name + '"'))}) AS body FROM {table} ORDER BY body", r => r.Text(0), default)) body.Append(table).Append(':').Append(value).Append('\n');
+            foreach (var value in Core.Db.Query($"SELECT json_array({string.Join(',', pair.Value.Select(name => '\"' + name + '\"'))}) AS body FROM {pair.Key} ORDER BY body", r => r.Text(0), default))
+                body.Append(pair.Key).Append(':').Append(value).Append('\n');
             return body;
         }) is { } text ? Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString()))) : throw new InvalidOperationException();
     public void Dispose() => Core.Dispose();

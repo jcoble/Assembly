@@ -31,7 +31,7 @@ public sealed class SessionMcpTests : IAsyncDisposable
         _db = TestDatabase.Open(_file.Path);
         RowStore.Open(_db);
         _store = SessionStore.Open(_db, time, Path.Combine(_home, "checkouts"));
-        _id = _store.Create("claude", "https://github.com/o/r").SessionId;
+        _id = _store.CreateReady("claude", "https://github.com/o/r").SessionId;
         _adapter = new(_launcher, "claude", time, TextWriter.Null);
         _observed = new(_id, null, null, null, 9);
     }
@@ -39,6 +39,7 @@ public sealed class SessionMcpTests : IAsyncDisposable
     [Fact]
     public async Task Cancel_before_ready_never_checks_out_or_acquires_adapter()
     {
+        Directory.Delete(_store.Root(_store.Get(_id)!)!);
         var checkoutRoot = Directory.CreateDirectory(Path.Combine(_home, "checkouts")).FullName;
         var sentinel = Path.Combine(checkoutRoot, "notes.md");
         await File.WriteAllTextAsync(sentinel, "owner draft");

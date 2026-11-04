@@ -12,7 +12,7 @@ public sealed partial class SessionHostTests
     public async Task Feed_keeps_immediate_pending_but_records_only_real_provider_state_answer_and_final_usage()
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         var feed = new EngineFeed(runtime, _log, _time);
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: feed);
         var host = registry.For(_session.SessionId);
@@ -48,7 +48,7 @@ public sealed partial class SessionHostTests
     public async Task Real_turn_cancel_settles_chat_and_Engine_need_in_the_same_write()
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(_session.SessionId); var run = host.Send("hi")!;
         var agent = await _launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt");
@@ -69,7 +69,7 @@ public sealed partial class SessionHostTests
     public async Task Immediate_native_child_ask_keeps_real_child_title_and_one_parent_Engine_need()
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(_session.SessionId); host.Send("hi");
         var agent = await _launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt");
@@ -93,7 +93,7 @@ public sealed partial class SessionHostTests
     public async Task Stopping_one_native_child_settles_only_its_ask_and_keeps_parent_and_sibling_alive()
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(_session.SessionId); var run = host.Send("hi");
         var agent = await _launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt");
@@ -139,9 +139,9 @@ public sealed partial class SessionHostTests
     [InlineData("codex", "codex-terminal-background")]
     public async Task Actual_v2_terminal_and_native_fixtures_keep_one_owning_session_and_record_tools(string provider, string fixture)
     {
-        var session = _sessionStore.Create(provider, "https://github.com/o/r");
+        var session = _sessionStore.CreateReady(provider, "https://github.com/o/r");
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(session.SessionId);
         using var live = _hub.Subscribe(session.SessionId, 0);

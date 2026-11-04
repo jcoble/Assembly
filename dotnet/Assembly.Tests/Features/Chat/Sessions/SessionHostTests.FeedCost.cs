@@ -48,7 +48,7 @@ public sealed partial class SessionHostTests
     public async Task Self_started_terminal_uses_later_cost_in_same_reader_list_but_never_invents_a_prompt_id()
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         var feed = new MeasuringFeed(new EngineFeed(runtime, _log, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: feed);
         var host = registry.For(_session.SessionId); host.Send("work");
@@ -72,7 +72,7 @@ public sealed partial class SessionHostTests
     public async Task Owning_release_is_published_only_after_original_execution_closes_and_completes()
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         var feed = new MeasuringFeed(new EngineFeed(runtime, _log, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: feed);
         var host = registry.For(_session.SessionId); var run = host.Send("work");
@@ -96,7 +96,7 @@ public sealed partial class SessionHostTests
     public async Task Completed_execution_release_survives_a_new_turn_reserved_before_original_close_finishes()
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         var feed = new MeasuringFeed(new EngineFeed(runtime, _log, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: feed);
         var host = registry.For(_session.SessionId); var first = host.Send("first");
@@ -122,7 +122,7 @@ public sealed partial class SessionHostTests
     public async Task Kept_background_release_waits_for_close_and_uses_the_last_actual_self_started_execution()
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         var feed = new MeasuringFeed(new EngineFeed(runtime, _log, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: feed);
         var host = registry.For(_session.SessionId); var prompted = host.Send("background work");

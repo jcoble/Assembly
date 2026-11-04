@@ -37,8 +37,8 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         _database = TestDatabase.Open(_db.Path);
         _store = RowStore.Open(_database);
         _hub = new LiveHub(_store);
-        _sessionStore = SessionStore.Open(_database, _time, "checkouts");
-        _session = _sessionStore.Create("claude", "https://github.com/o/r");
+        _sessionStore = SessionStore.Open(_database, _time, _db.Folder);
+        _session = _sessionStore.CreateReady("claude", "https://github.com/o/r");
         _adapter = new SharedAdapter(_launcher, "claude", _time, _log);
         _opener = new SessionOpener(_sessionStore, _launcher, _ => _adapter);
         _work = new BackgroundWork(_time, _log);
@@ -57,7 +57,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         var agent = await _launcher.NextAsync();
         var open = await agent.StartAsync();
         Assert.Equal("session/new", open.GetProperty("method").GetString());
-        Assert.Equal("/work/session", open.GetProperty("params").GetProperty("cwd").GetString());
+        Assert.Equal(_sessionStore.Root(_session), open.GetProperty("params").GetProperty("cwd").GetString());
         var prompt = await agent.ReadAsync("session/prompt");
         Assert.Equal("hi", prompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
 

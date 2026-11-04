@@ -50,7 +50,10 @@ internal sealed class AdapterDeliveryFixture : IAsyncDisposable
     public AdapterDeliveryFixture(bool worker = false, bool legacy = false, bool router = false,
         Func<string, string, bool>? configured = null, bool gateWrites = false)
     {
-        _worker = worker; _legacy = legacy; _router = router; _configured = configured; _gateWrites = gateWrites; Open();
+        _worker = worker; _legacy = legacy; _router = router;
+        _configured = configured ?? ((provider, account) => Launcher.Agents.Any(agent => agent.Id == provider &&
+            Assembly.Application.Common.Agents.AccountContext.Of(agent, Environment.GetEnvironmentVariable) == account));
+        _gateWrites = gateWrites; Open();
     }
     private void Open()
     {
@@ -58,10 +61,10 @@ internal sealed class AdapterDeliveryFixture : IAsyncDisposable
         IAppDatabase database = _gateWrites ? DatabaseGate = new AuthRuntimeFixture.WriterGate(Db) : Db;
         Rows = RowStore.Open(database);
         if (_legacy && Session is null) Db.Writer.Write("test.frozen-legacy", s => s.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Engine", "Fixtures", "old-v2.sql"))));
-        Hub = new LiveHub(Rows); Sessions = SessionStore.Open(database, Time, "checkouts");
-        Session = Session is null ? Sessions.Create("claude", "https://github.com/o/r") : Sessions.Get(Session.SessionId)!;
+        Hub = new LiveHub(Rows); Sessions = SessionStore.Open(database, Time, _file.Folder);
+        Session = Session is null ? Sessions.CreateReady("claude", "https://github.com/o/r") : Sessions.Get(Session.SessionId)!;
         Work = new BackgroundWork(Time, TextWriter.Null);
-        var cutover = new SessionCutover(database, Sessions, Launcher, "checkouts", Time);
+        var cutover = new SessionCutover(database, Sessions, Launcher, _file.Folder, Time);
         AdapterEffects Create(EngineRuntime runtime)
         {
             Assert.NotNull(Sessions.Get(Session.SessionId));
@@ -83,6 +86,14 @@ internal sealed class AdapterDeliveryFixture : IAsyncDisposable
         Commands = _worker ? Runtime.Commands : new EngineCommands(Runtime.Machine, new(() => 5, () => 10), projectCompletion: (s, c, e, r, d) => d is null ? null : Effects.ProjectCompletion(s, c, e, r, d), isConfiguredProvider: _configured);
         _subscription = Runtime.Publisher.Register(e => Events.Writer.TryWrite(e), out _);
     }
+    public async Task StartAsync(string sessionId)
+    {
+        var id = Db.QueryFirst("SELECT id FROM engine_outbox WHERE session_id=$id AND kind='start' AND state='pending'",
+            row => row.Text(0), default, new SqlArg("$id", sessionId))!;
+        var effect = ClaimEffect(id);
+        Assert.True(Complete(effect, await Effects.ExecuteAsync(effect, default)).Applied);
+    }
+
     public string Queue(string text = "exact body", string client = "C", bool raw = true, IReadOnlyList<string>? refs = null, string? sessionId = null)
     {
         sessionId ??= Session.SessionId;

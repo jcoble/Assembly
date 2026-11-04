@@ -12,7 +12,7 @@ public sealed partial class SessionHostTests
     public async Task Actual_form_required_types_and_choices_share_direct_and_prepared_answer_validation()
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work,
             feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(_session.SessionId); host.Send("form");

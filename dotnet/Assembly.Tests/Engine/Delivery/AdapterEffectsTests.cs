@@ -13,8 +13,8 @@ public sealed partial class AdapterEffectsTests
     {
         using var file = new TempDatabase(); using var db = TestDatabase.Open(file.Path);
         var rows = RowStore.Open(db); using var hub = new LiveHub(rows);
-        var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
-        var session = sessions.Create("claude", "https://github.com/o/r");
+        var sessions = SessionStore.Open(db, TimeProvider.System, file.Folder);
+        var session = sessions.CreateReady("claude", "https://github.com/o/r");
         var launcher = new FakeLauncher(); await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
         await using var registry = new SessionRegistry(hub, sessions, launcher, TimeProvider.System, TextWriter.Null, work);
         var sending = registry.For(session.SessionId).SendAsync("exact prompt", "client", null, default);

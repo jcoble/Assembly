@@ -40,14 +40,21 @@ public sealed partial class AdapterEffectsTests
     }
 
     [Fact]
-    public async Task Actual_handoff_effect_is_unavailable_without_adapter_work()
+    public async Task Release_without_a_captured_adapter_operation_never_fabricates_confirmation()
     {
         await using var f = new AdapterDeliveryFixture();
+        f.Sessions.SetAcpSession(f.Session.SessionId, "retained-public-session");
+        f.Db.Writer.Write("test.retained-native", scope => scope.Execute("UPDATE engine_session SET provider_session_id='retained-public-session' WHERE id=$id", new SqlArg("$id", f.Session.SessionId)));
         var result = f.Apply(new RequestHandoff(f.Session.SessionId, "workbox-test"), "handoff", f.Number("SELECT version FROM engine_session WHERE id=$id", f.Session.SessionId), new(Assembly.Engine.Contracts.ActorKind.Window, "owner")); Assert.True(result.Applied, result.Error);
-        var id = f.Db.QueryFirst("SELECT id FROM engine_outbox WHERE kind='handoff'", row => row.Text(0), default)!;
+        var id = f.Db.QueryFirst("SELECT id FROM engine_outbox WHERE kind='release'", row => row.Text(0), default)!;
         var effect = f.ClaimEffect(id);
-        foreach (var receipt in new[] { await f.Effects.ExecuteAsync(effect, default), await f.Effects.ReconcileAsync(effect, default) })
-        { Assert.Equal(EffectDisposition.Unavailable, receipt.Disposition); Assert.Equal("handoff_not_available", receipt.Error); }
+        var executing = await f.Effects.ExecuteAsync(effect, default);
+        Assert.Equal(EffectDisposition.Unknown, executing.Disposition);
+        Assert.Equal("handoff_execution_unavailable", executing.Error);
+        var reconciled = await f.Effects.ReconcileAsync(effect, default);
+        Assert.Equal(EffectDisposition.Unknown, reconciled.Disposition);
+        Assert.Equal("handoff_release_unconfirmed", reconciled.Error);
+        Assert.Equal("handing_off", f.State("engine_session", f.Session.SessionId));
         Assert.Equal(0, f.Launcher.Launches);
     }
 
@@ -98,8 +105,9 @@ public sealed partial class AdapterEffectsTests
         var opening = await agent.ReadAsync("session/new");
         f.Db.Writer.Write("test.owner-change", scope => scope.Execute("UPDATE engine_session SET epoch=epoch+1 WHERE id=$id", new SqlArg("$id", f.Session.SessionId)));
         await agent.ReplyAsync(opening, """{"sessionId":"acp-1"}""");
-        Assert.Equal(EffectDisposition.Unknown, (await sending.WaitAsync(DeliveryWait)).Disposition);
-        await agent.CloseAsync(); // The next provider call is close, never prompt.
+        await agent.CloseAsync(); // Cleanup must settle before reporting the refused open; never prompt.
+        var receipt = await sending.WaitAsync(DeliveryWait);
+        Assert.True(receipt.Disposition == EffectDisposition.Unknown, JsonSerializer.Serialize(receipt, global::Assembly.Engine.EngineJson.Default.EffectReceipt));
         Assert.Equal(1, f.Number("SELECT in_flight FROM engine_message WHERE id=$id", effect.Payload.GetProperty("messageId").GetString()!));
     }
 

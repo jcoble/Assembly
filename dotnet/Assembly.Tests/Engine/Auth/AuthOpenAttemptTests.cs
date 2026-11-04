@@ -18,7 +18,7 @@ public sealed class AuthOpenAttemptTests
     {
         using var file = new TempDatabase(); using var db = TestDatabase.Open(file.Path); RowStore.Open(db);
         var time = new FakeTimeProvider(DateTimeOffset.FromUnixTimeMilliseconds(1000));
-        var store = SessionStore.Open(db, time, "checkouts"); var session = store.Create("claude", "https://github.com/o/r");
+        var store = SessionStore.Open(db, time, file.Folder); var session = store.CreateReady("claude", "https://github.com/o/r");
         store.SetAcpSession(session.SessionId, "saved-prior-acp");
         var launcher = new FakeLauncher(); await using var adapter = new SharedAdapter(launcher, "claude", time, TextWriter.Null);
         var opener = new SessionOpener(store, launcher, _ => adapter);
@@ -160,8 +160,8 @@ public sealed class AuthOpenAttemptTests
         internal JsonRpcException PostIdentityError { get; } = new(-32000, "After accepted identity");
         internal OpeningFixture(bool resume = false, bool rejectAfterIdentity = false)
         {
-            _db = TestDatabase.Open(_file.Path); RowStore.Open(_db); Store = SessionStore.Open(_db, _time, "checkouts");
-            SessionId = Store.Create("claude", "https://github.com/o/r").SessionId;
+            _db = TestDatabase.Open(_file.Path); RowStore.Open(_db); Store = SessionStore.Open(_db, _time, _file.Folder);
+            SessionId = Store.CreateReady("claude", "https://github.com/o/r").SessionId;
             if (resume) Store.SetAcpSession(SessionId, "saved-prior-acp");
             _adapter = new(Launcher, "claude", _time, TextWriter.Null);
             var mcp = rejectAfterIdentity ? new SessionMcp(_ => Task.CompletedTask, (_, _) => [], _ => { }, (_, _) => throw PostIdentityError) : null;

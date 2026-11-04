@@ -16,7 +16,11 @@ namespace Assembly.Tests.Engine.Delivery;
 public sealed partial class AdapterEffectsTests
 {
     private static readonly TimeSpan DeliveryWait = TimeSpan.FromSeconds(8);
-    private static MessageEffectData Message(EffectReceipt receipt) => receipt.Data.Deserialize(global::Assembly.Engine.EngineJson.Default.MessageEffectData)!;
+    private static MessageEffectData Message(EffectReceipt receipt)
+    {
+        Assert.True(receipt.Data.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined), receipt.Error);
+        return receipt.Data.Deserialize(global::Assembly.Engine.EngineJson.Default.MessageEffectData)!;
+    }
 
     [Fact]
     public async Task Prompt_insertion_persists_real_ack_and_reconciles_without_resend()
@@ -97,8 +101,7 @@ public sealed partial class AdapterEffectsTests
         var refused = await sending.WaitAsync(DeliveryWait); Assert.Equal("auth_required", Message(refused).Reason);
         var original = Message(refused).UserRow!; Assert.NotNull(original); Assert.True(f.Complete(effect, refused).Applied);
         await agent.CloseAsync(); await f.RestartAsync();
-        var lost = f.Apply(new SetSessionState("lost", null, "test.auth-corrected"), f.Session.SessionId, f.Number("SELECT version FROM engine_session WHERE id=$id", f.Session.SessionId)); Assert.True(lost.Applied, lost.Error);
-        var idle = f.Apply(new SetSessionState("idle", null, null), f.Session.SessionId, f.Number("SELECT version FROM engine_session WHERE id=$id", f.Session.SessionId)); Assert.True(idle.Applied, idle.Error);
+        AuthRetryStartTests.SignIn(f);
         var retry = f.Claim(id); var resending = f.Effects.ExecuteAsync(retry, default);
         var nextAgent = await f.Launcher.NextAsync(); await nextAgent.StartAsync(); var actual = await nextAgent.ReadAsync("session/prompt");
         await nextAgent.InsertAsync(actual, "only-inserted-prompt"); var accepted = await resending.WaitAsync(DeliveryWait);

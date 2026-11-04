@@ -13,7 +13,7 @@ public sealed partial class SessionHostTests
     public async Task Existing_untitled_owner_first_prompt_uses_the_same_exact_chat_and_Engine_title()
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         Assert.Null(_sessionStore.Get(_session.SessionId)!.Title);
         _host.Send("  Exact first title\nBody stays exact");
         var agent = await _launcher.NextAsync(); await agent.StartAsync();
@@ -27,11 +27,14 @@ public sealed partial class SessionHostTests
     [Fact]
     public async Task Engine_first_empty_owner_root_projects_null_and_keeps_existing_first_prompt_naming()
     {
+        await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work);
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time),
+            effectsFactory: _ => new AdapterEffects(_database, registry, _sessionStore, _store));
         var folder = Directory.CreateTempSubdirectory("assembly-cutover-title-").FullName;
         var context = new CommandContext(Guid.NewGuid(), runtime.Machine, new(ActorKind.Window, "owner"), "engine-first", 0, 0, 1_000_000);
         Assert.True(runtime.Submit(context, new StartSession("claude", null, folder, "", null, null, null)).Applied);
+        await Until(() => _database.QueryFirst("SELECT state FROM engine_session WHERE id='engine-first'", row => row.Text(0), default) == "idle");
         Assert.Null(_sessionStore.Get("engine-first")!.Title);
         var host = new SessionHost("engine-first", _hub, _sessionStore, _opener, _time, _log, _work);
         try

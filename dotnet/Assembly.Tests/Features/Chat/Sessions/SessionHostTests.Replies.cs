@@ -17,7 +17,7 @@ public sealed partial class SessionHostTests
     {
         var child = _sessionStore.Helper(_session, "claude", "Captured child");
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work,
             feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(child.SessionId); var run = host.Send("work")!;
@@ -42,13 +42,17 @@ public sealed partial class SessionHostTests
     {
         var child = _sessionStore.Helper(_session, "claude", "Child");
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         _launcher.Launch = _ => throw new IOException("Open failed");
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work,
             feed: new EngineFeed(runtime, _log, _time));
-        var host = registry.For(child.SessionId); var run = host.Send("work")!;
-        await Until(() => host.ActiveRunId is null);
-        Assert.Equal("failed", _store.RunRows(child.SessionId, run).Last(r => r.Kind == "turn").Payload.GetProperty("state").GetString());
+        var host = registry.For(child.SessionId);
+        var sending = host.SendAsync("work", null, null, default);
+        var run = Assert.Single(_store.RowsAfter(child.SessionId, 0), row => row.Kind == "user").RunId!;
+        await sending; await host.CurrentTurn.Done;
+        var terminal = _store.RunRows(child.SessionId, run).LastOrDefault(r => r.Kind == "turn");
+        Assert.NotNull(terminal);
+        Assert.Equal("failed", terminal.Payload.GetProperty("state").GetString());
         Assert.Equal("", _database.QueryFirst("SELECT text FROM engine_message", r => r.Text(0), default));
         Assert.Equal(0, _database.QueryFirst("SELECT COUNT(*) FROM engine_usage", r => r.Long(0), default));
     }
@@ -63,7 +67,7 @@ public sealed partial class SessionHostTests
     {
         var child = _sessionStore.Helper(_session, "claude", "Self child");
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work,
             feed: new EngineFeed(runtime, _log, _time));
         using var live = _hub.Subscribe(child.SessionId, 0);

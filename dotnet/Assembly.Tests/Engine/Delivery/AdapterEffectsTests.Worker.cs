@@ -26,7 +26,7 @@ public sealed partial class AdapterEffectsTests
             Assert.True(f.Apply(new StopSession(), f.Session.SessionId, f.Number("SELECT version FROM engine_session WHERE id=$id", f.Session.SessionId), new(ActorKind.Window, "owner")).Applied);
             var stopId = f.Db.QueryFirst("SELECT id FROM engine_outbox WHERE kind='stop' AND session_id=$id", r => r.Text(0), default, new SqlArg("$id", f.Session.SessionId))!;
             await agent.ReadAsync("session/cancel"); Assert.Equal("inflight", f.State("engine_outbox", stopId));
-            var second = f.Sessions.Create("codex", "repo");
+            var second = f.Sessions.CreateReady("codex", "repo");
             var secondMessage = f.Queue("other session", "second", sessionId: second.SessionId);
             other = await f.Launcher.NextAsync(); await other.StartAsync(); var otherPrompt = await other.ReadAsync("session/prompt");
             await other.InsertAsync(otherPrompt, "second-provider"); await f.StateAsync("engine_message", secondMessage, "next_turn");
