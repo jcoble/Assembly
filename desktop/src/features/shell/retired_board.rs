@@ -17,10 +17,7 @@ pub fn remove_saved_panel(state: &mut DockAreaState) {
             .into_iter()
             .enumerate()
             .filter_map(|(index, child)| {
-                prune(child).map(|child| {
-                    kept.push(index);
-                    child
-                })
+                prune(child).inspect(|_| kept.push(index))
             })
             .collect();
         if kept.len() != old_len {

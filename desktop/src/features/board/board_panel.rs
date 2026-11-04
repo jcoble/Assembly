@@ -260,12 +260,12 @@ impl BoardPanel {
 
     /// Rerun's new run, or a saved open row, as soon as it's listed.
     fn open_pending(&mut self, cx: &mut Context<Self>) {
-        if let Some(key) = self.pending_run.clone() {
-            if let Some(at) = self.entries.iter().position(|entry| *entry == Entry::Run(key.clone())) {
-                self.pending_run = None;
-                self.open_run(&key, cx);
-                self.list.scroll_to_reveal_item(at);
-            }
+        if let Some(key) = self.pending_run.clone()
+            && let Some(at) = self.entries.iter().position(|entry| *entry == Entry::Run(key.clone()))
+        {
+            self.pending_run = None;
+            self.open_run(&key, cx);
+            self.list.scroll_to_reveal_item(at);
         }
         if self.reopened || self.entries.is_empty() {
             return;
