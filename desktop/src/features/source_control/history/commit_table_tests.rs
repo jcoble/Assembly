@@ -75,7 +75,8 @@ fn file_row(at: usize, path: &str) -> &'static str {
     leak(format!("history-file:{at:040}:{path}"))
 }
 fn open_with_file(timeline: &Entity<CommitTimeline>, visual: &mut VisualTestContext, at: usize, path: &str) {
-    press(visual, center(visual, row(at)), MouseButton::Left);
+    let at_row = center(visual, row(at));
+    press(visual, at_row, MouseButton::Left);
     let sha = format!("{at:040}");
     let file = GitCommitFile { path: path.into(), original_path: None, letter: 'M' };
     visual.update(|_, cx| {
@@ -161,7 +162,8 @@ fn expanding_a_commit_lists_its_files(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds(file_row(1, "src/a.rs")).is_none());
     open_with_file(&timeline, visual, 1, "src/a.rs");
     assert!(visual.debug_bounds(file_row(1, "src/a.rs")).is_some());
-    press(visual, center(visual, row(1)), MouseButton::Left);
+    let at_row = center(visual, row(1));
+    press(visual, at_row, MouseButton::Left);
     assert!(visual.debug_bounds(file_row(1, "src/a.rs")).is_none(), "pressing the row again closes it");
 }
 #[gpui::test]
@@ -169,9 +171,12 @@ fn picking_a_file_dispatches_open_commit_diff(cx: &mut TestAppContext) {
     let (timeline, visual) = table(cx, 3);
     let opened = Rc::new(RefCell::new(Vec::<OpenCommitDiff>::new()));
     let heard = opened.clone();
-    visual.update(|_, cx| cx.on_action(move |intent: &OpenCommitDiff, _| heard.borrow_mut().push(intent.clone())));
+    visual.update(|_, cx| {
+        cx.on_action(move |intent: &OpenCommitDiff, _| heard.borrow_mut().push(intent.clone()));
+    });
     open_with_file(&timeline, visual, 1, "src/a.rs");
-    press(visual, center(visual, file_row(1, "src/a.rs")), MouseButton::Left);
+    let at_row = center(visual, file_row(1, "src/a.rs"));
+    press(visual, at_row, MouseButton::Left);
     let opened = opened.borrow();
     assert_eq!(opened.len(), 1);
     assert_eq!(opened[0].sha, format!("{:040}", 1));
@@ -226,11 +231,14 @@ fn the_uncommitted_row_asks_for_source_control(cx: &mut TestAppContext) {
     let (timeline, visual) = table(cx, 1);
     let asked = Rc::new(RefCell::new(0));
     let heard = asked.clone();
-    visual.update(|_, cx| cx.on_action(move |_: &ShowSourceControl, _| *heard.borrow_mut() += 1));
+    visual.update(|_, cx| {
+        cx.on_action(move |_: &ShowSourceControl, _| *heard.borrow_mut() += 1);
+    });
     let work = Uncommitted { count_label: "1 file".into(), detail: "Changed 1".into() };
     timeline.update(visual, |timeline, cx| timeline.set_uncommitted(Some(work), cx));
     settle(visual);
-    press(visual, center(visual, "history-uncommitted"), MouseButton::Left);
+    let at_row = center(visual, "history-uncommitted");
+    press(visual, at_row, MouseButton::Left);
     assert_eq!(*asked.borrow(), 1);
 }
 // Pins: g9#17

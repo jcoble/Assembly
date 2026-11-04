@@ -1,11 +1,11 @@
 //! The Git history tab's table, the way GitHistoryView.svelte drew it: one 24 px row per commit with the branching
 //! picture, then Message, Date, Author and Hash each in a column of their own. Read only: nothing here moves a branch.
-use super::graph_lanes::{EdgeKind, LaneRow};
 use super::inline::{commit_file_menu, commit_tip, files_sentence};
 use super::{CommitFiles, CommitTimeline};
 use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_file::OpenFile};
 use crate::features::source_control::git_labels::{RefKind, commit_age, ref_pills, split_path};
 use crate::features::source_control::git_status::{GitStatus, Section};
+use crate::features::source_control::graph_lanes::{EdgeKind, LaneRow};
 use crate::features::source_control::history_filter::HistoryFilter;
 use crate::features::source_control::source_control_pane::ShowSourceControl;
 use chrono::{DateTime, Local};

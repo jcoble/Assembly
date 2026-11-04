@@ -78,11 +78,14 @@ impl CommitTimeline {
         // The table's list: the uncommitted row, each commit, then the footer.
         let list = ListState::new(ITEMS_AROUND, ListAlignment::Top, px(200.));
         if !inline {
-            let watching = list.clone();
             let weak = cx.entity().downgrade();
-            list.set_scroll_handler(move |_, _, cx| {
-                if watching.is_scrolled_to_end() == Some(true) {
-                    _ = weak.update(cx, |timeline, cx| timeline.load_more(cx));
+            // The list holds its own state while it calls this, so ask it nothing and load once it has let go.
+            list.set_scroll_handler(move |event, _, cx| {
+                if event.visible_range.end >= event.count {
+                    let weak = weak.clone();
+                    cx.defer(move |cx| {
+                        _ = weak.update(cx, |timeline, cx| timeline.load_more(cx));
+                    });
                 }
             });
         }
