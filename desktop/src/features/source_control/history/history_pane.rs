@@ -2,6 +2,7 @@ use super::commit_timeline::{CommitTimeline, uncommitted_of};
 use super::git_status::GitStatus;
 use super::history_filter::{HistoryFilter, author_options, branch_options};
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::state::sessions::Sessions;
 use crate::core::{intents::open_git_history::OpenGitHistory, ui::center_panes::CenterPanes};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -30,6 +31,9 @@ pub struct HistoryPane {
     /// The working copy behind the toolbar's folder label and the uncommitted row; re-read when shown or refreshed.
     status: Option<GitStatus>,
     status_read: Option<Task<()>>,
+    active: bool,
+    /// This session's state when last heard, so the end of a turn can be told from any other change.
+    turn_state: Option<String>,
     _heard: Vec<Subscription>,
 }
 fn key(session: &str) -> String {
@@ -160,7 +164,7 @@ impl HistoryPane {
     ) -> Self {
         let timeline = cx.new(|cx| CommitTimeline::new(session.clone(), path.clone(), expected_source.clone(), true, cx));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search message, hash or author"));
-        let heard = vec![
+        let mut heard = vec![
             cx.observe(&timeline, |_, _, cx| cx.notify()),
             cx.subscribe(&search, |pane, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -169,6 +173,9 @@ impl HistoryPane {
                 }
             }),
         ];
+        if let Some(sessions) = Sessions::try_global(cx) {
+            heard.push(cx.observe(&sessions, |pane, _, cx| pane.sessions_changed(cx)));
+        }
         let mut pane = Self {
             focus: cx.focus_handle(),
             session,
@@ -179,10 +186,29 @@ impl HistoryPane {
             filter: HistoryFilter::default(),
             status: None,
             status_read: None,
+            active: true,
+            turn_state: None,
             _heard: heard,
         };
+        pane.turn_state = pane.session_state(cx);
         pane.read_status(cx);
         pane
+    }
+    fn session_state(&self, cx: &App) -> Option<String> {
+        let sessions = Sessions::try_global(cx)?;
+        let sessions = sessions.read(cx);
+        let item = sessions.items().iter().find(|item| item.session_id == self.session)?;
+        Some(item.state.clone())
+    }
+    /// A turn that ends has usually changed the working copy, and the uncommitted row has to say so.
+    fn sessions_changed(&mut self, cx: &mut Context<Self>) {
+        let state = self.session_state(cx);
+        let ended = self.turn_state.as_deref() == Some("running")
+            && state.as_deref().is_some_and(|state| state != "running");
+        self.turn_state = state;
+        if ended && self.active {
+            self.read_status(cx);
+        }
     }
     fn read_status(&mut self, cx: &mut Context<Self>) {
         let Some(socket) = SocketClient::try_global(cx) else {
@@ -198,12 +224,20 @@ impl HistoryPane {
             let outcome = call.await;
             _ = pane.update(cx, |pane, cx| {
                 pane.status_read = None;
+                let prior = pane.status.take().and_then(|status| status.head);
                 pane.status = match outcome {
                     Outcome::Ok(status) => Some(status),
                     _ => None,
                 };
+                let head = pane.status.as_ref().and_then(|status| status.head.clone());
+                let moved = prior.is_some() && head.is_some() && prior != head;
                 let uncommitted = pane.status.as_ref().and_then(uncommitted_of);
-                pane.timeline.update(cx, |timeline, cx| timeline.set_uncommitted(uncommitted, cx));
+                pane.timeline.update(cx, |timeline, cx| {
+                    timeline.set_uncommitted(uncommitted, cx);
+                    if moved {
+                        timeline.refresh(cx);
+                    }
+                });
                 cx.notify();
             });
         }));
@@ -247,6 +281,7 @@ impl BasePanel for HistoryPane {
         HISTORY
     }
     fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
+        self.active = active;
         self.timeline
             .update(cx, |timeline, cx| timeline.set_active(active, cx));
         if active {

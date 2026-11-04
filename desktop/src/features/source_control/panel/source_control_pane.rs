@@ -338,3 +338,6 @@ mod refresh_tests;
 #[cfg(test)]
 #[path = "source_stale_tests.rs"]
 mod stale_tests;
+#[cfg(test)]
+#[path = "source_write_tests.rs"]
+mod write_tests;

@@ -207,13 +207,15 @@ impl Render for PrSection {
                                 .items_start()
                                 .child(div().text_sm().text_color(danger).child(failure))
                                 .child(
-                                    Button::new("pr-section-retry")
-                                        .ghost()
-                                        .compact()
-                                        .label("Try again")
-                                        .on_click(cx.listener(|section, _, _, cx| {
-                                            section.queue.update(cx, |queue, cx| queue.refresh(cx))
-                                        })),
+                                    div().debug_selector(|| "pr-section-retry".into()).child(
+                                        Button::new("pr-section-retry")
+                                            .ghost()
+                                            .compact()
+                                            .label("Try again")
+                                            .on_click(cx.listener(|section, _, _, cx| {
+                                                section.queue.update(cx, |queue, cx| queue.refresh(cx))
+                                            })),
+                                    ),
                                 ),
                         )
                     })
@@ -250,3 +252,6 @@ impl Render for PrSection {
             })
     }
 }
+#[cfg(test)]
+#[path = "pr_section_tests.rs"]
+mod tests;
