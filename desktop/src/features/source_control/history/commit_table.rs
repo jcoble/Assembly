@@ -2,7 +2,6 @@
 //! picture, then Message, Date, Author and Hash each in a column of their own. Read only: nothing here moves a branch.
 use super::inline::{commit_file_menu, commit_tip, files_sentence};
 use super::{CommitFiles, CommitTimeline};
-use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_file::OpenFile};
 use crate::features::source_control::git_labels::{RefKind, commit_age, ref_pills, split_path};
 use crate::features::source_control::git_status::{GitStatus, Section};
 use crate::features::source_control::graph_lanes::{EdgeKind, LaneRow};
@@ -270,7 +269,13 @@ impl CommitTimeline {
             (theme.muted_foreground, theme.secondary_hover, theme.background);
         let drawn = drawn_lanes(&self.graph);
         let graph = graph_width(drawn);
-        let tip = format!("{} — open Source Control", row.detail);
+        // Source control shows the session's own folder, which isn't what this row counted on another checkout.
+        let own_folder = self.checkout.is_none();
+        let tip = if own_folder {
+            format!("{} — open Source Control", row.detail)
+        } else {
+            row.detail.to_string()
+        };
         h_flex()
             .id("history-uncommitted")
             .debug_selector(|| "history-uncommitted".into())
@@ -281,7 +286,9 @@ impl CommitTimeline {
             .cursor_pointer()
             .hover(move |row| row.bg(hover))
             .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-            .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowSourceControl), cx))
+            .when(own_folder, |row| {
+                row.on_click(|_, window, cx| window.dispatch_action(Box::new(ShowSourceControl), cx))
+            })
             .child(
                 div().relative().flex_none().w(px(graph)).h(px(ROW)).child(
                     div()
@@ -460,21 +467,8 @@ impl CommitTimeline {
             let (name, folder) = split_path(&file.path);
             let unreadable = unreadable_path(&file.path);
             let chosen = self.chosen.as_ref().is_some_and(|(sha, path)| sha == &commit.sha && path == &file.path);
-            let open = OpenCommitDiff {
-                session_id: self.session.clone(),
-                expected_source: self.expected_source.clone(),
-                sha: commit.sha.clone(),
-                path: file.path.clone(),
-                title: format!("{} {}", commit.short_sha, commit.subject),
-            };
-            let current = OpenFile {
-                session_id: self.session.clone(),
-                path: file.path.clone(),
-                expected_source: self.expected_source.clone(),
-                line: None,
-                column: None,
-                pinned: false,
-            };
+            let open = self.commit_diff(&commit.sha, &file.path, format!("{} {}", commit.short_sha, commit.subject));
+            let current = self.current_file(&file.path);
             let tip = if unreadable {
                 "This file has a name git could not print in plain letters.".to_string()
             } else {

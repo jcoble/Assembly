@@ -23,6 +23,7 @@ internal sealed partial class SourceControlFeature
             kind != CallKind.Write && !MachineReads.AllowRead(registry, "git", method, kind == CallKind.BulkRead))
             throw new CallFailed("forbidden");
         var json = JsonSerializer.SerializeToElement(args, argsType);
+        ValidateCheckoutArguments(method, json);
         if (json.TryGetProperty("projectId", out var project) && project.ValueKind != JsonValueKind.Null &&
             json.TryGetProperty("session", out var projectSession) && projectSession.ValueKind != JsonValueKind.Null)
             throw new CallBadArguments("Choose exactly one session or project.");
@@ -33,7 +34,7 @@ internal sealed partial class SourceControlFeature
         if (sessionValue.ValueKind != JsonValueKind.String || sessionValue.GetString() is not { Length: > 0 } session)
             throw new CallBadArguments("A session is required.");
         var info = sessions.Get(session) ?? throw new CallFailed("unknown session");
-        var qualified = kind == CallKind.Write || method is "status" or "diff" or "branchDiff" or "branches" or "stashes" or "history" or "commitFiles" or "commitDiff" or "prs" or "pr" or "prFile" or "operation_host" or "operation";
+        var qualified = kind == CallKind.Write || method is "checkouts" or "status" or "diff" or "branchDiff" or "branches" or "stashes" or "history" or "commitFiles" or "commitDiff" or "prs" or "pr" or "prFile" or "operation_host" or "operation";
         var assertedSource = json.TryGetProperty("expectedSource", out var asserted) && asserted.ValueKind != JsonValueKind.Null
             ? asserted.Deserialize(SourceControlJson.Default.ExpectedSource) : null;
         if (call.ExpectedSource is not null && assertedSource is not null && call.ExpectedSource != assertedSource)
@@ -49,11 +50,16 @@ internal sealed partial class SourceControlFeature
                 var observedRoot = json.TryGetProperty("expectedCheckoutRoot", out var root) && root.ValueKind == JsonValueKind.String ? root.GetString() : null;
                 SourceControlWrites.RequireRoot(sessions, session, observedRoot, expected is not null);
             }
+            var selectedRoot = IsCheckoutRead(method) &&
+                json.TryGetProperty("checkoutPath", out var selected) && selected.ValueKind != JsonValueKind.Null
+                    ? RecordedCheckoutRoot(session) : null;
             void EnsureLocal()
             {
                 if (sessions.Get(session) is not { Machine: null })
                     throw new CallFailed("The session's owning machine changed.", "source_changed");
                 RequireLocalOwner(db, operations.Machine, session);
+                // The sender can recheck recorded state, never filesystem/Git membership.
+                if (selectedRoot is not null && RecordedCheckoutRoot(session) != selectedRoot) throw CheckoutRootChanged();
             }
             call.SourceGuard = new LocalReadSource(EnsureLocal);
             EnsureLocal();

@@ -44,7 +44,7 @@ public sealed partial class GitSocketTests : IAsyncLifetime
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
         new WorktreesFeature(_sessions).Register(calls);
         _operations = new(_gitWork, topics, TimeProvider.System, machine);
-        var routes = new SourceControlFeature(_sessions, _db, _operations, null, null);
+        var routes = new SourceControlFeature(_sessions, _db, _operations, null, null, new GitCli());
         routes.Register(calls);
         new SourceControlWrites(_sessions, new GitCli(), new CheckoutWrites(), TimeProvider.System, routes).Register(calls);
         var prGit = new GitCli();

@@ -4,7 +4,10 @@ use super::{
     graph_lanes::{LaneRow, lanes},
     history_filter::HistoryFilter,
 };
-use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_file::OpenFile};
+use crate::core::socket::{
+    checkout_selector::CheckoutSelector, client::SocketClient, outcome::Outcome,
+};
 use gpui_kit::*;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -20,6 +23,8 @@ pub(super) enum CommitFiles {
 pub struct CommitTimeline {
     session: String,
     expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    /// A linked checkout to read instead of the session's own.
+    checkout: Option<CheckoutSelector>,
     path: Option<String>,
     active: bool,
     pub(super) history: GitHistory,
@@ -92,6 +97,7 @@ impl CommitTimeline {
         Self {
             session,
             expected_source,
+            checkout: None,
             path,
             active,
             history: GitHistory::default(),
@@ -136,6 +142,33 @@ impl CommitTimeline {
             self.expected_source = source;
             self.refresh(cx);
         }
+    }
+    pub fn set_checkout(&mut self, checkout: Option<CheckoutSelector>, cx: &mut Context<Self>) {
+        if self.checkout != checkout {
+            self.checkout = checkout;
+            self.refresh(cx);
+        }
+    }
+    pub(super) fn commit_diff(&self, sha: &str, path: &str, title: String) -> OpenCommitDiff {
+        OpenCommitDiff {
+            session_id: self.session.clone(),
+            expected_source: self.expected_source.clone(),
+            sha: sha.to_string(),
+            path: path.to_string(),
+            title,
+            checkout: self.checkout.clone(),
+        }
+    }
+    /// A file opens in the session's own folder; there's no way yet to open one in another checkout.
+    pub(super) fn current_file(&self, path: &str) -> Option<OpenFile> {
+        self.checkout.is_none().then(|| OpenFile {
+            session_id: self.session.clone(),
+            path: path.to_string(),
+            expected_source: self.expected_source.clone(),
+            line: None,
+            column: None,
+            pinned: false,
+        })
     }
     /// The history's own commits, for the toolbar's pickers and counts.
     pub fn shown_count(&self) -> usize {
@@ -185,12 +218,11 @@ impl CommitTimeline {
             return;
         };
         let key = format!("git/history/{}", cx.entity_id());
-        let call = socket.read(cx).call::<GitHistory>(
-            "git",
-            "history",
+        let args = CheckoutSelector::applied(
+            self.checkout.as_ref(),
             json!({"session":self.session,"cursor":cursor,"path":self.path,"expectedSource":self.expected_source}),
-            Some(&key),
         );
+        let call = socket.read(cx).call::<GitHistory>("git", "history", args, Some(&key));
         self.reading = true;
         self.error = None;
         self.read = Some(cx.spawn(async move |timeline, cx| {
@@ -226,12 +258,11 @@ impl CommitTimeline {
         if !self.files.contains_key(&sha) {
             if let Some(socket) = SocketClient::try_global(cx) {
                 let key = format!("git/commitFiles/{}/{sha}", cx.entity_id());
-                let call = socket.read(cx).call::<Vec<GitCommitFile>>(
-                    "git",
-                    "commitFiles",
+                let args = CheckoutSelector::applied(
+                    self.checkout.as_ref(),
                     json!({"session":self.session,"sha":sha,"expectedSource":self.expected_source}),
-                    Some(&key),
                 );
+                let call = socket.read(cx).call::<Vec<GitCommitFile>>("git", "commitFiles", args, Some(&key));
                 self.files.insert(sha.clone(), CommitFiles::Reading);
                 let target = sha.clone();
                 let measured = sha.clone();

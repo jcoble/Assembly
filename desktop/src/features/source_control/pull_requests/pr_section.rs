@@ -253,5 +253,5 @@ impl Render for PrSection {
     }
 }
 #[cfg(test)]
-#[path = "pr_section_tests.rs"]
+#[path = "tests/pr_section_tests.rs"]
 mod tests;

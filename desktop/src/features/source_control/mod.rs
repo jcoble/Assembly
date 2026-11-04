@@ -22,6 +22,8 @@ pub mod discard_dialog;
 pub mod git_action;
 #[path = "git/git_branches.rs"]
 pub mod git_branches;
+#[path = "git/git_checkouts.rs"]
+pub mod git_checkouts;
 #[path = "git/git_failure.rs"]
 pub mod git_failure;
 #[path = "history/git_history.rs"]

@@ -214,7 +214,7 @@ public static class ServeRun
             var sessionGit = new GitSessionOperations(sessionStore, git, prWriter, checkoutWrites, gitOperations, new(git, utility), prReader, db);
             var localFolders = new LocalProjectFolders(git);
             var projectFolders = new ProjectFolderCreation(localFolders, new GitWriter(git), checkoutWrites, gitOperations);
-            var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, null, null);
+            var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, null, null, git);
             var projectPrReads = new ProjectPullRequestReads(db, projectRoots, sessionSources, engine.Machine, prReader, null, null);
             var projectPrActions = new ProjectPullRequestActions(projectPrReads, gitOperations, sessionGit, null);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,

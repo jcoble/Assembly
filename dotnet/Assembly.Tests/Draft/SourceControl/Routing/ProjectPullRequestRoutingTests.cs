@@ -38,7 +38,7 @@ public sealed class ProjectPullRequestRoutingTests
             var sources = new SessionRowSources(hosts.Remote.Fixture.Db, hosts.Remote.Sessions,
                 new MachineSet(new FakeMachine(null, hosts.Remote.Sessions)));
             var roots = new ProjectRoots(new ProjectStore(hosts.Remote.Fixture.Db, TimeProvider.System));
-            new PullRequestsFeature(hosts.Remote.Sessions, reader, new(hosts.Remote.Sessions, hosts.Remote.Fixture.Db, remoteOperations, null, null),
+            new PullRequestsFeature(hosts.Remote.Sessions, reader, new(hosts.Remote.Sessions, hosts.Remote.Fixture.Db, remoteOperations, null, null, repo.Git),
                 new(hosts.Remote.Fixture.Db, roots, sources, hosts.Remote.Fixture.Machine, reader, null, null)).Register(calls);
         };
         await hosts.Start(); await hosts.StartMirror();
@@ -50,7 +50,7 @@ public sealed class ProjectPullRequestRoutingTests
             new MachineSet(new FakeMachine(null, hosts.Mac.Sessions)), hosts.Connections);
         var projectReads = new ProjectPullRequestReads(hosts.Mac.Fixture.Db, new ProjectRoots(store), sourcesLocal,
             hosts.Mac.Fixture.Machine, readerLocal, hosts.Mac.Forwarder, hosts.Connections);
-        new PullRequestsFeature(hosts.Mac.Sessions, readerLocal, new(hosts.Mac.Sessions, hosts.Mac.Fixture.Db, localOperations, hosts.Mac.Forwarder, hosts.Connections), projectReads).Register(desktopCalls!);
+        new PullRequestsFeature(hosts.Mac.Sessions, readerLocal, new(hosts.Mac.Sessions, hosts.Mac.Fixture.Db, localOperations, hosts.Mac.Forwarder, hosts.Connections, repo.Git), projectReads).Register(desktopCalls!);
         var source = hosts.Mac.Fixture.Db.QueryFirst("SELECT machine,generation,name FROM engine_mirror WHERE state='live' AND name='workbox-test'",
             row => new ExpectedSource(row.Text(0), row.Long(1), row.Text(2)), default)!;
         using var socket = await ApiTests.OpenOwnerSocketAsync(hosts.Mac.Address, "isolated-token", "/socket/bulk");

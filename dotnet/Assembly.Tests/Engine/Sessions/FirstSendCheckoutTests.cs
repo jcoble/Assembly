@@ -146,7 +146,7 @@ public sealed class FirstSendCheckoutTests : IDisposable
         var prs = new PullRequestWriter(git, gh, prReader);
         var utilityPreferences = new Assembly.Application.Features.Preferences.PreferenceStore(owner.Fixture.Db);
         var utility = new Assembly.Infrastructure.Agents.AcpUtilityModel([], () => utilityPreferences.Read("utilityModel"), TimeProvider.System, TextWriter.Null);
-        var routes = new SourceControlFeature(owner.Sessions, owner.Fixture.Db, operations, owner.Forwarder, hosts.Connections);
+        var routes = new SourceControlFeature(owner.Sessions, owner.Fixture.Db, operations, owner.Forwarder, hosts.Connections, git);
         routes.Register(registered!);
         var sessionGit = new GitSessionOperations(owner.Sessions, git, prs, writes, operations, new(git, utility), prReader, owner.Fixture.Db);
         var projectPrReads = new ProjectPullRequestReads(owner.Fixture.Db, roots,

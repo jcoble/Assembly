@@ -9,7 +9,9 @@ use serde_json::{Value, json};
 
 use super::selected_session::SelectedSession;
 use super::sessions::Sessions;
+use crate::core::socket::checkout_selector::CheckoutSelector;
 use crate::core::socket::client::SocketClient;
+use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::socket::error_code::ErrorCode;
 use crate::core::socket::outcome::Outcome;
 
@@ -32,7 +34,9 @@ pub struct SessionRead<T> {
     active: bool,
     /// The session what's shown, or the read on its way, is for.
     read_for: Option<String>,
-    source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    source: Option<ExpectedRowSource>,
+    /// A linked checkout to read instead, for the session and source it was picked under and no other.
+    checkout: Option<(String, Option<ExpectedRowSource>, CheckoutSelector)>,
     shown: Shown<T>,
     /// Why the shown failure failed, for a next step such as Connect.
     failure_code: Option<ErrorCode>,
@@ -60,6 +64,7 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
             active: false,
             read_for: None,
             source: None,
+            checkout: None,
             shown: Shown::NoSession,
             failure_code: None,
             answers: 0,
@@ -115,8 +120,36 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         self.read_for.as_deref()
     }
 
-    pub fn source(&self) -> Option<&crate::core::socket::row_source::ExpectedRowSource> {
+    pub fn source(&self) -> Option<&ExpectedRowSource> {
         self.source.as_ref()
+    }
+
+    /// The linked checkout being read, if it isn't the session's own.
+    pub fn checkout(&self) -> Option<&CheckoutSelector> {
+        self.checkout.as_ref().map(|(_, _, checkout)| checkout)
+    }
+
+    /// Why the shown failure failed.
+    pub fn failure_code(&self) -> Option<&ErrorCode> {
+        self.failure_code.as_ref()
+    }
+
+    /// Reads another checkout of the session it's on, or its own again. What was shown belongs to the last one.
+    pub fn set_checkout(&mut self, checkout: Option<CheckoutSelector>, cx: &mut Context<Self>) {
+        let bound = match (checkout, &self.read_for) {
+            (Some(checkout), Some(session)) => Some((session.clone(), self.source.clone(), checkout)),
+            _ => None,
+        };
+        if bound == self.checkout {
+            return;
+        }
+        self.checkout = bound;
+        self.failure_code = None;
+        self.shown = Shown::Reading;
+        cx.notify();
+        if self.active {
+            self.read(true, cx);
+        }
     }
 
     pub fn reading(&self) -> bool {
@@ -175,10 +208,15 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
             self.reading = false;
             self._read = None;
             self.source = None;
+            self.checkout = None;
             self.shown = Shown::NoSession;
             cx.notify();
             return;
         };
+        self.checkout = self
+            .checkout
+            .take()
+            .filter(|(bound, from, _)| *bound == session && *from == source);
         let same = self.read_for.as_deref() == Some(session.as_str()) && self.source == source;
         if same && !again && !matches!(self.shown, Shown::Failed(_)) {
             return;
@@ -199,12 +237,11 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         };
         // Keyed, so a newer read answers this one Aborted and cancels it on the backend.
         let key = format!("{}/{}", self.feature, self.method);
-        let call = socket.read(cx).call::<Value>(
-            self.feature,
-            self.method,
+        let args = CheckoutSelector::applied(
+            self.checkout(),
             json!({ "session": session, "expectedSource": source }),
-            Some(&key),
         );
+        let call = socket.read(cx).call::<Value>(self.feature, self.method, args, Some(&key));
         self.reading = true;
         self._read = Some(cx.spawn(async move |read, cx| {
             let outcome = call.await;

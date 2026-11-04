@@ -5,6 +5,9 @@ use super::git_status::GitStatus;
 
 pub const STILL_RUNNING: &str = "Wait for the current source-control action to finish.";
 pub const UNCONFIRMED: &str = "Refresh the last action's outcome before starting another.";
+/// Why nothing can be changed while the panel is on another checkout.
+pub const READ_ONLY_SCOPE: &str =
+    "This folder is open for reading only — switch back to the session folder to change it.";
 const NO_REPOSITORY: &str = "This panel is not pointed at a repository folder yet.";
 const NO_UPSTREAM: &str =
     "This branch has no upstream branch, so there is no matching remote branch to pull from or push to.";
@@ -26,6 +29,7 @@ pub enum WriteState {
     Idle,
     Running,
     Unconfirmed,
+    ReadOnly,
 }
 pub struct MenuContext<'a> {
     pub has_session: bool,
@@ -57,6 +61,7 @@ fn blocked(context: &MenuContext) -> Option<String> {
         WriteState::Idle => None,
         WriteState::Running => Some(STILL_RUNNING.into()),
         WriteState::Unconfirmed => Some(UNCONFIRMED.into()),
+        WriteState::ReadOnly => Some(READ_ONLY_SCOPE.into()),
     }
 }
 fn has_upstream(context: &MenuContext) -> bool {

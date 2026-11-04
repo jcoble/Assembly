@@ -109,7 +109,8 @@ impl SourceControlPane {
         if self.busy(cx) {
             return;
         }
-        let Some(target) = self.target(cx) else {
+        // The session's checkout is the Engine's; which of them the pane is reading has no say in it.
+        let Some(target) = self.shown_target(cx) else {
             return;
         };
         let Some(machine) = target
@@ -280,9 +281,14 @@ impl SourceControlPane {
                 });
             });
         }
-        self.read.update(cx, |read, cx| read.refresh(cx));
+        // The session now lives where the pane may have been looking, so its own folder is what's shown next.
+        if self.read_only(cx) {
+            self.back_to_session_folder(cx);
+        } else {
+            self.read.update(cx, |read, cx| read.refresh(cx));
+            self.read_branches(cx);
+        }
         self.result_answers = self.read.read(cx).answers() + 1;
-        self.read_branches(cx);
         cx.notify();
     }
     /// A create keeps its menu open and says why under the name; everything else says it in the pane.

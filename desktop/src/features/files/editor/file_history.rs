@@ -211,6 +211,7 @@ impl Render for FileHistory {
                             path: self.state.path.clone(),
                             expected_source: self.source.clone(),
                             title: format!("{} · {}", commit.short_sha, self.state.path),
+                            checkout: None,
                         };
                         v_flex()
                             .id(("file-history", ix))

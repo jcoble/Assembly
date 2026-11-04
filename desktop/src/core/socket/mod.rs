@@ -11,6 +11,7 @@
 //! The same client, a second time, holds `/socket/bulk`, which alone carries the large calls (`client.rs`).
 
 pub mod call_failure;
+pub mod checkout_selector;
 pub mod client;
 mod client_thread;
 #[cfg(test)]
@@ -45,6 +46,7 @@ mod row_source_tests;
 pub mod row_update;
 mod rows_feed;
 #[cfg(test)]
+#[path = "tests/rows_tests.rs"]
 mod rows_tests;
 #[cfg(test)]
 pub(crate) mod test_client;

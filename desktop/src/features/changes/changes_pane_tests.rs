@@ -9,6 +9,7 @@ use gpui_kit::AppContext as _;
 use serde_json::{Value, json};
 
 use super::{ChangesPane, PatchContent, Picked, Shown};
+use crate::core::socket::checkout_selector::CheckoutSelector;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
@@ -21,6 +22,7 @@ struct Seen {
     reads: Vec<(String, Value)>,
     cancels: Vec<Value>,
     sources: Vec<Value>,
+    args: Vec<Value>,
 }
 
 /// Answers a one-line edit for any path but `slow.rs`, which it never answers.
@@ -39,6 +41,7 @@ fn backend(seen: Arc<Mutex<Seen>>, heard: UnboundedSender<()>) -> FakeBackend {
                     .to_string();
                 seen.reads.push((path.clone(), id.clone()));
                 seen.sources.push(frame["args"]["expectedSource"].clone());
+                seen.args.push(frame["args"].clone());
                 if path == "slow.rs" {
                     Vec::new()
                 } else {
@@ -77,6 +80,7 @@ fn picked(path: &str) -> Picked {
         session: "s1".into(),
         path: path.into(),
         original_path: None,
+        checkout: None,
     }
 }
 
@@ -153,6 +157,7 @@ async fn opening_the_branch_diff_shows_each_file_under_its_base_and_stops_the_fi
     let branch = Picked::Branch {
         expected_source: Some(origin()),
         session: "s1".into(),
+        checkout: None,
     };
     pane.update(cx, |pane, cx| pane.show(branch, cx));
     until("branch diff shown", &mut changes, &changed, || {
@@ -205,4 +210,33 @@ fn changing_presentation_retains_the_same_patch_revision(cx: &mut TestAppContext
         assert_eq!(state.read(cx).mode(), DiffMode::Split);
         assert_eq!(state.read(cx).files()[0].additions(), 1);
     });
+}
+
+#[gpui::test]
+async fn a_diff_from_another_checkout_reads_that_checkout(cx: &mut TestAppContext) {
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let (changed, mut changes) = unbounded();
+    let backend = backend(seen.clone(), changed.clone());
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        SocketClient::start(Endpoint { port: backend.port, token: "secret".into() }, cx);
+    });
+    let file = Picked::File {
+        expected_source: Some(origin()),
+        session: "s1".into(),
+        path: "a.rs".into(),
+        original_path: None,
+        checkout: Some(CheckoutSelector { path: "/linked".into(), expected_root: "/own".into() }),
+    };
+    let _pane = cx.new(|cx| ChangesPane::new(Some(file), cx));
+    until("the diff read", &mut changes, &changed, || {
+        cx.run_until_parked();
+        !seen.lock().unwrap().args.is_empty()
+    })
+    .await;
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.args[0]["checkoutPath"], "/linked");
+    assert_eq!(seen.args[0]["expectedCheckoutRoot"], "/own");
+    drop(backend);
 }

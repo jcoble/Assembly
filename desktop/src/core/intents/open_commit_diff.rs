@@ -8,4 +8,6 @@ pub struct OpenCommitDiff {
     pub sha: String,
     pub path: String,
     pub title: String,
+    /// A linked checkout to read instead of the session's own.
+    pub checkout: Option<crate::core::socket::checkout_selector::CheckoutSelector>,
 }

@@ -48,6 +48,8 @@ impl Render for SourceControlPane {
             .child(body)
     }
 }
+/// Pull requests belong to the session's branch, whichever checkout the rest of the panel is reading.
+const PR_SCOPE: &str = "Pull requests below are for the session folder, not this checkout.";
 impl SourceControlPane {
     fn render_body(&mut self, cx: &mut Context<Self>) -> AnyElement {
         match self.read.read(cx).shown().clone() {
@@ -57,13 +59,24 @@ impl SourceControlPane {
                 None,
                 cx,
             ),
-            Shown::Reading => div()
-                .px_3()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("Reading the changes…")
-                .into_any_element(),
-            Shown::Failed(message) => self.failure_body(message, cx),
+            Shown::Reading => {
+                let scope = self.scope_row(cx);
+                v_flex()
+                    .children(scope)
+                    .child(
+                        div()
+                            .px_3()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Reading the changes…"),
+                    )
+                    .into_any_element()
+            }
+            Shown::Failed(message) => {
+                let scope = self.scope_row(cx);
+                let failure = self.failure_body(message, cx);
+                v_flex().children(scope).child(failure).into_any_element()
+            }
             Shown::Read(status) => self.repository_body(status, cx),
         }
     }
@@ -80,7 +93,7 @@ impl SourceControlPane {
         let result = self.result_element(cx);
         if message.starts_with(NOT_A_REPOSITORY) {
             let initializing = self.writes.action.read(cx).pending == Some("init");
-            let busy = self.busy(cx);
+            let busy = self.busy(cx) || self.read_only(cx);
             let actions = v_flex()
                 .items_center()
                 .gap_2()
@@ -156,10 +169,19 @@ impl SourceControlPane {
     }
     fn repository_body(&mut self, status: GitStatus, cx: &mut Context<Self>) -> AnyElement {
         let busy = self.busy(cx);
-        let commit_row = self.commit_row(&status, busy, cx);
+        let selection = self.selection(cx);
+        let scope = self.scope_picker(cx);
+        // Another checkout is only read, so the place that changes things says so and offers the way to change it.
+        let change_area = match &selection {
+            Some(selection) => vec![self.read_only_block(selection, cx)],
+            None => vec![
+                Textarea::new(&self.message).into_any_element(),
+                self.commit_row(&status, busy, cx).into_any_element(),
+            ],
+        };
         let running = self.running_line(cx);
         let result = self.result_element(cx);
-        let sections = self.render_sections(&status, busy, cx);
+        let sections = self.render_sections(&status, busy || selection.is_some(), cx);
         let timeline = self.timeline.as_ref().map(|(_, timeline)| timeline.clone());
         let pull_requests = self
             .pull_requests
@@ -180,8 +202,8 @@ impl SourceControlPane {
                         v_flex()
                             .p_2()
                             .gap_2()
-                            .child(Textarea::new(&self.message))
-                            .child(commit_row)
+                            .children(scope)
+                            .children(change_area)
                             .children(running)
                             .children(result)
                             .children(
@@ -191,6 +213,13 @@ impl SourceControlPane {
                             )
                             .children(sections)
                             .children(timeline)
+                            .children((selection.is_some() && pull_requests.is_some()).then(|| {
+                                div()
+                                    .debug_selector(|| "git-pr-scope".into())
+                                    .text_sm()
+                                    .text_color(muted)
+                                    .child(PR_SCOPE)
+                            }))
                             .children(pull_requests),
                     ),
             )
