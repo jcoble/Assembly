@@ -352,6 +352,7 @@ impl SettingsPage {
 
     /// Sends `machines/<method>` for the row of machine `about`, or the form (`None`); the button that sent it is
     /// `<method>-<name>`, or the form's `set`. Once the backend takes the form's save, the form empties.
+    #[allow(clippy::too_many_arguments)]
     fn machine_call(
         &mut self,
         about: Option<String>,
