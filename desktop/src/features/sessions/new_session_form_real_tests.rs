@@ -1,5 +1,8 @@
 //! Real-backend empty-agent refusal and registry draft selection. Valid first-send ownership is exercised in first_send_tests.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
 use gpui_kit::{Entity, VisualTestContext};
@@ -103,6 +106,15 @@ async fn the_agents_load_again_on_a_machines_change_only_after_a_dropped_load(
 async fn a_project_selection_keeps_the_registry_copy_and_does_not_invent_remote_ownership(cx:&mut TestAppContext) {
     let Some(backend)=RealBackend::start()else{return;};
     let (form,cx)=opened(&backend,cx).await;
+    // The agents load and the location read each write the form's one error and either can land last, so the load's
+    // refusal is caught as it lands.
+    let refused=Rc::new(Cell::new(false));
+    let (changed,mut changes)=unbounded();
+    let (seen,tell)=(refused.clone(),changed.clone());
+    let _heard=cx.update(|_,cx|cx.observe(&form,move|form,cx| {
+        seen.set(seen.get()||form.read(cx).error.contains("unknown machine"));
+        _=tell.unbounded_send(());
+    }));
     let project=serde_json::from_value(serde_json::json!({"id":"actual-copy","machine":"Workbox Test","rootPath":"/srv/app","title":"App","repoKey":null,"pinnedAt":null,"removedAt":null,"createdAt":1,"lastUsedAt":null})).unwrap();
     form.update_in(cx,|form,window,cx|form.fill_project(project,window,cx));
     form.read_with(cx,|form,_| {
@@ -110,6 +122,5 @@ async fn a_project_selection_keeps_the_registry_copy_and_does_not_invent_remote_
         assert_eq!(form.machine.as_deref(),Some("Workbox Test"));
         assert!(form.location_source.is_none());assert!(form.attempt.is_none());
     });
-    settled(&form,cx,|form|!form.loading).await;
-    form.read_with(cx,|form,_|assert!(form.error.contains("unknown machine"),"{}",form.error));
+    until("the agents load's refusal",&mut changes,&changed,||refused.get()).await;
 }
