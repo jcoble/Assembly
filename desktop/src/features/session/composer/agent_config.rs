@@ -21,11 +21,14 @@ pub struct AgentConfig {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigOption {
+    /// ACP 2 sends `configId`; a session saved before it holds `id`.
+    #[serde(rename = "configId", alias = "id")]
     pub id: String,
     pub name: String,
     pub category: Option<String>,
     #[serde(rename = "type")]
     pub kind: String,
+    #[serde(default, deserialize_with = "menu_value")]
     pub current_value: Option<String>,
     #[serde(default)]
     pub options: Vec<ConfigChoice>,
@@ -63,6 +66,14 @@ impl AgentConfig {
             .collect()
     }
 }
+/// A menu's value is text; another kind's (an on/off option's `false`) isn't a menu value, so it reads as none.
+fn menu_value<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(input)? {
+        serde_json::Value::String(value) => Some(value),
+        _ => None,
+    })
+}
+
 impl ConfigOption {
     pub fn model(&self) -> bool {
         self.category.as_deref() == Some("model") || self.id == "model"
