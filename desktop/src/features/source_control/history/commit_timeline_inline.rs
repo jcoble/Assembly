@@ -219,7 +219,7 @@ impl CommitTimeline {
                         };
                         tag.xsmall().rounded_full().max_w(relative(0.4)).truncate().child(pill.label)
                     }))
-                    .child(div().flex_1().min_w_0().truncate().text_sm().child(commit.subject.clone()))
+                    .child(div().flex_1().min_w_0().truncate().child(commit.subject.clone()))
                     .child(div().flex_none().text_sm().text_color(muted).child(byline)),
             )
             .context_menu(move |menu, _, _| {
@@ -301,7 +301,7 @@ impl CommitTimeline {
                                         .flex_1()
                                         .min_w_0()
                                         .gap_1()
-                                        .child(div().min_w_0().truncate().text_sm().child(name.to_string()))
+                                        .child(div().min_w_0().truncate().child(name.to_string()))
                                         .child(div().min_w_0().truncate().text_sm().text_color(muted).child(folder.to_string())),
                                 ),
                         )

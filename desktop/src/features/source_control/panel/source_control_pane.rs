@@ -21,7 +21,7 @@ use gpui_kit::component::dock::{
 };
 use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[path = "source_control_actions.rs"]
 mod actions;
@@ -73,6 +73,8 @@ pub struct SourceControlPane {
     checkout: Option<checkout::PendingCheckout>,
     checkout_task: Option<Task<()>>,
     open_sections: HashSet<Section>,
+    /// Each session's open sections and place in the scroller, for coming back to it.
+    session_views: HashMap<String, (HashSet<Section>, Point<Pixels>)>,
     hovered_section: Option<Section>,
     hovered_file: Option<(Section, String)>,
     selected_file: Option<(Section, String)>,
@@ -214,6 +216,7 @@ impl SourceControlPane {
             checkout: None,
             checkout_task: None,
             open_sections: HashSet::new(),
+            session_views: HashMap::new(),
             hovered_section: None,
             hovered_file: None,
             selected_file: None,

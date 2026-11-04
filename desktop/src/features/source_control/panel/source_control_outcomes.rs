@@ -65,7 +65,17 @@ impl SourceControlPane {
         self.push_branch_menu(cx);
         cx.notify();
     }
-    fn session_changed(&mut self, session: Option<String>, cx: &mut Context<Self>) {
+    pub(super) fn session_changed(&mut self, session: Option<String>, cx: &mut Context<Self>) {
+        if let Some(left) = self.last_session.take() {
+            let open = std::mem::take(&mut self.open_sections);
+            self.session_views.insert(left, (open, self.scroll.offset()));
+        }
+        let (open, place) = session
+            .as_ref()
+            .and_then(|session| self.session_views.remove(session))
+            .unwrap_or_default();
+        self.open_sections = open;
+        self.scroll.set_offset(place);
         self.last_session = session;
         self.result = None;
         self.branches = None;

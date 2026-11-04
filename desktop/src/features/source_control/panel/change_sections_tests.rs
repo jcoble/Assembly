@@ -58,6 +58,14 @@ fn a_blocked_file_action_says_why() {
     assert_eq!(reasons.open, None);
 }
 #[test]
+fn a_file_with_no_folder_to_open_says_so_before_it_says_it_was_deleted() {
+    let reasons = file_reasons(&file("a", ".", "D"), false, false);
+    assert_eq!(
+        reasons.open,
+        Some("This panel is not pointed at a repository folder yet.")
+    );
+}
+#[test]
 fn only_a_file_changed_two_ways_gets_a_change_word() {
     assert_eq!(change_word(&file("a", "M", "D")).as_deref(), Some("M + D"));
     assert_eq!(change_word(&file("a", "M", "M")), None);

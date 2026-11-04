@@ -83,7 +83,7 @@ fn the_pane_says_how_many_files_the_cap_leaves_out() {
         status(json!([file("a", "M", ".")]), 1201)
             .more_line()
             .as_deref(),
-        Some("Showing 1 of 1201 changed files. Commit, stash or ignore files to see the rest.")
+        Some("Showing 1 of 1,201 changed files. Commit, stash or ignore files to see the rest.")
     );
 }
 

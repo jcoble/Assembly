@@ -357,7 +357,7 @@ impl Render for HistoryPane {
                             .border_1()
                             .border_color(border)
                             .rounded(px(5.))
-                            .text_xs()
+                            .text_sm()
                             .text_color(muted)
                             .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
                             .child(path),
@@ -395,7 +395,7 @@ impl Render for HistoryPane {
                 |filter, value| filter.author = value,
             ))
             .child(div().flex_1().min_w_0().max_w(px(320.)).child(Input::new(&self.search).small()))
-            .child(div().flex_none().text_xs().text_color(muted).child(count))
+            .child(div().flex_none().text_sm().text_color(muted).child(count))
             .child(div().flex_1())
             .child(
                 Button::new("history-refresh")

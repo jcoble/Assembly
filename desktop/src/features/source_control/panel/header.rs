@@ -22,7 +22,7 @@ pub(super) fn reasoned_item(
         Some(reason) => PopupMenuItem::element(move |_, cx| {
             v_flex().child(label.clone()).child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(reason.clone()),
             )
@@ -82,7 +82,7 @@ impl SourceControlPane {
                             .gap_1()
                             .child(
                                 Icon::new(IconName::GitBranch)
-                                    .size(px(14.))
+                                    .size(px(12.))
                                     .text_color(muted),
                             )
                             .child(
@@ -90,24 +90,21 @@ impl SourceControlPane {
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
-                                    .text_sm()
                                     .child(status.branch_name()),
                             )
                             .children((behind > 0).then(|| {
                                 div()
-                                    .text_xs()
                                     .text_color(warning)
                                     .child(format!("↓{behind}"))
                             }))
                             .children((ahead > 0).then(|| {
                                 div()
-                                    .text_xs()
                                     .text_color(success)
                                     .child(format!("↑{ahead}"))
                             }))
                             .child(
                                 Icon::new(IconName::ChevronDown)
-                                    .size(px(14.))
+                                    .size(px(12.))
                                     .text_color(muted),
                             ),
                     ),
@@ -121,13 +118,13 @@ impl SourceControlPane {
             .compact()
             .rounded(px(999.))
             .icon(Icon::new(IconName::Ellipsis).size(px(16.)))
-            .tooltip("More actions")
+            .tooltip("More source-control actions")
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu: PopupMenu, window, cx| {
                 let Some(entity) = pane.upgrade() else {
                     return menu;
                 };
                 let (rows, publish) = entity.read(cx).menu_rows(cx);
-                let mut menu = menu.min_w(px(260.));
+                let mut menu = menu.min_w(px(260.)).max_w(px(288.));
                 for row in rows {
                     if row.separated {
                         menu = menu.separator();

@@ -6,11 +6,13 @@ use crate::core::socket::{
     test_wait::until,
 };
 use crate::core::state::{selected_session::SelectedSession, sessions::Sessions};
+use crate::features::source_control::git_status::Section;
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
 use gpui_kit::component::dock::BasePanel as _;
 use gpui_kit::{AppContext as _, EmptyView};
 use serde_json::json;
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 // Pins: g9#26; observes actual window activation, with no timer.
@@ -102,4 +104,25 @@ async fn regaining_focus_refreshes_once_and_a_hidden_pane_reads_nothing(cx: &mut
     cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     assert_eq!(*reads.lock().unwrap(), 2);
+}
+#[gpui::test]
+fn a_session_comes_back_with_its_own_open_sections_and_place(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        SelectedSession::init(cx);
+    });
+    let (pane, visual) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    let at = |y: f32| gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(y));
+    pane.update(visual, |pane, cx| {
+        pane.session_changed(Some("a".into()), cx);
+        pane.open_sections.insert(Section::Staged);
+        pane.scroll.set_offset(at(-40.));
+        pane.session_changed(Some("b".into()), cx);
+        assert!(pane.open_sections.is_empty(), "another session starts folded");
+        assert_eq!(pane.scroll.offset(), at(0.));
+        pane.open_sections.insert(Section::Untracked);
+        pane.session_changed(Some("a".into()), cx);
+        assert_eq!(pane.open_sections, HashSet::from([Section::Staged]));
+        assert_eq!(pane.scroll.offset(), at(-40.));
+    });
 }

@@ -85,7 +85,7 @@ impl PrSection {
         let check = pr.check_line().map(|(text, check)| {
             div()
                 .flex_none()
-                .text_xs()
+                .text_sm()
                 .text_color(tone(check))
                 .child(text)
         });
@@ -126,7 +126,7 @@ impl PrSection {
                             .flex_1()
                             .min_w_0()
                             .child(div().truncate().text_sm().child(title))
-                            .child(div().truncate().text_xs().text_color(muted).child(second)),
+                            .child(div().truncate().text_sm().text_color(muted).child(second)),
                     )
                     .children(check)
                     .child(

@@ -210,7 +210,7 @@ fn graph_cell(row: Option<LaneRow>, width: f32, drawn: usize, cx: &App) -> Div {
         .children(dot)
 }
 fn cell(width: f32, text: String, color: Hsla) -> Div {
-    div().flex_none().w(px(width)).truncate().text_xs().text_color(color).child(text)
+    div().flex_none().w(px(width)).truncate().text_sm().text_color(color).child(text)
 }
 impl CommitTimeline {
     pub(super) fn render_table(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -228,7 +228,7 @@ impl CommitTimeline {
             .border_b_1()
             .border_color(border)
             .bg(surface)
-            .text_xs()
+            .text_sm()
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(muted)
             .child(div().flex_none().w(px(graph)).child("GRAPH"))
@@ -236,7 +236,7 @@ impl CommitTimeline {
             .child(div().flex_none().w(px(DATE_WIDTH)).text_right().child("DATE"))
             .child(div().flex_none().w(px(AUTHOR_WIDTH)).child("AUTHOR"))
             .child(div().flex_none().w(px(HASH_WIDTH)).child("HASH"));
-        let notice = |text: String, color: Hsla| div().px(px(10.)).py(px(12.)).text_xs().text_color(color).child(text);
+        let notice = |text: String, color: Hsla| div().px(px(10.)).py(px(12.)).text_sm().text_color(color).child(text);
         let body = if self.history.commits.is_empty() {
             let (line, bad) = empty_line(self.error.as_deref(), self.reading);
             notice(line, if bad { danger } else { muted }).into_any_element()
@@ -305,7 +305,6 @@ impl CommitTimeline {
                         div()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(13.))
                             .italic()
                             .text_color(muted)
                             .child("Uncommitted Changes"),
@@ -373,7 +372,7 @@ impl CommitTimeline {
                     .overflow_hidden()
                     .gap(px(5.))
                     .children(pills)
-                    .child(div().min_w_0().truncate().text_size(px(13.)).child(subject)),
+                    .child(div().min_w_0().truncate().child(subject)),
             )
             .child(
                 div()
@@ -382,7 +381,7 @@ impl CommitTimeline {
                     .w(px(DATE_WIDTH))
                     .truncate()
                     .text_right()
-                    .text_xs()
+                    .text_sm()
                     .text_color(muted)
                     .tooltip(move |window, cx| Tooltip::new(age.clone()).build(window, cx))
                     .child(date),
@@ -427,7 +426,7 @@ impl CommitTimeline {
             theme.secondary,
         );
         let merge = commit.parents.len() > 1;
-        let note = |text: String, color: Hsla| div().py(px(3.)).pr(px(COLUMN_GAP)).text_xs().text_color(color).child(text);
+        let note = |text: String, color: Hsla| div().py(px(3.)).pr(px(COLUMN_GAP)).text_sm().text_color(color).child(text);
         let files = self.files.get(&commit.sha);
         let failed = matches!(files, Some(CommitFiles::Failed(_)));
         let mut block = v_flex()
@@ -438,7 +437,7 @@ impl CommitTimeline {
             .border_b_1()
             .border_color(border)
             .when(!commit.body.trim().is_empty(), |block| {
-                block.child(div().pr(px(COLUMN_GAP)).py(px(3.)).text_sm().child(commit.body.trim().to_string()))
+                block.child(div().pr(px(COLUMN_GAP)).py(px(3.)).child(commit.body.trim().to_string()))
             });
         if let Some(sentence) = files_sentence(files, merge) {
             return block
@@ -506,9 +505,9 @@ impl CommitTimeline {
                         window.dispatch_action(Box::new(open.clone()), cx);
                         cx.notify();
                     }))
-                    .child(div().flex_none().text_sm().child(name.to_string()))
+                    .child(div().flex_none().child(name.to_string()))
                     .when(!folder.is_empty(), |row| {
-                        row.child(div().min_w_0().truncate().text_xs().text_color(muted).child(folder.to_string()))
+                        row.child(div().min_w_0().truncate().text_sm().text_color(muted).child(folder.to_string()))
                     })
                     .child(
                         div()
@@ -516,7 +515,7 @@ impl CommitTimeline {
                             .flex_none()
                             .w(px(12.))
                             .text_center()
-                            .text_xs()
+                            .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(super::inline::letter_tone(file.letter, cx))
                             .child(file.letter.to_string()),
@@ -551,7 +550,7 @@ impl CommitTimeline {
         v_flex()
             .w_full()
             .children(self.error.clone().map(|error| {
-                div().px(px(COLUMN_GAP)).pt_2().text_xs().text_color(danger).child(error)
+                div().px(px(COLUMN_GAP)).pt_2().text_sm().text_color(danger).child(error)
             }))
             .child(
                 h_flex()
@@ -559,7 +558,7 @@ impl CommitTimeline {
                     .px(px(COLUMN_GAP))
                     .pt_2()
                     .pb_3()
-                    .child(div().min_w_0().text_xs().text_color(muted).child(sentence))
+                    .child(div().min_w_0().text_sm().text_color(muted).child(sentence))
                     .child(
                         Button::new("history-more")
                             .ghost()

@@ -8,17 +8,35 @@ use crate::features::source_control::commit_box::{
 };
 use crate::features::source_control::git_status::GitStatus;
 use crate::features::source_control::result_line::result_line;
+use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Textarea;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 const NOT_A_REPOSITORY: &str = "This folder isn't a git repository yet.";
 const AMEND_TIP: &str = "Rewrite the last commit instead of adding one. Never do this to a commit that is already pushed and shared.";
 
+/// What an empty panel shows: one icon, a short title, a sentence or two, and at most one thing to press.
+fn empty_state(title: &'static str, body: &'static str, actions: Option<AnyElement>, cx: &App) -> AnyElement {
+    let muted = cx.theme().muted_foreground;
+    v_flex()
+        .w_full()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .px_4()
+        .py_8()
+        .text_center()
+        .child(Icon::new(IconName::GitBranch).size(px(24.)).text_color(muted))
+        .child(div().max_w(px(300.)).font_weight(FontWeight::MEDIUM).child(title))
+        .child(div().max_w(px(340.)).text_sm().text_color(muted).child(body))
+        .children(actions)
+        .into_any_element()
+}
 impl Render for SourceControlPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.render_header(cx);
@@ -33,9 +51,10 @@ impl Render for SourceControlPane {
 impl SourceControlPane {
     fn render_body(&mut self, cx: &mut Context<Self>) -> AnyElement {
         match self.read.read(cx).shown().clone() {
-            Shown::NoSession => self.note(
+            Shown::NoSession => empty_state(
                 "No project selected yet",
                 "Pick a session and this panel shows that folder's source control.",
+                None,
                 cx,
             ),
             Shown::Reading => div()
@@ -47,19 +66,6 @@ impl SourceControlPane {
             Shown::Failed(message) => self.failure_body(message, cx),
             Shown::Read(status) => self.repository_body(status, cx),
         }
-    }
-    fn note(&self, title: &'static str, text: &'static str, cx: &App) -> AnyElement {
-        v_flex()
-            .px_3()
-            .gap_1()
-            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(title))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(text),
-            )
-            .into_any_element()
     }
     fn try_again(&self, cx: &mut Context<Self>) -> Button {
         Button::new("source-control-retry")
@@ -75,18 +81,13 @@ impl SourceControlPane {
         if message.starts_with(NOT_A_REPOSITORY) {
             let initializing = self.writes.action.read(cx).pending == Some("init");
             let busy = self.busy(cx);
-            return v_flex()
-                .px_3()
+            let actions = v_flex()
+                .items_center()
                 .gap_2()
-                .items_start()
-                .child(self.note(
-                    "This folder is not a git work tree",
-                    "It is a plain folder or a bare repository, so there are no changes to show.",
-                    cx,
-                ))
                 .child(
                     Button::new("git-initialize")
                         .primary()
+                        .small()
                         .label(if initializing {
                             "Initializing…"
                         } else {
@@ -97,6 +98,12 @@ impl SourceControlPane {
                 )
                 .children(result)
                 .into_any_element();
+            return empty_state(
+                "This folder is not a git work tree",
+                "It is a plain folder or a bare repository, so there are no changes to show.",
+                Some(actions),
+                cx,
+            );
         }
         let machine = self.read.read(cx).unreachable_machine().map(String::from);
         let danger = cx.theme().danger;
@@ -192,6 +199,7 @@ impl SourceControlPane {
         let message = self.message.read(cx).value().to_string();
         let can = can_commit(Some(status), &message, self.amend, busy);
         let commit = Button::new("git-commit")
+            .small()
             .label(commit_label(self.amend))
             .rounded(px(999.))
             .flex_1()
@@ -204,7 +212,7 @@ impl SourceControlPane {
             commit.secondary()
         };
         h_flex()
-            .gap_1()
+            .gap_2()
             .child(
                 Switch::new("git-amend")
                     .small()
@@ -228,6 +236,7 @@ impl SourceControlPane {
             .child(
                 Button::new("git-stage-all")
                     .secondary()
+                    .small()
                     .label("Stage All")
                     .rounded(px(999.))
                     .flex_1()
