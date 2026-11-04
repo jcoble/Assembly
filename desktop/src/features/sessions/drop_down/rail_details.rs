@@ -5,7 +5,7 @@ use gpui_kit::component::{ActiveTheme as _,Sizable as _,Size,v_flex};
 use gpui_kit::component::tab::{Tab,TabBar};
 use crate::core::theme::text::{TextRole,TextRoleExt as _};
 use crate::core::engine::{EngineFeed,EngineChanged,EngineKey,EngineScope,SessionKey,engine_items::SessionItem};
-use super::need_row::NeedRow;
+use crate::core::ui::ask::need_row::NeedRow;
 
 pub struct RailDetails {
     /// Which tab shows. Both stay alive while the row is open, since the body is as tall as the taller of them.
@@ -36,7 +36,7 @@ impl RailDetails {
         self.held.retain(|key,_|keys.contains(key));self.needs.clear();
         for need in facts {
             if !self.held.contains_key(&need.key) {
-                if let Ok(row)=NeedRow::create_for(self.parent.clone(),need.key.clone(),EngineScope{machine:need.key.machine.clone(),topic:"needs_me".into(),key:None},self.feed.clone(),window,cx) {
+                if let Ok(row)=NeedRow::create_for(self.parent.clone(),need.key.clone(),EngineScope{machine:need.key.machine.clone(),topic:"needs_me".into(),key:None},self.feed.clone(),"rail",window,cx) {
                     self.held.insert(need.key.clone(),row);
                 }
             }

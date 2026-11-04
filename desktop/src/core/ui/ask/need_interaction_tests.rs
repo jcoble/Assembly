@@ -44,7 +44,7 @@ async fn conflict_uncertainty_and_source_refusal_keep_the_draft_and_never_replay
     let(mut needs,_sessions)=cx.update(|cx|feed.update(cx,|feed,cx|(Some(feed.watch(scope.clone(),cx).unwrap()),feed.watch(sessions.clone(),cx).unwrap())));
     until("coherent question and epoch",&mut changes,&changed,||cx.update(|cx|feed.read(cx).loaded(&scope)&&feed.read(cx).loaded(&sessions))).await;
     let key=EngineKey{machine:"owner".into(),kind:"needs_me".into(),id:"question".into()};
-    let(row,visual)=cx.add_window_view(|window,cx|{let need=feed.read(cx).need(&key).unwrap();NeedRow::build(key.clone(),scope.clone(),feed.clone(),need,window,cx)});
+    let(row,visual)=cx.add_window_view(|window,cx|{let need=feed.read(cx).need(&key).unwrap();NeedRow::build(key.clone(),scope.clone(),feed.clone(),"board",need,window,cx)});
     let updated=changed.clone();let _row=visual.update(|_,cx|cx.observe(&row,move|_,_|{let _=updated.unbounded_send(());}));
     row.update_in(visual,|row,window,cx|{row.open(window,cx);row.text.update(cx,|text,cx|text.set_value("  exact draft\n",window,cx));row.answer(NeedAnswer::Answer(json!(row.text.read(cx).value().to_string())),cx);});
     until("held command",&mut changes,&changed,||state.lock().unwrap().held.is_some()).await;
@@ -64,7 +64,7 @@ async fn conflict_uncertainty_and_source_refusal_keep_the_draft_and_never_replay
     row.update_in(visual,|row,window,cx|{row.open(window,cx);row.answer(NeedAnswer::Answer(json!(row.text.read(cx).value().to_string())),cx);});
     until("actual answer settles here",&mut changes,&changed,||row.read_with(visual,|row,_|matches!(row.state,NeedRowState::Answered{here:true,..}))).await;
     let saved=state.lock().unwrap();let commands=&saved.commands;assert_eq!(commands.len(),3);
-    assert!(commands.iter().all(|command|command["machine"]=="owner"&&command["surface"]=="rail"&&command["epoch"]==9&&command["command"]["answer"]=="  exact draft\n"));
+    assert!(commands.iter().all(|command|command["machine"]=="owner"&&command["surface"]=="board"&&command["epoch"]==9&&command["command"]["answer"]=="  exact draft\n"));
     assert_eq!(commands[0]["expectedVersion"],3);assert_eq!(commands[1]["expectedVersion"],4);assert_eq!(commands[2]["expectedVersion"],4);
     drop(needs);
 }

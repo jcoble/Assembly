@@ -45,29 +45,29 @@ pub(super) fn validate_scope(key:&EngineKey,scope:&EngineScope)->Result<(),Engin
     else{Err(EngineRefusal{code:"need_scope_mismatch".into(),message:"The question does not belong to this machine-wide needs view.".into()})}
 }
 pub struct NeedRow {
-    key:EngineKey,scope:EngineScope,feed:Entity<EngineFeed>,viewed:Option<SessionKey>,need:NeedItem,state:NeedRowState,available:bool,
+    key:EngineKey,scope:EngineScope,feed:Entity<EngineFeed>,surface:&'static str,viewed:Option<SessionKey>,need:NeedItem,state:NeedRowState,available:bool,
     text:Entity<TextareaState>,form:Option<AskForm>,serial:u64,accepted_here:bool,reconciled:bool,
     _changed:Subscription,_send:Option<Task<()>>,_read:Option<Task<()>>,
 }
 impl NeedRow {
-    pub fn create(key:EngineKey,scope:EngineScope,feed:Entity<EngineFeed>,window:&mut Window,cx:&mut App)->Result<Entity<Self>,EngineRefusal> {
+    pub fn create(key:EngineKey,scope:EngineScope,feed:Entity<EngineFeed>,surface:&'static str,window:&mut Window,cx:&mut App)->Result<Entity<Self>,EngineRefusal> {
         validate_scope(&key,&scope)?;
         if !feed.read(cx).loaded(&scope){return Err(EngineRefusal{code:"need_source_unavailable".into(),message:"The owning needs view is not coherent yet.".into()});}
         let need=feed.read(cx).need(&key).ok_or_else(||EngineRefusal{code:"need_unavailable".into(),message:"The current question is unavailable.".into()})?;
-        Ok(cx.new(|cx|Self::build(key,scope,feed,need,window,cx)))
+        Ok(cx.new(|cx|Self::build(key,scope,feed,surface,need,window,cx)))
     }
-    pub(super) fn create_for(viewed:SessionKey,key:EngineKey,scope:EngineScope,feed:Entity<EngineFeed>,window:&mut Window,cx:&mut App)->Result<Entity<Self>,EngineRefusal> {
-        let row=Self::create(key,scope,feed,window,cx)?;
+    pub fn create_for(viewed:SessionKey,key:EngineKey,scope:EngineScope,feed:Entity<EngineFeed>,surface:&'static str,window:&mut Window,cx:&mut App)->Result<Entity<Self>,EngineRefusal> {
+        let row=Self::create(key,scope,feed,surface,window,cx)?;
         row.update(cx,|row,_|row.viewed=Some(viewed));
         Ok(row)
     }
-    fn build(key:EngineKey,scope:EngineScope,feed:Entity<EngineFeed>,need:NeedItem,window:&mut Window,cx:&mut Context<Self>)->Self {
+    fn build(key:EngineKey,scope:EngineScope,feed:Entity<EngineFeed>,surface:&'static str,need:NeedItem,window:&mut Window,cx:&mut Context<Self>)->Self {
         let changed=cx.subscribe(&feed,|row,_,event:&EngineChanged,cx| {
             if event.keys.contains(&row.key)||event.sessions.contains(&row.need.session)||event.scopes.contains(&row.scope){row.refresh(cx);}
         });
-        let text=cx.new(|cx|TextareaState::new(window,cx).auto_grow(1,6).submit_on_enter(true).placeholder("Your answer"));
+        let text=cx.new(|cx|TextareaState::new(window,cx).auto_grow(1,6).submit_on_enter(true).placeholder("Type your answer"));
         let state=if need.state=="open"{NeedRowState::Idle}else{settled_state(&need,false)};
-        Self{key,scope,feed,viewed:None,need,state,available:true,text,form:None,serial:0,accepted_here:false,reconciled:true,_changed:changed,_send:None,_read:None}
+        Self{key,scope,feed,surface,viewed:None,need,state,available:true,text,form:None,serial:0,accepted_here:false,reconciled:true,_changed:changed,_send:None,_read:None}
     }
     fn refresh(&mut self,cx:&mut Context<Self>) {
         let next=self.feed.read(cx).need(&self.key);
@@ -114,7 +114,7 @@ impl NeedRow {
             NeedAnswer::Dismiss=>NeedAnswer::Dismiss,
         };
         self.serial+=1;let serial=self.serial;self.accepted_here=false;self.reconciled=false;self.state=NeedRowState::Sending;
-        let call=self.feed.update(cx,|feed,cx|feed.resolve_need(self.key.clone(),answer,Some("rail"),cx));
+        let call=self.feed.update(cx,|feed,cx|feed.resolve_need(self.key.clone(),answer,Some(self.surface),cx));
         self._send=Some(cx.spawn(async move|row,cx| {
             let result=call.await;
             let _=row.update(cx,|row,cx| {
