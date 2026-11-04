@@ -1,15 +1,14 @@
 import { existsSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
-import { git, onDefault } from './worktree-state.ts';
+import { git, gitOperation, onDefault } from './worktree-state.ts';
 import type { WorktreeRecord } from './worktree-state.ts';
 
 const regenerable = new Set(['target', 'node_modules', 'bin', 'obj', 'dist', 'build', '.build', '.next', '.svelte-kit', '__pycache__', '.turbo', '.cache']);
 const gitPath = (path: string, name: string) => git(path, 'rev-parse', '--path-format=absolute', '--git-path', name);
 export function checkRemovalSafety(path: string, row: WorktreeRecord) {
   if (row.flag) throw Error('Worktree flagged: ' + row.flag);
-  for (const name of ['MERGE_HEAD', 'rebase-merge', 'rebase-apply', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'BISECT_START', 'BISECT_LOG', 'sequencer']) {
-    if (existsSync(gitPath(path, name))) throw Error('Git operation in progress: ' + name);
-  }
+  const operation = gitOperation(path);
+  if (operation) throw Error('Git operation in progress: ' + operation);
   const branch = git(path, 'symbolic-ref', '--short', 'HEAD');
   if (branch !== row.branch) throw Error('Worktree branch differs from lease record; kept.');
   if (git(path, 'stash', 'list', '--format=%s').split('\n').some(subject => subject.startsWith('WIP on ' + branch + ':') || subject.startsWith('On ' + branch + ':'))) throw Error('Unpushed stash exists; worktree kept.');

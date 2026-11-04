@@ -1,9 +1,9 @@
 import { lstatSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { git, tryGit, defaultBranch, onDefault, assertExclusive, withWorktree, mutateRegistry } from './worktree-state.ts';
+import { git, tryGit, defaultBranch, gitOperation, onDefault, assertExclusive, withWorktree, mutateRegistry } from './worktree-state.ts';
 import { canonical, inside } from './guard.ts';
 
-export type BackupResult = { status: 'pushed' | 'clean' | 'skipped' | 'failed'; reason?: string; kept: string[] };
+export type BackupResult = { status: 'pushed' | 'clean' | 'skipped' | 'failed'; reason?: string; kept: string[]; transient?: boolean };
 const forbidden = /(?:^|\/)(?:\.env[^/]*|id_rsa[^/]*|[^/]*credentials[^/]*|[^/]*\.(?:pem|key|db|sqlite[^/]*))$/i;
 function containsSecret(diff: string) {
   if (/^GIT binary patch$/m.test(diff)) throw Error('Secret scanner cannot inspect an opaque binary diff; no commit or push.');
@@ -19,7 +19,8 @@ export function backupUnderLock(path: string, owner?: string, verifyOnly = false
   let phase = 'preflight';
   try {
     if (!inside(path)) return { status: 'skipped', reason: 'Outside managed worktree root.', kept: [] };
-    assertExclusive(path, owner);
+    // Refusals that clear on their own must not flag the worktree, because a flag blocks later sweeps.
+    try { assertExclusive(path, owner, true); } catch (error) { return { status: 'skipped', reason: (error as Error).message, kept: [], transient: true }; }
     if (git(path, 'rev-parse', '--is-bare-repository') !== 'false') throw Error('Bare repository; kept.');
     const main = git(path, 'worktree', 'list', '--porcelain').split('\n')[0].slice(9);
     if (canonical(main) === path) return { status: 'skipped', reason: 'Main checkout; kept.', kept: [] };
@@ -34,6 +35,8 @@ export function backupUnderLock(path: string, owner?: string, verifyOnly = false
       try { return lstatSync(join(path, file)).size > 20 * 1024 * 1024; } catch (error: any) { if (error.code === 'ENOENT') return false; throw error; }
     });
     if (kept.length) return { status: 'skipped', reason: 'Sensitive filename or large file; nothing committed or pushed.', kept };
+    const operation = gitOperation(path);
+    if (operation) return { status: 'skipped', reason: 'Git operation in progress: ' + operation + '; nothing committed or pushed.', kept: [], transient: true };
     git(path, 'add', '-A', '--', '.');
     phase = 'scan';
     if (containsSecret(git(path, 'diff', '--cached', '--no-ext-diff', '--no-textconv', '--binary', '--'))) return { status: 'skipped', reason: 'Secret scanner found a possible credential; no commit or push.', kept: [] };
@@ -43,6 +46,8 @@ export function backupUnderLock(path: string, owner?: string, verifyOnly = false
     const history = git(path, 'log', '--format=', '-p', '--binary', '--no-ext-diff', '--no-textconv', base + '..HEAD');
     // Reuse the same bounded signature scan on history without executing any diff content.
     if (containsSecret(history)) return { status: 'skipped', reason: 'Secret scanner found a credential in unpushed history.', kept: [] };
+    const historical = git(path, 'log', '-z', '--name-only', '--format=', base + '..HEAD').split('\0').filter(file => forbidden.test(file.trim()));
+    if (historical.length) return { status: 'skipped', reason: 'Sensitive filename in unpushed history; nothing pushed.', kept: [...new Set(historical)] };
     if (verifyOnly) return { status: 'clean', kept: [] };
     // Nothing is unique to this worktree, so a backup branch would only clutter the remote.
     if (!tryGit(path, 'status', '--porcelain') && onDefault(path)) {
@@ -74,7 +79,7 @@ export function backupWorktree(path: string, owner?: string): BackupResult {
   try {
     return withWorktree(path, () => {
       const result = backupUnderLock(path, owner);
-      if (result.status === 'skipped' || result.status === 'failed') mutateRegistry(rows => { if (rows[path]) rows[path].flag = result.reason; });
+      if (!result.transient && (result.status === 'skipped' || result.status === 'failed')) mutateRegistry(rows => { if (rows[path]) rows[path].flag = result.reason; });
       return result;
     });
   } catch (error) { return { status: 'failed', reason: (error as Error).message, kept: [] }; }

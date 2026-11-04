@@ -55,11 +55,24 @@ export function liveCwds(): { pid: number; path: string }[] {
   }
   return result;
 }
-export function assertExclusive(path: string, owner?: string) {
+const operations = ['MERGE_HEAD', 'rebase-merge', 'rebase-apply', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'BISECT_START', 'BISECT_LOG', 'sequencer'];
+export function gitOperation(path: string) {
+  const running = operations.find(name => existsSync(git(path, 'rev-parse', '--path-format=absolute', '--git-path', name)));
+  return running || (git(path, 'ls-files', '--unmerged') ? 'unmerged files' : '');
+}
+function ancestors() {
+  const found = new Set<number>();
+  try {
+    for (let pid = process.ppid; pid > 1 && !found.has(pid); pid = Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8', timeout: 500, stdio: ['ignore', 'pipe', 'ignore'] }).trim())) found.add(pid);
+  } catch { /* Unknown ancestry leaves the remaining processes counted as live. */ }
+  return found;
+}
+export function assertExclusive(path: string, owner?: string, allowOwnProcesses = false) {
   const row = registry()[canonical(path)];
   if (!row) throw Error('Legacy or unowned worktree; report only.');
   if (Object.keys(row.leases).some(id => id !== owner)) throw Error('Another session has a lease; worktree kept.');
-  const live = liveCwds().filter(p => canonical(p.path) === canonical(path) || inside(p.path, path));
+  let live = liveCwds().filter(p => canonical(p.path) === canonical(path) || inside(p.path, path));
+  if (live.length && allowOwnProcesses) { const own = ancestors(); live = live.filter(p => !own.has(p.pid)); }
   if (live.length) throw Error('Live process cwd inside worktree; kept.');
   return row;
 }

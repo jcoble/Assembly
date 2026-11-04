@@ -522,6 +522,39 @@ test('session_end_releases_only_its_own_leases_outside_cwd', t => {
   assert.deepEqual(rows[mine].leases, {}); assert.equal(remoteTip(f, 'mine'), f.git(mine, 'rev-parse', 'HEAD'));
   assert.ok(rows[theirs].leases['claude:other']); assert.equal(remoteTip(f, 'theirs'), '');
 });
+test('backup_refuses_sensitive_file_anywhere_in_unpushed_history', t => {
+  const f = setup(t), path = f.create();
+  writeFileSync(join(path, '.env'), 'x=1'); f.git(path, 'add', '.'); f.git(path, 'commit', '-m', 'add');
+  f.git(path, 'rm', '.env'); f.git(path, 'commit', '-m', 'remove');
+  const result = JSON.parse(f.run(['backup', path]).stdout);
+  assert.equal(result.status, 'skipped'); assert.match(result.reason, /history/); assert.equal(remoteTip(f, 'tsk-1666-fixture'), '');
+});
+test('backup_refuses_during_unresolved_merge_without_flagging', t => {
+  const f = setup(t), path = f.create();
+  writeFileSync(join(path, 'README'), 'branch\n'); f.git(path, 'commit', '-am', 'branch side');
+  writeFileSync(join(f.repo, 'README'), 'main\n'); f.git(f.repo, 'commit', '-am', 'main side');
+  assert.notEqual(spawnSync('git', ['-C', path, 'merge', 'main'], { env: f.env }).status, 0);
+  const head = f.git(path, 'rev-parse', 'HEAD');
+  const result = JSON.parse(f.run(['backup', path]).stdout);
+  assert.equal(result.status, 'skipped'); assert.match(result.reason, /Git operation/);
+  assert.equal(f.git(path, 'rev-parse', 'HEAD'), head); assert.match(f.git(path, 'status', '--porcelain'), /^UU README/m);
+  assert.equal(remoteTip(f, 'tsk-1666-fixture'), '');
+  assert.equal(JSON.parse(readFileSync(f.registry, 'utf8'))[path].flag, undefined);
+});
+test('session_end_backs_up_when_its_own_process_is_in_the_worktree', t => {
+  const f = setup(t), path = hookIn(f, { hook_event_name: 'WorktreeCreate', name: 'own-cwd' });
+  writeFileSync(join(path, 'work'), 'safe'); writeFileSync(f.processes, `p${process.pid}\nn${path}\n`);
+  hookIn(f, { hook_event_name: 'SessionEnd', cwd: path });
+  assert.equal(remoteTip(f, 'own-cwd'), f.git(path, 'rev-parse', 'HEAD'));
+  assert.equal(JSON.parse(readFileSync(f.registry, 'utf8'))[path].flag, undefined);
+  assert.match(f.run(['sweep']).stdout, /Live process/); assert.ok(existsSync(path));
+});
+test('other_live_process_blocks_backup_without_a_lasting_flag', t => {
+  const f = setup(t), path = hookIn(f, { hook_event_name: 'WorktreeCreate', name: 'other-cwd' });
+  writeFileSync(join(path, 'work'), 'safe'); writeFileSync(f.processes, `p1\nn${path}\n`);
+  hookIn(f, { hook_event_name: 'SessionEnd', cwd: path });
+  assert.equal(remoteTip(f, 'other-cwd'), ''); assert.equal(JSON.parse(readFileSync(f.registry, 'utf8'))[path].flag, undefined);
+});
 test('subagent_stop_backs_up_exclusive_worktree', t => {
   const f = setup(t), path = f.create(); f.run(['lease', path, 'codex:child']); writeFileSync(join(path, 'work'), 'safe');
   const result = spawnSync(process.execPath, [new URL('./cli.ts', import.meta.url).pathname, 'hook', 'codex'], {
