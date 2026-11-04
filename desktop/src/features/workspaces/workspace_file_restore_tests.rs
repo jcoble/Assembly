@@ -1,6 +1,7 @@
 //! Opening a session whose saved workspace has an active file, through the real file and center tab codecs.
 use super::{
-    SocketClient, WorkspaceActivated, WorkspaceCoordinator, WorkspaceKey, WorkspaceTarget,
+    SocketClient, WorkspaceActivated, WorkspaceCoordinator, WorkspaceKey, WorkspaceRefused,
+    WorkspaceTarget,
 };
 use crate::core::socket::{
     endpoint::Endpoint,
@@ -19,7 +20,9 @@ use crate::features::workspaces::top_tabs_codec::TopTabsCodec;
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
 use gpui_kit::component::dock::{DockArea, DockPlacement, PaneRef};
-use gpui_kit::{App, AppContext as _, Context, Entity, IntoElement, Render, Window, div};
+use gpui_kit::{
+    App, AppContext as _, Context, Entity, IntoElement, Render, Subscription, Window, div,
+};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -96,12 +99,20 @@ fn start(
     });
     (backend, methods, coordinator)
 }
-fn add_dock(window: &mut Window, cx: &mut App) {
+/// The center panes hold the dock weakly, so the test keeps it the way the frame does.
+fn add_dock(window: &mut Window, cx: &mut App) -> Entity<DockArea> {
     let dock = cx.new(|cx| DockArea::new("workspace-file-restore", Some(2), window, cx));
     CenterPanes::init(&dock, cx);
     dock.update(cx, |dock, cx| {
         dock.load(default_state(), window, cx).unwrap()
     });
+    dock
+}
+/// A refused open never activates, so the test fails with its reason instead of waiting for an activation.
+fn fail_on_refusal(coordinator: &Entity<WorkspaceCoordinator>, cx: &mut App) -> Subscription {
+    cx.subscribe(coordinator, |_, event: &WorkspaceRefused, _| {
+        panic!("the workspace open was refused: {}", event.reason)
+    })
 }
 fn shown_center_tab(cx: &App) -> String {
     let dock = CenterPanes::dock(cx).unwrap();
@@ -127,7 +138,8 @@ async fn opening_a_session_with_a_saved_active_file_restores_it_and_keeps_the_sa
 ) {
     let (_backend, methods, coordinator) = start(cx);
     let (_, cx) = cx.add_window_view(|_, _| Host);
-    cx.update(add_dock);
+    let _dock = cx.update(add_dock);
+    let _refused = cx.update(|_, cx| fail_on_refusal(&coordinator, cx));
     let (sent, mut activated) = unbounded();
     let _heard = cx.update(|_, cx| {
         cx.subscribe(&coordinator, move |_, event: &WorkspaceActivated, _| {
@@ -170,7 +182,8 @@ async fn a_transcript_refuses_a_persons_file_but_the_next_checkout_restores_its_
 ) {
     let (_backend, _methods, coordinator) = start(cx);
     let (_, cx) = cx.add_window_view(|_, _| Host);
-    cx.update(add_dock);
+    let _dock = cx.update(add_dock);
+    let _refused = cx.update(|_, cx| fail_on_refusal(&coordinator, cx));
     let (sent, mut activated) = unbounded();
     let _heard = cx.update(|_, cx| {
         cx.subscribe(&coordinator, move |_, event: &WorkspaceActivated, _| {
