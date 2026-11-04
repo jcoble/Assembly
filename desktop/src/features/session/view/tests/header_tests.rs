@@ -105,13 +105,14 @@ fn with_no_session_open_the_title_row_keeps_the_sessions_button(cx: &mut TestApp
 
 #[test]
 fn a_session_in_no_project_says_so_instead_of_naming_its_folder() {
-    let item = |project: Option<&str>| -> SessionItem {
+    let item = |project: Option<&str>, bare: bool| -> SessionItem {
         serde_json::from_value(
             json!({ "sessionId": "s", "agent": "claude", "repoUrl": "/home/me/assembly-bare",
-            "projectId": project, "updatedAt": 1 }),
+            "projectId": project, "isBare": bare, "updatedAt": 1 }),
         )
         .expect("a session item")
     };
-    assert_eq!(project_name(&item(None)), "No project");
-    assert_eq!(project_name(&item(Some("p1"))), "assembly-bare");
+    assert_eq!(project_name(&item(None, true)), "No project");
+    assert_eq!(project_name(&item(None, false)), "assembly-bare");
+    assert_eq!(project_name(&item(Some("p1"), false)), "assembly-bare");
 }

@@ -285,7 +285,7 @@ internal sealed class SessionsFeature : IFeature
     internal sealed record ByClientReply(string? SessionId, string? CheckoutState, string? State, string? CheckoutOperationId = null, string? ProjectId = null, string? AcceptedRoot = null, CreatedSessionFacts? Facts = null);
 
     internal sealed record CreatedSessionFacts(string Machine, string Agent, string? ParentSessionId,
-        string Folder, bool ManagedCheckout, string RepoUrl);
+        string Folder, bool ManagedCheckout, string RepoUrl, bool IsBare = false);
 
     internal sealed record Created(string SessionId, string? CheckoutOperationId = null, string? ProjectId = null, string? AcceptedRoot = null, CreatedSessionFacts? Facts = null);
 
