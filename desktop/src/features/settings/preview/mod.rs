@@ -13,7 +13,9 @@ mod row;
 mod section;
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use crate::inline_field::{FieldValue, InlineField, SaveRequested};
+use crate::inline_field::{
+    FieldValue, FormFailure, FormSaveRequested, FormValues, InlineField, InlineForm,
+};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::group_box::GroupBoxVariant;
 use gpui_kit::component::input::InputState;
@@ -25,8 +27,8 @@ use model::Connections;
 use std::collections::{HashMap, HashSet};
 
 struct ProfileFields {
-    fields: [Entity<InlineField>; 2],
-    _subscriptions: Vec<Subscription>,
+    form: Entity<InlineForm>,
+    _saved: Subscription,
 }
 
 /// Presentation fixtures only: never opens a backend, socket, database or file.
@@ -44,6 +46,8 @@ pub struct SettingsPreview {
     show_install: bool,
     notice: String,
     context_machine: Option<String>,
+    /// So a click on the page's blank space leaves the inline field being edited.
+    surface: FocusHandle,
 }
 
 impl SettingsPreview {
@@ -64,6 +68,7 @@ impl SettingsPreview {
             show_install: false,
             notice: String::new(),
             context_machine: None,
+            surface: cx.focus_handle(),
         };
         for index in 0..view.connections.machines.len() {
             view.add_inline_profile(index, window, cx);
@@ -106,68 +111,62 @@ impl SettingsPreview {
     fn add_inline_profile(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let machine = &self.connections.machines[index];
         let id = machine.id;
-        let fields = [
-            cx.new(|cx| InlineField::text("Name", machine.name.clone(), window, cx)),
-            cx.new(|cx| {
-                InlineField::text("SSH destination", machine.destination.clone(), window, cx)
-            }),
-        ];
-        let subscriptions = fields
-            .iter()
-            .enumerate()
-            .map(|(kind, field)| {
-                cx.subscribe_in(
-                    field,
-                    window,
-                    move |view, field, save: &SaveRequested, window, cx| {
-                        let result = (|| {
-                            let FieldValue::Text(value) = &save.value else {
-                                return Err("Expected text.".to_owned());
-                            };
-                            let index =
-                                view.connections
-                                    .machines
-                                    .iter()
-                                    .position(|m| m.id == id)
-                                    .ok_or_else(|| "This sample profile was removed.".to_owned())?;
-                            let current = &view.connections.machines[index];
-                            let (name, destination) = if kind == 0 {
-                                (value.clone(), current.destination.clone())
-                            } else {
-                                (current.name.clone(), value.clone())
-                            };
-                            view.connections
-                                .save(&name, &destination, Some(index))
-                                .map_err(str::to_owned)?;
-                            let saved = &view.connections.machines[index];
-                            Ok(FieldValue::Text(if kind == 0 {
-                                saved.name.clone()
-                            } else {
-                                saved.destination.clone()
-                            }))
-                        })();
-                        if result.is_ok() {
-                            view.notice =
-                                "Sample profile updated in memory. No machine was contacted."
-                                    .into();
-                        }
-                        field.update(cx, |field, cx| {
-                            let request: crate::inline_field::SaveRequest = save.request;
-                            let result = result.map_err(crate::inline_field::SaveFailure::Refused);
-                            field.complete_save(request, result, window, cx);
-                        });
-                        cx.notify();
-                    },
-                )
-            })
-            .collect();
+        let (name, destination) = (machine.name.clone(), machine.destination.clone());
+        let name = cx.new(|cx| InlineField::text("Name", name, window, cx).in_form());
+        let destination =
+            cx.new(|cx| InlineField::text("SSH destination", destination, window, cx).in_form());
+        let form = cx.new(|cx| {
+            InlineForm::new(
+                vec![
+                    ("name".into(), name),
+                    ("destination".into(), destination),
+                ],
+                cx,
+            )
+        });
+        let saved = cx.subscribe_in(
+            &form,
+            window,
+            move |view, form, save: &FormSaveRequested, window, cx| {
+                let result = view.save_profile(id, &save.values);
+                if result.is_ok() {
+                    view.notice =
+                        "Sample profile updated in memory. No machine was contacted.".into();
+                }
+                form.update(cx, |form, cx| {
+                    form.complete_save(save.request, result, window, cx);
+                });
+                cx.notify();
+            },
+        );
         self.inline_profiles.insert(
             id,
             ProfileFields {
-                fields,
-                _subscriptions: subscriptions,
+                form,
+                _saved: saved,
             },
         );
+    }
+
+    fn save_profile(&mut self, id: u64, values: &FormValues) -> Result<FormValues, FormFailure> {
+        let text = |key| match values.get(key) {
+            Some(FieldValue::Text(value)) => value.clone(),
+            _ => String::new(),
+        };
+        let index = self
+            .connections
+            .machines
+            .iter()
+            .position(|machine| machine.id == id)
+            .ok_or_else(|| FormFailure::Refused("This sample profile was removed.".to_owned()))?;
+        self.connections
+            .save(&text("name"), &text("destination"), Some(index))
+            .map_err(|message| FormFailure::Refused(message.to_owned()))?;
+        let saved = &self.connections.machines[index];
+        Ok(FormValues(vec![
+            ("name".into(), FieldValue::Text(saved.name.clone())),
+            ("destination".into(), FieldValue::Text(saved.destination.clone())),
+        ]))
     }
 }
 
@@ -284,7 +283,7 @@ impl Render for SettingsPreview {
             }
             pages.push(page);
         }
-        v_flex().size_full()
+        v_flex().size_full().track_focus(&self.surface)
             .child(Label::new("UI preview · sample edits stay in memory; application preferences cannot be saved here.").text_role(TextRole::Body, cx).text_color(cx.theme().muted_foreground).p_3())
             .child(div().flex_1().min_h_0().child(
                 Settings::new(("kit-settings", self.navigation_generation))

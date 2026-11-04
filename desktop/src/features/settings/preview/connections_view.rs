@@ -49,10 +49,20 @@ impl SettingsPreview {
                     .outline()
                     .small()
                     .label("Edit connection")
-                    .on_click(cx.listener(move |s, _, _, cx| {
-                        if !s.editing.remove(&id) {
+                    .on_click(cx.listener(move |s, _, window, cx| {
+                        let opening = !s.editing.remove(&id);
+                        if opening {
                             s.editing.insert(id);
                             s.expanded.insert(id);
+                        }
+                        if let Some(profile) = s.inline_profiles.get(&id) {
+                            profile.form.update(cx, |form, cx| {
+                                if opening {
+                                    form.begin(window, cx);
+                                } else {
+                                    form.cancel(window, cx);
+                                }
+                            });
                         }
                         cx.notify();
                     })),
@@ -108,8 +118,7 @@ impl SettingsPreview {
                 v_flex().gap_3().max_w(px(384.)).children(
                     self.inline_profiles
                         .get(&id)
-                        .into_iter()
-                        .flat_map(|p| p.fields.iter().cloned()),
+                        .map(|profile| profile.form.clone()),
                 ),
             );
         }

@@ -58,15 +58,17 @@ pub enum SaveMode {
 }
 
 /// Saves as Notion does: Enter or leaving saves, a picked choice or date saves, Escape restores. Leaving is focus
-/// moving out of the field, so a field sits in a surface that tracks focus and a click on its blank space counts.
+/// moving out of the field, so a field sits in a surface that tracks focus, and a click on its blank space counts.
 pub struct InlineField {
     title: SharedString,
-    state: EditState<FieldValue>,
-    editor: Editor,
-    focus: FocusHandle,
+    pub(super) state: EditState<FieldValue>,
+    pub(super) editor: Editor,
+    pub(super) focus: FocusHandle,
     rules: Vec<FieldRule>,
     mode: SaveMode,
     read_only: bool,
+    /// The form this field is in has sent it.
+    saving: bool,
     _heard: Vec<Subscription>,
 }
 impl EventEmitter<SaveRequested> for InlineField {}
@@ -163,6 +165,7 @@ impl InlineField {
             rules: Vec::new(),
             mode: SaveMode::Single,
             read_only: false,
+            saving: false,
             _heard: vec![left, Self::hear(&editor, window, cx)],
             editor,
         }
@@ -282,17 +285,58 @@ impl InlineField {
             self.focus.focus(window, cx);
         }
     }
+    /// Opens the editor without taking focus, for the form that's opening all its fields.
+    pub(super) fn begin_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.state.edit() {
+            self.editor.sync(self.state.draft(), window, cx);
+            cx.notify();
+        }
+    }
+    pub(super) fn draft_value(&self) -> FieldValue {
+        self.state.draft().clone()
+    }
+    pub(super) fn validate(&self) -> Result<(), String> {
+        self.check()
+    }
+    pub(super) fn show_error(&mut self, message: Option<String>, cx: &mut Context<Self>) {
+        match message {
+            Some(message) => self.state.reject(message),
+            None => self.state.clear_error(),
+        }
+        cx.notify();
+    }
+    pub(super) fn restore(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.state.cancel() {
+            self.closed(true, window, cx);
+            cx.notify();
+        }
+    }
+    pub(super) fn set_saving(&mut self, saving: bool, cx: &mut Context<Self>) {
+        self.saving = saving;
+        cx.notify();
+    }
+    /// The form's save landed: this is the field's value now, and its editor closes.
+    pub(super) fn commit(&mut self, value: FieldValue, window: &mut Window, cx: &mut Context<Self>) {
+        self.saving = false;
+        self.state.set_committed(value);
+        self.state.cancel();
+        self.closed(true, window, cx);
+        cx.notify();
+    }
+    pub(super) fn focus_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editor.has_popup() {
+            self.focus.focus(window, cx);
+        } else {
+            self.editor.focus(window, cx);
+        }
+    }
     fn edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.read_only || self.mode == SaveMode::Form {
             return;
         }
         if self.state.edit() {
             self.editor.sync(self.state.draft(), window, cx);
-            if self.editor.has_popup() {
-                self.focus.focus(window, cx);
-            } else {
-                self.editor.focus(window, cx);
-            }
+            self.focus_editor(window, cx);
             cx.notify();
         }
     }
@@ -379,7 +423,7 @@ impl InlineField {
 impl Render for InlineField {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = if self.state.editing() {
-            let disabled = self.state.pending() || self.state.uncertain();
+            let disabled = self.state.pending() || self.state.uncertain() || self.saving;
             self.editor
                 .render(disabled, role_size(TextRole::Body, cx))
                 .into_any_element()

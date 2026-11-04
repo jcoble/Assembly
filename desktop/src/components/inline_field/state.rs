@@ -96,6 +96,9 @@ impl<T: Clone + PartialEq> EditState<T> {
             self.error = Some(message);
         }
     }
+    pub fn clear_error(&mut self) {
+        self.error = None;
+    }
     pub fn complete(&mut self, request: SaveRequest, result: Result<T, SaveFailure>) -> bool {
         if self.pending != Some(request) {
             return false;
