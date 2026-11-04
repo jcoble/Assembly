@@ -97,13 +97,12 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
     cx.update(|cx| {
         gpui_kit::init(cx);
         SelectedSession::init(cx);
-        SocketClient::start(
-            Endpoint {
-                port: backend.port,
-                token: "secret".into(),
-            },
-            cx,
-        );
+        let endpoint = Endpoint {
+            port: backend.port,
+            token: "secret".into(),
+        };
+        SocketClient::start(endpoint.clone(), cx);
+        SocketClient::start_bulk(endpoint, cx);
         Sessions::start(cx);
         SelectedSession::global(cx).update(cx, |selected, cx| {
             selected.commit_open(
@@ -142,6 +141,14 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
         pane.update(cx, |pane, cx| pane.shown_status(cx)).is_some()
     })
     .await;
+    // An Engine row read refuses until the bulk socket has shaken hands, as it does in the app.
+    let bulk = open.cx.update(|_, cx| {
+        SocketClient::try_bulk(cx)
+            .expect("the bulk socket")
+            .read(cx)
+            .call::<Value>("test", "test_barrier", json!({}), None)
+    });
+    let _ = bulk.await;
     open
 }
 impl Open<'_> {
