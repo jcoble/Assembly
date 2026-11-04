@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { config, context, command, worker, main } from './common.ts';
+import { config, context, command, worker, main, atomic } from './common.ts';
+import type { Config, Context } from './common.ts';
 import { auditAccount, auditFirewall } from './isolation.ts';
 
 export function selectModel(trailers: string, writableDirectories:string[]): {binary:string;model:string;args:string[]} {
@@ -27,6 +28,15 @@ export function run(directory: string, locked = false) {
       join(import.meta.dirname,'run.ts'),directory,'--locked'],{timeout:(c.runtimeSeconds+30)*1000});
     return;
   }
+  try { verify(c,ctx); }
+  catch(error) {
+    if(error instanceof Error && /^(BLOCKED: |Account audit failed: )/.test(error.message))
+      // Service-owned state, outside every worker-writable directory. ExecStopPost consumes it.
+      atomic(join(directory,'blocker.json'),{reason:error.message});
+    throw error;
+  }
+}
+function verify(c:Config,ctx:Context) {
   const memory=command('free',['-m']).split('\n').find(line=>/^Mem:/.test(line))?.trim().split(/\s+/);
   if (!memory || Number(memory.at(-1)) < c.minimumMemoryMB) throw Error('BLOCKED: insufficient available memory');
   const heavy=command('ps',['-eo','comm=']).split('\n').filter(x=>/^(cargo|rustc|dotnet|MSBuild|ninja|cmake)$/.test(x.trim()));
@@ -35,7 +45,11 @@ export function run(directory: string, locked = false) {
   const writableDirectories=[ctx.output,join(c.workerHome,'assembly-dotnet-verify-pr'),
     join(c.workerHome,'.config','assembly-dotnet-verify-pr'),
     join(c.workerHome,'.cargo'),join(c.workerHome,'.nuget'),join(c.workerHome,'.dotnet'),
-    join(c.workerHome,'.cache','pnpm'),join(c.workerHome,'.local','state','pnpm')];
+    join(c.workerHome,'.cache','pnpm'),join(c.workerHome,'.local','state','pnpm'),
+    // Provider children inherit the verifier sandbox, including state beyond their transcripts.
+    // https://developers.openai.com/codex/config-advanced#config-and-state-locations
+    // https://code.claude.com/docs/en/claude-directory
+    join(c.workerHome,'.codex'),join(c.workerHome,'.claude')];
   worker(c,'mkdir',['-p',...writableDirectories,c.worktrees]);
   // Public clone and fetch run as verify: no owner GitHub token, credential helper, or home is inherited.
   // Keep full history so posting can compare the PR against its merge base.
@@ -58,6 +72,9 @@ export function run(directory: string, locked = false) {
       VERIFY_RESULT:join(ctx.output,'result.json'),
       ASSEMBLY_DATA_DIR:join(ctx.output,'app-data'), XDG_DATA_HOME:join(ctx.output,'xdg-data'),
       XDG_CONFIG_HOME:join(c.workerHome,'.config'),
+      // Also moves ~/.claude.json inside this writable directory, retaining ~/.claude/projects.
+      // https://code.claude.com/docs/en/claude-directory
+      CLAUDE_CONFIG_DIR:join(c.workerHome,'.claude'),
     }});
 }
 main(import.meta.url,()=>run(process.argv[2] || '',process.argv[3]==='--locked'));

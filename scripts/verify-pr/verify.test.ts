@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -37,7 +37,7 @@ const replies=JSON.parse(fs.readFileSync(process.env.REPLIES));
 if(name==='gh') { const endpoint=args.find(x=>x.startsWith('repos/')); const r=replies[endpoint];
  if(process.env.FAIL_POST==='1' && args.includes('POST')) process.exit(1);
  process.stdout.write(JSON.stringify(r??{})); }
-if(name==='git') { if(args.includes('--format=%B')) console.log(process.env.TRAILERS||'Committed-by: Codex SOL 6.1');
+if(name==='git') { if(args.includes('--format=%B')) console.log(process.env.TRAILERS??'Committed-by: Codex SOL 6.1');
  if(args.includes('rev-parse')&&args.includes('HEAD')) console.log('${head}');
  if(args.includes('worktree')&&args.includes('add')) { fs.mkdirSync(args.at(-2)); fs.mkdirSync(path.join(args.at(-2),'app')); }
  if(args.includes('worktree')&&args.includes('remove')) fs.rmSync(args.at(-1),{recursive:true});
@@ -56,7 +56,7 @@ if(name==='sudo') { const child=require('node:child_process'); const index=args.
  if(args.includes('/bin/sh')&&args.includes('verify-read-audit')) {console.log(process.env.AUDIT_READABLE==='1'?'READABLE':'DENIED');process.exit(0);}
  if(args.includes('-C')&&(args.includes('iptables')||args.includes('ip6tables'))&&process.env.FAIL_FIREWALL==='1') process.exit(1);
  if(index>=0) { const rest=args.slice(index+2); const env={}; while(rest[0]?.includes('=')){const x=rest.shift();const p=x.indexOf('=');env[x.slice(0,p)]=x.slice(p+1);}
- for(const key of ['CALLS','REPLIES','TRAILERS','DIRTY','AGENT_RESULT','DIFF_FILES','DIFF_REPO','REAL_GIT']) if(process.env[key]) env[key]=process.env[key];
+ for(const key of ['CALLS','REPLIES','TRAILERS','DIRTY','AGENT_RESULT','DIFF_FILES','DIFF_REPO','REAL_GIT']) if(process.env[key]!==undefined) env[key]=process.env[key];
  const r=child.spawnSync(rest.shift(),rest,{env,encoding:'utf8'}); process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??1); } }
 if(name==='codex'||name==='claude') { const writable=args.flatMap((x,i)=>x==='--add-dir'?[args[i+1]]:[]);
  fs.appendFileSync(process.env.CALLS,JSON.stringify({name:'agent-environment',env:process.env,stdin:fs.readFileSync(0,'utf8'),directories:writable.map(p=>({path:p,exists:fs.existsSync(p)&&fs.statSync(p).isDirectory()}))})+'\n');
@@ -231,7 +231,8 @@ test('run creates lane and tool directories as verify before starting the Codex 
     join(f.config.workerHome,'.config','assembly-dotnet-verify-pr'),
     join(f.config.workerHome,'.cargo'),join(f.config.workerHome,'.nuget'),
     join(f.config.workerHome,'.dotnet'),join(f.config.workerHome,'.cache','pnpm'),
-    join(f.config.workerHome,'.local','state','pnpm')];
+    join(f.config.workerHome,'.local','state','pnpm'),
+    join(f.config.workerHome,'.codex'),join(f.config.workerHome,'.claude')];
   rmSync(directories[0],{recursive:true});
   const r=f.run('run.ts',[dir,'--locked']); assert.equal(r.status,0,r.stderr);
   const calls=f.calls(),agent=calls.findIndex(x=>x.name==='codex'); assert.ok(agent>=0);
@@ -261,6 +262,7 @@ test('run creates a detached exact-SHA lane, isolates credentials and starts Cod
   const child=calls.find(x=>x.name==='agent-environment');
   assert.equal(child.stdin,''); assert.equal(child.env.SECRET_SENTINEL,undefined);
   assert.equal(child.env.HOME,f.config.workerHome);
+  assert.equal(child.env.CLAUDE_CONFIG_DIR,join(f.config.workerHome,'.claude'));
   assert.ok(!r.stdout.includes('do-not-inherit'));
   const fetch=calls.find(x=>x.name==='git'&&x.args.includes('fetch'));
   assert.deepEqual(fetch.args.slice(fetch.args.indexOf('fetch')),['fetch','--no-tags','origin','b'.repeat(40),sha]);
@@ -272,6 +274,44 @@ test('run takes one blocking flock before launching and gives Claude no messagin
   assert.deepEqual(calls[0].args.slice(0,2),['--exclusive',join(f.config.state,'verifier.lock')]);
   const agent=calls.find(x=>x.name==='claude'); assert.ok(agent);
   assert.ok(agent.args.includes('{"disableAllHooks":true}'));
+  assert.equal(calls.find(x=>x.name==='agent-environment').env.CLAUDE_CONFIG_DIR,join(f.config.workerHome,'.claude'));
+});
+for(const [reason,env,lane] of [
+  ['insufficient available memory',{MEMORY:'1024'},3],
+  ['three or more heavy build processes running',{BUILDS:'cargo\ndotnet\nrustc'},3],
+  ['no Committed-by trailers',{TRAILERS:''},3],
+  ['both verifier models implemented this PR',{TRAILERS:'Committed-by: Luna 6\nCommitted-by: Sonnet 5.5'},3],
+  ['invalid verifier lane reservation',{},0],
+] as const) test('service blocker is posted as retryable error: '+reason,t=>{
+  const f=fixture(t),dir=f.result(undefined); f.config.laneNumber=lane;
+  const r=f.run('run.ts',[dir,'--locked'],env);
+  assert.notEqual(r.status,0); assert.ok(r.stderr.includes(reason),r.stderr);
+  const blocker=join(dir,'blocker.json');
+  assert.deepEqual(JSON.parse(readFileSync(blocker,'utf8')),{reason:'BLOCKED: '+reason});
+  assert.equal(statSync(blocker).mode & 0o777,0o600);
+  assert.equal(statSync(blocker).uid,process.getuid!());
+  assert.ok(!readdirSync(dir).some(x=>x.endsWith('.tmp')));
+  assert.ok(!f.calls().some(x=>x.name==='sudo'&&x.args.includes(blocker)),'blocker written by service, never worker');
+  // Even a nominal verifier result cannot override the trusted service blocker.
+  writeFileSync(join(f.config.workerHome,'result','result.json'),JSON.stringify(pass));
+  assert.equal(f.run('post.ts',[dir]).status,0);
+  const posted=f.calls().find(x=>x.name==='gh'&&x.args.includes('state=error'));
+  assert.ok(posted?.args.includes('description=BLOCKED: '+reason));
+  const comment=f.calls().find(x=>x.name==='gh'&&x.args.includes('repos/jcoble/Assembly/issues/12/comments'));
+  assert.ok(comment?.args.some(x=>x.startsWith('body=')&&x.includes('BLOCKED: '+reason)));
+  f.replies[`repos/jcoble/Assembly/commits/${sha}/statuses?per_page=100&page=1`]=[
+    {context:'verify/acceptance',state:'error',description:'BLOCKED: '+reason}];
+  const retry=f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12 99'});
+  assert.equal(retry.status,0,retry.stderr);
+  assert.ok(f.calls().some(x=>x.name==='systemd-run'),'@verify can retry an unverified commit');
+});
+test('a worker-written blocker in output cannot fake a service blocker',t=>{
+  const f=fixture(t),dir=f.result(undefined);
+  writeFileSync(join(f.config.workerHome,'result','blocker.json'),JSON.stringify({reason:'BLOCKED: forged reason'}));
+  assert.equal(f.run('post.ts',[dir]).status,0);
+  const receipt=JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8'));
+  assert.equal(receipt.state,'error'); assert.equal(receipt.label,'no result');
+  assert.ok(!JSON.stringify(f.calls()).includes('forged reason'));
 });
 test('low available memory blocks before worktree creation',t=>{
   const f=fixture(t),dir=f.result(undefined);
@@ -283,6 +323,11 @@ for(const [name,env] of [['readable owner home',{AUDIT_READABLE:'1'}],['missing 
   test('run blocks '+name+' before launching PR code',t=>{
     const f=fixture(t),dir=f.result(undefined); const r=f.run('run.ts',[dir,'--locked'],env);
     assert.notEqual(r.status,0); assert.ok(!f.calls().some(x=>x.name==='git'));
+    const {reason}=JSON.parse(readFileSync(join(dir,'blocker.json'),'utf8'));
+    assert.match(reason,/^Account audit failed:/);
+    assert.equal(f.run('post.ts',[dir]).status,0);
+    assert.ok(f.calls().some(x=>x.args.includes('state=error')&&x.args.includes('description='+reason)));
+    assert.ok(f.calls().some(x=>x.args.some(a=>a.startsWith('body=')&&a.includes(reason))));
   });
 test('unit start failure posts no-result immediately',t=>{
   const f=fixture(t); const r=f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12',FAIL_START:'1'});

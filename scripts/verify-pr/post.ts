@@ -31,9 +31,12 @@ function evidenceEnv() {
   return env;
 }
 function makeReceipt(c: Config, ctx: Context, directory: string) {
-  let outcome: Verdict = {state:'error',label:'no result'};
+  // Only the service can write this run directory; never read blockers from ctx.output.
+  const blockerPath=join(directory,'blocker.json');
+  const blocker=existsSync(blockerPath) ? JSON.parse(readFileSync(blockerPath,'utf8')).reason : undefined;
+  let outcome: Verdict = {state:'error',label:blocker || 'no result'};
   let links: Record<string,string> = {};
-  try {
+  if(!blocker) try {
     const result = validate(JSON.parse(workerRead(c,join(ctx.output,'result.json'),1024*1024).toString('utf8')),ctx.sha);
     const changed=worker(c,'git',['-C',ctx.worktree,'status','--porcelain','--untracked-files=all','--','.',':!evidence']).trim();
     const tested=worker(c,'git',['-C',ctx.worktree,'rev-parse','HEAD']).trim();
@@ -60,7 +63,7 @@ function makeReceipt(c: Config, ctx: Context, directory: string) {
   catch { latestCI='BLOCKED: gh could not read CI jobs; dispatch snapshot follows'; }
   const body = [marker, `## verify/acceptance: ${outcome.label}`,
     `PR #${ctx.pr} · tested commit \`${ctx.sha}\` · Workbox · started ${ctx.started}`,
-    details?.summary || 'No usable result. The verifier crashed, timed out, or returned an invalid result.',
+    blocker || details?.summary || 'No usable result. The verifier crashed, timed out, or returned an invalid result.',
     ...(details?.behaviors.map(b=>`- **${b.state}** ${b.name}: ${b.details}${b.proof.map(p=>links[p] ? ` [${p}](${links[p]})` : '').join('')}`) || []),
     '', "Verifier's test receipts (listed / ran / passed; reported by the verifier):",
     ...(details?.tests.map(t=>`- ${t.listed===0||t.ran!==t.listed||t.passed!==t.ran?'FAIL: ':''}${t.name}: ${t.listed} / ${t.ran} / ${t.passed}${t.receipt && links[t.receipt] ? ` [${t.receipt}](${links[t.receipt]})` : ' (no validated receipt)'}`) || []),
