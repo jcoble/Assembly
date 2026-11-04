@@ -6,12 +6,35 @@ on:
     tags:
       - 'assembly-v*'
 
+concurrency:
+  group: assembly-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  release:
+  version:
     permissions:
-      contents: write
+      contents: read
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Refuse a tag that is not the source's version, or a version with no bump
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-version.ts
+
+  desktop:
+    needs: version
     runs-on: macos-15
-    environment: release
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -42,28 +65,95 @@ jobs:
             "-p:SourceRevisionId=$GITHUB_SHA" -o "$RUNNER_TEMP/desktop-publish"
 
       - name: Package the app
-        id: package
         env:
           APPLE_SIGNING_IDENTITY: '-'
+        run: node scripts/desktop-release.ts package desktop/target/release/assembly-desktop "$RUNNER_TEMP/desktop-publish/Assembly.Desktop" desktop-release
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-desktop
+          path: desktop-release/*
+          if-no-files-found: error
+          retention-days: 2
+
+  remote:
+    needs: version
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Verify package contracts
+        run: node --test scripts/release-version.test.ts scripts/remote-backend-release.test.ts
+
+      - name: Build remote backend package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          echo "version=$(node scripts/desktop-release.ts version)" >> "$GITHUB_OUTPUT"
-          ARCHIVE=$(node scripts/desktop-release.ts package desktop/target/release/assembly-desktop "$RUNNER_TEMP/desktop-publish/Assembly.Desktop" desktop-release)
-          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+          dotnet publish dotnet/Assembly.Remote -c Release -r linux-x64 --self-contained \
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:NuGetLockFilePath=obj/release.packages.lock.json \
+            "-p:SourceRevisionId=$GITHUB_SHA" -o "$RUNNER_TEMP/remote-publish"
+          node scripts/remote-backend-release.ts "$VERSION" "$RUNNER_TEMP/remote-publish/Assembly.Remote" remote-backend-release
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-remote
+          path: remote-backend-release/*
+          if-no-files-found: error
+          retention-days: 2
+
+  # Runs only when both builds succeeded. The draft stays hidden until every asset is up.
+  publish:
+    needs: [version, desktop, remote]
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    environment: release
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-assets
 
       - name: Publish signed release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          VERSION: ${{ steps.package.outputs.version }}
-          ARCHIVE: ${{ steps.package.outputs.archive }}
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
           NOTES: Download the signed Assembly update for macOS.
         run: |
-          TAG="assembly-v$VERSION"
-          npm exec --yes --package=@tauri-apps/cli@2.11.2 -- tauri signer sign "$ARCHIVE"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --target "$GITHUB_SHA" --latest --title "Assembly v$VERSION" --notes "$NOTES"
-          gh release upload "$TAG" --clobber "$ARCHIVE" "$ARCHIVE.sig"
+          ARCHIVE="release-assets/Assembly_${VERSION}_aarch64.app.tar.gz"
+          REMOTE="release-assets/assembly-remote-backend-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          test -f "$ARCHIVE"
+          test -f "$REMOTE"
+          test -f "$REMOTE.download.json"
+          for file in "$ARCHIVE" "$REMOTE" "$REMOTE.download.json"; do
+            npm exec --yes --package=@tauri-apps/cli@2.11.2 -- tauri signer sign "$file"
+          done
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --latest=false --target "$GITHUB_SHA" --title "Assembly v$VERSION" \
+            --notes "Download the signed Assembly update for macOS and the signed remote backend package for Linux x86-64."
+          gh release upload "$TAG" --clobber release-assets/*
           URL=$(gh release view "$TAG" --json assets -q ".assets[] | select(.name == \"$(basename "$ARCHIVE")\") | .apiUrl")
           test -n "$URL"
-          node scripts/desktop-release.ts latest-json "$VERSION" "$NOTES" "$ARCHIVE.sig" "$URL" desktop-release/latest.json
-          gh release upload "$TAG" --clobber desktop-release/latest.json
+          node scripts/desktop-release.ts latest-json "$VERSION" "$NOTES" "$ARCHIVE.sig" "$URL" release-assets/latest.json
+          gh release upload "$TAG" --clobber release-assets/latest.json
+          gh release edit "$TAG" --draft=false --latest

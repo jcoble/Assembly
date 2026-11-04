@@ -35,6 +35,7 @@ export type RemoteBackendPackageInput = {
 };
 
 // $1 is the saved machine's port and $2 its token file under the remote's home: what a connection reads.
+// $3 and $4 are the adapter release and the manifest hash the desktop verified against the pinned key.
 export const REMOTE_BACKEND_INSTALL_SCRIPT = `#!/bin/sh
 set -eu
 
@@ -52,7 +53,7 @@ done
 
 sha256sum -c SHA256SUMS
 install -d "$root/bin" "$root/serve" "$HOME/.config/systemd/user"
-bash payload/dotnet/scripts/agents-file.sh "$root/adapters" "$root/serve/agents.json"
+ASSEMBLY_ADAPTER_TAG=$3 ASSEMBLY_ADAPTER_MANIFEST_SHA256=$4 bash payload/dotnet/scripts/agents-file.sh "$root/adapters" "$root/serve/agents.json"
 systemctl --user stop assembly-dotnet.service >/dev/null 2>&1 || true
 install -m 755 payload/assembly-remote-server "$root/bin/.assembly-remote-server.new"
 mv "$root/bin/.assembly-remote-server.new" "$root/bin/assembly-remote-server"

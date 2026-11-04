@@ -54,5 +54,5 @@ internal static class RemoteReleaseTrust
         return signer.VerifySignature(signature);
     }
 
-    private static CallFailed Invalid() => new("Backend download record signature verification failed.", "release_untrusted");
+    private static CallFailed Invalid() => new("Release signature verification failed.", "release_untrusted");
 }

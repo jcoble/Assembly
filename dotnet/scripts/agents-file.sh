@@ -3,6 +3,8 @@
 # Installs the latest published platform ACP bundle under ADAPTERS and writes OUT atomically.
 # Releases are public and read with curl: Workbox Test runs this with no gh and no GitHub login.
 # An explicit local packager output uses the same validation with archive-hash provenance, never a release tag.
+# A production remote can't check a signature itself, so the desktop that did names the release and its manifest's hash:
+# ASSEMBLY_ADAPTER_TAG and ASSEMBLY_ADAPTER_MANIFEST_SHA256. A manifest that differs stops the install.
 set -euo pipefail
 adapters=$1 out=$2
 local_assets=${3:-}
@@ -120,10 +122,20 @@ with open(sys.argv[1], "rb") as archive:
     print("local-sha256-" + hashlib.file_digest(archive, "sha256").hexdigest())
 PY
   ); then cached_fallback "$(tail -1 "$work/provider-selection.err")"; fi
+elif [[ -n "${ASSEMBLY_ADAPTER_TAG:-}" ]]; then
+  tag=$ASSEMBLY_ADAPTER_TAG
 elif ! tag=$(node "$repo/scripts/package-adapters.ts" provider-tag "$target" 2>"$work/provider-selection.err"); then
   cached_fallback "$(first_error "$work/provider-selection.err")"
 fi
+require_signed_manifest() {
+  [[ -z "${ASSEMBLY_ADAPTER_MANIFEST_SHA256:-}" ]] && return 0
+  if [[ "$(sha256sum "$1" | cut -d' ' -f1)" != "$ASSEMBLY_ADAPTER_MANIFEST_SHA256" ]]; then
+    echo "adapter manifest for $tag does not match its signature" >&2
+    exit 1
+  fi
+}
 if [[ "$tag" == "$active_tag" ]]; then
+  require_signed_manifest "$active_bundle/provider-manifest.json"
   bundle=$active_bundle
 else
   download="$work/download"
@@ -140,6 +152,7 @@ else
       cached_fallback "$(first_error "$work/provider-download.err")"
     fi
   fi
+  require_signed_manifest "$download/$manifest_file"
   if ! python3 -I - "$download/$manifest_file" "$download/$asset" "$target" "$tag" <<'PY' 2>"$work/manifest.err"
 import hashlib, json, re, sys
 manifest_path, archive_path, target, tag = sys.argv[1:]

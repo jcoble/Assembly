@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Assembly.Application.Common.Calls;
@@ -6,19 +7,22 @@ using Assembly.Infrastructure.Socket;
 namespace Assembly.Infrastructure.Remote.Install;
 
 internal sealed record RemoteReleaseRecord(int SchemaVersion, string Version, int ProtocolVersion, string Target, string ArchiveFile, long Bytes, string Sha256);
-/// <summary>A release whose signed record passed. The archive URL and record are what a remote is told to fetch and check.</summary>
-internal sealed record VerifiedRemoteRelease(string ArchiveUrl, RemoteReleaseRecord Record);
+/// <summary>An adapter release whose signed manifest passed. A remote fetches it by this tag and refuses any other manifest.</summary>
+internal sealed record VerifiedAdapters(string Tag, string ManifestSha256);
+/// <summary>A release whose signed files passed. The archive URL, record and adapters are what a remote is told to fetch and check.</summary>
+internal sealed record VerifiedRemoteRelease(string ArchiveUrl, RemoteReleaseRecord Record, VerifiedAdapters Adapters);
 
 /// <summary>
-/// Finds the latest published backend release and verifies its signed record here, on the desktop, which holds the
-/// pinned key. Only these small files come to the desktop: the remote downloads the archive itself.
+/// Finds the latest published release and adapters and verifies their signed files here, on the desktop, which holds the
+/// pinned key. Only these small files come to the desktop: the remote downloads the archives itself.
 /// </summary>
 internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKey = RemoteReleaseTrust.SigningPublicKey)
 {
     internal const string Target = "x86_64-unknown-linux-gnu";
     internal const long MaxArchive = 512L * 1024 * 1024;
     private const string Endpoint = "https://api.github.com/repos/jcoble/Assembly/releases?per_page=100";
-    private const string TagPrefix = "assembly-backend-v";
+    private const string TagPrefix = "assembly-v";
+    private const string AdapterArchive = "assembly-adapters-linux-x64.tar.gz", AdapterManifest = "assembly-adapters-linux-x64.json";
     private const string AssetPrefix = "/jcoble/Assembly/releases/download/";
     private const int MaxSmallAsset = 16 * 1024, MaxListing = 8 * 1024 * 1024;
 
@@ -34,8 +38,7 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
         var tag = release.GetProperty("tag_name").GetString()!;
         var version = tag[TagPrefix.Length..];
         if (!StableVersion().IsMatch(version)) throw Failure($"Invalid Assembly backend release tag: {tag}", "release_invalid");
-        var assets = release.GetProperty("assets").EnumerateArray().Select(asset => new Asset(asset.GetProperty("name").GetString()!,
-            asset.GetProperty("size").GetInt64(), asset.GetProperty("browser_download_url").GetString()!)).ToArray();
+        var assets = Assets(release);
         var archiveName = $"assembly-remote-backend-{version}-{Target}.tar.gz";
         var archive = Find(assets, archiveName) ?? throw Failure($"{tag} has no Linux x86-64 backend package.", "release_incomplete");
         var record = Find(assets, archiveName + ".download.json") ?? throw Failure($"{tag} lacks the signed download record; publish a compatible backend release.", "release_incomplete");
@@ -48,8 +51,27 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
         catch (JsonException) { throw Failure("Signed backend record is invalid.", "release_invalid"); }
         Validate(parsed, archive, version);
         RequirePublicUrl(archive.Url);
-        return new(archive.Url, parsed);
+        return new(archive.Url, parsed, await AdaptersAsync(listing.RootElement, ct));
     }
+
+    // An unsigned adapter release never qualifies, so the newest signed one is the answer.
+    private async Task<VerifiedAdapters> AdaptersAsync(JsonElement releases, CancellationToken ct)
+    {
+        var release = releases.EnumerateArray()
+            .Where(item => !item.GetProperty("draft").GetBoolean() && !item.GetProperty("prerelease").GetBoolean() &&
+                AdapterTag().IsMatch(item.GetProperty("tag_name").GetString() ?? ""))
+            .OrderByDescending(item => item.GetProperty("published_at").GetDateTimeOffset())
+            .Select(item => (Tag: item.GetProperty("tag_name").GetString()!, Assets: Assets(item)))
+            .FirstOrDefault(item => Find(item.Assets, AdapterArchive) is not null && Find(item.Assets, AdapterManifest) is not null && Find(item.Assets, AdapterManifest + ".sig") is not null);
+        if (release.Tag is null) throw Failure("No signed adapter release is available.", "release_missing");
+        var manifest = await SmallAsync(Find(release.Assets, AdapterManifest)!, ct);
+        var signature = await SmallAsync(Find(release.Assets, AdapterManifest + ".sig")!, ct);
+        RemoteReleaseTrust.Verify(manifest, signature, publicKey);
+        return new(release.Tag, Convert.ToHexStringLower(SHA256.HashData(manifest)));
+    }
+
+    private static Asset[] Assets(JsonElement release) => release.GetProperty("assets").EnumerateArray().Select(asset =>
+        new Asset(asset.GetProperty("name").GetString()!, asset.GetProperty("size").GetInt64(), asset.GetProperty("browser_download_url").GetString()!)).ToArray();
 
     private static void Validate(RemoteReleaseRecord record, Asset archive, string version)
     {
@@ -110,4 +132,7 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
 
     [GeneratedRegex(@"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")]
     private static partial Regex StableVersion();
+
+    [GeneratedRegex(@"^assembly-providers-[0-9]+-[0-9]+$")]
+    private static partial Regex AdapterTag();
 }

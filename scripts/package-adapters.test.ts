@@ -271,6 +271,7 @@ function releaseFixture(root: string) {
         protocolVersion: 2, info: { version }, canSteer: true,
       }])),
     }));
+    writeFileSync(join(assets, "assembly-adapters-" + target + ".json.sig"), "fixture signature");
   }
   const statePath = join(root, "release-state.json");
   writeFileSync(statePath, JSON.stringify({ calls: [], releases: {} }));
@@ -288,7 +289,7 @@ if (stage === "create") {
 } else if (stage === "upload") {
   state.releases[tag].assets = process.env.FAIL_STAGE === stage ? args.slice(0, 1) : args;
 } else if (stage === "edit") {
-  if (state.releases[tag].assets.length !== 6) throw new Error("Cannot publish incomplete assets");
+  if (state.releases[tag].assets.length !== 9) throw new Error("Cannot publish incomplete assets");
   if (!args.includes("--draft=false")) throw new Error("Expected publish");
   if (process.env.FAIL_STAGE !== stage) state.releases[tag].draft = false;
 } else throw new Error("Unexpected release stage");
@@ -310,6 +311,14 @@ if (process.env.FAIL_STAGE === stage) process.exit(17);
 test("publisher refuses incomplete artifacts before writing a release", () => fixture(root => {
   const f = releaseFixture(root);
   rmSync(join(f.assets, "assembly-adapters-linux-x64.tar.gz"));
+  const run = f.run();
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /Incomplete or unexpected release assets/);
+  assert.deepEqual(f.state().calls, []);
+}));
+test("publisher refuses an unsigned manifest before writing a release", () => fixture(root => {
+  const f = releaseFixture(root);
+  rmSync(join(f.assets, "assembly-adapters-linux-x64.json.sig"));
   const run = f.run();
   assert.notEqual(run.status, 0);
   assert.match(run.stderr, /Incomplete or unexpected release assets/);
@@ -347,12 +356,12 @@ for (const stage of ["create", "upload", "edit"]) {
     if (stage !== "edit") assert.ok(!f.state().calls.some(call => call.stage === "edit"));
   }));
 }
-test("a complete release publishes all six assets", () => fixture(root => {
+test("a complete release publishes all nine assets, signatures included", () => fixture(root => {
   const f = releaseFixture(root), run = f.run();
   assert.equal(run.status, 0, run.stderr);
   const release = f.state().releases["assembly-providers-fixture-1"];
   assert.equal(release.draft, false);
-  assert.equal(release.assets.length, 6);
+  assert.equal(release.assets.length, 9);
 }));
 test("a retry publishes a fresh release and preserves the failed draft", () => fixture(root => {
   const f = releaseFixture(root);
@@ -408,6 +417,7 @@ test("publishing adapters never takes GitHub's Latest", () => fixture(root => {
   for (const target of ["darwin-arm64", "darwin-x64", "linux-x64"]) {
     const file = "assembly-adapters-" + target + ".tar.gz";
     writeFileSync(join(assets, file), target);
+    writeFileSync(join(assets, "assembly-adapters-" + target + ".json.sig"), "signature");
     writeFileSync(join(assets, "assembly-adapters-" + target + ".json"), JSON.stringify({ schemaVersion: 1, target, versions,
       archive: { file, sha256: createHash("sha256").update(target).digest("hex") },
       smoke: Object.fromEntries(Object.entries(versions).map(([name, version]) => [name, { protocolVersion: 2, canSteer: true, info: { version } }])) }));

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
@@ -11,7 +12,7 @@ public sealed class RemoteReleaseFeedTests
 {
     private const string Version = "1.2.3";
     private const string Archive = "assembly-remote-backend-1.2.3-x86_64-unknown-linux-gnu.tar.gz";
-    private const string Base = "https://github.com/jcoble/Assembly/releases/download/assembly-backend-v1.2.3/";
+    private const string Base = "https://github.com/jcoble/Assembly/releases/download/assembly-v1.2.3/";
 
     internal sealed class Handler(Dictionary<string, byte[]> responses) : HttpMessageHandler
     {
@@ -38,29 +39,48 @@ public sealed class RemoteReleaseFeedTests
             sha256 = new string('a', 64)
         }));
 
-    internal static byte[] Listing(long archiveBytes, int recordBytes, int signatureBytes, string assetHost = "github.com") =>
+    internal const string AdapterBase = "https://github.com/jcoble/Assembly/releases/download/assembly-providers-7-1/";
+    internal const string AdapterManifest = "assembly-adapters-linux-x64.json";
+
+    private static object AdapterAsset(string tag, string name, long size) =>
+        new { name, size, browser_download_url = $"https://github.com/jcoble/Assembly/releases/download/{tag}/{name}" };
+
+    internal static byte[] Listing(long archiveBytes, int recordBytes, int signatureBytes, string assetHost = "github.com", int adapterManifestBytes = 100, int adapterSignatureBytes = 100) =>
         Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new object[]
         {
-            new { tag_name = "assembly-providers-9-1", draft = false, prerelease = false, assets = Array.Empty<object>() },
-            new { tag_name = "assembly-backend-v9.9.9", draft = true, prerelease = false, assets = Array.Empty<object>() },
-            new { tag_name = "assembly-backend-v9.9.8", draft = false, prerelease = true, assets = Array.Empty<object>() },
-            new { tag_name = "assembly-backend-v1.2.3", draft = false, prerelease = false, assets = new object[]
+            // Newer, but unsigned: it never qualifies.
+            new { tag_name = "assembly-providers-8-1", draft = false, prerelease = false, published_at = "2026-11-02T00:00:00Z", assets = new object[]
+            { AdapterAsset("assembly-providers-8-1", "assembly-adapters-linux-x64.tar.gz", 1000), AdapterAsset("assembly-providers-8-1", AdapterManifest, 100) } },
+            new { tag_name = "assembly-providers-7-1", draft = false, prerelease = false, published_at = "2026-11-01T00:00:00Z", assets = new object[]
             {
-                new { name = Archive, size = archiveBytes, browser_download_url = $"https://{assetHost}/jcoble/Assembly/releases/download/assembly-backend-v1.2.3/{Archive}" },
+                AdapterAsset("assembly-providers-7-1", "assembly-adapters-linux-x64.tar.gz", 1000),
+                AdapterAsset("assembly-providers-7-1", AdapterManifest, adapterManifestBytes),
+                AdapterAsset("assembly-providers-7-1", AdapterManifest + ".sig", adapterSignatureBytes),
+            } },
+            new { tag_name = "assembly-v9.9.9", draft = true, prerelease = false, assets = Array.Empty<object>() },
+            new { tag_name = "assembly-v9.9.8", draft = false, prerelease = true, assets = Array.Empty<object>() },
+            new { tag_name = "assembly-v1.2.3", draft = false, prerelease = false, assets = new object[]
+            {
+                new { name = Archive, size = archiveBytes, browser_download_url = $"https://{assetHost}/jcoble/Assembly/releases/download/assembly-v1.2.3/{Archive}" },
                 new { name = Archive + ".download.json", size = recordBytes, browser_download_url = Base + Archive + ".download.json" },
                 new { name = Archive + ".download.json.sig", size = signatureBytes, browser_download_url = Base + Archive + ".download.json.sig" },
             } },
         }));
 
-    private static (RemoteReleaseFeed Feed, Handler Handler) Feed(byte[] record, byte[]? signature = null, string assetHost = "github.com", long archiveBytes = 1000)
+    private static readonly byte[] Manifest = "{\"schemaVersion\":1}"u8.ToArray();
+
+    private static (RemoteReleaseFeed Feed, Handler Handler) Feed(byte[] record, byte[]? signature = null, string assetHost = "github.com", long archiveBytes = 1000, byte[]? adapterSignature = null)
     {
         var signer = new ReleaseSigner();
         var signed = signature ?? signer.Sign(record);
+        var adapterSigned = adapterSignature ?? signer.Sign(Manifest);
         var handler = new Handler(new()
         {
-            ["https://api.github.com/repos/jcoble/Assembly/releases?per_page=100"] = Listing(archiveBytes, record.Length, signed.Length, assetHost),
+            ["https://api.github.com/repos/jcoble/Assembly/releases?per_page=100"] = Listing(archiveBytes, record.Length, signed.Length, assetHost, Manifest.Length, adapterSigned.Length),
             [Base + Archive + ".download.json"] = record,
             [Base + Archive + ".download.json.sig"] = signed,
+            [AdapterBase + AdapterManifest] = Manifest,
+            [AdapterBase + AdapterManifest + ".sig"] = adapterSigned,
         });
         return (new RemoteReleaseFeed(new HttpClient(handler), signer.PublicKey), handler);
     }
@@ -73,6 +93,23 @@ public sealed class RemoteReleaseFeedTests
         Assert.Equal(Base + Archive, release.ArchiveUrl);
         Assert.Equal(Version, release.Record.Version);
         Assert.DoesNotContain(Base + Archive, handler.Asked);
+    }
+
+    [Fact]
+    public async Task Names_the_newest_signed_adapters_and_the_hash_of_their_manifest()
+    {
+        var (feed, handler) = Feed(Record());
+        var release = await feed.LatestAsync(default);
+        Assert.Equal("assembly-providers-7-1", release.Adapters.Tag);
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(Manifest)), release.Adapters.ManifestSha256);
+        Assert.DoesNotContain(handler.Asked, url => url.EndsWith(".tar.gz", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task An_adapter_manifest_signed_by_another_key_never_becomes_a_release()
+    {
+        var (feed, _) = Feed(Record(), adapterSignature: new ReleaseSigner().Sign(Manifest));
+        Assert.Equal("release_untrusted", (await Assert.ThrowsAsync<CallFailed>(() => feed.LatestAsync(default))).Reason);
     }
 
     [Fact]

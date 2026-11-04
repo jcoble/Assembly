@@ -36,7 +36,7 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
             phase("Downloading backend on the remote machine…");
             var inspected = await ReceiveAsync(target, stage, release, ct);
             phase("Installing and starting the backend…");
-            await shell.RunAsync(target, $"set -eu; cd {quoted}; sh install.sh {machine.Port.ToString(CultureInfo.InvariantCulture)} {Quote(machine.TokenFile)}", null, ct);
+            await shell.RunAsync(target, $"set -eu; cd {quoted}; sh install.sh {machine.Port.ToString(CultureInfo.InvariantCulture)} {Quote(machine.TokenFile)} {Quote(release.Adapters.Tag)} {Quote(release.Adapters.ManifestSha256)}", null, ct);
             phase("Verifying the service, database, and loopback listener…");
             var receipt = await shell.RunAsync(target, ReceiptCommand(machine.Port), null, ct);
             if (receipt != inspected.ServerSha256) throw new CallFailed("Installed backend checksum does not match the signed package.", "install_mismatch");
