@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Images;
 using Assembly.Infrastructure.Engine;
 using Assembly.Application.Common.Agents;
 using System.Security.Cryptography;

@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Images;
 using System.Net;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Attachments;

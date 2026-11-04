@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Images;
 using System.Text.Json;
 using Assembly.Application.Common;
 using Assembly.Application.Features.Chat.Rows;

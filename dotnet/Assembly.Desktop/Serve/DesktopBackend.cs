@@ -63,6 +63,7 @@ namespace Assembly.Desktop.Serve;
 public sealed class DesktopBackend : IAsyncDisposable
 {
     private readonly Func<Task> _beginStop;
+    private readonly Assembly.Infrastructure.Notion.NotionCalls _notion;
     private readonly NeedAnswers _answers;
     private readonly EngineHelperCards _helperCards;
     private readonly MachineCalls _ownerMachineCalls;
@@ -90,8 +91,9 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly RemoteInstallJobs _remoteInstalls;
 
     private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteConnections connections,
-        WebApplication app, TurnActivity activity, MachinesFeature machinesFeature, TerminalHost terminals, RoutedTerminals routedTerminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop, Func<Task> beginStop, NeedAnswers answers, EngineHelperCards helperCards, MachineCalls ownerMachineCalls, MachineRelay relay, HttpClient cliHttp, GitOperations gitOperations, ProviderRuntimeSubscriptions providerRuntimeSubscriptions, RemoteInstallJobs remoteInstalls, SignInRelay signInRelay)
+        WebApplication app, TurnActivity activity, MachinesFeature machinesFeature, TerminalHost terminals, RoutedTerminals routedTerminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop, Func<Task> beginStop, NeedAnswers answers, EngineHelperCards helperCards, MachineCalls ownerMachineCalls, MachineRelay relay, HttpClient cliHttp, GitOperations gitOperations, ProviderRuntimeSubscriptions providerRuntimeSubscriptions, RemoteInstallJobs remoteInstalls, SignInRelay signInRelay, Assembly.Infrastructure.Notion.NotionCalls notion)
     {
+        _notion = notion;
         _cliHttp = cliHttp;
         _gitOperations = gitOperations;
         _providerRuntimeSubscriptions = providerRuntimeSubscriptions;
@@ -186,6 +188,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         GitOperations? gitOperations = null;
         ProviderRuntimeSubscriptions? providerRuntimeSubscriptions = null;
         RemoteInstallJobs? remoteInstalls = null;
+        Assembly.Infrastructure.Notion.NotionCalls? notion = null;
         var activity = new TurnActivity();
         var tokens = new McpTokens();
         var endpoint = new McpEndpointReady(tokens);
@@ -363,6 +366,12 @@ public sealed class DesktopBackend : IAsyncDisposable
             var sessionSources = new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(db, sessionStore, machines, connections);
             var door = new EngineDoor(engine, sessionStore, machines, attachments, TimeProvider.System, answers, hub, sessionSources);
             cliHttp = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
+            var notionHttp = new Assembly.Infrastructure.Notion.NotionHttp(cliHttp);
+            var notionSettings = new Assembly.Application.Features.Notion.NotionSettings(db, new Assembly.Infrastructure.Security.MacKeychain(), notionHttp, TimeProvider.System);
+            notionHttp.Bind(notionSettings);
+            var notionCache = new Assembly.Application.Features.Notion.NotionCache(db, notionSettings, projectRoots);
+            var notionEdits = new Assembly.Application.Features.Notion.NotionEdits(db, notionSettings, notionHttp);
+            notion = new Assembly.Infrastructure.Notion.NotionCalls(notionSettings, new Assembly.Infrastructure.Notion.NotionOAuth(cliHttp, notionSettings, TimeProvider.System), new Assembly.Infrastructure.Notion.NotionDetailReader(notionHttp), notionCache, new Assembly.Infrastructure.Notion.NotionRefresh(notionHttp, notionCache, notionSettings, TimeProvider.System), notionEdits, new Assembly.Infrastructure.Notion.NotionImageUpload(Path.Combine(home, "staging", "notion"), notionHttp, notionSettings, notionEdits));
             var cliUpdates = new UpdateCalls(launcher, engine.Machine, cliHttp, TimeProvider.System, hostStop.Token,
                 (machine, ct) => connections.CliLocator(db, machine, ct), new RemoteCliClient(cliHttp, TimeProvider.System));
             var git = new GitCli();
@@ -383,7 +392,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             var fileOwners = new FileOwner(sessionStore, db);
             routedTerminals = new RoutedTerminals(terminals, sessionStore, machines, topics, work);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
-                [new RemoteInstallFeature(remoteInstalls), cliUpdates, new ProviderRuntimeCalls(engine.Machine, agentsFile, machineForward, providerRuntimeSubscriptions), new Assembly.Infrastructure.Engine.Messages.MessagesCalls(engine, db, machineForward), new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward, project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore, connections: connections), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, localEngineMachine: engine.Machine, readRemoteChallenge: signInRelay.ReadChallengeAsync, submitRemoteCode: signInRelay.SubmitCodeAsync, acknowledgeRemoteUrl: signInRelay.AcknowledgeUrlAsync), new TerminalFeature(routedTerminals), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome,
+                [notion, new RemoteInstallFeature(remoteInstalls), cliUpdates, new ProviderRuntimeCalls(engine.Machine, agentsFile, machineForward, providerRuntimeSubscriptions), new Assembly.Infrastructure.Engine.Messages.MessagesCalls(engine, db, machineForward), new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward, project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore, connections: connections), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, localEngineMachine: engine.Machine, readRemoteChallenge: signInRelay.ReadChallengeAsync, submitRemoteCode: signInRelay.SubmitCodeAsync, acknowledgeRemoteUrl: signInRelay.AcknowledgeUrlAsync), new TerminalFeature(routedTerminals), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome,
                         (args, call) => connections.CreateSessionAsync(db, projectStore, engine.Machine, args, call),
                         (args, call) => connections.ReadCreatedSessionAsync(db, projectStore, args, call)),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
@@ -397,7 +406,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                         name => name == "local" ? localFolders : new RemoteProjectFolders(connections, name), db)], board, Engine: engine), port, out _);
             app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });
             await app.StartAsync();
-            var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, routedTerminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp, gitOperations, providerRuntimeSubscriptions, remoteInstalls, signInRelay);
+            var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, routedTerminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp, gitOperations, providerRuntimeSubscriptions, remoteInstalls, signInRelay, notion);
             endpoint.Listening(backend.Address);
             relay.Start();
             return backend;
@@ -410,6 +419,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                 await app.StopAsync();
                 await app.DisposeAsync();
             }
+            if (notion is not null) await notion.DisposeAsync();
             if (remoteInstalls is not null) await remoteInstalls.DisposeAsync();
             if (answers is not null) await answers.DisposeAsync();
             if (relay is not null) await relay.DisposeAsync();
@@ -458,6 +468,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         var stopping = _beginStop();
         await _app.StopAsync();
         await _app.DisposeAsync();
+        await _notion.DisposeAsync();
         await _remoteInstalls.DisposeAsync();
         await _answers.DisposeAsync();
         await _relay.DisposeAsync();

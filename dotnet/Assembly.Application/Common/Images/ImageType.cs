@@ -1,4 +1,4 @@
-namespace Assembly.Application.Features.Chat.Attachments;
+namespace Assembly.Application.Common.Images;
 
 /// <summary>An image type we accept, its file extension, and the bytes its files start with.</summary>
 public sealed record ImageType(string ContentType, string Extension, byte[] Magic)

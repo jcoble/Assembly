@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Images;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Application.Common.Agents;
 using System.Text.Json;

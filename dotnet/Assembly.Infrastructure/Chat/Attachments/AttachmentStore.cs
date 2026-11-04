@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Images;
 using System.Text.RegularExpressions;
 
 using Assembly.Application.Common.Calls;
