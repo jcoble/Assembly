@@ -39,8 +39,20 @@ function makeReceipt(c: Config, ctx: Context, directory: string) {
     const tested=worker(c,'git',['-C',ctx.worktree,'rev-parse','HEAD']).trim();
     if(changed || tested!==ctx.sha) result.behaviors.push({name:'Verification-only boundary',state:'FAIL',
       details:'Verifier changed the lane or its HEAD; the declared PR commit was not verified cleanly.',proof:[]});
-    links = upload(c,ctx,directory,result.proof);
-    outcome = verdict(result,links);
+    const changedFiles=worker(c,'git',['-C',ctx.worktree,'diff','--name-only',ctx.base,ctx.sha]).trim().split('\n').filter(Boolean);
+    const codeChanged=changedFiles.some(file=>!(/\.(md|rst)$/i.test(file) || /^(docs\/.*\.txt|(?:README|LICENSE|NOTICE)(?:\.[^/]*)?)$/i.test(file)));
+    let receiptsValid=true;
+    const receipts: {file:string;description:string}[]=[];
+    for(const test of result.tests) {
+      try {
+        if(!test.receipt || !/^[A-Za-z0-9][A-Za-z0-9_.-]*\.(txt|log|md|html)$/.test(test.receipt)) throw Error('Invalid receipt');
+        const contents=workerRead(c,join(ctx.output,test.receipt),1024*1024).toString('utf8');
+        if(!contents.trim() || !contents.includes(test.name)) throw Error('Missing named tests');
+        if(!receipts.some(p=>p.file===test.receipt)) receipts.push({file:test.receipt,description:`Verifier's test receipt: ${test.name}`});
+      } catch { receiptsValid=false; }
+    }
+    links = upload(c,ctx,directory,[...result.proof.filter(p=>!receipts.some(r=>r.file===p.file)),...receipts]);
+    outcome = verdict(result,links,codeChanged,receiptsValid);
   } catch { /* Missing, malformed, killed or timed-out runs are explicit no-result. */ }
   const details = outcome.result;
   let latestCI:unknown;
@@ -50,8 +62,8 @@ function makeReceipt(c: Config, ctx: Context, directory: string) {
     `PR #${ctx.pr} · tested commit \`${ctx.sha}\` · Workbox · started ${ctx.started}`,
     details?.summary || 'No usable result. The verifier crashed, timed out, or returned an invalid result.',
     ...(details?.behaviors.map(b=>`- **${b.state}** ${b.name}: ${b.details}${b.proof.map(p=>links[p] ? ` [${p}](${links[p]})` : '').join('')}`) || []),
-    '', 'Tests (listed / ran / passed):',
-    ...(details?.tests.map(t=>`- ${t.listed===0||t.ran!==t.listed||t.passed!==t.ran?'FAIL: ':''}${t.name}: ${t.listed} / ${t.ran} / ${t.passed}`) || []),
+    '', "Verifier's test receipts (listed / ran / passed; reported by the verifier):",
+    ...(details?.tests.map(t=>`- ${t.listed===0||t.ran!==t.listed||t.passed!==t.ran?'FAIL: ':''}${t.name}: ${t.listed} / ${t.ran} / ${t.passed}${t.receipt && links[t.receipt] ? ` [${t.receipt}](${links[t.receipt]})` : ' (no validated receipt)'}`) || []),
     '', 'CI jobs at posting:', '```json', JSON.stringify(latestCI,null,2), '```',
     'CI jobs at dispatch:', '```json', JSON.stringify(ctx.ci,null,2), '```',
     `Task: ${ctx.task || 'BLOCKED: no task key found'}`,

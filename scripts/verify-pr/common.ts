@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -91,5 +91,22 @@ export function main(url: string, action: () => void) {
     try { action(); } catch (error) {
       console.error(error instanceof Error ? error.message : 'Verification failed'); process.exitCode = 1;
     }
+  }
+}
+
+// Only exact units durably recorded by this installation may be stopped.
+export function recordedUnits(state:string): string[] {
+  const path=join(state,'units.json');
+  if(!existsSync(path)) return [];
+  const units=JSON.parse(readFileSync(path,'utf8'));
+  if(!Array.isArray(units) || !units.every(u=>typeof u==='string' && /^verify-pr-[1-9][0-9]*\.service$/.test(u)))
+    throw Error('Invalid recorded units');
+  return units;
+}
+export function stopUnit(unit:string) {
+  try { command('systemctl',['--user','stop',unit]); }
+  catch {
+    if(command('systemctl',['--user','show',unit,'--property=LoadState','--value']).trim()!=='not-found')
+      throw Error('Previous verifier unit could not be stopped');
   }
 }

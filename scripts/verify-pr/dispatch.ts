@@ -1,6 +1,6 @@
 import { mkdtempSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { config, command, gh, status, atomic, main, privateDirectory, ci } from './common.ts';
+import { config, command, gh, status, atomic, main, privateDirectory, ci, recordedUnits, stopUnit } from './common.ts';
 import { post } from './post.ts';
 
 export function dispatch(input: string, locked=false) {
@@ -28,11 +28,10 @@ export function dispatch(input: string, locked=false) {
   if (!comment && c.skipDrafts && pull.draft) { console.log('Draft skipped'); return; }
   privateDirectory(c.state);
   // systemctl stop waits for ExecStopPost. Finish the old result before posting the new pending state.
-  try { command('systemctl', ['--user', 'stop', `verify-pr-${pr}.service`]); }
-  catch {
-    const load=command('systemctl',['--user','show',`verify-pr-${pr}.service`,'--property=LoadState','--value']).trim();
-    if(load!=='not-found') throw Error('Previous verifier unit could not be stopped');
-  }
+  const unitName=`verify-pr-${pr}.service`, units=recordedUnits(c.state);
+  if(units.includes(unitName)) stopUnit(unitName);
+  else if(command('systemctl',['--user','show',unitName,'--property=LoadState','--value']).trim()!=='not-found')
+    throw Error('Refusing an existing unit not recorded by this installation');
   for (const entry of readdirSync(c.state).filter(x => x.startsWith('run-'))) {
     const directory = join(c.state, entry);
     if (existsSync(join(directory, 'receipt.json')) && !existsSync(join(directory, 'posted.json'))) post(directory);
@@ -51,6 +50,7 @@ export function dispatch(input: string, locked=false) {
   // systemd parses these properties; paths installed by install.ts must contain no whitespace/metacharacters.
   const node = process.execPath, here = import.meta.dirname;
   if (![node, here, directory].every(x => /^[A-Za-z0-9_./-]+$/.test(x))) throw Error('Unsupported service path');
+  if(!units.includes(unitName)) atomic(join(c.state,'units.json'),[...units,unitName]);
   try {
     command('systemd-run', ['--user', `--unit=verify-pr-${pr}`, '--collect',
       `--property=RuntimeMaxSec=${c.runtimeSeconds}`, '--property=KillMode=control-group',

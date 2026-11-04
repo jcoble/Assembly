@@ -38,10 +38,12 @@ if(name==='gh') { const endpoint=args.find(x=>x.startsWith('repos/')); const r=r
 if(name==='git') { if(args.includes('--format=%B')) console.log(process.env.TRAILERS||'Committed-by: Codex SOL 6.1');
  if(args.includes('rev-parse')&&args.includes('HEAD')) console.log('${sha}');
  if(args.includes('worktree')&&args.includes('add')) fs.mkdirSync(args.at(-2),{recursive:true});
+ if(args.includes('--name-only')) console.log(process.env.DIFF_FILES||'src/code.ts');
  if(args.includes('status')) process.stdout.write(process.env.DIRTY||''); }
 if(name==='ps') console.log(process.env.BUILDS||'');
 if(name==='id') console.log(args.includes('-nG')?'verify':'1002');
 if(name==='free') console.log('Mem: 16000 1000 15000 0 0 '+(process.env.MEMORY||'15000'));
+if(name==='systemctl'&&args.includes('show')) console.log(process.env.SERVICE_LOAD||'not-found');
 if(name==='systemd-run'&&process.env.FAIL_START==='1') process.exit(1);
 if(name==='flock') { const r=require('node:child_process').spawnSync(args[2],args.slice(3),{env:process.env,encoding:'utf8'});process.stderr.write(r.stderr||'');process.exit(r.status??1); }
 if(name==='evidence') console.log('https://drive.google.com/file/d/test-proof/view');
@@ -49,7 +51,7 @@ if(name==='sudo') { const child=require('node:child_process'); const index=args.
  if(args.includes('/bin/sh')&&args.includes('verify-read-audit')) {console.log(process.env.AUDIT_READABLE==='1'?'READABLE':'DENIED');process.exit(0);}
  if(args.includes('-C')&&(args.includes('iptables')||args.includes('ip6tables'))&&process.env.FAIL_FIREWALL==='1') process.exit(1);
  if(index>=0) { const rest=args.slice(index+2); const env={}; while(rest[0]?.includes('=')){const x=rest.shift();const p=x.indexOf('=');env[x.slice(0,p)]=x.slice(p+1);}
- for(const key of ['CALLS','REPLIES','TRAILERS','DIRTY','AGENT_RESULT']) if(process.env[key]) env[key]=process.env[key];
+ for(const key of ['CALLS','REPLIES','TRAILERS','DIRTY','AGENT_RESULT','DIFF_FILES']) if(process.env[key]) env[key]=process.env[key];
  const r=child.spawnSync(rest.shift(),rest,{env,encoding:'utf8'}); process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??1); } }
 if(name==='codex'||name==='claude') { fs.appendFileSync(process.env.CALLS,JSON.stringify({name:'agent-environment',env:process.env,stdin:fs.readFileSync(0,'utf8')})+'\n');
  fs.writeFileSync(process.env.VERIFY_RESULT,process.env.AGENT_RESULT||'{}'); }
@@ -100,7 +102,7 @@ test('draft exclusion is one setting',t=>{
   assert.ok(f.calls().some(x=>x.name==='systemd-run'));
 });
 test('dispatch resolves SHA, stops only that PR unit, posts pending then starts detached unit',t=>{
-  const f=fixture(t); const r=f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12'});
+  const f=fixture(t); writeFileSync(join(f.config.state,'units.json'),JSON.stringify(['verify-pr-12.service'])); const r=f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12'});
   assert.equal(r.status,0,r.stderr);
   const calls=f.calls(); const stop=calls.findIndex(x=>x.name==='systemctl');
   assert.equal(calls[0].name,'flock');
@@ -128,7 +130,7 @@ test('rerun remains disabled until the owner decides',t=>{
 });
 
 const pass = {sha, summary:'Verified', behaviors:[{name:'native edit',state:'PASS',details:'Saved correctly',proof:['after.png']}],
-  tests:[{name:'edit tests',listed:3,ran:3,passed:3}], proof:[{file:'after.png',description:'Saved text'}]};
+  tests:[{name:'edit tests',listed:3,ran:3,passed:3,receipt:'tests.log'}], proof:[{file:'after.png',description:'Saved text'}]};
 for (const [name, value, expected] of [
   ['missing',undefined,'error'],['malformed','{','error'],['wrong SHA',{...pass,sha:'c'.repeat(40)},'error'],
   ['no proof',{...pass,proof:[]},'failure'],
@@ -137,13 +139,14 @@ for (const [name, value, expected] of [
   ['blocked phone',{...pass,behaviors:[{name:'phone',state:'BLOCKED',details:'no device',proof:[]}]},'failure'],
   ['docs only',{sha,summary:'Docs',behaviors:[{name:'docs',state:'NOT AFFECTED',details:'only prose',proof:[]}],tests:[],proof:[]},'success'],
 ] as const) test('post '+name+' => '+expected,t=>{
-  const f=fixture(t), dir=f.result(value); const r=f.run('post.ts',[dir]);
+  const f=fixture(t), dir=f.result(value); writeFileSync(join(f.config.workerHome,'result','tests.log'),'edit tests'); const r=f.run('post.ts',[dir],name==='docs only'?{DIFF_FILES:'README.md'}:{});
   assert.equal(r.status,0,r.stderr);
   assert.ok(f.calls().some(x=>x.args.includes('state='+expected)),'expected status '+expected);
   assert.ok(existsSync(join(dir,'posted.json')));
 });
 test('uploads proof, posts once, updates the marked comment, cleans only a clean lane',t=>{
   const f=fixture(t), dir=f.result(pass);
+  writeFileSync(join(f.config.workerHome,'result','tests.log'),'edit tests');
   writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
   f.replies['repos/jcoble/Assembly/issues/12/comments?per_page=100&page=1']=[{id:91,user:{login:'jcoble'},body:'<!-- verify/acceptance --> old'}];
   assert.equal(f.run('post.ts',[dir]).status,0);
@@ -169,7 +172,8 @@ test('dirty worktree is preserved',t=>{
   assert.ok(!f.calls().some(x=>x.name==='git'&&x.args.includes('remove')));
 });
 test('a PASS after changing PR code is REDO and preserves the lane',t=>{
-  const f=fixture(t),dir=f.result(pass);writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
+  const f=fixture(t),dir=f.result(pass);writeFileSync(join(f.config.workerHome,'result','tests.log'),'edit tests');
+  writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
   assert.equal(f.run('post.ts',[dir],{DIRTY:' M tracked-source.ts'}).status,0);
   assert.ok(f.calls().some(x=>x.args?.includes('state=failure')));
   assert.ok(!f.calls().some(x=>x.name==='git'&&x.args.includes('remove')));
@@ -255,4 +259,55 @@ test('run refuses three heavy builds before creating a worktree',t=>{
   const r=f.run('run.ts',[dir,'--locked'],{BUILDS:'cargo\ndotnet\nrustc'});
   assert.notEqual(r.status,0); assert.match(r.stderr,/heavy/i);
   assert.ok(!f.calls().some(x=>x.name==='git'&&x.args.includes('add')));
+});
+
+for (const [name,tests,receipt] of [
+  ['empty tests',[],undefined],
+  ['missing receipt field',[{name:'edit tests',listed:3,ran:3,passed:3}],undefined],
+  ['missing receipt file',pass.tests,undefined],
+  ['empty receipt',pass.tests,''],
+  ['receipt missing named tests',pass.tests,'different suite passed'],
+  ['receipt outside report',[{...pass.tests[0],receipt:'../tests.log'}],'edit tests'],
+] as const) test('PASS is REDO for '+name,t=>{
+  const f=fixture(t),dir=f.result({...pass,tests});
+  writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
+  if(receipt!==undefined) writeFileSync(join(f.config.workerHome,'result','tests.log'),receipt);
+  assert.equal(f.run('post.ts',[dir]).status,0);
+  const saved=JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8'));
+  assert.equal(saved.label,'REDO'); assert.equal(saved.state,'failure');
+});
+test('valid test receipt is uploaded and labeled as the verifier receipt',t=>{
+  const f=fixture(t),dir=f.result(pass);
+  writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
+  writeFileSync(join(f.config.workerHome,'result','tests.log'),'edit tests: 3 passed');
+  assert.equal(f.run('post.ts',[dir]).status,0);
+  const saved=JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8'));
+  assert.equal(saved.state,'success'); assert.match(saved.body,/Verifier.*receipts/i);
+  assert.match(saved.body,/\[tests.log\]\(https:\/\/drive.google.com/);
+});
+test('NOT AFFECTED without tests cannot excuse a code diff',t=>{
+  const f=fixture(t),dir=f.result({sha,summary:'Docs',behaviors:[{name:'docs',state:'NOT AFFECTED',details:'prose',proof:[]}],tests:[],proof:[]});
+  assert.equal(f.run('post.ts',[dir]).status,0);
+  assert.equal(JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8')).label,'REDO');
+});
+test('dispatch leaves an unrecorded look-alike service alone',t=>{
+  const f=fixture(t); assert.equal(f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12'}).status,0);
+  assert.ok(!f.calls().some(x=>x.name==='systemctl'&&x.args.includes('stop')));
+  assert.deepEqual(JSON.parse(readFileSync(join(f.config.state,'units.json'),'utf8')),['verify-pr-12.service']);
+});
+
+test('dispatch refuses to adopt an existing unrecorded unit',t=>{
+  const f=fixture(t),r=f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12',SERVICE_LOAD:'loaded'});
+  assert.notEqual(r.status,0);
+  assert.ok(!f.calls().some(x=>x.name==='systemctl'&&x.args.includes('stop')));
+  assert.ok(!existsSync(join(f.config.state,'units.json')));
+});
+for(const [file,state,details,label] of [
+  ['CMakeLists.txt','NOT AFFECTED','only prose','REDO'],
+  ['src/code.ts','BLOCKED','needs Mac','needs Mac'],
+  ['src/code.ts','BLOCKED','no phone connected','BLOCKED'],
+] as const) test('receipt requirement preserves '+label+' for '+file,t=>{
+  const f=fixture(t),dir=f.result({sha,summary:'Review',behaviors:[{name:'change',state,details,proof:[]}],tests:[],proof:[]});
+  assert.equal(f.run('post.ts',[dir],{DIFF_FILES:file}).status,0);
+  assert.equal(JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8')).label,label);
 });

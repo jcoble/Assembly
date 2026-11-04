@@ -1,6 +1,6 @@
 export type Behavior = { name: string; state: 'PASS' | 'FAIL' | 'BLOCKED' | 'NOT AFFECTED'; details: string; proof: string[] };
 export type Result = { sha: string; summary: string; behaviors: Behavior[];
-  tests: { name: string; listed: number; ran: number; passed: number }[];
+  tests: { name: string; listed: number; ran: number; passed: number; receipt?: string }[];
   proof: { file: string; description: string; seconds?: number }[] };
 export type Verdict = { state: 'success' | 'failure' | 'pending' | 'error'; label: string; result?: Result };
 const text = (x: unknown): x is string => typeof x === 'string' && x.trim().length > 0 && x.length < 20000;
@@ -30,8 +30,11 @@ export function validate(value: any, sha: string): Result {
     throw Error('Invalid proof budget');
   return value;
 }
-export function verdict(result: Result, uploaded: Record<string, string>): Verdict {
-  const failed = result.behaviors.some(b=>b.state === 'FAIL') ||
+export function verdict(result: Result, uploaded: Record<string, string>, codeChanged=false, receiptsValid=true): Verdict {
+  const needsTests = result.behaviors.some(b=>b.state === 'PASS') ||
+    (codeChanged && result.behaviors.every(b=>b.state === 'NOT AFFECTED'));
+  const failed = !receiptsValid || (needsTests && result.tests.length === 0) ||
+    result.tests.some(t=>!t.receipt || !uploaded[t.receipt]) || result.behaviors.some(b=>b.state === 'FAIL') ||
     result.tests.some(t=>t.listed === 0 || t.ran !== t.listed || t.passed !== t.ran) ||
     result.proof.some(p=>!uploaded[p.file]) ||
     result.behaviors.some(b=>b.state === 'PASS' && (b.proof.length === 0 || b.proof.some(p=>!uploaded[p])));
