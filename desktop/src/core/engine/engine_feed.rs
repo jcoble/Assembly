@@ -48,6 +48,7 @@ pub struct EngineFeed {
     watches: HashMap<EngineScope, Weak<ScopeWatch>>,
     pub(super) native_watches: HashMap<SessionKey, Weak<super::native_activity::NativeScope>>,
     error: Option<EngineRefusal>,
+    machine_names: HashMap<String, String>,
 }
 struct GlobalEngine(Entity<EngineFeed>);
 impl Global for GlobalEngine {}
@@ -67,6 +68,16 @@ impl EngineFeed {
     }
     pub fn items(&self, scope: &EngineScope) -> Vec<EngineItem> {
         self.store.items(scope)
+    }
+    /// A saved remote's own name for an engine, from whoever resolved it. The local engine has none.
+    pub fn name_machine(&mut self, machine: String, name: Option<String>) {
+        match name {
+            Some(name) => self.machine_names.insert(machine, name),
+            None => self.machine_names.remove(&machine),
+        };
+    }
+    pub fn machine_name(&self, machine: &str) -> Option<&str> {
+        self.machine_names.get(machine).map(String::as_str)
     }
     /// Every coherent machine-wide item of a topic, on all machines someone is watching.
     pub fn topic_items(&self, topic: &str) -> Vec<EngineItem> {

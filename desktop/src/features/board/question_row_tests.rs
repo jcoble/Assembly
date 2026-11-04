@@ -56,6 +56,6 @@ fn a_cancelled_need_reads_session_ended_and_a_dismissed_one_dismissed() {
 
 #[test]
 fn a_child_question_says_who_its_for() {
-    assert_eq!(asked_by(&need(json!({"state":"open"})), "Worker", "This Mac", Some("Main orchestrator")), "Worker · This Mac · for Main orchestrator");
-    assert_eq!(asked_by(&need(json!({"state":"open"})), "Main", "Workbox Test", None), "Main · Workbox Test");
+    assert_eq!(asked_by("Worker", "This Mac", Some("Main orchestrator")), "Worker · This Mac · for Main orchestrator");
+    assert_eq!(asked_by("Main", "Workbox Test", None), "Main · Workbox Test");
 }

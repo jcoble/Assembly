@@ -15,8 +15,9 @@ use gpui_kit::*;
 
 use super::{drawer_buttons, top_tabs};
 use crate::core::intents::open_settings::OpenSettings;
-use crate::features::board::OpenBoard;
-use crate::features::board::board_pane::BoardPane;
+use crate::core::engine::{EngineChanged, EngineFeed};
+use crate::features::board::ToggleBoard;
+use crate::features::board::board_panel::{BoardMemory, BoardPanel, top_bar_badge};
 
 /// The row's height, the approved mock's `.titlerow`.
 const HEIGHT: Pixels = px(40.);
@@ -30,46 +31,66 @@ pub struct TopBar {
     /// Redraws the bar whenever the dock does, so the Home cap follows a drag.
     _subscription: Subscription,
     /// Exists only while the dropdown is open, so dismissal releases its pushed reads and clock.
-    board: Option<Entity<BoardPane>>,
+    board: Option<Entity<BoardPanel>>,
     board_dismiss: Option<Subscription>,
+    /// Where the panel was left, for the window's life.
+    board_memory: BoardMemory,
+    /// How many need the owner, read when the shared rows change.
+    badge: Option<SharedString>,
+    _feed: Subscription,
 }
 
 impl TopBar {
     pub fn new(dock: Entity<DockArea>, cx: &mut Context<Self>) -> Self {
         let _subscription = cx.observe(&dock, |_, _, cx| cx.notify());
         Self::register_board_action(cx.weak_entity(), cx);
+        let feed = EngineFeed::global(cx);
+        let badge = top_bar_badge(feed.read(cx));
+        let _feed = cx.subscribe(&feed, |bar, feed, _: &EngineChanged, cx| {
+            let badge = top_bar_badge(feed.read(cx));
+            if bar.badge != badge {
+                bar.badge = badge;
+                cx.notify();
+            }
+        });
         Self {
             dock,
             _subscription,
             board: None,
             board_dismiss: None,
+            board_memory: BoardMemory::default(),
+            badge,
+            _feed,
         }
     }
     fn register_board_action(bar: WeakEntity<Self>, cx: &mut App) {
-        cx.on_action(move |_: &OpenBoard, cx| {
+        cx.on_action(move |_: &ToggleBoard, cx| {
             let bar = bar.clone();
             cx.defer(move |cx| {
-                _ = bar.update(cx, |bar, cx| bar.show_board(true, cx));
+                _ = bar.update(cx, |bar, cx| bar.show_board(bar.board.is_none(), cx));
             });
         });
     }
 
     fn show_board(&mut self, open: bool, cx: &mut Context<Self>) {
         if open && self.board.is_none() {
-            let board = cx.new(BoardPane::new);
+            let memory = self.board_memory.clone();
+            let board = cx.new(|cx| BoardPanel::new(memory, cx));
             self.board_dismiss = Some(cx.subscribe(&board, |bar, _, _: &DismissEvent, cx| {
                 bar.show_board(false, cx)
             }));
             self.board = Some(board);
         } else if !open {
             self.board_dismiss = None;
-            self.board = None;
+            if let Some(board) = self.board.take() {
+                self.board_memory = board.read(cx).memory();
+            }
         }
         cx.notify();
     }
 
     #[cfg(test)]
-    pub(crate) fn board_reader(&self) -> Option<WeakEntity<BoardPane>> {
+    pub(crate) fn board_reader(&self) -> Option<WeakEntity<BoardPanel>> {
         self.board.as_ref().map(Entity::downgrade)
     }
 }
@@ -95,7 +116,7 @@ impl Render for TopBar {
                         PopupMenuItem::new("Build Board")
                             .icon(IconName::LayoutDashboard)
                             .on_click(|_, window, cx| {
-                                if let Ok(open) = cx.build_action("board::OpenBoard", None) {
+                                if let Ok(open) = cx.build_action("board::ToggleBoard", None) {
                                     window.dispatch_action(open, cx);
                                 }
                             }),
@@ -119,6 +140,11 @@ impl Render for TopBar {
                             }),
                     )
             });
+        let trigger = Button::new("board").ghost().small().label(match &self.badge {
+            Some(count) => format!("Board · {count}"),
+            None => "Board".to_owned(),
+        });
+        let trigger = trigger.tooltip("Build Board");
         // A weak capture prevents the kit's retained content builder from keeping a dismissed Board alive.
         let board = self.board.as_ref().map(Entity::downgrade);
         let dropdown = Popover::new("build-board")
@@ -126,23 +152,9 @@ impl Render for TopBar {
             .p_0()
             .open(self.board.is_some())
             .on_open_change(cx.listener(|bar, open, _, cx| bar.show_board(*open, cx)))
-            .trigger(
-                Button::new("board")
-                    .ghost()
-                    .small()
-                    .label("Board")
-                    .tooltip("Build Board"),
-            )
-            .content(move |_, window, _| {
-                // Old Board.svelte caps width at 900px and keeps 8px side / 36px bottom clearance.
-                // The 40px title row, 8px inset and 4px popover gap leave the rest for the virtual list.
-                let viewport = window.viewport_size();
-                div()
-                    .debug_selector(|| "board-dropdown-body".into())
-                    .w((viewport.width - px(16.)).min(px(900.)).max(px(0.)))
-                    .h((viewport.height - px(88.)).max(px(0.)))
-                    .overflow_hidden()
-                    .children(board.as_ref().and_then(WeakEntity::upgrade))
+            .trigger(trigger)
+            .content(move |_, _, _| {
+                div().debug_selector(|| "board-dropdown-body".into()).overflow_hidden().children(board.as_ref().and_then(WeakEntity::upgrade))
             });
         h_flex()
             .h(HEIGHT)

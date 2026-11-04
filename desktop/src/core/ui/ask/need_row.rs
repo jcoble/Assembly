@@ -48,7 +48,7 @@ pub(super) fn validate_scope(key:&EngineKey,scope:&EngineScope)->Result<(),Engin
 pub enum NeedRowEvent {Settled}
 pub struct NeedRow {
     key:EngineKey,scope:EngineScope,feed:Entity<EngineFeed>,surface:&'static str,viewed:Option<SessionKey>,need:NeedItem,state:NeedRowState,available:bool,
-    text:Entity<TextareaState>,form:Option<AskForm>,serial:u64,accepted_here:bool,reconciled:bool,settled:bool,unsent:Option<String>,
+    text:Entity<TextareaState>,form:Option<AskForm>,serial:u64,accepted_here:bool,reconciled:bool,settled:bool,unsent:Option<String>,offline:Option<SharedString>,
     _changed:Subscription,_send:Option<Task<()>>,_read:Option<Task<()>>,
 }
 impl EventEmitter<NeedRowEvent> for NeedRow {}
@@ -56,6 +56,10 @@ impl NeedRow {
     pub fn need(&self)->&NeedItem {&self.need}
     /// What was being typed when someone else answered. It's shown to copy, and never sent.
     pub fn unsent_draft(&self)->Option<&str> {self.unsent.as_deref()}
+    /// Why this need's machine can't be answered on right now. Its draft stays, and nothing is sent until it's back.
+    pub fn set_offline(&mut self,reason:Option<SharedString>,cx:&mut Context<Self>) {
+        if self.offline!=reason{self.offline=reason;cx.notify();}
+    }
     pub fn create(key:EngineKey,scope:EngineScope,feed:Entity<EngineFeed>,surface:&'static str,window:&mut Window,cx:&mut App)->Result<Entity<Self>,EngineRefusal> {
         validate_scope(&key,&scope)?;
         if !feed.read(cx).loaded(&scope){return Err(EngineRefusal{code:"need_source_unavailable".into(),message:"The owning needs view is not coherent yet.".into()});}
@@ -73,7 +77,7 @@ impl NeedRow {
         });
         let text=cx.new(|cx|TextareaState::new(window,cx).auto_grow(1,6).submit_on_enter(true).placeholder("Type your answer"));
         let settled=need.state!="open";let state=if settled{settled_state(&need,false)}else{NeedRowState::Idle};
-        Self{key,scope,feed,surface,viewed:None,need,state,available:true,text,form:None,serial:0,accepted_here:false,reconciled:true,settled,unsent:None,_changed:changed,_send:None,_read:None}
+        Self{key,scope,feed,surface,viewed:None,need,state,available:true,text,form:None,serial:0,accepted_here:false,reconciled:true,settled,unsent:None,offline:None,_changed:changed,_send:None,_read:None}
     }
     fn refresh(&mut self,cx:&mut Context<Self>) {
         let next=self.feed.read(cx).need(&self.key);
@@ -125,7 +129,7 @@ impl NeedRow {
     }
     fn answer(&mut self,answer:NeedAnswer,cx:&mut Context<Self>) {
         self.refresh(cx);
-        if !self.available||!self.reconciled||self.need.state!="open"||matches!(self.state,NeedRowState::Sending){return;}
+        if self.offline.is_some()||!self.available||!self.reconciled||self.need.state!="open"||matches!(self.state,NeedRowState::Sending){return;}
         let answer=match answer {
             NeedAnswer::Answer(answer)=>match typed_answer(&self.need,answer){Ok(answer)=>NeedAnswer::Answer(answer),Err(message)=>{self.state=NeedRowState::Failed{message};cx.notify();return;}},
             NeedAnswer::Dismiss=>NeedAnswer::Dismiss,
@@ -207,6 +211,7 @@ impl Render for NeedRow {
             return column;
         }
         if matches!(self.state,NeedRowState::Sending){return column;}
+        if let Some(reason)=self.offline.clone(){return column.child(div().text_color(theme.muted_foreground).child(reason));}
         if !self.reconciled&&self._read.as_ref().is_some_and(|read|!read.is_ready()) {
             return column.child("Checking the current question…");
         }

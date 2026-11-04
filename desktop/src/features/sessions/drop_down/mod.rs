@@ -12,4 +12,4 @@ pub(super) mod rail_sources;
 #[cfg(test)]
 mod rail_sources_tests;
 
-pub(super) mod native_details;
+pub mod native_details;

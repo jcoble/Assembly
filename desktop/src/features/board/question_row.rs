@@ -6,8 +6,9 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, v_flex};
 use gpui_kit::*;
 
+use super::board_queries::BoardData;
 use super::question_actions::explain_more;
-use crate::activity::{CardBody, NeedsCard, NeedsState};
+use crate::activity::{CardBody, NeedsCard, NeedsState, StatusChip, Tone};
 use crate::core::engine::engine_items::NeedItem;
 use crate::core::engine::{EngineFeed, EngineKey, EngineScope, SessionKey};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
@@ -83,10 +84,36 @@ pub fn card_state(need: &NeedItem) -> NeedsState {
 }
 
 /// "for Main orchestrator" when it's addressed to a parent, then who asked and where.
-pub fn asked_by(need: &NeedItem, asker: &str, machine: &str, parent: Option<&str>) -> String {
+pub fn asked_by(asker: &str, machine: &str, parent: Option<&str>) -> String {
     match parent {
         Some(parent) => format!("{asker} · {machine} · for {parent}"),
         None => format!("{asker} · {machine}"),
+    }
+}
+
+/// Who's asking, in words, from the shared rows. A row that hasn't arrived reads as a plain session.
+pub fn need_card(need: &NeedItem, rows: &Entity<QuestionRows>, data: &BoardData, feed: &EngineFeed, now_ms: i64, cx: &App) -> NeedsCard {
+    let name = |key: &SessionKey| {
+        data.session(key).map_or_else(|| "A session".to_owned(), |session| session.title.clone().unwrap_or_else(|| session.provider.clone()))
+    };
+    let asker = name(&need.session);
+    let parent = need.addressee().map(|parent| name(&parent));
+    let machine = super::board_sections::machine_label(&need.key.machine, feed, cx);
+    let time = need.created_ms.map(|asked| age(asked, now_ms).0.into());
+    let stale = need.created_ms.is_some_and(|asked| age(asked, now_ms).1);
+    let recommended = need.presentation.as_ref().and_then(|presentation| presentation.recommendation.clone());
+    let reader = rows.read(cx);
+    NeedsCard {
+        key: card_key(&need.key),
+        kind: kind_label(need).into(),
+        title: title(need).into(),
+        why: asked_by(&asker, &machine, parent.as_deref()).into(),
+        next_step: recommended.map(|text| format!("Recommended: {text}").into()),
+        chips: if stale { vec![StatusChip::new("Old", Tone::Warning).into_any_element()] } else { Vec::new() },
+        time,
+        state: card_state(need),
+        drops: reader.drops().clone(),
+        body: QuestionRows::body(rows.downgrade(), need.key.clone(), need),
     }
 }
 
@@ -192,6 +219,11 @@ impl QuestionRows {
                     .child("Loading the question…")
                     .into_any_element();
             };
+            let offline = {
+                let feed = rows.read(cx).feed.read(cx);
+                super::board_sections::offline_reason(&key.machine, feed, cx)
+            };
+            row.update(cx, |row, cx| row.set_offline(offline, cx));
             let open = row.read(cx).need().state == "open";
             let refusal = rows.read(cx).refusals.get(&key).cloned();
             let (sending, for_click, target) = (rows.read(cx).explaining.contains_key(&key), rows.downgrade(), key.clone());
