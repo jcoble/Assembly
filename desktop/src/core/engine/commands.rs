@@ -93,6 +93,33 @@ impl EngineFeed {
             Err(error) => Task::ready(Err(error)),
         }
     }
+    /// As `submit`, for a command a row's unrelated moves don't change the meaning of. A refusal for a version that moved
+    /// on the way is a definite answer, not an uncertain outcome, so it's asked once more at the version the refusal named.
+    pub fn submit_following(
+        &mut self,
+        command: WindowCommand,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<CommandReceipt, EngineRefusal>> {
+        let first = self.submit(command.clone(), cx);
+        cx.spawn(async move |feed, cx| {
+            let answer = first.await;
+            let version = match &answer {
+                Ok(receipt) if receipt.error.as_deref() == Some("version_conflict") => {
+                    receipt.version
+                }
+                _ => return answer,
+            };
+            let again = WindowCommand {
+                command_id: uuid::Uuid::new_v4().to_string(),
+                expected_version: version,
+                ..command
+            };
+            match feed.update(cx, |feed, cx| feed.submit(again, cx)) {
+                Ok(second) => second.await,
+                Err(_) => answer,
+            }
+        })
+    }
     pub fn submit(
         &mut self,
         command: WindowCommand,
