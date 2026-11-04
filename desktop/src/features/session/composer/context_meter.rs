@@ -36,7 +36,12 @@ impl ContextMeter {
             },
             warm: left <= 25,
             hot: left <= 10,
-            headline: format!("{} of {} ({}%)", thousands(used), thousands(size), 100 - left),
+            headline: format!(
+                "{} of {} ({}%)",
+                thousands(used),
+                thousands(size),
+                100 - left
+            ),
             input: None,
             output: None,
         })

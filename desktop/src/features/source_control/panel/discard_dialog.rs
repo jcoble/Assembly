@@ -1,9 +1,9 @@
 //! Discard always asks first and names what goes. Everything keeps new files unless they're ticked; a new file is
 //! deleted from disk, so it says so; Cancel sends nothing.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::git_action::GitAction;
 use super::git_status::ChangedFile;
 use super::git_target::GitTarget;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::checkbox::Checkbox;
@@ -106,7 +106,9 @@ impl DiscardRequest {
                 let tracked: Vec<&str> = files
                     .iter()
                     .filter(|file| file.index != "?")
-                    .flat_map(|file| std::iter::once(file.path.as_str()).chain(file.original_path.as_deref()))
+                    .flat_map(|file| {
+                        std::iter::once(file.path.as_str()).chain(file.original_path.as_deref())
+                    })
                     .collect();
                 let untracked: Vec<&str> = files
                     .iter()
@@ -140,17 +142,25 @@ pub fn ask(
             .iter()
             .filter(|file| !deletes_from_disk(file))
             .collect();
-        let name = |file: &ChangedFile| div().text_role(TextRole::Body, cx).truncate().child(file.label());
+        let name = |file: &ChangedFile| {
+            div()
+                .text_role(TextRole::Body, cx)
+                .truncate()
+                .child(file.label())
+        };
         let mut body = v_flex()
             .gap_2()
             .child(div().text_role(TextRole::Body, cx).child(question.intro))
-            .children(
-                question
-                    .lines
-                    .iter()
-                    .map(|line| div().text_role(TextRole::Body, cx).text_color(muted).child(line.clone())),
-            );
-        let mut names = v_flex().id("discard-files").max_h(px(240.)).overflow_y_scroll();
+            .children(question.lines.iter().map(|line| {
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(muted)
+                    .child(line.clone())
+            }));
+        let mut names = v_flex()
+            .id("discard-files")
+            .max_h(px(240.))
+            .overflow_y_scroll();
         if !deleted.is_empty() {
             names = names
                 .child(
@@ -165,7 +175,11 @@ pub fn ask(
         body = body.child(names);
         if let DiscardRequest::Everything { omitted, .. } = &request {
             if *omitted > 0 {
-                body = body.child(div().text_role(TextRole::Body, cx).child(format!("and {omitted} more")));
+                body = body.child(
+                    div()
+                        .text_role(TextRole::Body, cx)
+                        .child(format!("and {omitted} more")),
+                );
             }
             let toggled = include_new.clone();
             let redraw = window.window_handle();

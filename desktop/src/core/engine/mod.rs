@@ -5,7 +5,7 @@ use serde_json::Value;
 mod engine_feed;
 mod engine_store;
 mod entity_batch;
-pub use engine_feed::{EngineFeed, EngineWatch, EngineChanged};
+pub use engine_feed::{EngineChanged, EngineFeed, EngineWatch};
 pub use engine_store::EngineStore;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -57,7 +57,7 @@ pub mod commands;
 mod commands_tests;
 
 mod native_activity;
-pub use native_activity::{NativeWatch,SubagentItem};
+pub use native_activity::{NativeWatch, SubagentItem};
 #[cfg(test)]
 mod native_activity_tests;
 

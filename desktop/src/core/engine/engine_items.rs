@@ -67,9 +67,18 @@ struct NeedFields {
 }
 impl NeedItem {
     pub fn addressee(&self) -> Option<SessionKey> {
-        let machine = self.addressee_machine.as_ref().filter(|value| !value.is_empty())?;
-        let id = self.addressee_session_id.as_ref().filter(|value| !value.is_empty())?;
-        Some(SessionKey { machine: machine.clone(), id: id.clone() })
+        let machine = self
+            .addressee_machine
+            .as_ref()
+            .filter(|value| !value.is_empty())?;
+        let id = self
+            .addressee_session_id
+            .as_ref()
+            .filter(|value| !value.is_empty())?;
+        Some(SessionKey {
+            machine: machine.clone(),
+            id: id.clone(),
+        })
     }
 
     pub fn of(item: &EngineItem) -> Option<Self> {

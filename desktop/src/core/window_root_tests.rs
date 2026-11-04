@@ -18,10 +18,10 @@ use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
 use crate::core::socket::test_wait::until;
-use crate::core::theme::copied_themes::copied_themes;
-use crate::core::theme::text::{TextRole, WINDOW_REM};
 use crate::core::state::appearance::{EDITOR_FONT_SIZE, THEME, UI_FONT_SIZE};
 use crate::core::state::preferences::Preferences;
+use crate::core::theme::copied_themes::copied_themes;
+use crate::core::theme::text::{TextRole, WINDOW_REM};
 use crate::core::theme::theme_id::ThemeId;
 use crate::core::theme::{self, THEMES_DIR};
 
@@ -212,13 +212,15 @@ async fn a_reload_settles_after_one_correction(cx: &mut TestAppContext) {
     let (_backend, _sets, window) = open_with(&[(UI_FONT_SIZE.key, json!(16))], cx).await;
     let updates = Rc::new(Cell::new(0));
     let count = updates.clone();
-    let _watch = window.update(|_, cx| {
-        cx.observe_global::<Theme>(move |_| count.set(count.get() + 1))
-    });
+    let _watch =
+        window.update(|_, cx| cx.observe_global::<Theme>(move |_| count.set(count.get() + 1)));
     reload_themes("settles", window);
     let after_reload = updates.get();
     assert!(after_reload > 0, "the reload didn't touch the theme");
-    assert!(after_reload <= 4, "{after_reload} theme updates for one reload");
+    assert!(
+        after_reload <= 4,
+        "{after_reload} theme updates for one reload"
+    );
     // A redraw with nothing changed updates nothing.
     assert_eq!(drawn_size(window), (px(16.), px(16.)));
     assert_eq!(updates.get(), after_reload, "the theme kept updating");

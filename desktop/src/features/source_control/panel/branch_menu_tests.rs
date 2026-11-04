@@ -34,14 +34,35 @@ fn a_branch_name_git_would_refuse_says_why() {
     let problem = |name: &str| branch_name_problem(name, &branches);
     assert_eq!(problem("   "), None);
     assert_eq!(problem("feature/ok"), None);
-    assert_eq!(problem("-x").as_deref(), Some("A branch name cannot start with a dash."));
-    assert_eq!(problem("a b").as_deref(), Some("Branch names cannot contain spaces."));
-    assert_eq!(problem("a~b").as_deref(), Some("Branch names cannot contain ~"));
-    assert_eq!(problem("a..b").as_deref(), Some("Branch names cannot contain two dots in a row."));
-    assert_eq!(problem("a/").as_deref(), Some("Branch names cannot start or end with a slash."));
-    assert_eq!(problem("a.lock").as_deref(), Some("Branch names cannot end with .lock"));
+    assert_eq!(
+        problem("-x").as_deref(),
+        Some("A branch name cannot start with a dash.")
+    );
+    assert_eq!(
+        problem("a b").as_deref(),
+        Some("Branch names cannot contain spaces.")
+    );
+    assert_eq!(
+        problem("a~b").as_deref(),
+        Some("Branch names cannot contain ~")
+    );
+    assert_eq!(
+        problem("a..b").as_deref(),
+        Some("Branch names cannot contain two dots in a row.")
+    );
+    assert_eq!(
+        problem("a/").as_deref(),
+        Some("Branch names cannot start or end with a slash.")
+    );
+    assert_eq!(
+        problem("a.lock").as_deref(),
+        Some("Branch names cannot end with .lock")
+    );
     assert_eq!(problem("main").as_deref(), Some("main already exists."));
-    assert_eq!(problem(&"x".repeat(201)).as_deref(), Some("That branch name is too long."));
+    assert_eq!(
+        problem(&"x".repeat(201)).as_deref(),
+        Some("That branch name is too long.")
+    );
 }
 #[test]
 fn the_filter_is_case_insensitive_and_the_detail_says_what_the_branch_tracks() {

@@ -9,9 +9,9 @@ mod target;
 #[cfg(test)]
 mod tests;
 mod view;
+use crate::core::engine::{EngineChanged, EngineFeed, EngineScope, EngineWatch};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
-use crate::core::engine::{EngineFeed, EngineScope, EngineChanged, EngineWatch};
 use crate::core::socket::outcome::Outcome;
 use challenge::ChallengeState;
 use gpui_kit::component::input::InputState;
@@ -197,17 +197,26 @@ impl SignInPanel {
     }
     fn subscribe(&mut self, cx: &mut Context<Self>) {
         let feed = EngineFeed::global(cx);
-        let scope = EngineScope { machine: self.projection.target.machine.clone(), topic: "providers".into(), key: None };
+        let scope = EngineScope {
+            machine: self.projection.target.machine.clone(),
+            topic: "providers".into(),
+            key: None,
+        };
         let generation = self.generation;
         let observed = scope.clone();
-        self._stream = Some(cx.subscribe(&feed, move |panel, feed, changed: &EngineChanged, cx| {
-            if panel.current(generation, cx) && changed.scopes.contains(&observed) {
-                panel.apply_feed(&feed, &observed, changed, cx);
-            }
-        }));
+        self._stream = Some(cx.subscribe(
+            &feed,
+            move |panel, feed, changed: &EngineChanged, cx| {
+                if panel.current(generation, cx) && changed.scopes.contains(&observed) {
+                    panel.apply_feed(&feed, &observed, changed, cx);
+                }
+            },
+        ));
         let error_scope = scope.clone();
         self._feed_error = Some(cx.observe(&feed, move |panel, feed, cx| {
-            if !panel.current(generation, cx) || feed.read(cx).loaded(&error_scope) { return; }
+            if !panel.current(generation, cx) || feed.read(cx).loaded(&error_scope) {
+                return;
+            }
             if let Some(error) = feed.read(cx).error() {
                 panel.projection.ready = false;
                 panel.error = error.message.clone().into();
@@ -224,14 +233,27 @@ impl SignInPanel {
                 self.resnapshot = Some(watch);
                 // An existing shared lease may have a prior completed cut. Obtain a fresh cut before
                 // enabling this newly opened sensitive surface, using that SAME subscription.
-                if feed.read(cx).loaded(&scope) { self.request_snapshot(cx); }
+                if feed.read(cx).loaded(&scope) {
+                    self.request_snapshot(cx);
+                }
             }
-            Err(error) => { self.error = error.message.into(); cx.notify(); }
+            Err(error) => {
+                self.error = error.message.into();
+                cx.notify();
+            }
         }
     }
-    fn apply_feed(&mut self, feed: &Entity<EngineFeed>, scope: &EngineScope, changed: &EngineChanged, cx: &mut Context<Self>) {
+    fn apply_feed(
+        &mut self,
+        feed: &Entity<EngineFeed>,
+        scope: &EngineScope,
+        changed: &EngineChanged,
+        cx: &mut Context<Self>,
+    ) {
         let feed = feed.read(cx);
-        if !feed.loaded(scope) { return; }
+        if !feed.loaded(scope) {
+            return;
+        }
         let fresh = self.resnapshot_pending || !self.projection.ready;
         if fresh {
             self.read_revision += 1;
@@ -240,22 +262,30 @@ impl SignInPanel {
             self._challenge = None;
         }
         self.projection.begin_snapshot();
-        for item in feed.items(scope) { self.projection.snapshot_item(item.value); }
+        for item in feed.items(scope) {
+            self.projection.snapshot_item(item.value);
+        }
         self.projection.finish_snapshot();
         self.resnapshot_pending = false;
-        self.provider_dirty |= fresh || changed.keys.iter().any(|key|
-            key.kind == "provider" && key.id == self.projection.target.provider_target_id);
+        self.provider_dirty |= fresh
+            || changed.keys.iter().any(|key| {
+                key.kind == "provider" && key.id == self.projection.target.provider_target_id
+            });
         let operation_changed = fresh || changed.keys.iter().any(|key| key.kind == "sign_in");
         self.operation_dirty |= operation_changed;
         self.challenge_dirty |= operation_changed;
-        if operation_changed { self.after_operation(cx); }
+        if operation_changed {
+            self.after_operation(cx);
+        }
         self.read_provider(cx);
         self.read_operation(cx);
         self.read_challenge(cx);
         cx.notify();
     }
     fn request_snapshot(&mut self, cx: &mut Context<Self>) {
-        if self.resnapshot_pending { return; }
+        if self.resnapshot_pending {
+            return;
+        }
         if let Some(request) = &self.resnapshot {
             self.resnapshot_pending = true;
             self.projection.ready = false;

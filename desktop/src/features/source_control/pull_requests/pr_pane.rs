@@ -5,12 +5,11 @@ use super::{
     pr_search::PrState,
     pull_request::{PrTarget, PullRequestSummary},
 };
-use crate::core::{
-    socket::row_source::ExpectedRowSource,
-    intents::open_pull_requests::OpenPullRequests, state::selected_session::SelectedSession,
-    ui::center_panes::CenterPanes,
-};
 use crate::core::socket::picture_client::PictureInterest;
+use crate::core::{
+    intents::open_pull_requests::OpenPullRequests, socket::row_source::ExpectedRowSource,
+    state::selected_session::SelectedSession, ui::center_panes::CenterPanes,
+};
 use crate::features::projects::projects::{ProjectRecord, Projects};
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, panel_handle, register_panel,
@@ -316,77 +315,14 @@ impl PrPane {
         }
         cx.notify();
     }
-    /// Typing searches after a short pause; a link waits for Enter.
-    fn search_after_pause(&mut self, text: String, cx: &mut Context<Self>) {
-        self.search_wait = None;
-        if text.trim().starts_with("https://") {
-            return;
-        }
-        self.search_wait = Some(cx.spawn(async move |pane, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(350))
-                .await;
-            _ = pane.update(cx, |pane, cx| {
-                pane.search_wait = None;
-                pane.search(text, cx);
-            });
-        }));
-    }
-    fn search(&mut self, text: String, cx: &mut Context<Self>) {
-        self.search_wait = None;
-        if text.trim().starts_with("https://") {
-            let mut known = self.scope.clone();
-            known.extend(
-                self.queue
-                    .read(cx)
-                    .page
-                    .items
-                    .iter()
-                    .map(|pr| pr.repository.clone()),
-            );
-            if let Some(projects) = &self.projects {
-                known.extend(
-                    projects
-                        .read(cx)
-                        .rows()
-                        .iter()
-                        .filter_map(|project| project.github_repository().map(String::from)),
-                );
-            }
-            let target = if self.session.is_some() {
-                PrTarget::parse_url(&text)
-            } else {
-                PrTarget::from_url(&text, &known)
-            };
-            // A session target is checked against the backend's actual origin before any detail is displayed.
-            self.missing_link = None;
-            match target {
-                Ok(target) => self.select_pr(Some(target.repository), target.number, cx),
-                Err(error) => match PrTarget::parse_url(&text) {
-                    Ok(target) => {
-                        self.missing_link = Some((
-                            format!(
-                                "github.com/{} is not a project in Assembly, so #{} cannot open here. Add the repository as a project, or open it on GitHub.",
-                                target.repository, target.number
-                            ),
-                            text.trim().to_string(),
-                        ));
-                    }
-                    Err(_) => self.failure = Some(error),
-                },
-            }
-        } else {
-            self.failure = None;
-            self.missing_link = None;
-            let text: String = text.chars().take(MAX_SEARCH).collect();
-            self.queue
-                .update(cx, |queue, cx| queue.set_search(text, cx));
-        }
-        cx.notify();
-    }
     fn select_pr(&mut self, repository: Option<String>, number: u64, cx: &mut Context<Self>) {
-        let wanted =
-            Selected { repository, number, listed_local: false, row: None, on_changes: false };
+        let wanted = Selected {
+            repository,
+            number,
+            listed_local: false,
+            row: None,
+            on_changes: false,
+        };
         self.open_pr(wanted, cx);
     }
     fn select_row(&mut self, row: PullRequestSummary, cx: &mut Context<Self>) {
@@ -407,7 +343,13 @@ impl PrPane {
     }
     fn open_pr(&mut self, wanted: Selected, cx: &mut Context<Self>) {
         self.cancel_open(cx);
-        let Selected { repository, number, listed_local, row, on_changes } = wanted.clone();
+        let Selected {
+            repository,
+            number,
+            listed_local,
+            row,
+            on_changes,
+        } = wanted.clone();
         self.failure = None;
         if let Some(id) = self.session.clone() {
             let source = selected_source(Some(&id), cx);
@@ -420,7 +362,10 @@ impl PrPane {
             return;
         }
         self.close_detail(cx);
-        let rows = self.projects.as_ref().map(|projects| projects.read(cx).rows());
+        let rows = self
+            .projects
+            .as_ref()
+            .map(|projects| projects.read(cx).rows());
         let found = holders(
             rows.unwrap_or_default(),
             self.project.as_deref(),
@@ -451,7 +396,8 @@ impl PrPane {
         let shown = detail.detail.as_ref()?;
         let owner = detail.owner();
         (matches!(owner, PrOwner::Project { .. })
-            && repository.is_none_or(|repository| repository.eq_ignore_ascii_case(&shown.repository)))
+            && repository
+                .is_none_or(|repository| repository.eq_ignore_ascii_case(&shown.repository)))
         .then(|| owner.clone())
     }
     fn resolve_project(
@@ -487,7 +433,11 @@ impl PrPane {
         let Some(choice) = self.choosing.take() else {
             return;
         };
-        let Some(project) = choice.projects.iter().find(|project| project.id == project_id) else {
+        let Some(project) = choice
+            .projects
+            .iter()
+            .find(|project| project.id == project_id)
+        else {
             return;
         };
         self.resolve_project(project, choice.repository, choice.number, cx);
@@ -513,8 +463,9 @@ impl PrPane {
                 pane.close_detail(cx)
             }),
             cx.subscribe(&detail, |pane: &mut Self, _, merged: &PrMerged, cx| {
-                pane.queue
-                    .update(cx, |queue, cx| queue.merged(&merged.repository, merged.number, cx))
+                pane.queue.update(cx, |queue, cx| {
+                    queue.merged(&merged.repository, merged.number, cx)
+                })
             }),
         ]);
         self.detail = Some(detail);
@@ -539,60 +490,10 @@ fn selected_source(session: Option<&str>, cx: &App) -> Option<ExpectedRowSource>
         .then(|| selected.source().cloned())
         .flatten()
 }
+#[path = "pr_view/pane_render.rs"]
+mod render;
+#[path = "pr_view/pane_search.rs"]
+mod search_run;
 #[cfg(test)]
 #[path = "pr_view/pane_tests.rs"]
 mod tests;
-impl EventEmitter<PanelEvent> for PrPane {}
-impl Focusable for PrPane {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-impl BasePanel for PrPane {
-    fn panel_name(&self) -> &'static str {
-        NAME
-    }
-    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
-        self.active = active;
-        self._pictures = active.then(|| PictureInterest::hold(cx)).flatten();
-        self.sync_scope(cx);
-        if let Some(detail) = &self.detail {
-            detail.update(cx, |detail, cx| detail.set_active(active, cx));
-        }
-    }
-    fn on_removed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.active = false;
-        self._pictures = None;
-        self.queue
-            .update(cx, |queue, cx| queue.set_active(false, cx));
-        if let Some(detail) = &self.detail {
-            detail.update(cx, |detail, cx| detail.set_active(false, cx));
-        }
-    }
-    fn dump(&self, _: &App) -> PanelState {
-        PanelState {
-            panel_name: NAME.into(),
-            children: Vec::new(),
-            info: PanelInfo::panel(json!({"session":self.session})),
-        }
-    }
-}
-impl Panel for PrPane {
-    fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        NAME
-    }
-}
-impl Render for PrPane {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let page = match (self.detail.clone(), self.selected.clone()) {
-            (Some(detail), _) => detail.into_any_element(),
-            (None, Some(selected)) => self.opening_page(&selected, cx),
-            (None, None) => self.list_page(cx).into_any_element(),
-        };
-        div()
-            .track_focus(&self.focus)
-            .size_full()
-            .min_h_0()
-            .child(page)
-    }
-}

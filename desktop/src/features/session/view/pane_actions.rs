@@ -8,22 +8,37 @@ use serde_json::{Value, json};
 
 use super::SessionPane;
 use crate::core::theme::grow::GROW;
+use crate::core::ui::ask::form::AskForm;
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::rows::tool::ToolDetail;
-use crate::core::ui::ask::form::AskForm;
 use crate::features::session::view::grow::toggled;
 use crate::features::session::view::lightbox::{open_lightbox, read_image};
 use crate::features::session::view::session_action::SessionAction;
 
 impl SessionPane {
     /// A qualified read refusal invalidates only the matching visible source, never another selection.
-    pub(crate) fn refuse_image_source(session:&str,source:&crate::core::socket::row_source::ExpectedRowSource,reason:String,cx:&mut App) {
-        if let Some(pane)=crate::core::ui::center_panes::CenterPanes::find::<SessionPane>("Chat",cx) {
-            pane.update(cx,|pane,cx| {
-                if pane.session.as_deref()==Some(session)&&pane.row_source.as_ref()==Some(source) {
-                    pane.on_rows(crate::features::session::client::session_client::RowUpdate::Refused{code:"source_changed".into(),message:reason},cx);
+    pub(crate) fn refuse_image_source(
+        session: &str,
+        source: &crate::core::socket::row_source::ExpectedRowSource,
+        reason: String,
+        cx: &mut App,
+    ) {
+        if let Some(pane) =
+            crate::core::ui::center_panes::CenterPanes::find::<SessionPane>("Chat", cx)
+        {
+            pane.update(cx, |pane, cx| {
+                if pane.session.as_deref() == Some(session)
+                    && pane.row_source.as_ref() == Some(source)
+                {
+                    pane.on_rows(
+                        crate::features::session::client::session_client::RowUpdate::Refused {
+                            code: "source_changed".into(),
+                            message: reason,
+                        },
+                        cx,
+                    );
                 }
             });
         }
@@ -36,17 +51,39 @@ impl SessionPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.active_source_cut.as_ref().is_some_and(|cut|!cut.current(cx)) {
-            self.composer.update(cx,|composer,cx|composer.invalidate_source(cx));
-            self.status="The captured session connection changed. Open the session again.".into();cx.notify();return;
+        if self
+            .active_source_cut
+            .as_ref()
+            .is_some_and(|cut| !cut.current(cx))
+        {
+            self.composer
+                .update(cx, |composer, cx| composer.invalidate_source(cx));
+            self.status = "The captured session connection changed. Open the session again.".into();
+            cx.notify();
+            return;
         }
         if self.row_source.is_some() && self._rows.is_none() {
-            self.status = "The captured session source is unavailable. Open the session again.".into(); cx.notify(); return;
+            self.status =
+                "The captured session source is unavailable. Open the session again.".into();
+            cx.notify();
+            return;
         }
-        if self.read_only && matches!(&action,
-            SessionAction::RetryPrompt { .. } | SessionAction::Pick { .. } | SessionAction::Flag { .. }
-            | SessionAction::SubmitAsk { .. } | SessionAction::Answer { .. } | SessionAction::StopTask { .. } | SessionAction::StopNative { .. } | SessionAction::StopEngineChild { .. }) {
-            self.status = "This recorded transcript is read-only.".into(); cx.notify(); return;
+        if self.read_only
+            && matches!(
+                &action,
+                SessionAction::RetryPrompt { .. }
+                    | SessionAction::Pick { .. }
+                    | SessionAction::Flag { .. }
+                    | SessionAction::SubmitAsk { .. }
+                    | SessionAction::Answer { .. }
+                    | SessionAction::StopTask { .. }
+                    | SessionAction::StopNative { .. }
+                    | SessionAction::StopEngineChild { .. }
+            )
+        {
+            self.status = "This recorded transcript is read-only.".into();
+            cx.notify();
+            return;
         }
         let Some(session) = self.session.clone() else {
             return;
@@ -101,7 +138,7 @@ impl SessionPane {
                 let Some(form) = self.forms.get_mut(&ask_id) else {
                     return;
                 };
-                form.pick(field,value,many);
+                form.pick(field, value, many);
                 self.refresh_ask(&ask_id, cx);
                 cx.notify();
             }
@@ -130,7 +167,9 @@ impl SessionPane {
                     return;
                 };
                 match AskForm::answer(asked, &form.picked, texts) {
-                    Ok(answer) => self.on_action(SessionAction::Answer { ask_id, answer }, window, cx),
+                    Ok(answer) => {
+                        self.on_action(SessionAction::Answer { ask_id, answer }, window, cx)
+                    }
                     Err(why) => {
                         self.status = why.into();
                         cx.notify();
@@ -150,39 +189,83 @@ impl SessionPane {
                 let args = json!({ "session": session, "ask": ask_id, "answer": answer });
                 self.send(task, "answer", args, cx);
             }
-            SessionAction::StopNative { key, payload_session_id } => {
-                match self.native_stop_task(&key,&payload_session_id) {
-                    Ok(task)=>{
-                        self.status=SharedString::default();
-                        self.send(format!("stop:{task}"),"stopTask",json!({"session":session,"task":task}),cx);
-                    }
-                    Err(error)=>{self.status=error.message.into();cx.notify();}
+            SessionAction::StopNative {
+                key,
+                payload_session_id,
+            } => match self.native_stop_task(&key, &payload_session_id) {
+                Ok(task) => {
+                    self.status = SharedString::default();
+                    self.send(
+                        format!("stop:{task}"),
+                        "stopTask",
+                        json!({"session":session,"task":task}),
+                        cx,
+                    );
                 }
-            }
+                Err(error) => {
+                    self.status = error.message.into();
+                    cx.notify();
+                }
+            },
             SessionAction::StopTask { task } => {
                 self.status = SharedString::default();
                 let args = json!({ "session": session, "task": task });
                 self.send(format!("stop:{task}"), "stopTask", args, cx);
             }
-            SessionAction::StopEngineChild{key,session_id}=>self.stop_engine_child(&key,&session_id,cx),
-            SessionAction::OpenNative { key, payload_session_id } => {
-                match self.native_open_request(&key,&payload_session_id) {
-                    Ok(request)=>self.request_open(request,window,cx),
-                    Err(error)=>{self.status=error.message.into();cx.notify();}
+            SessionAction::StopEngineChild { key, session_id } => {
+                self.stop_engine_child(&key, &session_id, cx)
+            }
+            SessionAction::OpenNative {
+                key,
+                payload_session_id,
+            } => match self.native_open_request(&key, &payload_session_id) {
+                Ok(request) => self.request_open(request, window, cx),
+                Err(error) => {
+                    self.status = error.message.into();
+                    cx.notify();
+                }
+            },
+            SessionAction::OpenEngineChild { session_id } => {
+                let parent =
+                    self.row_source
+                        .as_ref()
+                        .map(|source| crate::core::engine::SessionKey {
+                            machine: source.machine.clone(),
+                            id: session.clone(),
+                        });
+                let feed = crate::core::engine::EngineFeed::global(cx);
+                let children = parent
+                    .map(|parent| feed.read(cx).children_of(&parent))
+                    .unwrap_or_default();
+                let mut matches = children
+                    .into_iter()
+                    .filter(|child| child.key.id == session_id);
+                let key = matches.next().map(|child| child.session_key());
+                if let Some(key) = key.filter(|_| matches.next().is_none()) {
+                    self.request_open(
+                        crate::core::intents::session_open::SessionOpenRequest {
+                            key,
+                            request_id: uuid::Uuid::new_v4().to_string(),
+                            target: crate::core::intents::session_open::SessionOpenTarget::Engine,
+                        },
+                        window,
+                        cx,
+                    );
+                } else {
+                    self.status = "The helper's source-qualified session is unavailable.".into();
+                    cx.notify();
                 }
             }
-            SessionAction::OpenEngineChild { session_id } => {
-                let parent=self.row_source.as_ref().map(|source|crate::core::engine::SessionKey{machine:source.machine.clone(),id:session.clone()});
-                let feed=crate::core::engine::EngineFeed::global(cx);
-                let children=parent.map(|parent|feed.read(cx).children_of(&parent)).unwrap_or_default();
-                let mut matches=children.into_iter().filter(|child|child.key.id==session_id);
-                let key=matches.next().map(|child|child.session_key());
-                if let Some(key)=key.filter(|_|matches.next().is_none()) {
-                    self.request_open(crate::core::intents::session_open::SessionOpenRequest{key,request_id:uuid::Uuid::new_v4().to_string(),target:crate::core::intents::session_open::SessionOpenTarget::Engine},window,cx);
-                }else{self.status="The helper's source-qualified session is unavailable.".into();cx.notify();}
-            }
-            SessionAction::OpenSender {key} => {
-                self.request_open(crate::core::intents::session_open::SessionOpenRequest{key,request_id:uuid::Uuid::new_v4().to_string(),target:crate::core::intents::session_open::SessionOpenTarget::Engine},window,cx);
+            SessionAction::OpenSender { key } => {
+                self.request_open(
+                    crate::core::intents::session_open::SessionOpenRequest {
+                        key,
+                        request_id: uuid::Uuid::new_v4().to_string(),
+                        target: crate::core::intents::session_open::SessionOpenTarget::Engine,
+                    },
+                    window,
+                    cx,
+                );
             }
             SessionAction::ShowImage { name } => {
                 self.status = SharedString::default();
@@ -307,9 +390,17 @@ impl SessionPane {
     }
 
     /// One of the `send` feature's calls, `task` naming what it's for; a failure says why under the timeline.
-    fn send(&mut self, task: String, method: &'static str, mut args: Value, cx: &mut Context<Self>) {
-        let source=self.row_source.clone();
-        if let Some(source)=&source{args["expectedSource"]=json!(source);}
+    fn send(
+        &mut self,
+        task: String,
+        method: &'static str,
+        mut args: Value,
+        cx: &mut Context<Self>,
+    ) {
+        let source = self.row_source.clone();
+        if let Some(source) = &source {
+            args["expectedSource"] = json!(source);
+        }
         let call = self.client.call("send", method, args, None, cx);
         let session = self.session.clone();
         self._writes.insert(
@@ -319,13 +410,16 @@ impl SessionPane {
                 pane.update(cx, |pane, cx| match answer {
                     Ok(_) | Err(CallError::Aborted) => {}
                     // Said only where it was sent from: the reader may have switched away since.
-                    Err(_) if pane.session != session || pane.row_source!=source => {}
+                    Err(_) if pane.session != session || pane.row_source != source => {}
                     Err(error) => {
                         if matches!(&error,CallError::Refused{code,..} if code=="source_changed") {
-                            pane._rows=None;pane.active_source_cut=None;pane.composer.update(cx,|composer,cx|composer.invalidate_source(cx));
+                            pane._rows = None;
+                            pane.active_source_cut = None;
+                            pane.composer
+                                .update(cx, |composer, cx| composer.invalidate_source(cx));
                         }
                         pane.say_failed("That didn't go through", error, cx);
-                    },
+                    }
                 })
                 .ok();
             }),
@@ -356,8 +450,11 @@ impl SessionPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.session.as_ref()!=Some(&session){return;}
-        let source=self.row_source.clone();let serial=self.active_open_serial;
+        if self.session.as_ref() != Some(&session) {
+            return;
+        }
+        let source = self.row_source.clone();
+        let serial = self.active_open_serial;
         let client = self.client.clone();
         let task = format!("image:{name}");
         self._loads.insert(

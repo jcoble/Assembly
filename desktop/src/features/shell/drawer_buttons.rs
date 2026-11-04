@@ -40,7 +40,10 @@ pub fn press(open: bool) -> Press {
 }
 
 /// The overflow tool the capsule keeps: the one the drawer shows, or else the last one it showed.
-pub fn extra_after(last: Option<&'static str>, shown: Option<&'static str>) -> Option<&'static str> {
+pub fn extra_after(
+    last: Option<&'static str>,
+    shown: Option<&'static str>,
+) -> Option<&'static str> {
     shown.filter(|name| !primary(name)).or(last)
 }
 
@@ -210,7 +213,9 @@ pub fn toggle(dock: Entity<DockArea>, cx: &App) -> impl IntoElement {
         .tooltip(|window, cx| Tooltip::new("Toggle tools drawer").build(window, cx))
         .child(Icon::new(IconName::PanelRight).size(px(17.)))
         .on_click(move |_, window, cx| {
-                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
+            cx.defer(
+                crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed,
+            );
             dock.update(cx, |dock, cx| {
                 dock.toggle_dock(DockPlacement::Right, window, cx)
             })

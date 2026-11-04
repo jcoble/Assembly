@@ -1,6 +1,6 @@
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::projects_screen::ProjectsSampleScreen;
 use super::sample::{Machine, SAMPLE_FOLDER_LIMITATION, StartWith, normalize_path, parent_path};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::command::{Command, CommandItem, CommandState};

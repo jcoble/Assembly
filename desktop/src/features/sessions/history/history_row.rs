@@ -31,7 +31,15 @@ pub fn history_row(item: &SessionItem, now: Option<i64>, picked: bool, cx: &App)
         .when(picked, |line| line.bg(theme.secondary))
         .when(!picked, |line| line.hover(|line| line.bg(theme.muted)))
         .on_click(move |_, window, cx| {
-            window.dispatch_action(Box::new(OpenSession{id:id.clone(),route_machine:route_machine.clone(),request_id:uuid::Uuid::new_v4().to_string(),historical:true}),cx);
+            window.dispatch_action(
+                Box::new(OpenSession {
+                    id: id.clone(),
+                    route_machine: route_machine.clone(),
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    historical: true,
+                }),
+                cx,
+            );
         })
         .child(
             div()

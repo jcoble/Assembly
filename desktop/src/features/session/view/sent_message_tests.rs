@@ -22,7 +22,7 @@ use std::{cell::RefCell, rc::Rc};
 
 struct SenderHost {
     from: Option<String>,
-    machine:Option<String>,
+    machine: Option<String>,
     label: Option<String>,
     opened: Rc<RefCell<Vec<crate::core::engine::SessionKey>>>,
 }
@@ -33,7 +33,7 @@ impl Render for SenderHost {
             key: "user".into(),
             text: "body".into(),
             sender: self.from.clone(),
-            sender_machine:self.machine.clone(),
+            sender_machine: self.machine.clone(),
             sender_label: self.label.clone(),
             images: vec![],
             open: false,
@@ -53,7 +53,7 @@ fn sender_click_uses_identity_and_plain_label_has_no_action(cx: &mut TestAppCont
     let capture = opened.clone();
     let (host, cx) = cx.add_window_view(|_, _| SenderHost {
         from: Some("peer/x".into()),
-        machine:Some("sender-owner".into()),
+        machine: Some("sender-owner".into()),
         label: Some("Captured title (peer/x)".into()),
         opened: capture,
     });
@@ -64,7 +64,13 @@ fn sender_click_uses_identity_and_plain_label_has_no_action(cx: &mut TestAppCont
         .expect("sender drawn");
     cx.simulate_click(sender.center(), Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(*opened.borrow(), [crate::core::engine::SessionKey{machine:"sender-owner".into(),id:"peer/x".into()}]);
+    assert_eq!(
+        *opened.borrow(),
+        [crate::core::engine::SessionKey {
+            machine: "sender-owner".into(),
+            id: "peer/x".into()
+        }]
+    );
     host.update(cx, |host, cx| {
         host.from = None;
         host.label = Some("Assembly".into());
@@ -77,7 +83,13 @@ fn sender_click_uses_identity_and_plain_label_has_no_action(cx: &mut TestAppCont
         .expect("plain label drawn");
     cx.simulate_click(sender.center(), Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(*opened.borrow(), [crate::core::engine::SessionKey{machine:"sender-owner".into(),id:"peer/x".into()}]);
+    assert_eq!(
+        *opened.borrow(),
+        [crate::core::engine::SessionKey {
+            machine: "sender-owner".into(),
+            id: "peer/x".into()
+        }]
+    );
     host.update(cx, |host, cx| {
         host.from = Some("peer/x".into());
         host.label = None;
@@ -88,14 +100,40 @@ fn sender_click_uses_identity_and_plain_label_has_no_action(cx: &mut TestAppCont
     let sender = cx.debug_bounds("sent-message-sender").unwrap();
     cx.simulate_click(sender.center(), Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(*opened.borrow(), [crate::core::engine::SessionKey{machine:"sender-owner".into(),id:"peer/x".into()},crate::core::engine::SessionKey{machine:"sender-owner".into(),id:"peer/x".into()}]);
+    assert_eq!(
+        *opened.borrow(),
+        [
+            crate::core::engine::SessionKey {
+                machine: "sender-owner".into(),
+                id: "peer/x".into()
+            },
+            crate::core::engine::SessionKey {
+                machine: "sender-owner".into(),
+                id: "peer/x".into()
+            }
+        ]
+    );
 }
 
 #[gpui::test]
-fn a_legacy_sender_id_without_its_owner_is_readable_but_cannot_open_the_receiver_owner(cx:&mut TestAppContext) {
-    cx.update(gpui_kit::init);let opened=Rc::new(RefCell::new(Vec::new()));let capture=opened.clone();
-    let(_,cx)=cx.add_window_view(|_,_|SenderHost{from:Some("same-id".into()),machine:None,label:Some("Recorded sender".into()),opened:capture});
-    cx.run_until_parked();cx.update(|window,cx|window.draw(cx).clear(cx));
-    let sender=cx.debug_bounds("sent-message-sender").expect("legacy sender remains readable");
-    cx.simulate_click(sender.center(),Modifiers::none());cx.run_until_parked();assert!(opened.borrow().is_empty());
+fn a_legacy_sender_id_without_its_owner_is_readable_but_cannot_open_the_receiver_owner(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    let opened = Rc::new(RefCell::new(Vec::new()));
+    let capture = opened.clone();
+    let (_, cx) = cx.add_window_view(|_, _| SenderHost {
+        from: Some("same-id".into()),
+        machine: None,
+        label: Some("Recorded sender".into()),
+        opened: capture,
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let sender = cx
+        .debug_bounds("sent-message-sender")
+        .expect("legacy sender remains readable");
+    cx.simulate_click(sender.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(opened.borrow().is_empty());
 }

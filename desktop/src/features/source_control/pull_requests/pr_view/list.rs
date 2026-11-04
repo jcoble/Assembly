@@ -1,5 +1,4 @@
 //! The Pull requests list: a heading, the filters, a note when something's wrong, and one row per pull request.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::{
     pr_activity::{pr_state, repo_name},
     pr_parts::{age_label, avatar, state_icon, tone_color},
@@ -8,6 +7,7 @@ use super::super::{
 };
 use super::*;
 use crate::core::intents::open_url::OpenUrl;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::input::Input;
@@ -254,7 +254,12 @@ impl PrPane {
                 h_flex()
                     .gap_2()
                     .justify_between()
-                    .child(div().text_role(TextRole::Heading, cx).font_weight(FontWeight::SEMIBOLD).child("Pull requests"))
+                    .child(
+                        div()
+                            .text_role(TextRole::Heading, cx)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Pull requests"),
+                    )
                     .child(
                         Button::new("pr-queue-refresh")
                             .ghost()
@@ -269,19 +274,29 @@ impl PrPane {
             )
             .child(self.filters(cx))
             .children(missing.map(|(words, url)| {
-                h_flex().gap_2().text_role(TextRole::Body, cx).child(words).child(
-                    div().debug_selector(|| "pr-missing-open".into()).child(
-                        Button::new("pr-missing-open")
-                            .ghost()
-                            .small()
-                            .label("Open on GitHub")
-                            .on_click(move |_, window, cx| {
-                                window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
-                            }),
-                    ),
-                )
+                h_flex()
+                    .gap_2()
+                    .text_role(TextRole::Body, cx)
+                    .child(words)
+                    .child(
+                        div().debug_selector(|| "pr-missing-open".into()).child(
+                            Button::new("pr-missing-open")
+                                .ghost()
+                                .small()
+                                .label("Open on GitHub")
+                                .on_click(move |_, window, cx| {
+                                    window
+                                        .dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
+                                }),
+                        ),
+                    )
             }))
-            .children(error.map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)))
+            .children(error.map(|error| {
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(danger)
+                    .child(error)
+            }))
             .when((loading || projects_loading) && count == 0, |page| {
                 page.child(
                     h_flex()

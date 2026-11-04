@@ -34,10 +34,16 @@ fn head_branch_and_tag_decorations_become_named_pills_and_head_is_not_repeated()
         "tag: v1.2".into(),
     ]);
     assert_eq!(pills.len(), 3);
-    assert_eq!((pills[0].label.as_str(), pills[0].kind), ("main", RefKind::Head));
+    assert_eq!(
+        (pills[0].label.as_str(), pills[0].kind),
+        ("main", RefKind::Head)
+    );
     assert_eq!(pills[1].kind, RefKind::Remote);
     assert_eq!(ref_pills(&["main".into()])[0].kind, RefKind::Branch);
-    assert_eq!((pills[2].label.as_str(), pills[2].kind), ("v1.2", RefKind::Tag));
+    assert_eq!(
+        (pills[2].label.as_str(), pills[2].kind),
+        ("v1.2", RefKind::Tag)
+    );
     assert_eq!(ref_pills(&["HEAD".into()])[0].kind, RefKind::Head);
 }
 #[test]

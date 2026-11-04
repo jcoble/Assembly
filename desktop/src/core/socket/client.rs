@@ -237,7 +237,7 @@ impl SocketClient {
         &self,
         message: &str,
         machine: Option<&str>,
-        expected_source:Option<&super::row_source::ExpectedRowSource>,
+        expected_source: Option<&super::row_source::ExpectedRowSource>,
     ) -> TopicSubscription<super::engine_update::EngineUpdate> {
         let id = self.id();
         let (updates, receiver) = unbounded();
@@ -245,7 +245,7 @@ impl SocketClient {
             id,
             message: message.into(),
             machine: machine.map(Into::into),
-            expected_source:expected_source.cloned(),
+            expected_source: expected_source.cloned(),
             updates,
         });
         TopicSubscription::new(id, self.events.clone(), receiver)

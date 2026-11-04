@@ -13,12 +13,10 @@ pub fn run(key: WorkspaceKey, window: &mut Window, cx: &mut App) -> Task<bool> {
     let handle = window.window_handle();
     cx.spawn(async move |cx| {
         for document in keys {
-            let version = cx
-                .update(|cx| {
-                    cx.try_global::<DocumentStore>()
-                        .and_then(|docs| docs.version(&document))
-                })
-;
+            let version = cx.update(|cx| {
+                cx.try_global::<DocumentStore>()
+                    .and_then(|docs| docs.version(&document))
+            });
             let Some(version) = version else {
                 continue;
             };
@@ -37,36 +35,34 @@ pub fn run(key: WorkspaceKey, window: &mut Window, cx: &mut App) -> Task<bool> {
             match prompt.await {
                 Ok(0) => {
                     let (answer, saved) = oneshot::channel();
-                    let started = cx
-                        .update(|cx| {
-                            let view = CenterPanes::file_views(cx)
-                                .into_iter()
-                                .find(|view| view.read(cx).document_key() == Some(&document));
-                            if let Some(view) = view {
-                                view.update(cx, |view, cx| view.save_for_guard(answer, cx));
-                                true
-                            } else {
-                                false
-                            }
-                        });
+                    let started = cx.update(|cx| {
+                        let view = CenterPanes::file_views(cx)
+                            .into_iter()
+                            .find(|view| view.read(cx).document_key() == Some(&document));
+                        if let Some(view) = view {
+                            view.update(cx, |view, cx| view.save_for_guard(answer, cx));
+                            true
+                        } else {
+                            false
+                        }
+                    });
                     if !started || !saved.await.unwrap_or(false) {
                         return false;
                     }
                 }
                 Ok(1) => {
-                    let discarded = cx
-                        .update(|cx| {
-                            let view = CenterPanes::file_views(cx)
-                                .into_iter()
-                                .find(|view| view.read(cx).document_key() == Some(&document));
-                            if let Some(view) = view {
-                                view.update(cx, |view, cx| view.discard_for_guard(version, cx))
-                            } else {
-                                cx.global_mut::<DocumentStore>()
-                                    .discard(&document, version)
-                                    .is_ok()
-                            }
-                        });
+                    let discarded = cx.update(|cx| {
+                        let view = CenterPanes::file_views(cx)
+                            .into_iter()
+                            .find(|view| view.read(cx).document_key() == Some(&document));
+                        if let Some(view) = view {
+                            view.update(cx, |view, cx| view.discard_for_guard(version, cx))
+                        } else {
+                            cx.global_mut::<DocumentStore>()
+                                .discard(&document, version)
+                                .is_ok()
+                        }
+                    });
                     if !discarded {
                         return false;
                     }

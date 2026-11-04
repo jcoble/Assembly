@@ -49,8 +49,10 @@ fn sessions_group_by_project_and_machine_newest_project_first() {
 #[test]
 fn sessions_in_no_project_share_one_group_on_each_machine_whatever_their_folder() {
     let bare = |id: &str, folder: &str, machine: Option<&str>| -> SessionItem {
-        serde_json::from_value(json!({ "sessionId": id, "agent": "claude", "repoUrl": folder,
-            "machine": machine, "updatedAt": 1 }))
+        serde_json::from_value(
+            json!({ "sessionId": id, "agent": "claude", "repoUrl": folder,
+            "machine": machine, "updatedAt": 1 }),
+        )
         .expect("a session item")
     };
     let items = [
@@ -61,6 +63,9 @@ fn sessions_in_no_project_share_one_group_on_each_machine_whatever_their_folder(
     ];
     let groups = ProjectGroup::all(&items);
     let labels: Vec<String> = groups.iter().map(ProjectGroup::label).collect();
-    assert_eq!(labels, ["No project", "assembly-bare", "No project · Workbox Test"]);
+    assert_eq!(
+        labels,
+        ["No project", "assembly-bare", "No project · Workbox Test"]
+    );
     assert_eq!(ids(&groups[0]), ["s3", "s1"]);
 }

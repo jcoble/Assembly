@@ -14,11 +14,11 @@ pub mod composer_view;
 pub mod config_labels;
 #[path = "capsule/config_pills.rs"]
 pub mod config_pills;
+#[path = "capsule/context_gauge.rs"]
+pub mod context_gauge;
 pub mod context_meter;
 #[cfg(test)]
 mod context_meter_tests;
-#[path = "capsule/context_gauge.rs"]
-pub mod context_gauge;
 pub mod draft_config;
 #[path = "capsule/shape.rs"]
 pub mod shape;

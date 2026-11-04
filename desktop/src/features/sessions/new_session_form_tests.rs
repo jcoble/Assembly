@@ -38,11 +38,12 @@ impl SessionClient for FormClient {
         &self,
         message: &str,
         machine: Option<&str>,
-        expected_source:Option<&crate::core::socket::row_source::ExpectedRowSource>,
+        expected_source: Option<&crate::core::socket::row_source::ExpectedRowSource>,
         sink: crate::features::session::client::session_client::MessageSink,
         cx: &App,
     ) -> Subscription {
-        self.fake.subscribe_message(message, machine,expected_source, sink, cx)
+        self.fake
+            .subscribe_message(message, machine, expected_source, sink, cx)
     }
     fn clock(&self, _: ClockSink, _: &mut App) -> Subscription {
         Subscription::new(|| {})
@@ -104,7 +105,10 @@ fn opened(cx: &mut TestAppContext) -> (Entity<NewSessionForm>, FormClient, &mut 
 }
 fn folder(form: &Entity<NewSessionForm>, value: &str, cx: &mut VisualTestContext) {
     // Source-derived catalogue fixture: an already observed cwd, never a start-root argument.
-    form.update(cx, |form, cx| {form.cwd=Some(value.into());form.discover(cx);});
+    form.update(cx, |form, cx| {
+        form.cwd = Some(value.into());
+        form.discover(cx);
+    });
     cx.run_until_parked();
 }
 
@@ -146,8 +150,6 @@ fn changing_the_folder_cancels_old_discovery_and_does_not_install_its_error(
     });
 }
 
-
-
 #[gpui::test]
 fn missing_advertised_target_blocks_discovery_and_absolute_folder_creation(
     cx: &mut TestAppContext,
@@ -155,7 +157,9 @@ fn missing_advertised_target_blocks_discovery_and_absolute_folder_creation(
     let (form, client, cx) = opened(cx);
     form.update(cx, |form, _| form.agents[0].target_id = None);
     folder(&form, "/repo", cx);
-    form.update_in(cx, |form, window, cx| form.first_send("kept first prompt".into(),Vec::new(),window,cx));
+    form.update_in(cx, |form, window, cx| {
+        form.first_send("kept first prompt".into(), Vec::new(), window, cx)
+    });
     cx.run_until_parked();
     assert!(client.discoveries.borrow().is_empty());
     assert!(
@@ -165,9 +169,7 @@ fn missing_advertised_target_blocks_discovery_and_absolute_folder_creation(
             .iter()
             .any(|(method, _)| method == "sessions/create")
     );
-    assert!(form.read_with(cx, |form, _| {
-        !form.error.is_empty()
-    }));
+    assert!(form.read_with(cx, |form, _| { !form.error.is_empty() }));
 }
 
 #[gpui::test]
@@ -198,8 +200,6 @@ fn switching_machines_cancels_discovery_and_forwards_only_the_new_advertised_tar
     cx.run_until_parked();
     assert!(form.read_with(cx, |form, _| form.error.is_empty()));
 }
-
-
 
 fn auth_agents() -> Value {
     json!({"agents":[{"id":"codex","name":"Codex","targetId":"configuration-hash","accountContext":"","providerTargetId":"codex/"}]})
@@ -393,9 +393,14 @@ fn a_failed_start_asks_to_show_again_so_its_text_and_error_are_seen(cx: &mut Tes
     cx.update(gpui_kit::init);
     cx.update(SelectedSession::init);
     let client = FormClient::default();
-    let (form, cx) = cx.add_window_view(move |window, cx| NewSessionForm::with_client(Rc::new(client), window, cx));
+    let (form, cx) = cx.add_window_view(move |window, cx| {
+        NewSessionForm::with_client(Rc::new(client), window, cx)
+    });
     cx.run_until_parked();
-    assert!(form.read_with(cx, |form, _| !form.centered), "a project's dialog stays compact");
+    assert!(
+        form.read_with(cx, |form, _| !form.centered),
+        "a project's dialog stays compact"
+    );
     let failed = Rc::new(RefCell::new(0));
     let count = failed.clone();
     let _failed = cx.update(|_, cx| {
@@ -408,29 +413,48 @@ fn a_failed_start_asks_to_show_again_so_its_text_and_error_are_seen(cx: &mut Tes
     form.update(cx, |form, cx| form.start_error("Couldn't start.", cx));
     cx.run_until_parked();
     assert_eq!(*failed.borrow(), 1);
-    form.read_with(cx, |form, _| assert_eq!(form.error.as_ref(), "Couldn't start."));
+    form.read_with(cx, |form, _| {
+        assert_eq!(form.error.as_ref(), "Couldn't start.")
+    });
 }
 
 #[path = "new_session_form/generation_tests.rs"]
 mod generation_tests;
 
-
-
-
 #[gpui::test]
-fn an_unselected_observed_model_requires_a_pick_and_is_retained_in_the_first_send_configuration(cx:&mut TestAppContext) {
-    let (form,client,cx)=opened(cx);folder(&form,"/observed-project",cx);
-    let mut catalogue=catalogue_value();catalogue["options"][0]["currentValue"]=Value::Null;
-    discover(&client).1.send(Ok(catalogue)).unwrap();cx.run_until_parked();
-    form.read_with(cx,|form,_| {let config=form.config.as_ref().unwrap();assert!(!config.config.choices.contains_key("provider-model"));assert!(!config.ready());});
-    form.update_in(cx,|form,window,cx|form.first_send("retained text".into(),Vec::new(),window,cx));
-    assert!(!client.fake.calls().iter().any(|(method,_)|method=="sessions/create"));
-    form.update(cx,|form,cx|form.choose("provider-model","B",cx));
-    form.read_with(cx,|form,_| {
-        let config=form.config.as_ref().unwrap();assert!(config.ready());
-        assert_eq!(config.config.choices["provider-model"],"B");assert_eq!(config.config.choices["reasoning_effort"],"minimal");assert_eq!(config.config.choices["permission"],"ask");
+fn an_unselected_observed_model_requires_a_pick_and_is_retained_in_the_first_send_configuration(
+    cx: &mut TestAppContext,
+) {
+    let (form, client, cx) = opened(cx);
+    folder(&form, "/observed-project", cx);
+    let mut catalogue = catalogue_value();
+    catalogue["options"][0]["currentValue"] = Value::Null;
+    discover(&client).1.send(Ok(catalogue)).unwrap();
+    cx.run_until_parked();
+    form.read_with(cx, |form, _| {
+        let config = form.config.as_ref().unwrap();
+        assert!(!config.config.choices.contains_key("provider-model"));
+        assert!(!config.ready());
+    });
+    form.update_in(cx, |form, window, cx| {
+        form.first_send("retained text".into(), Vec::new(), window, cx)
+    });
+    assert!(
+        !client
+            .fake
+            .calls()
+            .iter()
+            .any(|(method, _)| method == "sessions/create")
+    );
+    form.update(cx, |form, cx| form.choose("provider-model", "B", cx));
+    form.read_with(cx, |form, _| {
+        let config = form.config.as_ref().unwrap();
+        assert!(config.ready());
+        assert_eq!(config.config.choices["provider-model"], "B");
+        assert_eq!(config.config.choices["reasoning_effort"], "minimal");
+        assert_eq!(config.config.choices["permission"], "ask");
         assert!(form.attempt.is_none());
     });
 }
-#[path="new_session_form/project_tests.rs"]
+#[path = "new_session_form/project_tests.rs"]
 mod project_tests;

@@ -19,14 +19,23 @@ fn submit_sends_what_was_picked_and_typed_leaving_out_the_empty_fields() {
 
 #[test]
 fn picking_form_values_preserves_actual_ids_and_multi_choice_order() {
-    let mut form=super::form::AskForm{picked:serde_json::Map::new(),texts:Vec::new()};
-    form.pick("actual-field".into(),"provider:z".into(),true);
-    form.pick("actual-field".into(),"provider:a".into(),true);
-    assert_eq!(form.picked["actual-field"],serde_json::json!(["provider:z","provider:a"]));
-    form.pick("actual-field".into(),"provider:z".into(),true);
-    assert_eq!(form.picked["actual-field"],serde_json::json!(["provider:a"]));
-    form.pick("other-field".into(),"Exact supplied value".into(),false);
-    assert_eq!(form.picked["other-field"],"Exact supplied value");
+    let mut form = super::form::AskForm {
+        picked: serde_json::Map::new(),
+        texts: Vec::new(),
+    };
+    form.pick("actual-field".into(), "provider:z".into(), true);
+    form.pick("actual-field".into(), "provider:a".into(), true);
+    assert_eq!(
+        form.picked["actual-field"],
+        serde_json::json!(["provider:z", "provider:a"])
+    );
+    form.pick("actual-field".into(), "provider:z".into(), true);
+    assert_eq!(
+        form.picked["actual-field"],
+        serde_json::json!(["provider:a"])
+    );
+    form.pick("other-field".into(), "Exact supplied value".into(), false);
+    assert_eq!(form.picked["other-field"], "Exact supplied value");
 }
 
 #[test]
@@ -45,11 +54,17 @@ fn a_required_choice_starts_on_its_first_and_an_empty_required_field_is_named() 
     let mut picked = serde_json::Map::new();
     picked.insert("zone".into(), json!("east"));
     let empty = vec![("note".to_string(), "  ".to_string())];
-    assert_eq!(AskForm::missing(&ask, &picked, &empty).as_deref(), Some("Note"));
+    assert_eq!(
+        AskForm::missing(&ask, &picked, &empty).as_deref(),
+        Some("Note")
+    );
     let typed = vec![("note".to_string(), "hi".to_string())];
     assert_eq!(AskForm::missing(&ask, &picked, &typed), None);
     picked.insert("zone".into(), json!(""));
-    assert_eq!(AskForm::missing(&ask, &picked, &typed).as_deref(), Some("zone"));
+    assert_eq!(
+        AskForm::missing(&ask, &picked, &typed).as_deref(),
+        Some("zone")
+    );
 }
 
 fn typed_ask() -> super::payload::AskPayload {
@@ -69,12 +84,16 @@ fn typed_ask() -> super::payload::AskPayload {
 }
 
 #[gpui::test]
-fn a_password_field_is_masked_and_a_check_box_starts_as_the_schema_says(cx: &mut gpui::TestAppContext) {
+fn a_password_field_is_masked_and_a_check_box_starts_as_the_schema_says(
+    cx: &mut gpui::TestAppContext,
+) {
     use super::form::AskForm;
     cx.update(gpui_kit::init);
     let ask = typed_ask();
     let cx = cx.add_empty_window();
-    let form = cx.update(|window, cx| AskForm::of(&ask, window, cx)).unwrap();
+    let form = cx
+        .update(|window, cx| AskForm::of(&ask, window, cx))
+        .unwrap();
     cx.update(|_, cx| {
         let masked = |name: &str| {
             let (_, input) = form.texts.iter().find(|(text, _)| text == name).unwrap();
@@ -135,7 +154,8 @@ fn an_answer_that_cannot_go_says_why_and_a_password_of_spaces_counts() {
 fn a_shown_answer_leaves_out_what_the_schema_hides() {
     use super::form::AskForm;
     let ask = typed_ask();
-    let answer = json!({ "action": "accept", "content": { "token": "s3cret", "pin": "1", "agree": true } });
+    let answer =
+        json!({ "action": "accept", "content": { "token": "s3cret", "pin": "1", "agree": true } });
     assert_eq!(
         AskForm::shown(ask.schema.as_ref(), &answer),
         json!({ "action": "accept", "content": { "agree": true } })

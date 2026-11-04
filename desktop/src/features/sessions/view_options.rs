@@ -1,5 +1,5 @@
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::socket::update::Update;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};

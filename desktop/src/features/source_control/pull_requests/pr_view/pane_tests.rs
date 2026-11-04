@@ -75,12 +75,13 @@ async fn a_row_with_no_session_reads_through_its_project_and_the_source_it_just_
         })
     })
     .await;
-    window.update(|_, cx| {
-        pane.update(cx, |pane, cx| pane.select_pr(Some("O/R".into()), 7, cx))
-    });
+    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_pr(Some("O/R".into()), 7, cx)));
     until("the project read", &mut changes, &changed, || {
         window.run_until_parked();
-        seen.lock().unwrap().iter().any(|frame| frame["method"] == "pr")
+        seen.lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame["method"] == "pr")
     })
     .await;
     let seen = seen.lock().unwrap();
@@ -197,7 +198,12 @@ fn fake(cx: &mut TestAppContext, projects: Value, first: Source) -> Fake {
         SocketClient::start(endpoint(), cx);
         SocketClient::start_bulk(endpoint(), cx);
     });
-    Fake { _backend: backend, seen, changes, changed }
+    Fake {
+        _backend: backend,
+        seen,
+        changes,
+        changed,
+    }
 }
 
 async fn pane_with_projects(
@@ -214,273 +220,6 @@ async fn pane_with_projects(
     })
     .await;
     pane
-}
-
-#[gpui::test]
-async fn a_repository_on_two_machines_waits_for_the_person_to_say_which(cx: &mut TestAppContext) {
-    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), Source::Answers);
-    let window = cx.add_empty_window();
-    let pane = pane_with_projects(&mut fake, window).await;
-    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_pr(Some("o/r".into()), 7, cx)));
-    window.run_until_parked();
-    window.update(|_, cx| {
-        let pane = pane.read(cx);
-        let choice = pane.choosing.as_ref().expect("the question");
-        assert_eq!(choice.projects.len(), 2);
-        assert!(pane.opening.is_none() && pane.detail.is_none());
-    });
-    assert!(calls(&fake.seen, "resolve_source").is_empty());
-    assert!(calls(&fake.seen, "pr").is_empty());
-
-    window.update(|_, cx| pane.update(cx, |pane, cx| pane.choose_project(FAR, cx)));
-    window.update(|_, cx| assert!(pane.read(cx).choosing.is_none()));
-    until("the chosen read", &mut fake.changes, &fake.changed, || {
-        window.run_until_parked();
-        !calls(&fake.seen, "pr").is_empty()
-    })
-    .await;
-    let read = calls(&fake.seen, "pr").remove(0);
-    assert_eq!(read["projectId"], FAR);
-    assert_eq!(read["expectedSource"]["routeMachine"], "far");
-}
-
-#[gpui::test]
-async fn cancelling_forgets_the_question_and_a_late_answer_opens_nothing(cx: &mut TestAppContext) {
-    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), Source::HoldsFirst);
-    let window = cx.add_empty_window();
-    let pane = pane_with_projects(&mut fake, window).await;
-    window.update(|_, cx| {
-        pane.update(cx, |pane, cx| {
-            pane.select_project(Some(LANE.into()), cx);
-            pane.select_pr(Some("o/r".into()), 7, cx);
-        })
-    });
-    window.update(|_, cx| assert!(pane.read(cx).opening.is_some()));
-    until("the first question", &mut fake.changes, &fake.changed, || {
-        window.run_until_parked();
-        !calls(&fake.seen, "resolve_source").is_empty()
-    })
-    .await;
-    window.update(|_, cx| pane.update(cx, |pane, cx| pane.cancel_open(cx)));
-    window.update(|_, cx| assert!(pane.read(cx).opening.is_none()));
-
-    window.update(|_, cx| {
-        pane.update(cx, |pane, cx| {
-            pane.select_project(Some(FAR.into()), cx);
-            pane.select_pr(Some("o/r".into()), 8, cx);
-        })
-    });
-    until("the second read", &mut fake.changes, &fake.changed, || {
-        window.run_until_parked();
-        !calls(&fake.seen, "pr").is_empty()
-    })
-    .await;
-    let reads = calls(&fake.seen, "pr");
-    assert_eq!(reads.len(), 1, "{reads:?}");
-    assert_eq!(reads[0]["number"], 8);
-    assert_eq!(reads[0]["projectId"], FAR);
-}
-
-#[gpui::test]
-async fn a_row_under_all_local_projects_opens_this_computers_copy_without_asking(
-    cx: &mut TestAppContext,
-) {
-    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(HERE, "local")]), Source::Answers);
-    let window = cx.add_empty_window();
-    let pane = pane_with_projects(&mut fake, window).await;
-    let row = serde_json::from_value(json!({"repository":"o/r","number":7,"title":"The row"})).unwrap();
-    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_row(row, cx)));
-    window.update(|_, cx| {
-        let pane = pane.read(cx);
-        assert_eq!(pane.selected.as_ref().and_then(|wanted| wanted.row.as_ref()).unwrap().title, "The row");
-    });
-    window.update(|_, cx| assert!(pane.read(cx).choosing.is_none()));
-    until("the local read", &mut fake.changes, &fake.changed, || {
-        window.run_until_parked();
-        !calls(&fake.seen, "pr").is_empty()
-    })
-    .await;
-    window.update(|_, cx| {
-        let pane = pane.read(cx);
-        assert!(pane.selected.is_none());
-        let detail = pane.detail.as_ref().expect("the page").read(cx);
-        assert_eq!(detail.row().unwrap().title, "The row");
-    });
-    let read = calls(&fake.seen, "pr").remove(0);
-    assert_eq!(read["projectId"], HERE);
-    assert_eq!(read["expectedSource"]["machine"], "box");
-    assert_eq!(read["expectedSource"]["routeMachine"], Value::Null);
-}
-
-#[gpui::test]
-async fn the_all_list_searches_local_projects_and_a_picked_remote_searches_only_itself(
-    cx: &mut TestAppContext,
-) {
-    let far = json!({
-        "id":FAR,"machine":"far","rootPath":"/far/x","title":"x",
-        "repoKey":"github.com/o/far","createdAt":1,
-    });
-    let mut fake = fake(cx, json!([holder(HERE, "local"), far]), Source::Answers);
-    let window = cx.add_empty_window();
-    let pane = pane_with_projects(&mut fake, window).await;
-    window.update(|_, cx| pane.update(cx, |pane, cx| pane.sync_scope(cx)));
-    window.update(|_, cx| assert_eq!(pane.read(cx).scope, vec!["o/r".to_string()]));
-    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_project(Some(FAR.into()), cx)));
-    window.update(|_, cx| assert_eq!(pane.read(cx).scope, vec!["o/far".to_string()]));
-}
-
-#[gpui::test]
-async fn moving_along_a_stack_stays_with_the_project_already_answering(cx: &mut TestAppContext) {
-    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), Source::Answers);
-    let window = cx.add_empty_window();
-    let pane = pane_with_projects(&mut fake, window).await;
-    window.update(|_, cx| {
-        pane.update(cx, |pane, cx| {
-            pane.select_pr(Some("o/r".into()), 7, cx);
-            pane.choose_project(LANE, cx);
-        })
-    });
-    until("the first read", &mut fake.changes, &fake.changed, || {
-        window.run_until_parked();
-        !calls(&fake.seen, "pr").is_empty()
-    })
-    .await;
-    let shown: crate::features::source_control::pull_requests::pull_request::PullRequestDetail =
-        serde_json::from_value(json!({"repository":"o/r","localRoot":"/lane/r","number":7,"title":"PR","body":"","bodyBlocks":[],"url":"https://github.com/o/r/pull/7","author":"author","headBranch":"feature","baseBranch":"main","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseSha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","reviewDecision":"","createdAt":"","mergedAt":"","mergedBy":"","closedAt":"","commits":[],"comments":[],"reviews":[],"reviewers":[],"checks":[],"files":[],"moreFiles":false,"timeline":[]})).unwrap();
-    window.update(|_, cx| {
-        let detail = pane.read(cx).detail.clone().expect("the page");
-        detail.update(cx, |detail, _| detail.detail = Some(shown));
-        pane.update(cx, |pane, cx| pane.select_pr(Some("O/R".into()), 8, cx));
-        assert!(pane.read(cx).choosing.is_none());
-    });
-    until("the next read", &mut fake.changes, &fake.changed, || {
-        window.run_until_parked();
-        calls(&fake.seen, "pr").len() == 2
-    })
-    .await;
-    let reads = calls(&fake.seen, "pr");
-    assert_eq!(reads[1]["number"], 8);
-    assert_eq!(reads[1]["projectId"], LANE);
-    assert_eq!(calls(&fake.seen, "resolve_source").len(), 1);
-}
-
-#[gpui::test]
-async fn going_back_from_a_page_still_opening_returns_to_the_list(cx: &mut TestAppContext) {
-    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), Source::Answers);
-    let window = cx.add_empty_window();
-    let pane = pane_with_projects(&mut fake, window).await;
-    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_pr(Some("o/r".into()), 7, cx)));
-    window.update(|_, cx| {
-        let pane = pane.read(cx);
-        assert_eq!(pane.selected.as_ref().map(|wanted| wanted.number), Some(7));
-        assert!(pane.choosing.is_some());
-    });
-    window.update(|_, cx| pane.update(cx, |pane, cx| pane.close_detail(cx)));
-    window.update(|_, cx| {
-        let pane = pane.read(cx);
-        assert!(pane.selected.is_none() && pane.choosing.is_none() && pane.opening.is_none());
-    });
-    assert!(calls(&fake.seen, "resolve_source").is_empty());
-}
-
-#[gpui::test]
-async fn a_machine_that_does_not_answer_keeps_the_page_and_refresh_asks_again(
-    cx: &mut TestAppContext,
-) {
-    let mut fake = fake(cx, json!([holder(LANE, "lane")]), Source::RefusesFirst);
-    let window = cx.add_empty_window();
-    let pane = pane_with_projects(&mut fake, window).await;
-    let woke = fake.changed.clone();
-    let _observe = window.update(|_, cx| {
-        cx.observe(&pane, move |_, _| {
-            let _ = woke.unbounded_send(());
-        })
-    });
-    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_pr(Some("o/r".into()), 7, cx)));
-    until("the refusal", &mut fake.changes, &fake.changed, || {
-        window.run_until_parked();
-        window.update(|_, cx| pane.read(cx).failure.is_some())
-    })
-    .await;
-    window.update(|_, cx| {
-        let pane = pane.read(cx);
-        assert_eq!(pane.failure.as_deref(), Some("The machine isn't there."));
-        assert_eq!(pane.selected.as_ref().map(|wanted| wanted.number), Some(7));
-        assert!(pane.opening.is_none() && pane.detail.is_none());
-    });
-    assert!(calls(&fake.seen, "pr").is_empty());
-
-    window.update(|_, cx| pane.update(cx, |pane, cx| pane.retry_open(cx)));
-    window.update(|_, cx| assert!(pane.read(cx).failure.is_none()));
-    until("the second read", &mut fake.changes, &fake.changed, || {
-        window.run_until_parked();
-        !calls(&fake.seen, "pr").is_empty()
-    })
-    .await;
-    assert_eq!(calls(&fake.seen, "resolve_source").len(), 2);
-    assert_eq!(calls(&fake.seen, "pr")[0]["projectId"], LANE);
-}
-
-#[gpui::test]
-async fn the_tab_picked_while_opening_is_the_tab_the_page_opens_on(cx: &mut TestAppContext) {
-    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), Source::Answers);
-    let window = cx.add_empty_window();
-    let pane = pane_with_projects(&mut fake, window).await;
-    window.update(|_, cx| {
-        pane.update(cx, |pane, cx| {
-            pane.select_pr(Some("o/r".into()), 7, cx);
-            pane.show_tab(true, cx);
-            pane.choose_project(FAR, cx);
-        })
-    });
-    until("the read", &mut fake.changes, &fake.changed, || {
-        window.run_until_parked();
-        !calls(&fake.seen, "pr").is_empty()
-    })
-    .await;
-    window.update(|_, cx| {
-        assert!(pane.read(cx).detail.as_ref().expect("the page").read(cx).on_changes());
-    });
-}
-
-#[gpui::test]
-async fn merging_on_the_page_takes_the_row_off_the_list_behind_it(cx: &mut TestAppContext) {
-    let mut fake = fake(cx, json!([holder(LANE, "lane")]), Source::Answers);
-    let window = cx.add_empty_window();
-    let pane = pane_with_projects(&mut fake, window).await;
-    window.update(|_, cx| {
-        pane.update(cx, |pane, cx| {
-            pane.active = true;
-            pane.select_project(Some(LANE.into()), cx);
-        })
-    });
-    // Picking a project makes the list this page came from.
-    let queue = window.update(|_, cx| pane.read(cx).queue.clone());
-    let woke = fake.changed.clone();
-    let _observe = window.update(|_, cx| {
-        cx.observe(&queue, move |_, _| {
-            let _ = woke.unbounded_send(());
-        })
-    });
-    until("the row", &mut fake.changes, &fake.changed, || {
-        window.run_until_parked();
-        window.update(|_, cx| queue.read(cx).page.items.len() == 1)
-    })
-    .await;
-    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_pr(Some("o/r".into()), 7, cx)));
-    until("the page", &mut fake.changes, &fake.changed, || {
-        window.run_until_parked();
-        !calls(&fake.seen, "pr").is_empty()
-    })
-    .await;
-    window.update(|_, cx| {
-        let detail = pane.read(cx).detail.clone().expect("the page");
-        detail.update(cx, |_, cx| {
-            cx.emit(PrMerged { repository: "O/R".into(), number: 7 })
-        });
-    });
-    window.run_until_parked();
-    window.update(|_, cx| assert!(queue.read(cx).page.items.is_empty()));
 }
 
 /// The window as the app has it: the kit's root over the dock, in front, with the palette and this pane registered.
@@ -522,10 +261,16 @@ fn the_palette_command_opens_the_tab_with_no_session_or_project(cx: &mut TestApp
     cx.simulate_keystrokes("enter");
     settle(cx);
     cx.update(|window, cx| {
-        assert!(!window.has_active_dialog(cx), "choosing the command closes the palette");
+        assert!(
+            !window.has_active_dialog(cx),
+            "choosing the command closes the palette"
+        );
         let pane = CenterPanes::find::<PrPane>(super::KEY, cx).expect("the Pull requests tab");
         assert!(pane.read(cx).active, "the tab is in front");
-        assert!(pane.read(cx).selected.is_none(), "it shows the list, not an opened page");
+        assert!(
+            pane.read(cx).selected.is_none(),
+            "it shows the list, not an opened page"
+        );
     });
 }
 
@@ -534,7 +279,11 @@ fn a_link_clicked_on_the_page_opens_its_address(cx: &mut TestAppContext) {
     let (_dock, cx) = registered_window(cx);
     cx.update(|window, cx| {
         window.dispatch_action(
-            Box::new(OpenPullRequests { session_id: None, repo: None, number: None }),
+            Box::new(OpenPullRequests {
+                session_id: None,
+                repo: None,
+                number: None,
+            }),
             cx,
         )
     });
@@ -546,8 +295,15 @@ fn a_link_clicked_on_the_page_opens_its_address(cx: &mut TestAppContext) {
         cx.notify();
     });
     settle(cx);
-    let at = cx.debug_bounds("pr-missing-open").expect("the link is drawn");
+    let at = cx
+        .debug_bounds("pr-missing-open")
+        .expect("the link is drawn");
     cx.simulate_click(at.center(), gpui_kit::Modifiers::none());
     settle(cx);
     assert_eq!(cx.opened_url().as_deref(), Some(url));
 }
+
+#[path = "pane_opening_tests.rs"]
+mod opening_tests;
+#[path = "pane_project_tests.rs"]
+mod project_tests;

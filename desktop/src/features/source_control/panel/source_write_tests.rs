@@ -56,15 +56,19 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
             )],
             (Some("sub"), _) if frame["stream"] == "engine" => {
                 seen.subscriptions.push(id.clone());
-                vec![Reply::Frame(json!({"t":"engine_snapshot","id":id,"machine":"owner","through":1,
-                    "items":if frame["topic"] == "sessions" { json!([session_row(1,"ready","first")]) } else { json!([]) },"more":false}))]
+                vec![Reply::Frame(
+                    json!({"t":"engine_snapshot","id":id,"machine":"owner","through":1,
+                    "items":if frame["topic"] == "sessions" { json!([session_row(1,"ready","first")]) } else { json!([]) },"more":false}),
+                )]
             }
             (Some("sub"), _) => vec![Reply::Frame(json!({"t":"state","sub":id,"items":[]}))],
             (Some("call"), Some("status")) => {
                 seen.statuses += 1;
-                vec![result(json!({"branch":"main","head":HEAD,"ahead":0,"behind":0,"hasUpstream":false,
+                vec![result(
+                    json!({"branch":"main","head":HEAD,"ahead":0,"behind":0,"hasUpstream":false,
                     "files":[{"path":"a.rs","originalPath":null,"index":"M","worktree":" "}],
-                    "totalFiles":1,"totalStaged":1,"fingerprint":"f"}))]
+                    "totalFiles":1,"totalStaged":1,"fingerprint":"f"}),
+                )]
             }
             (Some("call"), Some("branches")) => vec![result(json!({"remotes":[]}))],
             (Some("call"), Some("commit")) => {
@@ -73,9 +77,9 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
             }
             (Some("call"), Some("command")) => {
                 seen.commands.push(frame["args"].clone());
-                let mut replies = vec![
-                    result(json!({"applied":true,"late":false,"error":null,"version":2,"seq":2,"epoch":1})),
-                ];
+                let mut replies = vec![result(
+                    json!({"applied":true,"late":false,"error":null,"version":2,"seq":2,"epoch":1}),
+                )];
                 replies.extend(seen.subscriptions.iter().map(|id| Reply::Frame(json!({"t":"engine_events","id":id,"machine":"owner","after":1,"through":2,
                     "events":[{"machine":"owner","seq":2,"entityKind":"session","entityId":"s1","version":2}]}))));
                 replies
@@ -85,7 +89,9 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
                     command["commandId"].as_str().unwrap().to_string()
                 });
                 let version = if seen.commands.is_empty() { 1 } else { 2 };
-                vec![result(json!({"items":[session_row(version,"ready",&operation)],"next":null}))]
+                vec![result(
+                    json!({"items":[session_row(version,"ready",&operation)],"next":null}),
+                )]
             }
             (Some("call"), _) => vec![result(json!({}))],
             _ => vec![],
@@ -188,11 +194,16 @@ async fn cmd_enter_commits(cx: &mut TestAppContext) {
     open.cx.simulate_input("Fix it");
     open.cx.simulate_keystrokes("enter");
     open.barrier().await;
-    assert!(open.seen.lock().unwrap().commits.is_empty(), "enter is a new line");
+    assert!(
+        open.seen.lock().unwrap().commits.is_empty(),
+        "enter is a new line"
+    );
     open.cx.simulate_keystrokes("secondary-enter");
     let seen = open.seen.clone();
-    open.until("the commit", |_, _| !seen.lock().unwrap().commits.is_empty())
-        .await;
+    open.until("the commit", |_, _| {
+        !seen.lock().unwrap().commits.is_empty()
+    })
+    .await;
     let commit = seen.lock().unwrap().commits[0].clone();
     assert_eq!(commit["session"], "s1");
     assert_eq!(commit["message"], "Fix it");
@@ -201,12 +212,18 @@ async fn cmd_enter_commits(cx: &mut TestAppContext) {
 }
 // Pins: g9#6
 #[gpui::test]
-async fn a_held_branch_submits_the_shared_checkout_and_retains_session_identity(cx: &mut TestAppContext) {
+async fn a_held_branch_submits_the_shared_checkout_and_retains_session_identity(
+    cx: &mut TestAppContext,
+) {
     let mut open = open(cx).await;
     let before = open.seen.lock().unwrap().statuses;
     let pane = open.pane.clone();
     pane.update_in(open.cx, |pane, window, cx| {
-        pane.branch_picked(BranchPicked::MoveToFolder("/owned/other".into()), window, cx)
+        pane.branch_picked(
+            BranchPicked::MoveToFolder("/owned/other".into()),
+            window,
+            cx,
+        )
     });
     let seen = open.seen.clone();
     open.until("the shared checkout is submitted", |_, _| {
@@ -221,16 +238,29 @@ async fn a_held_branch_submits_the_shared_checkout_and_retains_session_identity(
         command["command"],
         json!({"kind":"change_checkout","checkoutKind":"folder","branch":null,"base":null,"folder":"/owned/other"})
     );
-    open.until("the checkout landed and the status was read again", |pane, cx| {
-        let done = cx.update(|_, cx| pane.read(cx).checkout.is_none());
-        done && seen.lock().unwrap().statuses > before
-    })
+    open.until(
+        "the checkout landed and the status was read again",
+        |pane, cx| {
+            let done = cx.update(|_, cx| pane.read(cx).checkout.is_none());
+            done && seen.lock().unwrap().statuses > before
+        },
+    )
     .await;
     open.cx.update(|_, cx| {
         let selected = SelectedSession::global(cx);
         let selected = selected.read(cx);
-        assert_eq!(selected.session_id(), Some("s1"), "the session stays the session");
+        assert_eq!(
+            selected.session_id(),
+            Some("s1"),
+            "the session stays the session"
+        );
         assert_eq!(selected.key().map(|key| key.id.as_str()), Some("s1"));
-        assert_eq!(pane.read(cx).target(cx).map(|target| target.session).as_deref(), Some("s1"));
+        assert_eq!(
+            pane.read(cx)
+                .target(cx)
+                .map(|target| target.session)
+                .as_deref(),
+            Some("s1")
+        );
     });
 }

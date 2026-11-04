@@ -42,17 +42,29 @@ pub fn upload_image(
     cx: &mut App,
 ) -> Task<Result<String, CallError>> {
     let read = cx.background_spawn(async move {
-        let encode=|bytes:&[u8]|(bytes.len(),bytes.chunks(CHUNK_BYTES).map(|chunk|STANDARD.encode(chunk)).collect::<Vec<_>>());
+        let encode = |bytes: &[u8]| {
+            (
+                bytes.len(),
+                bytes
+                    .chunks(CHUNK_BYTES)
+                    .map(|chunk| STANDARD.encode(chunk))
+                    .collect::<Vec<_>>(),
+            )
+        };
         match source {
-            UploadSource::Path(path)=>std::fs::read(path).map(|bytes|encode(&bytes)).map_err(|error|CallError::Failed(format!("Couldn't read the image: {error}"))),
-            UploadSource::Bytes(bytes)=>Ok(encode(&bytes)),
-            UploadSource::Image(image)=>Ok(encode(&image.bytes)),
+            UploadSource::Path(path) => std::fs::read(path)
+                .map(|bytes| encode(&bytes))
+                .map_err(|error| CallError::Failed(format!("Couldn't read the image: {error}"))),
+            UploadSource::Bytes(bytes) => Ok(encode(&bytes)),
+            UploadSource::Image(image) => Ok(encode(&image.bytes)),
         }
     });
     cx.spawn(async move |cx| {
         let (size, chunks) = read.await?;
         let mut begin = json!({ "session": session, "mime": mime, "size": size });
-        if let Some(source)=expected_source{begin["expectedSource"]=json!(source);}
+        if let Some(source) = expected_source {
+            begin["expectedSource"] = json!(source);
+        }
         let begun = cx
             .update(|cx| client.call("attachments", "begin", begin, None, cx))
             .await?;

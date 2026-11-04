@@ -18,7 +18,9 @@ impl Composer {
     /// Reads the session's config; a newer read takes the place of one still going. One a pick started or answered
     /// during is let go: it may answer the value from before the pick, and the pick's own answer is newer.
     pub(super) fn read_config(&mut self, cx: &mut Context<Self>) {
-        if !self.operational(){return;}
+        if !self.operational() {
+            return;
+        }
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -34,7 +36,11 @@ impl Composer {
                     let current = composer.target_generation == generation
                         && composer.session == Some(session)
                         && composer.picks == picks;
-                    if current {if let Err(error)=&answer{composer.source_refused(error,cx);}}
+                    if current {
+                        if let Err(error) = &answer {
+                            composer.source_refused(error, cx);
+                        }
+                    }
                     if let (true, Ok(config)) = (current, parse(answer)) {
                         composer.config = Some(config);
                         cx.notify();
@@ -46,7 +52,9 @@ impl Composer {
 
     /// Sets one of the agent's menus to `value`.
     pub(super) fn choose(&mut self, config_id: String, value: String, cx: &mut Context<Self>) {
-        if !self.operational(){return;}
+        if !self.operational() {
+            return;
+        }
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -68,7 +76,8 @@ impl Composer {
         self.picking += 1;
         self._config = None;
         self._warm = None;
-        let mut args = self.source_args(json!({ "session": session, "configId": config_id, "value": value }));
+        let mut args =
+            self.source_args(json!({ "session": session, "configId": config_id, "value": value }));
         if let Some(target) = &self.advertised_target {
             args["targetId"] = json!(target);
         }
@@ -84,7 +93,9 @@ impl Composer {
                     }
                     composer.picks += 1;
                     composer.picking = composer.picking.saturating_sub(1);
-                    if let Err(error)=&answer{composer.source_refused(error,cx);}
+                    if let Err(error) = &answer {
+                        composer.source_refused(error, cx);
+                    }
                     match parse(answer) {
                         Ok(config) => {
                             if let Some((agent, _, _)) = &composer.owner {

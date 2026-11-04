@@ -365,12 +365,24 @@ async fn another_checkout_is_read_until_the_session_changes(cx: &mut TestAppCont
     let mut open = open(cx);
     open.select(Some("s1"));
     open.show(true);
-    open.until("s1 read", |seen, shown| seen.reads.len() == 1 && matches!(shown, Shown::Read(_))).await;
-    let linked = CheckoutSelector { path: "/linked".into(), expected_root: "/own".into() };
-    open.read.update(open.cx, |read, cx| read.set_checkout(Some(linked), cx));
-    open.until("the other checkout read", |seen, _| seen.reads.len() == 2).await;
+    open.until("s1 read", |seen, shown| {
+        seen.reads.len() == 1 && matches!(shown, Shown::Read(_))
+    })
+    .await;
+    let linked = CheckoutSelector {
+        path: "/linked".into(),
+        expected_root: "/own".into(),
+    };
+    open.read
+        .update(open.cx, |read, cx| read.set_checkout(Some(linked), cx));
+    open.until("the other checkout read", |seen, _| seen.reads.len() == 2)
+        .await;
     open.select(Some("s2"));
     open.until("s2 read", |seen, _| seen.reads.len() == 3).await;
-    assert_eq!(open.seen.lock().unwrap().picked, vec![Value::Null, json!("/linked"), Value::Null]);
-    open.cx.update(|cx| assert!(open.read.read(cx).checkout().is_none()));
+    assert_eq!(
+        open.seen.lock().unwrap().picked,
+        vec![Value::Null, json!("/linked"), Value::Null]
+    );
+    open.cx
+        .update(|cx| assert!(open.read.read(cx).checkout().is_none()));
 }

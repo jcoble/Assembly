@@ -3,8 +3,8 @@
 //! turn's file totals when the agent gave no plan. The panel shuts when the turn ends. Replaces PlanChip.svelte.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use gpui_kit::assets::IconName as Glyph;
 use crate::core::ui::spinner::Spinner;
+use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -184,10 +184,14 @@ impl RenderOnce for PlanCard {
                         pill.child(mark).child(div().flex_none().child(words))
                     })
                     .when_some(changes, |pill, (changes, words)| {
-                        pill.when(has_plan, |pill| pill.child(div().text_color(muted).child("·")))
-                            .child(div().min_w_0().truncate().child(words))
-                            // A turn that changed files without a diff has no line counts to show.
-                            .when(changes.added + changes.removed > 0, |pill| {
+                        pill.when(has_plan, |pill| {
+                            pill.child(div().text_color(muted).child("·"))
+                        })
+                        .child(div().min_w_0().truncate().child(words))
+                        // A turn that changed files without a diff has no line counts to show.
+                        .when(
+                            changes.added + changes.removed > 0,
+                            |pill| {
                                 pill.child(
                                     div()
                                         .text_color(success)
@@ -198,7 +202,8 @@ impl RenderOnce for PlanCard {
                                         .text_color(danger)
                                         .child(format!("−{}", changes.removed)),
                                 )
-                            })
+                            },
+                        )
                     }),
             )
     }

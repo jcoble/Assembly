@@ -181,7 +181,12 @@ impl RenderOnce for GrowingBody {
         let drops = self.drops.read(cx);
         let open = drops.is_open(&self.key);
         let held = drops.bodies.get(&self.key).map(|held| {
-            (held.build.clone(), held.drawn.clone(), held.height.clone(), held.progress.clone())
+            (
+                held.build.clone(),
+                held.drawn.clone(),
+                held.height.clone(),
+                held.progress.clone(),
+            )
         });
         let target = if open { 1. } else { 0. };
         let progress = spring(

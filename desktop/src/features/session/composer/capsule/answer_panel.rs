@@ -69,8 +69,14 @@ pub fn is_deny(option: &AskOption) -> bool {
 
 /// The action on one line, and the details box's text: the agent's message, or all of a title too long for the line.
 pub fn approval_words(ask: &AskPayload) -> (String, Option<String>) {
-    let title = ask.title.as_deref().filter(|title| !title.trim().is_empty());
-    let message = ask.message.as_deref().filter(|message| !message.trim().is_empty());
+    let title = ask
+        .title
+        .as_deref()
+        .filter(|title| !title.trim().is_empty());
+    let message = ask
+        .message
+        .as_deref()
+        .filter(|message| !message.trim().is_empty());
     let tool = one_line(title.or(message).unwrap_or("Action requested"));
     let details = message
         .filter(|message| message.trim() != tool)
@@ -95,7 +101,14 @@ fn kicker(words: &'static str, cx: &App) -> Div {
         .child(words)
 }
 
-fn pill(id: String, label: String, color: Hsla, action: ControlAction, on_action: &OnControl, cx: &App) -> Button {
+fn pill(
+    id: String,
+    label: String,
+    color: Hsla,
+    action: ControlAction,
+    on_action: &OnControl,
+    cx: &App,
+) -> Button {
     let on_action = on_action.clone();
     Button::new(SharedString::from(id))
         .compact()
@@ -124,7 +137,12 @@ fn choice_copy(choice: &AskChoice, muted: Hsla, cx: &App) -> Div {
                 .child(choice.title.clone().unwrap_or(choice.value.clone())),
         )
         .when_some(choice.description.clone(), |copy, description| {
-            copy.child(div().text_role(TextRole::Meta, cx).text_color(muted).child(description))
+            copy.child(
+                div()
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(muted)
+                    .child(description),
+            )
         })
 }
 
@@ -150,7 +168,11 @@ impl AnswerPanel {
                 &self.on_action,
                 cx,
             );
-            actions = actions.child(if solid { button.primary() } else { button.outline() });
+            actions = actions.child(if solid {
+                button.primary()
+            } else {
+                button.outline()
+            });
         }
         v_flex()
             .child(
@@ -206,7 +228,10 @@ impl AnswerPanel {
                         )
                         .child(
                             div()
-                                .id(SharedString::from(format!("answer:{}:details", self.ask_id)))
+                                .id(SharedString::from(format!(
+                                    "answer:{}:details",
+                                    self.ask_id
+                                )))
                                 .mt(px(6.))
                                 .max_h(px(150.))
                                 .overflow_y_scroll()
@@ -219,7 +244,14 @@ impl AnswerPanel {
             .child(actions)
     }
 
-    fn one_of(&self, name: &str, choices: Vec<AskChoice>, picked: Option<&Value>, required: bool, cx: &App) -> Div {
+    fn one_of(
+        &self,
+        name: &str,
+        choices: Vec<AskChoice>,
+        picked: Option<&Value>,
+        required: bool,
+        cx: &App,
+    ) -> Div {
         let theme = cx.theme();
         let mut list = v_flex().mt(px(6.)).gap(px(5.));
         for choice in choices {
@@ -230,37 +262,52 @@ impl AnswerPanel {
             } else {
                 choice.value.clone()
             };
-            let action = ControlAction::Pick { field: name.to_string(), value, many: false };
+            let action = ControlAction::Pick {
+                field: name.to_string(),
+                value,
+                many: false,
+            };
             let on_action = self.on_action.clone();
             list = list.child(
-                Button::new(SharedString::from(format!("answer:{}:{name}:{}", self.ask_id, choice.value)))
-                    .ghost()
-                    .w_full()
-                    .h_auto()
-                    .min_h(px(32.))
-                    .px(px(9.))
-                    .py(px(6.))
-                    .rounded(px(9.))
-                    .when(selected, |row| {
-                        row.bg(theme.primary.opacity(0.10))
-                            .border_1()
-                            .border_color(theme.primary.opacity(0.36))
-                    })
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .justify_between()
-                            .gap(px(10.))
-                            .child(choice_copy(&choice, theme.muted_foreground, cx))
-                            .when(selected, |row| row.child(Icon::new(Glyph::Check).size(px(14.)))),
-                    )
-                    .on_click(move |_, window, cx| on_action(action.clone(), window, cx)),
+                Button::new(SharedString::from(format!(
+                    "answer:{}:{name}:{}",
+                    self.ask_id, choice.value
+                )))
+                .ghost()
+                .w_full()
+                .h_auto()
+                .min_h(px(32.))
+                .px(px(9.))
+                .py(px(6.))
+                .rounded(px(9.))
+                .when(selected, |row| {
+                    row.bg(theme.primary.opacity(0.10))
+                        .border_1()
+                        .border_color(theme.primary.opacity(0.36))
+                })
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .gap(px(10.))
+                        .child(choice_copy(&choice, theme.muted_foreground, cx))
+                        .when(selected, |row| {
+                            row.child(Icon::new(Glyph::Check).size(px(14.)))
+                        }),
+                )
+                .on_click(move |_, window, cx| on_action(action.clone(), window, cx)),
             );
         }
         list
     }
 
-    fn many_of(&self, name: &str, choices: Vec<AskChoice>, picked: Option<&Value>, cx: &App) -> Div {
+    fn many_of(
+        &self,
+        name: &str,
+        choices: Vec<AskChoice>,
+        picked: Option<&Value>,
+        cx: &App,
+    ) -> Div {
         let theme = cx.theme();
         let mut list = v_flex().mt(px(6.)).gap(px(5.));
         for choice in choices {
@@ -286,10 +333,13 @@ impl AnswerPanel {
                             .border_color(theme.primary.opacity(0.36))
                     })
                     .child(
-                        Checkbox::new(SharedString::from(format!("answer:{}:{name}:{}", self.ask_id, choice.value)))
-                            .checked(selected)
-                            .label(choice.title.clone().unwrap_or(choice.value.clone()))
-                            .on_click(move |_, window, cx| on_action(action.clone(), window, cx)),
+                        Checkbox::new(SharedString::from(format!(
+                            "answer:{}:{name}:{}",
+                            self.ask_id, choice.value
+                        )))
+                        .checked(selected)
+                        .label(choice.title.clone().unwrap_or(choice.value.clone()))
+                        .on_click(move |_, window, cx| on_action(action.clone(), window, cx)),
                     )
                     .when_some(choice.description.clone(), |row, description| {
                         row.child(
@@ -308,8 +358,9 @@ impl AnswerPanel {
     fn input(&self, form: &AskForm, cx: &App) -> Div {
         let theme = cx.theme();
         let schema = self.ask.schema.as_ref().and_then(AskSchema::of);
-        let (properties, required) =
-            schema.map_or_else(Default::default, |schema| (schema.properties, schema.required));
+        let (properties, required) = schema.map_or_else(Default::default, |schema| {
+            (schema.properties, schema.required)
+        });
         let mut fields = v_flex().mt(px(13.)).gap(px(10.));
         for (name, field) in properties {
             let needed = required.contains(&name);
@@ -320,7 +371,10 @@ impl AnswerPanel {
                 AskInput::Many(choices) => self.many_of(&name, choices, picked, cx),
                 AskInput::Flag => {
                     let on = picked.and_then(Value::as_bool).unwrap_or(false);
-                    let action = ControlAction::Flag { field: name.clone(), on: !on };
+                    let action = ControlAction::Flag {
+                        field: name.clone(),
+                        on: !on,
+                    };
                     let on_action = self.on_action.clone();
                     div().mt(px(7.)).child(
                         Checkbox::new(SharedString::from(format!("answer:{}:{name}", self.ask_id)))
@@ -329,23 +383,25 @@ impl AnswerPanel {
                             .on_click(move |_, window, cx| on_action(action.clone(), window, cx)),
                     )
                 }
-                AskInput::Text | AskInput::Secret => match form.texts.iter().find(|(text, _)| *text == name) {
-                    Some((_, input)) => {
-                        let on_action = self.on_action.clone();
-                        div()
-                            .mt(px(6.))
-                            .capture_key_down(move |event, window, cx| {
-                                if event.keystroke.key == "enter"
-                                    && !event.keystroke.modifiers.shift
-                                    && !event.is_held
-                                {
-                                    on_action(ControlAction::Submit, window, cx);
-                                }
-                            })
-                            .child(Input::new(input).h(px(30.)).rounded(px(8.)))
+                AskInput::Text | AskInput::Secret => {
+                    match form.texts.iter().find(|(text, _)| *text == name) {
+                        Some((_, input)) => {
+                            let on_action = self.on_action.clone();
+                            div()
+                                .mt(px(6.))
+                                .capture_key_down(move |event, window, cx| {
+                                    if event.keystroke.key == "enter"
+                                        && !event.keystroke.modifiers.shift
+                                        && !event.is_held
+                                    {
+                                        on_action(ControlAction::Submit, window, cx);
+                                    }
+                                })
+                                .child(Input::new(input).h(px(30.)).rounded(px(8.)))
+                        }
+                        None => div(),
                     }
-                    None => div(),
-                },
+                }
             };
             fields = fields.child(
                 v_flex()
@@ -369,7 +425,14 @@ impl AnswerPanel {
             );
         }
         let button = |id: &str, label: &str, color: Hsla, action: ControlAction| {
-            pill(format!("answer:{}:{id}", self.ask_id), label.to_string(), color, action, &self.on_action, cx)
+            pill(
+                format!("answer:{}:{id}", self.ask_id),
+                label.to_string(),
+                color,
+                action,
+                &self.on_action,
+                cx,
+            )
         };
         let muted = theme.muted_foreground;
         v_flex()
@@ -395,10 +458,21 @@ impl AnswerPanel {
                     .mt(px(9.))
                     .text_role(TextRole::Body, cx)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(self.ask.title.clone().unwrap_or_else(|| "Input requested".into())),
+                    .child(
+                        self.ask
+                            .title
+                            .clone()
+                            .unwrap_or_else(|| "Input requested".into()),
+                    ),
             )
             .when_some(self.ask.message.clone(), |panel, message| {
-                panel.child(div().mt(px(5.)).text_role(TextRole::Meta, cx).text_color(muted).child(message))
+                panel.child(
+                    div()
+                        .mt(px(5.))
+                        .text_role(TextRole::Meta, cx)
+                        .text_color(muted)
+                        .child(message),
+                )
             })
             .child(fields)
             .child(
@@ -406,9 +480,33 @@ impl AnswerPanel {
                     .justify_end()
                     .gap(px(7.))
                     .mt(px(12.))
-                    .child(button("cancel", "Cancel", muted, ControlAction::Answer(json!({ "action": "cancel" }))).outline())
-                    .child(button("skip", "Skip", muted, ControlAction::Answer(json!({ "action": "decline" }))).outline())
-                    .child(button("submit", "Continue", theme.primary_foreground, ControlAction::Submit).primary()),
+                    .child(
+                        button(
+                            "cancel",
+                            "Cancel",
+                            muted,
+                            ControlAction::Answer(json!({ "action": "cancel" })),
+                        )
+                        .outline(),
+                    )
+                    .child(
+                        button(
+                            "skip",
+                            "Skip",
+                            muted,
+                            ControlAction::Answer(json!({ "action": "decline" })),
+                        )
+                        .outline(),
+                    )
+                    .child(
+                        button(
+                            "submit",
+                            "Continue",
+                            theme.primary_foreground,
+                            ControlAction::Submit,
+                        )
+                        .primary(),
+                    ),
             )
     }
 }

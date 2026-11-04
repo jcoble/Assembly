@@ -83,13 +83,19 @@ impl RenderOnce for ItemRow {
                     .items_end()
                     .gap_1()
                     .when_some(self.checkout.clone(), |column, checkout| {
-                        column.child(div().w_full().text_role(TextRole::Meta, cx).text_color(muted).child(checkout))
+                        column.child(
+                            div()
+                                .w_full()
+                                .text_role(TextRole::Meta, cx)
+                                .text_color(muted)
+                                .child(checkout),
+                        )
                     })
                     .child(SentMessage {
                         key: key.clone(),
                         text,
                         sender: from,
-                        sender_machine:from_machine,
+                        sender_machine: from_machine,
                         sender_label,
                         images,
                         open: self.kept.open,

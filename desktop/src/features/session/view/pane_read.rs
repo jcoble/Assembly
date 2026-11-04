@@ -13,7 +13,9 @@ impl SessionPane {
     /// `running`: a turn is going in the open session.
     pub(super) fn tell_read(&mut self, running: bool, cx: &mut Context<Self>) {
         // Historical journal authority does not grant an unqualified presentation write.
-        if self.read_only && self.row_source.is_none() { return; }
+        if self.read_only && self.row_source.is_none() {
+            return;
+        }
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -23,7 +25,9 @@ impl SessionPane {
         self.read_to = self.view.newest;
         let source = self.row_source.clone();
         let mut args = json!({ "session": session, "seq": self.read_to });
-        if let Some(source) = &source { args["expectedSource"] = json!(source); }
+        if let Some(source) = &source {
+            args["expectedSource"] = json!(source);
+        }
         let call = self.client.call("sessions", "read", args, None, cx);
         // Each read runs to its answer (dropping one would cancel it) and, like the other writes, goes on when the
         // reader switches away; it lets go of itself once answered.
@@ -35,13 +39,18 @@ impl SessionPane {
                 pane.update(cx, |pane, cx| {
                     pane._writes.remove(&key);
                     // The write stays owned until its reply, but cannot report an old owner's refusal on a new view.
-                    if pane.session.as_deref() == Some(session.as_str()) && pane.row_source == source {
+                    if pane.session.as_deref() == Some(session.as_str())
+                        && pane.row_source == source
+                    {
                         if let Err(error) = answer {
-                            pane.status = format!("Could not mark this journal read: {}", error.reason()).into();
+                            pane.status =
+                                format!("Could not mark this journal read: {}", error.reason())
+                                    .into();
                             cx.notify();
                         }
                     }
-                }).ok();
+                })
+                .ok();
             }
         });
         self._writes.insert(key, task);

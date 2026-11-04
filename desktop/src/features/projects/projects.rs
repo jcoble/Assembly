@@ -82,15 +82,38 @@ impl Projects {
         }
     }
     /// Re-resolve the clicked registry tuple, so a changed or removed row cannot retarget a draft.
-    pub fn resolve_open(&self, intent: &crate::core::intents::open_project::OpenProject) -> Option<ProjectRecord> {
-        self.rows.iter().find(|project| project.id == intent.project_id && project.machine == intent.machine
-            && project.root_path == intent.root_path && project.removed_at.is_none()).cloned()
+    pub fn resolve_open(
+        &self,
+        intent: &crate::core::intents::open_project::OpenProject,
+    ) -> Option<ProjectRecord> {
+        self.rows
+            .iter()
+            .find(|project| {
+                project.id == intent.project_id
+                    && project.machine == intent.machine
+                    && project.root_path == intent.root_path
+                    && project.removed_at.is_none()
+            })
+            .cloned()
     }
-    pub fn revision(&self) -> Option<i64> { self.revision }
+    pub fn revision(&self) -> Option<i64> {
+        self.revision
+    }
     /// A bounded chooser query; the desktop registry remains the sole collection and SQL owns filtering/order.
-    pub fn search(&self, filter: &str, cx: &mut Context<Self>) -> Task<Result<Vec<ProjectRecord>, String>> {
-        let Some(socket) = SocketClient::try_global(cx) else { return Task::ready(Err("The backend isn't running.".into())); };
-        let call = socket.read(cx).call::<ProjectPage>("projects", "list", json!({"filter":filter,"limit":100}), None);
+    pub fn search(
+        &self,
+        filter: &str,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<ProjectRecord>, String>> {
+        let Some(socket) = SocketClient::try_global(cx) else {
+            return Task::ready(Err("The backend isn't running.".into()));
+        };
+        let call = socket.read(cx).call::<ProjectPage>(
+            "projects",
+            "list",
+            json!({"filter":filter,"limit":100}),
+            None,
+        );
         cx.spawn(async move |_, _| match call.await {
             Outcome::Ok(page) => Ok(page.projects),
             Outcome::Failed(error) => Err(error.message),

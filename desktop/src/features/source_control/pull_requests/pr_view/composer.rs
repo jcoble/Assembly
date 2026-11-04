@@ -1,8 +1,8 @@
 //! The Summary page's comment box and reply box. One box writes the review draft's text: alone it posts a comment,
 //! with line comments it posts a review. Posting always goes through the confirm dialog.
-use crate::core::theme::text::TextRole;
 use super::super::{post_confirm, review_draft::LineComment};
 use super::*;
+use crate::core::theme::text::TextRole;
 use gpui_kit::component::diff::{DiffLinePosition, DiffSide};
 use gpui_kit::component::input::{InputEvent, Textarea};
 use serde::Deserialize;
@@ -218,7 +218,8 @@ impl PrDetail {
             cx.notify();
             return;
         };
-        let shown = (self.detail.as_ref()).map(|detail| (detail.repository.as_str(), detail.local_root.as_str()));
+        let shown = (self.detail.as_ref())
+            .map(|detail| (detail.repository.as_str(), detail.local_root.as_str()));
         let Some(scope) = self.owner.scope(shown) else {
             self.failure = Some("Refresh first. Your comment is kept.".into());
             cx.notify();
@@ -334,7 +335,10 @@ impl PrDetail {
                     )
             }))
             .children(draft_error.map(|error| {
-                div().text_role(TextRole::Body, cx).text_color(danger).child(error)
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(danger)
+                    .child(error)
             }))
             .child(
                 h_flex()

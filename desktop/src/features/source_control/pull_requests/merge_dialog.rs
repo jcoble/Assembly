@@ -1,7 +1,7 @@
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{
     pr_activity::merge_method_label, pr_detail::PrDetail, pull_request::PullRequestDetail,
 };
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex,

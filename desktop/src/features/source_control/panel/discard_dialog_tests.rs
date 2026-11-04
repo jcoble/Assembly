@@ -42,7 +42,10 @@ fn discard_of_a_staged_new_file_warns_it_will_be_deleted() {
     let question = DiscardRequest::Files(vec![file("new", "A", ".")]).question(false);
     assert_eq!(question.title, "Discard changes to this file?");
     assert_eq!(question.confirm, "Delete the file");
-    assert_eq!(question.lines, ["1 file git has never tracked will be deleted from disk."]);
+    assert_eq!(
+        question.lines,
+        ["1 file git has never tracked will be deleted from disk."]
+    );
 }
 #[test]
 fn several_files_say_how_many_of_each_and_keep_their_own_words() {
@@ -89,7 +92,9 @@ async fn cancel_sends_nothing(cx: &mut TestAppContext) {
             seen.lock().unwrap().push(frame["args"].clone());
         }
         let _ = heard.unbounded_send(());
-        vec![Reply::Frame(json!({"t":"result","id":frame["id"],"result":{}}))]
+        vec![Reply::Frame(
+            json!({"t":"result","id":frame["id"],"result":{}}),
+        )]
     });
     cx.executor().allow_parking();
     cx.update(|cx| {
@@ -127,10 +132,15 @@ async fn cancel_sends_nothing(cx: &mut TestAppContext) {
     assert!(discards.lock().unwrap().is_empty());
     asked(visual);
     visual.simulate_keystrokes("enter");
-    until("confirming sends the discard", &mut changes, &changed, || {
-        visual.run_until_parked();
-        !discards.lock().unwrap().is_empty()
-    })
+    until(
+        "confirming sends the discard",
+        &mut changes,
+        &changed,
+        || {
+            visual.run_until_parked();
+            !discards.lock().unwrap().is_empty()
+        },
+    )
     .await;
     assert_eq!(discards.lock().unwrap()[0]["session"], "s1");
 }

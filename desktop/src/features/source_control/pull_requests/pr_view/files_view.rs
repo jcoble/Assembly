@@ -1,6 +1,6 @@
 //! How the Changes page looks: the stacked diff with its file header buttons, comment cards and the file tree.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::*;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::changed_tree::{TREE_WIDTH, TreeHandler};
 use crate::core::ui::diff_header::{file_heading, viewed_button};
 use crate::core::{intents::open_file::OpenFile, state::selected_session::SelectedSession};

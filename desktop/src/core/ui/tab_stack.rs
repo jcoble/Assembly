@@ -7,14 +7,17 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 pub fn tab_stack(selected: usize, tabs: impl IntoIterator<Item = AnyElement>) -> Div {
-    h_flex().w_full().items_start().children(tabs.into_iter().enumerate().map(|(at, tab)| {
-        div()
-            .w_full()
-            .flex_none()
-            .when(at > 0, |cell| cell.ml(relative(-1.)))
-            .when(at != selected, |cell| cell.invisible())
-            .child(tab)
-    }))
+    h_flex()
+        .w_full()
+        .items_start()
+        .children(tabs.into_iter().enumerate().map(|(at, tab)| {
+            div()
+                .w_full()
+                .flex_none()
+                .when(at > 0, |cell| cell.ml(relative(-1.)))
+                .when(at != selected, |cell| cell.invisible())
+                .child(tab)
+        }))
 }
 
 #[cfg(test)]

@@ -244,7 +244,7 @@ impl Render for ExpandRow {
         // render can change margins and report another height despite no motion running.
         let clip = (!cx.reduce_motion()
             && (self.moving.is_some() || self.resizing.is_some() || self.body.is_some()))
-            .then(|| (self.resized_height(now) * grown, faded(grown)));
+        .then(|| (self.resized_height(now) * grown, faded(grown)));
         let heard = cx.entity().downgrade();
         let root = v_flex().on_prepaint(move |bounds, _, cx| {
             _ = heard.update(cx, |row, cx| {

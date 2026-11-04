@@ -9,8 +9,8 @@ use gpui_kit::*;
 use serde_json::Value;
 
 use super::ContextPane;
-use crate::features::session::client::session_client::CallError;
 use super::listing::Listing;
+use crate::features::session::client::session_client::CallError;
 use crate::features::session::composer::attachment::Attachment;
 use crate::features::session::view::lightbox::{open_lightbox, read_image};
 
@@ -51,7 +51,14 @@ impl ContextPane {
                         .px_2()
                         .child(div().min_w_0().truncate().child(name.clone()));
                     match remote {
-                        Some(_) if self.context_scope.as_ref().is_none_or(|scope|!scope.valid||scope.source.is_none()) => row.text_color(muted),
+                        Some(_)
+                            if self
+                                .context_scope
+                                .as_ref()
+                                .is_none_or(|scope| !scope.valid || scope.source.is_none()) =>
+                        {
+                            row.text_color(muted)
+                        }
                         _ => {
                             let (path, name) = (path.clone(), name.clone());
                             row.cursor_pointer()
@@ -78,12 +85,22 @@ impl ContextPane {
                     }),
             )
             .child(body)
-            .when_some(remote.filter(|_| count.is_some()&&self.context_scope.as_ref().is_none_or(|scope|!scope.valid||scope.source.is_none())), |section, machine| {
-                section.child(note(
-                    "attachments-note-remote",
-                    format!("These images are on {machine} and can't be opened here yet.").into(),
-                ))
-            })
+            .when_some(
+                remote.filter(|_| {
+                    count.is_some()
+                        && self
+                            .context_scope
+                            .as_ref()
+                            .is_none_or(|scope| !scope.valid || scope.source.is_none())
+                }),
+                |section, machine| {
+                    section.child(note(
+                        "attachments-note-remote",
+                        format!("These images are on {machine} and can't be opened here yet.")
+                            .into(),
+                    ))
+                },
+            )
             .when(self.more && count.is_some(), |section| {
                 section.child(note(
                     "attachments-note-more",
@@ -102,11 +119,19 @@ impl ContextPane {
     }
 
     /// Reads an attached image by its file name in the store (the end of its path) and opens it full size.
-    pub(super) fn open(&mut self, path: String, name: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(scope)=self.context_scope.clone().filter(|scope|scope.valid)else{
-            self.open_failed=Some("The displayed attachment source is no longer valid.".into());cx.notify();return;
+    pub(super) fn open(
+        &mut self,
+        path: String,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(scope) = self.context_scope.clone().filter(|scope| scope.valid) else {
+            self.open_failed = Some("The displayed attachment source is no longer valid.".into());
+            cx.notify();
+            return;
         };
-        let serial=self.read_serial;
+        let serial = self.read_serial;
         let file = path
             .rsplit(['/', '\\'])
             .next()

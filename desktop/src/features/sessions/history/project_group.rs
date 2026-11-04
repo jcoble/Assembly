@@ -20,7 +20,11 @@ impl ProjectGroup {
         let mut groups: Vec<ProjectGroup> = Vec::new();
         for item in items {
             let machine = item.machine.clone().filter(|machine| !machine.is_empty());
-            let folder = if item.project_id.is_some() { item.repo_url.as_str() } else { "" };
+            let folder = if item.project_id.is_some() {
+                item.repo_url.as_str()
+            } else {
+                ""
+            };
             match groups
                 .iter_mut()
                 .find(|group| group.folder == folder && group.machine == machine)
@@ -38,7 +42,11 @@ impl ProjectGroup {
 
     /// Its header's name, as the sessions column's project header says it: "owner/repo · Workbox Test".
     pub fn label(&self) -> String {
-        let name = if self.folder.is_empty() { NO_PROJECT } else { project_label(&self.folder) };
+        let name = if self.folder.is_empty() {
+            NO_PROJECT
+        } else {
+            project_label(&self.folder)
+        };
         match &self.machine {
             Some(machine) => format!("{name} · {machine}"),
             None => name.to_string(),

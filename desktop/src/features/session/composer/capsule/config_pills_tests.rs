@@ -18,7 +18,9 @@ fn option(id: &str, category: Option<&str>, values: &[&str]) -> (ConfigOption, S
                 })
                 .collect(),
         },
-        values.first().map_or_else(String::new, |value| (*value).to_string()),
+        values
+            .first()
+            .map_or_else(String::new, |value| (*value).to_string()),
     )
 }
 
@@ -34,7 +36,11 @@ fn every_option_the_provider_reports_lands_in_a_pill() {
     assert_eq!(grouped.model.as_ref().unwrap().0.id, "provider-model");
     assert_eq!(grouped.effort.as_ref().unwrap().0.id, "reasoning_effort");
     assert_eq!(grouped.approval.as_ref().unwrap().0.id, "provider-mode");
-    let others: Vec<_> = grouped.others.iter().map(|(option, _)| option.id.as_str()).collect();
+    let others: Vec<_> = grouped
+        .others
+        .iter()
+        .map(|(option, _)| option.id.as_str())
+        .collect();
     assert_eq!(others, ["access", "second-mode"]);
 }
 

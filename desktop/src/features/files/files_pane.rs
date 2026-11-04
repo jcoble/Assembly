@@ -263,7 +263,13 @@ impl FilesPane {
         self.loads.insert(dir, task);
     }
 
-    pub fn reveal_folder(session: &str, path: &str, source: Option<&crate::core::socket::row_source::ExpectedRowSource>, window: &mut Window, cx: &mut App) {
+    pub fn reveal_folder(
+        session: &str,
+        path: &str,
+        source: Option<&crate::core::socket::row_source::ExpectedRowSource>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         use crate::core::ui::center_panes::CenterPanes;
         use gpui_kit::component::dock::{DockPlacement, PaneRef, PanelHandle};
         if SelectedSession::global(cx).read(cx).session_id() != Some(session) {
@@ -299,7 +305,10 @@ impl FilesPane {
         };
         view.update(cx, |pane, cx| {
             if pane.source.as_ref() != source {
-                pane.action_error=Some("The search result belongs to an earlier file source.".into());cx.notify();return;
+                pane.action_error =
+                    Some("The search result belongs to an earlier file source.".into());
+                cx.notify();
+                return;
             }
             pane.revealing = Some(path.to_string());
             pane.continue_reveal(cx);
@@ -380,7 +389,16 @@ impl FilesPane {
                         && event.keystroke.key == "enter"
                         && let Some(session) = &self.session
                     {
-                        FileView::open_at(session.clone(), path, None, None, true, self.source.clone(), window, cx);
+                        FileView::open_at(
+                            session.clone(),
+                            path,
+                            None,
+                            None,
+                            true,
+                            self.source.clone(),
+                            window,
+                            cx,
+                        );
                     }
                 }
             }

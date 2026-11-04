@@ -40,9 +40,15 @@ impl SessionsPane {
         self.put_in_chat(&form, window, cx);
     }
 
-    fn put_in_chat(&mut self, form: &Entity<NewSessionForm>, window: &mut Window, cx: &mut Context<Self>) {
+    fn put_in_chat(
+        &mut self,
+        form: &Entity<NewSessionForm>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let shown = SessionPane::open_draft(form.clone().into(), window, cx);
-        self.row_error = (!shown).then(|| "The new session can't open: there's no Chat pane.".into());
+        self.row_error =
+            (!shown).then(|| "The new session can't open: there's no Chat pane.".into());
         if shown {
             form.update(cx, |form, cx| form.focus_start(window, cx));
         }
@@ -56,15 +62,19 @@ impl SessionsPane {
             pane.creating = None;
             cx.notify();
         });
-        let draft = cx.subscribe_in(&form, window, |pane, form, event: &DraftEvent, window, cx| match event {
-            DraftEvent::Discard => {
-                SessionPane::close_draft(form.entity_id(), cx);
-                pane.creating = None;
-                cx.notify();
-            }
-            // A first send that fails after its session opened has to come back to where its text and error are.
-            DraftEvent::Failed => pane.put_in_chat(form, window, cx),
-        });
+        let draft = cx.subscribe_in(
+            &form,
+            window,
+            |pane, form, event: &DraftEvent, window, cx| match event {
+                DraftEvent::Discard => {
+                    SessionPane::close_draft(form.entity_id(), cx);
+                    pane.creating = None;
+                    cx.notify();
+                }
+                // A first send that fails after its session opened has to come back to where its text and error are.
+                DraftEvent::Failed => pane.put_in_chat(form, window, cx),
+            },
+        );
         self.creating = Some((form.clone(), [made, draft]));
         form
     }

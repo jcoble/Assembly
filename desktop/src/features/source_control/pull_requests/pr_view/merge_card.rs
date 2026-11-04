@@ -1,5 +1,4 @@
 //! The Summary page's merge card: what stands in the way, the button and the method, and how the merge went.
-use crate::core::theme::text::TextRole;
 use super::super::{
     merge_dialog,
     merge_dialog::MergeRequest,
@@ -7,6 +6,7 @@ use super::super::{
 };
 use super::summary::quiet;
 use super::*;
+use crate::core::theme::text::TextRole;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 
 impl PrDetail {
@@ -139,7 +139,14 @@ impl PrDetail {
                     .pb_3(),
                 )
             })
-            .children(merge_error.map(|error| div().px_4().pb_3().text_role(TextRole::Body, cx).text_color(danger).child(error)))
+            .children(merge_error.map(|error| {
+                div()
+                    .px_4()
+                    .pb_3()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(danger)
+                    .child(error)
+            }))
     }
     fn preview_merge(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(detail) = self.detail.clone() else {

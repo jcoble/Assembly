@@ -16,10 +16,10 @@ use super::SessionPane;
 use crate::core::engine::SessionKey;
 use crate::core::intents::open_session::OpenSession;
 use crate::core::state::selected_session::SelectedSession;
+use crate::core::ui::ask::form::AskForm;
 use crate::core::ui::center_panes::CenterPanes;
 use crate::features::session::client::session_client::SessionClient;
 use crate::features::session::client::socket_session_client::SocketSessionClient;
-use crate::core::ui::ask::form::AskForm;
 use crate::features::session::composer::answer_panel::AnswerPanel;
 use crate::features::session::composer::shape::next_answer;
 use crate::features::session::view::ask_row::AskRow;
@@ -51,25 +51,45 @@ impl SessionPane {
                 }
             });});
         });
-        cx.on_action(|request:&crate::core::intents::session_open::SessionOpenRequest,cx| {
-            let request=request.clone();
-            let Some(handle)=cx.active_window().or_else(||cx.windows().into_iter().next()) else {return;};
-            cx.defer(move|cx|{let _=handle.update(cx,|_,window,cx| {
-                if let Some(pane)=CenterPanes::find::<SessionPane>("Chat",cx) {
-                    pane.update(cx,|pane,_|pane.uncover(&request.key));
-                    pane.update(cx,|pane,cx|pane.request_open(request,window,cx));
-                } else {
-                    SelectedSession::global(cx).update(cx,|_,cx|cx.emit(crate::core::intents::session_open::SessionOpenResult {
-                        request_id:request.request_id,key:Some(request.key),result:Err(super::opening::refused("chat_unavailable","The registered Chat pane is unavailable.")),
-                    }));
-                }
-            });});
-        });
+        cx.on_action(
+            |request: &crate::core::intents::session_open::SessionOpenRequest, cx| {
+                let request = request.clone();
+                let Some(handle) = cx
+                    .active_window()
+                    .or_else(|| cx.windows().into_iter().next())
+                else {
+                    return;
+                };
+                cx.defer(move |cx| {
+                    let _ = handle.update(cx, |_, window, cx| {
+                        if let Some(pane) = CenterPanes::find::<SessionPane>("Chat", cx) {
+                            pane.update(cx, |pane, _| pane.uncover(&request.key));
+                            pane.update(cx, |pane, cx| pane.request_open(request, window, cx));
+                        } else {
+                            SelectedSession::global(cx).update(cx, |_, cx| {
+                                cx.emit(crate::core::intents::session_open::SessionOpenResult {
+                                    request_id: request.request_id,
+                                    key: Some(request.key),
+                                    result: Err(super::opening::refused(
+                                        "chat_unavailable",
+                                        "The registered Chat pane is unavailable.",
+                                    )),
+                                })
+                            });
+                        }
+                    });
+                });
+            },
+        );
     }
 
     /// Only the navigator commits prepared rows; selection notifications never start another open.
-    pub(super) fn chat(client:Rc<dyn SessionClient>,window:&mut Window,cx:&mut Context<Self>)->Self {
-        SessionPane::new(client,window,cx)
+    pub(super) fn chat(
+        client: Rc<dyn SessionClient>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        SessionPane::new(client, window, cx)
     }
 }
 
@@ -124,7 +144,11 @@ impl SessionPane {
     pub fn close_draft(draft: EntityId, cx: &mut App) {
         if let Some(pane) = CenterPanes::find::<SessionPane>("Chat", cx) {
             pane.update(cx, |pane, cx| {
-                if pane.draft.as_ref().is_some_and(|shown| shown.entity_id() == draft) {
+                if pane
+                    .draft
+                    .as_ref()
+                    .is_some_and(|shown| shown.entity_id() == draft)
+                {
                     pane.draft = None;
                     cx.notify();
                 }
@@ -135,7 +159,10 @@ impl SessionPane {
     /// This exact session is on screen. An id alone doesn't say so: another Engine can hold the same one.
     pub(in crate::features::session::view) fn shows(&self, key: &SessionKey) -> bool {
         self.session.as_deref() == Some(key.id.as_str())
-            && self.row_source.as_ref().is_some_and(|source| source.machine == key.machine)
+            && self
+                .row_source
+                .as_ref()
+                .is_some_and(|source| source.machine == key.machine)
     }
 
     /// Going to the session already under the draft uncovers it; it opens no differently, so nothing else would.
@@ -148,7 +175,10 @@ impl SessionPane {
     /// The same for a request that names the route to the session, not its Engine.
     fn uncover_route(&mut self, route: Option<&str>, session: &str) {
         if self.session.as_deref() == Some(session)
-            && self.row_source.as_ref().is_some_and(|source| source.route_machine.as_deref() == route)
+            && self
+                .row_source
+                .as_ref()
+                .is_some_and(|source| source.route_machine.as_deref() == route)
         {
             self.draft = None;
         }
@@ -184,7 +214,13 @@ impl SessionPane {
             on_action: self.on_action.clone(),
         }
         .on_control();
-        Some(AnswerPanel { ask_id, ask, form, count, on_action })
+        Some(AnswerPanel {
+            ask_id,
+            ask,
+            form,
+            count,
+            on_action,
+        })
     }
 }
 
@@ -204,7 +240,8 @@ impl Render for SessionPane {
             cx.on_next_frame(window, |pane, window, cx| pane.grow_frame(window, cx));
         }
         let answer = self.answer_panel(window, cx);
-        self.composer.update(cx, |composer, _| composer.set_answer(answer));
+        self.composer
+            .update(cx, |composer, _| composer.set_answer(answer));
         div()
             .size_full()
             .flex()

@@ -30,8 +30,10 @@ fn tall_detail(key: &str) -> BoardTaskResult {
             "answer": {"kind": "text", "text": "Yes"}, "answeredAt": 3100, "answerKey": null,
             "deliveryClientId": null, "deliveryTurnId": null, "deliveryState": "delivered", "acceptedRevision": null})
     };
-    serde_json::from_value(json!({"task": null, "questions": [question("q1"), question("q2"), question("q3")],
-        "feed": [], "nextBeforeSeq": null, "nextQuestionCursor": null}))
+    serde_json::from_value(
+        json!({"task": null, "questions": [question("q1"), question("q2"), question("q3")],
+        "feed": [], "nextBeforeSeq": null, "nextQuestionCursor": null}),
+    )
     .expect("a detail")
 }
 
@@ -98,12 +100,20 @@ fn a_card_grows_over_several_frames_and_folds_back(cx: &mut TestAppContext) {
     let moving = height("a", cx);
     settle(cx);
     let open = height("a", cx);
-    assert!(shut < moving && moving < open, "{shut:?} {moving:?} {open:?}");
+    assert!(
+        shut < moving && moving < open,
+        "{shut:?} {moving:?} {open:?}"
+    );
     pick(&pane, "a", cx);
     settle(cx);
     assert_eq!(height("a", cx), shut);
     pane.read_with(cx, |pane, cx| {
-        assert!(!pane.drops.read(cx).is_showing(&super::board_card::card_key("local", "a")));
+        assert!(
+            !pane
+                .drops
+                .read(cx)
+                .is_showing(&super::board_card::card_key("local", "a"))
+        );
     });
 }
 
@@ -117,7 +127,11 @@ fn a_card_on_its_way_shut_keeps_its_own_detail(cx: &mut TestAppContext) {
     let open = height("a", cx);
     pick(&pane, "b", cx);
     draw(cx);
-    assert!(height("a", cx) * 10. > open * 9., "{:?} of {open:?}", height("a", cx));
+    assert!(
+        height("a", cx) * 10. > open * 9.,
+        "{:?} of {open:?}",
+        height("a", cx)
+    );
     settle(cx);
     pane.read_with(cx, |pane, cx| {
         let drops = pane.drops.read(cx);

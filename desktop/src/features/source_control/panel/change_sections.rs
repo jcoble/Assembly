@@ -1,10 +1,10 @@
 //! Staged, Changes and Untracked: three sections that are always there and start folded, each with its letters and
 //! paths. A row's buttons mount only while it's hovered, so a long list holds no idle controls. Replaces
 //! ChangedFileRow.svelte and sourceControlFileMenu.ts.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::SourceControlPane;
 use crate::core::intents::{open_diff::OpenDiff, open_file::OpenFile};
 use crate::core::socket::checkout_selector::CheckoutSelector;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::file_icon::file_icon;
 use crate::core::ui::reasoned_item::reasoned_item;
 use crate::features::source_control::actions_menu::{READ_ONLY_SCOPE, STILL_RUNNING};
@@ -322,10 +322,22 @@ impl SourceControlPane {
                     .gap_1()
                     .child(div().truncate().child(name.to_string()))
                     .when(!folder.is_empty(), |line| {
-                        line.child(div().truncate().text_role(TextRole::Body, cx).text_color(muted).child(folder.to_string()))
+                        line.child(
+                            div()
+                                .truncate()
+                                .text_role(TextRole::Body, cx)
+                                .text_color(muted)
+                                .child(folder.to_string()),
+                        )
                     }),
             )
-            .children(word.map(|word| div().flex_none().text_role(TextRole::Body, cx).text_color(muted).child(word)))
+            .children(word.map(|word| {
+                div()
+                    .flex_none()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(muted)
+                    .child(word)
+            }))
             .children(cluster);
         let open = OpenDiff {
             session_id: target.session.clone(),

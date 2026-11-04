@@ -1,7 +1,6 @@
 //! The History tab reading another checkout, which moves nothing in the session or the panel.
 use super::HistoryPane;
 use crate::core::socket::checkout_selector::CheckoutSelector;
-use crate::features::source_control::git_checkouts::CheckoutHint;
 use crate::core::socket::{
     client::SocketClient,
     endpoint::Endpoint,
@@ -9,6 +8,7 @@ use crate::core::socket::{
     row_source::ExpectedRowSource,
     test_wait::until,
 };
+use crate::features::source_control::git_checkouts::CheckoutHint;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::{TestAppContext, VisualTestContext};
 use gpui_kit::component::dock::BasePanel as _;
@@ -24,7 +24,11 @@ fn selects(args: &Value) -> bool {
     args.get("checkoutPath").is_some() || args.get("expectedCheckoutRoot").is_some()
 }
 fn origin() -> ExpectedRowSource {
-    ExpectedRowSource { machine: "owner".into(), generation: 7, route_machine: None }
+    ExpectedRowSource {
+        machine: "owner".into(),
+        generation: 7,
+        route_machine: None,
+    }
 }
 #[derive(Default)]
 struct Seen {
@@ -45,10 +49,17 @@ struct Open<'a> {
     _backend: FakeBackend,
     _heard: Vec<Subscription>,
 }
-async fn open(cx: &mut TestAppContext, offered: bool, source: Option<ExpectedRowSource>) -> Open<'_> {
+async fn open(
+    cx: &mut TestAppContext,
+    offered: bool,
+    source: Option<ExpectedRowSource>,
+) -> Open<'_> {
     let (changed, changes) = unbounded();
     let heard = changed.clone();
-    let seen = Arc::new(Mutex::new(Seen { offered, ..Seen::default() }));
+    let seen = Arc::new(Mutex::new(Seen {
+        offered,
+        ..Seen::default()
+    }));
     let answered = seen.clone();
     let backend = FakeBackend::start(move |frame| {
         if let Some(reply) = hello(frame) {
@@ -56,36 +67,49 @@ async fn open(cx: &mut TestAppContext, offered: bool, source: Option<ExpectedRow
         }
         let id = frame["id"].clone();
         let result = |value: Value| Reply::Frame(json!({"t":"result","id":id,"result":value}));
-        let refuse = |code: &str| Reply::Frame(json!({"t":"error","id":id,"code":code,"message":"refused"}));
+        let refuse =
+            |code: &str| Reply::Frame(json!({"t":"error","id":id,"code":code,"message":"refused"}));
         let mut seen = answered.lock().unwrap();
         let args = frame["args"].clone();
         let replies = match (frame["t"].as_str(), frame["method"].as_str()) {
             (Some("sub"), _) => vec![Reply::Frame(json!({"t":"state","sub":id,"items":[]}))],
             (Some("call"), Some("status")) => {
                 seen.statuses.push(args.clone());
-                let (branch, root) = if selects(&args) { ("feature", LINKED) } else { ("main", OWN) };
+                let (branch, root) = if selects(&args) {
+                    ("feature", LINKED)
+                } else {
+                    ("main", OWN)
+                };
                 match (selects(&args), seen.refused) {
                     (true, Some(code)) => vec![refuse(code)],
-                    _ => vec![result(json!({"branch":branch,"head":"a".repeat(40),"ahead":0,"behind":0,"hasUpstream":true,
-                        "files":[],"totalFiles":0,"fingerprint":"f","checkoutRoot":root}))],
+                    _ => vec![result(
+                        json!({"branch":branch,"head":"a".repeat(40),"ahead":0,"behind":0,"hasUpstream":true,
+                        "files":[],"totalFiles":0,"fingerprint":"f","checkoutRoot":root}),
+                    )],
                 }
             }
             (Some("call"), Some("checkouts")) => {
                 seen.checkouts.push(args);
                 if seen.offered {
-                    vec![result(json!({"sessionRoot":OWN,"worktrees":[{"path":LINKED,"branch":"feature"}]}))]
+                    vec![result(
+                        json!({"sessionRoot":OWN,"worktrees":[{"path":LINKED,"branch":"feature"}]}),
+                    )]
                 } else {
                     vec![refuse("not_found")]
                 }
             }
             (Some("call"), Some("history")) => {
                 seen.histories.push(args);
-                vec![result(json!({"commits":[{"shortSha":"aaaaaaa","sha":SHA,"subject":"Commit","body":"","author":"Jesse",
-                    "committedAt":"2026-11-03T12:00:00Z","refs":[],"parents":[]}],"nextCursor":null}))]
+                vec![result(
+                    json!({"commits":[{"shortSha":"aaaaaaa","sha":SHA,"subject":"Commit","body":"","author":"Jesse",
+                    "committedAt":"2026-11-03T12:00:00Z","refs":[],"parents":[]}],"nextCursor":null}),
+                )]
             }
             (Some("call"), Some("commitFiles")) => {
                 seen.files.push(args);
-                vec![result(json!([{"path":"a.rs","originalPath":null,"letter":"M"}]))]
+                vec![result(
+                    json!([{"path":"a.rs","originalPath":null,"letter":"M"}]),
+                )]
             }
             (Some("call"), _) => vec![result(json!({}))],
             _ => vec![],
@@ -96,9 +120,16 @@ async fn open(cx: &mut TestAppContext, offered: bool, source: Option<ExpectedRow
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
-        SocketClient::start(Endpoint { port: backend.port, token: "secret".into() }, cx);
+        SocketClient::start(
+            Endpoint {
+                port: backend.port,
+                token: "secret".into(),
+            },
+            cx,
+        );
     });
-    let (pane, visual) = cx.add_window_view(|window, cx| HistoryPane::new("s1".into(), None, source, window, cx));
+    let (pane, visual) =
+        cx.add_window_view(|window, cx| HistoryPane::new("s1".into(), None, source, window, cx));
     let (tell, also) = (changed.clone(), changed.clone());
     let heard = visual.update(|_, cx| {
         let timeline = pane.read(cx).timeline.clone();
@@ -111,7 +142,15 @@ async fn open(cx: &mut TestAppContext, offered: bool, source: Option<ExpectedRow
             }),
         ]
     });
-    let mut open = Open { pane, cx: visual, seen, changed, changes, _backend: backend, _heard: heard };
+    let mut open = Open {
+        pane,
+        cx: visual,
+        seen,
+        changed,
+        changes,
+        _backend: backend,
+        _heard: heard,
+    };
     open.until("the first reads", |pane, cx, seen| {
         let answered = cx.update(|_, cx| {
             let pane = pane.read(cx);
@@ -123,7 +162,11 @@ async fn open(cx: &mut TestAppContext, offered: bool, source: Option<ExpectedRow
     open
 }
 impl Open<'_> {
-    async fn until(&mut self, what: &str, mut done: impl FnMut(&Entity<HistoryPane>, &mut VisualTestContext, &Seen) -> bool) {
+    async fn until(
+        &mut self,
+        what: &str,
+        mut done: impl FnMut(&Entity<HistoryPane>, &mut VisualTestContext, &Seen) -> bool,
+    ) {
         let (pane, seen, cx) = (self.pane.clone(), self.seen.clone(), &mut *self.cx);
         until(what, &mut self.changes, &self.changed, || {
             cx.run_until_parked();
@@ -141,7 +184,9 @@ impl Open<'_> {
         self.until("the other checkout's commits", |pane, cx, seen| {
             let shown = cx.update(|_, cx| {
                 let pane = pane.read(cx);
-                pane.status.as_ref().is_some_and(|status| status.branch.as_deref() == Some("feature"))
+                pane.status
+                    .as_ref()
+                    .is_some_and(|status| status.branch.as_deref() == Some("feature"))
                     && pane.timeline.read(cx).history.commits.len() == 1
             });
             shown && seen.histories.last().is_some_and(selects)
@@ -157,7 +202,13 @@ async fn an_older_owner_keeps_the_folder_label_and_never_gets_a_selector(cx: &mu
     open.pick(Some(LINKED));
     open.cx.run_until_parked();
     let seen = open.seen.lock().unwrap();
-    assert!(!seen.statuses.iter().chain(seen.histories.iter()).any(selects));
+    assert!(
+        !seen
+            .statuses
+            .iter()
+            .chain(seen.histories.iter())
+            .any(selects)
+    );
 }
 #[gpui::test]
 async fn a_session_without_a_source_is_not_asked_for_its_checkouts(cx: &mut TestAppContext) {
@@ -169,18 +220,30 @@ async fn a_picked_repository_is_read_for_status_history_and_commit_files(cx: &mu
     let mut open = open(cx, true, Some(origin())).await;
     open.cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(open.cx.debug_bounds("history-repository").is_some());
-    assert!(!open.seen.lock().unwrap().statuses.iter().any(selects), "its own folder sends none");
+    assert!(
+        !open.seen.lock().unwrap().statuses.iter().any(selects),
+        "its own folder sends none"
+    );
     open.showing_linked().await;
     let pane = open.pane.clone();
     pane.update(open.cx, |pane, cx| {
-        pane.timeline.update(cx, |timeline, cx| timeline.toggle_commit(SHA.into(), cx))
+        pane.timeline
+            .update(cx, |timeline, cx| timeline.toggle_commit(SHA.into(), cx))
     });
-    open.until("the commit's files", |_, _, seen| !seen.files.is_empty()).await;
+    open.until("the commit's files", |_, _, seen| !seen.files.is_empty())
+        .await;
     let seen = open.seen.lock().unwrap();
-    for asked in [seen.statuses.last().unwrap(), seen.histories.last().unwrap(), &seen.files[0]] {
+    for asked in [
+        seen.statuses.last().unwrap(),
+        seen.histories.last().unwrap(),
+        &seen.files[0],
+    ] {
         assert_eq!(asked["checkoutPath"], LINKED);
         assert_eq!(asked["expectedCheckoutRoot"], OWN);
-        assert_eq!(asked["expectedSource"], serde_json::to_value(origin()).unwrap());
+        assert_eq!(
+            asked["expectedSource"],
+            serde_json::to_value(origin()).unwrap()
+        );
     }
 }
 #[gpui::test]
@@ -192,34 +255,68 @@ async fn a_refused_repository_goes_back_to_the_session_folder_and_says_so(cx: &m
         let back = cx.update(|_, cx| {
             let pane = pane.read(cx);
             pane.checkout.is_none()
-                && pane.status.as_ref().is_some_and(|status| status.branch.as_deref() == Some("main"))
+                && pane
+                    .status
+                    .as_ref()
+                    .is_some_and(|status| status.branch.as_deref() == Some("main"))
         });
         back && seen.statuses.iter().any(selects)
     })
     .await;
-    assert!(!open.seen.lock().unwrap().statuses.last().is_some_and(selects));
+    assert!(
+        !open
+            .seen
+            .lock()
+            .unwrap()
+            .statuses
+            .last()
+            .is_some_and(selects)
+    );
     open.cx.update(|_, cx| {
-        assert!(open.pane.read(cx).notice.as_deref().is_some_and(|notice| notice.contains("went back to the session folder")));
+        assert!(
+            open.pane
+                .read(cx)
+                .notice
+                .as_deref()
+                .is_some_and(|notice| notice.contains("went back to the session folder"))
+        );
     });
 }
 #[gpui::test]
-async fn a_file_opens_only_from_the_session_folder_and_a_commit_diff_keeps_its_checkout(cx: &mut TestAppContext) {
+async fn a_file_opens_only_from_the_session_folder_and_a_commit_diff_keeps_its_checkout(
+    cx: &mut TestAppContext,
+) {
     let mut open = open(cx, true, Some(origin())).await;
     open.cx.update(|_, cx| {
         let timeline = open.pane.read(cx).timeline.read(cx);
         assert!(timeline.current_file("a.rs").is_some());
-        assert_eq!(timeline.commit_diff(SHA, "a.rs", "a.rs".into()).checkout, None);
+        assert_eq!(
+            timeline.commit_diff(SHA, "a.rs", "a.rs".into()).checkout,
+            None
+        );
     });
     open.showing_linked().await;
     open.cx.update(|_, cx| {
         let timeline = open.pane.read(cx).timeline.read(cx);
-        assert!(timeline.current_file("a.rs").is_none(), "there's no way to open it in that checkout yet");
+        assert!(
+            timeline.current_file("a.rs").is_none(),
+            "there's no way to open it in that checkout yet"
+        );
         let diff = timeline.commit_diff(SHA, "a.rs", "a.rs".into());
-        assert_eq!(diff.checkout.expect("the checkout it came from").path, LINKED);
+        assert_eq!(
+            diff.checkout.expect("the checkout it came from").path,
+            LINKED
+        );
     });
     open.pick(None);
     open.until("its own commits", |pane, cx, seen| {
-        let own = cx.update(|_, cx| pane.read(cx).timeline.read(cx).current_file("a.rs").is_some());
+        let own = cx.update(|_, cx| {
+            pane.read(cx)
+                .timeline
+                .read(cx)
+                .current_file("a.rs")
+                .is_some()
+        });
         own && !seen.histories.last().is_some_and(selects)
     })
     .await;
@@ -229,14 +326,25 @@ async fn a_file_opens_only_from_the_session_folder_and_a_commit_diff_keeps_its_c
 async fn the_label_names_the_picked_folder_before_its_status_answers(cx: &mut TestAppContext) {
     let mut open = open(cx, true, Some(origin())).await;
     open.pick(Some(LINKED));
-    open.cx.update(|_, cx| assert_eq!(open.pane.read(cx).folder_label(), "owned-linked"));
-    open.until("the other checkout's status", |pane, cx, _| cx.update(|_, cx| pane.read(cx).status.is_some())).await;
-    open.cx.update(|_, cx| assert_eq!(open.pane.read(cx).folder_label(), "owned-linked (feature)"));
+    open.cx
+        .update(|_, cx| assert_eq!(open.pane.read(cx).folder_label(), "owned-linked"));
+    open.until("the other checkout's status", |pane, cx, _| {
+        cx.update(|_, cx| pane.read(cx).status.is_some())
+    })
+    .await;
+    open.cx
+        .update(|_, cx| assert_eq!(open.pane.read(cx).folder_label(), "owned-linked (feature)"));
     open.pick(None);
-    open.cx.update(|_, cx| assert_eq!(open.pane.read(cx).folder_label(), "owned (main)"));
+    open.cx
+        .update(|_, cx| assert_eq!(open.pane.read(cx).folder_label(), "owned (main)"));
 }
 fn hint(path: &str) -> CheckoutHint {
-    CheckoutHint { session: "s1".into(), source: origin(), path: path.into(), expected_root: OWN.into() }
+    CheckoutHint {
+        session: "s1".into(),
+        source: origin(),
+        path: path.into(),
+        expected_root: OWN.into(),
+    }
 }
 impl Open<'_> {
     /// The tab as a saved layout builds it, up to the next list.
@@ -249,14 +357,27 @@ impl Open<'_> {
         });
     }
     async fn dropped_and_said(&mut self) {
-        self.until("the hint is dropped", |pane, cx, _| cx.update(|_, cx| pane.read(cx).checkout_hint.is_none())).await;
+        self.until("the hint is dropped", |pane, cx, _| {
+            cx.update(|_, cx| pane.read(cx).checkout_hint.is_none())
+        })
+        .await;
         let seen = self.seen.lock().unwrap();
-        assert!(!seen.statuses.iter().chain(seen.histories.iter()).any(selects));
+        assert!(
+            !seen
+                .statuses
+                .iter()
+                .chain(seen.histories.iter())
+                .any(selects)
+        );
         drop(seen);
         self.cx.update(|_, cx| {
             let pane = self.pane.read(cx);
             assert_eq!(pane.checkout, None);
-            assert!(pane.notice.as_deref().is_some_and(|notice| notice.contains("went back to the session folder")));
+            assert!(
+                pane.notice
+                    .as_deref()
+                    .is_some_and(|notice| notice.contains("went back to the session folder"))
+            );
         });
     }
 }
@@ -266,7 +387,9 @@ async fn a_saved_repository_comes_back_once_a_fresh_list_still_offers_it(cx: &mu
     open.restore(hint(LINKED));
     open.until("its commits", |pane, cx, seen| {
         let shown = cx.update(|_, cx| pane.read(cx).checkout.is_some());
-        shown && seen.statuses.last().is_some_and(selects) && seen.histories.last().is_some_and(selects)
+        shown
+            && seen.statuses.last().is_some_and(selects)
+            && seen.histories.last().is_some_and(selects)
     })
     .await;
 }
@@ -286,7 +409,10 @@ async fn a_saved_repository_no_longer_listed_is_dropped_and_said(cx: &mut TestAp
 async fn a_saved_repository_from_a_replaced_owner_is_dropped_and_said(cx: &mut TestAppContext) {
     let mut open = open(cx, true, Some(origin())).await;
     open.restore(CheckoutHint {
-        source: ExpectedRowSource { generation: 8, ..origin() },
+        source: ExpectedRowSource {
+            generation: 8,
+            ..origin()
+        },
         ..hint(LINKED)
     });
     open.dropped_and_said().await;
@@ -300,11 +426,16 @@ async fn a_saved_repository_with_no_source_to_check_is_dropped_and_said(cx: &mut
 }
 // Another panel's choice is a request: the tab reads it only if its own list offers it.
 #[gpui::test]
-async fn a_checkout_asked_for_by_another_panel_is_read_only_if_the_fresh_list_offers_it(cx: &mut TestAppContext) {
+async fn a_checkout_asked_for_by_another_panel_is_read_only_if_the_fresh_list_offers_it(
+    cx: &mut TestAppContext,
+) {
     let mut open = open(cx, true, Some(origin())).await;
     let pane = open.pane.clone();
     let ask = |path: &str, pane: &Entity<HistoryPane>, cx: &mut VisualTestContext| {
-        let asked = CheckoutSelector { path: path.into(), expected_root: OWN.into() };
+        let asked = CheckoutSelector {
+            path: path.into(),
+            expected_root: OWN.into(),
+        };
         pane.update(cx, |pane, cx| {
             pane.ask_for(Some(asked), cx);
             pane.read_status(cx);
@@ -315,7 +446,8 @@ async fn a_checkout_asked_for_by_another_panel_is_read_only_if_the_fresh_list_of
     open.dropped_and_said().await;
     ask(LINKED, &pane, open.cx);
     open.until("the asked-for checkout", |pane, cx, seen| {
-        let shown = cx.update(|_, cx| pane.read(cx).checkout.is_some() && pane.read(cx).notice.is_none());
+        let shown =
+            cx.update(|_, cx| pane.read(cx).checkout.is_some() && pane.read(cx).notice.is_none());
         shown && seen.statuses.last().is_some_and(selects)
     })
     .await;
@@ -324,7 +456,9 @@ async fn a_checkout_asked_for_by_another_panel_is_read_only_if_the_fresh_list_of
 async fn the_saved_layout_keeps_only_the_repository_still_chosen(cx: &mut TestAppContext) {
     let mut open = open(cx, true, Some(origin())).await;
     let pane = open.pane.clone();
-    let dump = |cx: &mut VisualTestContext| cx.update(|_, cx| CheckoutHint::saved(&pane.read(cx).dump(cx).info));
+    let dump = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| CheckoutHint::saved(&pane.read(cx).dump(cx).info))
+    };
     assert_eq!(dump(open.cx), None);
     open.showing_linked().await;
     assert_eq!(dump(open.cx), Some(hint(LINKED)));

@@ -136,7 +136,12 @@ impl CommitTimeline {
             self.refresh(cx);
         }
     }
-    pub fn set_target(&mut self, path: Option<String>, source: Option<crate::core::socket::row_source::ExpectedRowSource>, cx: &mut Context<Self>) {
+    pub fn set_target(
+        &mut self,
+        path: Option<String>,
+        source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+        cx: &mut Context<Self>,
+    ) {
         if self.path != path || self.expected_source != source {
             self.path = path;
             self.expected_source = source;
@@ -222,7 +227,9 @@ impl CommitTimeline {
             self.checkout.as_ref(),
             json!({"session":self.session,"cursor":cursor,"path":self.path,"expectedSource":self.expected_source}),
         );
-        let call = socket.read(cx).call::<GitHistory>("git", "history", args, Some(&key));
+        let call = socket
+            .read(cx)
+            .call::<GitHistory>("git", "history", args, Some(&key));
         self.reading = true;
         self.error = None;
         self.read = Some(cx.spawn(async move |timeline, cx| {
@@ -262,7 +269,12 @@ impl CommitTimeline {
                     self.checkout.as_ref(),
                     json!({"session":self.session,"sha":sha,"expectedSource":self.expected_source}),
                 );
-                let call = socket.read(cx).call::<Vec<GitCommitFile>>("git", "commitFiles", args, Some(&key));
+                let call = socket.read(cx).call::<Vec<GitCommitFile>>(
+                    "git",
+                    "commitFiles",
+                    args,
+                    Some(&key),
+                );
                 self.files.insert(sha.clone(), CommitFiles::Reading);
                 let target = sha.clone();
                 let measured = sha.clone();
@@ -307,7 +319,8 @@ impl CommitTimeline {
         self.graph = lanes(next.iter().map(|&index| &self.history.commits[index]));
         if appended {
             let at = self.visible.len() + 1;
-            self.list.splice(at..at + 1, next.len() - self.visible.len() + 1);
+            self.list
+                .splice(at..at + 1, next.len() - self.visible.len() + 1);
         } else {
             self.list.reset(next.len() + ITEMS_AROUND);
         }
@@ -323,10 +336,10 @@ impl Render for CommitTimeline {
         }
     }
 }
-#[path = "commit_table.rs"]
-mod table;
 #[path = "commit_timeline_inline.rs"]
 mod inline;
+#[path = "commit_table.rs"]
+mod table;
 #[cfg(test)]
 #[path = "commit_timeline_tests.rs"]
 mod tests;

@@ -20,7 +20,9 @@ impl Composer {
         self.refresh_config_target(cx);
     }
     pub(super) fn connection_changed(&mut self, connected: bool, cx: &mut Context<Self>) {
-        if !connected {self.invalidate_source(cx);}
+        if !connected {
+            self.invalidate_source(cx);
+        }
         if self.backend_connected == connected {
             return;
         }
@@ -28,7 +30,9 @@ impl Composer {
         self.refresh_config_target(cx);
     }
     pub(super) fn refresh_config_target(&mut self, cx: &mut Context<Self>) {
-        if !self.operational(){return;}
+        if !self.operational() {
+            return;
+        }
         self.target_generation += 1;
         self._target = None;
         self._warm = None;
@@ -68,8 +72,7 @@ impl Composer {
                     .and_then(|v| serde_json::from_value::<AgentList>(v).map_err(|e| e.to_string()))
                     .and_then(|list| {
                         let agent = list.agents.into_iter().find(|a| a.id == owner.0);
-                        composer.agent_name =
-                            agent.as_ref().map(|a| a.name.clone().into());
+                        composer.agent_name = agent.as_ref().map(|a| a.name.clone().into());
                         agent
                             .and_then(|a| a.target_id)
                             .filter(|id| !id.is_empty())
@@ -118,7 +121,9 @@ impl Composer {
                 {
                     return;
                 }
-                if let Err(error)=&answer{composer.source_refused(error,cx);}
+                if let Err(error) = &answer {
+                    composer.source_refused(error, cx);
+                }
                 match answer.map_err(|e| e.reason()).and_then(|v| {
                     serde_json::from_value::<AgentConfig>(v).map_err(|e| e.to_string())
                 }) {

@@ -1,9 +1,9 @@
 //! Native confirmation/name dialog. One owned socket attempt; confirmed filesystem changes precede tab metadata.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::document_store::{DocumentKey, DocumentStore};
 use super::entry::FileOwnership;
 use super::file_actions::{ActionReply, ActionRun, ActionState, named_target};
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::center_panes::CenterPanes;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -200,12 +200,12 @@ impl Render for FileActionForm {
                     .as_ref()
                     .map(|name| Input::new(name).disabled(busy)),
             )
-            .children(
-                self.run
-                    .error
-                    .clone()
-                    .map(|error| div().text_role(TextRole::Body, cx).text_color(cx.theme().danger).child(error)),
-            )
+            .children(self.run.error.clone().map(|error| {
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(cx.theme().danger)
+                    .child(error)
+            }))
             .child(
                 h_flex()
                     .gap_2()

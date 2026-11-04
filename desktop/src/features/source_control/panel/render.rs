@@ -1,9 +1,9 @@
 //! The pane's one hierarchy: the header, then either why there's nothing to show or a single scroller holding the commit
 //! box, what the last action came to, the three sections, the commits and the pull requests.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::SourceControlPane;
 use super::outcomes::running_label;
 use crate::core::state::session_read::Shown;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::features::source_control::commit_box::{
     can_commit, commit_hint, commit_label, stage_hint, stageable,
 };
@@ -22,7 +22,12 @@ const NOT_A_REPOSITORY: &str = "This folder isn't a git repository yet.";
 const AMEND_TIP: &str = "Rewrite the last commit instead of adding one. Never do this to a commit that is already pushed and shared.";
 
 /// What an empty panel shows: one icon, a short title, a sentence or two, and at most one thing to press.
-fn empty_state(title: &'static str, body: &'static str, actions: Option<AnyElement>, cx: &App) -> AnyElement {
+fn empty_state(
+    title: &'static str,
+    body: &'static str,
+    actions: Option<AnyElement>,
+    cx: &App,
+) -> AnyElement {
     let muted = cx.theme().muted_foreground;
     v_flex()
         .w_full()
@@ -32,9 +37,24 @@ fn empty_state(title: &'static str, body: &'static str, actions: Option<AnyEleme
         .px_4()
         .py_8()
         .text_center()
-        .child(Icon::new(IconName::GitBranch).size(px(24.)).text_color(muted))
-        .child(div().max_w(px(300.)).font_weight(FontWeight::MEDIUM).child(title))
-        .child(div().max_w(px(340.)).text_role(TextRole::Body, cx).text_color(muted).child(body))
+        .child(
+            Icon::new(IconName::GitBranch)
+                .size(px(24.))
+                .text_color(muted),
+        )
+        .child(
+            div()
+                .max_w(px(300.))
+                .font_weight(FontWeight::MEDIUM)
+                .child(title),
+        )
+        .child(
+            div()
+                .max_w(px(340.))
+                .text_role(TextRole::Body, cx)
+                .text_color(muted)
+                .child(body),
+        )
         .children(actions)
         .into_any_element()
 }
@@ -158,7 +178,12 @@ impl SourceControlPane {
                     )
                 }
                 None => view
-                    .child(div().text_role(TextRole::Body, cx).text_color(danger).child(message))
+                    .child(
+                        div()
+                            .text_role(TextRole::Body, cx)
+                            .text_color(danger)
+                            .child(message),
+                    )
                     .child(self.try_again(cx)),
             })
             .children(result)
@@ -207,11 +232,12 @@ impl SourceControlPane {
                             .children(change_area)
                             .children(running)
                             .children(result)
-                            .children(
-                                status
-                                    .more_line()
-                                    .map(|line| div().text_role(TextRole::Body, cx).text_color(muted).child(line)),
-                            )
+                            .children(status.more_line().map(|line| {
+                                div()
+                                    .text_role(TextRole::Body, cx)
+                                    .text_color(muted)
+                                    .child(line)
+                            }))
                             .children(sections)
                             .children(timeline)
                             .children((selection.is_some() && pull_requests.is_some()).then(|| {
@@ -291,7 +317,12 @@ impl SourceControlPane {
                     .child(
                         h_flex()
                             .gap_2()
-                            .child(div().text_role(TextRole::Body, cx).text_color(muted).child(label))
+                            .child(
+                                div()
+                                    .text_role(TextRole::Body, cx)
+                                    .text_color(muted)
+                                    .child(label),
+                            )
                             .child(
                                 Button::new("git-operation-cancel")
                                     .ghost()
@@ -302,7 +333,12 @@ impl SourceControlPane {
                                     }),
                             ),
                     )
-                    .children(note.map(|note| div().text_role(TextRole::Body, cx).text_color(muted).child(note)))
+                    .children(note.map(|note| {
+                        div()
+                            .text_role(TextRole::Body, cx)
+                            .text_color(muted)
+                            .child(note)
+                    }))
                     .into_any_element(),
             );
         }

@@ -29,12 +29,18 @@ pub fn section_heading(
 ) -> Div {
     let id: SharedString = id.into();
     // A quarter turn over 120 ms, starting again each time it folds or opens, and then still.
-    let (from, to) = if open { (0_f32, 90_f32) } else { (90_f32, 0_f32) };
-    let chevron = Icon::new(IconName::ChevronRight).size(px(14.)).with_animation(
-        ElementId::Name(format!("{id}-chevron-{open}").into()),
-        Animation::new(Duration::from_millis(120)),
-        move |icon, delta| icon.rotate(radians((from + (to - from) * delta).to_radians())),
-    );
+    let (from, to) = if open {
+        (0_f32, 90_f32)
+    } else {
+        (90_f32, 0_f32)
+    };
+    let chevron = Icon::new(IconName::ChevronRight)
+        .size(px(14.))
+        .with_animation(
+            ElementId::Name(format!("{id}-chevron-{open}").into()),
+            Animation::new(Duration::from_millis(120)),
+            move |icon, delta| icon.rotate(radians((from + (to - from) * delta).to_radians())),
+        );
     h_flex()
         .w_full()
         .min_h(px(24.))

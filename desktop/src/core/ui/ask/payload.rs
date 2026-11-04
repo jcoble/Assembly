@@ -136,7 +136,9 @@ impl AskField {
         }
         match self.one_of.clone().or_else(|| listed(&self.choices)) {
             Some(choices) => AskInput::One(choices),
-            None if self.format.as_deref() == Some("password") || self.write_only == Some(true) => AskInput::Secret,
+            None if self.format.as_deref() == Some("password") || self.write_only == Some(true) => {
+                AskInput::Secret
+            }
             None => AskInput::Text,
         }
     }

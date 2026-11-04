@@ -1,12 +1,12 @@
 //! The panel's Open pull requests section: it reads only once opened, and each row opens the pull request. Replaces
 //! PullRequestList.svelte.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::git_action::GitWrites;
 use super::super::git_target::GitTarget;
 use super::super::section_heading::section_heading;
 use super::pull_request::{CheckTone, PullRequestSummary};
 use super::{create_pr_dialog, pr_queue::PrQueue};
 use crate::core::intents::{open_pull_requests::OpenPullRequests, open_url::OpenUrl};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::list::ListItem;
@@ -127,7 +127,13 @@ impl PrSection {
                             .flex_1()
                             .min_w_0()
                             .child(div().truncate().text_role(TextRole::Body, cx).child(title))
-                            .child(div().truncate().text_role(TextRole::Body, cx).text_color(muted).child(second)),
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_role(TextRole::Body, cx)
+                                    .text_color(muted)
+                                    .child(second),
+                            ),
                     )
                     .children(check)
                     .child(
@@ -206,7 +212,12 @@ impl Render for PrSection {
                                 .px_2()
                                 .gap_1()
                                 .items_start()
-                                .child(div().text_role(TextRole::Body, cx).text_color(danger).child(failure))
+                                .child(
+                                    div()
+                                        .text_role(TextRole::Body, cx)
+                                        .text_color(danger)
+                                        .child(failure),
+                                )
                                 .child(
                                     div().debug_selector(|| "pr-section-retry".into()).child(
                                         Button::new("pr-section-retry")
@@ -214,7 +225,9 @@ impl Render for PrSection {
                                             .compact()
                                             .label("Try again")
                                             .on_click(cx.listener(|section, _, _, cx| {
-                                                section.queue.update(cx, |queue, cx| queue.refresh(cx))
+                                                section
+                                                    .queue
+                                                    .update(cx, |queue, cx| queue.refresh(cx))
                                             })),
                                     ),
                                 ),

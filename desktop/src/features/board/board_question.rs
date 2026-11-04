@@ -77,7 +77,11 @@ pub fn question(
             _ => answer.text.clone().unwrap_or_default(),
         };
         return shell
-            .child(div().text_role(TextRole::Body, cx).child(format!("Answer: {said}")))
+            .child(
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .child(format!("Answer: {said}")),
+            )
             .child(
                 div()
                     .text_role(TextRole::Meta, cx)
@@ -125,7 +129,12 @@ pub fn question(
     shell
         .child(actions)
         .when_some(error, |shell, error| {
-            shell.child(div().text_role(TextRole::Meta, cx).text_color(danger).child(error))
+            shell.child(
+                div()
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(danger)
+                    .child(error),
+            )
         })
         .into_any_element()
 }

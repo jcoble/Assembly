@@ -46,7 +46,13 @@ mod turn_totals {
             },
         )
     }
-    fn tool(key: &str, state: ToolState, path: Option<&str>, added: Option<i64>, removed: Option<i64>) -> Item {
+    fn tool(
+        key: &str,
+        state: ToolState,
+        path: Option<&str>,
+        added: Option<i64>,
+        removed: Option<i64>,
+    ) -> Item {
         item(
             key,
             ItemKind::Tool {
@@ -68,15 +74,34 @@ mod turn_totals {
     #[test]
     fn only_the_newest_turns_finished_changes_count_and_a_file_counts_once() {
         let items = [
-            tool("old", ToolState::Completed, Some("old.rs"), Some(50), Some(50)),
+            tool(
+                "old",
+                ToolState::Completed,
+                Some("old.rs"),
+                Some(50),
+                Some(50),
+            ),
             user("u"),
             tool("a", ToolState::Completed, Some("a.rs"), Some(3), Some(1)),
             tool("b", ToolState::Completed, Some("a.rs"), Some(2), None),
-            tool("running", ToolState::Started, Some("c.rs"), Some(9), Some(9)),
+            tool(
+                "running",
+                ToolState::Started,
+                Some("c.rs"),
+                Some(9),
+                Some(9),
+            ),
             tool("read", ToolState::Completed, Some("d.rs"), None, None),
         ];
         let changes = turn_file_changes(&items);
-        assert_eq!(changes, Some(FileChanges { files: 1, added: 5, removed: 1 }));
+        assert_eq!(
+            changes,
+            Some(FileChanges {
+                files: 1,
+                added: 5,
+                removed: 1
+            })
+        );
     }
 
     #[test]

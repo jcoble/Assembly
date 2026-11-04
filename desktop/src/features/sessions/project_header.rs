@@ -136,16 +136,23 @@ impl RenderOnce for ProjectHeader {
             // Which machines it's on, as icons that say so on hover.
             .children(self.machines.into_iter().map(|machine| {
                 let local = machine == "local";
-                let name: SharedString =
-                    if local { "This Mac".into() } else { machine.into() };
+                let name: SharedString = if local {
+                    "This Mac".into()
+                } else {
+                    machine.into()
+                };
                 div()
                     .id(name.clone())
                     .flex_none()
                     .tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
                     .child(
-                        Icon::new(if local { IconName::Laptop } else { IconName::Server })
-                            .xsmall()
-                            .text_color(muted),
+                        Icon::new(if local {
+                            IconName::Laptop
+                        } else {
+                            IconName::Server
+                        })
+                        .xsmall()
+                        .text_color(muted),
                     )
             }))
             .child(count(self.count, faint, cx))

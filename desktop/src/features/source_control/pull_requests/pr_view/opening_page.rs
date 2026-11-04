@@ -1,9 +1,9 @@
 //! A pull request's page before it can be read: the row's words at once, and "Loading" while its project's machine
 //! says who owns it, or the question of which project, when more than one holds it.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::pr_parts::{PrHeading, loading_line};
 use super::{PrPane, Selected};
 use crate::core::intents::open_url::OpenUrl;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonRounded, ButtonVariants as _};
 use gpui_kit::component::{
@@ -86,7 +86,11 @@ impl PrPane {
                     .ghost()
                     .small()
                     .icon(IconName::Link)
-                    .tooltip(if self.copied.is_some() { "Link copied" } else { "Copy link" })
+                    .tooltip(if self.copied.is_some() {
+                        "Link copied"
+                    } else {
+                        "Copy link"
+                    })
                     .disabled(url.is_none())
                     .on_click(cx.listener(move |pane, _, _, cx| {
                         if let Some(url) = copied.clone() {
@@ -150,7 +154,12 @@ impl PrPane {
             .min_h_0()
             .child(bar)
             .children(self.failure.clone().map(|error| {
-                div().px_3().py_1().text_role(TextRole::Body, cx).text_color(danger).child(error)
+                div()
+                    .px_3()
+                    .py_1()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(danger)
+                    .child(error)
             }))
             .child(
                 v_flex()
