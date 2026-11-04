@@ -3,6 +3,8 @@ namespace Assembly.Engine.Messages.Reading;
 /// <summary>Canonical SQL copy selection; whole available order keys never enter display DTOs.</summary>
 public static class MessageMetadata
 {
+    // Unknown-provenance checks probe canonical once per physical row. Materialize the
+    // shared relation so SQLite can index those probes instead of rebuilding its joins.
     internal const string Cte = """
         WITH session_names AS (
           SELECT machine,id,substr(title,1,256) AS name,title AS order_name,1 AS full_available,version
@@ -62,7 +64,7 @@ public static class MessageMetadata
             ROW_NUMBER() OVER(PARTITION BY origin_machine,id ORDER BY
             CASE WHEN storage_machine=recipient_machine THEN 0 ELSE 1 END,version DESC,storage_machine) AS copy_rank
           FROM physical p WHERE origin_machine IS NOT NULL
-        ), canonical AS (
+        ), canonical AS MATERIALIZED (
           SELECT o.origin_machine,o.id,o.created_ms AS origin_created_ms,o.sender_machine,o.from_session_id,
             o.sender_name,o.recipient_machine,o.to_session_id,COALESCE(recipient.name,o.receiver_name) AS receiver_name,o.run_machine,o.run_id,
             o.run_owner_machine,o.run_owner_id,o.kind,o.preview,o.message_created_seq,

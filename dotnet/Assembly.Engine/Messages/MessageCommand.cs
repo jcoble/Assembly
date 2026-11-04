@@ -15,4 +15,9 @@ public sealed record SendMessage(string? FromSessionId, string ToSessionId,
 public sealed record SendOwnerPrompt(string ToSessionId, string Text, string ClientId,
     IReadOnlyList<string> AttachmentIds, long? TargetEpoch) : MessageCommand;
 public sealed record MessageOutcome(string State, string? ProviderTurnId,
-    string? Reason) : MessageCommand;
+    string? Reason) : MessageCommand
+{
+    // Only the owning receipt projector supplies this; it is never a wire assertion.
+    [JsonIgnore]
+    internal Assembly.Application.Features.Chat.Rows.FinalizedChatReply? CompletedTurn { get; init; }
+}
