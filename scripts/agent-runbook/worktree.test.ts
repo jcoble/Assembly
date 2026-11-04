@@ -40,6 +40,31 @@ test('allow_add_under_root', t => {
 test('allow_unrelated_commands_containing_worktree', t => {
   const f = setup(t); for (const command of ['git worktree list', "rg 'git worktree add /tmp/x'", 'echo worktree']) assert.deepEqual(f.guard(command), {});
 });
+test('guard_allows_heredoc_documentation', t => {
+  const f = setup(t);
+  for (const delimiter of ["'EOF'", '"EOF"', 'EOF']) for (const op of ['<<', '<<-']) {
+    assert.deepEqual(f.guard(`cat > notes.md ${op}${delimiter}\n\tFor documentation: git worktree add /tmp/outside\n${op === '<<-' ? '\t' : ''}EOF`), {});
+  }
+  assert.ok(f.guard("cat <<'EOF'\ngit worktree list\nEOF\ngit worktree add /tmp/outside").deny);
+  assert.deepEqual(f.guard("cat bash <<'EOF'\ngit worktree add /tmp/outside\nEOF"), {});
+  assert.deepEqual(f.guard("bash -c true\ncat <<'EOF'\ngit worktree add /tmp/outside\nEOF"), {});
+});
+test('guard_denies_heredoc_into_shell', t => {
+  const f = setup(t);
+  for (const head of ['bash', 'sh', 'cat | bash', 'cat | sh']) {
+    assert.ok(f.guard(`${head} <<'EOF'\ngit worktree add /tmp/outside\nEOF`).deny, head);
+  }
+  assert.ok(f.guard("cat <<'EOF' | bash\ngit worktree add /tmp/outside\nEOF").deny);
+});
+test('guard_allows_env_options_with_read_only_worktree', t => {
+  const f = setup(t);
+  for (const options of ['--unset=UNUSED', '-u UNUSED', '--chdir=/tmp', '-C /tmp', '--unknown']) {
+    assert.deepEqual(f.guard(`env ${options} git worktree list`), {}, options);
+    assert.ok(f.guard(`env ${options} git worktree add /tmp/outside`).deny, options);
+  }
+  assert.deepEqual(f.guard(`env --unset=UNUSED git worktree add '${f.home}/dev/work/worktrees/Assembly/safe'`), {});
+  assert.ok(f.guard("env -S 'git worktree add /tmp/outside'").deny);
+});
 test('guard_denies_function_wrapper', t => {
   const f = setup(t); assert.ok(f.guard('g(){ command git worktree add -b alias-probe "$HOME/outside-worktree"; }; g').deny);
 });
@@ -307,6 +332,31 @@ test('sweep_backs_up_idle_dirty_files_before_removal', t => {
 test('sweep_keeps_idle_stash', t => {
   const { f, path } = idle(t); writeFileSync(join(path, 'work'), 'stashed work'); f.git(path, 'stash', 'push'); age(f, path);
   assert.match(f.run(['sweep']).stdout, /stash/i); assert.ok(existsSync(path));
+});
+test('sweep_removes_when_only_other_branch_has_stash', t => {
+  const { f, path } = idle(t); writeFileSync(join(f.repo, 'README'), 'other branch stash'); f.git(f.repo, 'stash', 'push');
+  const result = f.run(['sweep']); assert.ok(!existsSync(path), result.stdout);
+  assert.match(f.git(f.repo, 'stash', 'list'), /WIP on main:/);
+});
+test('sweep_ignores_ds_store_and_build_output', t => {
+  const { f, path } = idle(t);
+  writeFileSync(join(f.repo, '.git/info/exclude'), '.DS_Store\n.build/\ngen/schemas/\n');
+  for (const file of ['.DS_Store', 'nested/.DS_Store', '.build/debug/output', 'nested/.build/output', 'gen/schemas/schema.json']) {
+    mkdirSync(join(path, file, '..'), { recursive: true }); writeFileSync(join(path, file), 'generated');
+  }
+  const result = f.run(['sweep']); assert.ok(!existsSync(path), result.stdout);
+});
+test('sweep_keeps_settings_local_json', t => {
+  const { f, path } = idle(t); writeFileSync(join(f.repo, '.git/info/exclude'), '.claude/\n');
+  mkdirSync(join(path, '.claude')); writeFileSync(join(path, '.claude/settings.local.json'), 'important settings');
+  assert.match(f.run(['sweep']).stdout, /settings.local.json/); assert.ok(existsSync(path));
+});
+test('sweep_keeps_other_protected_ignored_paths', t => {
+  for (const file of ['.lane', 'owner.db', 'scratch/notes', 'gen/notes']) {
+    const { f, path } = idle(t); writeFileSync(join(f.repo, '.git/info/exclude'), file + '\n');
+    mkdirSync(join(path, file, '..'), { recursive: true }); writeFileSync(join(path, file), 'important');
+    assert.ok(existsSync(path)); assert.match(f.run(['sweep']).stdout, /preservation/); assert.ok(existsSync(path));
+  }
 });
 for (const activity of ['file', 'index', 'lease']) test('sweep_uses_newest_activity_' + activity, t => {
   const { f, path } = idle(t);

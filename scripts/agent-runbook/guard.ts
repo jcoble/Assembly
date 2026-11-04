@@ -14,6 +14,8 @@ export function inside(path: string, root = worktreeRoot()) {
 // Split shell command boundaries while keeping quoted text and ${HOME} intact.
 function tokens(command: string) {
   const result: { words: string[]; bare: string[] }[] = [{ words: [], bare: [] }];
+  const heredocs: { delimiter: string; tabs: boolean }[] = [];
+  let lineStart = 0, malformedBody = false;
   let word = '', quote = '', started = false, quoted = false;
   const push = () => { if (started) { result.at(-1)!.words.push(word); if (!quoted) result.at(-1)!.bare.push(word); } word = ''; started = quoted = false; };
   for (let i = 0; i < command.length; i++) {
@@ -21,12 +23,34 @@ function tokens(command: string) {
     if (c === '\\' && quote !== "'") { word += command[++i] || ''; started = true; continue; }
     if (quote) { if (c === quote) quote = ''; else word += c; started = true; continue; }
     if (c === '"' || c === "'") { quote = c; started = quoted = true; continue; }
+    if (c === '<' && command[i + 1] === '<' && command[i + 2] !== '<') {
+      const match = /^<<(-)?[ \t]*((?:'[^']*'|"[^"]*"|\\.|[^\s;&|<>])+)/.exec(command.slice(i));
+      if (match) {
+        push(); heredocs.push({ delimiter: match[2].replace(/['"]|\\(?=.)/g, ''), tabs: !!match[1] });
+        i += match[0].length - 1; continue;
+      }
+    }
+    if (c === '\n' && heredocs.length) {
+      push();
+      const shell = result.slice(lineStart).some(part => /(^|\/)(bash|sh|zsh|dash)$/.test(part.words.find(word => !['command', 'env', 'sudo', 'exec', 'nohup', 'time'].includes(word) && !/^[A-Za-z_][A-Za-z_0-9]*=/.test(word)) || ''));
+      for (const doc of heredocs.splice(0)) {
+        let body = '', closed = false;
+        while (i < command.length) {
+          const end = command.indexOf('\n', i + 1), stop = end < 0 ? command.length : end;
+          const line = command.slice(i + 1, stop); i = stop;
+          if ((doc.tabs ? line.replace(/^\t+/, '') : line) === doc.delimiter) { closed = true; break; }
+          body += line + '\n';
+        }
+        if (shell) { const parsed = tokens(body); result.push(...parsed.commands); malformedBody ||= parsed.malformed || !closed; }
+      }
+      result.push({ words: [], bare: [] }); lineStart = result.length - 1; continue;
+    }
     if (c === '$' && command[i + 1] === '(') { i++; push(); result.push({ words: [], bare: [] }); continue; }
-    if (';&|\n()`'.includes(c)) { push(); if (result.at(-1)!.words.length) result.push({ words: [], bare: [] }); continue; }
+    if (';&|\n()`'.includes(c)) { push(); if (result.at(-1)!.words.length) result.push({ words: [], bare: [] }); if (c === '\n') lineStart = result.length - 1; continue; }
     if (/\s/.test(c)) { push(); continue; }
     word += c; started = true;
   }
-  push(); return { commands: result.filter(part => part.words.length), malformed: !!quote };
+  push(); return { commands: result.filter(part => part.words.length), malformed: !!quote || malformedBody };
 }
 function expand(path: string) {
   return path.replace(/^~(?=\/|$)/, homedir()).replace(/^\$\{HOME\}(?=\/|$)|^\$HOME(?=\/|$)/, homedir());
@@ -35,7 +59,7 @@ export function checkWorktreeCommand(command: string, cwd: string): { deny?: str
   const parsed = tokens(command);
   let directory = cwd;
   const deny = () => ({ deny: 'Create or move worktrees only under ' + worktreeRoot() + '/<repo>/<name>; use agent-worktree create.' });
-  for (const original of parsed.commands) {
+  commands: for (const original of parsed.commands) {
     const words = [...original.words];
     while (['command', 'env', 'sudo', '{', '}', '!', 'if', 'then', 'elif', 'else', 'do', 'while', 'until', 'time', 'nohup', 'exec', 'builtin', 'xargs'].includes(words[0]) || /^[A-Za-z_][A-Za-z_0-9]*=/.test(words[0] || '')) {
       if (words.shift() !== 'env') continue;
@@ -43,9 +67,12 @@ export function checkWorktreeCommand(command: string, cwd: string): { deny?: str
         const option = words.shift();
         if (option === '--') break;
         if (option === '-i' || option === '--ignore-environment') continue;
-        if (option === '-C' || option === '--chdir') { if (!words[0]) return deny(); directory = resolve(directory, expand(words.shift()!)); }
-        else if (option === '-u' || option === '--unset') { if (!words.shift()) return deny(); }
-        else return deny();
+        if (option?.startsWith('--unset=') || /^-u.+/.test(option || '')) continue;
+        if (option?.startsWith('--chdir=') || /^-C.+/.test(option || '')) { directory = resolve(directory, expand(option!.replace(/^(--chdir=|-C)/, ''))); continue; }
+        if ((option === '-C' || option === '--chdir') && words[0]) { directory = resolve(directory, expand(words.shift()!)); continue; }
+        if ((option === '-u' || option === '--unset') && words.shift()) continue;
+        if (/\bworktree\s+(add|move)\b/.test(original.words.join(' '))) return deny();
+        continue commands;
       }
     }
     if (words[0] === 'eval' || /(^|\/)(bash|sh|zsh|dash)$/.test(words[0] || '')) {

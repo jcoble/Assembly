@@ -11,7 +11,7 @@ const launcher = join(home, '.local/bin/agent-runbook');
 const quote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
 mkdirSync(destination, { recursive: true, mode: 0o700 });
 atomicWrite(join(destination, 'package.json'), '{\n  \"type\": \"module\"\n}\n');
-for (const name of ['rules.ts', 'runbook.ts', 'cli.ts', 'harnesses.ts', 'fast-hook.sh', 'worktree.ts', 'worktree-state.ts', 'worktree-safety.ts', 'guard.ts', 'data-guard.ts', 'backup.ts', 'agent-worktree.ts']) {
+for (const name of ['rules.ts', 'runbook.ts', 'cli.ts', 'session-owner.ts', 'harnesses.ts', 'fast-hook.sh', 'worktree.ts', 'worktree-state.ts', 'worktree-safety.ts', 'guard.ts', 'data-guard.ts', 'backup.ts', 'agent-worktree.ts']) {
   atomicWrite(join(destination, name), readFileSync(new URL(name, import.meta.url), 'utf8'));
 }
 atomicWrite(launcher, '#!/bin/sh\nexec ' + quote(process.execPath) + ' ' + quote(join(destination, 'cli.ts')) + ' "$@"\n');

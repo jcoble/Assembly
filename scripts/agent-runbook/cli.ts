@@ -7,6 +7,7 @@ import { checkDataCommand, namesProtectedFolder, DATA_DENY } from './data-guard.
 import { createWorktree, backupWorktree, lease } from './worktree.ts';
 import { registry, tryGit, setHookBudget } from './worktree-state.ts';
 import { spawn } from 'node:child_process';
+import { sessionOwner } from './session-owner.ts';
 
 let eventName = '';
 const [command, provider, id, ...args] = process.argv.slice(2);
@@ -19,6 +20,7 @@ try {
     const parentSession = String(event.session_id || '');
     const session = eventName === 'SubagentStart' ? parentSession : String(event.agent_id || parentSession);
     identity(provider, session);
+    const ownerWarning = sessionOwner(provider, event);
     if (eventName === 'WorktreeCreate') {
       const path = createWorktree(event.name, event.cwd);
       lease(path, provider + ':' + session);
@@ -74,7 +76,9 @@ try {
         const child = spawn(process.execPath, [new URL('./agent-worktree.ts', import.meta.url).pathname, 'sweep', '--hourly'], { cwd: process.env.HOME, env: process.env, detached: true, stdio: 'ignore' });
         child.on('error', error => console.error('Sweep could not start: ' + error.message)); child.unref();
       }
-      console.log(JSON.stringify(recover(provider, session, binding)));
+      const recovered = recover(provider, session, binding);
+      if (ownerWarning) recovered.hookSpecificOutput.additionalContext += '\n' + ownerWarning;
+      console.log(JSON.stringify(recovered));
     } else if (event.hook_event_name === 'PreCompact') {
       // Never initialize a replacement during compaction: a missing binding must be visible.
       checkpoint(provider, session, event);
