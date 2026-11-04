@@ -373,11 +373,13 @@ function checkSqlite(cmd: Simple, args: Word[], state: State) {
 // ---- Entry point -------------------------------------------------------------------------------
 export function checkDataCommand(command: string, cwd: string): { deny?: string } {
   const named = namesProtectedFolder(command) || (!!cwd && insideFolder(cwd));
-  if (!named && !/[*?[]/.test(command)) return {};
   if (named) return evaluate(command, cwd, true).result;
+  // $? is a number, so it can't reach the folder even though it contains a glob character.
+  const globbed = command.replaceAll('$?', '0');
+  if (!/[*?[]/.test(globbed)) return {};
   // A glob can reach the folder without naming it. Only a command it reaches gets the full strict check.
-  const probe = evaluate(command, cwd, false);
-  return probe.result.deny || !probe.touched ? probe.result : evaluate(command, cwd, true).result;
+  const probe = evaluate(globbed, cwd, false);
+  return probe.result.deny || !probe.touched ? probe.result : evaluate(globbed, cwd, true).result;
 }
 function evaluate(command: string, cwd: string, strict: boolean): { result: { deny?: string }; touched: boolean } {
   const blocked = { result: deny(), touched: true };

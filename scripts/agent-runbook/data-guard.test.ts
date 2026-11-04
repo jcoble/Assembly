@@ -21,6 +21,10 @@ const denied = (...commands: string[]) => { for (const c of commands) assert.dee
 test('deny_reason_text_is_exact', () => {
   assert.equal(DATA_DENY, "~/assembly-dotnet is Jesse's live data. Reads and copies out are allowed; writes are not. Make a test copy elsewhere and work on that.");
 });
+test('exit_status_is_not_a_glob', () => {
+  allowed('cd ~ && echo done $?', 'cd ~ && node x.ts > ~/y/z.json; echo done $?', 'cd ~ && node "$W/x.ts"; echo $?');
+  denied('cd ~; echo $?; rm -rf assembly*', 'echo $?; rm -rf ~/assembly-*', 'echo $?; touch ~/assembly-dotnet/x');
+});
 test('allows_ls_cat_du_find_grep', () => {
   allowed(`ls -la ${D}`, `cat ${D}/x`, `head -n 3 ${D}/x`, `tail ${D}/x`, `stat ${D}/x`, `du -sh ${D}`, `file ${D}/x`, `wc -l ${D}/x`,
     `find ${D} -name '*.db' -print`, `grep -rn needle ${D}/sub`, `rg needle ${D}`, `shasum ${D}/x`, `sha256sum ${D}/x`, `md5 ${D}/x`, `md5sum ${D}/x`);
