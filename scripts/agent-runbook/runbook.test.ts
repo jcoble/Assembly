@@ -66,11 +66,12 @@ test('subagent inherits parent runbook read-only and sessions remain isolated', 
   f.run(['update', 'codex', 'parent'], 'Parent state, approved step 2.');
   const child = f.hook('codex', { hook_event_name: 'SubagentStart', agent_id: 'child', agent_type: 'worker' });
   assert.match(child.hookSpecificOutput.additionalContext, /Parent state, approved step 2/);
-  assert.match(child.hookSpecificOutput.additionalContext, /Check with.*parent/);
-  assert.notEqual(f.run(['update', 'codex', 'child'], 'bad overwrite').status, 0);
+  assert.match(child.hookSpecificOutput.additionalContext, /check with.*parent/i);
+  assert.equal(f.run(['update', 'codex', 'child'], 'Child own state').status, 0);
   const binding = JSON.parse(f.run(['where', 'codex', 'child']).stdout);
   assert.equal(binding.parent, 'codex:parent');
-  assert.equal(binding.readOnly, true);
+  assert.equal(binding.readOnly, false);
+  assert.notEqual(binding.path, JSON.parse(f.run(['where', 'codex', 'parent']).stdout).path);
   const before = f.run(['read', 'codex', 'parent']).stdout;
   f.hook('codex', { hook_event_name: 'PreCompact', session_id: 'parent', agent_id: 'child', trigger: 'auto' });
   assert.equal(f.run(['read', 'codex', 'parent']).stdout, before);
@@ -127,9 +128,9 @@ test('child recovery with shared session_id never checkpoints parent and missing
   assert.equal(f.run(['read', 'claude', 'parent']).stdout, before);
   const context = f.hook('claude', { hook_event_name: 'SessionStart', source: 'compact', agent_id: 'child' }).hookSpecificOutput.additionalContext;
   assert.match(context, /read-only/);
-  const codex = f.hook('codex', { hook_event_name: 'PreCompact', session_id: 'unknown', trigger: 'auto' });
+  const codex = f.hook('codex', { hook_event_name: 'PreCompact', session_id: 'unknown', trigger: 'manual' });
   assert.equal(codex.continue, false);
-  const claude = f.run(['hook', 'claude'], JSON.stringify({ cwd: f.cwd, session_id: 'unknown', hook_event_name: 'PreCompact', trigger: 'auto' }));
+  const claude = f.run(['hook', 'claude'], JSON.stringify({ cwd: f.cwd, session_id: 'unknown', hook_event_name: 'PreCompact', trigger: 'manual' }));
   assert.equal(claude.status, 2);
   assert.equal(JSON.parse(claude.stdout).decision, 'block');
 });

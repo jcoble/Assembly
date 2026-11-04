@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join, basename } from 'node:path';
-import { notionConfig, notionRequest } from './notion.ts';
+import { notionConfig, notionRequest, remainingBudget } from './notion.ts';
 
 export type RunbookMeta = {
   title: string; projectId?: string; provider: string; host: string; branch: string; worktree: string;
@@ -11,7 +11,7 @@ export type RunbookMeta = {
 };
 export function collectMeta(cwd: string, provider: string, session: string, parent?: string): RunbookMeta {
   const git = (...args: string[]) => {
-    try { return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 1000, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; }
+    try { return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: remainingBudget(1000), stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; }
   };
   const branch = git('symbolic-ref', '--short', 'HEAD') || 'HEAD';
   const worktree = git('rev-parse', '--show-toplevel') || cwd;
@@ -32,7 +32,7 @@ export function collectMeta(cwd: string, provider: string, session: string, pare
     }
   }
   try {
-    meta.prUrl = JSON.parse(execFileSync('gh', ['pr', 'view', '--json', 'url'], { cwd, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] })).url;
+    meta.prUrl = JSON.parse(execFileSync('gh', ['pr', 'view', '--json', 'url'], { cwd, encoding: 'utf8', timeout: remainingBudget(2000), stdio: ['ignore', 'pipe', 'ignore'] })).url;
   } catch { /* No PR or offline is valid. */ }
   return meta;
 }

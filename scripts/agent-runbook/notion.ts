@@ -4,6 +4,14 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { RunbookMeta } from './meta.ts';
 
+let deadline = Infinity;
+export function setHookBudget(milliseconds: number) { deadline = Date.now() + milliseconds; }
+export function remainingBudget(maximum: number) {
+  const budget = Math.min(maximum, deadline - Date.now());
+  if (budget <= 0) throw Error('Hook I/O budget exhausted; queued locally.');
+  return budget;
+}
+
 export function notionConfig(): { runbooksDataSourceId: string; tasksDataSourceId?: string } {
   const config = JSON.parse(readFileSync(join(homedir(), '.config/agent-runbook/notion.json'), 'utf8'));
   if (!config.runbooksDataSourceId) throw Error('Configure runbooksDataSourceId in agent-runbook/notion.json.');
@@ -12,7 +20,7 @@ export function notionConfig(): { runbooksDataSourceId: string; tasksDataSourceI
 export function notionRequest(method: string, path: string, body?: unknown, timeoutMs = 5000): any {
   const args = ['api', path, '-X', method];
   if (body !== undefined) args.push('-d', JSON.stringify(body));
-  const result = JSON.parse(execFileSync('ntn', args, { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 262144, stdio: ['ignore', 'pipe', 'pipe'] }));
+  const result = JSON.parse(execFileSync('ntn', args, { encoding: 'utf8', timeout: remainingBudget(timeoutMs), maxBuffer: 262144, stdio: ['ignore', 'pipe', 'pipe'] }));
   if (result.object === 'error') throw Error('Notion request failed: ' + result.code);
   return result;
 }

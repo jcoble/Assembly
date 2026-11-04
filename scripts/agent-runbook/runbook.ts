@@ -7,7 +7,7 @@ import { rules } from './rules.ts';
 import { createRunbookPage, writeRunbookBody, readRunbookBody } from './notion.ts';
 import { collectMeta } from './meta.ts';
 
-export type Binding = { path: string; project: string; owner: string; readOnly: boolean; parent?: string; ssh?: string; cwd?: string; task?: string; notionPageId?: string; syncPending?: boolean; syncError?: string; updateCursor?: { bytes: number; at: string }; transcriptPath?: string };
+export type Binding = { path: string; project: string; owner: string; readOnly: boolean; parent?: string; parentPageId?: string; ssh?: string; cwd?: string; task?: string; notionPageId?: string; syncPending?: boolean; syncError?: string; updateCursor?: { bytes: number; at: string }; transcriptPath?: string; nudged?: boolean; stopContinued?: boolean; checkedBytes?: number };
 export const STATE = '\n<!-- live-state -->\n';
 export const OBSERVED = '\n<!-- observed-checkpoint -->\n';
 const root = () => join(homedir(), '.local/state/agent-runbook');
@@ -89,6 +89,7 @@ export function update(provider: string, id: string, state: string) {
   const checkpoint = old.split(OBSERVED)[1].replace(/^## Automatic checkpoint\n/, '');
   atomicWrite(binding.path, render(binding, 'Updated: ' + new Date().toISOString() + '\n' + state, checkpoint));
   binding.syncPending = true;
+  binding.nudged = false; binding.stopContinued = false;
   binding.updateCursor = { bytes: binding.transcriptPath && existsSync(binding.transcriptPath) ? statSync(binding.transcriptPath).size : 0, at: new Date().toISOString() };
   saveBinding(provider, id, binding);
   flushPending(provider, id);
@@ -101,7 +102,7 @@ export function flushPending(provider: string, id: string) {
     const text = readRunbook(binding);
     if (binding.notionPageId) writeRunbookBody(binding.notionPageId, text);
     else {
-      const meta = collectMeta(binding.cwd || process.cwd(), provider, id);
+      const meta = collectMeta(binding.cwd || process.cwd(), provider, id, binding.parentPageId);
       binding.notionPageId = createRunbookPage(meta, text).id;
     }
     binding.syncPending = false; delete binding.syncError;
