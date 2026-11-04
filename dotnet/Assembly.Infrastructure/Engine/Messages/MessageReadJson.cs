@@ -6,6 +6,14 @@ namespace Assembly.Infrastructure.Engine.Messages;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     RespectRequiredConstructorParameters = true)]
+[JsonSerializable(typeof(MessageDisplay[]))]
+[JsonSerializable(typeof(MessageOrderInput[]))]
+[JsonSerializable(typeof(SenderOrderArgs))]
+[JsonSerializable(typeof(SenderOrderPage))]
+[JsonSerializable(typeof(SenderOrderFact))]
+[JsonSerializable(typeof(ReceiverOrderArgs))]
+[JsonSerializable(typeof(ReceiverOrderPage))]
+[JsonSerializable(typeof(ReceiverOrderFact))]
 [JsonSerializable(typeof(MessagesPageArgs))]
 [JsonSerializable(typeof(MessagesCountArgs))]
 [JsonSerializable(typeof(BodyArgs))]

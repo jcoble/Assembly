@@ -8,6 +8,14 @@ using Assembly.Engine.Reading;
 namespace Assembly.Engine.Messages.Reading;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true)]
+[JsonSerializable(typeof(SenderOrderArgs))]
+[JsonSerializable(typeof(SenderOrderPage))]
+[JsonSerializable(typeof(SenderOrderFact))]
+[JsonSerializable(typeof(ReceiverOrderArgs))]
+[JsonSerializable(typeof(ReceiverOrderPage))]
+[JsonSerializable(typeof(ReceiverOrderFact))]
+[JsonSerializable(typeof(ReceiverOrderRef[]))]
+[JsonSerializable(typeof(MessageOrderInput[]))]
 [JsonSerializable(typeof(SeenCut[]))]
 [JsonSerializable(typeof(MessageCursor))]
 [JsonSerializable(typeof(MessageKey[]))]
@@ -40,7 +48,7 @@ internal static class MessageCursors
         using (var json = new Utf8JsonWriter(bytes))
         {
             json.WriteStartArray();
-            json.WriteStringValue("messages-query/logical-anchor-v2");
+            json.WriteStringValue(scope.Sort == "time" ? "messages-query/logical-anchor-v2" : "messages-query/full-name-stream-v3");
             foreach (var value in new[] { scope.Machine, scope.SessionMachine, scope.SessionId, scope.RunMachine, scope.RunId, scope.State, scope.Search, scope.Sort }) json.WriteStringValue(value);
             foreach (var source in sources) { json.WriteStringValue(source.Machine); json.WriteNumberValue(source.Generation); }
             json.WriteEndArray();
@@ -48,7 +56,12 @@ internal static class MessageCursors
         return Convert.ToHexStringLower(SHA256.HashData(bytes.ToArray()));
     }
 
-    internal static string Encode(MessageCursor cursor) => Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(cursor, MessageReadModelJson.Default.MessageCursor));
+    internal static string Encode(MessageCursor cursor)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(cursor, MessageReadModelJson.Default.MessageCursor);
+        if (4L * ((bytes.LongLength + 2) / 3) > 1024 * 1024) throw new InvalidOperationException("message_response_too_large");
+        return Convert.ToBase64String(bytes);
+    }
     internal static MessageCursor Decode(string value)
     {
         if (value.Length > 1024 * 1024) throw new ArgumentException("bad_args");
@@ -57,12 +70,17 @@ internal static class MessageCursors
             var cursor = JsonSerializer.Deserialize(Convert.FromBase64String(value), MessageReadModelJson.Default.MessageCursor) ?? throw new ArgumentException("bad_args");
             if (string.IsNullOrEmpty(cursor.QueryHash) || cursor.Cuts is null || cursor.Cuts.Any(cut => cut is null || string.IsNullOrEmpty(cut.Machine)) ||
                 cursor.Cuts.Select(cut => cut.Machine).Distinct(StringComparer.Ordinal).Count() != cursor.Cuts.Count) throw new ArgumentException("bad_args");
+            if (cursor.Name is { } name && (name.Bucket is null || name.Bucket.EnumerateRunes().Count() > 256 || name.Sources is null ||
+                name.Sources.Any(p => p is null || string.IsNullOrEmpty(p.OriginMachine) || p.ScopeConsumed < 0 ||
+                  p.Consumed is { } a && (a.OriginMachine != p.OriginMachine || string.IsNullOrEmpty(a.Id))) ||
+                name.Sources.Select(p => p.OriginMachine).Distinct(StringComparer.Ordinal).Count() != name.Sources.Count ||
+                name.Sources.Count > 800 || name.Completed && (name.Sources.Count != 0 || cursor.After is not null))) throw new ArgumentException("bad_args");
             return cursor;
         }
         catch (Exception error) when (error is FormatException or JsonException) { throw new ArgumentException("bad_args", error); }
     }
 
-    internal static void Validate(IReadSnapshot read, MessageCursor cursor, string hash, IReadOnlyList<MessageSource> sources)
+    internal static void Validate(IReadSnapshot read, MessageCursor cursor, string hash, IReadOnlyList<MessageSource> sources, bool ignoreSessionEvents = false)
     {
         if (cursor.QueryHash != hash || cursor.Cuts.Count != sources.Count) throw new InvalidOperationException("query_changed");
         foreach (var source in sources)
@@ -70,8 +88,8 @@ internal static class MessageCursors
             var cut = cursor.Cuts.SingleOrDefault(item => item.Machine == source.Machine);
             if (cut is null || cut.Through < source.Floor || cut.Through > source.High || cut.Through < 0 ||
                 !MatchesCut(read, cut.Through, cut.At, cut.Generation, source) || read.QueryFirst("""
-                    SELECT 1 FROM engine_event WHERE machine=$machine AND seq>$through AND entity_kind IN ('message','session','run') LIMIT 1
-                    """, row => row.Long(0), new SqlArg("$machine", source.Machine), new("$through", cut.Through)) == 1)
+                    SELECT 1 FROM engine_event WHERE machine=$machine AND seq>$through AND (entity_kind IN ('message','run') OR ($sessions=1 AND entity_kind='session')) LIMIT 1
+                    """, row => row.Long(0), new SqlArg("$machine", source.Machine), new("$through", cut.Through), new("$sessions", ignoreSessionEvents ? 0 : 1)) == 1)
                 throw new InvalidOperationException("query_changed");
         }
     }

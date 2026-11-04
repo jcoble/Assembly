@@ -7,11 +7,14 @@ using Assembly.Infrastructure.Remote;
 namespace Assembly.Infrastructure.Engine.Messages;
 
 /// <summary>One request's bounded authority reads through existing pinned machine sockets, never mirrored body bytes.</summary>
-internal sealed class MessageReadSources(MessageQueries queries, string machine, MachineForward? forward)
+internal sealed partial class MessageReadSources(MessageQueries queries, string machine, MachineForward? forward)
 {
-    internal async Task<MessagePage> PageAsync(MessageScope scope, MessageCursor? cursor, int limit, CancellationToken ct)
+    internal Task<MessagePage> PageAsync(MessageScope scope, MessageCursor? cursor, int limit, CancellationToken ct)
+        => scope.Sort == "time" ? FinishPageAsync(scope, queries.Candidates(scope, cursor, limit, ct), ct, false) : NamePageAsync(scope, cursor, limit, ct);
+
+    private async Task<MessagePage> FinishPageAsync(MessageScope scope, MessagePage candidates, CancellationToken ct, bool name, OrderBudget? budget = null,
+        Dictionary<string, (RemoteMachine Remote, RemoteMachine.OwnerConnectionBinding Binding)>? pins = null)
     {
-        var candidates = queries.Candidates(scope, cursor, limit, ct);
         var needed = (scope.Machine is null ? candidates.Cut.Select(cut => cut.Machine) :
             candidates.Items.SelectMany(item => new[] { item.Key.OriginMachine, item.Storage.Machine }).Append(scope.Machine)).Distinct(StringComparer.Ordinal).ToArray();
         var availability = await Task.WhenAll(needed.Select(async source => (Source: source, Available: source == machine || forward is not null && await forward.MessageSourceAvailableAsync(source, ct).ConfigureAwait(false)))).ConfigureAwait(false);
@@ -20,7 +23,7 @@ internal sealed class MessageReadSources(MessageQueries queries, string machine,
         if (scope.Search.Length > 0)
         {
             var groups = candidates.Items.GroupBy(item => item.Key.OriginMachine).ToArray();
-            var results = await Task.WhenAll(groups.Select(async group =>
+            var pending = groups.Select(async group =>
             {
                 var origin = group.Key; var ids = group.Select(item => item.Key.Id).ToArray();
                 if (ids.Length > 200) throw new InvalidOperationException("message_candidate_limit");
@@ -28,26 +31,32 @@ internal sealed class MessageReadSources(MessageQueries queries, string machine,
                 try
                 {
                     var args = new MatchArgs(ids, scope.Search);
-                    var result = origin == machine ? queries.Match(args, ct) : (await (forward ?? throw new KeyNotFoundException("Unknown source"))
-                        .CallAsync(origin, "messages", "match", JsonSerializer.SerializeToElement(args, MessageReadJson.Default.MatchArgs), true, ct).ConfigureAwait(false))
-                        .Deserialize(MessageReadJson.Default.BodyMatch) ?? throw new IOException("Invalid body match response");
+                    if (budget is not null && !budget.SearchReserved) budget.Charge(origin, ids.Length, 0);
+                    var request = JsonSerializer.SerializeToElement(args, MessageReadJson.Default.MatchArgs);
+                    var result = origin == machine ? queries.Match(args, ct) :
+                        (await (pins is null ? (forward ?? throw new KeyNotFoundException("Unknown source"))
+                          .CallAsync(origin, "messages", "match", request, true, ct) : ReadPinnedAsync(origin, "match", request, pins, ct))
+                          .ConfigureAwait(false)).Deserialize(MessageReadJson.Default.BodyMatch) ?? throw new IOException("Invalid body match response");
+                    budget?.Charge(origin, 0, JsonSerializer.SerializeToUtf8Bytes(result, MessageReadJson.Default.BodyMatch).Length);
                     if (result.Ids.Count > ids.Length || result.Ids.Any(id => !ids.Contains(id, StringComparer.Ordinal))) throw new IOException("Invalid body match identity");
                     return (origin, Ids: result.Ids.ToArray(), Missing: false);
                 }
                 catch (Exception error) when (error is MachineUnreachable or KeyNotFoundException or IOException) { return (origin, Ids: Array.Empty<string>(), Missing: true); }
-            })).ConfigureAwait(false);
+            });
+            var results = name ? await Sequential(pending).ConfigureAwait(false) : await Task.WhenAll(pending).ConfigureAwait(false);
             foreach (var result in results.Where(result => result.Missing)) missing.Add(result.origin);
             matches = results.SelectMany(result => result.Ids.Select(id => new MessageKey(result.origin, id))).ToArray();
         }
         ct.ThrowIfCancellationRequested();
         var selected = scope.Search.Length == 0 ? candidates : queries.SelectMatches(scope, candidates, matches, ct);
-        queries.ValidatePage(scope, selected, ct);
+        if (name) queries.ValidateNameRead(scope, selected.Captured!, ct); else queries.ValidatePage(scope, selected, ct);
         var page = selected with
         {
             MissingMachines = missing.Order(StringComparer.Ordinal).ToArray(),
             Items = selected.Items.Select(item => missing.Contains(item.Key.OriginMachine) ? item with { BodyAvailable = false } : item).ToArray()
         };
         MessageQueries.ValidateBudget(page);
+        budget?.Charge(machine, 0, JsonSerializer.SerializeToUtf8Bytes(page, MessageReadJson.Default.MessagePage).Length);
         return page;
     }
 
@@ -75,4 +84,7 @@ internal sealed class MessageReadSources(MessageQueries queries, string machine,
             throw new CallFailed("The message body source changed.", "query_changed");
         return body;
     }
+    private static async Task<T[]> Sequential<T>(IEnumerable<Task<T>> work)
+    { List<T> results = []; foreach (var task in work) results.Add(await task.ConfigureAwait(false)); return results.ToArray(); }
+
 }

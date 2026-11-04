@@ -63,7 +63,7 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
         var remote = byMachineId(machine) ?? throw new MachineUnreachable(machine, "Remote engine machine is disconnected");
         try
         {
-            if (feature == "messages" && method is "body" or "match")
+            if (feature == "messages" && method is "body" or "match" or "sender_order" or "receiver_order")
             {
                 if (!bulk) throw new Assembly.Application.Common.Calls.CallBadArguments("Message authority reads require bulk.");
                 var captured = await remote.CaptureOwnerReadAsync(machine, ct).ConfigureAwait(false);
@@ -82,6 +82,31 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
             throw new MachineUnreachable(remote.Name!, $"{remote.Name}: machine socket closed", error);
         }
     }
+    internal async Task<(RemoteMachine Remote, RemoteMachine.OwnerConnectionBinding Binding)> CaptureMessageOwnerAsync(string machine, CancellationToken ct)
+    {
+        var remote = byMachineId(machine) ?? throw new MachineUnreachable(machine, "Message authority is unavailable");
+        var binding = await remote.CaptureOwnerBindingAsync(machine, ct).ConfigureAwait(false);
+        if (!ReferenceEquals(byMachineId(machine), remote)) throw new MachineUnreachable(machine, "Message authority changed");
+        return (remote, binding);
+    }
+
+    internal async Task<JsonElement> ReadMessageOnAsync((RemoteMachine Remote, RemoteMachine.OwnerConnectionBinding Binding) held,
+        string method, JsonElement args, CancellationToken ct)
+    {
+        if (method is not ("sender_order" or "receiver_order" or "match") || !ReferenceEquals(byMachineId(held.Binding.Machine), held.Remote))
+            throw new MachineUnreachable(held.Binding.Machine, "Message authority changed");
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, held.Binding.Invalidated);
+        try
+        {
+            return await held.Remote.CallAsync("messages", method, args, true, stop.Token, held.Binding.Machine, expectedOwner: held.Binding).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is WebSocketException or IOException or ObjectDisposedException ||
+            error is OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            throw new MachineUnreachable(held.Remote.Name!, $"{held.Remote.Name}: machine socket closed", error);
+        }
+    }
+
     internal async Task<bool> MessageSourceAvailableAsync(string machine, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -303,7 +328,7 @@ internal static class MachineReads
     internal static bool AllowRead(ICallRegistry registry, string feature, string method, bool bulk)
     {
         if (feature == "messages")
-            return bulk && method is ("body" or "match") && registry.KindOf(feature, method) == CallKind.BulkRead;
+            return bulk && method is ("body" or "match" or "sender_order" or "receiver_order") && registry.KindOf(feature, method) == CallKind.BulkRead;
         var expected = GitCallKinds.KindOf(method);
         return feature == "git" && expected == (bulk ? CallKind.BulkRead : CallKind.Read) &&
             registry.KindOf(feature, method) == expected;

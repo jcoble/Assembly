@@ -1,11 +1,9 @@
 //! The Summary page: what the pull request is, everything that happened on it, the comment box and merge card, and
 //! the side column of threads, comments, reviews and checks.
 use super::super::{
-    pr_activity::{
-        ActivityRow, activity_rows, check_summary, check_tone, check_word, words_of,
-    },
+    pr_activity::{ActivityRow, activity_rows, words_of},
     pr_parts::{PrHeading, age_label, avatar, loading_line},
-    pull_request::{CheckTone, PullRequestComment},
+    pull_request::PullRequestComment,
 };
 use super::*;
 use crate::core::ui::markdown::view::MarkdownView;
@@ -15,21 +13,6 @@ use gpui_kit::component::scroll::ScrollableElement as _;
 /// Below this the side column moves under the main one.
 const TWO_COLUMNS: f32 = 1180.;
 
-fn side_section(title: &'static str, body: impl IntoElement, cx: &App) -> impl IntoElement {
-    let theme = cx.theme();
-    v_flex()
-        .gap_2()
-        .pb_3()
-        .border_b_1()
-        .border_color(theme.border)
-        .child(
-            div()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(title),
-        )
-        .child(body)
-}
 pub(super) fn quiet(text: impl Into<SharedString>, cx: &App) -> Div {
     div()
         .text_sm()
@@ -77,20 +60,26 @@ impl PrDetail {
         let side = detail.map(|detail| self.side_column(detail, cx));
         let page = if wide {
             h_flex()
+                .relative()
                 .size_full()
                 .min_h_0()
                 .items_start()
+                .on_scroll(cx.listener(Self::wheel_beside_the_page))
                 .child(
                     div()
+                        .id("pr-summary-main")
                         .flex_1()
                         .min_w_0()
                         .max_w(px(868.))
                         .h_full()
-                        .overflow_y_scrollbar()
+                        .track_scroll(&self.main_scroll)
+                        .overflow_y_scroll()
                         .child(main),
                 )
                 .children(side.map(|side| {
                     div()
+                        .id("pr-summary-side")
+                        .debug_selector(|| "pr-summary-side".into())
                         .flex_shrink(1.)
                         .w(px(300.))
                         .min_w(px(220.))
@@ -98,9 +87,11 @@ impl PrDetail {
                         .pt_3()
                         .pr_5()
                         .ml_5()
-                        .overflow_y_scrollbar()
+                        .track_scroll(&self.side_scroll)
+                        .overflow_y_scroll()
                         .child(side)
                 }))
+                .vertical_scrollbar(&self.main_scroll)
                 .into_any_element()
         } else {
             div()
@@ -122,6 +113,28 @@ impl PrDetail {
             .child(measure)
             .child(page)
             .into_any_element()
+    }
+    /// The old page scrolled as one with its side column held still: a wheel beside the main column moves the main
+    /// column, unless the side column has more of its own to show.
+    fn wheel_beside_the_page(
+        &mut self,
+        event: &ScrollEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let over = |scroll: &ScrollHandle| scroll.bounds().contains(&event.position);
+        if over(&self.main_scroll)
+            || (over(&self.side_scroll) && self.side_scroll.max_offset().y > px(0.))
+        {
+            return;
+        }
+        let delta = event.delta.pixel_delta(window.line_height()).y;
+        let at = self.main_scroll.offset();
+        let y = (at.y + delta).clamp(-self.main_scroll.max_offset().y, px(0.));
+        if y != at.y {
+            self.main_scroll.set_offset(point(at.x, y));
+            cx.notify();
+        }
     }
     fn main_column(
         &self,
@@ -333,91 +346,5 @@ impl PrDetail {
         });
         self.reply_input = None;
         cx.notify();
-    }
-    fn side_column(&self, detail: &PullRequestDetail, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (success, danger, warning) = (theme.success, theme.danger, theme.warning);
-        let comments = if detail.comments.is_empty() {
-            quiet("No comments", cx).into_any_element()
-        } else {
-            v_flex()
-                .gap_2()
-                .text_sm()
-                .children(detail.comments.iter().map(|comment| {
-                    h_flex()
-                        .gap_2()
-                        .min_w_0()
-                        .children(avatar(&comment.author))
-                        .child(
-                            div()
-                                .flex_none()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(comment.author.clone()),
-                        )
-                        .child(div().min_w_0().truncate().child(comment.body.clone()))
-                }))
-                .into_any_element()
-        };
-        let requested = (!detail.reviewers.is_empty())
-            .then(|| quiet(format!("Requested: {}", detail.reviewers.join(", ")), cx));
-        let reviews = v_flex()
-            .gap_2()
-            .text_sm()
-            .when(detail.reviews.is_empty(), |list| {
-                list.child(quiet("No reviews", cx))
-            })
-            .children(detail.reviews.iter().map(|review| {
-                h_flex()
-                    .gap_2()
-                    .children(avatar(&review.author))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(review.author.clone()))
-                    .child(words_of(&review.state))
-            }))
-            .children(requested);
-        let checks = v_flex()
-            .gap_1()
-            .text_sm()
-            .child(quiet(check_summary(&detail.checks), cx))
-            .children(detail.checks.iter().enumerate().map(|(index, check)| {
-                let color = match check_tone(check) {
-                    CheckTone::Passing => success,
-                    CheckTone::Failing => danger,
-                    _ => warning,
-                };
-                let url = check.url.clone();
-                let word = check_word(check);
-                h_flex()
-                    .gap_2()
-                    .child(div().flex_none().size(px(8.)).rounded_full().bg(color))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .child(check.name.clone()),
-                    )
-                    .child(if url.is_empty() {
-                        div().flex_none().child(word).into_any_element()
-                    } else {
-                        Button::new(SharedString::from(format!("pr-check:{index}")))
-                            .link()
-                            .small()
-                            .label(word)
-                            .on_click(move |_, window, cx| {
-                                window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
-                            })
-                            .into_any_element()
-                    })
-            }));
-        v_flex()
-            .gap_3()
-            .child(side_section(
-                "Threads",
-                quiet("Threads for this pull request aren't linked yet.", cx),
-                cx,
-            ))
-            .child(side_section("Comments", comments, cx))
-            .child(side_section("Reviews", reviews, cx))
-            .child(side_section("Checks", checks, cx))
     }
 }

@@ -97,7 +97,8 @@ internal sealed partial class RemoteMachine
             }
             if (!succeeded)
                 throw new CallFailed(frame.GetProperty("message").GetString()!,
-                    feature == "engine" && method == "entities" && frame.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String
+                    (feature == "engine" && method == "entities" || feature == "messages" && method is "sender_order" or "receiver_order") &&
+                    frame.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String
                         ? code.GetString() : null);
             return frame.GetProperty("result");
         }

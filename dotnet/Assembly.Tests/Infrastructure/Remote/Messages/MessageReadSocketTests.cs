@@ -7,7 +7,7 @@ using Assembly.Tests.Engine.Messages;
 
 namespace Assembly.Tests.Infrastructure.Remote;
 
-public sealed class MessageReadSocketTests
+public sealed partial class MessageReadSocketTests
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(30);
 

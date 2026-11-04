@@ -76,6 +76,12 @@ public sealed class SessionRailCanonicalSourceTests
             Assert.Contains(initial.GetProperty("items").EnumerateArray(), row => row.GetProperty("id").GetString() == "ordinary-child");
             await Send(pushed, $$"""{"t":"ack","id":77,"stream":"engine","after":{{initial.GetProperty("through").GetInt64()}}}""");
 
+            // Genuine legacy copied metadata has no accepted ancestry proof, even beside the actual mirrored row.
+            hosts.Mac.Sessions.Add("s", "codex", "/test", "workbox-test");
+            hosts.Mac.Sessions.SetTitle("s", "Test", "prompt");
+            using (var legacyRead = hosts.Mac.Fixture.Db.OpenSnapshot(default))
+                Assert.Null(hosts.Mac.Runtime.Commands.ReadKnownAncestry(legacyRead, "s"));
+
             // Actual imported local Engine identity collides with a remote id. Its transcript is not remote metadata.
             hosts.Mac.Fixture.Db.Writer.Write("test.local-import", scope =>
             {
@@ -118,18 +124,24 @@ public sealed class SessionRailCanonicalSourceTests
                 await Send(pushed, $$"""{"t":"ack","id":77,"stream":"engine","after":{{change.GetProperty("through").GetInt64()}}}""");
             } while (!change.GetProperty("events").EnumerateArray().Any(item =>
                 item.GetProperty("entityKind").GetString() == "session" && item.GetProperty("entityId").GetString() == acceptedId));
-            var unproven = Sessions(await Read(socket)).Where(row => row.GetProperty("sessionId").GetString() == acceptedId).ToArray();
-            Assert.Equal(2, unproven.Length);
-            Assert.Single(unproven, row => row.GetProperty("source").ValueKind == JsonValueKind.Null);
-            // Acceptance stored no durable owner ID: retain the unknown facade instead of guessing its tuple.
+            // Real acceptance atomically records the owning ancestry, so this copied facade now deduplicates.
+            using (var acceptedRead = hosts.Mac.Fixture.Db.OpenSnapshot(default))
+            {
+                var ancestry = hosts.Mac.Runtime.Commands.ReadKnownAncestry(acceptedRead, acceptedId);
+                Assert.NotNull(ancestry);
+                var selected = Assert.Single(ancestry);
+                Assert.Equal(acceptedId, selected.SessionId);
+                Assert.Equal(original.Machine, selected.Machine);
+                Assert.Equal("claude", selected.Provider);
+                Assert.Null(selected.ParentId);
+            }
             var deduplicated = Sessions(await Read(socket));
             Assert.Equal(4, deduplicated.Length);
-            AssertSource(Assert.Single(deduplicated, row => row.GetProperty("sessionId").GetString() == acceptedId &&
-                row.GetProperty("source").ValueKind != JsonValueKind.Null), original);
+            AssertSource(Assert.Single(deduplicated, row => row.GetProperty("sessionId").GetString() == acceptedId), original);
             Assert.Equal(0, launcher.Launches);
-            var unknownCursorRow = Assert.Single(deduplicated, row => row.GetProperty("sessionId").GetString() == acceptedId &&
+            var unknownCursorRow = Assert.Single(deduplicated, row => row.GetProperty("sessionId").GetString() == "s" &&
                 row.GetProperty("source").ValueKind == JsonValueKind.Null);
-            var knownCursorRow = Assert.Single(deduplicated, row => row.GetProperty("sessionId").GetString() == acceptedId &&
+            var knownCursorRow = Assert.Single(deduplicated, row => row.GetProperty("sessionId").GetString() == "s" &&
                 row.GetProperty("source").ValueKind != JsonValueKind.Null);
             using (var unknownOrder = JsonDocument.Parse(unknownCursorRow.GetProperty("ordering").GetString()!))
             using (var knownOrder = JsonDocument.Parse(knownCursorRow.GetProperty("ordering").GetString()!))
@@ -143,7 +155,7 @@ public sealed class SessionRailCanonicalSourceTests
             var next = Sessions(ApiTests.Result(await ApiTests.SocketRequestAsync(socket, 3, "sessions", "rail",
                 JsonSerializer.Serialize(afterUnknown, SessionsJson.Default.RailArgs))));
             var nextKnown = Assert.Single(next);
-            Assert.Equal(acceptedId, nextKnown.GetProperty("sessionId").GetString());
+            Assert.Equal("s", nextKnown.GetProperty("sessionId").GetString());
             AssertSource(nextKnown, original);
 
             await hosts.DisconnectMirror();

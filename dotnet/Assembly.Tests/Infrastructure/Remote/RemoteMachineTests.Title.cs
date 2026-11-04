@@ -4,6 +4,8 @@ using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Remote;
+using Assembly.Infrastructure.Engine;
+using Assembly.Engine.Sessions;
 using Assembly.Tests.Infrastructure.Http;
 
 namespace Assembly.Tests.Infrastructure.Remote;
@@ -45,7 +47,9 @@ public sealed partial class RemoteMachineTests
         Assembly.Engine.Persistence.EngineSchema.Open(db, TimeProvider.System.GetUtcNow().ToUnixTimeMilliseconds());
         var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
         using var hub = new LiveHub(RowStore.Open(db));
-        await using var machine = new RemoteMachine(Box, _box.Address, BoxToken, hub, sessions, _log, new MachineStatus(topics, [Box]));
+        await using var engine = EngineRuntime.Start(db, topics, TimeProvider.System, new SessionLimits(() => 5, () => 10));
+        await using var machine = new RemoteMachine(Box, _box.Address, BoxToken, hub, sessions, _log, new MachineStatus(topics, [Box]),
+            acceptanceEngine: engine);
         await machine.ProbeAsync(CancellationToken.None);
         var identity = await machine.ReadMirrorOwnerAsync(CancellationToken.None);
         var read = await machine.CaptureOwnerReadAsync(identity.Info.Machine, CancellationToken.None);

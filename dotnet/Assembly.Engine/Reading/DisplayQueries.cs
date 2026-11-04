@@ -73,6 +73,7 @@ internal static class DisplayQueries
                 "'originMachine',t.origin_machine,'messageCreatedSeq',t.message_created_seq,'delivery',t.delivery," +
                 "'fromMachine',CASE WHEN t.from_session_id IS NULL THEN t.origin_machine ELSE (SELECT machine FROM engine_session WHERE id=t.from_session_id) END," +
                 "'toMachine',(SELECT machine FROM engine_session WHERE id=t.to_session_id)," +
+                "'senderNameComplete',json(CASE WHEN octet_length(t.sender_label)>1024 THEN 'false' WHEN t.sender_label COLLATE BINARY=substr(t.sender_label,1,256) COLLATE BINARY THEN 'true' ELSE 'false' END)," +
                 "'senderName',substr(t.sender_label,1,256),'receiverName',(SELECT substr(title,1,256) FROM engine_session WHERE id=t.to_session_id)," +
                 "'runMachine',(SELECT machine FROM engine_run WHERE id=t.run_id)," +
                 "'runOwnerMachine',(SELECT s.machine FROM engine_run r JOIN engine_session s ON s.id=r.owner_session_id WHERE r.id=t.run_id)," +

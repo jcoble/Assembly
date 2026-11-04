@@ -25,6 +25,7 @@ namespace Assembly.Infrastructure.Remote;
 internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
 {
     private readonly string _name;
+    private readonly EngineRuntime? _acceptanceEngine;
     private readonly LiveHub _hub;
     private readonly SessionStore _sessionStore;
     private readonly RemoteFollower _follower;
@@ -35,9 +36,10 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
 
     /// <param name="turnEnded">Told when a copied turn ends (a helper's row goes idle).</param>
     public RemoteMachine(string name, Uri address, string token, LiveHub hub, SessionStore sessionStore, TextWriter log, MachineStatus status,
-        Action<string>? turnEnded = null, Assembly.Application.Common.Topics.ITopics? topics = null, TimeProvider? time = null, string? connectionIdentity = null)
+        Action<string>? turnEnded = null, Assembly.Application.Common.Topics.ITopics? topics = null, TimeProvider? time = null, string? connectionIdentity = null, EngineRuntime? acceptanceEngine = null)
     {
         _connectionIdentity = connectionIdentity ?? "";
+        _acceptanceEngine = acceptanceEngine;
         Terminals = new RemoteTerminalSocket(name, address, token, topics ?? new Topics.Topics(), CaptureTerminalOwnerAsync);
         _address = address;
         _token = token;
@@ -104,6 +106,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         EngineMirror.LiveMirrorBinding? live, CancellationToken ct,
         Action<Assembly.Application.Common.Database.IWriteScope, SessionsFeature.Created>? accepted = null)
     {
+        RequireAcceptanceEngine();
         var initial = request.InitialConfig is null ? null
             : request.InitialConfig with { TargetId = UnwrapTarget(request.InitialConfig.TargetId) };
         var normalized = request with
@@ -130,6 +133,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         EngineMirror.LiveMirrorBinding? live, CancellationToken ct,
         Action<Assembly.Application.Common.Database.IWriteScope, SessionsFeature.ByClientReply>? accepted = null)
     {
+        RequireAcceptanceEngine();
         var args = new SessionsFeature.ByClientArgs(clientId,
             ExpectedSource: qualified ? new(owner.Machine, 0, null) : null);
         var reply = await CallAsync("sessions", "byClient", JsonSerializer.SerializeToElement(args, SessionsJson.Default.ByClientArgs),
@@ -147,21 +151,26 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         Action<Assembly.Application.Common.Database.IWriteScope>? accepted)
     {
         // Older peers may acknowledge acceptance without certifying copied metadata. Never invent it.
-        if (created.Facts is not { } facts) return;
+        if (created.Facts is not { } facts)
+            throw new CallFailed("The accepting owner did not certify session metadata.", "configuration_unavailable");
         if (facts.Machine != owner.Machine) throw new CallFailed("The accepted session owner changed.", "source_changed");
-        await _socketSend.WaitAsync(ct);
-        try
+        await using (var ancestry = await CaptureAcceptedAncestryAsync(created.SessionId, facts, owner, live, ct))
         {
-            void Validate(Assembly.Application.Common.Database.IWriteScope _)
+            await _socketSend.WaitAsync(ct);
+            try
             {
-                ct.ThrowIfCancellationRequested();
-                if (!ReferenceEquals(RequireOwnerBinding(owner), socket))
-                    throw new CallFailed("The accepting owner connection changed.", "source_changed");
-                RequireLiveMirror(owner, live);
+                void Validate(Assembly.Application.Common.Database.IWriteScope _)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (!ReferenceEquals(RequireOwnerBinding(owner), socket))
+                        throw new CallFailed("The accepting owner connection changed.", "source_changed");
+                    RequireLiveMirror(owner, live);
+                }
+                _sessionStore.AcceptCopiedCreation(created.SessionId, facts, _name, created.ProjectId, Validate, accepted,
+                    ancestry.Apply);
             }
-            _sessionStore.AcceptCopiedCreation(created.SessionId, facts, _name, created.ProjectId, Validate, accepted);
+            finally { _socketSend.Release(); }
         }
-        finally { _socketSend.Release(); }
         await RefreshCreatedSessionTitleAsync(created.SessionId, owner, socket, live, ct);
     }
 

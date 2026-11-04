@@ -79,7 +79,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         private EngineRuntime StartRuntime()
         {
             Sessions = SessionStore.Open(Fixture.Db, Fixture.Time, _checkouts ?? Path.GetTempPath());
-            var cutover = _machineLauncher is null ? null : new SessionCutover(Fixture.Db, Sessions, _machineLauncher, _checkouts!, Fixture.Time);
+            var cutover = _machineLauncher is null ? null : new SessionCutover(Fixture.Db, Sessions, _machineLauncher, _checkouts!, Fixture.Time, owningHome: _owningHome);
             var runtime = EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time,
                 Fixture.Limits, _effects, cutover: cutover, isConfiguredProvider: _isConfiguredProvider);
             _needHub = new(RowStore.Open(Fixture.Db)); _needWork = new(Fixture.Time, TextWriter.Null);
@@ -92,11 +92,12 @@ internal sealed class TwoHosts : IAsyncDisposable
         private readonly bool _windowCalls;
         private readonly IAgentLauncher? _machineLauncher;
         private readonly string? _checkouts;
+        private readonly string? _owningHome;
         private MachineCalls? _machineCalls;
         public Host(bool windowCalls = false, IEngineEffects? effects = null, IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? limits = null,
-            Func<string, string, bool>? isConfiguredProvider = null)
+            Func<string, string, bool>? isConfiguredProvider = null, string? owningHome = null)
         {
-            _windowCalls = windowCalls; _effects = effects; _machineLauncher = machineLauncher; _checkouts = checkouts; _isConfiguredProvider = isConfiguredProvider;
+            _windowCalls = windowCalls; _effects = effects; _machineLauncher = machineLauncher; _checkouts = checkouts; _isConfiguredProvider = isConfiguredProvider; _owningHome = owningHome;
             if (machineLauncher is not null && checkouts is null) throw new ArgumentException("Isolated checkouts required", nameof(checkouts));
             Fixture = new(topics: Topics, limits: limits); Runtime = StartRuntime();
         }
@@ -200,7 +201,7 @@ internal sealed class TwoHosts : IAsyncDisposable
                         Interlocked.Increment(ref host.OwnerReadCalls);
                         if (host.OwnerReading is { } reading) await reading(method, call).WaitAsync(call.Cancellation);
                     }
-                    if (machineReads && feature == "engine" && method is ("foreign_title_source_close" or "relay_source_open" or "relay_source_part" or "relay_send_ack") && host.MachineReading is { } machineRead)
+                    if (machineReads && feature == "engine" && method is ("foreign_title_source_check" or "foreign_title_source_close" or "relay_source_open" or "relay_source_part" or "relay_send_ack") && host.MachineReading is { } machineRead)
                         await machineRead(method, call).WaitAsync(call.Cancellation);
                     if (feature == "engine" && method == "legacy_session_title_chunk" && value is Assembly.Application.Common.Engine.LegacySessionTitleChunkArgs chunk && host.LegacyTitleReading is { } titleRead)
                         await titleRead(chunk, call).WaitAsync(call.Cancellation);
@@ -263,12 +264,12 @@ internal sealed class TwoHosts : IAsyncDisposable
     private readonly Dictionary<string, Host> _additionalHosts = new(StringComparer.Ordinal);
     public TwoHosts(bool windowCalls = false, bool forwardCommands = false, IEngineEffects? effects = null,
         IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? macLimits = null, SessionLimits? remoteLimits = null, IEngineEffects? macEffects = null, TextWriter? remoteLog = null,
-        Func<string, string, bool>? isConfiguredProvider = null)
+        Func<string, string, bool>? isConfiguredProvider = null, string? owningHome = null)
     {
         _forwardCommands = forwardCommands; _remoteLog = remoteLog;
-        Remote = new(forwardCommands, effects, machineLauncher, checkouts is null ? null : Path.Combine(checkouts, "remote"), remoteLimits, isConfiguredProvider);
+        Remote = new(forwardCommands, effects, machineLauncher, checkouts is null ? null : Path.Combine(checkouts, "remote"), remoteLimits, isConfiguredProvider, owningHome);
         Mac = new(windowCalls, effects: macEffects, machineLauncher: machineLauncher, checkouts: checkouts is null ? null : Path.Combine(checkouts, "mac"), limits: macLimits,
-            isConfiguredProvider: isConfiguredProvider);
+            isConfiguredProvider: isConfiguredProvider, owningHome: owningHome);
         if (forwardCommands) Mac.Forwarder = new(machine => _connections!.ByEngineMachine(Mac.Fixture.Db, machine));
     }
     public EngineMirror Mirror { get; private set; } = null!;
@@ -282,7 +283,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         _hub = new LiveHub(store, topics: Mac.Topics);
         var sessions = Mac.Sessions;
         if (!_forwardCommands)
-            _machine = new("workbox-test", Remote.Address, "isolated-token", _hub, sessions, _remoteLog ?? TextWriter.Null, new MachineStatus(Mac.Topics, []), topics: Mac.Topics);
+            _machine = new("workbox-test", Remote.Address, "isolated-token", _hub, sessions, _remoteLog ?? TextWriter.Null, new MachineStatus(Mac.Topics, []), topics: Mac.Topics, acceptanceEngine: Mac.Runtime);
         var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sub = Mac.Topics.Subscribe("__engine_mirrored", Remote.Fixture.Machine, _ => { }, (_, _) =>
         {
@@ -299,7 +300,7 @@ internal sealed class TwoHosts : IAsyncDisposable
                 _machinesFeature = new(machines, status, () => { }, TimeProvider.System);
                 _connections = new(profiles, Mac.Fixture.Db.Writer, machines, status, _hub, sessions, Mac.Topics, MirrorLog, _machinesFeature,
                     open: (profile, _) => Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((new(profile.Name,
-                        (profile.Name == "workbox-test" ? Remote : _additionalHosts[profile.Name]).Address, "isolated-token"), null)));
+                        (profile.Name == "workbox-test" ? Remote : _additionalHosts[profile.Name]).Address, "isolated-token"), null)), acceptanceEngine: Mac.Runtime);
                 _connections.Start(new("workbox-test", "isolated"));
                 await _connections.ReadyAsync("workbox-test");
                 _machine = _connections.StartupSnapshot("workbox-test")!.Value.Machine;

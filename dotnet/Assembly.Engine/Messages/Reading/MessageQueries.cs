@@ -10,6 +10,13 @@ public sealed partial class MessageQueries(IAppDatabase db, string machine)
 
     public MessagePage Candidates(MessageScope scope, MessageCursor? cursor, int limit, CancellationToken ct)
     {
+        if (scope is null) throw new ArgumentException("bad_args");
+        if (scope.Sort is "sender" or "receiver")
+        {
+            var direct = DirectNamePage(scope, cursor, limit, ct);
+            if (direct.Page.Items.Count == 0 && direct.FirstBlockedBucket is not null) throw new InvalidOperationException("message_order_requires_authority");
+            return direct.Page;
+        }
         Validate(scope, limit); ct.ThrowIfCancellationRequested();
         using var read = db.OpenSnapshot(ct);
         var sources = MessageCursors.Sources(read, machine); var hash = MessageCursors.Hash(scope, sources);
@@ -50,7 +57,7 @@ public sealed partial class MessageQueries(IAppDatabase db, string machine)
         if (matches is null || matches.Count > 800 || candidates.Items.Count > 200) throw new ArgumentException("bad_args");
         var captured = candidates.Captured ?? throw new ArgumentException("bad_args");
         using var read = db.OpenSnapshot(ct); var sources = MessageCursors.Sources(read, machine);
-        MessageCursors.Validate(read, captured, MessageCursors.Hash(scope, sources), sources);
+        MessageCursors.Validate(read, captured, MessageCursors.Hash(scope, sources), sources, scope.Sort != "time");
         var keys = JsonSerializer.Serialize(candidates.Items.Select(item => item.Key).ToArray(), MessageReadModelJson.Default.MessageKeyArray);
         var matched = JsonSerializer.Serialize(matches.ToArray(), MessageReadModelJson.Default.MessageKeyArray);
         var args = Arguments(scope, null).Concat([new SqlArg("$keys", keys), new SqlArg("$matches", matched)]).ToArray();
@@ -62,7 +69,7 @@ public sealed partial class MessageQueries(IAppDatabase db, string machine)
               AND EXISTS(SELECT 1 FROM json_each($keys) k WHERE json_extract(k.value,'$.originMachine')=c.origin_machine AND json_extract(k.value,'$.id')=c.id)
               AND ($search='' OR EXISTS(SELECT 1 FROM json_each($matches) m WHERE json_extract(m.value,'$.originMachine')=c.origin_machine AND json_extract(m.value,'$.id')=c.id)
                 OR instr(lower(COALESCE(c.sender_name,'')),lower($search))>0 OR instr(lower(COALESCE(c.receiver_name,'')),lower($search))>0)
-            ORDER BY {MessageMetadata.Order(scope.Sort)}
+            ORDER BY {(scope.Sort == "time" ? MessageMetadata.Order(scope.Sort) : "(SELECT CAST(k.key AS INTEGER) FROM json_each($keys) k WHERE json_extract(k.value,'$.originMachine')=c.origin_machine AND json_extract(k.value,'$.id')=c.id)")}
             """, row => Read(row).Item, args);
         var result = candidates with { Items = items }; Budget(result); return result;
     }

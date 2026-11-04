@@ -115,13 +115,13 @@ impl PrPane {
                         }
                     }),
             );
-        let title = match (row, &selected.repository) {
-            (Some(row), _) => PrHeading::of_row(row).view(cx),
-            (None, repository) => v_flex().child(
-                div().text_lg().font_weight(FontWeight::SEMIBOLD).child(match repository {
-                    Some(repository) => format!("{repository} #{}", selected.number),
-                    None => format!("#{}", selected.number),
-                }),
+        let title = match row {
+            Some(row) => PrHeading::of_row(row).view(cx),
+            None => v_flex().child(
+                div()
+                    .text_lg()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(format!("#{}", selected.number)),
             ),
         };
         let danger = cx.theme().danger;

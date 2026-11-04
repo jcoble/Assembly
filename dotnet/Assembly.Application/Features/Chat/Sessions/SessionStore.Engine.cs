@@ -188,12 +188,15 @@ public sealed partial class SessionStore : ISessionProjectProjection
     internal SessionLocation? OwningLocation(IReadScope scope, string sessionId) => _engine?.Location(scope, sessionId);
 
     internal SessionInfo AcceptCopiedCreation(string sessionId, SessionsFeature.CreatedSessionFacts facts, string route,
-        string? projectId, Action<IWriteScope> validate, Action<IWriteScope>? accepted = null) => _writer.Write("sessions.accepted", scope =>
+        string? projectId, Action<IWriteScope> validate, Action<IWriteScope>? accepted = null,
+        Action<IWriteScope>? establishOwner = null) => _writer.Write("sessions.accepted", scope =>
     {
         validate(scope);
         if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(route) ||
             string.IsNullOrWhiteSpace(facts.Machine) || string.IsNullOrWhiteSpace(facts.Agent) || !Path.IsPathFullyQualified(facts.Folder))
             throw new CallFailed("The accepted owner metadata is unavailable.", "source_changed");
+        establishOwner?.Invoke(scope);
+        validate(scope);
         if (scope.QueryFirst("""
                 SELECT COUNT(*) FROM engine_session WHERE id=$id AND
                     (holder='local' OR machine<>$owner OR provider<>$agent OR parent_id IS NOT $parent)

@@ -10,6 +10,7 @@ use crate::core::{
     intents::open_pull_requests::OpenPullRequests, state::selected_session::SelectedSession,
     ui::center_panes::CenterPanes,
 };
+use crate::core::socket::picture_client::PictureInterest;
 use crate::features::projects::projects::{ProjectRecord, Projects};
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, panel_handle, register_panel,
@@ -43,6 +44,7 @@ impl Global for OpenPane {}
 pub struct PrPane {
     focus: FocusHandle,
     active: bool,
+    _pictures: Option<PictureInterest>,
     session: Option<String>,
     /// The tab shows the selected session's project until the person picks one.
     follows_selection: bool,
@@ -196,6 +198,7 @@ impl PrPane {
         let mut pane = Self {
             focus: cx.focus_handle(),
             active: true,
+            _pictures: PictureInterest::hold(cx),
             session,
             follows_selection: true,
             project: None,
@@ -551,6 +554,7 @@ impl BasePanel for PrPane {
     }
     fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
         self.active = active;
+        self._pictures = active.then(|| PictureInterest::hold(cx)).flatten();
         self.sync_scope(cx);
         if let Some(detail) = &self.detail {
             detail.update(cx, |detail, cx| detail.set_active(active, cx));
@@ -558,6 +562,7 @@ impl BasePanel for PrPane {
     }
     fn on_removed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.active = false;
+        self._pictures = None;
         self.queue
             .update(cx, |queue, cx| queue.set_active(false, cx));
         if let Some(detail) = &self.detail {

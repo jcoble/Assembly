@@ -1,13 +1,19 @@
 namespace Assembly.Engine.Messages.Reading;
 
-/// <summary>The one SQL projection over local messages and committed mirror descriptors. No body enters a mirror.</summary>
+/// <summary>Canonical SQL copy selection; whole available order keys never enter display DTOs.</summary>
 public static class MessageMetadata
 {
     internal const string Cte = """
         WITH session_names AS (
-          SELECT machine,id,substr(title,1,256) AS name,title AS order_name FROM engine_session WHERE machine=$local
+          SELECT machine,id,substr(title,1,256) AS name,title AS order_name,1 AS full_available,version
+          FROM engine_session WHERE machine=$local
           UNION ALL
-          SELECT mr.machine,mr.entity_id,substr(json_extract(mr.row_json,'$.title'),1,256),json_extract(mr.row_json,'$.title')
+          SELECT mr.machine,mr.entity_id,substr(json_extract(mr.row_json,'$.title'),1,256),
+            CASE WHEN json_type(mr.row_json,'$.title')='text' AND
+              (json_type(mr.row_json,'$.titleComplete') IS NULL OR json_type(mr.row_json,'$.titleComplete')='true')
+              THEN json_extract(mr.row_json,'$.title') END,
+            CASE WHEN json_type(mr.row_json,'$.title')='text' AND
+              (json_type(mr.row_json,'$.titleComplete') IS NULL OR json_type(mr.row_json,'$.titleComplete')='true') THEN 1 ELSE 0 END,mr.version
           FROM engine_mirror_row mr JOIN engine_mirror mm ON mm.machine=mr.machine AND mm.generation=mr.generation
           WHERE mr.entity_kind='session' AND mm.state='live'
         ), physical AS (
@@ -17,7 +23,8 @@ public static class MessageMetadata
             substr(COALESCE(r.title,m.to_session_id),1,256) AS receiver_name,wr.machine AS run_machine,m.run_id,
             owner.machine AS run_owner_machine,wr.owner_session_id AS run_owner_id,
             m.sender_kind AS kind,m.state,m.delivery,m.reason,
-            substr(replace(replace(m.text,char(13),' '),char(10),' '),1,256) AS preview,m.message_created_seq,m.sender_label AS sender_order_name
+            substr(replace(replace(m.text,char(13),' '),char(10),' '),1,256) AS preview,m.message_created_seq,
+            m.sender_label AS sender_order_name,1 AS sender_full_available
           FROM engine_message m
           LEFT JOIN engine_session s ON s.id=m.from_session_id
           LEFT JOIN engine_session r ON r.id=m.to_session_id
@@ -32,18 +39,27 @@ public static class MessageMetadata
             json_extract(mr.row_json,'$.runOwnerMachine'),json_extract(mr.row_json,'$.runOwnerSessionId'),
             json_extract(mr.row_json,'$.senderKind'),json_extract(mr.row_json,'$.state'),json_extract(mr.row_json,'$.delivery'),
             json_extract(mr.row_json,'$.reason'),substr(replace(replace(json_extract(mr.row_json,'$.text'),char(13),' '),char(10),' '),1,256),
-            json_extract(mr.row_json,'$.messageCreatedSeq'),json_extract(mr.row_json,'$.senderName')
+            json_extract(mr.row_json,'$.messageCreatedSeq'),
+            CASE WHEN json_extract(mr.row_json,'$.framed')=1 AND json_type(mr.row_json,'$.senderLabel')='text' AND
+              (json_type(mr.row_json,'$.senderLabelComplete') IS NULL OR json_type(mr.row_json,'$.senderLabelComplete')='true')
+              THEN json_extract(mr.row_json,'$.senderLabel')
+              WHEN json_type(mr.row_json,'$.senderNameComplete')='true' AND json_type(mr.row_json,'$.senderName')='text'
+              THEN json_extract(mr.row_json,'$.senderName') END,
+            CASE WHEN (json_extract(mr.row_json,'$.framed')=1 AND json_type(mr.row_json,'$.senderLabel')='text' AND
+              (json_type(mr.row_json,'$.senderLabelComplete') IS NULL OR json_type(mr.row_json,'$.senderLabelComplete')='true'))
+              OR (json_type(mr.row_json,'$.senderNameComplete')='true' AND json_type(mr.row_json,'$.senderName')='text') THEN 1 ELSE 0 END
           FROM engine_mirror_row mr JOIN engine_mirror mm ON mm.machine=mr.machine AND mm.generation=mr.generation
           WHERE mr.entity_kind='message' AND mm.state='live'
         ), origin AS (
           SELECT storage_machine,id,origin_machine,created_ms,version,sender_machine,from_session_id,sender_name,
             recipient_machine,to_session_id,receiver_name,run_machine,run_id,run_owner_machine,run_owner_id,
-            kind,state,delivery,reason,preview,message_created_seq,sender_order_name
+            kind,state,delivery,reason,preview,message_created_seq,sender_order_name,sender_full_available
           FROM physical WHERE storage_machine=origin_machine AND sender_machine IS NOT NULL AND recipient_machine IS NOT NULL AND to_session_id IS NOT NULL
         ), observed AS (
           SELECT p.storage_machine,p.id,p.origin_machine,p.created_ms,p.version,p.sender_machine,p.from_session_id,p.sender_name,
             p.recipient_machine,p.to_session_id,p.receiver_name,p.run_machine,p.run_id,p.run_owner_machine,p.run_owner_id,
-            p.kind,p.state,p.delivery,p.reason,p.preview,p.message_created_seq,p.sender_order_name,ROW_NUMBER() OVER(PARTITION BY origin_machine,id ORDER BY
+            p.kind,p.state,p.delivery,p.reason,p.preview,p.message_created_seq,p.sender_order_name,p.sender_full_available,
+            ROW_NUMBER() OVER(PARTITION BY origin_machine,id ORDER BY
             CASE WHEN storage_machine=recipient_machine THEN 0 ELSE 1 END,version DESC,storage_machine) AS copy_rank
           FROM physical p WHERE origin_machine IS NOT NULL
         ), canonical AS (
@@ -51,7 +67,8 @@ public static class MessageMetadata
             o.sender_name,o.recipient_machine,o.to_session_id,COALESCE(recipient.name,o.receiver_name) AS receiver_name,o.run_machine,o.run_id,
             o.run_owner_machine,o.run_owner_id,o.kind,o.preview,o.message_created_seq,
             receipt.storage_machine,receipt.version,receipt.state,receipt.delivery,receipt.reason,
-            o.sender_order_name,COALESCE(recipient.order_name,o.receiver_name) AS receiver_order_name
+            o.sender_order_name,recipient.order_name AS receiver_order_name,o.sender_full_available,
+            COALESCE(recipient.full_available,0) AS receiver_full_available,recipient.version AS recipient_version
           FROM origin o JOIN observed receipt ON receipt.origin_machine=o.origin_machine AND receipt.id=o.id AND receipt.copy_rank=1
           LEFT JOIN session_names recipient ON recipient.machine=o.recipient_machine AND recipient.id=o.to_session_id
           WHERE receipt.delivery IS NOT NULL
@@ -70,8 +87,14 @@ public static class MessageMetadata
     internal static string Name(string sort) => sort switch
     {
         "time" => "''",
-        "sender" => "COALESCE(c.sender_order_name,'') COLLATE NOCASE",
-        "receiver" => "COALESCE(c.receiver_order_name,'') COLLATE NOCASE",
+        "sender" => "c.sender_order_name COLLATE NOCASE",
+        "receiver" => "c.receiver_order_name COLLATE NOCASE",
+        _ => throw new ArgumentException("bad_args")
+    };
+    internal static string Bucket(string sort) => sort switch
+    {
+        "sender" => "substr(COALESCE(c.sender_name,''),1,256)",
+        "receiver" => "substr(COALESCE(c.receiver_name,''),1,256)",
         _ => throw new ArgumentException("bad_args")
     };
     internal static string Order(string sort) => $"{Name(sort)} ASC,c.origin_created_ms DESC,c.origin_machine COLLATE BINARY,c.id COLLATE BINARY";
@@ -81,5 +104,10 @@ public static class MessageMetadata
           OR c.ordering_name COLLATE NOCASE=a.ordering_name COLLATE NOCASE AND
             (c.origin_created_ms<a.origin_created_ms OR c.origin_created_ms=a.origin_created_ms AND
               (c.origin_machine COLLATE BINARY>a.origin_machine COLLATE BINARY OR c.origin_machine=a.origin_machine AND c.id COLLATE BINARY>a.id COLLATE BINARY))))
+        """;
+
+    internal const string ItemColumns = """
+        c.origin_machine,c.id,c.storage_machine,c.version,c.sender_machine,c.from_session_id,COALESCE(c.sender_name,''),
+        c.recipient_machine,c.to_session_id,COALESCE(c.receiver_name,''),c.run_machine,c.run_id,c.origin_created_ms,c.kind,c.state,c.delivery,c.reason,COALESCE(c.preview,'')
         """;
 }

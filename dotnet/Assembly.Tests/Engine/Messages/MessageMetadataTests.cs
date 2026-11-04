@@ -137,7 +137,7 @@ internal static class MessageReadFixture
         });
     }
 
-    internal static void Mirror(EngineFixture target, EngineFixture source, bool omitDelivery = false)
+    internal static void Mirror(EngineFixture target, EngineFixture source, bool omitDelivery = false, bool omitOrderProof = false)
     {
         target.Db.Writer.Write("mirror.open", s => MirrorApply.Open(s, source.Machine, "route-" + source.Machine, 1000));
         target.Db.Writer.Write("mirror.begin", s => MirrorApply.BeginSnapshot(s, source.Machine, 1000));
@@ -147,8 +147,9 @@ internal static class MessageReadFixture
             page = snapshot.ReadNext();
             var items = page.Items.Select(item =>
             {
-                if (!omitDelivery || item.GetProperty("entityKind").GetString() != "message") return item;
-                var old = System.Text.Json.Nodes.JsonNode.Parse(item.GetRawText())!.AsObject(); old.Remove("delivery");
+                if ((!omitDelivery && !omitOrderProof) || item.GetProperty("entityKind").GetString() != "message") return item;
+                var old = System.Text.Json.Nodes.JsonNode.Parse(item.GetRawText())!.AsObject(); if (omitDelivery) old.Remove("delivery");
+                if (omitOrderProof) old.Remove("senderNameComplete");
                 using var json = JsonDocument.Parse(old.ToJsonString()); return json.RootElement.Clone();
             }).ToArray();
             target.Db.Writer.Write("mirror.page", s => { MirrorApply.SnapshotPage(s, source.Machine, items); return 0; });

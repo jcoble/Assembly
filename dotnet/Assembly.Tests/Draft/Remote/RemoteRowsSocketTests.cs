@@ -8,6 +8,9 @@ using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Rows;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Remote;
+using Assembly.Infrastructure.Engine;
+using Assembly.Engine.Sessions;
+using Assembly.Tests.Features.Chat.Sessions;
 using Assembly.Infrastructure.Socket;
 using Assembly.Tests.Draft.Base.Chat;
 using Microsoft.AspNetCore.Builder;
@@ -31,6 +34,8 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
     private RowStore _remoteStore = null!;
     private SessionStore _localSessions = null!;
     private RemoteMachine _machine = null!;
+    private EngineRuntime _localEngine = null!;
+    private MachineCalls _ownerMachineCalls = null!;
     private SocketEndpoint _socket = null!, _bulk = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
@@ -53,7 +58,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         _remoteHub = new LiveHub(_remoteStore, topics: topics, summaries: remoteSummaries,
             summaryChanged: session => _remoteSessions.PublishSummary(session));
         var localSummaries = SessionSummaries.Load(RowStore.Open(_localDb));
-        Assembly.Engine.Persistence.EngineSchema.Open(_localDb, TimeProvider.System.GetUtcNow().ToUnixTimeMilliseconds());
+        _localEngine = EngineRuntime.Start(_localDb, _localTopics, TimeProvider.System, new SessionLimits(() => 5, () => 10));
         _localHub = new LiveHub(RowStore.Open(_localDb), topics: _localTopics, summaries: localSummaries);
         var sessions = _remoteSessions = SessionStore.Open(_remoteDb, TimeProvider.System, "checkouts", remoteSummaries);
         sessions.Add("s", "claude", "https://github.com/o/r", null!);
@@ -75,6 +80,8 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         new SessionsFeature(sessions, machines, owningMachine: _ownerEngine.Machine, owningHome: _owningHome).Register(calls);
         new Assembly.Infrastructure.Engine.EngineCalls(_ownerEngine, TimeProvider.System, _ownerAnswers).Register(calls);
         new Assembly.Infrastructure.Engine.Titles.SessionTitleCalls(_ownerEngine, sessions).Register(calls);
+        _ownerMachineCalls = new MachineCalls(_ownerEngine, TimeProvider.System, new FakeLauncher(), _owningHome, _ownerAnswers);
+        _ownerMachineCalls.Register(calls);
         new SendFeature(sessions, machines, _remoteHub, answers).Register(calls);
         new ConfigFeature(sessions, machines).Register(calls);
         new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System).Register(calls);
@@ -120,7 +127,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         await _app.StartAsync();
         _address = new Uri(_app.Urls.Single());
         _machine = new RemoteMachine("box", _address, "token", _localHub, _localSessions, TextWriter.Null,
-            _status = new MachineStatus(new TopicSet(), ["box"]));
+            _status = new MachineStatus(new TopicSet(), ["box"]), acceptanceEngine: _localEngine);
         await _machine.ProbeAsync(CancellationToken.None);
         await _machine.CallAsync("engine", "machine", JsonSerializer.SerializeToElement(new { }), false, CancellationToken.None);
     }
@@ -288,6 +295,8 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         _socket.CloseAll();
         _bulk.CloseAll();
         await _app.DisposeAsync();
+        await _ownerMachineCalls.DisposeAsync();
+        await _localEngine.DisposeAsync();
         await _ownerAnswers.DisposeAsync();
         await _ownerEngine.DisposeAsync();
         await _ownerHosts.DisposeAsync();

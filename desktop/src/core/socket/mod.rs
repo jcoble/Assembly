@@ -30,6 +30,7 @@ mod open_failure;
 mod out_frame;
 pub mod outcome;
 pub mod pending_call;
+pub mod picture_client;
 #[cfg(test)]
 pub(crate) mod real_backend;
 #[cfg(test)]

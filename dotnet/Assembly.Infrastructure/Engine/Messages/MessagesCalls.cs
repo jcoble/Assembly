@@ -24,6 +24,10 @@ internal sealed class MessagesCalls(EngineRuntime runtime, IAppDatabase db, Mach
             (args, call) => Read(call, () => sources.CountAsync(args.Session, args.SeenCuts, args.Machine, call.Cancellation)));
         calls.Read("messages", "body", MessageReadJson.Default.BodyArgs, MessageReadJson.Default.JsonElement,
             (args, call) => Read(call, () => sources.BodyAsync(args, call.Cancellation)), bulk: true);
+        calls.Read("messages", "sender_order", MessageReadJson.Default.SenderOrderArgs, MessageReadJson.Default.SenderOrderPage,
+            (args, call) => Read(call, () => Task.FromResult(query.OwningSender(args, call.Cancellation))), bulk: true);
+        calls.Read("messages", "receiver_order", MessageReadJson.Default.ReceiverOrderArgs, MessageReadJson.Default.ReceiverOrderPage,
+            (args, call) => Read(call, () => Task.FromResult(query.OwningReceiver(args, call.Cancellation))), bulk: true);
         calls.Read("messages", "match", MessageReadJson.Default.MatchArgs, MessageReadJson.Default.BodyMatch,
             (args, call) => Read(call, () => Task.FromResult(query.Match(args, call.Cancellation))), bulk: true);
     }
@@ -34,7 +38,9 @@ internal sealed class MessagesCalls(EngineRuntime runtime, IAppDatabase db, Mach
         call.Cancellation.ThrowIfCancellationRequested();
         try { var result = await read().ConfigureAwait(false); call.Cancellation.ThrowIfCancellationRequested(); return result; }
         catch (ArgumentException error) { throw new CallBadArguments(error.Message); }
-        catch (InvalidOperationException error) when (error.Message is "query_changed" or "message_body_too_large" or "message_response_too_large" or "message_candidate_limit")
-        { throw new CallFailed(error.Message, error.Message); }
+        catch (InvalidOperationException error) when (error.Message.StartsWith("message_name_unavailable:", StringComparison.Ordinal))
+        { throw new CallFailed(error.Message, "unavailable"); }
+        catch (InvalidOperationException error) when (error.Message is "query_changed" or "message_body_too_large" or "message_response_too_large" or "message_candidate_limit" or "message_order_resource_limit" || error.Message.StartsWith("message_order_resource_limit:", StringComparison.Ordinal))
+        { throw new CallFailed(error.Message, error.Message.StartsWith("message_order_resource_limit:", StringComparison.Ordinal) ? "message_order_resource_limit" : error.Message); }
     }
 }

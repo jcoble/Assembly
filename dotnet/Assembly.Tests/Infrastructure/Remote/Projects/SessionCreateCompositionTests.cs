@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using Assembly.Desktop.Serve;
 using Assembly.Infrastructure.Engine;
+using Assembly.Engine.Hosting;
 using Assembly.Infrastructure.Remote;
 using Assembly.Remote.Serve;
 using Assembly.Tests.Features.Chat.Sessions;
@@ -100,6 +101,14 @@ public sealed class SessionCreateCompositionTests
             Assert.Equal(associatedSession, AssertOwned(ownerReplay, remote.Runtime.Machine));
             Assert.Equal(projectId, ownerReplay.GetProperty("projectId").GetString());
             Assert.Equal(root, ownerReplay.GetProperty("facts").GetProperty("folder").GetString());
+            var ancestry = ((IEngineRuntime)desktopEngine).Read(scope =>
+                desktopEngine.Commands.ReadKnownAncestry(scope, associatedSession), CancellationToken.None);
+            Assert.NotNull(ancestry);
+            var reference = Assert.Single(ancestry);
+            Assert.Equal(associatedSession, reference.SessionId);
+            Assert.Equal(remote.Runtime.Machine, reference.Machine);
+            Assert.Equal("claude", reference.Provider);
+            Assert.Null(reference.ParentId);
             Assert.Equal(0, remoteLauncher.Launches);
             Assert.Equal(0, desktopLauncher.Launches);
         }
@@ -116,8 +125,15 @@ public sealed class SessionCreateCompositionTests
         }
     }
 
-    private static async Task<JsonElement> Call(WebSocket socket, long id, string feature, string method, object args) =>
-        ApiTests.Result(await ApiTests.SocketRequestAsync(socket, id, feature, method, JsonSerializer.Serialize(args)));
+    private static async Task<JsonElement> Call(WebSocket socket, long id, string feature, string method, object args)
+    {
+        var frame = await ApiTests.SocketRequestAsync(socket, id, feature, method, JsonSerializer.Serialize(args));
+        var type = frame.GetProperty("t").GetString();
+        var code = frame.TryGetProperty("code", out var c) ? c.GetString() : null;
+        var message = frame.TryGetProperty("message", out var m) ? m.GetString() : null;
+        Assert.True(type == "result", $"{feature}/{method}: expected result; t={type}, code={code}, message={message}");
+        return ApiTests.Result(frame);
+    }
 
     private static string AssertOwned(JsonElement created, string machine)
     {

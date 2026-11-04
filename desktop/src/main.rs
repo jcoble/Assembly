@@ -39,6 +39,7 @@ fn main() {
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(|cx| {
             gpui_kit::init(cx);
+            crate::core::socket::picture_client::register(cx);
             inline_field::init(cx);
             features::shell::workspace_preview::register(cx);
             features::shell::placeholder_pane::PlaceholderPane::register_all(cx);

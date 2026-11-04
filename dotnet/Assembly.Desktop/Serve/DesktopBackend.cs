@@ -321,7 +321,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                 {
                     cancel.ThrowIfCancellationRequested();
                     return Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((remote, tunnel));
-                }, mirrored: helperCards.Mirrored);
+                }, mirrored: helperCards.Mirrored, acceptanceEngine: engine);
             remoteInstalls = RemoteInstallJobs.Create(home, work, topics, TimeProvider.System, connections);
             connections.Start(savedRemote ?? (remote is null ? null : new SavedMachine(remote.Name, remote.Name)));
             // Direct test endpoints use the same owner; their callers historically expect routing ready on return.
