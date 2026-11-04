@@ -12,6 +12,6 @@ try {
   else if (command === 'lease') { if (!second) throw Error('lease requires an owner identity.'); lease(first, second); console.log('{}'); }
   else if (command === 'sweep') console.log(JSON.stringify(sweep({ legacy: process.argv.includes('--legacy'), dryRun: process.argv.includes('--dry-run'), hourly: process.argv.includes('--hourly') })));
   else if (command === 'status') console.log(JSON.stringify(status()));
-  else if (command === 'restore') console.log(restore(first, second || process.cwd()));
+  else if (command === 'restore') console.log(restore(first, second));
   else throw Error('Use create, backup, done, sweep, status, restore or guard.');
 } catch (error) { console.error('Worktree error: ' + (error as Error).message); process.exitCode = 1; }

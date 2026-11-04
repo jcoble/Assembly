@@ -14,7 +14,8 @@ function containsSecret(diff: string) {
   ];
   return patterns.some(pattern => pattern.test(diff));
 }
-function backup(path: string, owner?: string): BackupResult {
+// The caller owns the worktree lock. Verification scans a clean tree without pushing.
+export function backupUnderLock(path: string, owner?: string, verifyOnly = false): BackupResult {
   let phase = 'preflight';
   try {
     if (!inside(path)) return { status: 'skipped', reason: 'Outside managed worktree root.', kept: [] };
@@ -42,6 +43,7 @@ function backup(path: string, owner?: string): BackupResult {
     const history = git(path, 'log', '--format=', '-p', '--binary', '--no-ext-diff', '--no-textconv', base + '..HEAD');
     // Reuse the same bounded signature scan on history without executing any diff content.
     if (containsSecret(history)) return { status: 'skipped', reason: 'Secret scanner found a credential in unpushed history.', kept: [] };
+    if (verifyOnly) return { status: 'clean', kept: [] };
     phase = 'commit';
     if (!branch) { branch = 'backup/' + basename(path); git(path, 'switch', '-c', branch); }
     if (tryGit(path, 'status', '--porcelain')) {
@@ -63,7 +65,7 @@ export function backupWorktree(path: string, owner?: string): BackupResult {
   path = canonical(path);
   try {
     return withWorktree(path, () => {
-      const result = backup(path, owner);
+      const result = backupUnderLock(path, owner);
       if (result.status === 'skipped' || result.status === 'failed') mutateRegistry(rows => { if (rows[path]) rows[path].flag = result.reason; });
       return result;
     });

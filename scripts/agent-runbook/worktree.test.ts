@@ -86,10 +86,10 @@ test('sweep_removes_merged_leased_clean', t => {
   const f = setup(t), path = f.create(); f.run(['backup', path]);
   const result = f.run(['sweep']); assert.equal(result.status, 0, result.stderr); assert.ok(!existsSync(path), result.stdout);
 });
-test('sweep_reports_idle_unmerged_without_removing', t => {
+test('sweep_removes_idle_backed_up_after_12h', t => {
   const f = setup(t), path = f.create(); writeFileSync(join(path, 'work'), 'safe'); f.run(['backup', path]);
-  const db = JSON.parse(readFileSync(f.registry, 'utf8')); db[path].updated = new Date(Date.now() - 73 * 3600000).toISOString(); writeFileSync(f.registry, JSON.stringify(db));
-  const result = f.run(['sweep']); assert.ok(existsSync(path)); assert.match(result.stdout, /idle.*unmerged/i);
+  age(f, path);
+  const result = f.run(['sweep']); assert.equal(result.status, 0, result.stderr); assert.ok(!existsSync(path), result.stdout);
 });
 test('done_backs_up_and_removes_without_a_pr', t => {
   const f = setup(t), path = f.create(); writeFileSync(join(path, 'work'), 'safe');
@@ -146,7 +146,7 @@ test('failed_push_retains_dirty_work_and_remote_head', t => {
   writeFileSync(join(f.remote, 'hooks/pre-receive'), '#!/bin/sh\necho remote-rejected >&2\nexit 1\n', { mode: 0o755 });
   writeFileSync(join(path, 'work'), 'safe');
   const result = JSON.parse(f.run(['backup', path]).stdout); assert.equal(result.status, 'failed'); assert.match(result.reason, /remote-rejected/); assert.ok(existsSync(path));
-  assert.match(f.run(['sweep']).stdout, /Backup HEAD/); assert.ok(existsSync(path));
+  assert.match(f.run(['sweep']).stdout, /flagged.*remote-rejected/); assert.ok(existsSync(path));
 });
 test('process_inventory_failure_prevents_commit_and_removal', t => {
   const f = setup(t), path = f.create(); writeFileSync(join(path, 'work'), 'safe');
@@ -195,4 +195,120 @@ test('installed_launchers_and_hook_payloads_run_from_temp_HOME', t => {
   const payload = { cwd: f.repo, session_id: 'one', hook_event_name: 'PreToolUse', tool_input: { command: 'git worktree add /tmp/outside' } };
   const guarded = spawnSync('/bin/sh', ['-c', codex.hooks.PreToolUse[0].hooks[0].command], { cwd: f.repo, input: JSON.stringify(payload), encoding: 'utf8', env: f.env });
   assert.equal(guarded.status, 0, guarded.stderr); assert.equal(JSON.parse(guarded.stdout).hookSpecificOutput.permissionDecision, 'deny');
+});
+
+function age(f: ReturnType<typeof setup>, path: string, hours = 13) {
+  const at = new Date(Date.now() - hours * 3600000);
+  const db = JSON.parse(readFileSync(f.registry, 'utf8')); db[path].updated = at.toISOString(); writeFileSync(f.registry, JSON.stringify(db));
+  for (const file of f.git(path, 'ls-files', '--cached', '--others', '--exclude-standard').split('\n').filter(Boolean)) utimesSync(join(path, file), at, at);
+  for (const name of ['HEAD', 'index', 'logs/HEAD']) {
+    const file = f.git(path, 'rev-parse', '--path-format=absolute', '--git-path', name);
+    if (existsSync(file)) utimesSync(file, at, at);
+  }
+}
+function idle(t: any) {
+  const f = setup(t), path = f.create();
+  writeFileSync(join(path, 'work'), 'safe');
+  assert.equal(JSON.parse(f.run(['backup', path]).stdout).status, 'pushed');
+  age(f, path); return { f, path };
+}
+test('sweep_keeps_idle_under_12h', t => {
+  const { f, path } = idle(t); age(f, path, 11);
+  assert.match(f.run(['sweep']).stdout, /12|idle/i); assert.ok(existsSync(path));
+});
+test('sweep_keeps_idle_with_unpushed_commits', t => {
+  const { f, path } = idle(t); writeFileSync(join(path, 'work'), 'local commit'); f.git(path, 'commit', '-am', 'local'); age(f, path);
+  assert.match(f.run(['sweep']).stdout, /unpushed|remote/i); assert.ok(existsSync(path));
+});
+test('sweep_keeps_when_remote_lacks_head', t => {
+  const { f, path } = idle(t); f.git(f.remote, 'update-ref', '-d', 'refs/heads/tsk-1666-fixture');
+  assert.match(f.run(['sweep']).stdout, /remote/i); assert.ok(existsSync(path));
+});
+test('sweep_keeps_ignored_unique_file_and_names_it', t => {
+  const { f, path } = idle(t); writeFileSync(join(f.repo, '.git/info/exclude'), 'unique-notes\n'); writeFileSync(join(path, 'unique-notes'), 'important');
+  assert.match(f.run(['sweep']).stdout, /unique-notes/); assert.ok(existsSync(path));
+  assert.match(JSON.parse(readFileSync(f.registry, 'utf8'))[path].flag, /unique-notes/);
+});
+test('sweep_removes_with_only_regenerable_ignored_dirs', t => {
+  const { f, path } = idle(t); writeFileSync(join(f.repo, '.git/info/exclude'), 'target/\nnode_modules/\n');
+  for (const dir of ['target', 'node_modules']) { mkdirSync(join(path, dir)); writeFileSync(join(path, dir, 'generated'), 'cache'); }
+  const result = f.run(['sweep']); assert.ok(!existsSync(path), result.stdout);
+});
+test('sweep_keeps_with_live_process', t => {
+  const { f, path } = idle(t); writeFileSync(f.processes, `p9999\nn${path}\n`);
+  assert.match(f.run(['sweep']).stdout, /live/i); assert.ok(existsSync(path));
+});
+test('sweep_keeps_during_rebase', t => {
+  const { f, path } = idle(t); mkdirSync(f.git(path, 'rev-parse', '--path-format=absolute', '--git-path', 'rebase-merge'));
+  assert.match(f.run(['sweep']).stdout, /rebase/i); assert.ok(existsSync(path));
+});
+test('sweep_keeps_when_measurement_fails', t => {
+  const { f, path } = idle(t); rmSync(f.git(path, 'rev-parse', '--path-format=absolute', '--git-path', 'index'));
+  assert.match(f.run(['sweep']).stdout, /measure|ENOENT/i); assert.ok(existsSync(path));
+});
+test('sweep_never_removes_legacy_idle', t => {
+  const { f, path } = idle(t); writeFileSync(f.registry, '{}');
+  assert.match(f.run(['sweep', '--legacy']).stdout, /legacy/i); assert.ok(existsSync(path));
+});
+test('restore_after_idle_removal', t => {
+  const { f, path } = idle(t); const head = f.git(path, 'rev-parse', 'HEAD');
+  const result = f.run(['sweep']); assert.ok(!existsSync(path), result.stdout);
+  assert.match(result.stdout, /tsk-1666-fixture/);
+  const restored = f.run(['restore', 'tsk-1666-fixture'], f.home); assert.equal(restored.status, 0, restored.stderr);
+  assert.equal(restored.stdout.trim(), path); assert.equal(f.git(path, 'rev-parse', 'HEAD'), head); assert.equal(readFileSync(join(path, 'work'), 'utf8'), 'safe');
+});
+test('worktreeremove_backs_up_and_returns_nonzero_to_retain', t => {
+  const f = setup(t), path = f.create(); writeFileSync(join(path, 'work'), 'safe');
+  const result = spawnSync(process.execPath, [new URL('./cli.ts', import.meta.url).pathname, 'hook', 'claude'], { cwd: f.repo, input: JSON.stringify({ cwd: f.repo, worktree_path: path, session_id: 'one', hook_event_name: 'WorktreeRemove' }), encoding: 'utf8', env: { ...f.env, FAKE_PROCESSES: f.processes } });
+  assert.equal(result.status, 1, result.stderr); assert.ok(existsSync(path)); assert.match(result.stderr, /retain/i);
+  assert.equal(f.git(path, 'ls-remote', '--heads', 'origin', 'refs/heads/tsk-1666-fixture').split(/\s/)[0], f.git(path, 'rev-parse', 'HEAD'));
+});
+
+test('sweep_backs_up_idle_dirty_files_before_removal', t => {
+  const { f, path } = idle(t); writeFileSync(join(path, 'new-work'), 'recover this'); age(f, path);
+  const result = f.run(['sweep']); assert.ok(!existsSync(path), result.stdout);
+  assert.equal(f.run(['restore', 'tsk-1666-fixture']).status, 0);
+  assert.equal(readFileSync(join(path, 'new-work'), 'utf8'), 'recover this');
+});
+test('sweep_keeps_idle_stash', t => {
+  const { f, path } = idle(t); writeFileSync(join(path, 'work'), 'stashed work'); f.git(path, 'stash', 'push'); age(f, path);
+  assert.match(f.run(['sweep']).stdout, /stash/i); assert.ok(existsSync(path));
+});
+for (const activity of ['file', 'index', 'lease']) test('sweep_uses_newest_activity_' + activity, t => {
+  const { f, path } = idle(t);
+  if (activity === 'file') utimesSync(join(path, 'work'), new Date(), new Date());
+  if (activity === 'index') utimesSync(f.git(path, 'rev-parse', '--path-format=absolute', '--git-path', 'index'), new Date(), new Date());
+  if (activity === 'lease') {
+    const db = JSON.parse(readFileSync(f.registry, 'utf8')); db[path].updated = new Date().toISOString(); writeFileSync(f.registry, JSON.stringify(db));
+  }
+  assert.ok(existsSync(path)); assert.match(f.run(['sweep']).stdout, /12/); assert.ok(existsSync(path));
+});
+test('sweep_marks_existing_runbook_row_done', t => {
+  const { f, path } = idle(t), cli = new URL('./cli.ts', import.meta.url).pathname;
+  const run = (args: string[], input = '') => spawnSync(process.execPath, [cli, ...args], { cwd: path, input, encoding: 'utf8', env: f.env });
+  assert.equal(run(['init', 'codex', 'row']).status, 0);
+  assert.equal(run(['update', 'codex', 'row'], 'Safe fixture runbook').status, 0);
+  const binding = JSON.parse(run(['where', 'codex', 'row']).stdout);
+  const result = f.run(['sweep']); assert.ok(!existsSync(path), result.stdout);
+  assert.ok(f.db().calls.some((call: any) => call.path === '/v1/pages/' + binding.notionPageId && call.body?.properties?.Status?.select?.name === 'Done'));
+});
+
+test('sweep_keeps_clean_excluded_files', t => {
+  const { f, path } = idle(t); writeFileSync(join(path, 'fixture.sqlite'), 'safe fixture data');
+  f.git(path, 'add', '.'); f.git(path, 'commit', '-m', 'fixture database'); f.git(path, 'push'); age(f, path);
+  const result = f.run(['sweep']); assert.ok(existsSync(path), result.stdout); assert.match(result.stdout, /Sensitive filename/);
+});
+test('sweep_flags_failed_secret_scan', t => {
+  const { f, path } = idle(t); writeFileSync(join(path, 'secret'), 'api_key = "sk-' + 'c'.repeat(50) + '"'); age(f, path);
+  const result = f.run(['sweep']); assert.ok(existsSync(path), result.stdout);
+  assert.match(JSON.parse(readFileSync(f.registry, 'utf8'))[path].flag, /Secret scanner/);
+});
+test('sweep_keeps_idle_with_live_lease', t => {
+  const { f, path } = idle(t); f.run(['lease', path, 'claude:other']); age(f, path);
+  assert.match(f.run(['sweep']).stdout, /lease/); assert.ok(existsSync(path));
+});
+test('sweep_dry_run_preserves_registry_and_files', t => {
+  const { f, path } = idle(t); writeFileSync(join(f.repo, '.git/info/exclude'), 'unique\n'); writeFileSync(join(path, 'unique'), 'important');
+  const before = readFileSync(f.registry, 'utf8'); f.run(['sweep', '--dry-run']);
+  assert.equal(readFileSync(f.registry, 'utf8'), before); assert.ok(existsSync(path));
 });

@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, statSync, existsSync } from 'node:fs';
 import { init, getBinding, saveBinding, readRunbook, update, checkpoint, recover, identity, projectFor, flushPending, atomicWrite, recordWorktreeOutcome } from './runbook.ts';
 import { rules } from './rules.ts';
 import { harnessFor } from './harnesses.ts';
@@ -48,6 +48,10 @@ try {
         }
       }
       flushPending(provider, session);
+      if (eventName === 'WorktreeRemove' && (!path || existsSync(path))) {
+        console.error('Worktree retained for resume and safe sweep; refusing removal.');
+        process.exitCode = 1;
+      }
       console.log('{}');
     } else if (event.hook_event_name === 'SubagentStart') {
       flushPending(provider, session);
@@ -140,7 +144,7 @@ try {
   if (command === 'hook') {
     // Prevent compaction from silently losing the checkpoint when supported by the provider.
     console.error(message);
-    if (eventName === 'WorktreeCreate') {
+    if (['WorktreeCreate', 'WorktreeRemove'].includes(eventName)) {
       process.exitCode = 1;
     } else if (eventName === 'PreCompact' && manualMissing) {
       const harness = harnessFor(provider);

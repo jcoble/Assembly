@@ -4,7 +4,9 @@ import { execFileSync } from 'node:child_process';
 import { atomicWrite } from './runbook.ts';
 import { inside, canonical, worktreeRoot } from './guard.ts';
 import { git, tryGit, defaultBranch, registry, mutateRegistry, withLock, withWorktree, assertExclusive, repositories, stateRoot, liveCwds, lease } from './worktree-state.ts';
-import { backupWorktree } from './backup.ts';
+import { backupWorktree, backupUnderLock } from './backup.ts';
+import { checkRemovalSafety, idleHours } from './worktree-safety.ts';
+import { markWorktreeRunbooksDone } from './worktree-outcome.ts';
 import { collectMeta } from './meta.ts';
 export { backupWorktree, lease };
 
@@ -34,7 +36,16 @@ export function createWorktree(name: string, cwd: string): string {
     return path;
   });
 }
-export function restore(branch: string, repo: string): string {
+function removals(): Record<string, { repo: string; branch: string; removed: string }> {
+  const path = join(stateRoot(), 'removed-worktrees.json');
+  return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
+}
+export function restore(branch: string, repo?: string): string {
+  if (!repo) {
+    const matches = Object.values(removals()).filter(row => row.branch === branch);
+    if (matches.length > 1) throw Error('Branch exists in multiple repositories; specify the repository.');
+    repo = matches[0]?.repo || process.cwd();
+  }
   git(repo, 'check-ref-format', '--branch', branch);
   const path = managedPath(branch.replaceAll('/', '-'), repo);
   const main = git(repo, 'worktree', 'list', '--porcelain').split('\n')[0].slice(9);
@@ -47,27 +58,30 @@ export function restore(branch: string, repo: string): string {
     register(path, main); return path;
   });
 }
-function confirmedRemote(path: string, head: string, branch: string) {
-  return git(path, 'ls-remote', '--heads', 'origin', 'refs/heads/' + branch).split(/\s/)[0] === head;
-}
-function removable(path: string, done = false, owner?: string) {
+function removable(path: string, done = false, owner?: string, idle = false) {
   if (!inside(path)) throw Error('Outside managed root.');
   const row = assertExclusive(path, owner);
   if (canonical(row.repo) === canonical(path)) throw Error('Main checkout is never removed.');
+  const main = git(path, 'worktree', 'list', '--porcelain').split('\n')[0].slice(9);
+  if (canonical(main) === canonical(path)) throw Error('Main checkout is never removed.');
+  checkRemovalSafety(path, row);
   if (git(path, 'status', '--porcelain')) throw Error('Dirty worktree is kept.');
   const head = git(path, 'rev-parse', 'HEAD');
-  if (row.backedUpHead !== head || !confirmedRemote(path, head, row.branch)) throw Error('Backup HEAD is not confirmed on remote.');
-  if (!done && !row.done) {
+  if (row.backedUpHead !== head) throw Error('Backup HEAD is not confirmed on remote.');
+  if (!done && !row.done && !idle) {
     try { git(path, 'merge-base', '--is-ancestor', head, 'refs/heads/' + defaultBranch(path)); }
-    catch { throw Error('Idle unmerged worktree is reported, never removed.'); }
+    catch { throw Error('Worktree is unmerged and has not been idle for 12 hours.'); }
   }
   return row;
 }
-function remove(path: string, owner?: string) {
-  const row = removable(path, false, owner);
+function remove(path: string, owner?: string, idle = false) {
+  const row = removable(path, false, owner, idle);
+  // Save recovery information before deletion, retaining the branch locally and remotely.
+  withLock('removals', () => atomicWrite(join(stateRoot(), 'removed-worktrees.json'), JSON.stringify({ ...removals(), [path]: { repo: row.repo, branch: row.branch, removed: new Date().toISOString() } })));
   git(row.repo, 'worktree', 'remove', '--', path);
   if (existsSync(path)) throw Error('Git left the worktree directory; keep residual files for inspection.');
   mutateRegistry(rows => { delete rows[path]; });
+  markWorktreeRunbooksDone(path);
 }
 export function done(path: string, owner?: string) {
   path = canonical(path);
@@ -80,9 +94,9 @@ export function done(path: string, owner?: string) {
     remove(path); return result;
   });
 }
-export type SweepReport = { removed: string[]; kept: { path: string; reason: string }[]; skipped?: string };
+export type SweepReport = { removed: string[]; removedBranches: { path: string; branch: string }[]; kept: { path: string; reason: string }[]; skipped?: string };
 export function sweep(opts: { legacy: boolean; dryRun: boolean; hourly?: boolean }): SweepReport {
-  const report: SweepReport = { removed: [], kept: [] };
+  const report: SweepReport = { removed: [], removedBranches: [], kept: [] };
   try {
     return withLock('sweep', () => {
       const stamp = join(stateRoot(), 'sweep.stamp');
@@ -91,11 +105,34 @@ export function sweep(opts: { legacy: boolean; dryRun: boolean; hourly?: boolean
         if (!existsSync(path)) { report.kept.push({ path, reason: 'Missing worktree; use agent-worktree restore <branch> <repo>.' }); continue; }
         try {
           withWorktree(path, () => {
-            removable(path);
-            if (!opts.dryRun) remove(path);
+            if (!inside(path)) throw Error('Outside managed root.');
+            const row = assertExclusive(path);
+            const main = git(path, 'worktree', 'list', '--porcelain').split('\n')[0].slice(9);
+            if (canonical(main) === canonical(path) || canonical(row.repo) === canonical(path)) throw Error('Main checkout is never removed.');
+            const hours = idleHours(path, row);
+            checkRemovalSafety(path, row);
+            const idle = hours >= 12;
+            if (!idle) { removable(path); }
+            if (!opts.dryRun) {
+              // A clean tree needs only a fresh remote confirmation, never a speculative push.
+              const clean = !git(path, 'status', '--porcelain');
+              const backup = backupUnderLock(path, undefined, clean);
+              if (!['pushed', 'clean'].includes(backup.status)) {
+                const reason = (backup.reason || 'Backup failed; kept.') + (backup.kept.length ? ' ' + backup.kept.slice(0, 10).join(', ') : '');
+                mutateRegistry(rows => { rows[path].flag = reason; });
+                throw Error(reason);
+              }
+              if (clean) mutateRegistry(rows => { rows[path].backedUpHead = git(path, 'rev-parse', 'HEAD'); });
+              remove(path, undefined, idle);
+            } else if (git(path, 'status', '--porcelain')) throw Error('Dirty worktree needs backup; dry run keeps it.');
+            report.removedBranches.push({ path, branch: registry()[path]?.branch || row.branch });
           });
           report.removed.push(path);
-        } catch (error) { report.kept.push({ path, reason: (error as Error).message }); }
+        } catch (error) {
+          const reason = (error as Error).message;
+          if (!opts.dryRun) mutateRegistry(rows => { if (rows[path] && /Ignored files/.test(reason)) rows[path].flag = reason; });
+          report.kept.push({ path, reason });
+        }
       }
       if (opts.legacy) for (const row of status()) if (row.legacy) report.kept.push({ path: row.path, reason: 'Legacy: report only.' });
       if (opts.hourly && !opts.dryRun) atomicWrite(stamp, String(Date.now()));

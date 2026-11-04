@@ -27,7 +27,7 @@ export function withWorktree<T>(path: string, action: () => T) {
   return withLock('tree-' + createHash('sha256').update(canonical(path)).digest('hex'), action);
 }
 export function git(cwd: string, ...args: string[]) {
-  return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: remainingBudget(10000), maxBuffer: 8388608, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  return execFileSync('git', ['-C', cwd, ...args], { env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' }, encoding: 'utf8', timeout: remainingBudget(10000), maxBuffer: 8388608, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 export function tryGit(cwd: string, ...args: string[]) { try { return git(cwd, ...args); } catch { return ''; } }
 export function defaultBranch(repo: string): string {
