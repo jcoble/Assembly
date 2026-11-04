@@ -1,6 +1,8 @@
 //! The pane's writes. Each is decided against what the pane shows and goes through the one write authority.
 use super::{BranchPicked, MenuAction, RunningOperation, SourceControlPane};
-use crate::core::intents::{open_branch_diff::OpenBranchDiff, open_git_history::OpenGitHistory};
+use crate::core::intents::open_git_history::OpenGitHistory;
+use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::features::files::entry::FileOwnership;
 use crate::features::source_control::commit_box::{amend_needs_confirm, can_commit, stageable};
 use crate::features::source_control::discard_dialog::{self, DiscardRequest};
 use crate::features::source_control::git_status::ChangedFile;
@@ -11,7 +13,54 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
+pub(super) const NOT_ON_THIS_DESKTOP: &str =
+    "Reveal is available only for files owned by this desktop.";
+
 impl SourceControlPane {
+    /// Shows a file in this desktop's file manager. The session's owner says where its folder is; on another machine
+    /// there's nothing here to show.
+    pub(super) fn reveal_file(&mut self, path: String, cx: &mut Context<Self>) {
+        let Some(target) = self.target(cx) else {
+            return;
+        };
+        let Some(socket) = SocketClient::try_global(cx) else {
+            self.fail("The backend isn't running.", cx);
+            return;
+        };
+        let call = socket.read(cx).call::<FileOwnership>(
+            "files",
+            "owner",
+            json!({"session":target.session,"expectedSource":target.source,"expectedOwner":null}),
+            None,
+        );
+        self.reveal_read = Some(cx.spawn(async move |pane, cx| {
+            let answer = call.await;
+            _ = pane.update(cx, |pane, cx| {
+                pane.reveal_read = None;
+                let same = pane.target(cx).is_some_and(|now| {
+                    now.session == target.session && now.source == target.source
+                });
+                if !same {
+                    return;
+                }
+                match answer {
+                    Outcome::Ok(owner) => {
+                        let local = SocketClient::try_global(cx).is_some_and(|socket| {
+                            socket.read(cx).engine_machine().as_deref()
+                                == Some(owner.machine.as_str())
+                        });
+                        if local {
+                            cx.reveal_path(&std::path::Path::new(&owner.checkout_root).join(&path));
+                        } else {
+                            pane.fail(NOT_ON_THIS_DESKTOP, cx);
+                        }
+                    }
+                    Outcome::Failed(failure) => pane.fail(&failure.message, cx),
+                    Outcome::Aborted => pane.fail("The connection dropped.", cx),
+                }
+            });
+        }));
+    }
     fn write_to(
         &mut self,
         target: GitTarget,
@@ -187,18 +236,6 @@ impl SourceControlPane {
             MenuAction::AddRemote => {
                 if let Some(target) = self.target(cx) {
                     remote_dialogs::add(target, self.writes.action.clone(), window, cx);
-                }
-            }
-            MenuAction::BranchDiff => {
-                if let Some(target) = self.shown_target(cx) {
-                    window.dispatch_action(
-                        Box::new(OpenBranchDiff {
-                            expected_source: target.source,
-                            session_id: target.session,
-                            checkout: self.selection(cx),
-                        }),
-                        cx,
-                    );
                 }
             }
             MenuAction::OpenHistory => {

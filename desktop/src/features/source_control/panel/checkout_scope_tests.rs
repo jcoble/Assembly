@@ -9,7 +9,9 @@ use crate::core::socket::{
     row_source::ExpectedRowSource,
     test_wait::until,
 };
-use crate::core::state::{selected_session::SelectedSession, sessions::Sessions};
+use crate::core::state::{
+    inspected_checkout::InspectedCheckout, selected_session::SelectedSession, sessions::Sessions,
+};
 use crate::core::intents::open_git_history::OpenGitHistory;
 use crate::features::source_control::actions_menu::{MenuAction, READ_ONLY_SCOPE};
 use crate::features::source_control::git_checkouts::CheckoutHint;
@@ -104,6 +106,9 @@ async fn open(cx: &mut TestAppContext, offered: Option<Value>) -> Open<'_> {
                     Some(list) => vec![result(list)],
                     None => vec![refuse("not_found")],
                 }
+            }
+            (Some("call"), Some("owner")) => {
+                vec![result(json!({"machine":"elsewhere","checkoutRoot":OWN,"remoteSessionId":"s1"}))]
             }
             (Some("call"), Some("branches")) => {
                 seen.branches.push(args);
@@ -535,6 +540,45 @@ async fn using_it_as_the_session_checkout_moves_the_session_through_the_engine(c
     open.until("it landed and this reads the session's own again", |pane, cx, seen| {
         let landed = cx.update(|_, cx| pane.read(cx).checkout.is_none() && pane.read(cx).selection(cx).is_none());
         landed && !seen.statuses.last().is_some_and(selects)
+    })
+    .await;
+}
+// Pins: the Changes tab follows what this panel read, never a pick still on its way.
+#[gpui::test]
+async fn it_publishes_only_the_checkout_it_has_read(cx: &mut TestAppContext) {
+    let mut open = open(cx, linked()).await;
+    let published = |open: &mut Open<'_>| {
+        open.cx
+            .update(|_, cx| InspectedCheckout::global(cx).read(cx).current.clone())
+            .expect("a published status")
+    };
+    let own = published(&mut open);
+    assert_eq!(own.session, "s1");
+    assert_eq!(own.checkout, None);
+    open.showing_linked().await;
+    let linked = published(&mut open);
+    assert_eq!(
+        linked
+            .checkout
+            .as_ref()
+            .map(|checkout| checkout.path.as_str()),
+        Some(LINKED)
+    );
+    assert_eq!(
+        linked.checkout.map(|checkout| checkout.expected_root),
+        Some(OWN.to_string())
+    );
+}
+#[gpui::test]
+async fn reveal_says_so_when_another_machine_owns_the_file(cx: &mut TestAppContext) {
+    let mut open = open(cx, linked()).await;
+    let pane = open.pane.clone();
+    pane.update(open.cx, |pane, cx| pane.reveal_file("a.rs".into(), cx));
+    open.until("the refusal", |pane, cx, _| {
+        cx.update(|_, cx| {
+            matches!(&pane.read(cx).result, Some(PaneResult::Failed(failure))
+                if failure.sentence == "Reveal is available only for files owned by this desktop.")
+        })
     })
     .await;
 }

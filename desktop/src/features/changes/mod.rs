@@ -5,3 +5,4 @@
 pub mod branch_diff;
 pub mod changes_pane;
 pub mod file_diff;
+pub mod working_copy;

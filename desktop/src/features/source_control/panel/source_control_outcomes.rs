@@ -2,6 +2,7 @@
 //! returned status needs no second read, and an operation's terminal state is taken once.
 use super::{PaneResult, RunningOperation, SourceControlPane};
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::state::inspected_checkout::{Inspected, InspectedCheckout};
 use crate::core::state::session_read::Shown;
 use crate::features::source_control::commit_timeline::CommitTimeline;
 use crate::features::source_control::git_branches::GitBranchList;
@@ -50,6 +51,7 @@ impl SourceControlPane {
         if changed {
             self.session_changed(session.clone(), cx);
         }
+        self.publish_inspected(cx);
         self.sync_checkouts(cx);
         if matches!(self.result, Some(PaneResult::Done(_))) && answers != self.result_answers {
             self.result = None;
@@ -66,10 +68,25 @@ impl SourceControlPane {
         self.push_branch_menu(cx);
         cx.notify();
     }
+    /// Tells the Changes tab what this panel has actually read. A pick or a saved hint on its way isn't that.
+    fn publish_inspected(&self, cx: &mut Context<Self>) {
+        let read = self.read.read(cx);
+        if let (Shown::Read(status), Some(session)) = (read.shown(), read.session()) {
+            let inspected = Inspected {
+                session: session.to_string(),
+                source: read.source().cloned(),
+                checkout: read.checkout().cloned(),
+                fingerprint: status.fingerprint.clone(),
+                answers: read.answers(),
+            };
+            InspectedCheckout::publish(Some(inspected), cx);
+        }
+    }
     pub(super) fn session_changed(&mut self, session: Option<String>, cx: &mut Context<Self>) {
         if let Some(left) = self.last_session.take() {
             let open = std::mem::take(&mut self.open_sections);
-            self.session_views.insert(left, (open, self.scroll.offset()));
+            self.session_views
+                .insert(left, (open, self.scroll.offset()));
         }
         let (open, place) = session
             .as_ref()

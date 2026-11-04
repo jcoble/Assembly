@@ -11,9 +11,9 @@ use super::selected_session::SelectedSession;
 use super::sessions::Sessions;
 use crate::core::socket::checkout_selector::CheckoutSelector;
 use crate::core::socket::client::SocketClient;
-use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::socket::error_code::ErrorCode;
 use crate::core::socket::outcome::Outcome;
+use crate::core::socket::row_source::ExpectedRowSource;
 
 /// What the tab shows.
 #[derive(Clone, Debug, PartialEq)]
@@ -30,6 +30,8 @@ pub enum Shown<T> {
 pub struct SessionRead<T> {
     feature: &'static str,
     method: &'static str,
+    /// A newer read on this key cancels the last one, so two owners of the same call each need their own.
+    key: String,
     /// The tab is shown.
     active: bool,
     /// The session what's shown, or the read on its way, is for.
@@ -61,6 +63,7 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         Self {
             feature,
             method,
+            key: format!("{feature}/{method}"),
             active: false,
             read_for: None,
             source: None,
@@ -74,6 +77,12 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
             _settled: None,
             settled_state: None,
         }
+    }
+
+    /// For a second owner of the same call.
+    pub fn keyed(mut self, key: &str) -> Self {
+        self.key = key.to_string();
+        self
     }
 
     /// Refreshes on the selected session's actual running-to-settled transition; never polls.
@@ -137,7 +146,9 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
     /// Reads another checkout of the session it's on, or its own again. What was shown belongs to the last one.
     pub fn set_checkout(&mut self, checkout: Option<CheckoutSelector>, cx: &mut Context<Self>) {
         let bound = match (checkout, &self.read_for) {
-            (Some(checkout), Some(session)) => Some((session.clone(), self.source.clone(), checkout)),
+            (Some(checkout), Some(session)) => {
+                Some((session.clone(), self.source.clone(), checkout))
+            }
             _ => None,
         };
         if bound == self.checkout {
@@ -236,17 +247,20 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
             return;
         };
         // Keyed, so a newer read answers this one Aborted and cancels it on the backend.
-        let key = format!("{}/{}", self.feature, self.method);
         let args = CheckoutSelector::applied(
             self.checkout(),
             json!({ "session": session, "expectedSource": source }),
         );
-        let call = socket.read(cx).call::<Value>(self.feature, self.method, args, Some(&key));
+        let call = socket
+            .read(cx)
+            .call::<Value>(self.feature, self.method, args, Some(&self.key));
         self.reading = true;
         self._read = Some(cx.spawn(async move |read, cx| {
             let outcome = call.await;
             _ = read.update(cx, |read, cx| {
-                if read.read_for.as_deref() != Some(session.as_str()) || read.source != source { return; }
+                if read.read_for.as_deref() != Some(session.as_str()) || read.source != source {
+                    return;
+                }
                 read.reading = false;
                 read.answers += 1;
                 read.failure_code = match &outcome {

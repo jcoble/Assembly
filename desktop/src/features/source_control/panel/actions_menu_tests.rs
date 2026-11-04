@@ -1,4 +1,7 @@
-use super::{MenuAction, MenuContext, PublishRow, READ_ONLY_SCOPE, STILL_RUNNING, WriteState, publish_row, rows};
+use super::{
+    MenuAction, MenuContext, PublishRow, READ_ONLY_SCOPE, STILL_RUNNING, WriteState, publish_row,
+    rows,
+};
 use crate::features::source_control::git_status::GitStatus;
 fn status() -> GitStatus {
     GitStatus {
@@ -45,7 +48,6 @@ fn every_row_stays_listed_in_the_old_order_with_nothing_blocked_when_all_is_well
             "Pull",
             "Push",
             "Add remote…",
-            "Branch diff",
             "Open history"
         ]
     );
@@ -59,8 +61,16 @@ fn push_without_upstream_is_disabled_with_its_reason() {
     };
     let remotes = ["origin".to_string()];
     let open = context(&unpublished, &remotes);
-    assert!(reason(&open, MenuAction::Push).unwrap().starts_with("This branch has no upstream"));
-    assert!(reason(&open, MenuAction::Pull).unwrap().starts_with("This branch has no upstream"));
+    assert!(
+        reason(&open, MenuAction::Push)
+            .unwrap()
+            .starts_with("This branch has no upstream")
+    );
+    assert!(
+        reason(&open, MenuAction::Pull)
+            .unwrap()
+            .starts_with("This branch has no upstream")
+    );
     assert_eq!(reason(&open, MenuAction::Fetch), None);
 }
 #[test]
@@ -92,7 +102,7 @@ fn a_running_action_blocks_every_write_but_refresh_still_reads() {
     };
     for row in rows(&running) {
         match row.action {
-            MenuAction::Refresh | MenuAction::BranchDiff | MenuAction::OpenHistory => {
+            MenuAction::Refresh | MenuAction::OpenHistory => {
                 assert_eq!(row.reason, None)
             }
             _ => assert_eq!(row.reason.as_deref(), Some(STILL_RUNNING)),
@@ -150,11 +160,24 @@ fn another_checkout_blocks_every_write_and_leaves_reading_open() {
     let remotes = ["origin".to_string()];
     let mut shown = context(&current, &remotes);
     shown.write = WriteState::ReadOnly;
-    for action in [MenuAction::DiscardAll, MenuAction::Fetch, MenuAction::Pull, MenuAction::Push, MenuAction::AddRemote] {
-        assert_eq!(reason(&shown, action).as_deref(), Some(READ_ONLY_SCOPE), "{action:?}");
+    for action in [
+        MenuAction::DiscardAll,
+        MenuAction::Fetch,
+        MenuAction::Pull,
+        MenuAction::Push,
+        MenuAction::AddRemote,
+    ] {
+        assert_eq!(
+            reason(&shown, action).as_deref(),
+            Some(READ_ONLY_SCOPE),
+            "{action:?}"
+        );
     }
-    assert_eq!(publish_row(&shown), PublishRow::Blocked(READ_ONLY_SCOPE.into()));
-    for action in [MenuAction::Refresh, MenuAction::BranchDiff, MenuAction::OpenHistory] {
+    assert_eq!(
+        publish_row(&shown),
+        PublishRow::Blocked(READ_ONLY_SCOPE.into())
+    );
+    for action in [MenuAction::Refresh, MenuAction::OpenHistory] {
         assert_eq!(reason(&shown, action), None, "{action:?}");
     }
 }

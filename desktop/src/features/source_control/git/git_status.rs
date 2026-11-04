@@ -56,7 +56,7 @@ impl Section {
 }
 
 impl ChangedFile {
-    fn untracked(&self) -> bool {
+    pub fn untracked(&self) -> bool {
         self.index == "?"
     }
 
@@ -145,10 +145,18 @@ impl GitStatus {
             "Switching here changes this working directory.".to_string(),
         ];
         if self.behind > 0 {
-            lines.push(format!("{} {} behind its remote.", self.behind, commits(self.behind)));
+            lines.push(format!(
+                "{} {} behind its remote.",
+                self.behind,
+                commits(self.behind)
+            ));
         }
         if self.ahead > 0 {
-            lines.push(format!("{} {} ahead of its remote.", self.ahead, commits(self.ahead)));
+            lines.push(format!(
+                "{} {} ahead of its remote.",
+                self.ahead,
+                commits(self.ahead)
+            ));
         }
         lines.join("\n")
     }
