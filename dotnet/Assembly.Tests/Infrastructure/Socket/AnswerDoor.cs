@@ -8,6 +8,7 @@ internal sealed class AnswerDoor : IEngineDoor
     public Func<NeedAnswerRequest, Task<Func<IWriteScope, bool>>> Answer { get; set; } = _ => Task.FromResult<Func<IWriteScope, bool>>(_ => true);
     public int Prepared { get; private set; }
     public IEngineDoor? Owner { get; set; }
+    public Func<OwnerPromptRequest, CancellationToken, Task<Func<IWriteScope, OwnerPromptAccepted>>>? OwnerPrompt { get; set; }
 
     public Task<Func<IWriteScope, bool>> PrepareNeedAnswerAsync(NeedAnswerRequest request, CancellationToken cancellationToken)
     {
@@ -20,5 +21,5 @@ internal sealed class AnswerDoor : IEngineDoor
     public Task<OwnerPromptPage> ReadOwnerPromptsAsync(OwnerPromptReadArgs request, CancellationToken cancellationToken) => throw new NotSupportedException();
     public Task<OwnerPromptChunk> ReadOwnerPromptChunkAsync(OwnerPromptChunkArgs request, CancellationToken cancellationToken) => throw new NotSupportedException();
     public Task<Func<IWriteScope, OwnerPromptAccepted>> PrepareOwnerPromptAsync(OwnerPromptRequest request, CancellationToken cancellationToken) =>
-        Owner?.PrepareOwnerPromptAsync(request, cancellationToken) ?? throw new NotSupportedException();
+        OwnerPrompt?.Invoke(request, cancellationToken) ?? Owner?.PrepareOwnerPromptAsync(request, cancellationToken) ?? throw new NotSupportedException();
 }

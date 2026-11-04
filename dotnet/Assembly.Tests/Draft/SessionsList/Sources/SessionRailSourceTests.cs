@@ -146,7 +146,19 @@ public sealed partial class SessionRailTests
                     INSERT INTO engine_mirror_row(machine,entity_kind,entity_id,generation,version,row_json)
                     VALUES($machine,'session',$session,1,1,$json);
                     """, new("$machine", machine), new("$route", route), new("$session", session),
-                    new("$json", JsonSerializer.Serialize(new { id = session, machine, holder = "local", state = "idle", parentId = parent, model = "recorded-model" })));
+                    new("$json", JsonSerializer.Serialize(new
+                    {
+                        id = session,
+                        machine,
+                        holder = "local",
+                        state = "idle",
+                        parentId = parent,
+                        provider = facade.Agent,
+                        folder = facade.RepoUrl,
+                        title = facade.Title,
+                        updatedMs = facade.UpdatedAt,
+                        model = "recorded-model"
+                    })));
             }
             else scope.Execute("""
                 INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,

@@ -103,6 +103,7 @@ public sealed partial class RemoteMachineTests
         AssertControlRefusal(await ControlAnswerAsync(socket, 1));
         await helperAgent.FinishAsync(helperPrompt, """{"stopReason":"end_turn"}""");
         Assert.Equal("acp-helper", await helperAgent.CloseAsync());
+        await parentAgent.ReplyAsync(await parentAgent.ReadAsync("_session/steering"), """{"outcome":"injected"}""");
         await parentAgent.FinishAsync(parentPrompt, """{"stopReason":"end_turn"}""");
         await parentAgent.CloseAsync();
     }

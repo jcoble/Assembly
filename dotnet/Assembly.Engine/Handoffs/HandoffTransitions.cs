@@ -47,6 +47,13 @@ public static class HandoffTransitions
         if (session.State is "ended" or "moved" || Find(s, c.EntityId) is not null)
             return Refused(c, "invalid_transition", session.Version, epoch);
         if (session.State != "idle") return Refused(c, "busy", session.Version, epoch);
+        // An earlier start/stop still owns its session-state confirmation. Do not reserve an epoch
+        // until it drains: that reservation would prevent its normal confirmation from completing.
+        if (s.QueryFirst("""
+            SELECT EXISTS(SELECT 1 FROM engine_outbox WHERE session_id=$id AND kind IN ('start','stop')
+                AND state NOT IN ('done','failed','dead'))
+            """, r => r.Long(0), new SqlArg("$id", command.SessionId)) != 0)
+            return Refused(c, "busy", session.Version, epoch);
         if (s.QueryFirst("SELECT checkout_state FROM engine_session WHERE id=$id", r => r.Text(0),
                 new SqlArg("$id", command.SessionId)) == "pending") return Refused(c, "checkout_pending", session.Version, epoch);
         if (session.ParentId is not null) return Refused(c, "has_parent", session.Version, epoch);

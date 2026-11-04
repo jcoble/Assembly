@@ -1,11 +1,48 @@
 using Assembly.Engine;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Handoffs;
+using Assembly.Engine.Sessions;
+using Assembly.Engine.Effects;
+using Assembly.Engine.Contracts;
+using System.Text.Json;
 
 namespace Assembly.Tests.Engine;
 
 public sealed class HandoffRequestEligibilityTests
 {
+    [Theory]
+    [InlineData("start", false)]
+    [InlineData("start", true)]
+    [InlineData("stop", false)]
+    [InlineData("stop", true)]
+    public void Earlier_session_effect_drains_before_handoff_can_reserve_an_epoch(string kind, bool inflight)
+    {
+        using var f = new EngineFixture();
+        var system = new EngineActor(ActorKind.System, "adapter");
+        Assert.True(f.Apply(new StartSession("codex", null, f.Folder, "Source", null, null, null), "s").Applied);
+        var start = f.Text("SELECT id FROM engine_outbox WHERE kind='start'")!;
+        if (kind == "stop")
+        {
+            Assert.True(f.Apply(new ClaimEffect(), start, actor: system).Applied);
+            Assert.True(f.Apply(new CompleteEffect(new(EffectDisposition.Confirmed,
+                JsonSerializer.SerializeToElement(new SessionEffectData("idle", "native", null), EngineJson.Default.SessionEffectData), null)), start, 1, actor: system).Applied);
+            Assert.True(f.Apply(new StopSession(), "s", f.Number("SELECT version FROM engine_session WHERE id='s'")).Applied);
+        }
+        else Assert.True(f.Apply(new SetSessionState("idle", "native", null), "s", 1, actor: system).Applied);
+        var effect = f.Text("SELECT id FROM engine_outbox WHERE kind=$kind", new SqlArg("$kind", kind))!;
+        if (inflight) Assert.True(f.Apply(new ClaimEffect(), effect, actor: system).Applied);
+        var version = f.Number("SELECT version FROM engine_session WHERE id='s'");
+        Assert.Equal("busy", f.Apply(new RequestHandoff("s", "target"), "blocked", version).Error);
+        Assert.Null(f.Text("SELECT reserved_epoch FROM engine_session WHERE id='s'"));
+        Assert.Equal(0, f.Count("engine_handoff"));
+        if (!inflight) Assert.True(f.Apply(new ClaimEffect(), effect, actor: system).Applied);
+        Assert.True(f.Apply(new CompleteEffect(new(EffectDisposition.Confirmed,
+            JsonSerializer.SerializeToElement(new SessionEffectData("idle", "native", null), EngineJson.Default.SessionEffectData), null)), effect, 1, actor: system).Applied);
+        Assert.Equal("done", f.State("engine_outbox", effect));
+        Assert.True(f.Apply(new RequestHandoff("s", "target"), "ready",
+            f.Number("SELECT version FROM engine_session WHERE id='s'")).Applied);
+    }
+
     [Theory]
     [InlineData("starting")]
     [InlineData("running")]

@@ -225,6 +225,7 @@ public sealed partial class EngineForwardTests
                 var remote = h.Remote;
                 var rows = RowStore.Open(remote.Fixture.Db);
                 remote.Sessions.Add("s", "codex", "repo", null!);
+                Directory.CreateDirectory(remote.Sessions.Root(remote.Sessions.Get("s")!)!);
                 answers.Inner = new AdapterEffects(remote.Fixture.Db, remote.NeedHosts, remote.Sessions, rows);
                 var host = remote.NeedHosts.For("s");
                 var sending = host.SendAsync("Fixture question", null, null, default);

@@ -60,8 +60,9 @@ public sealed partial class CrossMachineStartTests
                 $"UPDATE engine_session SET {mutation} WHERE id=$id", new SqlArg("$id", f.ForeignRoot)));
         }
         finally { pause.Release.Set(); }
-        var error = await Assert.ThrowsAsync<CallFailed>(() => starting);
-        Assert.Equal("source_changed", error.Message);
+        var error = await Assert.ThrowsAsync<McpRefused>(() => starting);
+        Assert.Equal("remote_start_failed", error.Refusal.Code);
+        Assert.Equal("source_changed", error.Refusal.Values!["message"]);
         Assert.Equal(0, h.Remote.Fixture.Number("SELECT COUNT(*) FROM engine_session WHERE parent_id=$id AND state<>'foreign'", new SqlArg("$id", f.Parent)));
         Assert.Equal(0, h.Mac.Fixture.Count("engine_message"));
     }

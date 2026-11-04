@@ -30,11 +30,12 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     private readonly FakeLauncher _boxLauncher = new();
     private readonly SharedLog _log = new();
     private DesktopBackend _box = null!;
+    private Assembly.Infrastructure.Engine.EngineRuntime _boxEngine = null!;
     private DesktopBackend? _desktop;
 
     public async Task InitializeAsync()
     {
-        _box = await DesktopBackend.StartAsync(_boxHome, BoxToken, port: 0, _boxLauncher, _log);
+        _box = await DesktopBackend.StartAsync(_boxHome, BoxToken, port: 0, _boxLauncher, _log, engineStarted: runtime => _boxEngine = runtime);
         await StartDesktopAsync();
     }
 
@@ -162,12 +163,9 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         await agent.InsertAsync(prompt, "agent-helper-prompt");
         var token = open.GetProperty("params").GetProperty("mcpServers")[0].GetProperty("headers")[0].GetProperty("value").GetString()!;
 
-        using var http = new HttpClient { BaseAddress = _box.Address };
-        http.DefaultRequestHeaders.Authorization = AuthenticationHeaderValue.Parse(token);
-        var call = """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"start_session","arguments":{"prompt":"Count the lines.","title":"Count the lines.","provider":"codex"}}}""";
-        var answer = JsonDocument.Parse(await (await http.PostAsync("/mcp", Json(call))).Content.ReadAsStringAsync()).RootElement;
-        var helperId = JsonDocument.Parse(answer.GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString()!)
-            .RootElement.GetProperty("sessionId").GetString()!;
+        var helperId = (await ToolAsync(_box, token["Bearer ".Length..], "start_session",
+            new { prompt = "Count the lines.", title = "Count the lines.", provider = "codex" }))
+            .GetProperty("sessionId").GetString()!;
 
         while ((await ApiTests.ReadRowsAsync(desktop, 1))[0].GetProperty("kind").GetString() != "subagent")
         {
@@ -189,6 +187,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
             && row.GetProperty("payload").GetProperty("state").GetString() == "idle"));
 
         // The parent's turn ends, and it runs another.
+        await parentAgent.ReplyAsync(await parentAgent.ReadAsync("_session/steering"), """{"outcome":"injected"}""");
         await parentAgent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
         await parentAgent.CloseAsync();
         await SendAsync(parent);
@@ -281,30 +280,31 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         var asked = (await ToolAsync(_box, helperToken, "send_message", new { sessionId = parent, text = "Which file?" })).GetProperty("messageId").GetString()!;
         var question = await desktop.ReadAsync("session/prompt");
         Assert.Contains("Which file?", question.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
-        // As if the desktop stopped before telling the box: the box lists it again, and the desktop only tells it again.
-        var boxDb = Path.Combine(_boxHome, "assembly.db");
-        await Until(() => DeliveredRun(boxDb, asked) is not null);
-        var run = DeliveredRun(boxDb, asked);
-        ForgetDelivery(boxDb, asked);
-        await Until(() => DeliveredRun(boxDb, asked) == run);
-        await Assert.ThrowsAsync<TimeoutException>(() => desktop.NextMessageAsync().WaitAsync(TimeSpan.FromSeconds(2)));
-
-        // The parent's answer goes back to the box.
+        await desktop.InsertAsync(question, "parent-question-provider");
+        await Until(async () => (await ToolAsync(_box, helperToken, "message_status", new { messageId = asked }))
+            .GetProperty("state").GetString() == "next_turn");
+        Assert.Single((await RowsAsync(_desktop!, DesktopToken, parent)), row => row.GetProperty("kind").GetString() == "user"
+            && row.GetProperty("payload").GetProperty("text").GetString()!.Contains("Which file?", StringComparison.Ordinal));
         await desktop.TextAsync("notes.txt", "p2", "acp-parent");
         await desktop.FinishAsync(question, """{"stopReason":"end_turn"}""");
-        var answered = await ToolAsync(_box, helperToken, "message_status", new { messageId = asked });
-        Assert.Equal(("answered", "notes.txt"), (answered.GetProperty("state").GetString(), answered.GetProperty("reply").GetString()));
 
         // The helper answers; the parent reads it on the desktop, from the rows copied from the box.
-        var status = ToolAsync(_desktop!, parentToken, "message_status", new { messageId = started.GetProperty("messageId").GetString() });
         await box.TextAsync("notes.txt has 3 lines.", "h1", "acp-helper");
         await box.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "acp-helper");
-        var reply = await status;
-        Assert.Equal(("answered", "notes.txt has 3 lines."), (reply.GetProperty("state").GetString(), reply.GetProperty("reply").GetString()));
+        await Until(async () => (await ToolAsync(_desktop!, parentToken, "message_status",
+            new { messageId = started.GetProperty("messageId").GetString() })).GetProperty("state").GetString() == "next_turn");
+        // The automatic final reply is its own durable message, not an invented answered state on the initial prompt.
+        await desktop.CloseAsync();
+        await desktop.OpenAsync("acp-parent");
+        var reply = await desktop.ReadAsync("session/prompt");
+        Assert.Contains("notes.txt has 3 lines.", reply.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
+        await desktop.InsertAsync(reply, "helper-reply-provider");
+        await desktop.FinishAsync(reply, """{"stopReason":"end_turn"}""");
+
     }
 
     [Fact]
-    public async Task A_message_left_queued_after_its_helper_ended_is_still_delivered_and_says_how_long_it_waited()
+    public async Task A_message_left_queued_after_its_helper_ended_is_delivered_once_with_its_original_timestamp()
     {
         var created = await FeatureResultAsync(_desktop!, DesktopToken, "sessions", "create",
             new { agent = "claude", clientId = Guid.NewGuid().ToString("N") });
@@ -317,20 +317,26 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         var helperId = (await ToolAsync(_desktop!, parentToken, "start_session", new { prompt = "Count the lines.", title = "Count the lines.", provider = "codex", folder = _boxHome, machine = await RemoteEngineMachineAsync() }))
             .GetProperty("sessionId").GetString()!;
         var box = await _boxLauncher.NextAsync();
-        await box.StartAsync(acpSessionId: "acp-helper");
-        await box.FinishAsync(await box.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
-        await desktop.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "acp-parent");
-        await Until(async () => (await RowsPageAsync(_desktop!, DesktopToken, parent)).GetProperty("rows").EnumerateArray()
-            .Any(row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}" && row.GetProperty("payload").GetProperty("state").GetString() == "idle"));
-        await desktop.CloseAsync();
+        var helperToken = SessionToken(await box.StartAsync(acpSessionId: "acp-helper"));
+        var helperPrompt = await box.ReadAsync("session/prompt");
+        await box.InsertAsync(helperPrompt, "late-helper-provider");
+        await _desktop!.DisposeAsync();
+        _desktop = null;
+        var late = (await ToolAsync(_box, helperToken, "send_message", new { sessionId = parent, text = "Which file?" }))
+            .GetProperty("messageId").GetString()!;
+        var sent = _boxEngine.Reader.Entity("message", late, default)!.Value.GetProperty("createdMs").GetInt64();
+        await box.FinishAsync(helperPrompt, """{"stopReason":"end_turn"}""");
+        await box.CloseAsync();
+        await StartDesktopAsync();
+        var resumed = await _desktopLauncher.NextAsync();
+        await resumed.StartAsync("acp-parent");
+        var prompt = await resumed.ReadAsync("session/prompt");
+        Assert.Contains("Which file?", prompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
+        Assert.Equal(sent, ((Assembly.Engine.Hosting.IEngineRuntime)_boxEngine).Read(scope => scope.QueryFirst(
+            "SELECT created_ms FROM engine_message WHERE id=$id", row => row.Long(0), new Assembly.Application.Common.Database.SqlArg("$id", late)), default));
+        await resumed.InsertAsync(prompt, "late-provider");
+        await resumed.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
 
-        // As if the helper sent it and ended before the desktop looked: no helper of the parent's is at work on the box now.
-        var boxDb = Path.Combine(_boxHome, "assembly.db");
-        Queue(boxDb, "late-1", helperId, parent, "Which file?", DateTimeOffset.UtcNow.AddMinutes(-10));
-        await desktop.OpenAsync("acp-parent");
-        var text = (await desktop.ReadAsync("session/prompt")).GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString();
-        Assert.Contains("Which file?", text);
-        Assert.Contains("It was sent 10 min ago", text);
     }
 
     [Fact]
@@ -356,8 +362,11 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         long stopId = 0;
         await Until(async () =>
         {
-            var stopped = await ApiTests.SocketRequestAsync(owner, ++stopId, "send", "stopTask",
-                JsonSerializer.Serialize(new { session = parent, task = helperId }));
+            var turns = await RowsAsync(_desktop!, DesktopToken, helperId);
+            var runId = turns.LastOrDefault(row => row.GetProperty("kind").GetString() == "turn");
+            if (runId.ValueKind == JsonValueKind.Undefined) return false;
+            var stopped = await ApiTests.SocketRequestAsync(owner, ++stopId, "send", "stop",
+                JsonSerializer.Serialize(new { runId = runId.GetProperty("runId").GetString() }));
             if (stopped.GetProperty("t").GetString() == "error")
             {
                 Assert.Equal("failed", stopped.GetProperty("code").GetString());
@@ -459,40 +468,6 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         var root = document.RootElement;
         Assert.True(root.TryGetProperty("result", out var result), body);
         return result.Clone();
-    }
-
-    private static string? DeliveredRun(string database, string messageId)
-    {
-        using var db = new SqliteConnection($"Data Source={database};Pooling=False");
-        db.Open();
-        using var command = db.CreateCommand();
-        command.CommandText = "SELECT run_id FROM helper_messages WHERE message_id = $id;";
-        command.Parameters.AddWithValue("$id", messageId);
-        return command.ExecuteScalar() as string;
-    }
-
-    private static void Queue(string database, string messageId, string from, string to, string text, DateTimeOffset sent)
-    {
-        using var db = new SqliteConnection($"Data Source={database};Pooling=False");
-        db.Open();
-        using var command = db.CreateCommand();
-        command.CommandText = "INSERT INTO helper_messages(message_id, from_session, to_session, text, created_at) VALUES ($id, $from, $to, $text, $at);";
-        command.Parameters.AddWithValue("$id", messageId);
-        command.Parameters.AddWithValue("$from", from);
-        command.Parameters.AddWithValue("$to", to);
-        command.Parameters.AddWithValue("$text", text);
-        command.Parameters.AddWithValue("$at", sent.ToUnixTimeMilliseconds());
-        command.ExecuteNonQuery();
-    }
-
-    private static void ForgetDelivery(string database, string messageId)
-    {
-        using var db = new SqliteConnection($"Data Source={database};Pooling=False");
-        db.Open();
-        using var command = db.CreateCommand();
-        command.CommandText = "UPDATE helper_messages SET run_id = NULL WHERE message_id = $id;";
-        command.Parameters.AddWithValue("$id", messageId);
-        command.ExecuteNonQuery();
     }
 
     private static Task Until(Func<bool> condition, TimeSpan? limit = null) => Until(() => Task.FromResult(condition()), limit);

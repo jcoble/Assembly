@@ -162,7 +162,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
                 JsonDocument.Parse("""{"text":"answer","clientId":"rail-C"}""").RootElement.Clone(), 1));
             batch.Rows.Add(new NewRow("run-1", null, RowKind.Turn,
                 JsonDocument.Parse("""{"state":"started"}""").RootElement.Clone(), 1));
-            _remoteHub.Publish("s", batch);
+            if (_remoteStore.LastSeq("s") == 0) _remoteHub.Publish("s", batch);
             await SendAsync(socket, $$$"""{"t":"result","id":{{{call.RootElement.GetProperty("id")}}},"result":{"rows":[]}}""");
         };
         try

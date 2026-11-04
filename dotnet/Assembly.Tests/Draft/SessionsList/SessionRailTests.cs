@@ -187,7 +187,15 @@ public sealed partial class SessionRailTests : IDisposable
             UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.provider',$provider,'$.folder','/recorded/remote','$.updatedMs',$updated)
             WHERE entity_kind='session' AND entity_id=$id;
             """, new("$provider", remote.Agent), new("$updated", remote.UpdatedAt), new("$id", c)));
-        Parent("codex", machine: "workbox-test");
+        var otherRemote = Parent("codex", machine: "workbox-test");
+        _database.Writer.Write("test.known-filtered-owners", scope => scope.Execute("""
+            INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
+                activity_state,parent_id,holder,epoch,cancel_requested,account_context,managed_checkout)
+            SELECT s.session_id,0,m.machine,s.created_at,s.updated_at,s.agent,NULL,s.repo_url,COALESCE(s.title,''),'foreign',
+                'idle',NULL,m.machine,0,0,'',0
+            FROM session_info s JOIN engine_mirror_row m ON m.entity_kind='session' AND m.entity_id=s.session_id
+            WHERE s.session_id IN ($first,$second);
+            """, new("$first", c), new("$second", otherRemote)));
         var settled = Parent("claude");
         Running(settled);
         _database.Writer.Write("test.mark", scope => { _sessions.Mark(scope, settled, "settled"); return 0; });

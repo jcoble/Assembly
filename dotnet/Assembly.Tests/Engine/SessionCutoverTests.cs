@@ -98,8 +98,15 @@ public sealed class SessionCutoverTests
         var topics = new Topics(); using var f = new EngineFixture(topics: topics);
         f.SeedSession("running", state: "running"); f.SeedSession("uncertain");
         f.Apply(new StartSession("work-profile", null, "/folder", "Starting", null, null, null), "starting");
-        var system = new EngineActor(ActorKind.System, "provider");
-        Assert.True(f.Apply(new OpenNeed("running", null, null, "permission", "Provider permission", ["allow", "deny"], "request", null, null), "provider-need", actor: system).Applied);
+        var system = new EngineActor(ActorKind.System, "adapter");
+        var card = new Assembly.Domain.Rows.AskPayload("permission", "open", null, "Provider permission", null,
+            [new("allow", "Allow", "allow_once"), new("deny", "Deny", "reject_once")], null, null);
+        var prepared = EngineCommands.PrepareNeedCommand(new OpenNeed("running", null, null, "permission", "Provider permission",
+            ["allow", "deny"], "request", "provider-need", null) with
+        { ProviderQuestion = JsonSerializer.SerializeToElement(card, RowJsonContext.Rows.AskPayload) });
+        RowStore.Open(f.Db).Commit("running", new RowConverter().Apply(new Assembly.Domain.Events.AskChanged(1000, "provider-need", card)), scope =>
+            Assert.True(new EngineCommands(f.Machine, f.Limits).ApplyPreparedNeed(scope,
+                new(Guid.NewGuid(), f.Machine, system, "provider-need", 0, 0, 1000), prepared).Applied));
         Assert.True(f.Apply(new OpenNeed("running", null, null, "question", "Owner question", [], null, null, null), "owner-need", actor: system).Applied);
         Assert.True(f.Apply(new SendMessage(null, "uncertain", "Exact message", "prompt"), "message").Applied);
         var sendId = f.Text("SELECT id FROM engine_outbox WHERE kind='send'")!;

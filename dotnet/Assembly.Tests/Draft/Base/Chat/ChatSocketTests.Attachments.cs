@@ -135,11 +135,11 @@ public sealed partial class ChatSocketTests
         socket.Dispose();
         await _here.Cancelled.Task.WaitAsync(Wait);
 
-        // Nothing marks the moment a close would drop it too early, so give that half a second to show. The held
-        // commit's own file is there either way, so this watches the chunked upload's.
-        Assert.False(SpinWait.SpinUntil(() => !File.Exists(Path.Combine(Staging, upload)), TimeSpan.FromMilliseconds(500)));
+        await _box.Cancelled.Task.WaitAsync(Wait);
         _box.Release();
-        Assert.True(SpinWait.SpinUntil(() => Directory.GetFiles(Staging).Length == 0, Wait));
+        await _socketClosed.Task.WaitAsync(Wait);
+        Assert.Empty(Directory.GetFiles(Staging));
+        Assert.Null(_box.Saved);
     }
 
     [Fact]

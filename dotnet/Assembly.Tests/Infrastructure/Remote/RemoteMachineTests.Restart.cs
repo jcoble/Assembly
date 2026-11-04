@@ -32,6 +32,7 @@ public sealed partial class RemoteMachineTests
         var box = await _boxLauncher.NextAsync();
         await box.StartAsync(acpSessionId: "acp-helper");
         var helperPrompt = await box.ReadAsync("session/prompt");
+        await box.InsertAsync(helperPrompt, "restart-helper-initial-provider");
         await UntilRestartStateAsync(parent, helperId, "running");
 
         // The desktop stops as if before it copied any of the helper's rows, and the helper finishes on the box meanwhile.

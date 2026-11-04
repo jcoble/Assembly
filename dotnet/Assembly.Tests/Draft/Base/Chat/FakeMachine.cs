@@ -74,6 +74,9 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     public Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken) =>
         Remote($"stop {runId}", () => !Refuses, cancellationToken);
 
+    public Task<T> OwnerPromptAsync<T>(string session, string text, Func<T> answer, CancellationToken cancellationToken) =>
+        Remote($"owner prompt {session} {text}", answer, cancellationToken);
+
     public Task<bool> StopTaskAsync(SessionInfo session, string taskId, CancellationToken cancellationToken) =>
         Remote($"stop task {taskId}", () => !Refuses, cancellationToken);
 

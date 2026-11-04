@@ -304,7 +304,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         var sessions = list.GetProperty("sessions").EnumerateArray().ToList();
         Assert.Equal([second, first], sessions.Select(t => t.GetProperty("sessionId").GetString()));
         Assert.Equal("claude", sessions[0].GetProperty("agent").GetString());
-        Assert.Equal(_work, sessions[0].GetProperty("repoUrl").GetString());
+        Assert.Equal(Path.Combine(_work, "assembly-bare"), sessions[0].GetProperty("repoUrl").GetString());
         Assert.Equal(JsonValueKind.Null, sessions[0].GetProperty("title").ValueKind);
         Assert.Equal(JsonValueKind.Null, sessions[0].GetProperty("machine").ValueKind);
         Assert.True(sessions[0].GetProperty("updatedAt").GetInt64() > 0);
