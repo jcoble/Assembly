@@ -87,6 +87,9 @@ jobs:
         run: node --test scripts/hooks/*.test.ts
       - name: Agent runbook behavior
         run: node --test scripts/agent-runbook/runbook.test.ts
+      # remote-cli.test.sh checks the built CLI's arguments.
+      - name: Build the remote CLI
+        run: dotnet build dotnet/Assembly.Remote/Assembly.Remote.csproj
       - name: Every scripts/*.test.sh passes
         run: |
           failed=0
