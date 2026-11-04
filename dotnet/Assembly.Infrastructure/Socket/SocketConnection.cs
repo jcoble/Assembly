@@ -171,7 +171,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
         else
         {
             Peer = new OwnerPeer();
-            await socket.SendAsync(SocketDispatcher.Frame(new WelcomeFrame(Protocol, machine, Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion, BackendBuild.Commit, engineMachine), SocketJson.Default.WelcomeFrame),
+            await socket.SendAsync(SocketDispatcher.Frame(new WelcomeFrame(Protocol, machine, Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion, BackendBuild.Commit, engineMachine, BackendBuild.Identity), SocketJson.Default.WelcomeFrame),
                 WebSocketMessageType.Text, endOfMessage: true, stopping);
             return true;
         }

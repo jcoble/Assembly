@@ -60,6 +60,8 @@ impl SettingsPage {
         let theme = cx.theme();
         let (dot, status) = if !machine.checked && machine.name.is_some() {
             (theme.muted_foreground, "Checking…".to_string())
+        } else if machine.reachable && machine.reason.is_some() {
+            (theme.warning, machine.reason.clone().unwrap_or_default())
         } else if machine.reachable {
             (theme.success, "Connected".to_string())
         } else {

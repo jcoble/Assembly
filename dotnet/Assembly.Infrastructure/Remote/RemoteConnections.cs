@@ -40,6 +40,7 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
     }
     private readonly Dictionary<string, CliRefresh> _cliRefresh = [];
     private bool _disposed;
+    private readonly Development.DevRemoteSyncStatus? _devSync;
 
     public RemoteConnections(MachineStore store, IAtomicWriter writer, MachineSet machines, MachineStatus status, LiveHub hub, SessionStore sessions,
         global::Assembly.Infrastructure.Topics.Topics topics, TextWriter log, MachinesFeature feature,
@@ -50,6 +51,8 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
         (_store, _machines, _status, _hub, _sessions, _topics, _log, _feature, _turnEnded) =
             (store, machines, status, hub, sessions, topics, log, feature, turnEnded);
         _writer = writer;
+        if (Environment.GetEnvironmentVariable("ASSEMBLY_DEV_REMOTE_SYNC_STATUS") is { Length: > 0 } syncPath)
+            _devSync = new(syncPath, status);
         _acceptanceEngine = acceptanceEngine;
         _mirrored = mirrored;
         _store.Status = status;
@@ -290,6 +293,7 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _devSync?.Dispose();
         _topics.Unsubscribe(_subscription);
         Task[] tasks;
         lock (_gate)

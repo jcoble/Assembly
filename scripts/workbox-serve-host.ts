@@ -8,6 +8,7 @@ import { sameBackendFiles } from './remote-backend-package.ts';
 import { backendIdentity, lane, type Lane } from './dev-remote-identity.ts';
 import { command, lifetime } from './dev-remote-process.ts';
 import { probeSource, type Probe } from './dev-remote-probe.ts';
+import { waitForIdle } from './dev-remote-idle.ts';
 import { stage } from './dev-remote-timing.ts';
 
 const owner = lifetime(true);
@@ -23,7 +24,7 @@ async function atomic(file: string, text: string) {
   await fs.writeFile(temporary, text, { mode: 0o600, flag: 'wx' });
   await fs.rename(temporary, file);
 }
-async function idle(pid: string) {
+async function members(pid: string) {
   const group = await run('systemctl', ['--user', 'show', target.unit, '-p', 'ControlGroup', '--value']);
   if (!group.endsWith('/' + target.unit + '.service')) throw Error('unit control group differs');
   const members = new Set<string>();
@@ -31,7 +32,10 @@ async function idle(pid: string) {
   for (const file of await fs.readdir(directory, { recursive: true }))
     if (file === 'cgroup.procs' || file.endsWith('/cgroup.procs'))
       for (const member of (await fs.readFile(join(directory, file), 'utf8')).trim().split('\n')) if (member) members.add(member);
-  if (members.size !== 1 || !members.has(pid)) throw Error('lane host is busy; no restart performed');
+  return [...members];
+}
+async function idle(pid: string) {
+  await waitForIdle(() => members(pid), pid, root, request.waitForIdle === true, owner.signal);
 }
 async function ready(pid: string) {
   // Journal replay for this exact new PID avoids a connection retry loop and startup races.
@@ -59,8 +63,7 @@ try {
   const before = await probe();
   const identity = await backendIdentity(process.cwd(), request.commit, owner.signal);
   if (identity !== request.identity) throw Error('source identity differs after transfer');
-  let actual = 'unknown';
-  try { if (!before.missing) actual = await backendIdentity(process.cwd(), before.commit, owner.signal); } catch { owner.signal.throwIfAborted(); }
+  const actual = before.backendIdentity ?? 'unknown';
   if (actual === identity && before.adapterOK && before.launcherSha === request.launcher) {
     console.log(`Workbox Test ${target.unit} already matches after acquiring the lane lock; no deploy`);
   } else {
@@ -121,7 +124,7 @@ TimeoutStopSec=30
       const answerTime = stage('answer');
       await ready(pid);
       const after = await probe();
-      if (after.commit !== prepared.commit || (!before.missing && after.engine !== before.engine) || after.dll !== dll) throw Error('new host identity could not be verified; inspect lane host before retrying');
+      if (after.backendIdentity !== identity || after.commit !== prepared.commit || (!before.missing && after.engine !== before.engine) || after.dll !== dll) throw Error('new host identity could not be verified; inspect lane host before retrying');
       answerTime();
       // Disk only: a failed cleanup never fails a host that is already verified.
       await pruneReleases(root, [destination, ...(previous ? [previous.directory] : [])])
@@ -137,6 +140,9 @@ TimeoutStopSec=30
       await command('systemctl', ['--user', 'start', target.unit]);
     } catch { console.error('previous host could not be restored before candidate startup; inspect the lane unit'); }
   }
+  console.log('ASSEMBLY_REMOTE_SYNC ' + JSON.stringify({ reason: candidateStarted
+    ? 'Remote backend failed to start. Host may be down; inspect it before retrying. No automatic rollback was attempted because startup may have migrated the database.'
+    : `Remote backend build or deploy failed: ${error instanceof Error ? error.message : String(error)}` }));
   console.error(`Workbox Test sync failed${candidateStarted ? ' after candidate startup (host state needs inspection)' : ''}: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 }
