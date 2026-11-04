@@ -93,8 +93,15 @@ export async function ensureTools(root: string, adapters: string, descriptor: st
   safePath(assets, false);
   // Reuse the existing packager, steering smoke proof, archive validator and atomic descriptor writer.
   if (!keepAdapters) {
+  // The packager writes an unproven manifest before its smoke checks, so only a finished build reaches this path.
   try { await fs.access(join(assets, `assembly-adapters-${target}.json`)); }
-  catch { await run(process.execPath, [join(root, 'scripts/package-adapters.ts'), 'build', target, JSON.stringify(adapterVersions), assets], { cwd: root, signal, live: true, env: { PATH: npmPath } }); }
+  catch {
+    const stage = assets + '.' + randomUUID();
+    try {
+      await run(process.execPath, [join(root, 'scripts/package-adapters.ts'), 'build', target, JSON.stringify(adapterVersions), stage], { cwd: root, signal, live: true, env: { PATH: npmPath } });
+      await fs.rename(stage, assets);
+    } finally { await fs.rm(stage, { recursive: true, force: true }); }
+  }
   }
   await run('bash', [join(root, 'dotnet/scripts/agents-file.sh'), adapters, descriptor, ...(keepAdapters ? [] : [assets])], { cwd: root, signal, live: true, env: { ...environment, ASSEMBLY_KEEP_CURRENT_ADAPTERS: keepAdapters ? '1' : '' } });
   const agents = await readAgents(descriptor);

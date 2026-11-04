@@ -48,6 +48,28 @@ test('dependency check skips all install/build work on the second launch, and ke
     assert.equal(calls.filter(call => call[0] === process.execPath).length, 0, 'current ACP adapters must not rebuild for a CLI update');
   } finally { f.close(); }
 });
+test('a failed adapter build leaves nothing the next launch would mistake for a finished one', async () => {
+  const f = fixture(), adapters = join(f.root, 'adapters'), descriptor = join(f.root, 'profile/agents.json');
+  const versions = Object.fromEntries(packages.map(name => [name, '1.2.3'])) as ToolVersions;
+  let builds = 0;
+  const run = async (tool: string, args: string[]) => {
+    if (tool === 'npm') {
+      const prefix = args[args.indexOf('--prefix') + 1];
+      for (const name of packages.slice(2)) f.write(join(prefix, 'node_modules', name, 'package.json'), JSON.stringify({ version: '1.2.3' }));
+    } else if (tool === process.execPath) {
+      builds++;
+      f.write(join(args.at(-1)!, 'assembly-adapters-linux-x64.json'), '{"unproven":true}');
+      if (builds === 1) throw Error('smoke failed');
+    } else if (tool === 'bash') throw Error('stop after the build');
+    return '';
+  };
+  try {
+    const ensure = () => ensureTools(f.root, adapters, descriptor, versions, new AbortController().signal, run as any, 'linux-x64', fakeNpm);
+    await assert.rejects(ensure(), /smoke failed/);
+    await assert.rejects(ensure(), /stop after the build/);
+    assert.equal(builds, 2, 'the second launch must rebuild, not reuse the failed output');
+  } finally { f.close(); }
+});
 // Workbox Test has no npm; a fresh lane there must install one rather than fail.
 function fakeNpmArchive(root: string) {
   const source = join(root, 'source/package/bin');
