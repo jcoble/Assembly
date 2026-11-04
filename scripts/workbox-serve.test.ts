@@ -40,7 +40,7 @@ else console.log(JSON.stringify({commit:'${previous}',engine:'test-engine',dll:'
 function fixture(state: object = {}) {
   const root = mkdtempSync(join(tmpdir(), 'assembly-devsync-'));
   for (const dir of ['scripts', 'bin']) mkdirSync(join(root, dir));
-  for (const file of ['workbox-serve.ts', 'dev-remote-process.ts', 'dev-remote-identity.ts', 'dev-remote-probe.ts'])
+  for (const file of ['workbox-serve.ts', 'dev-remote-process.ts', 'dev-remote-identity.ts', 'dev-remote-probe.ts', 'dev-remote-timing.ts'])
     copyFileSync(new URL(file, import.meta.url), join(root, 'scripts', file));
   const paths = { state: join(root, 'state'), calls: join(root, 'calls'), marker: join(root, 'started'), release: join(root, 'release') };
   writeFileSync(paths.state, JSON.stringify(state));

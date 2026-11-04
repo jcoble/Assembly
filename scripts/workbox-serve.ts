@@ -4,9 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { backendIdentity, requireCleanBackend, lane, type Lane } from './dev-remote-identity.ts';
 import { command, lifetime, quote, sshOptions } from './dev-remote-process.ts';
 import { probeSource, type Probe } from './dev-remote-probe.ts';
+import { stage } from './dev-remote-timing.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const owner = lifetime();
+const total = stage('total');
+const identityCheck = stage('identity');
 try {
   const [name, number, selected = 'HEAD', mainGuard] = process.argv.slice(2);
   const main = !name && number === '0' && mainGuard === 'clean-origin-main';
@@ -27,11 +30,14 @@ try {
   const probe = JSON.parse(await command('ssh', [...sshOptions, 'workbox-test', read], { signal: owner.signal })) as Probe;
   let actual = probe.missing ? 'not installed' : 'unknown';
   try { if (!probe.missing) actual = await backendIdentity(root, probe.commit, owner.signal); } catch { owner.signal.throwIfAborted(); }
+  identityCheck();
   if (actual === identity && probe.adapterOK && probe.launcherSha === launcher) {
     console.log(`Workbox Test ${target.unit} already runs backend ${identity} (host commit ${probe.commit}); no deploy`);
   } else {
     console.log(`Workbox Test ${target.unit} backend changed: ${actual} -> ${identity}; building and deploying ${commit}`);
+    const transfer = stage('transfer');
     await command('git', ['push', '-q', 'ssh://workbox-test/~/assembly.git', `+${commit}:refs/heads/dev-sync-${name || 'main'}`], { cwd: root, signal: owner.signal, live: true });
+    transfer({ payload: 'git changed source objects', binaryBytes: 0 });
     const request = JSON.stringify({ lane: target, commit, identity, launcher, probe });
     // Kernel-owned lock covers probe, build, package and activation across Mac/Workbox launches. No stale PID lock.
     const checkout = `${target.data}/checkouts/${commit}`;
@@ -44,4 +50,4 @@ try {
 } catch (error) {
   console.error(`Workbox Test sync: ${(error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ')}`);
   process.exitCode = 1;
-} finally { owner.close(); }
+} finally { owner.close(); total(); }

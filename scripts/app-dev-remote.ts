@@ -16,7 +16,7 @@ export function startRemoteSync(root: string, home: string) {
     worker.once('error', error => { console.warn(`app:dev: Workbox Test sync could not start: ${error.message}; log: ${log}`); });
     worker.once('close', code => {
       finished = true;
-      const detail = readFileSync(log, 'utf8').trim().split('\n').at(-1) || `sync exited ${code}`;
+      const detail = readFileSync(log, 'utf8').trim().split('\n').filter(line => !line.startsWith('[dev-sync timing]')).at(-1) || `sync exited ${code}`;
       console.warn(`app:dev: ${detail}; log: ${log}`);
       resolve();
     });

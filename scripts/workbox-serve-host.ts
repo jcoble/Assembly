@@ -7,6 +7,7 @@ import { writeRemoteBackendPackage } from './remote-backend-package.ts';
 import { backendIdentity, lane, type Lane } from './dev-remote-identity.ts';
 import { command, lifetime } from './dev-remote-process.ts';
 import { probeSource, type Probe } from './dev-remote-probe.ts';
+import { stage } from './dev-remote-timing.ts';
 
 const owner = lifetime(true);
 const request = JSON.parse(process.argv[2]);
@@ -74,7 +75,10 @@ try {
     if (!before.missing) await idle(before.pid);
     temporary = await fs.mkdtemp(join(root, '.dev-sync-'));
     const publish = join(temporary, 'publish'), archive = join(temporary, 'backend.tar.gz');
+    const buildTime = stage('build');
     await run('dotnet', ['publish', 'dotnet/Assembly.Remote', '-c', 'Release', '--no-self-contained', '-p:UseSharedCompilation=false', `-p:SourceRevisionId=${request.commit}`, '-o', publish], true);
+    buildTime();
+    const packageTime = stage('package');
     const bundle = await writeRemoteBackendPackage({ publishDir: publish, commit: request.commit, outputFile: archive, sourceDir: process.cwd() });
     const destination = join(root, 'bin', request.commit + '-' + bundle.sha256);
     await fs.mkdir(join(root, 'bin'), { recursive: true });
@@ -86,6 +90,7 @@ try {
       if (bytes.length !== item.bytes || digest(bytes) !== item.sha256) throw Error('staged backend package differs');
     }
     await fs.rename(join(temporary, 'package'), destination);
+    packageTime({ archiveBytes: bundle.bytes, files: manifest.files.length });
     const latest = await probe();
     if (latest.missing !== before.missing || latest.pid !== before.pid || latest.unitSha !== before.unitSha) throw Error('lane host changed during build; no restart performed');
     if (!before.missing) await idle(before.pid);
@@ -110,6 +115,7 @@ TimeoutStopSec=30
     const updated = unit.replace(before.missing ? 'INITIAL_BACKEND' : (before.unitDll ?? before.dll), dll);
     if (updated === unit || updated.split(dll).length !== 2) throw Error('ambiguous unit backend path');
     owner.signal.throwIfAborted();
+    const restartTime = stage('restart');
     if (!before.missing) {
       await run('systemctl', ['--user', 'stop', target.unit]);
       stopped = true;
@@ -121,9 +127,12 @@ TimeoutStopSec=30
     candidateStarted = true;
     await run('systemctl', ['--user', 'start', target.unit]);
     const pid = await run('systemctl', ['--user', 'show', target.unit, '-p', 'MainPID', '--value']);
+    restartTime();
+    const answerTime = stage('answer');
     await ready(pid);
     const after = await probe();
     if (after.commit !== request.commit || (!before.missing && after.engine !== before.engine) || after.dll !== dll) throw Error('new host identity could not be verified; inspect lane host before retrying');
+    answerTime();
     console.log(`Workbox Test ${target.unit} deployed backend ${identity}; authenticated host commit ${after.commit}; PID ${after.pid}; engine preserved ${after.engine}`);
   }
 } catch (error) {
