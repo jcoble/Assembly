@@ -4,6 +4,7 @@
 //! `set`, `remove`), one call at a time, and the list changes only as the topic says, so nothing shows as saved unless
 //! the backend took it. A call that fails says why on its machine's row, or under the form.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _};
@@ -42,7 +43,7 @@ impl SettingsPage {
             return v_flex()
                 .px_4()
                 .py_3()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .child("The backend isn't running.");
         };
         let listed: Vec<Machine> = machines.read(cx).machines().cloned().collect();
@@ -79,7 +80,7 @@ impl SettingsPage {
             .min_w_0()
             .child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.foreground)
                     .child(machine.name.clone().unwrap_or("This Mac".into())),
@@ -88,7 +89,7 @@ impl SettingsPage {
                 h_flex()
                     .gap_1p5()
                     .items_start()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(theme.muted_foreground)
                     .child(div().flex_none().size(px(6.)).rounded_full().bg(dot))
                     .child(
@@ -207,7 +208,7 @@ impl SettingsPage {
             .gap_3()
             .child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.foreground)
                     .child(title),
@@ -229,7 +230,7 @@ impl SettingsPage {
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(theme.muted_foreground)
                     .child("A port or token file left empty takes the default shown."),
             )
@@ -242,7 +243,7 @@ impl SettingsPage {
         let (from, why) = self.machine_edits.failure.as_ref()?;
         (from.as_ref() == about).then(|| {
             div()
-                .text_xs()
+                .text_role(TextRole::Meta, cx)
                 .text_color(cx.theme().danger)
                 .child(why.clone())
         })
@@ -395,7 +396,7 @@ fn field(label: &'static str, state: &Entity<InputState>, locked: bool, cx: &App
         .gap_1()
         .child(
             div()
-                .text_xs()
+                .text_role(TextRole::Meta, cx)
                 .text_color(cx.theme().muted_foreground)
                 .child(label),
         )

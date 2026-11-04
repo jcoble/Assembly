@@ -73,7 +73,7 @@ impl InlineFieldPreview {
 }
 impl Render for InlineFieldPreview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut content=v_flex().gap_4().p_4().w_full().max_w(rems(36.))
+        let mut content=v_flex().gap_4().p_4().w_full().max_w(px(576.))
             .child(Label::new("Inline fields"))
             .child(Label::new("Sample only · Click a value to edit. Save stores changes in this preview’s memory only."));
         let mut group = GroupBox::new()

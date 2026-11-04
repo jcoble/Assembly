@@ -4,6 +4,7 @@
 //! (`rows/files`, `rows/attachments`) when it's shown, and again when another session is picked while it's shown, and
 //! doesn't follow the live rows: Chat already does, and nobody watches these lists while they change.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
@@ -244,7 +245,7 @@ impl Render for ContextPane {
             .overflow_y_scroll()
             .p_2()
             .gap_1()
-            .text_size(px(13.))
+            .text_role(TextRole::Body, cx)
             .child(
                 h_flex()
                     .px_2()

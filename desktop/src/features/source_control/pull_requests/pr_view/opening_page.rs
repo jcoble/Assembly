@@ -1,5 +1,6 @@
 //! A pull request's page before it can be read: the row's words at once, and "Loading" while its project's machine
 //! says who owns it, or the question of which project, when more than one holds it.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::pr_parts::{PrHeading, loading_line};
 use super::{PrPane, Selected};
 use crate::core::intents::open_url::OpenUrl;
@@ -119,7 +120,7 @@ impl PrPane {
             Some(row) => PrHeading::of_row(row).view(cx),
             None => v_flex().child(
                 div()
-                    .text_lg()
+                    .text_role(TextRole::Heading, cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(format!("#{}", selected.number)),
             ),
@@ -140,7 +141,7 @@ impl PrPane {
                 .collect();
             v_flex()
                 .gap_2()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .child(format!("{what} is in more than one project. Open it from:"))
                 .child(h_flex().gap_2().flex_wrap().children(picks))
         });
@@ -149,7 +150,7 @@ impl PrPane {
             .min_h_0()
             .child(bar)
             .children(self.failure.clone().map(|error| {
-                div().px_3().py_1().text_sm().text_color(danger).child(error)
+                div().px_3().py_1().text_role(TextRole::Body, cx).text_color(danger).child(error)
             }))
             .child(
                 v_flex()

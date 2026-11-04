@@ -2,6 +2,7 @@
 //! when cancelled), opens its own session on click (the open session intent, lane g0-host), and has a Stop button
 //! until it's idle and while it can stop (`send/stopTask` with its session id). Replaces chat/Subagent.svelte.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -76,7 +77,7 @@ impl RenderOnce for SubagentCard {
                             .when_some(subagent.description.clone(), |column, description| {
                                 column.child(
                                     div()
-                                        .text_xs()
+                                        .text_role(TextRole::Meta, cx)
                                         .text_color(muted)
                                         .truncate()
                                         .child(description),
@@ -85,7 +86,7 @@ impl RenderOnce for SubagentCard {
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_role(TextRole::Meta, cx)
                             .text_color(muted)
                             .child(state_label(subagent)),
                     )

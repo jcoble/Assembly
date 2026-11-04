@@ -1,5 +1,6 @@
 //! The commit list as Source control draws it: under the sections in the panel's own scroller, a row per commit with its
 //! ref pills, opening onto its files, and more only on Load more. The history tab keeps the graph.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::git_history::GitCommit;
 use super::super::git_labels::{RefKind, commit_age, ref_pills, split_path};
 use super::super::section_heading::heading_label;
@@ -77,7 +78,7 @@ pub(super) fn commit_file_menu(
         None => PopupMenuItem::element(|_, cx| {
             v_flex().child("Open current file in editor").child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(cx.theme().muted_foreground)
                     .child(CURRENT_FILE_ELSEWHERE),
             )
@@ -118,7 +119,7 @@ impl CommitTimeline {
     pub(super) fn render_inline(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
-        let line = |text: String, color: Hsla| div().px_2().py_1().text_sm().text_color(color).child(text);
+        let line = |text: String, color: Hsla, cx: &App| div().px_2().py_1().text_role(TextRole::Body, cx).text_color(color).child(text);
         let complete = self.history.next_cursor.is_none();
         let count = self.history.commits.len();
         let heading = h_flex()
@@ -141,7 +142,7 @@ impl CommitTimeline {
                     .on_click(cx.listener(|timeline, _, _, cx| timeline.refresh(cx))),
             );
         let body = if let Some(error) = self.error.clone().filter(|_| count == 0) {
-            line(error, danger).into_any_element()
+            line(error, danger, cx).into_any_element()
         } else if count == 0 {
             line(
                 if self.reading {
@@ -150,6 +151,7 @@ impl CommitTimeline {
                     "This repository has no commits yet.".to_string()
                 },
                 muted,
+                cx,
             )
             .into_any_element()
         } else {
@@ -163,11 +165,11 @@ impl CommitTimeline {
             .child(heading)
             .child(body)
             .when(count > 0 && self.error.is_some(), |view| {
-                view.children(self.error.clone().map(|error| line(error, danger)))
+                view.children(self.error.clone().map(|error| line(error, danger, cx)))
             })
             .when(
                 !footer(count, complete, self.pages).is_empty(),
-                |view| view.child(line(footer(count, complete, self.pages), muted)),
+                |view| view.child(line(footer(count, complete, self.pages), muted, cx)),
             )
             .when(!complete, |view| {
                 view.child(
@@ -231,7 +233,7 @@ impl CommitTimeline {
                         tag.xsmall().rounded_full().max_w(relative(0.4)).truncate().child(pill.label)
                     }))
                     .child(div().flex_1().min_w_0().truncate().child(commit.subject.clone()))
-                    .child(div().flex_none().text_sm().text_color(muted).child(byline)),
+                    .child(div().flex_none().text_role(TextRole::Body, cx).text_color(muted).child(byline)),
             )
             .context_menu(move |menu, _, _| {
                 let (toggle, copy, view) = (menu_toggle.clone(), menu_copy.clone(), view.clone());
@@ -254,7 +256,7 @@ impl CommitTimeline {
         let sha = commit.sha.as_str();
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
-        let line = |text: String, color: Hsla| div().px_2().py_1().text_sm().text_color(color).child(text);
+        let line = |text: String, color: Hsla| div().px_2().py_1().text_role(TextRole::Body, cx).text_color(color).child(text);
         let files = self.files.get(sha);
         let content = match (files_sentence(files, commit.parents.len() > 1), files) {
             (Some(sentence), Some(CommitFiles::Failed(_))) => line(sentence, danger).into_any_element(),
@@ -288,7 +290,7 @@ impl CommitTimeline {
                                     div()
                                         .flex_none()
                                         .w(px(12.))
-                                        .text_sm()
+                                        .text_role(TextRole::Body, cx)
                                         .font_family(cx.theme().mono_font_family.clone())
                                         .text_color(muted)
                                         .child(file.letter.to_string()),
@@ -300,7 +302,7 @@ impl CommitTimeline {
                                         .min_w_0()
                                         .gap_1()
                                         .child(div().min_w_0().truncate().child(name.to_string()))
-                                        .child(div().min_w_0().truncate().text_sm().text_color(muted).child(folder.to_string())),
+                                        .child(div().min_w_0().truncate().text_role(TextRole::Body, cx).text_color(muted).child(folder.to_string())),
                                 ),
                         )
                         .context_menu(move |menu, _, _| {

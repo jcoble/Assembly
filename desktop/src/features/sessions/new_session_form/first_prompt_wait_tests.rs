@@ -63,7 +63,7 @@ async fn successful_first_prompt(cx:&mut TestAppContext,refuse:bool) {
         nav.calls_at_least("command",1).await;
         until("accepted retry operation",&mut changes,&changed,|| {cx.run_until_parked();form.read_with(cx,|form,_|form.attempt.as_ref().is_some_and(|attempt|attempt.current_operation.as_deref()!=Some(INITIAL)&&attempt.retry_operation.is_none()))}).await;
         let calls=nav.calls();let command=calls.iter().find(|frame|frame["method"]=="command").unwrap();
-        assert_eq!(command["args"]["entityId"],"accepted");assert_eq!(command["args"]["command"],json!({"kind":"change_checkout","checkoutKind":"current"}));
+        assert_eq!(command["args"]["entityId"],"accepted");assert_eq!(command["args"]["command"],json!({"kind":"change_checkout","checkoutKind":"current","branch":null,"base":null,"folder":null}));
         let actual=command["args"]["commandId"].as_str().unwrap().to_string();assert_ne!(actual,INITIAL);
         form.read_with(cx,|form,_|assert_eq!(form.attempt.as_ref().unwrap().accepted.as_ref().unwrap().initial_operation_id.as_deref(),Some(INITIAL)));
         (actual,4,"revised first prompt")

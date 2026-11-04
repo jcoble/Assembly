@@ -50,19 +50,19 @@ public sealed class NeedPresentationTests
     [Fact]
     public void Historical_numbers_backfill_once_by_created_time_and_id_without_fabricating_answer_origin()
     {
-        using var f = new EngineFixture(); f.SeedSession();
-        var command = new OpenNeed("s", null, null, "question", "Recorded question", [], null, null, null);
-        Assert.True(f.Apply(command, "b", actor: new(ActorKind.Session, "s")).Applied);
-        Assert.True(f.Apply(command, "a", actor: new(ActorKind.Session, "s")).Applied);
-        // Reconstruct the actual previous schema, preserving its two recorded rows and old answer.
-        f.Db.Writer.Write("test.previous-schema", scope => scope.Execute("""
-            UPDATE engine_needs_me SET answer_json='"historical answer"',answered_by='owner',answered_ms=1000,state='answered' WHERE id='a';
-            DROP INDEX engine_need_display_number;
-            ALTER TABLE engine_needs_me DROP COLUMN presentation_json;
-            ALTER TABLE engine_needs_me DROP COLUMN display_number;
-            ALTER TABLE engine_needs_me DROP COLUMN answered_origin_json;
-            ALTER TABLE engine_meta DROP COLUMN next_need_number;
-            UPDATE engine_meta SET schema_version=11;
+        using var f = new EngineFixture(predecessor: scope =>
+        {
+            // Real captured v10 DDL plus its actual workflow upgrade produces the v11 predecessor.
+            var captured = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Engine", "Workflows", "Fixtures", "schema10", "actual-v10.sql"));
+            scope.Execute(captured[..captured.IndexOf("INSERT INTO", StringComparison.Ordinal)]);
+            Assembly.Engine.Workflows.Persistence.WorkflowSchema.Upgrade(scope);
+            scope.Execute("INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq) VALUES(1,11,'need-schema',1,0,0)");
+        });
+        f.SeedSession();
+        f.Db.Writer.Write("test.historical-needs", scope => scope.Execute("""
+            INSERT INTO engine_needs_me(id,version,machine,created_ms,updated_ms,session_id,kind,text,options_json,state,answer_json,answered_by,answered_ms)
+            VALUES('b',1,'need-schema',1000,1000,'s','question','Recorded question','[]','open',NULL,NULL,NULL),
+                  ('a',2,'need-schema',1000,1000,'s','question','Recorded question','[]','answered','"historical answer"','owner',1000);
             """));
         f.Reopen();
         Assert.Equal(1, Display(f, "a").GetProperty("displayNumber").GetInt64());

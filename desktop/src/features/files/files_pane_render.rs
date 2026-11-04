@@ -1,5 +1,6 @@
 //! Native tree rows and controls borrow the pane's owned lazy model and action state.
-use super::{FileView, FilesPane, INDENT, Row, TREE_LINE, TREE_TEXT};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use super::{FileView, FilesPane, INDENT, Row, TREE_LINE};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::ContextMenuExt as _;
@@ -18,7 +19,7 @@ impl FilesPane {
                 .pl(px(8.) + INDENT * depth as f32)
                 .pr_2()
                 .gap_1()
-                .text_size(TREE_TEXT)
+                .text_role(TextRole::Title, cx)
                 .line_height(TREE_LINE)
                 .whitespace_nowrap()
                 .overflow_hidden()
@@ -145,7 +146,7 @@ impl Render for FilesPane {
                 div()
                     .px_3()
                     .py_2()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(muted)
                     .child("Pick a session to see its files."),
             );
@@ -196,7 +197,7 @@ impl Render for FilesPane {
         .children(self.action_error.clone().map(|error| {
             div()
                 .px_2()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .text_color(cx.theme().danger)
                 .child(error)
         }))

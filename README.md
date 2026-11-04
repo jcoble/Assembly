@@ -13,6 +13,7 @@ Run `pnpm app:dev` from the repository root or `app/`. It builds the .NET backen
 window in `desktop/`, not the old Tauri/Svelte window. Requires Node.js with TypeScript stripping, pnpm, the .NET
 SDK and the Rust toolchain pinned in `desktop/rust-toolchain.toml`.
 
-The command uses the existing checkout configuration from `scripts/lane-env.sh`: main uses `~/assembly-dotnet/mac`,
-and configured lanes use their own data and ports. The desktop owns the backend and stops it when the app closes.
-`ADAPTERS` overrides the ACP adapter installation folder (default `~/spike-dotnet/adapters`).
+It works from any checkout with nothing to set up. Main uses `~/assembly-dotnet/mac`, a lane worktree keeps its lane's
+data and ports, and any other checkout gets its own data under `~/assembly-dev/worktrees/` and its own ports. The
+desktop owns the backend and stops it when the app closes.
+`ADAPTERS` overrides the ACP adapter installation folder (default `adapters` beside that data).

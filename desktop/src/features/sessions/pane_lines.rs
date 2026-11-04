@@ -4,6 +4,7 @@
 
 use std::rc::Rc;
 
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::list_entries::{changed_lines, list_entries, same_line};
@@ -104,6 +105,7 @@ impl SessionsPane {
                 needs_you: super::sessions_pane::engine_rows::needs_you(entry,cx),
                 offline: Machines::offline(entry.machine.as_deref(), cx),
                 now,
+                arrow: None,
                 on_open: on_open.clone(),
                 on_mark: on_mark.clone(),
             };
@@ -129,7 +131,7 @@ impl SessionsPane {
                     key: header,
                     fold_key,
                     label,
-                    repo_url,
+                    repo_url: _,
                     machines,
                     count,
                     folded,
@@ -138,7 +140,7 @@ impl SessionsPane {
                     let new_pane = pane.clone();
                     ProjectHeader::new(
                         label,
-                        repo_url,
+                        header.clone(),
                         machines,
                         count,
                         folded,
@@ -162,33 +164,49 @@ impl SessionsPane {
                     if entry.running {
                         running_drawn.set(true);
                     }
-                    let context = row(&entry, cx);
+                    let mut context = row(&entry, cx);
                     let key=super::drop_down::rail_details_key(&entry);
+                    let open=drops.read(cx).is_open(&key);
                     let toggle_key=key.clone();let toggles=drops.clone();
                     let native_route=entry.machine.clone();
                     let parent=entry.source.as_ref().map(|source|crate::core::engine::SessionKey{machine:source.machine.clone(),id:entry.session_id.clone()});
                     let toggle_details:Rc<dyn Fn(&mut App)>=Rc::new(move|cx| {
-                        cx.stop_propagation();
                         let Some(parent)=parent.clone()else{return;};
                         if toggles.read(cx).is_open(&toggle_key){toggles.update(cx,|drops,cx|drops.shut(cx));return;}
                         let details=cx.new(|cx|super::drop_down::rail_details::RailDetails::new(parent,native_route.clone(),cx));
                         toggles.update(cx,|drops,cx|drops.toggle(toggle_key.clone(),move|_,_|details.clone().into_any_element(),cx));
                     });
-                    let clicked=toggle_details.clone();
-                    let toggle=gpui_kit::component::button::Button::new(SharedString::from(format!("details:{key}")))
-                        .child(crate::core::ui::row_drop_down::chevron(key.clone(),drops.clone()))
-                        .on_click(move|_,_,cx|clicked(cx));
+                    // An open row keeps its arrow even once its last question is answered, so it can shut.
+                    let openable=open||super::sessions_pane::engine_rows::has_details(&entry,cx);
+                    if openable {
+                        context.arrow=Some(crate::core::ui::three_line_row::RowArrow{open,on_toggle:toggle_details.clone()});
+                    }
                     let keys=drops.clone();let key_for_header=key.clone();
-                    let header=gpui_kit::component::h_flex().id(SharedString::from(format!("rail-header:{key}")))
+                    let showing=drops.read(cx).is_showing(&key);
+                    // An open row and its body are one fill, the one a selected row has. The kit's item would lay its own over it.
+                    context.selected=context.selected&&!showing;
+                    let row_height=crate::core::ui::three_line_row::row_height(cx);
+                    let growing=crate::core::ui::row_drop_down::GrowingBody::new(key.clone(),drops.clone(),row_height);
+                    let band=crate::core::ui::three_line_row::selected_fill(cx);
+                    let radius=gpui_kit::component::ActiveTheme::theme(cx).radius;
+                    gpui_kit::component::v_flex()
+                        .id(SharedString::from(format!("rail-header:{key}")))
+                        .w_full()
+                        .rounded(radius)
+                        .overflow_hidden()
+                        .when(showing,|row|row.bg(band))
                         .on_key_down(move|event,_,cx| {
                             let code=event.keystroke.key.as_str();
                             if code=="right" {
-                                if !keys.read(cx).is_open(&key_for_header){toggle_details(cx);}cx.stop_propagation();
+                                if openable&&!keys.read(cx).is_open(&key_for_header){toggle_details(cx);}cx.stop_propagation();
                             }else if matches!(code,"left"|"escape") {
                                 keys.update(cx,|drops,cx|{drops.handle_key(key_for_header.clone(),code,|_,_|Empty.into_any_element(),cx);});cx.stop_propagation();
                             }
-                        }).child(toggle).child(div().flex_1().min_w_0().child(SessionRow::new(*entry, context)));
-                    gpui_kit::component::v_flex().child(header).children(drops.read(cx).expand_row(&key)).into_any_element()
+                        })
+                        .child(SessionRow::new(*entry, context))
+                        .child(growing)
+                        .map(|row|div().w_full().px_2().py_px().child(row))
+                        .into_any_element()
                 }
             }
         }

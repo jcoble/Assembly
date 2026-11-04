@@ -3,6 +3,7 @@
 //! newer search, a session switch or closing the pane drops the older one, which cancels its call on the backend.
 //! "More" loads the next page the same way. It registers under the Search pane's name, after the placeholders.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -15,7 +16,7 @@ use serde_json::json;
 
 use super::entry::{ContentMatch, NameMatch, SearchResult};
 use super::file_view::FileView;
-use super::files_pane::{TREE_LINE, TREE_TEXT};
+use super::files_pane::TREE_LINE;
 use crate::core::intents::reveal_file_folder::RevealFileFolder;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
@@ -212,7 +213,7 @@ impl SearchPane {
             .child(format!("{}:{}:{}", found.path, line, column))
             .child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(cx.theme().muted_foreground)
                     .child(found.excerpt.clone()),
             )
@@ -266,7 +267,7 @@ impl SearchPane {
             .overflow_hidden()
             .when(picked, |row| row.bg(secondary))
             .when(!picked, |row| row.hover(|row| row.bg(accent)))
-            .child(div().flex_none().text_size(TREE_TEXT).child(format!(
+            .child(div().flex_none().text_role(TextRole::Title, cx).child(format!(
                 "{}{}",
                 found.name,
                 if found.is_directory { "/" } else { "" }
@@ -277,7 +278,7 @@ impl SearchPane {
                     .min_w_0()
                     .overflow_hidden()
                     .text_ellipsis()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(muted)
                     .child(folder.to_string()),
             )
@@ -346,7 +347,7 @@ impl Render for SearchPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
-        let line = |text: String| div().px_3().py_1().text_sm().child(text);
+        let line = |text: String| div().px_3().py_1().text_role(TextRole::Body, cx).child(text);
         let status = if self.session.is_none() {
             Some(line("Pick a session to search its files.".into()).text_color(muted))
         } else if let Some(error) = &self.error {

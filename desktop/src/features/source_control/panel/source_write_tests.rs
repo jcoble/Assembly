@@ -219,7 +219,7 @@ async fn a_held_branch_submits_the_shared_checkout_and_retains_session_identity(
     assert_eq!(command["expectedVersion"], 1);
     assert_eq!(
         command["command"],
-        json!({"kind":"change_checkout","checkoutKind":"folder","folder":"/owned/other"})
+        json!({"kind":"change_checkout","checkoutKind":"folder","branch":null,"base":null,"folder":"/owned/other"})
     );
     open.until("the checkout landed and the status was read again", |pane, cx| {
         let done = cx.update(|_, cx| pane.read(cx).checkout.is_none());

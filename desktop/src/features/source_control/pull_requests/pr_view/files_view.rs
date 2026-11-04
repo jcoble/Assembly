@@ -1,4 +1,5 @@
 //! How the Changes page looks: the stacked diff with its file header buttons, comment cards and the file tree.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::*;
 use crate::core::ui::changed_tree::{TREE_WIDTH, TreeHandler};
 use crate::core::ui::diff_header::{file_heading, viewed_button};
@@ -76,12 +77,12 @@ impl PrFiles {
                     );
                 }
             })
-            .render_annotation(move |annotation, _, cx| {
+            .render_annotation(move |annotation, window, cx| {
                 let content = contents
                     .iter()
                     .find(|(id, _)| id == annotation.id())
                     .map(|(_, content)| content.clone());
-                annotation_card(content, target.clone(), cx)
+                annotation_card(content, target.clone(), window, cx)
             });
         if self.open {
             diff = diff.on_add_annotation(move |range, _, cx| {
@@ -167,31 +168,45 @@ fn file_menu(path: &str, session: Option<String>) -> impl IntoElement + use<> {
 fn annotation_card(
     content: Option<AnnotationContent>,
     target: WeakEntity<PrFiles>,
+    window: &Window,
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
-    let (border, muted) = (theme.border, theme.muted_foreground);
+    let (surface, ring, muted, mono) = (
+        theme.secondary,
+        theme.ring,
+        theme.muted_foreground,
+        theme.mono_font_family.clone(),
+    );
     match content {
         Some(AnnotationContent::Adding(key, comment, input)) => {
             let (add, cancel) = (target.clone(), target);
             let (added, canceled) = (comment.id.clone(), comment.id.clone());
+            let focused = input.focus_handle(cx).contains_focused(window, cx);
             v_flex()
-                .m_2()
+                .mx_3()
+                .my_2()
                 .p_3()
                 .gap_2()
                 .rounded(theme.radius_lg)
+                .bg(surface)
                 .border_1()
-                .border_color(border)
-                .child(div().font_weight(FontWeight::SEMIBOLD).child(format!(
-                    "Comment on line {} ({} side)",
-                    comment.target.line,
-                    if comment.target.side == "LEFT" {
-                        "old"
-                    } else {
-                        "new"
-                    }
-                )))
-                .child(Textarea::new(&input))
+                .border_color(if focused { ring } else { transparent_black() })
+                .child(
+                    div()
+                        .text_role(TextRole::Meta, cx)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(format!(
+                            "Comment on line {} ({} side)",
+                            comment.target.line,
+                            if comment.target.side == "LEFT" {
+                                "old"
+                            } else {
+                                "new"
+                            }
+                        )),
+                )
+                .child(Textarea::new(&input).appearance(false))
                 .child(
                     h_flex()
                         .gap_2()
@@ -221,17 +236,16 @@ fn annotation_card(
         Some(AnnotationContent::Added(key, comment)) => {
             let id = comment.id.clone();
             h_flex()
-                .m_2()
-                .px_3()
-                .py_1()
+                .mx_3()
+                .my_2()
                 .gap_2()
-                .rounded(theme.radius_lg)
-                .border_1()
-                .border_color(border)
+                .text_role(TextRole::Body, cx)
                 .child(
                     div()
                         .flex_none()
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_role(TextRole::Meta, cx)
+                        .font_family(mono)
+                        .text_color(muted)
                         .child(format!("Line {}", comment.target.line)),
                 )
                 .child(
@@ -239,7 +253,6 @@ fn annotation_card(
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_color(muted)
                         .child(comment.target.body),
                 )
                 .child(
@@ -282,12 +295,12 @@ impl Render for PrFiles {
             .h_full()
             .min_h_0()
             .children((!current).then(|| {
-                div().px_3().py_1().text_sm().child(
+                div().px_3().py_1().text_role(TextRole::Body, cx).child(
                     "This review draft is for an earlier head. Its comments are kept; refresh before posting.",
                 )
             }))
             .children(self.failure.clone().map(|error| {
-                div().px_3().py_1().text_sm().text_color(danger).child(error)
+                div().px_3().py_1().text_role(TextRole::Body, cx).text_color(danger).child(error)
             }))
             .children(notes.into_iter().map(|(path, note, can_read)| {
                 let is_reading = reading.as_deref() == Some(path.as_str());
@@ -296,7 +309,7 @@ impl Render for PrFiles {
                     .px_3()
                     .py_1()
                     .gap_2()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(muted)
                     .child(div().truncate().child(format!("{path} · {note}")))
                     .children(can_read.then(|| {

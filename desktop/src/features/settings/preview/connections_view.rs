@@ -1,4 +1,5 @@
 //! One machine-centric surface for connection and provider maintenance.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::*;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::collapsible::Collapsible;
@@ -113,10 +114,10 @@ impl SettingsPreview {
             );
         }
         details = details
-            .child(Label::new("Assembly backend").text_sm())
+            .child(Label::new("Assembly backend").text_role(TextRole::Body, cx))
             .child(
                 Label::new("Version and protocol checks appear here in the connected app.")
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(cx.theme().muted_foreground),
             )
             .child(
@@ -155,7 +156,7 @@ impl SettingsPreview {
                         )
                         .child(
                             Label::new(machine.destination.clone())
-                                .text_sm()
+                                .text_role(TextRole::Body, cx)
                                 .text_color(cx.theme().muted_foreground),
                         )
                         .child(self.provider_rows(id, machine.connected, machine.installed, cx)),
@@ -180,18 +181,18 @@ impl SettingsPreview {
     pub(super) fn connection_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let mut content = v_flex().gap_4().w_full().max_w(px(720.))
             .child(h_flex().justify_between().gap_3()
-                .child(div().text_xl().child("Connections"))
+                .child(div().text_role(TextRole::Display, cx).child("Connections"))
                 .child(Button::new("install-connect").primary().small().label("Install and Connect")
                     .on_click(cx.listener(|s, _, _, cx| { s.show_install = !s.show_install; cx.notify(); }))))
-            .child(Label::new("Install, connect and manage your machines here. Expand a machine or provider for maintenance details.").text_sm().text_color(cx.theme().muted_foreground))
-            .child(Label::new("Sample data · connection edits stay in memory. Provider versions and models below are layout examples, not checks of your machines.").text_sm().text_color(cx.theme().muted_foreground));
+            .child(Label::new("Install, connect and manage your machines here. Expand a machine or provider for maintenance details.").text_role(TextRole::Body, cx).text_color(cx.theme().muted_foreground))
+            .child(Label::new("Sample data · connection edits stay in memory. Provider versions and models below are layout examples, not checks of your machines.").text_role(TextRole::Body, cx).text_color(cx.theme().muted_foreground));
         if self.show_install {
             content = content.child(GroupBox::new().id("install-form").outline()
                 .child(Label::new("Add a remote machine"))
                 .child(Form::vertical().small().max_w(px(384.))
                     .child(Field::new().label("Machine name").child(Input::new(&self.name)))
                     .child(Field::new().label("SSH destination").child(Input::new(&self.destination))))
-                .child(Label::new("The connected app will install the backend and connect over SSH. Here you can save a sample profile to try the layout.").text_sm().text_color(cx.theme().muted_foreground))
+                .child(Label::new("The connected app will install the backend and connect over SSH. Here you can save a sample profile to try the layout.").text_role(TextRole::Body, cx).text_color(cx.theme().muted_foreground))
                 .child(h_flex().gap_2()
                     .child(Button::new("save-machine").primary().small().label("Save sample profile")
                         .on_click(cx.listener(|s, _, window, cx| s.save(window, cx))))
@@ -202,7 +203,7 @@ impl SettingsPreview {
             content = content.child(self.machine_row(index, cx));
         }
         if !self.notice.is_empty() {
-            content = content.child(Label::new(self.notice.clone()).text_sm());
+            content = content.child(Label::new(self.notice.clone()).text_role(TextRole::Body, cx));
         }
         content.into_any_element()
     }

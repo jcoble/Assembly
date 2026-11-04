@@ -3,6 +3,7 @@
 //! panel behind the center, the drawer and the bottom dock. The utility strip sits at the foot of the sessions column
 //! (MotionSkin). Replaces ShellFrame.svelte and the `next-shell` markup in routes/+page.svelte (lines 817-958).
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -168,7 +169,7 @@ impl Render for Frame {
             .size_full()
             .bg(rgb(GROUND))
             .child(self.top_bar.clone())
-            .children(status.map(|text|div().px_3().py_1().text_xs().text_color(theme.danger).child(text)))
+            .children(status.map(|text|div().px_3().py_1().text_role(TextRole::Meta, cx).text_color(theme.danger).child(text)))
             .child(
                 div()
                     .flex_1()

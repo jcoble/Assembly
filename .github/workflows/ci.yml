@@ -44,7 +44,6 @@ jobs:
           key: desktop-${{ runner.os }}-${{ hashFiles('desktop/Cargo.lock', 'desktop/rust-toolchain.toml') }}
       # Installs the toolchain and components desktop/rust-toolchain.toml names.
       - run: rustup toolchain install
-      - run: cargo fmt --check
       # The .debs, so a slow mirror only costs apt-get update. Keyed on this file, which holds the package list.
       - uses: actions/cache@v4
         with:
@@ -72,6 +71,10 @@ jobs:
       - name: Native launcher shutdown timing
         run: bash ../scripts/shutdown-timing.test.sh
       - run: cargo clippy --locked --all-targets -- -D warnings
+      # Last and always, so unformatted code reports here without stopping the tests above.
+      - name: cargo fmt --check
+        if: ${{ !cancelled() }}
+        run: cargo fmt --check
   scripts:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -90,13 +93,20 @@ jobs:
       - name: Every scripts/*.test.sh passes
         run: |
           failed=0
-          # shutdown-timing.test.sh runs in the desktop job with its Rust toolchain and native dependencies.
+          # shutdown-timing.test.sh runs in the desktop job with its Rust toolchain and native dependencies, and
+          # remote-cli.test.sh below, since its build can rewrite a lock file and lint-checks.test.sh needs a clean tree.
           for t in scripts/*.test.sh; do
             [ "$t" = scripts/shutdown-timing.test.sh ] && continue
+            [ "$t" = scripts/remote-cli.test.sh ] && continue
             echo "== $t"
             bash "$t" || failed=1
           done
           exit $failed
+      - name: The remote CLI's arguments
+        if: ${{ !cancelled() }}
+        run: |
+          dotnet build dotnet/Assembly.Remote/Assembly.Remote.csproj
+          bash scripts/remote-cli.test.sh
   lint:
     # scripts/lint.sh runs the retained script checks and native desktop guard; its .NET checks need dotnet.
     runs-on: ubuntu-latest

@@ -2,6 +2,7 @@
 //! when it was made). Draws only; every word comes from `Worktree`. Replaces WorktreeRow.svelte and
 //! WorktreeDetail.svelte's facts.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::f32::consts::FRAC_PI_2;
 
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex, v_flex};
@@ -22,7 +23,7 @@ pub fn title(worktree: &Worktree, grown: f32, cx: &App) -> Div {
             .flex_none()
             .px_1p5()
             .rounded(theme.radius)
-            .text_xs()
+            .text_role(TextRole::Meta, cx)
             .text_color(fg)
             .bg(bg)
             .child(mark.text)
@@ -31,7 +32,7 @@ pub fn title(worktree: &Worktree, grown: f32, cx: &App) -> Div {
         .h(px(28.))
         .px_2()
         .gap_2()
-        .text_sm()
+        .text_role(TextRole::Body, cx)
         .child(
             Icon::new(IconName::ChevronRight)
                 .xsmall()
@@ -54,7 +55,7 @@ pub fn body(worktree: &Worktree, cx: &App) -> Div {
         .px_2()
         .pb_2()
         .gap_1()
-        .text_xs()
+        .text_role(TextRole::Meta, cx)
         .child(fact("Folder", worktree.path.clone()))
         .children(worktree.head_line().map(|head| fact("Head", head)))
         .children(worktree.committed().map(|at| fact("Made", at)))

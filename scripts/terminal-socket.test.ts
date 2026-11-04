@@ -105,8 +105,15 @@ async function scenario(options: Scenario = {}) {
     }
     const result = (value: unknown) => send({ t: 'result', id: frame.id, result: value });
     if (path === '/socket') {
+      if (frame.feature === 'projects') {
+        assert.equal(frame.method, 'add');
+        assert.deepEqual(frame.args, { machine: 'workbox-test', path: repo });
+        result({ project: { id: 'fixture-project' } }); return;
+      }
       assert.equal(frame.feature, 'sessions'); assert.equal(frame.method, 'create');
-      assert.deepEqual(frame.args, { agent: 'test-provider', repoUrl: repo, machine: 'workbox-test' });
+      const { clientId, ...asked } = frame.args;
+      assert.match(clientId, /^[a-f0-9-]{36}$/);
+      assert.deepEqual(asked, { agent: 'test-provider', projectId: 'fixture-project', machine: 'workbox-test' });
       if (options.create === 'disconnect') { peer.destroy(); return; }
       if (options.create === 'reject') { send({ t: 'error', id: frame.id, code: 'failed', message: 'remote create refused' }); return; }
       result({ sessionId: 'remote-owner' }); return;

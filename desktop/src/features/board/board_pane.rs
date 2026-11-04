@@ -5,7 +5,8 @@
 //! going), so dismissing it drops them all; the backend keeps mirroring. The top bar's existing popover owns its
 //! lifetime, and the palette's "Build Board" opens that same dropdown.
 
-use std::collections::HashMap;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use std::collections::{HashMap, HashSet};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{DockAreaState, DockState, PanelInfo, PanelState};
@@ -29,6 +30,7 @@ use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::machines::Machines;
 use crate::core::state::selected_session::SelectedSession;
+use crate::core::ui::row_drop_down::{RowDropDownEvent, RowDropDowns};
 
 /// The retired saved pane name and the palette's label.
 pub const BOARD: &str = "Build Board";
@@ -107,6 +109,11 @@ pub struct BoardPane {
     pub(super) detail_failed: Option<String>,
     /// The backend clock's last tick, for the durations of cards still going.
     pub(super) now: Option<i64>,
+    /// The one open card, growing and shrinking in the list.
+    pub(super) drops: Entity<RowDropDowns>,
+    _drops: Subscription,
+    /// The last card shut, and the detail it had.
+    closing: Option<((String, String), Option<BoardTaskResult>)>,
     inputs: HashMap<QuestionId, Entity<InputState>>,
     _topic: Option<Task<()>>,
     _page: Option<Task<()>>,
@@ -139,7 +146,22 @@ impl BoardPane {
                 cx.notify();
             })
         });
+        let drops = cx.new(|_| RowDropDowns::default());
+        let _drops = cx.subscribe(&drops, |pane, _, event: &RowDropDownEvent, cx| {
+            if let RowDropDownEvent::Moved(key) = event {
+                let card = (pane.state.items.iter()).position(|item| {
+                    board_card::card_key(&item.task.machine_id, &item.task.task_key) == *key
+                });
+                if let Some(at) = card {
+                    pane.list.remeasure_items(at..at + 1);
+                }
+            }
+            cx.notify();
+        });
         let mut pane = BoardPane {
+            drops,
+            _drops,
+            closing: None,
             focus: cx.focus_handle(),
             state: BoardState::default(),
             list: ListState::new(0, ListAlignment::Top, px(400.)),
@@ -235,9 +257,20 @@ impl BoardPane {
                 });
             }
             self.hold_clock(cx);
+            self.release_gone_cards(cx);
             cx.notify();
         }
         self.read_page(next, cx);
+    }
+
+    /// A card no longer listed never finishes closing, so its body goes now. The selected card stays open: it's still
+    /// expanded when a filter brings it back.
+    fn release_gone_cards(&mut self, cx: &mut Context<Self>) {
+        let mut listed: HashSet<SharedString> = (self.state.items.iter())
+            .map(|item| board_card::card_key(&item.task.machine_id, &item.task.task_key))
+            .collect();
+        listed.extend((self.state.selected.as_ref()).map(|card| board_card::card_key(&card.0, &card.1)));
+        self.drops.update(cx, |drops, cx| drops.retain_keys(|key| listed.contains(key), cx));
     }
 
     /// Holds the backend clock while a shown card is still going, and lets it go otherwise.
@@ -285,12 +318,41 @@ impl BoardPane {
         }));
     }
 
-    /// Expands the card, or folds it when it's the one expanded.
-    pub(super) fn select(&mut self, machine: &str, task: &str, cx: &mut Context<Self>) {
+    /// Expands the card, or folds it when it's the one expanded. The card on its way shut keeps its detail until the
+    /// next card is picked, so it doesn't change as it closes.
+    pub(super) fn select(&mut self, machine: &str, task: &str, session: &str, cx: &mut Context<Self>) {
         (self._detail, self.detail_failed) = (None, None);
+        let was = self.state.selected.clone();
+        let had = self.state.detail.take();
         let read = self.state.select(machine, task);
+        self.closing = was.map(|card| (card, had));
         self.read_detail(read, cx);
+        if self.state.selected.is_none() {
+            self.drops.update(cx, |drops, cx| drops.shut(cx));
+            return self.redraw(cx);
+        }
+        let pane = cx.weak_entity();
+        let (key, machine, task, session) =
+            (board_card::card_key(machine, task), machine.to_string(), task.to_string(), session.to_string());
+        self.drops.update(cx, |drops, cx| {
+            drops.toggle(
+                key,
+                move |window, cx| {
+                    pane.update(cx, |pane, cx| {
+                        board_card::detail(pane, &machine, &task, &session, window, cx)
+                    })
+                    .unwrap_or_else(|_| Empty.into_any_element())
+                },
+                cx,
+            )
+        });
         self.redraw(cx);
+    }
+
+    /// The detail of the card on its way shut.
+    pub(super) fn closing_detail(&self, machine: &str, task: &str) -> Option<BoardTaskResult> {
+        let (card, detail) = self.closing.as_ref()?;
+        (card.0 == machine && card.1 == task).then(|| detail.clone()).flatten()
     }
 
     pub(super) fn earlier_events(&mut self, cx: &mut Context<Self>) {
@@ -436,10 +498,10 @@ impl Render for BoardPane {
             .pt_3()
             .pb_2()
             .gap_0p5()
-            .child(div().text_xs().text_color(muted).child("BUILD BOARD"))
+            .child(div().text_role(TextRole::Meta, cx).text_color(muted).child("BUILD BOARD"))
             .child(
                 div()
-                    .text_lg()
+                    .text_role(TextRole::Heading, cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(headline),
             )
@@ -448,7 +510,7 @@ impl Render for BoardPane {
                     "{} running · {} finished · {} in all",
                     c.running, c.terminal, c.total
                 );
-                div().text_sm().text_color(muted).child(line)
+                div().text_role(TextRole::Body, cx).text_color(muted).child(line)
             }))
             .child(
                 div().pt_1().min_w_0().child(
@@ -459,7 +521,7 @@ impl Render for BoardPane {
                         .children(filters),
                 ),
             );
-        let note = |text: String| div().px_4().py_2().text_sm().text_color(muted).child(text);
+        let note = |text: String| div().px_4().py_2().text_role(TextRole::Body, cx).text_color(muted).child(text);
         let body = match &self.failed {
             Some(message) => note(message.clone()).text_color(danger).into_any_element(),
             None if counts.is_none() => note("Reading the Board…".into()).into_any_element(),
@@ -481,7 +543,7 @@ impl Render for BoardPane {
                 .px_4()
                 .py_2()
                 .gap_2()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .text_color(muted)
                 .child(format!("Showing {shown} of {total}"))
                 .child(
@@ -501,3 +563,7 @@ impl Render for BoardPane {
             .children(more)
     }
 }
+
+#[cfg(test)]
+#[path = "board_pane_tests.rs"]
+mod tests;

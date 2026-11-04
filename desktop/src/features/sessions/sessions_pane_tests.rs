@@ -200,10 +200,13 @@ fn selected(cx: &mut VisualTestContext) -> Option<String> {
     })
 }
 
-/// The pane takes `answer` as its read's.
+/// The pane takes `answer` as its read's: the one already out if the rail topic started one, or a new one.
 fn answer(pane: &Entity<SessionsPane>, answer: RailPage, cx: &mut VisualTestContext) {
     pane.update(cx, |pane, cx| {
-        let (id, _) = pane.rail.changed().unwrap();
+        let id = pane
+            .rail
+            .reading_id()
+            .unwrap_or_else(|| pane.rail.changed().unwrap().0);
         pane.answer(id, Outcome::Ok(answer), cx);
     });
     draw(cx);
@@ -581,7 +584,7 @@ fn the_draft_says_when_it_has_no_chat_pane_and_a_second_press_keeps_the_same_one
     pane.update_in(cx, |pane, window, cx| pane.show_draft(window, cx));
     let first = pane.read_with(cx, |pane, _| pane.creating.as_ref().map(|(form, _)| form.clone()));
     assert!(first.is_some());
-    pane.read_with(cx, |pane, _| assert!(pane.mark_error.is_some()));
+    pane.read_with(cx, |pane, _| assert!(pane.row_error.is_some()));
     pane.update_in(cx, |pane, window, cx| pane.show_draft(window, cx));
     let second = pane.read_with(cx, |pane, _| pane.creating.as_ref().map(|(form, _)| form.clone()));
     assert_eq!(first, second);

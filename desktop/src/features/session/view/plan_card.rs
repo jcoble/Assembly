@@ -2,8 +2,9 @@
 //! with a panel of steps that opens upward over the timeline, so opening it moves nothing. The pill also carries the
 //! turn's file totals when the agent gave no plan. The panel shuts when the turn ends. Replaces PlanChip.svelte.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
-use gpui_kit::component::spinner::Spinner;
+use crate::core::ui::spinner::Spinner;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -127,7 +128,7 @@ fn panel(items: &[PlanItem], running: bool, cx: &App) -> Div {
                 .rounded(px(12.))
                 .bg(theme.popover)
                 .shadow_lg()
-                .text_size(px(14.))
+                .text_role(TextRole::Body, cx)
                 .children(steps),
         )
 }
@@ -171,7 +172,7 @@ impl RenderOnce for PlanCard {
                     .rounded_full()
                     .bg(popover)
                     .shadow_sm()
-                    .text_size(px(14.))
+                    .text_role(TextRole::Body, cx)
                     .when(has_plan, |pill| {
                         pill.cursor_pointer()
                             .hover(move |pill| pill.bg(hover))

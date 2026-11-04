@@ -12,6 +12,7 @@ mod row;
 #[path = "../section.rs"]
 mod section;
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::inline_field::{FieldValue, InlineField, SaveRequested};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::group_box::GroupBoxVariant;
@@ -227,7 +228,7 @@ impl Render for SettingsPreview {
                             .child(field.clone())
                             .child(
                                 Label::new(description)
-                                    .text_sm()
+                                    .text_role(TextRole::Body, cx)
                                     .text_color(cx.theme().muted_foreground),
                             )
                     })
@@ -283,7 +284,7 @@ impl Render for SettingsPreview {
             pages.push(page);
         }
         v_flex().size_full()
-            .child(Label::new("UI preview · sample edits stay in memory; application preferences cannot be saved here.").text_sm().text_color(cx.theme().muted_foreground).p_3())
+            .child(Label::new("UI preview · sample edits stay in memory; application preferences cannot be saved here.").text_role(TextRole::Body, cx).text_color(cx.theme().muted_foreground).p_3())
             .child(div().flex_1().min_h_0().child(
                 Settings::new(("kit-settings", self.navigation_generation))
                     .sidebar_width(px(220.))

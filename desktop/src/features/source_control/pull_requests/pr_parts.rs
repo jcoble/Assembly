@@ -1,10 +1,11 @@
 //! The small pieces the Pull requests tab draws in many places.
-use super::pr_activity::{PrTone, age_of, pr_state};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use super::pr_activity::{PrTone, age_of, pr_state, repo_name};
 use super::pull_request::{PullRequestDetail, PullRequestSummary};
 use crate::core::socket::picture_client::picture_url;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::avatar::Avatar;
-use gpui_kit::component::spinner::Spinner;
+use crate::core::ui::spinner::Spinner;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -86,9 +87,15 @@ impl<'a> PrHeading<'a> {
         }
     }
     pub fn view(&self, cx: &App) -> Div {
-        let muted = cx.theme().muted_foreground;
+        let theme = cx.theme();
+        let (muted, text, quiet_pill) = (theme.muted_foreground, theme.foreground, theme.secondary);
         let (state, tone) = pr_state(self.state, self.is_draft);
         let color = tone_color(tone, cx);
+        let pill_color = if tone == PrTone::Idle {
+            quiet_pill
+        } else {
+            color.opacity(0.16)
+        };
         let title = if self.title.is_empty() {
             format!("#{}", self.number)
         } else {
@@ -96,31 +103,41 @@ impl<'a> PrHeading<'a> {
         };
         let pill = (!self.state.is_empty()).then(|| {
             h_flex()
-                .gap_1()
-                .px_2()
-                .rounded_full()
-                .border_1()
-                .border_color(color)
+                .gap(px(5.))
+                .px(px(9.))
+                .py(px(3.))
+                .rounded(px(8.))
+                .bg(pill_color)
                 .text_color(color)
                 .child(Icon::new(state_icon(self.state, self.is_draft)).size(px(13.)))
                 .child(state)
         });
-        let author = (!self.author.is_empty())
-            .then(|| div().font_weight(FontWeight::SEMIBOLD).child(self.author.to_string()));
+        let author = (!self.author.is_empty()).then(|| {
+            div()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(text)
+                .child(self.author.to_string())
+        });
         v_flex()
             .gap_2()
+            .child(h_flex().gap_2().text_role(TextRole::Body, cx).children(pill).child(
+                div().text_color(muted).child(format!(
+                    "{} #{}",
+                    repo_name(self.repository),
+                    self.number
+                )),
+            ))
             .child(
-                h_flex().gap_2().text_sm().children(pill).child(
-                    div()
-                        .text_color(muted)
-                        .child(format!("{} #{}", self.repository, self.number)),
-                ),
+                div()
+                    .text_role(TextRole::Heading, cx)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title),
             )
-            .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(title))
             .child(
                 h_flex()
-                    .gap_1()
-                    .text_sm()
+                    .flex_wrap()
+                    .gap_2()
+                    .text_role(TextRole::Body, cx)
                     .text_color(muted)
                     .children(avatar(self.author))
                     .children(author)
@@ -134,16 +151,20 @@ impl<'a> PrHeading<'a> {
 fn branches(head: &str, base: &str, cx: &App) -> impl IntoElement + use<> {
     let muted = cx.theme().muted_foreground;
     h_flex()
-        .gap_1()
+        .gap_2()
         .min_w_0()
         .child(div().truncate().child(head.to_string()))
-        .child(Icon::new(IconName::ArrowRight).size(px(11.)).text_color(muted))
+        .child(
+            Icon::new(IconName::ArrowRight)
+                .size(px(13.))
+                .text_color(muted),
+        )
         .child(div().truncate().child(base.to_string()))
 }
 pub fn loading_line(cx: &App) -> Div {
     h_flex()
         .gap_2()
-        .text_sm()
+        .text_role(TextRole::Body, cx)
         .text_color(cx.theme().muted_foreground)
         .child(Spinner::new().small())
         .child("Loading pull request…")

@@ -264,8 +264,9 @@ public sealed class RemoteConnectionsTests
             var session = sessions.Get("existing")!;
             Assert.Equal("remote", (await machines.For(session).ConfigAsync(session, CancellationToken.None)).Choices["where"]);
             Assert.Equal("remote", (await machines.For(session).SetConfigAsync(session, "model", "chosen", CancellationToken.None)).Choices["where"]);
+            await Assert.IsType<RemoteMachine>(machines.For(session)).ReadMirrorOwnerAsync(CancellationToken.None);
             var accepted = await Assert.IsType<RemoteMachine>(machines.For(session)).SendOwnerPromptAsync(
-                new(session.SessionId, "hello", "connection-first", [], null), CancellationToken.None);
+                new(session.SessionId, "hello", restart == 0 ? "connection-first" : "connection-second", [], null), CancellationToken.None);
             Assert.Equal("queued", accepted.State);
             Assert.Null(accepted.RunId);
             Assert.Empty(local.Asked);
@@ -280,6 +281,7 @@ public sealed class RemoteConnectionsTests
             Assert.Null(machines.Named("box"));
             store.Import(new("box", "second"));
             await connections.ConnectionAsync("box", true, CancellationToken.None);
+            await Assert.IsType<RemoteMachine>(machines.For(session)).ReadMirrorOwnerAsync(CancellationToken.None);
             accepted = await Assert.IsType<RemoteMachine>(machines.For(session)).SendOwnerPromptAsync(
                 new(session.SessionId, "edited", "connection-second", [], null), CancellationToken.None);
             Assert.Equal("queued", accepted.State);

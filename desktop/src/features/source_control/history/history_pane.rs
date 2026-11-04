@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::commit_timeline::{CommitTimeline, uncommitted_of};
 use super::git_checkouts::{CheckoutHint, GitCheckouts, checkout_gone, repository_label};
 use super::git_status::GitStatus;
@@ -464,7 +465,7 @@ impl Render for HistoryPane {
                             .border_1()
                             .border_color(border)
                             .rounded(px(5.))
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .text_color(muted)
                             .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
                             .child(path),
@@ -500,7 +501,7 @@ impl Render for HistoryPane {
                 |filter, value| filter.author = value,
             ))
             .child(div().flex_1().min_w_0().max_w(px(320.)).child(Input::new(&self.search).small()))
-            .child(div().flex_none().text_sm().text_color(muted).child(count))
+            .child(div().flex_none().text_role(TextRole::Body, cx).text_color(muted).child(count))
             .child(div().flex_1())
             .child(
                 Button::new("history-refresh")
@@ -521,7 +522,7 @@ impl Render for HistoryPane {
             .min_h_0()
             .child(toolbar)
             .children(self.notice.clone().map(|notice| {
-                div().flex_none().px(px(10.)).py_1().text_sm().text_color(muted).child(notice)
+                div().flex_none().px(px(10.)).py_1().text_role(TextRole::Body, cx).text_color(muted).child(notice)
             }))
             .child(self.timeline.clone())
     }

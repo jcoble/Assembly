@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::*;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
@@ -16,12 +17,12 @@ impl Render for SignInPanel {
                 .gap_1()
                 .child(
                     div()
-                        .text_lg()
+                        .text_role(TextRole::Heading, cx)
                         .child(self.projection.target.provider_name.clone()),
                 )
                 .child(
                     div()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(cx.theme().muted_foreground)
                         .child(self.projection.target.machine_label.clone()),
                 ),
@@ -32,25 +33,25 @@ impl Render for SignInPanel {
             .as_ref()
             .and_then(|row| row.facts());
         if let Some(facts) = &facts {
-            content = content.child(div().text_sm().child(
+            content = content.child(div().text_role(TextRole::Body, cx).child(
                 format!("{} · {} · {}{}",facts.name,facts.adapter,facts.installation,
                 facts.version.as_ref().map(|v|format!(" · {v}")).unwrap_or_default()),
             ));
             content = content.child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .child(format!("Authentication: {}", facts.auth)),
             );
         }
         if let Some(problem) = facts.as_ref().and_then(|facts| facts.problem.as_deref()) {
-            content = content.child(div().text_sm().child(problem_text(problem)));
+            content = content.child(div().text_role(TextRole::Body, cx).child(problem_text(problem)));
         }
         if let Some(row) = &self.projection.operation {
             if let Some(method) = &row.method_id {
-                content = content.child(div().text_sm().child(format!("Method: {method}")));
+                content = content.child(div().text_role(TextRole::Body, cx).child(format!("Method: {method}")));
             }
             if let Some(reason) = &row.reason {
-                content = content.child(div().text_sm().child(problem_text(reason)));
+                content = content.child(div().text_role(TextRole::Body, cx).child(problem_text(reason)));
             }
         }
         let state = self
@@ -72,7 +73,7 @@ impl Render for SignInPanel {
             } else {
                 "Loading provider status…"
             });
-        content = content.child(div().text_sm().child(state));
+        content = content.child(div().text_role(TextRole::Body, cx).child(state));
         let mut methods = h_flex().gap_2().flex_wrap();
         if let Some(facts) = &facts {
             for method in &facts.methods {
@@ -141,7 +142,7 @@ impl Render for SignInPanel {
                 content = content
                     .child(
                         div()
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .w_full()
                             .whitespace_normal()
                             .child(url.clone()),
@@ -157,7 +158,7 @@ impl Render for SignInPanel {
             }
             if challenge.wants_code {
                 content = content
-                    .child(div().text_sm().child("Code from the sign-in page"))
+                    .child(div().text_role(TextRole::Body, cx).child("Code from the sign-in page"))
                     .child(Input::new(&self.code))
                     .child(
                         Button::new("auth:submit-code")
@@ -169,13 +170,13 @@ impl Render for SignInPanel {
                     );
             }
             if challenge.terminal_id.is_some() {
-                content=content.child(div().text_sm().child("This method needs a terminal. Terminal sign-in attachment is not available in this panel yet."));
+                content=content.child(div().text_role(TextRole::Body, cx).child("This method needs a terminal. Terminal sign-in attachment is not available in this panel yet."));
             }
         }
         if !self.error.is_empty() {
             content = content.child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(cx.theme().danger)
                     .child(self.error.clone()),
             );

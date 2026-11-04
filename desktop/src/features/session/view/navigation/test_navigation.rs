@@ -46,7 +46,7 @@ impl NavigationFixture {
                         "messageId":format!("prompt/{}/{}",args["session"].as_str().unwrap(),args["clientId"].as_str().unwrap()),"state":"queued","messageVersion":2,"seq":42,"epoch":1,"runId":null}}));vec![]
                 },
                 (Some("call"),Some("engine"),Some("command"),_) if state.start_reply.is_some()=>{
-                    assert_eq!(args["command"],json!({"kind":"change_checkout","checkoutKind":"current"}));
+                    assert_eq!(args["command"],json!({"kind":"change_checkout","checkoutKind":"current","branch":null,"base":null,"folder":null}));
                     let session=args["entityId"].as_str().unwrap();let mut row=state.start_displays[session].clone();
                     assert_eq!(row["state"],"starting");assert_eq!(row["checkoutState"],"refused");
                     let after=row["version"].as_i64().unwrap();assert_eq!(args["expectedVersion"],after);
@@ -125,6 +125,8 @@ impl NavigationFixture {
     pub fn start_case(&self,row:Value,reply:Value) {
         let mut state=self.state.lock().unwrap();state.start_displays.insert(row["id"].as_str().unwrap().into(),row);state.start_reply=Some(reply);
     }
+    /// Forgets the results so far, so `opened` waits for the next one.
+    pub fn forget_results(&self){self.results.borrow_mut().clear();}
     pub fn fail_next_warm(&self){self.state.lock().unwrap().fail_warm=true;}
     pub fn operational(&self){self.state.lock().unwrap().operational=true;}
     pub fn replace_owner(&self){self.state.lock().unwrap().owner=Some("replacement-owner".into());}

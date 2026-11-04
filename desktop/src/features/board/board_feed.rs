@@ -1,6 +1,7 @@
 //! The expanded card's feed: each event's time, kind and its own question, answer or delivery status.
 //! A progress report shows the state it moved the task to and its summary.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use chrono::{Local, TimeZone};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -26,7 +27,7 @@ pub fn feed(events: &[BoardEvent], cx: &App) -> Div {
         h_flex()
             .items_start()
             .gap_2()
-            .text_xs()
+            .text_role(TextRole::Meta, cx)
             .child(div().w(px(64.)).flex_none().text_color(muted).child(time))
             .child(
                 div()

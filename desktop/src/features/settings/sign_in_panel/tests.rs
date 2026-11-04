@@ -1,5 +1,6 @@
 //! The actual native panel handlers over the existing main/bulk fake socket transport.
 use super::{SignInPanel, SignInTarget, SocketClient, connection_identity};
+use crate::core::engine::{EngineChanged, EngineFeed};
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
 use crate::core::socket::test_wait::until;
@@ -7,6 +8,8 @@ use futures_channel::{mpsc::unbounded, oneshot};
 use gpui::TestAppContext;
 use gpui_kit::{Entity, Task, VisualTestContext};
 use serde_json::{Value, json};
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -349,7 +352,20 @@ async fn actual_click_handler_never_acks_failed_opens_or_an_obsolete_displayed_l
     );
 }
 
+/// Commits a provider change and waits until the panel has heard it. Its event travels apart from the call's reply.
 async fn invalidate_provider(cx: &mut VisualTestContext) {
+    let heard = Rc::new(Cell::new(false));
+    let (tell, mut changes) = unbounded();
+    let (hear, signal) = (heard.clone(), tell.clone());
+    let _heard = cx.update(|_, cx| {
+        let feed = EngineFeed::global(cx);
+        cx.subscribe(&feed, move |_, changed: &EngineChanged, _| {
+            if changed.keys.iter().any(|key| key.kind == "provider") {
+                hear.set(true);
+                _ = signal.unbounded_send(());
+            }
+        })
+    });
     let call = cx.read(|cx| {
         SocketClient::global(cx).read(cx).call::<Value>(
             "test",
@@ -362,6 +378,7 @@ async fn invalidate_provider(cx: &mut VisualTestContext) {
         call.await,
         crate::core::socket::outcome::Outcome::Ok(_)
     ));
+    until("the provider change", &mut changes, &tell, || heard.get()).await;
 }
 #[gpui::test]
 async fn repeated_committed_invalidations_during_a_read_coalesce_and_do_not_get_lost(

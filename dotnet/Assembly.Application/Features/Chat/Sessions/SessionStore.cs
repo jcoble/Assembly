@@ -333,7 +333,7 @@ public sealed partial class SessionStore
                 Text(17), Long(18), ProviderGlyph.Of(row.Text(5)), (int)row.Long(19), (int)row.Long(20),
                 row.Text(21), Text(22), Text(26), (int)row.Long(35), Long(27), Long(28), Long(29),
                 Text(30), Text(31), Text(32), Text(33), Long(34),
-                Text(23) is { } machine ? new(machine, row.Long(24), Text(25)) : null),
+                Text(23) is { } machine ? new(machine, row.Long(24), Text(25)) : null, row.Long(36) == 1),
         };
     }
 

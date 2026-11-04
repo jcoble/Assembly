@@ -51,7 +51,7 @@ impl GroupedSampleForm {
 }
 impl Render for GroupedSampleForm {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut form = Form::vertical().small().w_full().max_w(rems(18.));
+        let mut form = Form::vertical().small().w_full().max_w(px(288.));
         for (index, title) in ["Display name", "Destination"].iter().enumerate() {
             let value = if self.state.editing {
                 Input::new(&self.inputs[index])

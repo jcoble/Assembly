@@ -42,7 +42,7 @@ impl SessionsPane {
 
     fn put_in_chat(&mut self, form: &Entity<NewSessionForm>, window: &mut Window, cx: &mut Context<Self>) {
         let shown = SessionPane::open_draft(form.clone().into(), window, cx);
-        self.mark_error = (!shown).then(|| "The new session can't open: there's no Chat pane.".into());
+        self.row_error = (!shown).then(|| "The new session can't open: there's no Chat pane.".into());
         if shown {
             form.update(cx, |form, cx| form.focus_start(window, cx));
         }
@@ -79,7 +79,7 @@ impl SessionsPane {
         let call = socket
             .read(cx)
             .call::<Value>("sessions", "mark", args, None);
-        self.mark_error = None;
+        self.row_error = None;
         self.next_mark += 1;
         let id = self.next_mark;
         let task = cx.spawn(async move |pane, cx| {
@@ -87,7 +87,7 @@ impl SessionsPane {
             pane.update(cx, |pane, cx| {
                 pane.marking.remove(&id);
                 if let Outcome::Failed(failure) = outcome {
-                    pane.mark_error =
+                    pane.row_error =
                         Some(format!("Couldn't move the session: {}", failure.message).into());
                 }
                 cx.notify();

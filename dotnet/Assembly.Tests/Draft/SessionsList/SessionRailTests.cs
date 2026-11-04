@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Assembly.Application.Common.Topics;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Rows;
@@ -181,6 +182,11 @@ public sealed partial class SessionRailTests : IDisposable
         Running(b);
         var c = Parent("claude", machine: "workbox-test");
         Asking(c);
+        var remote = _sessions.Get(c)!;
+        _database.Writer.Write("test.filtered-owner", scope => scope.Execute("""
+            UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.provider',$provider,'$.folder','/recorded/remote','$.updatedMs',$updated)
+            WHERE entity_kind='session' AND entity_id=$id;
+            """, new("$provider", remote.Agent), new("$updated", remote.UpdatedAt), new("$id", c)));
         Parent("codex", machine: "workbox-test");
         var settled = Parent("claude");
         Running(settled);
@@ -343,6 +349,25 @@ public sealed partial class SessionRailTests : IDisposable
         Assert.True(Entry(Read(), session).Running);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_native_subagent_gives_its_session_something_to_open_on_the_rail(bool remote)
+    {
+        var session = Parent(machine: remote ? "workbox-test" : null);
+        Assert.False(Entry(Read(), session).NativeActivity);
+
+        _topics.Published.Clear();
+        var state = new { state = "completed" };
+        if (remote)
+            Assert.True(_hub.PublishCopy(new StoredRow(session, 1, "run-1", "native", RowKind.Subagent, JsonSerializer.SerializeToElement(state), 1, PrevSeq: 0)));
+        else
+            Rows(session, ("native", RowKind.Subagent, state));
+
+        Assert.Contains((RailTopic, (string?)session, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
+        Assert.True(Entry(Read(), session).NativeActivity);
+    }
+
     [Fact]
     public void HelperChangesReachRailSubscribers()
     {
@@ -480,14 +505,19 @@ public sealed partial class SessionRailTests : IDisposable
     private static List<string> Collect(Func<RailCursor?, Rail> read)
     {
         var seen = new List<string>();
+        var identities = new HashSet<(string Id, string? Route, ExpectedSource? Source)>();
         RailCursor? next = null;
         do
         {
             var page = read(next);
-            seen.AddRange(page.Sessions.Where(entry => entry.Kind == "session").Select(entry => entry.SessionId));
+            foreach (var entry in page.Sessions.Where(entry => entry.Kind == "session"))
+            {
+                Assert.True(identities.Add((entry.SessionId, entry.Machine, entry.Source)), "A source-qualified rail session repeated across pages.");
+                seen.Add(entry.SessionId);
+            }
             next = page.Next;
         } while (next is not null);
-        Assert.Equal(seen.Count, seen.Distinct().Count());
+        Assert.Equal(seen.Count, identities.Count);
         return seen;
     }
 

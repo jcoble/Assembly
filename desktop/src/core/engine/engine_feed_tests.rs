@@ -365,7 +365,7 @@ async fn refresh_cancels_a_held_old_entities_read_and_applies_the_new_cut_withou
         cx.observe(&bulk,move |_,_| { let _=b.unbounded_send(()); })
     ));
     until("both sockets", &mut changes, &changed, || cx.update(|cx|
-        main.read(cx).connection_generation().is_some() && bulk.read(cx).connection_generation().is_some())).await;
+        [&main,&bulk].iter().all(|socket|matches!(socket.read(cx).state(),ConnectionState::Connected{..})))).await;
     let feed = cx.update(EngineFeed::global);
     let scope = EngineScope { machine:"owner".into(), topic:"sessions".into(), key:None };
     let watch = cx.update(|cx| feed.update(cx,|feed,cx|feed.watch(scope.clone(),cx).unwrap()));

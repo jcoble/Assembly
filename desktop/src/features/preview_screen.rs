@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::features::{projects, settings::preview as settings_preview};
 use crate::inline_field;
 use gpui_kit::component::button::Button;
@@ -58,7 +59,7 @@ impl Render for Preview {
                     )
                     .child(
                         div()
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .text_color(cx.theme().muted_foreground)
                             .child("Assembly UI Preview · sample data only"),
                     ),

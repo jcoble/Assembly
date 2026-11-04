@@ -137,6 +137,8 @@ public sealed partial class SessionStore
             SaveOptions(scope, expected.SessionId, options ?? "null");
             SaveChoices(scope, expected.SessionId, choices);
             if (commands is not null) SaveCommands(scope, expected.SessionId, commands);
+            else scope.Execute("INSERT INTO session_commands(session_id,commands) VALUES($id,'null') ON CONFLICT(session_id) DO NOTHING",
+                new SqlArg("$id", expected.SessionId));
             if (agentOptions is not null) SaveAgentOptions(scope, expected.Agent, agentOptions);
             if (confirmedModel is { } selected && HasPendingModel)
             {

@@ -1,6 +1,7 @@
 //! The Pull requests list: a heading, the filters, a note when something's wrong, and one row per pull request.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::{
-    pr_activity::pr_state,
+    pr_activity::{pr_state, repo_name},
     pr_parts::{age_label, avatar, state_icon, tone_color},
     pr_search::{PrScope, PrState},
     pull_request::PullRequestSummary,
@@ -12,6 +13,7 @@ use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex,
 };
@@ -172,9 +174,13 @@ impl PrPane {
                                 h_flex()
                                     .gap_1()
                                     .min_w_0()
-                                    .text_sm()
+                                    .text_role(TextRole::Body, cx)
                                     .text_color(muted)
-                                    .child(format!("{} #{} ·", pr.repository, pr.number))
+                                    .child(format!(
+                                        "{} #{} ·",
+                                        repo_name(&pr.repository),
+                                        pr.number
+                                    ))
                                     .child(div().truncate().child(pr.head_branch.clone()))
                                     .child(Icon::new(IconName::ArrowRight).size(px(11.)))
                                     .child(div().truncate().child(pr.base_branch.clone())),
@@ -184,7 +190,7 @@ impl PrPane {
                         h_flex()
                             .flex_none()
                             .gap_2()
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .text_color(muted)
                             .children(avatar(&pr.author))
                             .children(age_label(
@@ -248,7 +254,7 @@ impl PrPane {
                 h_flex()
                     .gap_2()
                     .justify_between()
-                    .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Pull requests"))
+                    .child(div().text_role(TextRole::Heading, cx).font_weight(FontWeight::SEMIBOLD).child("Pull requests"))
                     .child(
                         Button::new("pr-queue-refresh")
                             .ghost()
@@ -263,7 +269,7 @@ impl PrPane {
             )
             .child(self.filters(cx))
             .children(missing.map(|(words, url)| {
-                h_flex().gap_2().text_sm().child(words).child(
+                h_flex().gap_2().text_role(TextRole::Body, cx).child(words).child(
                     div().debug_selector(|| "pr-missing-open".into()).child(
                         Button::new("pr-missing-open")
                             .ghost()
@@ -275,19 +281,21 @@ impl PrPane {
                     ),
                 )
             }))
-            .children(error.map(|error| div().text_sm().text_color(danger).child(error)))
-            .when(loading || projects_loading, |page| {
+            .children(error.map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)))
+            .when((loading || projects_loading) && count == 0, |page| {
                 page.child(
-                    div()
-                        .text_sm()
+                    h_flex()
+                        .gap_2()
+                        .text_role(TextRole::Body, cx)
                         .text_color(muted)
+                        .child(Spinner::new().small())
                         .child("Loading pull requests…"),
                 )
             })
             .when(empty, |page| {
                 page.child(
                     div()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(muted)
                         .child("No pull requests match these filters."),
                 )

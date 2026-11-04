@@ -55,14 +55,19 @@ public sealed class ForeignTests
     }
 
     [Fact]
-    public void Ordinary_peer_child_requires_matching_nonlocal_parent_and_skips_source_limits()
+    public void Ordinary_peer_child_requires_matching_proven_nonlocal_parent_and_target_limits()
     {
         using var f = new EngineFixture(new(() => 0, () => 0));
-        Assert.True(f.Apply(new RegisterForeignSession("source", "p", "T"), "parent", actor: Peer()).Applied);
+        var commands = new EngineCommands(f.Machine, f.Limits);
+        var ancestry = commands.PrepareForeignAncestry(new("source", "parent", [new("root", "source", "p", "Root", null), new("parent", "source", "p", "T", "root")]));
+        Assert.True(f.Db.Writer.Write("test.known-parent", scope => commands.ApplyForeignAncestryBatch(scope, ancestry)).Applied);
         var start = new StartSession("configured-target", null, "/target", "Child", "parent", null, null);
         Assert.Equal("forbidden", f.Apply(start, "window").Error);
         Assert.Equal("forbidden", f.Apply(start, "wrong-source", actor: Peer("other")).Error);
-        Assert.True(f.Apply(start, "child", actor: Peer()).Applied);
+        Assert.Equal("depth_limit", f.Apply(start, "too-deep", actor: Peer()).Error);
+        var permitted = new EngineCommands(f.Machine, new(() => 2, () => 1));
+        Assert.True(f.Db.Writer.Write("test.peer-child", scope => permitted.Apply(scope,
+            new(Guid.NewGuid(), f.Machine, Peer(), "child", 0, 0, 1000), start)).Applied);
         Assert.Equal("starting", f.State("engine_session", "child"));
         Assert.Null(f.Text("SELECT model FROM engine_session WHERE id='child'"));
         Assert.Equal(1, f.Count("engine_outbox")); Assert.Single(f.Events());

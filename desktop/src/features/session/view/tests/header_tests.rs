@@ -5,7 +5,8 @@ use gpui::TestAppContext;
 use gpui_kit::{AppContext as _, Entity};
 use serde_json::{Value, json};
 
-use super::{Header, project};
+use super::{Header, project, project_name};
+use crate::core::state::session_item::SessionItem;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
@@ -100,4 +101,15 @@ fn with_no_session_open_the_title_row_keeps_the_sessions_button(cx: &mut TestApp
         cx.debug_bounds("toggle-sessions").is_some(),
         "a sessions column left closed can be opened again"
     );
+}
+
+#[test]
+fn a_session_in_no_project_says_so_instead_of_naming_its_folder() {
+    let item = |project: Option<&str>| -> SessionItem {
+        serde_json::from_value(json!({ "sessionId": "s", "agent": "claude", "repoUrl": "/home/me/assembly-bare",
+            "projectId": project, "updatedAt": 1 }))
+        .expect("a session item")
+    };
+    assert_eq!(project_name(&item(None)), "No project");
+    assert_eq!(project_name(&item(Some("p1"))), "assembly-bare");
 }

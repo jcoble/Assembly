@@ -22,8 +22,8 @@ public sealed partial class RemoteMachineTests
         await using var desktop = await DesktopOnAsync(remote, Directory.CreateTempSubdirectory("assembly-desktop-").FullName);
 
         using var socket = await ApiTests.OpenOwnerSocketAsync(desktop.Address, DesktopToken);
-        var created = await ApiTests.SocketRequestAsync(socket, 1, "sessions", "create",
-            JsonSerializer.Serialize(new { agent = "claude", clientId = Guid.NewGuid().ToString("N"), machine = Box }));
+        var created = await ApiTests.SocketRequestAsync(socket, 1, "machines", "agents",
+            JsonSerializer.Serialize(new { machine = Box }));
 
         Assert.Equal("error", created.GetProperty("t").GetString());
         Assert.Equal("failed", created.GetProperty("code").GetString());

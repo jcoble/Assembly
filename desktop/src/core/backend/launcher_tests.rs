@@ -166,13 +166,14 @@ fn dropping_the_launcher_stops_the_backend() {
 #[test]
 fn a_backend_with_no_ready_line_in_time_is_stopped() {
     let mut config = fake("late", WAIT_FOR_TERM);
-    config.ready_limit = Duration::from_millis(200);
+    // Long enough for the script to set its trap on a loaded machine, or the stop isn't recorded.
+    config.ready_limit = Duration::from_secs(2);
     let (mut launcher, ready) = launch(config);
     launcher.thread.take().unwrap().join().unwrap();
     assert!(ready.try_recv().is_err());
     assert_eq!(read(&launcher.config, "stopped"), "stopped\n");
     let log = std::fs::read_to_string(launcher.config.home.join("backend.log")).unwrap();
-    assert!(log.contains("no ready line within 200ms"), "{log}");
+    assert!(log.contains("no ready line within 2s"), "{log}");
 }
 
 #[test]
