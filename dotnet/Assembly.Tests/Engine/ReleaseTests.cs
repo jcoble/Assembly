@@ -1,5 +1,9 @@
 using System.Text.Json;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Events;
+using Assembly.Domain.Rows;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Messages;
@@ -188,7 +192,13 @@ public sealed class ReleaseTests
         using var f = new EngineFixture(); f.SeedSession(); Open(f, "n", "permission", "request");
         Assert.True(f.Apply(new ResolveNeed("cancelled", null, reason), "n", 1, actor: System).Applied);
         Assert.Equal(answers, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='answer'"));
-        Assert.Equal("\"deny\"", f.Text("SELECT answer_json FROM engine_needs_me"));
+        Assert.Null(f.Text("SELECT answer_json FROM engine_needs_me"));
+        if (answers != 0)
+        {
+            using var payload = JsonDocument.Parse(f.Text("SELECT payload_json FROM engine_outbox WHERE kind='answer'")!);
+            Assert.Equal(JsonValueKind.Null, payload.RootElement.GetProperty("answer").ValueKind);
+            Assert.Equal("n", payload.RootElement.GetProperty("cancellation").GetProperty("chatRowId").GetString());
+        }
         Assert.Equal(reason, f.Events().Last(e => e.EntityKind == "needs_me").Data.Reason);
     }
 
@@ -262,8 +272,22 @@ public sealed class ReleaseTests
 
     private static EngineCommand Cancel(string? reason) => JsonSerializer.Deserialize(
         JsonSerializer.Serialize(new { kind = "resolve_need", state = "cancelled", answer = (string?)null, reason }), EngineJson.Default.EngineCommand)!;
-    private static void Open(EngineFixture f, string id, string kind = "question", string? request = null) =>
-        Assert.True(f.Apply(new OpenNeed("s", null, null, kind, "Question?", [], request, null, null), id, actor: System).Applied);
+    private static void Open(EngineFixture f, string id, string kind = "question", string? request = null)
+    {
+        if (request is null)
+        {
+            Assert.True(f.Apply(new OpenNeed("s", null, null, kind, "Question?", [], null, null, null), id, actor: System).Applied);
+            return;
+        }
+        var card = new AskPayload(kind, "open", null, "Question?", null,
+            [new AskOption("allow", "Allow", "allow_once"), new AskOption("deny", "Deny", "reject_once")], null, null);
+        var prepared = EngineCommands.PrepareNeedCommand(new OpenNeed("s", null, null, kind, "Question?",
+            ["allow", "deny"], request, id, null) with
+        { ProviderQuestion = JsonSerializer.SerializeToElement(card, RowJsonContext.Rows.AskPayload) });
+        RowStore.Open(f.Db).Commit("s", new RowConverter().Apply(new AskChanged(1000, id, card)), scope =>
+            Assert.True(new EngineCommands(f.Machine, f.Limits).ApplyPreparedNeed(scope,
+                new(Guid.NewGuid(), f.Machine, System, id, 0, 0, 1000), prepared).Applied));
+    }
     private static void Capable(EngineFixture f) => f.Db.Writer.Write("test.capability", s => s.Execute("UPDATE engine_session SET can_steer=1 WHERE id='s'"));
     private static void State(EngineFixture f, string state) => Assert.True(f.Apply(new SetSessionState(state, null, null), "s",
         f.Number("SELECT version FROM engine_session WHERE id='s'"), actor: System).Applied);

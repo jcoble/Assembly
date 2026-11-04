@@ -32,7 +32,7 @@ public sealed class BoardToolsTests
     public async Task ReportStoresOrderedStepsAndAttempts()
     {
         await using var host = new BoardSocketTests.Host();
-        var session = host.Sessions.Create("codex", "project");
+        var session = host.Sessions.CreateReady("codex", "project");
         var steps = BoardQueryTests.Fixture.Steps();
         var report = host.F.Report() with { Steps = steps };
         var input = JsonSerializer.SerializeToElement(report, WorkflowJson.Default.BoardUpdateArgs);
@@ -66,7 +66,7 @@ public sealed class BoardToolsTests
     public async Task RapidAnswersEachStartTheirOwnTurn()
     {
         await using var host = new BoardSocketTests.Host();
-        var session = host.Sessions.Create("codex", "project");
+        var session = host.Sessions.CreateReady("codex", "project");
         var args = Enumerable.Range(1, 3).Select(i => host.F.Answer("q" + i)).ToArray();
         foreach (var answer in args)
             host.Tools.Update(session.SessionId, host.F.Report(question: host.F.Ask(answer.QuestionKey)));
@@ -118,7 +118,7 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("codex", "project");
+        var session = sessions.CreateReady("codex", "project");
         await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask(kind: kind)));
         tools.Update(session.SessionId, f.Report(question: f.Ask("q2")));
@@ -164,7 +164,7 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("claude", "project");
+        var session = sessions.CreateReady("claude", "project");
         await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask()));
         var args = f.Answer();
@@ -192,7 +192,7 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("codex", "project");
+        var session = sessions.CreateReady("codex", "project");
         host.Registry.For(session.SessionId).Send("held");
         using var hostStop = new CancellationTokenSource();
         using var caller = new CancellationTokenSource();
@@ -230,7 +230,7 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("claude", "project");
+        var session = sessions.CreateReady("claude", "project");
         await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask()));
         var a = f.Answer();
@@ -263,7 +263,7 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("codex", "project");
+        var session = sessions.CreateReady("codex", "project");
         f.Transitions.Update(session.SessionId, "project", f.Report(question: f.Ask()));
         var args = f.Answer();
         var acceptance = f.Transitions.Answer(args).Acceptance;
@@ -297,7 +297,7 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("claude", "project");
+        var session = sessions.CreateReady("claude", "project");
         host.Registry.For(session.SessionId).Send("held");
         using var hostStop = new CancellationTokenSource();
         await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, hostStop.Token);
@@ -317,7 +317,7 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("codex", "project");
+        var session = sessions.CreateReady("codex", "project");
         host.Registry.For(session.SessionId).Send("held");
         await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask()));
@@ -348,7 +348,7 @@ public sealed class BoardToolsTests
     public async Task TokenOwnsTaskAndHelperCannotReport()
     {
         using var f = new BoardQueryTests.Fixture();
-        var checkouts = Path.GetFullPath("unused");
+        var checkouts = f.Folder;
         var sessions = SessionStore.Open(f.Db, f.Time, checkouts);
         var launcher = new FakeLauncher();
         using var hub = new LiveHub(RowStore.Open(f.Db));
@@ -372,7 +372,22 @@ public sealed class BoardToolsTests
         await app.StartAsync();
         var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         endpoint.Listening(address);
-        var parent = sessions.Create("codex", "project");
+        var parent = sessions.CreateReady("codex", "project");
+        async Task Start(string sessionId)
+        {
+            var effectId = f.Db.QueryFirst("SELECT id FROM engine_outbox WHERE kind='start' AND session_id=$session",
+                r => r.Text(0), default, new Assembly.Application.Common.Database.SqlArg("$session", sessionId))!;
+            var context = new Assembly.Engine.Contracts.CommandContext(Guid.NewGuid(), runtime.Machine,
+                new(Assembly.Engine.Contracts.ActorKind.System, "worker"), effectId, 0, 0, 1000);
+            Assert.True(runtime.Submit(context, new Assembly.Engine.Effects.ClaimEffect()).Applied);
+            var payload = f.Db.QueryFirst("SELECT payload_json FROM engine_outbox WHERE id=$id", r => r.Text(0), default,
+                new Assembly.Application.Common.Database.SqlArg("$id", effectId))!;
+            var effect = new Assembly.Engine.Effects.Effect(effectId, "start", sessionId, null, JsonDocument.Parse(payload).RootElement, 1);
+            var receipt = await new AdapterEffects(f.Db, registry, sessions, RowStore.Open(f.Db)).ExecuteAsync(effect, default);
+            Assert.True(runtime.Submit(context with { CommandId = Guid.NewGuid(), ExpectedVersion = 1 },
+                new Assembly.Engine.Effects.CompleteEffect(receipt)).Applied);
+        }
+        await Start(parent.SessionId);
         registry.For(parent.SessionId).Send("start");
         var agent = await launcher.NextAsync();
         var opening = await agent.StartAsync();
@@ -404,13 +419,15 @@ public sealed class BoardToolsTests
             Assert.True((await Request("tools/call", """{"name":"board_update","arguments":""" + forged + "}", token))
                 .GetProperty("isError").GetBoolean());
         }
-        var foreign = sessions.Create("claude", "project");
+        var foreign = sessions.CreateReady("claude", "project");
         Assert.Throws<CallFailed>(() => tools.Update(foreign.SessionId, f.Report()));
         tools.Update(foreign.SessionId, f.Report("foreign"));
         var foreignArgs = JsonSerializer.Serialize(f.Report("foreign"), WorkflowJson.Default.BoardUpdateArgs);
         Assert.Contains("not_owner", (await Request("tools/call",
             """{"name":"board_update","arguments":""" + foreignArgs + "}", token)).GetRawText());
         var helper = sessions.Helper(parent, "claude", "Helper");
+        Directory.CreateDirectory(sessions.Root(helper)!);
+        await Start(helper.SessionId);
         registry.For(helper.SessionId).Send("helper");
         var helperAgent = await launcher.NextAsync();
         var helperOpen = await helperAgent.StartAsync(acpSessionId: "helper");

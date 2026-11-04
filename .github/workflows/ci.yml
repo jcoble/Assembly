@@ -44,7 +44,6 @@ jobs:
           key: desktop-${{ runner.os }}-${{ hashFiles('desktop/Cargo.lock', 'desktop/rust-toolchain.toml') }}
       # Installs the toolchain and components desktop/rust-toolchain.toml names.
       - run: rustup toolchain install
-      - run: cargo fmt --check
       # The .debs, so a slow mirror only costs apt-get update. Keyed on this file, which holds the package list.
       - uses: actions/cache@v4
         with:
@@ -72,6 +71,10 @@ jobs:
       - name: Native launcher shutdown timing
         run: bash ../scripts/shutdown-timing.test.sh
       - run: cargo clippy --locked --all-targets -- -D warnings
+      # Last and always, so unformatted code reports here without stopping the tests above.
+      - name: cargo fmt --check
+        if: ${{ !cancelled() }}
+        run: cargo fmt --check
   scripts:
     runs-on: ubuntu-latest
     timeout-minutes: 15

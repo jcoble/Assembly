@@ -15,6 +15,8 @@ public sealed class TurnReplyDeliveryTests
     {
         await using var f = new AdapterDeliveryFixture();
         var child = f.Sessions.Helper(f.Session, "claude", "Child title");
+        Directory.CreateDirectory(f.Sessions.Root(child)!);
+        await f.StartAsync(child.SessionId);
         var host = f.Hosts.For(child.SessionId); var run = host.Send("work")!;
         var childAgent = await f.Launcher.NextAsync(); await childAgent.StartAsync(); var childPrompt = await childAgent.ReadAsync("session/prompt");
         if (body.Length > 0) await childAgent.TextAsync(body);

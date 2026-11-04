@@ -192,7 +192,7 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
     public async Task Window_requests_handoff_with_session_version_and_epoch_but_cannot_report_outcome()
     {
         _f.SeedSession("session", epoch: 7);
-        _f.Db.Writer.Write("session-version", s => s.Execute("UPDATE engine_session SET version=3 WHERE id='session'"));
+        _f.Db.Writer.Write("session-version", s => s.Execute("UPDATE engine_session SET version=3,provider_session_id='native' WHERE id='session'"));
         using var socket = await Open();
         Assert.Equal("stale_epoch", (await Command(socket, new RequestHandoff("session", "target"), "handoff", version: 3, epoch: 6)).Error);
         Assert.Equal("version_conflict", (await Command(socket, new RequestHandoff("session", "target"), "handoff", version: 0, epoch: 7)).Error);
@@ -215,9 +215,11 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
         await Send(socket, """{"t":"unsub","id":7}""");
         Assert.Equal("forbidden", (await Command(socket, new HandoffOutcome("accepted", 8, null), "handoff", 1, 8)).Error);
         var target = new EngineActor(ActorKind.System, "target");
-        Assert.Equal("stale_epoch", _f.Apply(new HandoffOutcome("accepted", 8, null), "handoff", 1, 7, target).Error);
-        Assert.Equal("version_conflict", _f.Apply(new HandoffOutcome("accepted", 8, null), "handoff", 0, 8, target).Error);
-        Assert.True(_f.Apply(new HandoffOutcome("accepted", 8, null), "handoff", 1, 8, target).Applied);
+        Assert.Equal("forbidden", _f.Apply(new HandoffOutcome("accepted", 8, null), "handoff", 1, 7, target).Error);
+        Assert.Equal("forbidden", _f.Apply(new HandoffOutcome("accepted", 8, null), "handoff", 0, 8, target).Error);
+        var identity = new Assembly.Engine.Handoffs.HandoffIdentity("handoff", _f.Machine, "session", "target", 7, 8);
+        Assembly.Tests.Engine.HandoffTests.CompleteRelease(_f, identity);
+        Assert.True(Assembly.Tests.Engine.HandoffTests.Phase(_f, identity, Assembly.Engine.Handoffs.HandoffPhase.Accept).Receipt!.Applied);
         var fenced = await Command(socket, new StopSession(), "session", 4, 7);
         Assert.Equal("handing_off", fenced.Error);
         Assert.Equal(8, fenced.Epoch);

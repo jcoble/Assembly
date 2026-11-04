@@ -42,13 +42,15 @@ public sealed partial class RemoteMachineTests
     {
         var agents = await FeatureResultAsync(_desktop!, DesktopToken, "machines", "agents", new { machine = Box });
         var target = agents.GetProperty("agents")[0].GetProperty("targetId").GetString()!;
+        var project = await FeatureResultAsync(_desktop!, DesktopToken, "projects", "add", new { machine = Box, path = _boxHome });
+        var projectId = project.GetProperty("project").GetProperty("id").GetString()!;
         using var socket = await OpenSocketAsync(_desktop!);
-        await SendTextAsync(socket, $$$$$"""{"t":"call","id":1,"feature":"sessions","method":"create","args":{"agent":"claude","repoUrl":"repo","machine":"{{{{{Box}}}}}","workingFolder":"/tmp","initialConfig":{"targetId":"{{{{{target}}}}}","choices":{"model":"b"}}}}""");
+        await SendTextAsync(socket, $$$$$"""{"t":"call","id":1,"feature":"sessions","method":"create","args":{"agent":"claude","clientId":"composer-create","machine":"{{{{{Box}}}}}","projectId":"{{{{{projectId}}}}}","initialConfig":{"targetId":"{{{{{target}}}}}","choices":{"model":"b"}}}}""");
         var created = JsonDocument.Parse(await ReadTextAsync(socket)).RootElement;
         var id = created.GetProperty("result").GetProperty("sessionId").GetString()!;
         var saved = await FeatureResultAsync(_box, BoxToken, "config", "get", new { session = id });
         Assert.Equal("b", saved.GetProperty("choices").GetProperty("model").GetString());
-        Assert.Equal("/tmp", (await SessionAsync(_box, BoxToken, id)).GetProperty("root").GetString());
+        Assert.Equal(_boxHome, (await SessionAsync(_box, BoxToken, id)).GetProperty("root").GetString());
         await SendTextAsync(socket, $$$$$"""{"t":"call","id":2,"feature":"config","method":"warm","args":{"session":"{{{{{id}}}}}","targetId":"{{{{{target}}}}}"}}""");
         var warming = await _boxLauncher.NextAsync();
         var open = await warming.StartAsync(acpSessionId: "owner-native", configOptions: SessionWarmConfigTests.Options);
@@ -62,7 +64,7 @@ public sealed partial class RemoteMachineTests
         var running = await _boxLauncher.NextAsync();
         var resumed = await running.StartAsync(acpSessionId: "owner-native", configOptions: SessionWarmConfigTests.Options);
         Assert.Equal("session/resume", resumed.GetProperty("method").GetString());
-        Assert.Equal("/tmp", resumed.GetProperty("params").GetProperty("cwd").GetString());
+        Assert.Equal(_boxHome, resumed.GetProperty("params").GetProperty("cwd").GetString());
         var prompt = await running.ReadAsync("session/prompt");
         await running.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await sending.WaitAsync(TimeSpan.FromSeconds(5));
@@ -89,12 +91,14 @@ public sealed partial class RemoteMachineTests
     {
         var agents = await FeatureResultAsync(_desktop!, DesktopToken, "machines", "agents", new { machine = Box });
         var target = agents.GetProperty("agents")[0].GetProperty("targetId").GetString()!;
+        var project = await FeatureResultAsync(_desktop!, DesktopToken, "projects", "add", new { machine = Box, path = _boxHome });
+        var projectId = project.GetProperty("project").GetProperty("id").GetString()!;
         var created = await FeatureResultAsync(_desktop!, DesktopToken, "sessions", "create", new
         {
             agent = "claude",
-            repoUrl = "repo",
+            clientId = "composer-restart",
             machine = Box,
-            workingFolder = "/tmp",
+            projectId,
             initialConfig = new { targetId = target, choices = new Dictionary<string, string> { ["model"] = "b", ["effort"] = "medium", ["mode"] = "full" } }
         });
         var id = created.GetProperty("sessionId").GetString()!;
