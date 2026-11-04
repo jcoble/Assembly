@@ -3,7 +3,7 @@
 # .lane and isn't on main, it stops before it writes anything; in a lane's checkout, serve writes only under that
 # lane's data folder and starts the backend on the lane's port, home and token file. Each case runs this checkout's
 # desktop.sh and lane-env.sh in a throwaway worktree with HOME set to a temp folder, so it can never reach the real
-# ~/assembly-dotnet, and with pnpm, node, dotnet and nc replaced by stubs, so it never downloads adapters or starts a
+# ~/assembly-dotnet, with agents-file.sh, dotnet and nc replaced by stubs, so it never downloads adapters or starts a
 # real backend.
 # Run: bash scripts/desktop-lane.test.sh
 set -uo pipefail
@@ -45,7 +45,7 @@ check "no .lane: it writes nothing under HOME" '[ -z "$(ls -A "$home")" ]'
 # arguments and exits; nc answers at once.
 home=$tmp/home-probe stubs=$tmp/bin-probe args=$tmp/probe-args
 mkdir -p "$home" "$stubs"
-for tool in pnpm node nc; do printf '#!/bin/sh\nexit 0\n' >"$stubs/$tool"; chmod +x "$stubs/$tool"; done
+printf '#!/bin/sh\nexit 0\n' >"$stubs/nc"; chmod +x "$stubs/nc"
 cat >"$stubs/dotnet" <<EOF
 #!/bin/sh
 while [ \$# -gt 0 ]; do [ "\$1" = -o ] && bin=\$2; shift; done
@@ -56,6 +56,7 @@ EOF
 chmod +x "$stubs/dotnet"
 worktree probe
 printf 'LANE_NAME=probe\nLANE_NUMBER=9\n' >"$tmp/tree-probe/.lane"
+printf '#!/bin/sh\nprintf "[]" > "$2"\n' >"$tmp/tree-probe/dotnet/scripts/agents-file.sh"
 out=$(cd "$tmp/tree-probe" && HOME=$home PATH=$stubs:$PATH dotnet/scripts/desktop.sh serve 2>&1)
 code=$?
 for _ in $(seq 50); do [ -s "$args" ] && break; sleep 0.1; done
