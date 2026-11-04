@@ -17,7 +17,9 @@ function fixture(run: (root: string) => unknown) {
 function fakeReleaseApi(root: string) {
   writeFileSync(join(root, "curl"), "#!" + process.execPath + "\n" + String.raw`
 const fs = require("node:fs");
-if (!process.argv.at(-1).startsWith("https://api.github.com/repos/jcoble/Assembly/releases?")) throw Error("unexpected curl request");
+const url = process.argv.at(-1), download = url.match(/^https:\/\/github\.com\/jcoble\/Assembly\/releases\/download\/[^/]+\/([^/]+)$/);
+if (download) { fs.copyFileSync(process.env.RELEASE_DIR + "/" + download[1], process.argv[process.argv.indexOf("-o") + 1]); process.exit(0); }
+if (!url.startsWith("https://api.github.com/repos/jcoble/Assembly/releases?")) throw Error("unexpected curl request");
 console.log(JSON.stringify(JSON.parse(fs.readFileSync(process.env.RELEASES, "utf8")).map(release => ({ tag_name: release.tagName, draft: release.isDraft,
   prerelease: release.isPrerelease, published_at: release.publishedAt, assets: release.assets.map(name => ({ name })) }))));
 `, { mode: 0o755 });
@@ -128,15 +130,6 @@ test("daily comparison uses raw Claude vendor entrypoint from a v2 baseline, not
   writeFileSync(join(releaseDir, "assembly-adapters-linux-x64.json"), JSON.stringify(manifest));
   const releases = [{ tagName: "assembly-providers-300-1", isDraft: false, isPrerelease: false, publishedAt: "2026-11-01T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"] }];
   writeFileSync(join(root, "releases.json"), JSON.stringify(releases));
-  writeFileSync(join(root, "gh"), "#!" + process.execPath + "\n" + String.raw`
-const fs = require("node:fs");
-const args = process.argv.slice(2);
-if (args[0] !== "release") throw Error("unexpected gh command");
-if (args[1] === "download") {
-  const dir = args[args.indexOf("--dir") + 1];
-  for (const name of ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"]) fs.copyFileSync(process.env.RELEASE_DIR + "/" + name, dir + "/" + name);
-} else throw Error("unexpected gh release action " + args[1]);
-`, { mode: 0o755 });
   fakeReleaseApi(root);
   const oldPath = process.env.PATH, oldReleases = process.env.RELEASES, oldReleaseDir = process.env.RELEASE_DIR;
   process.env.PATH = root + ":" + (oldPath ?? "");

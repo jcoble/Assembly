@@ -207,8 +207,8 @@ export function compareWithLastProviderRelease(target: string, currentBundle: st
   const assets = join(scratch, "previous-assets");
   const unpacked = join(scratch, "previous-bundle");
   mkdirSync(assets); mkdirSync(unpacked);
-  execFileSync("gh", ["release", "download", tag, "--repo", providerRepo,
-    "--pattern", asset, "--pattern", manifestFile, "--dir", assets]);
+  for (const file of [asset, manifestFile]) execFileSync("curl", ["-fsSL", "--connect-timeout", "10", "-o", join(assets, file),
+    "https://github.com/" + providerRepo + "/releases/download/" + tag + "/" + file]);
   const manifest = validateHistoricalProviderAsset(join(assets, manifestFile), join(assets, asset), target);
   const members = execFileSync("tar", ["-tzf", join(assets, asset)], { encoding: "utf8" }).split("\n").filter(Boolean);
   if (members.some(name => name.startsWith("/") || name.split("/").some(part => part === ".."))) {
