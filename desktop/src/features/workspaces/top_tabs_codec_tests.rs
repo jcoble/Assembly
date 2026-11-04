@@ -34,6 +34,28 @@ fn actual_registered_factories_restore_order_and_active_pane_while_retaining_the
 }
 
 #[gpui::test]
+fn a_real_history_tab_with_a_checkout_hint_saves_it_and_comes_back_from_what_it_saved(cx:&mut TestAppContext) {
+    let source=serde_json::json!({"machine":"actual-owner","generation":7,"routeMachine":"box"});
+    let info=serde_json::json!({"session":"session","expectedSource":source,"path":null,
+        "checkoutHint":{"session":"session","source":source,"path":"/linked","expectedRoot":"/checkout"}});
+    let saved=serde_json::json!({"version":1,"files":[],"topTabs":{"order":["Chat","git-history:session"],"activeKey":"git-history:session","panes":[
+        {"key":"git-history:session","state":{"panel_name":"Git history","children":[],"info":{"panel":info}}}]}});
+    cx.update(|cx| {
+        gpui_kit::init(cx);SelectedSession::init(cx);Preferences::init(cx);SessionPane::register(cx);
+        ChangesPane::register(cx);HistoryPane::register(cx);PrPane::register(cx);
+        WorkspacePanes::register(Box::new(TopTabsCodec),cx).unwrap();
+    });let (_,cx)=cx.add_window_view(|_,_|Host);
+    cx.update(|window,cx| {
+        let dock=cx.new(|cx|DockArea::new("workspace-history-hint",Some(2),window,cx));CenterPanes::init(&dock,cx);
+        dock.update(cx,|dock,cx|dock.load(default_state(),window,cx).unwrap());
+        WorkspacePanes::set_key(key(),cx);WorkspacePanes::restore(&saved,window,cx).unwrap();
+        let captured=WorkspacePanes::capture(window,cx).unwrap();assert_eq!(captured["topTabs"],saved["topTabs"]);
+        WorkspacePanes::restore(&captured,window,cx).unwrap();
+        assert_eq!(WorkspacePanes::capture(window,cx).unwrap()["topTabs"],saved["topTabs"]);
+    });
+}
+
+#[gpui::test]
 fn a_real_split_layout_is_refused_before_restore_or_rootless_teardown_changes_its_geometry(cx:&mut TestAppContext) {
     use gpui_kit::component::dock::{PanelState,PanelInfo};
     use gpui_kit::px;
