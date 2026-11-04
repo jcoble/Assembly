@@ -35,7 +35,7 @@ fn open_with_older(
 
 fn session(id: &str, folder: &str, machine: Option<&str>) -> SessionItem {
     serde_json::from_value(
-        json!({ "sessionId": id, "agent": "claude", "repoUrl": folder, "machine": machine,
+        json!({ "sessionId": id, "agent": "claude", "repoUrl": folder, "projectId": folder, "machine": machine,
         "updatedAt": 1 }),
     )
     .expect("a session item")
