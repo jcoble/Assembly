@@ -18,6 +18,16 @@ fn actual_uncertain_wire_code_preserves_the_captured_machine_and_is_not_failed()
 }
 
 #[test]
+fn a_refused_checkout_read_keeps_its_code() {
+    for code in ["checkout_root_changed", "checkout_unavailable", "source_changed"] {
+        assert_eq!(
+            ErrorCode::from_wire(code, None),
+            ErrorCode::Refused { code: code.into() }
+        );
+    }
+}
+
+#[test]
 fn an_actual_error_frame_keeps_uncertainty_distinct_from_definite_failure() {
     use crate::core::socket::{
         fake_backend::{FakeBackend, Reply, hello},

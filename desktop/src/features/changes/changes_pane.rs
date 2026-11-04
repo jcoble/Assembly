@@ -3,7 +3,9 @@ use super::{branch_diff::BranchDiff, file_diff::FileDiff};
 use crate::core::intents::{
     open_branch_diff::OpenBranchDiff, open_commit_diff::OpenCommitDiff, open_diff::OpenDiff,
 };
-use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::socket::{
+    checkout_selector::CheckoutSelector, client::SocketClient, outcome::Outcome,
+};
 use crate::core::state::preferences::Preferences;
 use crate::core::ui::{
     center_panes::CenterPanes,
@@ -31,10 +33,12 @@ enum Picked {
         expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
         path: String,
         original_path: Option<String>,
+        checkout: Option<CheckoutSelector>,
     },
     Branch {
         session: String,
         expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+        checkout: Option<CheckoutSelector>,
     },
     Commit {
         session: String,
@@ -42,7 +46,17 @@ enum Picked {
         sha: String,
         path: String,
         title: String,
+        checkout: Option<CheckoutSelector>,
     },
+}
+impl Picked {
+    fn checkout(&self) -> Option<&CheckoutSelector> {
+        match self {
+            Self::File { checkout, .. } | Self::Branch { checkout, .. } | Self::Commit { checkout, .. } => {
+                checkout.as_ref()
+            }
+        }
+    }
 }
 struct PatchView {
     label: &'static str,
@@ -166,14 +180,16 @@ impl ChangesPane {
                     sha,
                     path,
                     title: text("title").unwrap_or_default(),
+                    checkout: None,
                 },
                 (_, Some(path)) => Picked::File {
                     expected_source: saved.get("expectedSource").cloned().and_then(|value| serde_json::from_value(value).ok()),
                     session,
                     path,
                     original_path: text("originalPath"),
+                    checkout: None,
                 },
-                _ => Picked::Branch { session, expected_source: saved.get("expectedSource").cloned().and_then(|value| serde_json::from_value(value).ok()) },
+                _ => Picked::Branch { session, expected_source: saved.get("expectedSource").cloned().and_then(|value| serde_json::from_value(value).ok()), checkout: None },
             });
             let pane = cx.new(|cx| {
                 let mut pane = ChangesPane::new(None, cx);
@@ -196,6 +212,7 @@ impl ChangesPane {
                     session: intent.session_id.clone(),
                     path: intent.path.clone(),
                     original_path: intent.original_path.clone(),
+                    checkout: intent.checkout.clone(),
                 },
                 cx,
             )
@@ -205,6 +222,7 @@ impl ChangesPane {
                 Picked::Branch {
                     expected_source: intent.expected_source.clone(),
                     session: intent.session_id.clone(),
+                    checkout: intent.checkout.clone(),
                 },
                 cx,
             )
@@ -217,6 +235,7 @@ impl ChangesPane {
                     sha: intent.sha.clone(),
                     path: intent.path.clone(),
                     title: intent.title.clone(),
+                    checkout: intent.checkout.clone(),
                 },
                 cx,
             )
@@ -281,24 +300,23 @@ impl ChangesPane {
                 path,
                 original_path,
                 expected_source,
+                checkout,
             } => {
-                let call = socket.call::<FileDiff>(
-                    "git",
-                    "diff",
+                let args = CheckoutSelector::applied(
+                    checkout.as_ref(),
                     json!({"session":session,"path":path,"originalPath":original_path,"expectedSource":expected_source}),
-                    Some(KEY),
                 );
+                let call = socket.call::<FileDiff>("git", "diff", args, Some(KEY));
                 cx.spawn(async move |pane, cx| Self::answered(pane, call.await, Shown::file, cx))
             }
             Picked::Commit {
-                session, sha, path, expected_source, ..
+                session, sha, path, expected_source, checkout, ..
             } => {
-                let call = socket.call::<FileDiff>(
-                    "git",
-                    "commitDiff",
+                let args = CheckoutSelector::applied(
+                    checkout.as_ref(),
                     json!({"session":session,"sha":sha,"path":path,"expectedSource":expected_source}),
-                    Some(KEY),
                 );
+                let call = socket.call::<FileDiff>("git", "commitDiff", args, Some(KEY));
                 cx.spawn(async move |pane, cx| {
                     Self::answered(
                         pane,
@@ -317,13 +335,12 @@ impl ChangesPane {
                     )
                 })
             }
-            Picked::Branch { session, expected_source } => {
-                let call = socket.call::<BranchDiff>(
-                    "git",
-                    "branchDiff",
+            Picked::Branch { session, expected_source, checkout } => {
+                let args = CheckoutSelector::applied(
+                    checkout.as_ref(),
                     json!({"session":session,"expectedSource":expected_source}),
-                    Some(KEY),
                 );
+                let call = socket.call::<BranchDiff>("git", "branchDiff", args, Some(KEY));
                 cx.spawn(async move |pane, cx| {
                     Self::answered(
                         pane,
@@ -387,12 +404,14 @@ impl BasePanel for ChangesPane {
         self._read = None;
     }
     fn dump(&self, _: &App) -> PanelState {
-        let mut info = match &self.picked {
+        // Another checkout's diff isn't restored: only a fresh `git/checkouts` answer may offer a selector.
+        let mut info = match self.picked.as_ref().filter(|picked| picked.checkout().is_none()) {
             Some(Picked::File {
                 session,
                 path,
                 original_path,
                 expected_source,
+                ..
             }) => json!({"session":session,"path":path,"originalPath":original_path,"expectedSource":expected_source}),
             Some(Picked::Commit {
                 session,
@@ -400,8 +419,9 @@ impl BasePanel for ChangesPane {
                 path,
                 title,
                 expected_source,
+                ..
             }) => json!({"session":session,"sha":sha,"path":path,"title":title,"expectedSource":expected_source}),
-            Some(Picked::Branch { session, expected_source }) => json!({"session":session,"expectedSource":expected_source}),
+            Some(Picked::Branch { session, expected_source, .. }) => json!({"session":session,"expectedSource":expected_source}),
             None => Value::Null,
         };
         if info.is_object() {
@@ -443,6 +463,10 @@ impl Render for ChangesPane {
             ) => format!("Branch vs {base}"),
             (Some(Picked::Branch { .. }), _) => "Branch".into(),
             (None, _) => "Pick a changed file in the Source control tab.".into(),
+        };
+        let title = match self.picked.as_ref().and_then(Picked::checkout) {
+            Some(checkout) => format!("{title} — in {}", checkout.folder()),
+            None => title,
         };
         let header = h_flex()
             .px_3()

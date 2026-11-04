@@ -6,7 +6,8 @@ use super::header::reasoned_item;
 use crate::core::intents::{
     open_diff::OpenDiff, open_file::OpenFile, reveal_file_folder::RevealFileFolder,
 };
-use crate::features::source_control::actions_menu::STILL_RUNNING;
+use crate::core::socket::checkout_selector::CheckoutSelector;
+use crate::features::source_control::actions_menu::{READ_ONLY_SCOPE, STILL_RUNNING};
 use crate::features::source_control::git_labels::split_path;
 use crate::features::source_control::git_status::{ChangedFile, GitStatus, Section};
 use crate::features::source_control::git_target::GitTarget;
@@ -58,6 +59,18 @@ pub(super) struct FileReasons {
     pub discard: Option<&'static str>,
     pub open: Option<&'static str>,
     pub copy_path: Option<&'static str>,
+}
+impl FileReasons {
+    /// On another checkout nothing changes and nothing opens for editing; a path can still be copied.
+    fn read_only(self) -> Self {
+        Self {
+            stage: Some(READ_ONLY_SCOPE),
+            unstage: Some(READ_ONLY_SCOPE),
+            discard: Some(READ_ONLY_SCOPE),
+            open: Some(READ_ONLY_SCOPE),
+            copy_path: self.copy_path,
+        }
+    }
 }
 pub(super) fn file_reasons(file: &ChangedFile, has_root: bool, busy: bool) -> FileReasons {
     let write = |reason: Option<&'static str>| if busy { Some(STILL_RUNNING) } else { reason };
@@ -166,7 +179,7 @@ impl SourceControlPane {
             }
             cx.notify();
         });
-        let target = self.target(cx);
+        let target = self.shown_target(cx);
         let root = status.checkout_root.clone();
         v_flex()
             .gap_1()
@@ -271,7 +284,9 @@ impl SourceControlPane {
         let selected = self.selected_file.as_ref() == Some(&key);
         let (name, folder) = split_path(&file.path);
         let muted = cx.theme().muted_foreground;
+        let checkout = self.selection(cx);
         let reasons = file_reasons(file, root.is_some(), busy);
+        let reasons = if checkout.is_some() { reasons.read_only() } else { reasons };
         let id = format!("{}:{}", section.label(), file.path);
         let cluster =
             hovered.then(|| self.row_buttons(letter, file, target, &id, name, busy, &reasons, cx));
@@ -312,10 +327,11 @@ impl SourceControlPane {
             expected_source: target.source.clone(),
             path: file.path.clone(),
             original_path: file.original_path.clone(),
+            checkout: checkout.clone(),
         };
         let tip = SharedString::from(file.label());
         let hover_key = key.clone();
-        let menu = self.file_menu(letter, file, target, root, busy, cx);
+        let menu = self.file_menu(letter, file, target, checkout, root, busy, cx);
         ListItem::new(SharedString::from(format!("git-file:{id}")))
             .selected(selected)
             .px_2()
@@ -418,11 +434,13 @@ impl SourceControlPane {
             .child(open)
             .into_any_element()
     }
+    #[allow(clippy::too_many_arguments)]
     fn file_menu(
         &self,
         letter: char,
         file: &ChangedFile,
         target: &GitTarget,
+        checkout: Option<CheckoutSelector>,
         root: Option<String>,
         busy: bool,
         cx: &mut Context<Self>,
@@ -438,12 +456,15 @@ impl SourceControlPane {
         let target = target.clone();
         move |menu, _, _| {
             let reasons = file_reasons(&file, root.is_some(), busy);
+            let view_reason = reasons.open;
+            let reasons = if checkout.is_some() { reasons.read_only() } else { reasons };
             let reason = |reason: Option<&'static str>| reason.map(String::from);
             let view = OpenDiff {
                 session_id: target.session.clone(),
                 expected_source: target.source.clone(),
                 path: file.path.clone(),
                 original_path: file.original_path.clone(),
+                checkout: checkout.clone(),
             };
             let open = OpenFile {
                 session_id: target.session.clone(),
@@ -466,7 +487,7 @@ impl SourceControlPane {
                 .as_ref()
                 .map(|root| format!("{}/{}", root.trim_end_matches('/'), file.path));
             menu.min_w(px(220.)).max_w(px(220.))
-                .item(reasoned_item("View changes", reason(reasons.open), move |window, cx| {
+                .item(reasoned_item("View changes", reason(view_reason), move |window, cx| {
                     window.dispatch_action(Box::new(view.clone()), cx)
                 }))
                 .item(reasoned_item(

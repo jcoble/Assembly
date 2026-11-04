@@ -190,18 +190,19 @@ impl SourceControlPane {
                 }
             }
             MenuAction::BranchDiff => {
-                if let Some(target) = self.target(cx) {
+                if let Some(target) = self.shown_target(cx) {
                     window.dispatch_action(
                         Box::new(OpenBranchDiff {
                             expected_source: target.source,
                             session_id: target.session,
+                            checkout: self.selection(cx),
                         }),
                         cx,
                     );
                 }
             }
             MenuAction::OpenHistory => {
-                if let Some(target) = self.target(cx) {
+                if let Some(target) = self.shown_target(cx) {
                     window.dispatch_action(
                         Box::new(OpenGitHistory {
                             expected_source: target.source,
@@ -215,8 +216,8 @@ impl SourceControlPane {
         }
     }
     pub(super) fn set_branch_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        self.branch_open = open;
-        if open {
+        self.branch_open = open && !self.read_only(cx);
+        if self.branch_open {
             self.read_branches(cx);
         }
         cx.notify();
@@ -227,6 +228,9 @@ impl SourceControlPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         if !matches!(picked, BranchPicked::Create(_)) {
             self.branch_open = false;
         }

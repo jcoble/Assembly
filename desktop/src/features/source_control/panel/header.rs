@@ -1,13 +1,13 @@
 //! The one header row: the branch menu at the left, how many files changed, and the more-actions menu at the right.
 use super::SourceControlPane;
-use crate::features::source_control::actions_menu::{MenuAction, PublishRow};
+use crate::features::source_control::actions_menu::{MenuAction, PublishRow, READ_ONLY_SCOPE};
 use crate::features::source_control::git_status::GitStatus;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::tag::Tag;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
 /// A row that can't run stays visible and says why on a second line, because a disabled row shows no tooltip.
@@ -63,6 +63,7 @@ impl SourceControlPane {
         let (muted, warning, success) = (theme.muted_foreground, theme.warning, theme.success);
         let (ahead, behind) = (status.ahead, status.behind);
         let menu = self.branch_menu.clone();
+        let read_only = self.read_only(cx);
         Popover::new("git-branch-menu")
             .anchor(Anchor::TopLeft)
             .p_0()
@@ -74,7 +75,12 @@ impl SourceControlPane {
                     .ghost()
                     .compact()
                     .w_full()
-                    .tooltip(status.branch_title())
+                    .tooltip(if read_only {
+                        READ_ONLY_SCOPE.to_string()
+                    } else {
+                        status.branch_title()
+                    })
+                    .disabled(read_only)
                     .child(
                         h_flex()
                             .w_full()

@@ -1,4 +1,4 @@
-use super::{MenuAction, MenuContext, PublishRow, STILL_RUNNING, WriteState, publish_row, rows};
+use super::{MenuAction, MenuContext, PublishRow, READ_ONLY_SCOPE, STILL_RUNNING, WriteState, publish_row, rows};
 use crate::features::source_control::git_status::GitStatus;
 fn status() -> GitStatus {
     GitStatus {
@@ -142,4 +142,19 @@ fn publish_is_hidden_with_an_upstream_and_with_two_remotes_asks_which() {
         publish_row(&context(&detached, &one)),
         PublishRow::Blocked("Choose a branch before publishing.".into())
     );
+}
+#[test]
+fn another_checkout_blocks_every_write_and_leaves_reading_open() {
+    let mut current = status();
+    current.has_upstream = false;
+    let remotes = ["origin".to_string()];
+    let mut shown = context(&current, &remotes);
+    shown.write = WriteState::ReadOnly;
+    for action in [MenuAction::DiscardAll, MenuAction::Fetch, MenuAction::Pull, MenuAction::Push, MenuAction::AddRemote] {
+        assert_eq!(reason(&shown, action).as_deref(), Some(READ_ONLY_SCOPE), "{action:?}");
+    }
+    assert_eq!(publish_row(&shown), PublishRow::Blocked(READ_ONLY_SCOPE.into()));
+    for action in [MenuAction::Refresh, MenuAction::BranchDiff, MenuAction::OpenHistory] {
+        assert_eq!(reason(&shown, action), None, "{action:?}");
+    }
 }

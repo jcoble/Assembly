@@ -1,5 +1,5 @@
 use super::{RowWrite, change_word, file_reasons, row_write, stageable_in};
-use crate::features::source_control::actions_menu::STILL_RUNNING;
+use crate::features::source_control::actions_menu::{READ_ONLY_SCOPE, STILL_RUNNING};
 use crate::features::source_control::git_status::{ChangedFile, GitStatus, Section};
 
 fn file(path: &str, index: &str, worktree: &str) -> ChangedFile {
@@ -32,6 +32,14 @@ fn a_rows_first_button_stages_what_is_left_and_unstages_only_a_fully_staged_file
     assert_eq!(row_write(&file("a", "M", "."), 'M'), RowWrite::Unstage);
     assert_eq!(row_write(&file("a", "U", "U"), '!'), RowWrite::Resolve);
     assert_eq!(row_write(&file("a", "?", "?"), '?'), RowWrite::Stage);
+}
+#[test]
+fn on_another_checkout_a_file_only_keeps_its_copy_path() {
+    let reasons = file_reasons(&file("a", ".", "M"), true, false).read_only();
+    for reason in [reasons.stage, reasons.unstage, reasons.discard, reasons.open] {
+        assert_eq!(reason, Some(READ_ONLY_SCOPE));
+    }
+    assert_eq!(reasons.copy_path, None);
 }
 #[test]
 fn a_blocked_file_action_says_why() {

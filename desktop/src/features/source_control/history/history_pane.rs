@@ -1,7 +1,10 @@
 use super::commit_timeline::{CommitTimeline, uncommitted_of};
+use super::git_checkouts::{CheckoutChoice, GitCheckouts, checkout_gone, repository_label};
 use super::git_status::GitStatus;
 use super::history_filter::{HistoryFilter, author_options, branch_options};
-use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::socket::{
+    checkout_selector::CheckoutSelector, client::SocketClient, outcome::Outcome,
+};
 use crate::core::state::sessions::Sessions;
 use crate::core::{intents::open_git_history::OpenGitHistory, ui::center_panes::CenterPanes};
 use gpui_kit::assets::IconName;
@@ -18,6 +21,7 @@ use serde_json::json;
 use std::collections::HashMap;
 
 const HISTORY: &str = "Git history";
+const CHECKOUT_GONE: &str = "That checkout can't be read any more, so this went back to the session folder.";
 struct OpenHistory(HashMap<String, WeakEntity<HistoryPane>>);
 impl Global for OpenHistory {}
 pub struct HistoryPane {
@@ -31,6 +35,13 @@ pub struct HistoryPane {
     /// The working copy behind the toolbar's folder label and the uncommitted row; re-read when shown or refreshed.
     status: Option<GitStatus>,
     status_read: Option<Task<()>>,
+    /// The session's other checkouts, from a successful `git/checkouts`. Without one there's only its own folder.
+    checkouts: Option<GitCheckouts>,
+    checkouts_read: Option<Task<()>>,
+    /// The checkout this tab reads instead of the session's own. It moves nothing, and isn't saved with the layout.
+    checkout: Option<CheckoutSelector>,
+    own_branch: Option<String>,
+    notice: Option<String>,
     active: bool,
     /// This session's state when last heard, so the end of a turn can be told from any other change.
     turn_state: Option<String>,
@@ -141,8 +152,20 @@ impl HistoryPane {
         if let Some(pane) = existing {
             pane.update(cx, |pane, cx| {
                 pane.path = intent.path.clone();
+                let moved = pane.expected_source != intent.expected_source;
                 pane.expected_source = intent.expected_source.clone();
+                if moved {
+                    pane.checkouts = None;
+                    pane.own_branch = None;
+                    pane.notice = None;
+                    pane.timeline.update(cx, |timeline, cx| timeline.set_checkout(None, cx));
+                }
                 pane.timeline.update(cx, |timeline, cx| timeline.set_target(intent.path, intent.expected_source, cx));
+                if moved {
+                    pane.checkout = None;
+                    pane.status = None;
+                    pane.read_status(cx);
+                }
                 cx.notify();
             });
             CenterPanes::open(key(&intent.session_id), window, cx, |_, _| pane);
@@ -186,6 +209,11 @@ impl HistoryPane {
             filter: HistoryFilter::default(),
             status: None,
             status_read: None,
+            checkouts: None,
+            checkouts_read: None,
+            checkout: None,
+            own_branch: None,
+            notice: None,
             active: true,
             turn_state: None,
             _heard: heard,
@@ -214,21 +242,35 @@ impl HistoryPane {
         let Some(socket) = SocketClient::try_global(cx) else {
             return;
         };
+        self.read_checkouts(cx);
+        let args = CheckoutSelector::applied(
+            self.checkout.as_ref(),
+            json!({"session":self.session,"expectedSource":self.expected_source}),
+        );
         let call = socket.read(cx).call::<GitStatus>(
             "git",
             "status",
-            json!({"session":self.session,"expectedSource":self.expected_source}),
+            args,
             Some(&format!("git/status/{}", cx.entity_id())),
         );
         self.status_read = Some(cx.spawn(async move |pane, cx| {
             let outcome = call.await;
             _ = pane.update(cx, |pane, cx| {
                 pane.status_read = None;
+                if pane.checkout.is_some()
+                    && matches!(&outcome, Outcome::Failed(failure) if checkout_gone(&failure.code))
+                {
+                    pane.leave_checkout(cx);
+                    return;
+                }
                 let prior = pane.status.take().and_then(|status| status.head);
                 pane.status = match outcome {
                     Outcome::Ok(status) => Some(status),
                     _ => None,
                 };
+                if let (None, Some(status)) = (&pane.checkout, &pane.status) {
+                    pane.own_branch = status.branch.clone();
+                }
                 let head = pane.status.as_ref().and_then(|status| status.head.clone());
                 let moved = prior.is_some() && head.is_some() && prior != head;
                 let uncommitted = pane.status.as_ref().and_then(uncommitted_of);
@@ -242,10 +284,69 @@ impl HistoryPane {
             });
         }));
     }
-    /// What the folder picker's trigger reads: this session's own folder, the only one its history can be read for.
+    /// A selector needs the source in its own arguments, so a session with none is asked for nothing.
+    fn read_checkouts(&mut self, cx: &mut Context<Self>) {
+        let (Some(source), Some(socket)) = (self.expected_source.clone(), SocketClient::try_global(cx)) else {
+            return;
+        };
+        let call = socket.read(cx).call::<GitCheckouts>(
+            "git",
+            "checkouts",
+            json!({"session":self.session,"expectedSource":source}),
+            Some(&format!("git/checkouts/{}", cx.entity_id())),
+        );
+        self.checkouts_read = Some(cx.spawn(async move |pane, cx| {
+            let answer = call.await;
+            _ = pane.update(cx, |pane, cx| {
+                pane.checkouts_read = None;
+                pane.checkouts = match answer {
+                    Outcome::Ok(checkouts) => Some(checkouts),
+                    Outcome::Failed(_) | Outcome::Aborted => None,
+                };
+                if let Some(checkout) = pane.checkout.clone()
+                    && !pane.checkouts.as_ref().is_some_and(|checkouts| checkouts.offers(&checkout))
+                {
+                    pane.leave_checkout(cx);
+                }
+                cx.notify();
+            });
+        }));
+    }
+    /// `None` is the session's own folder.
+    fn pick_checkout(&mut self, path: Option<String>, cx: &mut Context<Self>) {
+        let checkout = match path {
+            None => None,
+            Some(path) => match self.checkouts.as_ref().and_then(|checkouts| checkouts.selector(&path)) {
+                Some(checkout) => Some(checkout),
+                None => return,
+            },
+        };
+        self.notice = None;
+        if checkout != self.checkout {
+            self.set_checkout(checkout, cx);
+        }
+        cx.notify();
+    }
+    fn leave_checkout(&mut self, cx: &mut Context<Self>) {
+        self.notice = Some(CHECKOUT_GONE.into());
+        self.set_checkout(None, cx);
+    }
+    /// What was shown belongs to the last checkout, and another checkout's head isn't the head moving.
+    fn set_checkout(&mut self, checkout: Option<CheckoutSelector>, cx: &mut Context<Self>) {
+        self.checkout = checkout.clone();
+        self.status = None;
+        self.timeline.update(cx, |timeline, cx| timeline.set_checkout(checkout, cx));
+        self.read_status(cx);
+        cx.notify();
+    }
+    /// What the folder picker's trigger reads.
     fn folder_label(&self) -> String {
         let Some(status) = &self.status else {
-            return "No repository".into();
+            return match (&self.checkout, &self.checkouts) {
+                (Some(checkout), _) => checkout.folder().to_string(),
+                (None, Some(checkouts)) => repository_label(&checkouts.session_root, self.own_branch.as_deref()),
+                (None, None) => "No repository".into(),
+            };
         };
         let folder = status
             .checkout_root
@@ -288,10 +389,12 @@ impl BasePanel for HistoryPane {
             self.read_status(cx);
         } else {
             self.status_read = None;
+            self.checkouts_read = None;
         }
     }
     fn on_removed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.status_read = None;
+        self.checkouts_read = None;
         self.timeline
             .update(cx, |timeline, cx| timeline.set_active(false, cx));
     }
@@ -342,6 +445,38 @@ fn picker(
                 })
         })
 }
+/// The folder this tab reads. With nowhere else to look it only names the folder.
+fn repository_picker(
+    label: String,
+    choices: Option<Vec<CheckoutChoice>>,
+    current: Option<String>,
+    pane: WeakEntity<HistoryPane>,
+) -> AnyElement {
+    let trigger = Button::new("history-folder").outline().small();
+    let Some(choices) = choices else {
+        return trigger.label(label).disabled(true).into_any_element();
+    };
+    div()
+        .debug_selector(|| "history-repository".into())
+        .min_w(px(150.))
+        .max_w(px(260.))
+        .child(
+            trigger
+                .dropdown_caret(true)
+                .label(label)
+                .tooltip("Which repository's history to show")
+                .dropdown_menu(move |menu, _, _| {
+                    choices.iter().cloned().fold(menu, |menu, CheckoutChoice { path, label }| {
+                        let pane = pane.clone();
+                        let checked = current == path;
+                        menu.item(PopupMenuItem::new(label).checked(checked).on_click(move |_, _, cx| {
+                            _ = pane.update(cx, |pane, cx| pane.pick_checkout(path.clone(), cx));
+                        }))
+                    })
+                }),
+        )
+        .into_any_element()
+}
 impl Render for HistoryPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let timeline = self.timeline.read(cx);
@@ -371,13 +506,15 @@ impl Render for HistoryPane {
             .bg(surface)
             .border_b_1()
             .border_color(border)
-            .child(
-                Button::new("history-folder")
-                    .outline()
-                    .small()
-                    .label(self.folder_label())
-                    .disabled(true),
-            )
+            .child(repository_picker(
+                self.folder_label(),
+                self.checkouts
+                    .as_ref()
+                    .filter(|checkouts| checkouts.has_others())
+                    .map(|checkouts| checkouts.repository_choices(self.own_branch.as_deref())),
+                self.checkout.as_ref().map(|checkout| checkout.path.clone()),
+                weak.clone(),
+            ))
             .children(self.path.clone().map(|path| {
                 let tip = path.clone();
                 h_flex()
@@ -438,6 +575,7 @@ impl Render for HistoryPane {
                     .tooltip("Read the commit history again")
                     .disabled(reading)
                     .on_click(cx.listener(|pane, _, _, cx| {
+                        pane.notice = None;
                         pane.read_status(cx);
                         pane.timeline.update(cx, |timeline, cx| timeline.refresh(cx))
                     })),
@@ -447,9 +585,15 @@ impl Render for HistoryPane {
             .size_full()
             .min_h_0()
             .child(toolbar)
+            .children(self.notice.clone().map(|notice| {
+                div().flex_none().px(px(10.)).py_1().text_sm().text_color(muted).child(notice)
+            }))
             .child(self.timeline.clone())
     }
 }
 #[cfg(test)]
 #[path = "history_pane_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "history_checkout_tests.rs"]
+mod checkout_tests;

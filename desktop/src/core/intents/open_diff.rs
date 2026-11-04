@@ -10,4 +10,6 @@ pub struct OpenDiff {
     pub path: String,
     /// A staged rename's old path, so its diff shows the rename.
     pub original_path: Option<String>,
+    /// A linked checkout to read instead of the session's own.
+    pub checkout: Option<crate::core::socket::checkout_selector::CheckoutSelector>,
 }

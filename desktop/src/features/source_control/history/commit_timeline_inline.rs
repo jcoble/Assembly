@@ -15,6 +15,7 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+const CURRENT_FILE_ELSEWHERE: &str = "Switch back to the session folder to open it.";
 const MERGE_HAS_NO_CHANGES: &str =
     "This is a merge, and a merge brings no changes of its own. Open the commits it brought in to see the work.";
 /// What an open commit says instead of a file list; every case ends in words.
@@ -59,7 +60,7 @@ pub(super) fn letter_tone(letter: char, cx: &App) -> Hsla {
 pub(super) fn commit_file_menu(
     menu: PopupMenu,
     open: OpenCommitDiff,
-    current: OpenFile,
+    current: Option<OpenFile>,
     path: String,
     readable: bool,
 ) -> PopupMenu {
@@ -68,11 +69,21 @@ pub(super) fn commit_file_menu(
             .disabled(!readable)
             .on_click(move |_, window, cx| window.dispatch_action(Box::new(open.clone()), cx)),
     )
-    .item(
-        PopupMenuItem::new("Open current file in editor")
+    .item(match current {
+        Some(current) => PopupMenuItem::new("Open current file in editor")
             .disabled(!readable)
             .on_click(move |_, window, cx| window.dispatch_action(Box::new(current.clone()), cx)),
-    )
+        // A disabled row shows no tooltip, so the reason is on its second line.
+        None => PopupMenuItem::element(|_, cx| {
+            v_flex().child("Open current file in editor").child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(CURRENT_FILE_ELSEWHERE),
+            )
+        })
+        .disabled(true),
+    })
     .item(PopupMenuItem::new("Copy path").on_click(move |_, _, cx| {
         cx.write_to_clipboard(ClipboardItem::new_string(path.clone()))
     }))
@@ -252,22 +263,9 @@ impl CommitTimeline {
                 .child(line(files_summary(files.len()), muted))
                 .children(files.iter().map(|file| {
                     let (name, folder) = split_path(&file.path);
-                    let open = OpenCommitDiff {
-                        session_id: self.session.clone(),
-                        expected_source: self.expected_source.clone(),
-                        sha: sha.to_string(),
-                        path: file.path.clone(),
-                        title: format!("{} {}", commit.short_sha, commit.subject),
-                    };
+                    let open = self.commit_diff(sha, &file.path, format!("{} {}", commit.short_sha, commit.subject));
                     let menu_open = open.clone();
-                    let current = OpenFile {
-                        session_id: self.session.clone(),
-                        path: file.path.clone(),
-                        expected_source: self.expected_source.clone(),
-                        line: None,
-                        column: None,
-                        pinned: false,
-                    };
+                    let current = self.current_file(&file.path);
                     let copied = file.path.clone();
                     let full_path = file.path.clone();
                     let readable = !super::table::unreadable_path(&file.path);

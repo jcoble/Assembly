@@ -50,6 +50,7 @@ impl SourceControlPane {
         if changed {
             self.session_changed(session.clone(), cx);
         }
+        self.sync_checkouts(cx);
         if matches!(self.result, Some(PaneResult::Done(_))) && answers != self.result_answers {
             self.result = None;
         }
@@ -95,7 +96,9 @@ impl SourceControlPane {
     pub(super) fn sync_children(&mut self, cx: &mut Context<Self>) {
         let session = self.last_session.clone();
         let target = self.target(cx);
-        let source = target.as_ref().and_then(|target| target.source.clone());
+        let shown = self.shown_target(cx);
+        let source = shown.as_ref().and_then(|shown| shown.source.clone());
+        let checkout = self.selection(cx);
         let head = self.shown_status(cx).and_then(|status| status.head);
         let is_repository = matches!(self.read.read(cx).shown(), Shown::Read(_));
         if self.pull_requests.as_ref().map(|(key, _)| key) != session.as_ref() {
@@ -134,6 +137,7 @@ impl SourceControlPane {
             self.timeline_active = wanted;
             self.seen_head = head;
             timeline.update(cx, |timeline, cx| {
+                timeline.set_checkout(checkout, cx);
                 timeline.set_target(None, source, cx);
                 timeline.set_active(wanted, cx)
             });
@@ -141,6 +145,7 @@ impl SourceControlPane {
             let moved = head.is_some() && head != self.seen_head;
             self.seen_head = head;
             timeline.update(cx, |timeline, cx| {
+                timeline.set_checkout(checkout, cx);
                 timeline.set_target(None, source, cx);
                 if moved {
                     timeline.refresh(cx);
