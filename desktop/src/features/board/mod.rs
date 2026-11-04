@@ -2,6 +2,7 @@
 //! (docs/behavior/board.md), shown in the top bar's dropdown as in the old app.
 
 pub mod board_card;
+pub mod board_commands;
 pub mod board_feed;
 pub mod board_pane;
 pub mod board_payload;
