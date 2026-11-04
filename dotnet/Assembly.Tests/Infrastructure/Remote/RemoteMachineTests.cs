@@ -307,13 +307,23 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         await Until(async () => (await ToolAsync(_desktop!, parentToken, "message_status",
             new { messageId = started.GetProperty("messageId").GetString() })).GetProperty("state").GetString() == "next_turn");
         // The automatic final reply is its own durable message, not an invented answered state on the initial prompt.
-        await desktop.CloseAsync();
-        await desktop.OpenAsync("acp-parent");
-        var reply = await desktop.ReadAsync("session/prompt");
+        // The helper's turn end lets the kept parent session close, and the worker delivers the reply on its own, so
+        // either can come first: the reply takes the session still open, or resumes it. Both deliver it once.
+        var reply = await desktop.NextMessageAsync();
+        if (reply.GetProperty("method").GetString() == "session/close")
+        {
+            await desktop.ReplyAsync(reply, "{}");
+            await desktop.OpenAsync("acp-parent");
+            reply = await desktop.ReadAsync("session/prompt");
+        }
+        Assert.Equal("session/prompt", reply.GetProperty("method").GetString());
         Assert.Contains("notes.txt has 3 lines.", reply.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
+        Assert.Single((await RowsAsync(_desktop!, DesktopToken, parent)), row => row.GetProperty("kind").GetString() == "user"
+            && row.GetProperty("payload").GetProperty("text").GetString()!.Contains("notes.txt has 3 lines.", StringComparison.Ordinal));
         await desktop.InsertAsync(reply, "helper-reply-provider");
         await desktop.FinishAsync(reply, """{"stopReason":"end_turn"}""");
-
+        // Nothing is left on the session, so the next thing it hears is its close, not the reply again.
+        await desktop.CloseAsync();
     }
 
     [Fact]
