@@ -24,7 +24,7 @@ function parse(command: string) {
   let cur = blank(false);
   let text = '', dynamic = false, started = false, quote = '', tilde = false, quoted = false, open = 0, close = 0;
   let pending: Redirect | undefined;
-  let substitution = false, malformed = false;
+  let substitution = false, malformed = false, subshell = false;
   const heredocs: { delimiter: string; quoted: boolean; strip: boolean; into: Simple }[] = [];
   const reset = () => { text = ''; dynamic = false; started = false; tilde = false; quoted = false; open = 0; close = 0; };
   const pushWord = () => {
@@ -111,6 +111,7 @@ function parse(command: string) {
       i = position - 1;
       continue;
     }
+    if (c === '(' || c === ')') subshell = true;
     if (c === ';' || c === '&' || c === '(' || c === ')') { endCommand(false); continue; }
     if (c === '|') {
       if (command[i + 1] === '|') { i++; endCommand(false); } else { if (command[i + 1] === '&') i++; endCommand(true); }
@@ -126,7 +127,7 @@ function parse(command: string) {
   if (quote) malformed = true;
   endCommand(false);
   if (heredocs.length) malformed = true;
-  return { commands, malformed, substitution };
+  return { commands, malformed, substitution, subshell };
 }
 
 // ---- Paths -------------------------------------------------------------------------------------
@@ -330,7 +331,7 @@ function sqlSafe(sql: string, state: State) {
     const line = raw.trim();
     if (!line) continue;
     if (!line.startsWith('.')) {
-      if (SQL_WRITE.test(line) || (/\bpragma\b/i.test(line) && line.includes('='))) return false;
+      if (SQL_WRITE.test(line) || /\b(writefile|edit|load_extension)\b/i.test(line) || (/\bpragma\b/i.test(line) && line.includes('='))) return false;
       continue;
     }
     const parts = [...line.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map(m => m[1] ?? m[2] ?? m[3]);
@@ -400,6 +401,8 @@ function evaluate(command: string, cwd: string, strict: boolean): { result: { de
     const [first, ...args] = rest;
     const name = basename(first.text);
     if (['cd', 'pushd'].includes(first.text)) {
+      // A subshell's cd ends with the subshell, and the parser doesn't track that scope.
+      if (strict && parsed.subshell) { state.unknown = true; continue; }
       const target = args.find(a => !['-L', '-P', '-e', '-@', '--'].includes(a.text));
       if (!target) { state.dir = homedir(); state.unknown = false; }
       else if (target.dynamic || target.text === '-') state.unknown = true;
