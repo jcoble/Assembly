@@ -8,6 +8,7 @@ import { backendIdentity, lane, type Lane } from './dev-remote-identity.ts';
 import { command, lifetime } from './dev-remote-process.ts';
 import { probeSource, type Probe } from './dev-remote-probe.ts';
 import { stage } from './dev-remote-timing.ts';
+import { remotePublishArguments } from './dev-remote-build-profile.ts';
 
 const owner = lifetime(true);
 const request = JSON.parse(process.argv[2]);
@@ -76,7 +77,7 @@ try {
     temporary = await fs.mkdtemp(join(root, '.dev-sync-'));
     const publish = join(temporary, 'publish'), archive = join(temporary, 'backend.tar.gz');
     const buildTime = stage('build');
-    await run('dotnet', ['publish', 'dotnet/Assembly.Remote', '-c', 'Release', '--no-self-contained', '-p:UseSharedCompilation=false', `-p:SourceRevisionId=${request.commit}`, '-o', publish], true);
+    await run('dotnet', ['publish', 'dotnet/Assembly.Remote', ...remotePublishArguments, `-p:SourceRevisionId=${request.commit}`, '-o', publish], true);
     buildTime();
     const packageTime = stage('package');
     const bundle = await writeRemoteBackendPackage({ publishDir: publish, commit: request.commit, outputFile: archive, sourceDir: process.cwd() });

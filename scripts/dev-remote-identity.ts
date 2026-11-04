@@ -6,7 +6,7 @@ import { command } from './dev-remote-process.ts';
 export function backendInput(file: string) {
   return /^dotnet\/Assembly\.(Remote|Infrastructure|Application|Engine|Domain)\//.test(file)
     || /^(dotnet\/)?(Directory\.[^/]+\.(props|targets)|[Nn]u[Gg]et\.[Cc]onfig|global\.json)$/.test(file)
-    || ['scripts/adapters/claude-launcher.ts', 'scripts/package-adapters.ts'].includes(file);
+    || ['scripts/adapters/claude-launcher.ts', 'scripts/package-adapters.ts', 'scripts/dev-remote-build-profile.ts'].includes(file);
 }
 export async function backendIdentity(root: string, commit: string, signal?: AbortSignal) {
   if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error('unknown running backend commit');
