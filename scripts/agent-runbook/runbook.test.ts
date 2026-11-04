@@ -11,9 +11,11 @@ function fixture(t: any) {
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const cwd = join(home, 'Assembly');
   mkdirSync(cwd);
+  const fakeBin = join(home, 'fake-bin'); mkdirSync(fakeBin);
+  writeFileSync(join(fakeBin, 'ntn'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   function run(args: string[], input = '') {
     return spawnSync(process.execPath, [cli.pathname, ...args], {
-      cwd, input, encoding: 'utf8', env: { ...process.env, HOME: home },
+      cwd, input, encoding: 'utf8', env: { ...process.env, HOME: home, PATH: fakeBin + ':' + process.env.PATH },
     });
   }
   function hook(provider: string, event: any) {

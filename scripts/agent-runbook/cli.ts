@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { init, getBinding, saveBinding, readRunbook, update, checkpoint, recover, identity, projectFor } from './runbook.ts';
+import { init, getBinding, saveBinding, readRunbook, update, checkpoint, recover, identity, projectFor, flushPending } from './runbook.ts';
 import { rules } from './rules.ts';
 import { harnessFor } from './harnesses.ts';
 
@@ -13,6 +13,7 @@ try {
     const parentSession = String(event.session_id || '');
     const session = eventName === 'SubagentStart' ? parentSession : String(event.agent_id || parentSession);
     identity(provider, session);
+    flushPending(provider, session);
     if (event.hook_event_name === 'SubagentStart') {
       const parent = getBinding(provider, session) || init(provider, session, event.cwd);
       const child = String(event.agent_id || '');

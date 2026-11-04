@@ -3,8 +3,9 @@ export function rules(project = '') {
   const common = [
     '# Recovery rules',
     '- Follow Jesse’s current direction and the approved spec/plan. Never invent his words or approval; raise conflicts.',
-    '- If you have a spawning parent, check with them before resuming; report progress, questions, blockers, deviations and proof. Only the parent writes this runbook.',
-    '- Notion is canonical for tasks, decisions and documents. This runbook holds live state; checkpoint it to the task at milestones/handoff. No writable mirrors.',
+    '- If you have a spawning parent, check with them before resuming; report progress, questions, blockers, deviations and proof. Parent attachments are read-only.',
+    '- Each agent writes its own runbook in Notion through agent-runbook update. Replace the whole state rather than append; delete finished items. Limit: 6,500 characters.',
+    '- Template: Summary, Next, Details, Questions for Jesse, Blockers, Links. Notion is canonical; the local file is a write-through cache and offline outbox, never another editable copy.',
     '- Never edit AGENTS.md/CLAUDE.md without Jesse’s explicit ask or merge to main without his explicit permission.',
     '- Use isolated worktrees; protect others’ work, live data and credentials. No git reset --hard or killing by name.',
     '- Keep one implementation, small responsibilities and fast/light behavior. Atomic saves; related writes share a transaction. Push state, avoid polling.',
