@@ -55,12 +55,14 @@ repo_with() {
   echo "$repo"
 }
 # Archive .NET source from the recorded prospective tree, including its root helper and Assembly.slnx.
-# The retained desktop/src marker lets the architecture tests locate this scratch root.
+# The retained desktop/src marker lets the architecture tests locate this scratch root. Building Infrastructure stamps
+# its backend identity from HEAD with the two identity scripts, so the scratch repo needs both and a first commit.
 dotnet_repo_with() {
   local repo
   repo=$(repo_with "$1")
-  git -C "$source_repo" archive "$source_tree" dotnet | tar -x -C "$repo" || return 1
+  git -C "$source_repo" archive "$source_tree" dotnet scripts/dev-remote-identity.ts scripts/dev-remote-process.ts | tar -x -C "$repo" || return 1
   mkdir -p "$repo/desktop/src"
+  commit_all "$repo" || return 1
   echo "$repo"
 }
 # Commits the repo's tree, so what's staged next is all a commit would change.
