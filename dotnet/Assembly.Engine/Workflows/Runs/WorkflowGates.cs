@@ -30,7 +30,7 @@ public static class WorkflowGates
             var c = new CommandContext(Guid.NewGuid(), machine, new(ActorKind.System, "engine.worker"), row.Step, row.Version, row.Epoch, now);
             var id = row.Step + "/gate/" + row.Attempt;
             var text = row.Text.Length > 4096 ? row.Text[..4096] : row.Text;
-            var presentation = NeedPresentationInputs.Normalize(new(row.Owner, row.Run, row.Step, "workflow_gate", text, ["approve", "revise", "deny"], null, null, null));
+            var presentation = NeedPresentationInputs.Normalize(new(row.Owner, row.Run, row.Step, "workflow_gate", text, ["approve", "deny"], null, null, null));
             var number = NeedPresentationInputs.AllocateNumber(s);
             s.Execute("""
                 UPDATE engine_step SET state='waiting',dispatch_state='gate',attempt=$attempt,attempt_in_generation=attempt_in_generation+1,
@@ -39,7 +39,7 @@ public static class WorkflowGates
                   SELECT id,attempt,'waiting',$now,0,generation,attempt_in_generation,$epoch,'waiting',$machine FROM engine_step WHERE id=$step;
                 INSERT INTO engine_needs_me(id,version,machine,created_ms,updated_ms,session_id,run_id,step_id,kind,text,options_json,state,
                   addressee_session_id,source_kind,presentation_json,display_number)
-                VALUES($id,1,$machine,$now,$now,$owner,$run,$step,'workflow_gate',$text,'["approve","revise","deny"]','open',$owner,'workflow_gate',$presentation,$number);
+                VALUES($id,1,$machine,$now,$now,$owner,$run,$step,'workflow_gate',$text,'["approve","deny"]','open',$owner,'workflow_gate',$presentation,$number);
                 """, new("$attempt", row.Attempt), new("$now", now), new("$step", row.Step), new("$epoch", row.Epoch), new("$machine", machine),
                 new("$id", id), new("$owner", row.Owner), new("$run", row.Run), new("$text", text), new("$presentation", JsonSerializer.Serialize(presentation, EngineJson.Default.NeedPresentation)), new("$number", number));
             List<EventDraft> events = [new("step.changed","step",row.Step,row.Version+1,false,new(null,row.Run,row.Step,null,"waiting",row.Epoch)),

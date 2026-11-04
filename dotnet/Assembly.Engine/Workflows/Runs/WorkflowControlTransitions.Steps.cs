@@ -72,7 +72,7 @@ internal static partial class WorkflowControlTransitions
         if (decision == "retry")
         {
             if (step.State is not ("failed" or "waiting") || step.State == "waiting" && step.Reason is not ("session_lost" or "timed_out" or "interrupted" or "command_uncertain")) return Refuse("invalid_transition");
-            if (step.Used >= step.Max) return Refuse("attempts_exhausted");
+            if (step.State == "failed" && step.Used >= step.Max) return Refuse("attempts_exhausted");
             if (step.Kind == "command" && step.Reason == "command_uncertain")
             {
                 if (preparedRetry is null) return Refuse("executor_quiescence_required");
@@ -95,6 +95,9 @@ internal static partial class WorkflowControlTransitions
         {
             if (step.State != "waiting" || need is null) return Refuse("already_resolved");
             if (decision == "revise" && (command is not DecideWorkflowStep { Reply: { Length: > 0 } reply } || string.IsNullOrWhiteSpace(reply))) return Refuse("reply_required");
+            // Neither the snapshot contract nor the old gate handler defines a revision target.
+            // Keep the original gate open rather than acknowledge and repeat the same question.
+            if (decision == "revise") return Refuse("revision_target_undefined");
         }
         else if (decision == "skip")
         {
@@ -109,11 +112,12 @@ internal static partial class WorkflowControlTransitions
         var state = decision switch { "approve" => "succeeded", "deny" => "failed", "skip" => "skipped", _ => "pending" };
         var replyText = (command as DecideWorkflowStep)?.Reply;
         if (replyText is { Length: > 32768 }) return Refuse("bad_args");
+        var recovery = decision == "retry" && step.State == "waiting";
         s.Execute("""
             UPDATE engine_step SET state=$state,dispatch_state=CASE WHEN $state='pending' THEN 'pending' ELSE 'settled' END,
-              generation=generation+CASE WHEN $reason='revise' THEN 1 ELSE 0 END,
-              round=round+CASE WHEN $reason='revise' THEN 1 ELSE 0 END,
-              attempt_in_generation=CASE WHEN $reason='revise' THEN 0 ELSE attempt_in_generation END,
+              generation=generation+$recovery,
+              attempt_in_generation=CASE WHEN $recovery=1 THEN 0 ELSE attempt_in_generation END,
+              scope_granted=CASE WHEN $state='pending' THEN 0 ELSE scope_granted END,
               session_id=CASE WHEN $state='pending' THEN NULL ELSE session_id END,
               receipt_id=CASE WHEN $state='pending' THEN NULL ELSE receipt_id END,
               proof_json=CASE WHEN $state='pending' THEN NULL ELSE proof_json END,
@@ -121,9 +125,9 @@ internal static partial class WorkflowControlTransitions
               version=version+1,updated_ms=$now WHERE id=$step;
             UPDATE engine_step_attempt SET state=CASE WHEN $state='pending' THEN 'failed' ELSE $state END,
               reason=$reason,gate_state='settled',ended_ms=$now WHERE step_id=$step AND attempt=$attempt AND state IN ('running','waiting');
-            """, new("$state", state), new("$reason", decision == "skip" ? "condition_false" : decision), new("$now", c.NowMs), new("$step", id), new("$attempt", step.Attempt));
+            """, new("$state", state), new("$recovery", recovery ? 1 : 0), new("$reason", decision == "skip" ? "condition_false" : decision), new("$now", c.NowMs), new("$step", id), new("$attempt", step.Attempt));
         List<EventDraft> events = [StepEvent("step.changed", state)];
-        if (need is not null && decision is "approve" or "revise" or "deny" or "retry")
+        if (need is not null && decision is "approve" or "deny" or "retry")
         {
             s.Execute("""
                 UPDATE engine_needs_me SET state='answered',version=version+1,updated_ms=$now,answered_ms=$now,

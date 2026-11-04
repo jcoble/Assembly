@@ -33,7 +33,7 @@ public sealed class WorkflowStepControlTests
         f.SeedStep(state: "waiting", sessionId: "worker", attempt: 1, maxAttempts: 2);
         f.Db.Writer.Write("test.lost", s => s.Execute("UPDATE engine_step SET kind='agent',outcome_reason='session_lost',attempt_in_generation=1"));
         Assert.Equal("executor_quiescence_required", f.Apply(new RetryWorkflowStep("step"), "r").Error);
-        f.Db.Writer.Write("test.exhausted", s => s.Execute("UPDATE engine_step SET attempt_in_generation=2"));
+        f.Db.Writer.Write("test.exhausted", s => s.Execute("UPDATE engine_step SET state='failed',attempt_in_generation=2"));
         Assert.Equal("attempts_exhausted", f.Apply(new RetryWorkflowStep("step"), "r").Error);
     }
     [Fact]
@@ -54,7 +54,6 @@ public sealed class WorkflowStepControlTests
     [Theory]
     [InlineData("approve", "succeeded")]
     [InlineData("deny", "failed")]
-    [InlineData("revise", "pending")]
     public void Gate_owner_answer_resolves_one_need_and_duplicate_is_already_resolved(string decision, string expected)
     {
         using var f = Gate(); var need = f.Text("SELECT id FROM engine_needs_me")!;
@@ -104,17 +103,44 @@ public sealed class WorkflowStepControlTests
         Assert.Equal(0, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='stop'"));
     }
     [Fact]
-    public void Gate_revision_with_default_budget_opens_a_new_generation_and_keeps_old_attempt()
+    public void Gate_revision_without_a_defined_target_is_refused_without_consuming_reply_or_reopening_gate()
     {
         using var f = Gate();
-        f.Db.Writer.Write("test.default-budget", s => s.Execute("UPDATE engine_step SET max_attempts=1"));
-        Assert.True(f.Apply(new DecideWorkflowStep("step", "revise", "Please revise"), "r", Version(f)).Applied);
-        Assert.Equal(1, f.Db.Writer.Write("test.reopen-revised-gate", s => WorkflowGates.OpenReady(s, f.Machine, 1000)));
+        Assert.Equal("revision_target_undefined", f.Apply(new DecideWorkflowStep("step", "revise", "Please revise"), "r", Version(f)).Error);
+        Assert.Equal("waiting", f.State("engine_step", "step"));
+        Assert.Equal("open", f.Text("SELECT state FROM engine_needs_me"));
+        Assert.Equal("[\"approve\",\"deny\"]", f.Text("SELECT options_json FROM engine_needs_me"));
+        Assert.Equal(0, f.Number("SELECT generation FROM engine_step"));
+        Assert.Equal(1, f.Count("engine_step_attempt"));
+        Assert.Equal(0, f.Count("engine_workflow_history"));
+    }
+    [Theory]
+    [InlineData("session_lost")]
+    [InlineData("interrupted")]
+    [InlineData("timed_out")]
+    public void Owner_recovery_with_default_budget_dispatches_a_fresh_generation_and_consumes_old_scope_confirmation(string reason)
+    {
+        using var f = WorkflowControlTests.Fixture(); f.SeedStep(state: "waiting", attempt: 1);
+        f.Db.Writer.Write("test.interrupted", s => s.Execute("UPDATE engine_step SET kind='agent',outcome_reason=$reason,attempt_in_generation=1,scope_granted=1,required_scope='repo:write'", new SqlArg("$reason", reason)));
+        var result = f.Apply(new RetryWorkflowStep("step"), "r"); Assert.True(result.Applied, result.Error);
         Assert.Equal(1, f.Number("SELECT generation FROM engine_step"));
+        Assert.Equal(0, f.Number("SELECT attempt_in_generation FROM engine_step"));
+        Assert.Equal(0, f.Number("SELECT scope_granted FROM engine_step"));
+        f.SeedSession("worker", parentId: "owner", runId: "r");
+        Assert.True(f.Apply(new StartStep("worker"), "step", 1).Applied);
         Assert.Equal(2, f.Number("SELECT attempt FROM engine_step"));
         Assert.Equal(1, f.Number("SELECT attempt_in_generation FROM engine_step"));
-        Assert.Equal(2, f.Count("engine_step_attempt"));
-        Assert.Equal("failed", f.Text("SELECT state FROM engine_step_attempt WHERE attempt=1"));
+    }
+    [Fact]
+    public void Second_scope_request_after_continue_requires_fresh_confirmation()
+    {
+        using var f = WorkflowControlTests.Fixture(); f.SeedStep(state: "waiting");
+        f.Db.Writer.Write("test.scope", s => s.Execute("UPDATE engine_step SET kind='agent',required_scope='repo:write',outcome_reason='scope_required'"));
+        Assert.True(f.Apply(new GrantWorkflowScope("step", "repo:write"), "r").Applied);
+        Assert.True(f.Apply(new DecideWorkflowStep("step", "continue"), "r", Version(f)).Applied);
+        f.Db.Writer.Write("test.next-scope", s => s.Execute("UPDATE engine_step SET state='waiting',outcome_reason='scope_required'"));
+        Assert.Equal("invalid_transition", f.Apply(new DecideWorkflowStep("step", "continue"), "r", Version(f)).Error);
+        Assert.True(f.Apply(new GrantWorkflowScope("step", "repo:write"), "r", Version(f)).Applied);
     }
     internal static long Version(EngineFixture f) => f.Number("SELECT version FROM engine_run WHERE id='r'");
     private static EngineFixture Gate()

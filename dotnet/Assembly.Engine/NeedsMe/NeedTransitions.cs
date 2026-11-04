@@ -211,6 +211,18 @@ public static class NeedTransitions
             target.ProviderRequestId == need.RequestId && target.ChatRowId == need.ChatId;
     }
 
+    // The executor is already gone. Close its questions in the same session transaction,
+    // without manufacturing an owner answer or queuing an answer to an ended provider.
+    internal static IReadOnlyList<EventDraft> CancelForEndedSession(IWriteScope s, CommandContext c) => s.Query("""
+        UPDATE engine_needs_me SET state='cancelled',version=version+1,updated_ms=$now,answer_json=NULL,
+          answered_by=$actor,answered_ms=$now,answered_origin_json=$origin
+        WHERE session_id=$session AND state='open'
+        RETURNING id,version,run_id,step_id,addressee_session_id
+        """, r => new EventDraft("needs_me.answered", "needs_me", r.Text(0), r.Long(1), false,
+            new(c.EntityId, r.IsNull(2) ? null : r.Text(2), r.IsNull(3) ? null : r.Text(3),
+                r.IsNull(4) ? null : r.Text(4), "cancelled", c.Epoch, "session_ended")),
+        new SqlArg("$now", c.NowMs), new("$actor", c.Actor.Id), new("$origin", OriginJson(c)), new("$session", c.EntityId));
+
     public static CommandResult Expire(IWriteScope s, CommandContext c, MessageExpiryPolicy? expiryPolicy = null) => Apply(s, c, new ResolveNeed("expired", null), expiryPolicy);
 
     public static long? NextDeadline(IAppDatabase db) => db.QueryFirst(

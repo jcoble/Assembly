@@ -61,11 +61,13 @@ public sealed class CommandRecoveryTests
         Assert.False(held.Execution.IsCompleted); Assert.Equal(1, held.Starts);
         await held.StopAndLoseExitAsync();
         var prepared = await recovery.PrepareAsync(c, default);
+        var context = c with { EntityId = held.Fixture.Run, ExpectedVersion = held.Fixture.Core.Number("SELECT version FROM engine_run") };
+        var command = new Assembly.Engine.Workflows.Runs.RetryWorkflowStep(held.Fixture.Step);
         var result = held.Fixture.Core.Db.Writer.Write("test.repeat-recovery", scope =>
-            held.Fixture.Commands.ApplyPreparedWorkflowCommandRetry(scope, prepared.Context, prepared));
+            held.Fixture.Commands.ApplyPreparedWorkflowControlRetry(scope, context, command, prepared));
         Assert.True(result.Applied, result.Error);
         Assert.Equal(result, held.Fixture.Core.Db.Writer.Write("test.repeat-replay", scope =>
-            held.Fixture.Commands.ApplyPreparedWorkflowCommandRetry(scope, prepared.Context with { NowMs = 2000 }, prepared)));
+            held.Fixture.Commands.ApplyPreparedWorkflowControlRetry(scope, context with { NowMs = 2000 }, command, prepared)));
         Assert.True(held.Fixture.Start(held.Fixture.Prepare()).Applied);
         Assert.Equal(2, held.Fixture.Core.Number("SELECT attempt FROM engine_step"));
         Assert.Equal(2, held.Fixture.Core.Count("engine_step_attempt"));
@@ -79,7 +81,6 @@ public sealed class CommandRecoveryTests
     {
         await using var held = await InterruptedCommand.StartAsync(true);
         await held.InterruptAsync(); var f = held.Fixture;
-        f.Core.Db.Writer.Write("test.retry-budget", scope => scope.Execute("UPDATE engine_step SET max_attempts=2"));
         var need = held.OwnerContext();
         var context = need with { EntityId = f.Run, ExpectedVersion = f.Core.Number("SELECT version FROM engine_run") };
         var command = new Assembly.Engine.Workflows.Runs.RetryWorkflowStep(f.Core.Text("SELECT id FROM engine_step")!);
@@ -90,6 +91,8 @@ public sealed class CommandRecoveryTests
         var result = f.Core.Db.Writer.Write("test.standard-retry", scope => f.Commands.ApplyPreparedWorkflowControlRetry(scope, context, command, prepared));
         Assert.True(result.Applied, result.Error);
         Assert.Equal("pending", f.Core.Text("SELECT state FROM engine_step"));
+        Assert.Equal(1, f.Core.Number("SELECT generation FROM engine_step"));
+        Assert.Equal(0, f.Core.Number("SELECT attempt_in_generation FROM engine_step"));
         Assert.Equal("failed", f.Core.Text("SELECT state FROM engine_step_attempt"));
         Assert.Equal(result, f.Core.Apply(context, command));
         Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind='command_retry_authorized'"));
