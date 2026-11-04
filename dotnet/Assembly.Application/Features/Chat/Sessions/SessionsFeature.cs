@@ -235,7 +235,7 @@ internal sealed class SessionsFeature : IFeature
                 parentLocation = _store.OwningLocation(scope, args.ParentSessionId);
                 if (parentLocation is null || !parentLocation.Ready) throw new CallFailed("The parent's checkout is not ready.", "checkout_not_ready");
             }
-            var folder = parentLocation?.Folder ?? preparation?.CanonicalRoot ?? _owningHome;
+            var folder = parentLocation?.Folder ?? preparation?.CanonicalRoot ?? BareSessionFolder.ForHome(_owningHome);
             if (projectId is not null && preparation is null)
             {
                 var project = _projects?.Find(scope, projectId);

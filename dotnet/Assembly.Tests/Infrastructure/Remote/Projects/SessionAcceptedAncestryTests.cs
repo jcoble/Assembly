@@ -21,6 +21,33 @@ namespace Assembly.Tests.Infrastructure.Remote;
 
 public sealed class SessionAcceptedAncestryTests
 {
+    [Theory]
+    [InlineData("claude")]
+    [InlineData("codex")]
+    public async Task Bare_create_forwarded_to_remote_uses_its_own_home_and_keeps_project_null(string agent)
+    {
+        await using var f = new Fixture(separateHomes: true);
+        var remoteHome = f.RemoteHome;
+        var owner = f.Hosts.Remote;
+        await f.Start();
+        using var socket = await f.OpenDesktop();
+        var created = Result(await ApiTests.SocketRequestAsync(socket, 1, "sessions", "create",
+            JsonSerializer.Serialize(new SessionsFeature.CreateArgs(agent, "bare-remote", Machine: "workbox-test",
+                ExpectedSource: f.Source()), SessionsJson.Default.CreateArgs)));
+        var id = created.GetProperty("sessionId").GetString()!;
+        var folder = Path.Combine(remoteHome, "assembly-bare");
+        Assert.True(Directory.Exists(folder));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(folder));
+        Assert.False(Directory.Exists(Path.Combine(f.Home.FullName, "assembly-bare")));
+        Assert.Equal(folder, created.GetProperty("facts").GetProperty("folder").GetString());
+        Assert.Equal(agent, created.GetProperty("facts").GetProperty("agent").GetString());
+        Assert.Equal(owner.Runtime.Machine, created.GetProperty("facts").GetProperty("machine").GetString());
+        Assert.Equal(JsonValueKind.Null, created.GetProperty("projectId").ValueKind);
+        Assert.Null(owner.Sessions.Get(id)!.ProjectId);
+        Assert.Equal(folder, owner.Sessions.Root(owner.Sessions.Get(id)!));
+        Assert.Equal(0, f.Launcher.Launches);
+    }
+
     [Fact]
     public async Task Accepted_root_and_helper_replay_keep_actual_owner_provider_and_certified_parent_without_provider_launch()
     {
@@ -231,15 +258,22 @@ public sealed class SessionAcceptedAncestryTests
         internal DirectoryInfo Home { get; } = Directory.CreateTempSubdirectory("assembly-accepted-ancestry-");
         internal FakeLauncher Launcher { get; } = new();
         internal TwoHosts Hosts { get; }
-        internal Fixture()
+        internal string RemoteHome { get; }
+        internal Fixture(bool separateHomes = false)
         {
-            Hosts = new(windowCalls: true, forwardCommands: true, machineLauncher: Launcher, checkouts: Home.FullName, owningHome: Home.FullName);
+            RemoteHome = separateHomes ? Directory.CreateDirectory(Path.Combine(Home.FullName, "remote-home")).FullName : Home.FullName;
+            Hosts = new(windowCalls: true, forwardCommands: true, machineLauncher: Launcher, checkouts: Home.FullName,
+                owningHome: Home.FullName, remoteOwningHome: RemoteHome);
             var projects = new ProjectStore(Hosts.Mac.Fixture.Db, Hosts.Mac.Fixture.Time);
             Hosts.Remote.SessionFeature = host =>
             {
-                var machines = new MachineSet(new FakeMachine(null, host.Sessions));
+                var machines = new MachineSet(new FakeMachine(null, host.Sessions)
+                {
+                    Agents = [new("claude", "Claude", new string('a', 64), "", "claude/"),
+                        new("codex", "Codex", new string('b', 64), "", "codex/")]
+                });
                 return new SessionsFeature(host.Sessions, machines, new SessionRowSources(host.Fixture.Db, host.Sessions, machines),
-                    owningMachine: host.Runtime.Machine, owningHome: Home.FullName);
+                    owningMachine: host.Runtime.Machine, owningHome: RemoteHome);
             };
             Hosts.Mac.SessionFeature = host =>
             {

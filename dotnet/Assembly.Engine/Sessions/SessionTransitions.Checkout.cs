@@ -4,6 +4,7 @@ using Assembly.Application.Common.Engine;
 using Assembly.Application.Common.Projects;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Effects;
+using Assembly.Engine.Messages;
 using Assembly.Engine.Persistence;
 
 namespace Assembly.Engine.Sessions;
@@ -176,6 +177,16 @@ public static partial class SessionTransitions
                 }
             }
         }
+        // Pending checkout gates every recipient in the source folder, including when this
+        // session moves to a new worktree. Release only after all checkout projections settle.
+        foreach (var recipient in scope.Query("""
+            SELECT s.id FROM engine_session s
+            WHERE s.machine=$machine AND s.holder='local' AND s.folder=$folder
+              AND s.state IN ('idle','running') AND s.cancel_requested=0 AND s.checkout_state<>'pending'
+              AND NOT EXISTS(SELECT 1 FROM engine_session peer WHERE peer.folder=s.folder AND peer.checkout_state='pending')
+              AND EXISTS(SELECT 1 FROM engine_message m WHERE m.to_session_id=s.id AND m.state='queued' AND m.in_flight=0)
+            """, r => r.Text(0), new SqlArg("$machine", context.Machine), new("$folder", intent.Folder)))
+            events.AddRange(MessageRelease.Next(scope, context, recipient, effects));
         EngineJournal.Commit(scope, context with { EntityId = effect.SessionId!, ExpectedVersion = current.Version, Epoch = current.Epoch }, version, current.Epoch, events, effects);
     }
 }

@@ -1,17 +1,19 @@
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
+using Assembly.Tests.Fixtures;
+using Assembly.Infrastructure.Persistence;
 using static Assembly.Tests.Features.Chat.Rows.Converted;
 
 namespace Assembly.Tests.Features.Chat.Rows;
 
-/// <summary>The recorded tool turn: ToolSearch, Read, Bash, and an Edit that asked permission, between three messages.</summary>
+/// <summary>The recorded tool turn: ToolSearch, Read, Bash, and an Edit that asked permission, between two messages.</summary>
 public sealed class ToolTurnTests
 {
-    private const string ToolSearch = "toolu_01WJArcq72dgAfMLbKWhuQqN";
-    private const string Read = "toolu_01VxBwJRtaXUo3M5ZGuxGoVz";
-    private const string Bash = "toolu_01QAXNGNLNoxzu1d8X4iRQFD";
-    private const string Edit = "toolu_01AQLCH8NyrUYyEzzHhVS93F";
-    private const string File = "/tmp/spike-record-tools-LWZCTs/notes.txt";
+    private const string ToolSearch = "toolu_013PTbSqNKt3gPS7hrwcKe3o";
+    private const string Read = "toolu_01SJ4uuZgjqkmu1ovu31fLED";
+    private const string Bash = "toolu_01YAmXRA8UPoCAGDrzDwqBJV";
+    private const string Edit = "toolu_012mN1u8J2i9vYYpscFbFR29";
+    private const string File = "/tmp/assembly-record-tools-9hZYYI/notes.txt";
     private static readonly Converted Turn = Fixture("acp/tools.jsonl");
 
     [Fact]
@@ -19,14 +21,14 @@ public sealed class ToolTurnTests
     {
         var items = Turn.ItemOrder().Where(id => !id.StartsWith('#') && !id.StartsWith("context:")).ToList();
         Assert.Equal(
-            [ToolSearch, "msg_011CgLZKJP9x6gwJFiUpHax8", Read, Bash, "msg_011CgLZKZ3DeAMqPxmg8gcQE", Edit, "msg_011CgLZKjXkemKZZSDjE4LVt"],
+            [ToolSearch, "msg_011CghqGtoTovCoBPYZt8UZM", Read, Bash, Edit, "msg_011CghqHELTYkfVgpsisvF9B"],
             items);
     }
 
     [Fact]
     public void A_message_ends_when_the_next_tool_starts()
     {
-        var message = Turn.OfItem("msg_011CgLZKJP9x6gwJFiUpHax8")[^1];
+        var message = Turn.OfItem("msg_011CghqGtoTovCoBPYZt8UZM")[^1];
         Assert.Equal(RowKind.Message, message.Kind);
         Assert.True(Turn.Rows.ToList().IndexOf(message) < Turn.Rows.ToList().IndexOf(Turn.OfItem(Read)[0]));
     }
@@ -56,9 +58,9 @@ public sealed class ToolTurnTests
     [Fact]
     public void Each_tool_line_names_the_tool_and_says_what_it_acted_on()
     {
-        AssertLine(ToolSearch, "ToolSearch", "todo");
+        AssertLine(ToolSearch, "ToolSearch", "todo task list");
         AssertLine(Read, "Read", File);
-        AssertLine(Bash, "Bash", $"wc -l {File}");
+        AssertLine(Bash, "Bash", "wc -l notes.txt");
         AssertLine(Edit, "Edit", File);
         Assert.Equal(File, Text(Turn.OfItem(Read)[^1], "path"));
     }
@@ -80,7 +82,13 @@ public sealed class ToolTurnTests
     public void Tool_details_hold_the_input_and_the_output()
     {
         Assert.Equal("1\tapple\n2\tbanana\n3\tcherry\n4\t", Turn.Detail(Read).Output);
-        Assert.Equal($"3 {File}", Turn.Detail(Bash).Output);
+        using var file = new TempDatabase();
+        using var database = TestDatabase.Open(file.Path);
+        var store = RowStore.Open(database);
+        var converter = new RowConverter();
+        foreach (var agentEvent in FixtureReplay.Events("acp/tools.jsonl"))
+            store.Commit("session", converter.Apply(agentEvent));
+        Assert.Equal("3 notes.txt", store.ToolCall("session", Bash)!.Output);
         Assert.Contains("\"command\":\"wc -l", Turn.Detail(Bash).Input);
     }
 
@@ -89,7 +97,7 @@ public sealed class ToolTurnTests
     {
         var stats = Turn.Last(RowKind.Stats).Payload;
         Assert.Equal(4, stats.GetProperty("toolCalls").GetInt32());
-        Assert.Equal(0.1562456m, stats.GetProperty("costUsd").GetDecimal());
+        Assert.Equal(0.2324636m, stats.GetProperty("costUsd").GetDecimal());
         Assert.Equal("finished", Text(Turn.Rows[^1], "state"));
     }
 

@@ -59,8 +59,9 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
         return Probe(cancellationToken);
     }
 
+    public IReadOnlyList<ConfigTarget> Agents { get; set; } = [new("claude", "Claude", new string('a', 64), "", "claude/")];
     public Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken) =>
-        Remote<IReadOnlyList<ConfigTarget>>("agents", () => [new("claude", "Claude", new string('a', 64), "", "claude/")], cancellationToken);
+        Remote("agents", () => Agents, cancellationToken);
 
     public Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken,
         InitialSessionConfig? initialConfig = null, string? workingFolder = null) =>

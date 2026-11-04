@@ -30,6 +30,7 @@ public sealed class SessionCutoverDoorTests
         await using var h = await Host.Start();
         var sentinel = Path.Combine(h.Home, "notes.md");
         await File.WriteAllTextAsync(sentinel, "owner draft");
+        Assert.False(Directory.Exists(Path.Combine(h.Home, "assembly-bare")));
         var before = Directory.EnumerateFileSystemEntries(h.Home).Select(Path.GetFileName).Order().ToArray();
         using var firstSocket = await h.Open();
         await Send(firstSocket, """{"t":"call","id":1,"feature":"sessions","method":"create","args":{"agent":"claude","clientId":"cutover_claude_1"}}""");
@@ -43,6 +44,9 @@ public sealed class SessionCutoverDoorTests
         foreach (var id in new[] { firstId, socketId })
         {
             Assert.Null(h.Store.Get(id)!.Title);
+            Assert.Null(h.Store.Get(id)!.ProjectId);
+            Assert.Equal(Path.Combine(h.Home, "assembly-bare"), h.Store.Root(h.Store.Get(id)!));
+            Assert.Equal(Path.Combine(h.Home, "assembly-bare"), h.F.Text("SELECT folder FROM engine_session WHERE id=$id", new SqlArg("$id", id)));
             Assert.Equal("", h.F.Text("SELECT title FROM engine_session WHERE id=$id", new SqlArg("$id", id)));
         }
         Assert.Equal(2, h.F.Count("engine_session"));
@@ -50,7 +54,8 @@ public sealed class SessionCutoverDoorTests
         Assert.Equal(2, h.F.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='start'"));
         Assert.Equal(0, h.F.Count("engine_message")); Assert.Equal(0, h.Launcher.Launches);
         Assert.Equal("owner draft", await File.ReadAllTextAsync(sentinel));
-        Assert.Equal(before, Directory.EnumerateFileSystemEntries(h.Home).Select(Path.GetFileName).Order());
+        Assert.Equal(before.Append("assembly-bare").Order(), Directory.EnumerateFileSystemEntries(h.Home).Select(Path.GetFileName).Order());
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(h.Home, "assembly-bare")));
         Assert.False(Directory.Exists(Path.Combine(h.Home, "checkouts")));
     }
 

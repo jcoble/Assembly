@@ -31,6 +31,11 @@ public static class TranscriptReplay
                 throw new InvalidDataException("Transcript replay requires ACP v2; re-record this v1 fixture.");
             switch (direction)
             {
+                case "in" when message.TryGetProperty("result", out var created)
+                    && created.TryGetProperty("sessionId", out _)
+                    && created.TryGetProperty("availableCommands", out var commands) && commands.ValueKind == JsonValueKind.Array:
+                    events.Add(new CommandsChanged(at, commands.Clone()));
+                    break;
                 case "out" when MethodOf(message) == AcpMethods.SessionPrompt:
                     openPrompt = message.GetProperty("id").GetInt64();
                     promptSession = message.GetProperty("params").GetProperty("sessionId").GetString();
@@ -43,8 +48,9 @@ public static class TranscriptReplay
                     var update = message.GetProperty("params").Deserialize(AcpJsonContext.Default.SessionNotification)!;
                     if (!readers.TryGetValue(update.SessionId, out var reader))
                         readers[update.SessionId] = reader = new UpdateReader();
-                    events.AddRange(reader.Read(update, at).Where(e => e is not TurnStarted and not SessionMessage));
-                    if (events.LastOrDefault() is TurnEnded or TurnFailed) openPrompt = null;
+                    var observed = reader.Read(update, at);
+                    events.AddRange(observed.Where(e => e is not TurnStarted and not SessionMessage));
+                    if (update.SessionId == promptSession && observed.Any(e => e is TurnEnded or TurnFailed)) openPrompt = null;
                     break;
                 case "in" when openPrompt is { } id && message.TryGetProperty("id", out var replyId) && replyId.GetInt64() == id:
                     if (message.TryGetProperty("result", out var response) && !response.TryGetProperty("messageId", out _))

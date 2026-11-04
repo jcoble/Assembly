@@ -39,11 +39,11 @@ public sealed class SessionInitialConfigTests : IDisposable
         var choices = new Dictionary<string, string> { ["raw/模型\"selector"] = "model/β", ["effort"] = "medium" };
         var target = StartOwningEngine();
         var created = _db.Writer.Write("test.owner-create", scope => _store.Create(scope, "claude", "initial_raw",
-            _home.FullName, null, null, initialConfig: new(target, choices)));
+            Path.Combine(_home.FullName, "assembly-bare"), null, null, initialConfig: new(target, choices)));
         var reopened = SessionStore.Open(_db, _time, "/managed");
         Assert.Equal(created, reopened.Get(created.SessionId));
-        Assert.Equal(_home.FullName, reopened.Get(created.SessionId)!.WorkingFolder);
-        Assert.Equal(new SessionLocation(_home.FullName, false, false), _store.Location(created));
+        Assert.Equal(Path.Combine(_home.FullName, "assembly-bare"), reopened.Get(created.SessionId)!.WorkingFolder);
+        Assert.Equal(new SessionLocation(Path.Combine(_home.FullName, "assembly-bare"), false, false), _store.Location(created));
         Assert.Equal(target, reopened.Config(created.SessionId).ConfigTarget);
         Assert.Equal(choices, reopened.Config(created.SessionId).Choices);
         Assert.Null(reopened.Config(created.SessionId).PendingModel);
@@ -60,7 +60,7 @@ public sealed class SessionInitialConfigTests : IDisposable
         var target = StartOwningEngine();
         _db.Writer.Write("test.reject", scope => scope.Execute("CREATE TRIGGER reject_initial BEFORE INSERT ON session_config BEGIN SELECT RAISE(ABORT,'fixture refusal'); END;"));
         Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => _db.Writer.Write("test.owner-create", scope =>
-            _store.Create(scope, "claude", "rollback_raw", _home.FullName, null, null,
+            _store.Create(scope, "claude", "rollback_raw", Path.Combine(_home.FullName, "assembly-bare"), null, null,
                 initialConfig: new(target, new Dictionary<string, string> { ["model"] = "wire" }))));
         Assert.Equal(0L, Count("session_info"));
         Assert.Equal(0L, Count("session_config"));
@@ -116,7 +116,7 @@ public sealed class SessionInitialConfigTests : IDisposable
             var launcher = new MutatingLauncher(actual, () => Environment.SetEnvironmentVariable(key, "late-fixture"));
             StartOwningEngine(launcher);
             var created = _db.Writer.Write("test.captured-owner-create", scope => _store.Create(scope,
-                "claude", "captured_target", _home.FullName, null, null,
+                "claude", "captured_target", Path.Combine(_home.FullName, "assembly-bare"), null, null,
                 initialConfig: new(target, new Dictionary<string, string> { ["model"] = "wire" })));
             Assert.Equal("late-fixture", Environment.GetEnvironmentVariable(key));
             Assert.Equal(target, _store.Config(created.SessionId).ConfigTarget);

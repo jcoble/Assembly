@@ -249,9 +249,9 @@ public sealed class UpdateReaderTests
                 return change;
             }
             Apply("""{"sessionUpdate":"tool_call_update","toolCallId":"t","status":"in_progress"}""");
-            Apply("""{"sessionUpdate":"tool_call_content_chunk","toolCallId":"t","content":{"type":"diff","path":"a.txt","oldText":"old","newText":"new"}}""");
-            var both = Apply("""{"sessionUpdate":"tool_call_content_chunk","toolCallId":"t","content":{"type":"diff","path":"b.txt","oldText":"old","newText":"new"}}""");
-            Assert.Equal(new[] { "a.txt", "b.txt" }, both.Fields.Diffs!.Select(diff => diff.Path));
+            Apply("""{"sessionUpdate":"tool_call_content_chunk","toolCallId":"t","content":{"type":"diff","changes":[{"operation":"modify","path":"a.txt"}],"patch":{"format":"git_patch","text":"diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n"}}}""");
+            var both = Apply("""{"sessionUpdate":"tool_call_content_chunk","toolCallId":"t","content":{"type":"diff","changes":[{"operation":"modify","path":"b.txt"}],"patch":{"format":"git_patch","text":"diff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-old\n+new\n"}}}""");
+            Assert.Equal(new[] { "a.txt", "b.txt" }, both.Fields.Diffs!.SelectMany(diff => diff.Paths));
             var detail = store.ToolCall("s", "t")!;
             Assert.Contains("a.txt", detail.Diff);
             Assert.Contains("b.txt", detail.Diff);
