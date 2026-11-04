@@ -24,19 +24,22 @@ export function validateVersions(value: unknown): Versions {
   return data as Versions;
 }
 
+// A public read, not gh: Workbox Test has neither gh nor a GitHub login. One list call carries every release's assets.
+// The token only raises the rate limit (CI's shared addresses); it goes on stdin so no process listing shows it.
 export function latestProviderTag(target: string): string | undefined {
   if (!targets.includes(target)) throw new Error("Unsupported target: " + target);
-  const releases = JSON.parse(execFileSync("gh", ["release", "list", "--repo", providerRepo, "--limit", "1000",
-    "--json", "tagName,isDraft,isPrerelease,publishedAt"], { encoding: "utf8" }));
+  const auth = process.env.GH_TOKEN ? 'header = "Authorization: Bearer ' + process.env.GH_TOKEN + '"\n' : "";
+  const releases = JSON.parse(execFileSync("curl", ["-fsSL", "--connect-timeout", "10", "--max-time", "60", "--config", "-",
+    "-H", "Accept: application/vnd.github+json", "https://api.github.com/repos/" + providerRepo + "/releases?per_page=100"],
+    { encoding: "utf8", input: auth, stdio: ["pipe", "pipe", "inherit"] }));
   const candidates = releases.filter((release: any) =>
-    typeof release.tagName === "string" && /^assembly-providers-\d+-\d+$/.test(release.tagName) &&
-    release.isDraft !== true && release.isPrerelease !== true)
-    .sort((a: any, b: any) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
-  const required = new Set(["assembly-adapters-" + target + ".tar.gz", "assembly-adapters-" + target + ".json"]);
+    typeof release.tag_name === "string" && /^assembly-providers-\d+-\d+$/.test(release.tag_name) &&
+    release.draft !== true && release.prerelease !== true)
+    .sort((a: any, b: any) => Date.parse(b.published_at) - Date.parse(a.published_at));
+  const required = ["assembly-adapters-" + target + ".tar.gz", "assembly-adapters-" + target + ".json"];
   for (const release of candidates) {
-    const details = JSON.parse(execFileSync("gh", ["release", "view", release.tagName, "--repo", providerRepo, "--json", "assets"], { encoding: "utf8" }));
-    const assets = new Set((details.assets ?? []).map((asset: any) => asset.name));
-    if ([...required].every(name => assets.has(name))) return release.tagName;
+    const assets = new Set((release.assets ?? []).map((asset: any) => asset.name));
+    if (required.every(name => assets.has(name))) return release.tag_name;
   }
   return undefined;
 }
@@ -236,9 +239,15 @@ async function main() {
     return;
   }
   if (command === "provider-tag") {
-    const tag = latestProviderTag(args[0]);
-    if (!tag) throw new Error("No eligible published provider release contains the required platform assets");
-    console.log(tag);
+    // agents-file.sh reports stderr's first error, so a failed lookup prints no Node stack dump.
+    try {
+      const tag = latestProviderTag(args[0]);
+      if (!tag) throw new Error("No eligible published provider release contains the required platform assets");
+      console.log(tag);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
     return;
   }
   if (command === "publish") {

@@ -64,28 +64,24 @@ cat >"$tmp/releases.json" <<'JSON'
  {"tagName":"assembly-providers-205-1","isLatest":false,"isDraft":false,"isPrerelease":true,"publishedAt":"2026-11-09T00:00:00Z","assets":["assembly-adapters-linux-x64.tar.gz","assembly-adapters-linux-x64.json"]}
 ]
 JSON
-cat >"$tmp/bin/gh" <<'JS'
+cat >"$tmp/bin/curl" <<'JS'
 #!/usr/bin/env node
 const fs = require("node:fs"), path = require("node:path");
-const [group, action, ...args] = process.argv.slice(2);
+const args = process.argv.slice(2), url = args.at(-1);
 const releases = JSON.parse(fs.readFileSync(process.env.FAKE_RELEASES_FILE, "utf8"));
-const calls = process.env.FAKE_GH_CALLS;
+const calls = process.env.FAKE_CURL_CALLS;
 const log = value => calls && fs.appendFileSync(calls, JSON.stringify(value) + "\n");
-if (group !== "release") throw Error("unexpected gh operation");
-if (action === "list") {
-  log({action, args});
-  if (process.env.FAKE_FAIL_LIST) { console.error("fake release list unavailable"); process.exit(17); }
-  console.log(JSON.stringify(releases.map(({tagName,isDraft,isPrerelease,publishedAt}) => ({tagName,isDraft,isPrerelease,publishedAt}))));
-} else if (action === "view") {
-  const tag = args[0], release = releases.find(item => item.tagName === tag);
-  log({action, tag});
-  console.log(JSON.stringify({assets: (release?.assets ?? []).map(name => ({name}))}));
-} else if (action === "download") {
-  const tag = args[0];
-  log({action, tag});
-  if (process.env.FAKE_FAIL_DOWNLOAD) { console.error("fake release download unavailable"); process.exit(17); }
-  const dir = args[args.indexOf("--dir") + 1], patterns = args.flatMap((arg, i) => arg === "--pattern" ? [args[i + 1]] : []);
-  for (const name of patterns) fs.copyFileSync(path.join(process.env.FAKE_ASSET_ROOT, tag, name), path.join(dir, name));
+const download = url.match(/^https:\/\/github\.com\/jcoble\/Assembly\/releases\/download\/([^/]+)\/([^/]+)$/);
+if (url.startsWith("https://api.github.com/repos/jcoble/Assembly/releases?")) {
+  log({action: "list"});
+  if (process.env.FAKE_FAIL_LIST) { console.error("curl: (22) fake release list unavailable"); process.exit(22); }
+  console.log(JSON.stringify(releases.map(release => ({tag_name: release.tagName, draft: release.isDraft, prerelease: release.isPrerelease,
+    published_at: release.publishedAt, assets: release.assets.map(name => ({name}))}))));
+} else if (download) {
+  const [, tag, name] = download;
+  log({action: "download", tag, name});
+  if (process.env.FAKE_FAIL_DOWNLOAD) { console.error("curl: (22) fake release download unavailable"); process.exit(22); }
+  fs.copyFileSync(path.join(process.env.FAKE_ASSET_ROOT, tag, name), args[args.indexOf("-o") + 1]);
   if (process.env.FAKE_EDIT_DESCRIPTOR) require("node:child_process").execFileSync("python3", ["-I", "-c", `
 import fcntl,json,os,sys,tempfile
 p=sys.argv[1]; lock=os.open(p+'.lock',os.O_CREAT|os.O_RDWR,0o600)
@@ -97,13 +93,16 @@ try:
  os.replace(tmp,p)
 finally: os.close(lock)
 `, process.env.FAKE_EDIT_DESCRIPTOR]);
-} else throw Error("unexpected gh release operation " + action);
+} else throw Error("unexpected curl request " + url);
 JS
+chmod +x "$tmp/bin/curl"
+# Workbox Test has no gh and no GitHub login, so every path here must work with gh refusing to run.
+printf '#!/bin/sh\necho "gh: command not found" >&2\nexit 127\n' >"$tmp/bin/gh"
 chmod +x "$tmp/bin/gh"
 
 run_agents() {
   env -u CODEX_HOME HOME="$tmp/home" PATH="$tmp/bin:/usr/bin:/bin" FAKE_RELEASES_FILE="$tmp/releases.json" \
-    FAKE_ASSET_ROOT="$tmp/releases" FAKE_GH_CALLS="$tmp/gh-calls.jsonl" "$@" \
+    FAKE_ASSET_ROOT="$tmp/releases" FAKE_CURL_CALLS="$tmp/curl-calls.jsonl" "$@" \
     bash "$here/../dotnet/scripts/agents-file.sh" "$tmp/adapters" "$tmp/agents.json"
 }
 expect_config() {
@@ -147,13 +146,11 @@ grep -Fq 'CODEX_HOME must not be empty when configured' "$tmp/empty-codex-home.e
 echo "ok   explicitly empty CODEX_HOME refuses config lookup and preserves the descriptor"
 expect_config "selects newest complete provider release, not app latest or incomplete/draft releases" entries
 expect_config "records explicit adapter vendor families" vendor_families
-python3 - "$tmp/gh-calls.jsonl" <<'PY'
+python3 - "$tmp/curl-calls.jsonl" <<'PY'
 import json, sys
 calls = [json.loads(line) for line in open(sys.argv[1])]
-downloads = [call["tag"] for call in calls if call["action"] == "download"]
-assert downloads == ["assembly-providers-202-1"], downloads
-assert any(call.get("tag") == "assembly-providers-203-1" for call in calls)
-assert not any(call.get("tag") in ("assembly-providers-204-1", "assembly-providers-205-1") for call in calls)
+downloads = {call["tag"] for call in calls if call["action"] == "download"}
+assert downloads == {"assembly-providers-202-1"}, downloads
 PY
 expect_config "by default claude.ai connectors are off" claude_connectors_off
 expect_config "by default Codex plugins load" codex_plugins_default
@@ -195,7 +192,7 @@ if env HOME="$tmp/home" PATH="$tmp/bin:/usr/bin:/bin" FAKE_RELEASES_FILE="$tmp/r
   bash "$here/../dotnet/scripts/agents-file.sh" "$tmp/fresh-adapters" "$tmp/fresh-agents.json" 2>"$tmp/fresh.err"; then
   echo "FAIL fresh offline startup unexpectedly succeeded"; exit 1
 fi
-grep -Fq 'no valid cached bundle exists' "$tmp/fresh.err"
+grep -Fq 'adapter update unavailable (curl: (22) fake release list unavailable), and no valid cached bundle exists' "$tmp/fresh.err"
 [[ ! -e "$tmp/fresh-agents.json" ]]
 [[ -z "$(find "$tmp/fresh-adapters/bundles" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)" ]]
 echo "ok   fresh offline startup fails clearly without writing saved state"
@@ -204,10 +201,22 @@ if env HOME="$tmp/home" PATH="$tmp/bin:/usr/bin:/bin" FAKE_RELEASES_FILE="$tmp/r
   bash "$here/../dotnet/scripts/agents-file.sh" "$tmp/fresh-download-adapters" "$tmp/fresh-download-agents.json" 2>"$tmp/fresh-download.err"; then
   echo "FAIL fresh download failure unexpectedly succeeded"; exit 1
 fi
-grep -Fq 'no valid cached bundle exists' "$tmp/fresh-download.err"
+grep -Fq 'adapter update unavailable (curl: (22) fake release download unavailable), and no valid cached bundle exists' "$tmp/fresh-download.err"
 [[ ! -e "$tmp/fresh-download-agents.json" ]]
 [[ -z "$(find "$tmp/fresh-download-adapters/bundles" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)" ]]
 echo "ok   fresh failed download leaves no descriptor or staged bundle"
+
+# A provider-tag crash reports its first real error, never the last line of a Node stack dump.
+mkdir -p "$tmp/crash-bin"
+ln -s "$tmp/bin/curl" "$tmp/crash-bin/curl"
+printf '#!/bin/sh\nprintf "%%s\\n" "node:internal/child_process:1160" "" "Error: spawnSync curl ENOENT" "    at main" "  spawnargs: [" "  ]" "}" >&2\nexit 1\n' >"$tmp/crash-bin/node"
+chmod +x "$tmp/crash-bin/node"
+if env HOME="$tmp/home" PATH="$tmp/crash-bin:/usr/bin:/bin" FAKE_RELEASES_FILE="$tmp/releases.json" FAKE_ASSET_ROOT="$tmp/releases" \
+  bash "$here/../dotnet/scripts/agents-file.sh" "$tmp/crash-adapters" "$tmp/crash-agents.json" 2>"$tmp/crash.err"; then
+  echo "FAIL provider-tag crash unexpectedly succeeded"; exit 1
+fi
+grep -Fq 'adapter update unavailable (Error: spawnSync curl ENOENT), and no valid cached bundle exists' "$tmp/crash.err"
+echo "ok   a crashed provider lookup reports its first real error"
 
 # A truncated archive with a matching test-manifest checksum fails staged extraction and retains the old cache.
 python3 - "$tmp/releases.json" <<'PY'
@@ -293,7 +302,7 @@ echo "ok   final locked render preserves owner runtime fields and unrelated prov
 ln -s "$tmp/agents.json" "$tmp/agents-alias.json"
 ln -s "$tmp" "$tmp/directory-alias"
 env -u CODEX_HOME HOME="$tmp/home" PATH="$tmp/bin:/usr/bin:/bin" FAKE_RELEASES_FILE="$tmp/releases.json" \
-  FAKE_ASSET_ROOT="$tmp/releases" FAKE_GH_CALLS="$tmp/gh-calls.jsonl" \
+  FAKE_ASSET_ROOT="$tmp/releases" FAKE_CURL_CALLS="$tmp/curl-calls.jsonl" \
   python3 -I - "$tmp/agents.json" "$tmp/directory-alias/agents-alias.json" "$here/../dotnet/scripts/agents-file.sh" "$tmp/adapters" <<'PY'
 import fcntl, os, stat, subprocess, sys
 path, alias, script, adapters = sys.argv[1:]
