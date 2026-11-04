@@ -57,6 +57,8 @@ pub(super) struct PrThreads {
     _watch: Option<EngineWatch>,
     refused: bool,
     reads: HashMap<EngineKey, Task<()>>,
+    /// Rows read for this page that no watch holds in the feed; the next push of this Engine's pull requests reads them again.
+    rows: HashMap<EngineKey, EngineItem>,
     /// Rows that couldn't be read; the next push of this Engine's pull requests tries them again.
     unreadable: HashSet<EngineKey>,
     shown: ThreadsBody,
@@ -94,6 +96,7 @@ impl PrThreads {
             _watch: None,
             refused: false,
             reads: HashMap::new(),
+            rows: HashMap::new(),
             unreadable: HashSet::new(),
             shown: ThreadsBody::Waiting,
             _changes: changes,
@@ -117,6 +120,7 @@ impl PrThreads {
             self._watch = None;
             self.refused = false;
             self.reads.clear();
+            self.rows.clear();
             self.unreadable.clear();
             return;
         }
@@ -150,6 +154,9 @@ impl PrThreads {
             || change.sessions.iter().any(|key| key.machine == machine);
         if pushed {
             self.unreadable.clear();
+            for key in self.rows.keys().cloned().collect::<Vec<_>>() {
+                self.fetch(key, cx);
+            }
         }
         if relevant {
             self.recompute(cx);
@@ -192,7 +199,7 @@ impl PrThreads {
                     kind: "run".into(),
                     id,
                 };
-                let Some(run) = feed.item(&key) else {
+                let Some(run) = feed.item(&key).or_else(|| self.rows.get(&key)) else {
                     return if self.unreadable.contains(&key) {
                         (ThreadsBody::Unavailable, None)
                     } else {
@@ -212,19 +219,22 @@ impl PrThreads {
             machine: machine.clone(),
             id: session,
         };
-        let title = feed
-            .session(&key)
-            .and_then(|session| session.title)
-            .map(|title| title.trim().to_owned())
-            .filter(|title| !title.is_empty())
-            .unwrap_or_else(|| "Untitled session".to_owned());
         let row = EngineKey {
             machine: machine.clone(),
             kind: "session".into(),
             id: key.id.clone(),
         };
-        let missing = (feed.item(&row).is_none() && !self.unreadable.contains(&row)).then_some(row);
-        (ThreadsBody::One { key, title }, missing)
+        let held = feed.item(&row).or_else(|| self.rows.get(&row));
+        if held.is_none() && !self.unreadable.contains(&row) {
+            return (ThreadsBody::Waiting, Some(row));
+        }
+        let title = held
+            .and_then(|row| row.value["title"].as_str())
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .unwrap_or("Untitled session")
+            .to_owned();
+        (ThreadsBody::One { key, title }, None)
     }
     fn fetch(&mut self, key: EngineKey, cx: &mut Context<Self>) {
         if self.reads.contains_key(&key) {
@@ -238,8 +248,14 @@ impl PrThreads {
             let answer = read.await;
             _ = threads.update(cx, |threads, cx| {
                 threads.reads.remove(&asked);
-                if !matches!(answer, Ok(Some(_))) {
-                    threads.unreadable.insert(asked);
+                match answer {
+                    Ok(Some(row)) => {
+                        threads.rows.insert(asked, row);
+                    }
+                    _ => {
+                        threads.rows.remove(&asked);
+                        threads.unreadable.insert(asked);
+                    }
                 }
                 threads.recompute(cx);
             });

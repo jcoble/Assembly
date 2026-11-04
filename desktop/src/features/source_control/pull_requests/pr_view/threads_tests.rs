@@ -148,6 +148,12 @@ async fn showing<'a>(
         })
     })
     .await;
+    visual.update(|_, cx| {
+        assert!(
+            threads.read(cx).reads.is_empty(),
+            "a row already read is not read again"
+        )
+    });
     visual
 }
 #[gpui::test]
