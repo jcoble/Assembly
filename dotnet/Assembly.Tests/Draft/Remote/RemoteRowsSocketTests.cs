@@ -205,6 +205,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         using var viewer = _localHub.Subscribe("s", 0);
         var frames = System.Threading.Channels.Channel.CreateUnbounded<JsonElement>();
         var interrupted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var caughtUp = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var attempts = 0;
         async IAsyncEnumerable<JsonElement> Subscribe(string session, long after,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
@@ -220,13 +221,17 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
                 Exception aborted = disposed ? new ObjectDisposedException("bulk socket") : new OperationCanceledException("bulk socket aborted");
                 return Task.FromException<IReadOnlyList<StoredRow>>(aborted);
             }
-            return Task.FromResult<IReadOnlyList<StoredRow>>(_remoteStore.RowsAfter(session, after));
+            var rows = _remoteStore.RowsAfter(session, after);
+            if (rows.Count == 0) caughtUp.TrySetResult();
+            return Task.FromResult<IReadOnlyList<StoredRow>>(rows);
         }, _ => Task.CompletedTask, _ => Task.CompletedTask, (_, _) => { }, TextWriter.Null);
         follower.Watch("s");
         frames.Writer.TryWrite(JsonSerializer.SerializeToElement(new { t = "state", seq = 1 }));
         await interrupted.Task.WaitAsync(Wait);
         frames.Writer.TryWrite(JsonSerializer.SerializeToElement(new { t = "state", seq = 1 }));
         Assert.Equal(new long[] { 1 }, await ReadSeqsAsync(viewer, 1));
+        // The read after the copied row ends catch-up; disposing before it would cancel the token this test pins.
+        await caughtUp.Task.WaitAsync(Wait);
         Assert.False(viewer.Rows.TryRead(out _));
         Assert.True(Volatile.Read(ref attempts) >= 2);
     }
