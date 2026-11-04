@@ -401,6 +401,9 @@ impl Panel for SourceControlPane {
 }
 
 #[cfg(test)]
+#[path = "../checkout_real_tests.rs"]
+mod checkout_real_tests;
+#[cfg(test)]
 #[path = "source_refresh_tests.rs"]
 mod refresh_tests;
 #[cfg(test)]

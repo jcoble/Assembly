@@ -12,7 +12,7 @@ impl NewSessionForm {
         let Some(session)=feed.read(cx).session(&key)else{self.start_error("The current accepted session is unavailable.",cx);return;};
         let operation=uuid::Uuid::new_v4().to_string();
         let command=WindowCommand{command_id:operation.clone(),entity_id:key.id,expected_version:session.version,epoch:session.epoch,machine:Some(key.machine),surface:None,
-            command:json!({"kind":"change_checkout","checkoutKind":"current"})};
+            command:json!({"kind":"change_checkout","checkoutKind":"current","branch":null,"base":null,"folder":null})};
         let attempt=self.attempt.as_mut().expect("owned retry");attempt.retry_operation=Some(operation.clone());attempt.retry_version=session.version;
         self.starting=true;self.start_composer.update(cx,|composer,cx|composer.set_start_state(false,true,None,cx));
         let task=feed.update(cx,|feed,cx|feed.submit(command,cx));
