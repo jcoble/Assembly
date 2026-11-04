@@ -1,11 +1,12 @@
 //! Opening a session whose saved workspace has an active file, through the real file and center tab codecs.
 use super::{
     SocketClient, WorkspaceActivated, WorkspaceCoordinator, WorkspaceKey, WorkspaceRefused,
-    WorkspaceTarget,
+    WorkspaceSaved, WorkspaceTarget,
 };
 use crate::core::socket::{
     endpoint::Endpoint,
     fake_backend::{FakeBackend, Reply, hello},
+    test_wait::until,
 };
 use crate::core::state::{
     preferences::Preferences, selected_session::SelectedSession, workspace_panes::WorkspacePanes,
@@ -19,7 +20,7 @@ use crate::features::source_control::{history_pane::HistoryPane, pull_requests::
 use crate::features::workspaces::top_tabs_codec::TopTabsCodec;
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
-use gpui_kit::component::dock::{DockArea, DockPlacement, PaneRef};
+use gpui_kit::component::dock::{BasePanel, DockArea, DockPlacement, PaneRef};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, IntoElement, Render, Subscription, Window, div,
 };
@@ -78,8 +79,12 @@ fn start(
             json!({"t": "result", "id": frame["id"], "result": {"revision": 5, "snapshot": saved()}}),
         )]
     });
+    let coordinator = install(&backend, cx);
+    (backend, methods, coordinator)
+}
+fn install(backend: &FakeBackend, cx: &mut TestAppContext) -> Entity<WorkspaceCoordinator> {
     cx.executor().allow_parking();
-    let coordinator = cx.update(|cx| {
+    cx.update(|cx| {
         gpui_kit::init(cx);
         SelectedSession::init(cx);
         Preferences::init(cx);
@@ -96,8 +101,7 @@ fn start(
         SocketClient::start(endpoint.clone(), cx);
         SocketClient::start_bulk(endpoint, cx);
         WorkspaceCoordinator::init(cx)
-    });
-    (backend, methods, coordinator)
+    })
 }
 /// The center panes hold the dock weakly, so the test keeps it the way the frame does.
 fn add_dock(window: &mut Window, cx: &mut App) -> Entity<DockArea> {
@@ -242,4 +246,351 @@ async fn a_transcript_refuses_a_persons_file_but_the_next_checkout_restores_its_
         assert_eq!(shown_center_tab(cx), "File");
         assert_eq!(coordinator.read(cx).status, None);
     });
+}
+
+const NO_IDENTITY: &str = "Not saved: A file tab has no confirmed owning workspace identity.";
+fn elsewhere() -> WorkspaceKey {
+    WorkspaceKey {
+        machine: "actual-owner".into(),
+        session_id: "session".into(),
+        checkout_root: "/elsewhere".into(),
+    }
+}
+/// The same saved session with the file behind Chat, which is how a person leaves it after going back to the chat.
+fn saved_behind_chat() -> Value {
+    let mut saved = saved();
+    saved.as_object_mut().unwrap().remove("activePath");
+    saved["topTabs"]["activeKey"] = json!("Chat");
+    saved
+}
+#[derive(Clone, Default)]
+struct Heard {
+    /// Each call as `feature/method`.
+    calls: Arc<Mutex<Vec<String>>>,
+    saves: Arc<Mutex<Vec<Value>>>,
+}
+impl Heard {
+    fn count(&self, call: &str) -> usize {
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|heard| *heard == call)
+            .count()
+    }
+}
+/// Answers reads with `snapshot` for the owner's checkout and nothing saved anywhere else, or everywhere when it's null;
+/// takes every save, and says the file belongs to `owner_root`. With no owner root, the question goes unanswered.
+fn start_answering(
+    snapshot: Value,
+    owner_root: Option<&'static str>,
+    cx: &mut TestAppContext,
+) -> (FakeBackend, Heard, Entity<WorkspaceCoordinator>) {
+    let heard = Heard::default();
+    let told = heard.clone();
+    let backend = FakeBackend::start(move |frame| {
+        if let Some(reply) = hello(frame) {
+            return reply;
+        }
+        if frame["t"] != "call" {
+            return Vec::new();
+        }
+        let call = format!(
+            "{}/{}",
+            frame["feature"].as_str().unwrap(),
+            frame["method"].as_str().unwrap()
+        );
+        told.calls.lock().unwrap().push(call.clone());
+        let result = match call.as_str() {
+            "workspaces/read"
+                if frame["args"]["checkoutRoot"] == "/checkout" && !snapshot.is_null() =>
+            {
+                json!({"revision": 5, "snapshot": snapshot})
+            }
+            "workspaces/read" => json!({"revision": 0, "snapshot": null}),
+            "workspaces/save" => {
+                told.saves
+                    .lock()
+                    .unwrap()
+                    .push(frame["args"]["snapshot"].clone());
+                json!({"revision": frame["args"]["expectedRevision"].as_u64().unwrap() + 1})
+            }
+            "files/owner" => match owner_root {
+                Some(root) => {
+                    json!({"machine": "actual-owner", "checkoutRoot": root, "remoteSessionId": "session"})
+                }
+                None => return Vec::new(),
+            },
+            _ => return Vec::new(),
+        };
+        vec![Reply::Frame(
+            json!({"t": "result", "id": frame["id"], "result": result}),
+        )]
+    });
+    let coordinator = install(&backend, cx);
+    (backend, heard, coordinator)
+}
+fn open_workspace(
+    key: WorkspaceKey,
+    coordinator: &Entity<WorkspaceCoordinator>,
+    cx: &mut gpui::VisualTestContext,
+) {
+    cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::Checkout(key),
+                Box::new(|_, _, _| Ok(())),
+                window,
+                cx,
+            );
+        })
+    });
+}
+/// Opens a file the way a person does, and shows it, which is what asks who owns it.
+fn open_as_a_person(cx: &mut gpui::VisualTestContext) -> Entity<FileView> {
+    cx.update(|window, cx| {
+        FileView::open_at(
+            "session".into(),
+            "other.rs".into(),
+            None,
+            None,
+            true,
+            None,
+            window,
+            cx,
+        );
+    });
+    cx.update(|window, cx| {
+        let file = CenterPanes::file_views(cx)[0].clone();
+        file.update(cx, |file, cx| BasePanel::set_active(file, true, window, cx));
+        file
+    })
+}
+// Pins: a tab restored behind Chat isn't shown, so its owner isn't read, and that used to refuse every save and every
+// departure from the session, which the rail showed as a red line and no way out.
+#[gpui::test]
+async fn a_file_restored_behind_chat_saves_under_its_checkout_and_lets_the_session_be_left(
+    cx: &mut TestAppContext,
+) {
+    let (_backend, heard, coordinator) = start_answering(saved_behind_chat(), None, cx);
+    let (_, cx) = cx.add_window_view(|_, _| Host);
+    let _dock = cx.update(add_dock);
+    let _refused = cx.update(|_, cx| fail_on_refusal(&coordinator, cx));
+    let (sent, mut activated) = unbounded();
+    let _heard = cx.update(|_, cx| {
+        cx.subscribe(&coordinator, move |_, event: &WorkspaceActivated, _| {
+            sent.unbounded_send(event.clone()).unwrap();
+        })
+    });
+    open_workspace(owner(), &coordinator, cx);
+    activated.recv().await.unwrap();
+    let asked = heard.count("files/owner");
+
+    let captured = cx
+        .update(|window, cx| WorkspacePanes::capture(window, cx))
+        .unwrap();
+
+    let document = r#"document:["actual-owner","/checkout","README.md"]"#;
+    assert_eq!(captured["files"][0]["path"], "README.md");
+    assert_eq!(
+        captured["activePath"],
+        Value::Null,
+        "the file stays behind Chat"
+    );
+    assert!(
+        captured["topTabs"]["order"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|key| key == document)
+    );
+    assert_eq!(captured["topTabs"]["activeKey"], "Chat");
+    cx.update(|_, cx| {
+        let file = CenterPanes::file_views(cx)[0].read(cx);
+        assert_eq!(file.workspace_path(&owner()).as_deref(), Ok("README.md"));
+        assert!(file.workspace_path(&elsewhere()).is_err());
+    });
+
+    let next = WorkspaceKey {
+        session_id: "next".into(),
+        checkout_root: "/next".into(),
+        ..owner()
+    };
+    open_workspace(next.clone(), &coordinator, cx);
+    let event = activated.recv().await.unwrap();
+
+    assert_eq!(event.target, WorkspaceTarget::Checkout(next));
+    assert_eq!(cx.update(|_, cx| coordinator.read(cx).status.clone()), None);
+    assert_eq!(
+        heard.count("files/owner"),
+        asked,
+        "saving and leaving read no hidden file's owner"
+    );
+}
+// Pins: a file a person just opened can't be saved until its owner is known, and nothing else was going to save it
+// when the answer came, so the red line stayed until some later change.
+#[gpui::test]
+async fn a_file_a_person_opened_is_refused_until_its_owner_answers_and_then_saves_itself(
+    cx: &mut TestAppContext,
+) {
+    let (_backend, heard, coordinator) = start_answering(Value::Null, Some("/checkout"), cx);
+    let (_, cx) = cx.add_window_view(|_, _| Host);
+    let _dock = cx.update(add_dock);
+    let _refused = cx.update(|_, cx| fail_on_refusal(&coordinator, cx));
+    let (sent, mut activated) = unbounded();
+    let _heard = cx.update(|_, cx| {
+        cx.subscribe(&coordinator, move |_, event: &WorkspaceActivated, _| {
+            sent.unbounded_send(event.clone()).unwrap();
+        })
+    });
+    open_workspace(owner(), &coordinator, cx);
+    activated.recv().await.unwrap();
+    let (changed, mut changes) = unbounded();
+    let told = changed.clone();
+    let _saved = cx.update(|_, cx| {
+        cx.subscribe(&coordinator, move |_, _: &WorkspaceSaved, _| {
+            told.unbounded_send(()).unwrap();
+        })
+    });
+
+    cx.update(|window, cx| {
+        FileView::open_at(
+            "session".into(),
+            "other.rs".into(),
+            None,
+            None,
+            true,
+            None,
+            window,
+            cx,
+        );
+    });
+    assert_eq!(
+        cx.update(|_, cx| coordinator.read(cx).status.clone())
+            .as_deref(),
+        Some(NO_IDENTITY)
+    );
+    let file = cx.update(|_, cx| CenterPanes::file_views(cx)[0].clone());
+    cx.update(|window, cx| {
+        file.update(cx, |file, cx| BasePanel::set_active(file, true, window, cx))
+    });
+
+    let saves = heard.saves.clone();
+    until("the opened file saved", &mut changes, &changed, || {
+        !saves.lock().unwrap().is_empty()
+    })
+    .await;
+
+    let document = r#"document:["actual-owner","/checkout","other.rs"]"#;
+    let saved = heard.saves.lock().unwrap()[0].clone();
+    assert!(
+        saved["topTabs"]["order"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|key| key == document)
+    );
+    cx.run_until_parked();
+    assert_eq!(cx.update(|_, cx| coordinator.read(cx).status.clone()), None);
+}
+// Pins: knowing the owner isn't the same as belonging here. A file owned by another checkout stays refused.
+#[gpui::test]
+async fn a_file_a_person_opened_that_another_checkout_owns_stays_refused_and_saves_nothing(
+    cx: &mut TestAppContext,
+) {
+    let (_backend, heard, coordinator) = start_answering(Value::Null, Some("/elsewhere"), cx);
+    let (_, cx) = cx.add_window_view(|_, _| Host);
+    let _dock = cx.update(add_dock);
+    let _refused = cx.update(|_, cx| fail_on_refusal(&coordinator, cx));
+    let (sent, mut activated) = unbounded();
+    let _heard = cx.update(|_, cx| {
+        cx.subscribe(&coordinator, move |_, event: &WorkspaceActivated, _| {
+            sent.unbounded_send(event.clone()).unwrap();
+        })
+    });
+    open_workspace(owner(), &coordinator, cx);
+    activated.recv().await.unwrap();
+    let file = open_as_a_person(cx);
+    let (changed, mut changes) = unbounded();
+    let told = changed.clone();
+    let _notified = cx.update(|_, cx| {
+        cx.observe(&file, move |_, _| {
+            told.unbounded_send(()).unwrap();
+        })
+    });
+
+    until("the owner answered", &mut changes, &changed, || {
+        cx.update(|_, cx| {
+            file.read(cx)
+                .restored_workspace_path(&elsewhere())
+                .is_some()
+        })
+    })
+    .await;
+    cx.run_until_parked();
+
+    cx.update(|_, cx| {
+        assert_eq!(coordinator.read(cx).status.as_deref(), Some(NO_IDENTITY));
+        assert!(file.read(cx).workspace_path(&owner()).is_err());
+    });
+    assert!(heard.saves.lock().unwrap().is_empty());
+}
+// Pins: an owner answer that contradicts the saved checkout reads nothing and doesn't move the tab to that checkout.
+#[gpui::test]
+async fn a_restored_file_answered_by_another_checkout_reads_nothing_and_keeps_its_saved_place(
+    cx: &mut TestAppContext,
+) {
+    let (_backend, heard, coordinator) = start_answering(saved(), Some("/elsewhere"), cx);
+    let (_, cx) = cx.add_window_view(|_, _| Host);
+    let _dock = cx.update(add_dock);
+    let _refused = cx.update(|_, cx| fail_on_refusal(&coordinator, cx));
+    let (sent, mut activated) = unbounded();
+    let _heard = cx.update(|_, cx| {
+        cx.subscribe(&coordinator, move |_, event: &WorkspaceActivated, _| {
+            sent.unbounded_send(event.clone()).unwrap();
+        })
+    });
+    open_workspace(owner(), &coordinator, cx);
+    activated.recv().await.unwrap();
+    let file = cx.update(|window, cx| {
+        let file = CenterPanes::file_views(cx)[0].clone();
+        file.update(cx, |file, cx| {
+            BasePanel::set_active(file, false, window, cx);
+            BasePanel::set_active(file, true, window, cx);
+        });
+        file
+    });
+    let (changed, mut changes) = unbounded();
+    let told = changed.clone();
+    let answered = Arc::new(Mutex::new(false));
+    let noticed = answered.clone();
+    let _notified = cx.update(|_, cx| {
+        cx.observe(&file, move |_, _| {
+            *noticed.lock().unwrap() = true;
+            told.unbounded_send(()).unwrap();
+        })
+    });
+
+    until("the owner answered", &mut changes, &changed, || {
+        *answered.lock().unwrap()
+    })
+    .await;
+    cx.run_until_parked();
+
+    cx.update(|_, cx| {
+        let view = file.read(cx);
+        assert_eq!(view.workspace_path(&owner()).as_deref(), Ok("README.md"));
+        assert!(view.workspace_path(&elsewhere()).is_err());
+    });
+    assert_eq!(
+        heard
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| call.starts_with("files/") && *call != "files/owner")
+            .count(),
+        0,
+        "nothing was read from the other checkout"
+    );
 }
