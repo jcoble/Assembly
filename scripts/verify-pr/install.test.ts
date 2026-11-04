@@ -78,6 +78,7 @@ test('reserves first free lane and reuses it on reinstall',t=>{
   const f=fixture(t);assert.equal(f.run().status,0);
   const c=JSON.parse(readFileSync(join(f.destination,'config.json'),'utf8'));
   assert.equal(c.laneNumber,2);
+  assert.equal(c.runtimeSeconds,900);
   assert.equal(JSON.parse(readFileSync(join(f.destination,'install-state.json'),'utf8')).laneReservation,2);
   assert.equal(f.run().status,0);
   const calls=readFileSync(f.log,'utf8').trim().split('\n').map(x=>JSON.parse(x));

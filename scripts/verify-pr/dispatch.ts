@@ -64,7 +64,8 @@ export function dispatch(input: string, locked=false) {
   if(!units.includes(unitName)) atomic(join(c.state,'units.json'),[...units,unitName]);
   try {
     command('systemd-run', ['--user', `--unit=verify-pr-${pr}`, '--collect',
-      `--property=RuntimeMaxSec=${c.runtimeSeconds}`, '--property=KillMode=control-group',
+      // Only an outer bound for a stuck unit. A queued run waits for the lock; run.ts limits the verifier itself.
+      '--property=RuntimeMaxSec=86400', '--property=KillMode=control-group',
       '--property=TimeoutStopSec=120', '--property=UMask=0077',
       `--setenv=VERIFY_CONFIG=${process.env.VERIFY_CONFIG || join(here, 'config.json')}`,
       `--property=ExecStopPost=${node} ${join(here, 'post.ts')} ${directory}`,

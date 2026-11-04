@@ -96,7 +96,7 @@ export function install(args:string[]) {
     ownerHome:home,workerPath:'/home/verify/.local/bin:/usr/local/bin:/usr/bin:/bin',
     evidence:command('which',['evidence']).trim(),
     workerHome:'/home/verify',worker:'verify',worktrees:'/home/verify/dev/work/worktrees/Assembly',
-    laneNumber:previous?.config.laneNumber || 0,runtimeSeconds:7200,minimumMemoryMB:2048,livePorts:ports};
+    laneNumber:previous?.config.laneNumber || 0,runtimeSeconds:900,minimumMemoryMB:2048,livePorts:ports};
   privateDirectory(destination);
   const state:InstallState=previous ||
     {config:c,firewall:[],authorized:false,secret:false,completed:[]};

@@ -15,7 +15,7 @@ function fixture(t: any, head = sha, base = 'b'.repeat(40)) {
     ownerHome:root, workerPath:bin+':'+process.env.PATH,evidence:join(bin,'evidence'),
     clone: join(root, 'clone'), workerHome: join(root, 'worker'), worker: 'verify',
     worktrees: join(root, 'worktrees'), laneNumber: 3,
-    runtimeSeconds: 7200, minimumMemoryMB: 2048, livePorts: [5000] };
+    runtimeSeconds: 900, minimumMemoryMB: 2048, livePorts: [5000] };
   for (const p of [config.state, config.clone, config.workerHome, config.worktrees]) mkdirSync(p);
   const configPath = join(root, 'config.json');
   const log = join(root, 'calls.jsonl');
@@ -45,11 +45,12 @@ if(name==='git') { if(args.includes('--format=%B')) console.log(process.env.TRAI
   if(process.env.DIFF_REPO) { const r=require('node:child_process').spawnSync(process.env.REAL_GIT,['-C',process.env.DIFF_REPO,...args.slice(2)],{encoding:'utf8'});process.stdout.write(r.stdout||'');process.exit(r.status??1); }
   console.log(process.env.DIFF_FILES||'src/code.ts'); }
  if(args.includes('status')) { const dirty=(process.env.DIRTY||'').split('\\n').filter(x=>!args.includes(':!evidence')||!/^.. evidence\\//.test(x)); process.stdout.write(dirty.join('\\n')); } }
-if(name==='ps') console.log(process.env.BUILDS||'');
+if(name==='ps') { if(args.join(' ')!=='-eo comm=,args=') process.exit(1); console.log(process.env.BUILDS||''); }
 if(name==='id') console.log(args.includes('-nG')?'verify':'1002');
 if(name==='free') console.log('Mem: 16000 1000 15000 0 0 '+(process.env.MEMORY||'15000'));
 if(name==='systemctl'&&args.includes('show')) console.log(process.env.SERVICE_LOAD||'not-found');
 if(name==='systemd-run'&&process.env.FAIL_START==='1') process.exit(1);
+if(name==='flock'&&process.env.FLOCK_WAIT_MS) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Number(process.env.FLOCK_WAIT_MS)); process.exit(0); }
 if(name==='flock') { const r=require('node:child_process').spawnSync(args[2],args.slice(3),{env:process.env,encoding:'utf8'});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??1); }
 if(name==='evidence') console.log('https://drive.google.com/file/d/test-proof/view');
 if(name==='sudo') { const child=require('node:child_process'); const index=args.indexOf('env');
@@ -116,7 +117,8 @@ test('dispatch resolves SHA, stops only that PR unit, posts pending then starts 
   const unit=calls.find(x=>x.name==='systemd-run');
   assert.ok(unit.args.includes('--unit=verify-pr-12'));
   assert.ok(unit.args.some((x:string)=>x.startsWith('--property=ExecStopPost=')));
-  assert.ok(unit.args.includes('--property=RuntimeMaxSec=7200'));
+  // A queued run must not spend its verification limit waiting for the lock.
+  assert.ok(unit.args.includes('--property=RuntimeMaxSec=86400'));
   assert.ok(!r.stdout.includes('SECRET_SENTINEL'));
 });
 for (const [name, comment] of [
@@ -221,6 +223,7 @@ test('Codex receives every writable directory and Claude arguments stay unchange
   const { selectModel } = await import('./run.ts');
   const directories=['/verify/result','/verify/assembly-dotnet-verify-pr','/verify/.config/assembly-dotnet-verify-pr'];
   const codex=selectModel('Committed-by: Codex SOL 6.1',directories);
+  assert.ok(codex.args.includes('model_reasoning_effort="medium"'));
   assert.deepEqual(codex.args.flatMap((x,i)=>x==='--add-dir'?[codex.args[i+1]]:[]),directories);
   assert.deepEqual(selectModel('Committed-by: Luna 6',directories),selectModel('Committed-by: Luna 6',[]));
 });
@@ -275,6 +278,12 @@ test('run creates a detached exact-SHA lane, isolates credentials and starts Cod
   const fetch=calls.find(x=>x.name==='git'&&x.args.includes('fetch'));
   assert.deepEqual(fetch.args.slice(fetch.args.indexOf('fetch')),['fetch','--no-tags','origin','b'.repeat(40),sha]);
 });
+test('waiting in the queue for the lock does not use up the verification limit',t=>{
+  const f=fixture(t),dir=f.result(undefined);
+  // A limit applied to the wait would be under a second here, and this wait takes longer.
+  f.config.runtimeSeconds=-29.5;
+  const r=f.run('run.ts',[dir],{FLOCK_WAIT_MS:'1000'}); assert.equal(r.status,0,r.stderr);
+});
 test('run takes one blocking flock before launching and gives Claude no messaging hooks',t=>{
   const f=fixture(t),dir=f.result(undefined);
   const r=f.run('run.ts',[dir],{TRAILERS:'Committed-by: Luna 6'}); assert.equal(r.status,0,r.stderr);
@@ -286,7 +295,7 @@ test('run takes one blocking flock before launching and gives Claude no messagin
 });
 for(const [reason,env,lane] of [
   ['insufficient available memory',{MEMORY:'1024'},3],
-  ['three or more heavy build processes running',{BUILDS:'cargo\ndotnet\nrustc'},3],
+  ['three or more heavy build processes running',{BUILDS:'cargo cargo build\ndotnet dotnet build\nrustc rustc lib.rs'},3],
   ['no Committed-by trailers',{TRAILERS:''},3],
   ['both verifier models implemented this PR',{TRAILERS:'Committed-by: Luna 6\nCommitted-by: Sonnet 5.5'},3],
   ['invalid verifier lane reservation',{},0],
@@ -368,9 +377,30 @@ test('authorized-key replacement is idempotent and preserves unrelated keys',asy
 });
 test('run refuses three heavy builds before creating a worktree',t=>{
   const f=fixture(t),dir=f.result(undefined);
-  const r=f.run('run.ts',[dir,'--locked'],{BUILDS:'cargo\ndotnet\nrustc'});
+  const r=f.run('run.ts',[dir,'--locked'],{BUILDS:'cargo cargo build\ndotnet dotnet build\nrustc rustc lib.rs'});
   assert.notEqual(r.status,0); assert.match(r.stderr,/heavy/i);
   assert.ok(!f.calls().some(x=>x.name==='git'&&x.args.includes('add')));
+});
+
+test('sixteen long-running dotnet servers do not block verification',t=>{
+  const f=fixture(t),dir=f.result(undefined);
+  const servers=Array.from({length:16},(_,i)=>i%2
+    ? 'dotnet /usr/bin/dotnet Assembly.Remote.dll serve'
+    : 'dotnet /usr/bin/dotnet EdiEngine.dll');
+  const r=f.run('run.ts',[dir,'--locked'],{BUILDS:servers.join('\n')});
+  assert.equal(r.status,0,r.stderr);
+  assert.ok(f.calls().some(x=>x.name==='codex'));
+});
+for(const build of ['cargo cargo build','rustc rustc lib.rs','MSBuild MSBuild project.sln',
+  'ninja ninja','cmake cmake --build out',
+  ...['build','publish','test','restore','msbuild'].map(verb=>'dotnet /usr/bin/dotnet '+verb+' project.sln'),
+  'dotnet /usr/bin/dotnet /sdk/MSBuild.dll /nologo',
+  'dotnet /usr/bin/dotnet exec /sdk/Roslyn/bincore/VBCSCompiler.dll -pipename:test',
+]) test('three real builds block: '+build,t=>{
+  const f=fixture(t),dir=f.result(undefined);
+  const r=f.run('run.ts',[dir,'--locked'],{BUILDS:Array(3).fill(build).join('\n')});
+  assert.notEqual(r.status,0); assert.match(r.stderr,/three or more heavy build processes/);
+  assert.ok(!f.calls().some(x=>x.name==='git'));
 });
 
 for (const [name,tests,receipt] of [
