@@ -77,6 +77,9 @@ pub struct RailEntry {
     pub last_seen_ms: Option<i64>,
     /// Recorded candidate identity only; opening still resolves and validates the current route.
     pub source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    /// Native subagents are recorded on this session. Their detail is only read once the row opens.
+    #[serde(default)]
+    pub native_activity: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]

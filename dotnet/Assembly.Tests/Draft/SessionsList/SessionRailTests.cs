@@ -343,6 +343,25 @@ public sealed partial class SessionRailTests : IDisposable
         Assert.True(Entry(Read(), session).Running);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_native_subagent_gives_its_session_something_to_open_on_the_rail(bool remote)
+    {
+        var session = Parent(machine: remote ? "workbox-test" : null);
+        Assert.False(Entry(Read(), session).NativeActivity);
+
+        _topics.Published.Clear();
+        var state = new { state = "completed" };
+        if (remote)
+            Assert.True(_hub.PublishCopy(new StoredRow(session, 1, "run-1", "native", RowKind.Subagent, JsonSerializer.SerializeToElement(state), 1, PrevSeq: 0)));
+        else
+            Rows(session, ("native", RowKind.Subagent, state));
+
+        Assert.Contains((RailTopic, (string?)session, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
+        Assert.True(Entry(Read(), session).NativeActivity);
+    }
+
     [Fact]
     public void HelperChangesReachRailSubscribers()
     {

@@ -12,9 +12,10 @@ pub(crate) fn needs_you(entry:&RailEntry,cx:&mut App)->bool {
     let feed=EngineFeed::global(cx);let feed=feed.read(cx);
     feed.loaded(&scope(&source.machine,"needs_me"))&&feed.needs_for(&SessionKey{machine:source.machine.clone(),id:entry.session_id.clone()}).iter().any(|need|need.state=="open")
 }
-/// Whether the row has anything to open: a question for you, a workflow, or sessions it started.
+/// Whether the row has anything to open: a question for you, a workflow, sessions it started, or native activity.
 pub(crate) fn has_details(entry:&RailEntry,cx:&mut App)->bool {
     let Some(source)=&entry.source else{return false;};
+    if entry.native_activity{return true;}
     let session=SessionKey{machine:source.machine.clone(),id:entry.session_id.clone()};
     let feed=EngineFeed::global(cx);let feed=feed.read(cx);
     !feed.needs_for(&session).is_empty()
