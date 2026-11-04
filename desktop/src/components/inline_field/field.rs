@@ -158,7 +158,9 @@ impl InlineField {
     ) -> Self {
         editor.sync(&value, window, cx);
         let focus = cx.focus_handle().tab_stop(true);
-        let left = cx.on_focus_out(&focus, window, |field, _, window, cx| field.left(window, cx));
+        let left = cx.on_focus_out(&focus, window, |field, _, window, cx| {
+            field.left(window, cx)
+        });
         Self {
             title,
             state: EditState::new(value),
@@ -167,7 +169,9 @@ impl InlineField {
             mode: SaveMode::Single,
             read_only: false,
             saving: false,
-            _heard: std::iter::once(left).chain(Self::hear(&editor, window, cx)).collect(),
+            _heard: std::iter::once(left)
+                .chain(Self::hear(&editor, window, cx))
+                .collect(),
             editor,
         }
     }
@@ -176,37 +180,45 @@ impl InlineField {
             Editor::Chip { .. } => return None,
             Editor::Text { state, shape } => {
                 let shape = *shape;
-                cx.subscribe_in(state, window, move |field, input, event, window, cx| {
-                    match event {
+                cx.subscribe_in(
+                    state,
+                    window,
+                    move |field, input, event, window, cx| match event {
                         InputEvent::Change => {
                             let value = shape.saved(input.read(cx).unmask_value().as_ref());
                             field.changed(FieldValue::Text(value), window, cx);
                         }
                         InputEvent::PressEnter { .. } => field.save_if_single(window, cx),
                         _ => {}
-                    }
-                })
+                    },
+                )
             }
             Editor::Multiline(state) => {
-                cx.subscribe_in(state, window, |field, input, event, window, cx| match event {
-                    InputEvent::Change => {
-                        let value = input.read(cx).value().to_string();
-                        field.changed(FieldValue::Text(value), window, cx);
-                    }
-                    // Shift-Enter has already added its line.
-                    InputEvent::PressEnter { shift: false, .. } => {
-                        field.save_if_single(window, cx)
-                    }
-                    _ => {}
-                })
+                cx.subscribe_in(
+                    state,
+                    window,
+                    |field, input, event, window, cx| match event {
+                        InputEvent::Change => {
+                            let value = input.read(cx).value().to_string();
+                            field.changed(FieldValue::Text(value), window, cx);
+                        }
+                        // Shift-Enter has already added its line.
+                        InputEvent::PressEnter { shift: false, .. } => {
+                            field.save_if_single(window, cx)
+                        }
+                        _ => {}
+                    },
+                )
             }
-            Editor::Date(state) => {
-                cx.subscribe_in(state, window, |field, _, event, window, cx| {
-                    let DatePickerEvent::Change(value) = event;
-                    field.changed(FieldValue::Date(value.start().map(|v| v.date())), window, cx);
-                    field.save_if_single(window, cx);
-                })
-            }
+            Editor::Date(state) => cx.subscribe_in(state, window, |field, _, event, window, cx| {
+                let DatePickerEvent::Change(value) = event;
+                field.changed(
+                    FieldValue::Date(value.start().map(|v| v.date())),
+                    window,
+                    cx,
+                );
+                field.save_if_single(window, cx);
+            }),
             Editor::DateTime(state) => {
                 cx.subscribe_in(state, window, |field, _, event, window, cx| {
                     let DatePickerEvent::Change(value) = event;
@@ -329,7 +341,12 @@ impl InlineField {
         cx.notify();
     }
     /// The form's save landed: this is the field's value now, and its editor closes.
-    pub(super) fn commit(&mut self, value: FieldValue, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn commit(
+        &mut self,
+        value: FieldValue,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.saving = false;
         self.state.set_committed(value);
         self.state.cancel();
@@ -423,7 +440,9 @@ impl InlineField {
         }
     }
     fn display_element(&self, cx: &App) -> AnyElement {
-        if let (Editor::Chip { options }, FieldValue::Choice(value)) = (&self.editor, self.state.committed()) {
+        if let (Editor::Chip { options }, FieldValue::Choice(value)) =
+            (&self.editor, self.state.committed())
+        {
             let (label, tone) = ChoiceOption::shown(options, value.as_deref());
             return StatusChip::new(label, tone).into_any_element();
         }
@@ -472,7 +491,10 @@ impl Render for InlineField {
         };
         let value = div().w_full().max_w(px(288.)).min_w_0().child(content);
         let hint = self.state.pending().then(|| SharedString::from("Saving…"));
-        let error = self.state.error().map(|error| SharedString::from(error.to_owned()));
+        let error = self
+            .state
+            .error()
+            .map(|error| SharedString::from(error.to_owned()));
         v_flex()
             .w_full()
             .key_context("InlineField")

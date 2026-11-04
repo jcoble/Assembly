@@ -61,7 +61,9 @@ impl TextShape {
         match self {
             Self::Plain => value.to_owned(),
             Self::Number(NumberFormat::Currency) => {
-                let cents = value.parse::<f64>().map_or_else(|_| value.to_owned(), |v| format!("{v:.2}"));
+                let cents = value
+                    .parse::<f64>()
+                    .map_or_else(|_| value.to_owned(), |v| format!("{v:.2}"));
                 format!("${}", self.mask().mask(&cents))
             }
             Self::Number(NumberFormat::Percent) => format!("{}%", self.mask().mask(value)),
@@ -76,7 +78,11 @@ fn email_rule(value: &FieldValue) -> Result<(), String> {
     };
     let text = text.trim();
     let well_formed = text.split_once('@').is_some_and(|(name, domain)| {
-        !name.is_empty() && !domain.contains('@') && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.')
+        !name.is_empty()
+            && !domain.contains('@')
+            && domain.contains('.')
+            && !domain.starts_with('.')
+            && !domain.ends_with('.')
     });
     if text.is_empty() || (well_formed && !text.contains(char::is_whitespace)) {
         Ok(())
@@ -105,7 +111,13 @@ impl InlineField {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::with_editor(title.into(), FieldValue::Choice(value), Editor::Chip { options }, window, cx)
+        Self::with_editor(
+            title.into(),
+            FieldValue::Choice(value),
+            Editor::Chip { options },
+            window,
+            cx,
+        )
     }
 
     /// Enter saves and Shift-Enter adds a line, as in the answer box.
@@ -116,7 +128,13 @@ impl InlineField {
         cx: &mut Context<Self>,
     ) -> Self {
         let editor = Editor::multiline(window, cx);
-        Self::with_editor(title.into(), FieldValue::Text(value.into()), editor, window, cx)
+        Self::with_editor(
+            title.into(),
+            FieldValue::Text(value.into()),
+            editor,
+            window,
+            cx,
+        )
     }
 
     pub fn email(
@@ -136,8 +154,16 @@ impl InlineField {
         cx: &mut Context<Self>,
     ) -> Self {
         let editor = Editor::text(TextShape::Phone, window, cx);
-        Self::with_editor(title.into(), FieldValue::Text(value.into()), editor, window, cx)
-            .rule(Rc::new(|value| digits_rule(value, &[10], "Enter a 10-digit phone number.")))
+        Self::with_editor(
+            title.into(),
+            FieldValue::Text(value.into()),
+            editor,
+            window,
+            cx,
+        )
+        .rule(Rc::new(|value| {
+            digits_rule(value, &[10], "Enter a 10-digit phone number.")
+        }))
     }
 
     /// Saves the plain number and shows it in `format`.
@@ -149,9 +175,17 @@ impl InlineField {
         cx: &mut Context<Self>,
     ) -> Self {
         let editor = Editor::text(TextShape::Number(format), window, cx);
-        let field = Self::with_editor(title.into(), FieldValue::Text(value.into()), editor, window, cx);
+        let field = Self::with_editor(
+            title.into(),
+            FieldValue::Text(value.into()),
+            editor,
+            window,
+            cx,
+        );
         if format == NumberFormat::Zip {
-            return field.rule(Rc::new(|value| digits_rule(value, &[5, 9], "Enter a 5- or 9-digit ZIP code.")));
+            return field.rule(Rc::new(|value| {
+                digits_rule(value, &[5, 9], "Enter a 5- or 9-digit ZIP code.")
+            }));
         }
         field
     }

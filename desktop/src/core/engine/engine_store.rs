@@ -27,7 +27,9 @@ impl EngineStore {
     }
     /// The whole-machine scopes of a topic this store has heard from.
     pub fn machine_scopes(&self, topic: &str) -> impl Iterator<Item = &EngineScope> {
-        self.scopes.keys().filter(move |scope| scope.topic == topic && scope.key.is_none())
+        self.scopes
+            .keys()
+            .filter(move |scope| scope.topic == topic && scope.key.is_none())
     }
     /// Index references only: display facts remain solely in items.
     pub fn needs_for(&self, session: &SessionKey) -> Vec<&EngineItem> {
@@ -216,19 +218,35 @@ impl EngineStore {
     }
 
     fn need_sessions(&self, key: &EngineKey) -> Vec<SessionKey> {
-        if key.kind != "needs_me" { return Vec::new(); }
-        let Some(row) = self.items.get(key) else { return Vec::new(); };
+        if key.kind != "needs_me" {
+            return Vec::new();
+        }
+        let Some(row) = self.items.get(key) else {
+            return Vec::new();
+        };
         let mut sessions = Vec::new();
         if let Some(id) = row.value["sessionId"].as_str().filter(|id| !id.is_empty()) {
-            sessions.push(SessionKey { machine: key.machine.clone(), id: id.into() });
+            sessions.push(SessionKey {
+                machine: key.machine.clone(),
+                id: id.into(),
+            });
         }
         // The need owner need not own the addressee. A scalar ID grants no relation.
         if let (Some(machine), Some(id)) = (
-            row.value["addresseeMachine"].as_str().filter(|v| !v.is_empty()),
-            row.value["addresseeSessionId"].as_str().filter(|v| !v.is_empty()),
+            row.value["addresseeMachine"]
+                .as_str()
+                .filter(|v| !v.is_empty()),
+            row.value["addresseeSessionId"]
+                .as_str()
+                .filter(|v| !v.is_empty()),
         ) {
-            let session = SessionKey { machine: machine.into(), id: id.into() };
-            if !sessions.contains(&session) { sessions.push(session); }
+            let session = SessionKey {
+                machine: machine.into(),
+                id: id.into(),
+            };
+            if !sessions.contains(&session) {
+                sessions.push(session);
+            }
         }
         sessions
     }

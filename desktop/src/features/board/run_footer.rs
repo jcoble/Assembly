@@ -34,7 +34,10 @@ pub struct Footer {
 }
 
 fn settled(step: &StepItem) -> bool {
-    matches!(step.state.as_str(), "succeeded" | "failed" | "cancelled" | "skipped")
+    matches!(
+        step.state.as_str(),
+        "succeeded" | "failed" | "cancelled" | "skipped"
+    )
 }
 
 fn ran(run: &RunItem, now_ms: i64) -> Option<String> {
@@ -53,27 +56,59 @@ fn with_time(words: String, run: &RunItem, now_ms: i64, joiner: &str) -> String 
 pub fn retryable(steps: &[&StepItem]) -> usize {
     steps
         .iter()
-        .filter(|step| step.state == "failed" && !step.closed && (step.required_scope.is_none() || step.scope_granted))
+        .filter(|step| {
+            step.state == "failed"
+                && !step.closed
+                && (step.required_scope.is_none() || step.scope_granted)
+        })
         .count()
 }
 
 fn summary(run: &RunItem, steps: &[&StepItem], tools_called: Option<i64>, now_ms: i64) -> String {
-    let succeeded = steps.iter().filter(|step| step.state == "succeeded").count();
+    let succeeded = steps
+        .iter()
+        .filter(|step| step.state == "succeeded")
+        .count();
     match run.state.as_str() {
         "succeeded" => match tools_called {
             Some(tools) => format!("{tools} tool{} called", if tools == 1 { "" } else { "s" }),
             None => with_time(format!("{} steps", steps.len()), run, now_ms, "ran "),
         },
-        "failed" | "cancelled" => {
-            with_time(format!("{} settled, {succeeded} succeeded", steps.iter().filter(|step| settled(step)).count()), run, now_ms, "ran ")
-        }
-        _ => with_time(format!("Step {} of {}", (succeeded + 1).min(steps.len().max(1)), steps.len()), run, now_ms, ""),
+        "failed" | "cancelled" => with_time(
+            format!(
+                "{} settled, {succeeded} succeeded",
+                steps.iter().filter(|step| settled(step)).count()
+            ),
+            run,
+            now_ms,
+            "ran ",
+        ),
+        _ => with_time(
+            format!(
+                "Step {} of {}",
+                (succeeded + 1).min(steps.len().max(1)),
+                steps.len()
+            ),
+            run,
+            now_ms,
+            "",
+        ),
     }
 }
 
 /// `can_undo` holds only while the engine's undo token from an applied Keep hasn't been refused or dropped.
-pub fn footer(run: &RunItem, steps: &[&StepItem], tools_called: Option<i64>, open_need: bool, can_undo: bool, now_ms: i64) -> Footer {
-    let unsuccessful_all_closed = steps.iter().filter(|step| matches!(step.state.as_str(), "failed" | "cancelled")).all(|step| step.closed);
+pub fn footer(
+    run: &RunItem,
+    steps: &[&StepItem],
+    tools_called: Option<i64>,
+    open_need: bool,
+    can_undo: bool,
+    now_ms: i64,
+) -> Footer {
+    let unsuccessful_all_closed = steps
+        .iter()
+        .filter(|step| matches!(step.state.as_str(), "failed" | "cancelled"))
+        .all(|step| step.closed);
     let actions = match run.state.as_str() {
         _ if can_undo => vec![RunAction::Undo],
         "succeeded" => vec![RunAction::Rerun],
@@ -87,5 +122,8 @@ pub fn footer(run: &RunItem, steps: &[&StepItem], tools_called: Option<i64>, ope
         _ if run.paused => vec![RunAction::Resume, RunAction::Stop],
         _ => vec![RunAction::Pause, RunAction::Stop],
     };
-    Footer { summary: summary(run, steps, tools_called, now_ms), actions }
+    Footer {
+        summary: summary(run, steps, tools_called, now_ms),
+        actions,
+    }
 }

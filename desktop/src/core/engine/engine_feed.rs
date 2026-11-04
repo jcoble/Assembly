@@ -71,13 +71,37 @@ impl EngineFeed {
     }
     /// A whole cut of a scope, as a snapshot delivers it.
     #[cfg(test)]
-    pub fn test_snapshot(&mut self, scope: EngineScope, values: Vec<serde_json::Value>, cx: &mut Context<Self>) {
-        let keys = self.store.snapshot(scope.clone(), super::EngineCursor { through: 1, at: None }, values).expect("a valid cut");
+    pub fn test_snapshot(
+        &mut self,
+        scope: EngineScope,
+        values: Vec<serde_json::Value>,
+        cx: &mut Context<Self>,
+    ) {
+        let keys = self
+            .store
+            .snapshot(
+                scope.clone(),
+                super::EngineCursor {
+                    through: 1,
+                    at: None,
+                },
+                values,
+            )
+            .expect("a valid cut");
         // A watch nothing can run, so the scope reads as someone holding it. The test's lifetime keeps it.
-        let watch = Rc::new(ScopeWatch { _task: Task::ready(()), active: Rc::new(Cell::new(true)), coherent: Rc::new(Cell::new(true)), resnapshot: Box::new(|| {}) });
+        let watch = Rc::new(ScopeWatch {
+            _task: Task::ready(()),
+            active: Rc::new(Cell::new(true)),
+            coherent: Rc::new(Cell::new(true)),
+            resnapshot: Box::new(|| {}),
+        });
         self.watches.insert(scope.clone(), Rc::downgrade(&watch));
         std::mem::forget(watch);
-        cx.emit(EngineChanged { scopes: vec![scope], keys, sessions: Vec::new() });
+        cx.emit(EngineChanged {
+            scopes: vec![scope],
+            keys,
+            sessions: Vec::new(),
+        });
         cx.notify();
     }
     /// A saved remote's own name for an engine, from whoever resolved it. The local engine has none.
@@ -259,7 +283,7 @@ impl EngineFeed {
         let reset_on_connect = resnapshot.clone();
         let disconnected = coherent.clone();
         let pending_connection = snapshot_pending.clone();
-        let invalidated_scope=scope.clone();
+        let invalidated_scope = scope.clone();
         let main_connection = cx.subscribe(&socket, move |_, _, state, cx| {
             if matches!(
                 state,
@@ -271,7 +295,11 @@ impl EngineFeed {
                 pending_connection.set(false);
                 reset_on_connect();
             }
-            cx.emit(EngineChanged{scopes:vec![invalidated_scope.clone()],keys:Vec::new(),sessions:Vec::new()});
+            cx.emit(EngineChanged {
+                scopes: vec![invalidated_scope.clone()],
+                keys: Vec::new(),
+                sessions: Vec::new(),
+            });
             cx.notify();
         });
         let applied_snapshot = coherent.clone();
@@ -297,9 +325,18 @@ impl EngineFeed {
             let _connection = connection;
             let _main_connection = main_connection;
             'updates: while let Ok(update) = subscription.updates.recv().await {
-                if let EngineUpdate::Refused{code,message}=update {
+                if let EngineUpdate::Refused { code, message } = update {
                     applied_snapshot.set(false);
-                    let _=feed.update(cx,|feed,cx|{feed.error=Some(EngineRefusal{code,message});cx.emit(EngineChanged{scopes:vec![watched.clone()],keys:Vec::new(),sessions:Vec::new()});cx.notify();});return;
+                    let _ = feed.update(cx, |feed, cx| {
+                        feed.error = Some(EngineRefusal { code, message });
+                        cx.emit(EngineChanged {
+                            scopes: vec![watched.clone()],
+                            keys: Vec::new(),
+                            sessions: Vec::new(),
+                        });
+                        cx.notify();
+                    });
+                    return;
                 }
                 let EngineUpdate::Scoped(page) = update else {
                     continue;

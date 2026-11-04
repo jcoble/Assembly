@@ -1,6 +1,8 @@
 //! The panel as it draws: only what shows, its holds, and the top bar's dropdown.
 use gpui::TestAppContext;
-use gpui_kit::{AppContext as _, Entity, IntoElement as _, Modifiers, VisualTestContext, point, px, size};
+use gpui_kit::{
+    AppContext as _, Entity, IntoElement as _, Modifiers, VisualTestContext, point, px, size,
+};
 use serde_json::{Value, json};
 
 use super::{BoardMemory, BoardPanel};
@@ -13,23 +15,45 @@ fn item(kind: &str, id: &str, mut value: Value) -> EngineItem {
     value["machine"] = json!("m");
     value["id"] = json!(id);
     value["version"] = json!(1);
-    EngineItem { key: EngineKey { machine: "m".into(), kind: kind.into(), id: id.into() }, version: 1, value }
+    EngineItem {
+        key: EngineKey {
+            machine: "m".into(),
+            kind: kind.into(),
+            id: id.into(),
+        },
+        version: 1,
+        value,
+    }
 }
 
 fn need(id: &str, state: &str) -> EngineItem {
-    item("needs_me", id, json!({"sessionId":"s","kind":"question","state":state,"text":format!("Question {id}"),"createdMs":1}))
+    item(
+        "needs_me",
+        id,
+        json!({"sessionId":"s","kind":"question","state":state,"text":format!("Question {id}"),"createdMs":1}),
+    )
 }
 
-
 fn run(id: &str, state: &str) -> EngineItem {
-    item("run", id, json!({"state":state,"activeStepIds":[],"paused":false,"reference":false,"title":id}))
+    item(
+        "run",
+        id,
+        json!({"state":state,"activeStepIds":[],"paused":false,"reference":false,"title":id}),
+    )
 }
 
 fn key(kind: &str, id: &str) -> EngineKey {
-    EngineKey { machine: "m".into(), kind: kind.into(), id: id.into() }
+    EngineKey {
+        machine: "m".into(),
+        kind: kind.into(),
+        id: id.into(),
+    }
 }
 
-fn open_panel(cx: &mut TestAppContext, viewport_height: f32) -> (Entity<BoardPanel>, &mut VisualTestContext) {
+fn open_panel(
+    cx: &mut TestAppContext,
+    viewport_height: f32,
+) -> (Entity<BoardPanel>, &mut VisualTestContext) {
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -48,7 +72,9 @@ fn draw(cx: &mut VisualTestContext) {
 #[gpui::test]
 async fn needs_you_list_renders_only_visible_rows(cx: &mut TestAppContext) {
     let (panel, cx) = open_panel(cx, 600.);
-    let needs = (0..225).map(|index| need(&index.to_string(), "open")).collect::<Vec<_>>();
+    let needs = (0..225)
+        .map(|index| need(&index.to_string(), "open"))
+        .collect::<Vec<_>>();
     cx.update(|_, cx| {
         panel.update(cx, |panel, cx| {
             panel.test_set_data(BoardData::of(&needs, &[], &[], &[]), cx);
@@ -92,15 +118,20 @@ async fn list_remeasures_on_moved(cx: &mut TestAppContext) {
     });
     draw(cx);
     let list = cx.read(|cx| panel.read(cx).test_list());
-    let second = |list: &gpui_kit::ListState| list.bounds_for_item(2).expect("second run's row").top();
+    let second =
+        |list: &gpui_kit::ListState| list.bounds_for_item(2).expect("second run's row").top();
     let shut = second(&list);
     cx.update(|_, cx| panel.update(cx, |panel, cx| panel.test_open(&key("run", "a"), cx)));
     // The motion runs on frames, and each step tells the list.
     for _ in 0..40 {
-        cx.executor().advance_clock(std::time::Duration::from_millis(16));
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(16));
         draw(cx);
     }
-    assert!(second(&list) > shut, "the row under an opening one moves down");
+    assert!(
+        second(&list) > shut,
+        "the row under an opening one moves down"
+    );
 }
 
 #[gpui::test]
@@ -115,13 +146,19 @@ async fn closing_card_keeps_its_own_body(cx: &mut TestAppContext) {
         })
     });
     draw(cx);
-    assert!(cx.read(|cx| panel.read(cx).test_run_card_held(&key("run", "a"))), "an open row has its card");
+    assert!(
+        cx.read(|cx| panel.read(cx).test_run_card_held(&key("run", "a"))),
+        "an open row has its card"
+    );
     cx.update(|_, cx| panel.update(cx, |panel, cx| panel.test_open(&key("run", "b"), cx)));
     draw(cx);
     assert!(cx.read(|cx| panel.read(cx).test_run_card_held(&key("run", "b"))));
     cx.update(|_, cx| panel.update(cx, |_, cx| cx.notify()));
     draw(cx);
-    assert!(cx.read(|cx| panel.read(cx).test_run_card_held(&key("run", "a"))), "and keeps it through its closing motion");
+    assert!(
+        cx.read(|cx| panel.read(cx).test_run_card_held(&key("run", "a"))),
+        "and keeps it through its closing motion"
+    );
 }
 
 #[gpui::test]
@@ -137,7 +174,11 @@ async fn filtered_out_card_is_released_and_selected_stays_open(cx: &mut TestAppC
         let drops: &Entity<crate::core::ui::row_drop_down::RowDropDowns> = drops;
         cx.read(|cx| drops.read(cx).is_open(key))
     };
-    cx.update(|_, cx| drops.update(cx, |drops, cx| drops.toggle(a.clone(), |_, _| gpui_kit::Empty.into_any_element(), cx)));
+    cx.update(|_, cx| {
+        drops.update(cx, |drops, cx| {
+            drops.toggle(a.clone(), |_, _| gpui_kit::Empty.into_any_element(), cx)
+        })
+    });
     draw(cx);
     assert!(open(&a, &drops, cx));
     let without_b = BoardData::of(&[need("a", "open")], &[], &[], &[]);
@@ -156,7 +197,11 @@ async fn only_selected_tab_body_is_built(cx: &mut TestAppContext) {
     let (panel, cx) = open_panel(cx, 800.);
     let data = BoardData::of(
         &[],
-        &[item("session", "s", json!({"provider":"claude","folder":"/w","state":"running","activityState":"working","epoch":1,"runId":"r"}))],
+        &[item(
+            "session",
+            "s",
+            json!({"provider":"claude","folder":"/w","state":"running","activityState":"working","epoch":1,"runId":"r"}),
+        )],
         &[run("r", "running")],
         &[],
     );
@@ -170,15 +215,24 @@ async fn only_selected_tab_body_is_built(cx: &mut TestAppContext) {
         })
     });
     for _ in 0..4 {
-        cx.executor().advance_clock(std::time::Duration::from_millis(16));
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(16));
         draw(cx);
     }
-    let tabs = cx.read(|cx| panel.read(cx).test_session_tabs(&row)).expect("the open row's tabs");
-    assert_eq!(cx.read(|cx| tabs.read(cx).test_held()), (false, false), "PRs needs neither the workflow nor the sub-agents");
+    let tabs = cx
+        .read(|cx| panel.read(cx).test_session_tabs(&row))
+        .expect("the open row's tabs");
+    assert_eq!(
+        cx.read(|cx| tabs.read(cx).test_held()),
+        (false, false),
+        "PRs needs neither the workflow nor the sub-agents"
+    );
 }
 
 #[gpui::test]
-async fn board_button_and_palette_share_a_dropdown_that_releases_its_reader_on_dismiss(cx: &mut TestAppContext) {
+async fn board_button_and_palette_share_a_dropdown_that_releases_its_reader_on_dismiss(
+    cx: &mut TestAppContext,
+) {
     use crate::features::board::ToggleBoard;
     use crate::features::shell::default_layout::{LAYOUT_VERSION, default_state};
     use crate::features::shell::placeholder_pane::PlaceholderPane;
@@ -197,7 +251,8 @@ async fn board_button_and_palette_share_a_dropdown_that_releases_its_reader_on_d
     let held: Rc<RefCell<Option<Entity<DockArea>>>> = Rc::default();
     let capture = held.clone();
     let (bar, cx) = cx.add_window_view(move |window, cx| {
-        let dock = cx.new(|cx| DockArea::new("board-dropdown-test", Some(LAYOUT_VERSION), window, cx));
+        let dock =
+            cx.new(|cx| DockArea::new("board-dropdown-test", Some(LAYOUT_VERSION), window, cx));
         dock.update(cx, |dock, cx| _ = dock.load(default_state(), window, cx));
         *capture.borrow_mut() = Some(dock.clone());
         TopBar::new(dock, cx)
@@ -208,7 +263,9 @@ async fn board_button_and_palette_share_a_dropdown_that_releases_its_reader_on_d
     let layout = cx.update(|_, cx| dock.read(cx).dump(cx));
     assert!(cx.debug_bounds("board-dropdown-body").is_none());
     assert!(cx.read(|cx| bar.read(cx).board_reader().is_none()));
-    let button = cx.debug_bounds("board-dropdown-button").expect("Board button");
+    let button = cx
+        .debug_bounds("board-dropdown-button")
+        .expect("Board button");
     cx.simulate_click(button.center(), Modifiers::none());
     draw(cx);
     let body = cx.debug_bounds("board-panel").expect("Board panel");
@@ -218,13 +275,26 @@ async fn board_button_and_palette_share_a_dropdown_that_releases_its_reader_on_d
     let reader = cx.read(|cx| bar.read(cx).board_reader().unwrap());
     cx.update(|window, cx| window.dispatch_action(Box::new(ToggleBoard), cx));
     draw(cx);
-    assert!(cx.read(|cx| bar.read(cx).board_reader().is_none()), "the palette's action closes what's open");
-    assert!(cx.read(|_| reader.upgrade().is_none()), "and closing releases it");
-    assert_eq!(cx.update(|_, cx| dock.read(cx).dump(cx)), layout, "the panes never change");
+    assert!(
+        cx.read(|cx| bar.read(cx).board_reader().is_none()),
+        "the palette's action closes what's open"
+    );
+    assert!(
+        cx.read(|_| reader.upgrade().is_none()),
+        "and closing releases it"
+    );
+    assert_eq!(
+        cx.update(|_, cx| dock.read(cx).dump(cx)),
+        layout,
+        "the panes never change"
+    );
     cx.update(|window, cx| window.dispatch_action(Box::new(ToggleBoard), cx));
     draw(cx);
     let reader = cx.read(|cx| bar.read(cx).board_reader().unwrap());
-    assert!(cx.debug_bounds("board-panel").is_some(), "and it opens the same drop-down");
+    assert!(
+        cx.debug_bounds("board-panel").is_some(),
+        "and it opens the same drop-down"
+    );
     cx.simulate_keystrokes("escape");
     draw(cx);
     assert!(cx.debug_bounds("board-panel").is_none(), "Escape closes it");
@@ -234,6 +304,9 @@ async fn board_button_and_palette_share_a_dropdown_that_releases_its_reader_on_d
     assert!(cx.debug_bounds("board-panel").is_some());
     cx.simulate_click(point(px(1396.), px(896.)), Modifiers::none());
     draw(cx);
-    assert!(cx.debug_bounds("board-panel").is_none(), "an outside click closes it");
+    assert!(
+        cx.debug_bounds("board-panel").is_none(),
+        "an outside click closes it"
+    );
     assert_eq!(cx.update(|_, cx| dock.read(cx).dump(cx)), layout);
 }

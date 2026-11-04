@@ -53,7 +53,10 @@ impl RunReader {
             _connections: Vec::new(),
             _changed: changed,
         };
-        for socket in [SocketClient::try_global(cx), SocketClient::try_bulk(cx)].into_iter().flatten() {
+        for socket in [SocketClient::try_global(cx), SocketClient::try_bulk(cx)]
+            .into_iter()
+            .flatten()
+        {
             if let Some(generation) = socket.read(cx).connection_generation() {
                 reader.connections.push((socket.clone(), generation));
             }
@@ -101,7 +104,9 @@ impl RunReader {
         self.connections.len() == 2
             && SocketClient::try_global(cx).as_ref() == Some(&self.connections[0].0)
             && SocketClient::try_bulk(cx).as_ref() == Some(&self.connections[1].0)
-            && self.connections.iter().all(|(socket, generation)| socket.read(cx).connection_generation() == Some(*generation))
+            && self.connections.iter().all(|(socket, generation)| {
+                socket.read(cx).connection_generation() == Some(*generation)
+            })
     }
 
     /// The run to read, or an empty answer when a session has none.
@@ -109,12 +114,19 @@ impl RunReader {
         match &self.source {
             RunSource::Run { machine, id } => Ok(Some((machine.clone(), id.clone()))),
             RunSource::Session(parent) => {
-                let scope = EngineScope { machine: parent.machine.clone(), topic: "sessions".into(), key: None };
+                let scope = EngineScope {
+                    machine: parent.machine.clone(),
+                    topic: "sessions".into(),
+                    key: None,
+                };
                 let feed = self.feed.read(cx);
                 if !feed.loaded(&scope) {
                     return Err("The owning session display is unavailable.".into());
                 }
-                Ok(feed.session(parent).and_then(|session| session.run_id).map(|id| (parent.machine.clone(), id)))
+                Ok(feed
+                    .session(parent)
+                    .and_then(|session| session.run_id)
+                    .map(|id| (parent.machine.clone(), id)))
             }
         }
     }
@@ -144,12 +156,19 @@ impl RunReader {
                 return;
             }
         };
-        let scope = EngineScope { machine: machine.clone(), topic: "runs".into(), key: Some(run_id.clone()) };
+        let scope = EngineScope {
+            machine: machine.clone(),
+            topic: "runs".into(),
+            key: Some(run_id.clone()),
+        };
         if self.scope.as_ref() != Some(&scope) {
             self.view = None;
             self.watch = None;
             self.scope = Some(scope.clone());
-            match self.feed.update(cx, |feed, cx| feed.watch(scope.clone(), cx)) {
+            match self
+                .feed
+                .update(cx, |feed, cx| feed.watch(scope.clone(), cx))
+            {
                 Ok(watch) => self.watch = Some(watch),
                 Err(error) => {
                     self.error = Some(error.message);
@@ -171,7 +190,11 @@ impl RunReader {
                     return;
                 }
                 reader.read = None;
-                if !reader.scope.as_ref().is_some_and(|scope| reader.feed.read(cx).loaded(scope)) {
+                if !reader
+                    .scope
+                    .as_ref()
+                    .is_some_and(|scope| reader.feed.read(cx).loaded(scope))
+                {
                     reader.view = None;
                     reader.error = Some("The workflow source is no longer coherent.".into());
                 } else {

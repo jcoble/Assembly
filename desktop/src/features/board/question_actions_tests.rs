@@ -9,11 +9,25 @@ fn item(kind: &str, id: &str, machine: &str, mut value: Value) -> EngineItem {
     value["machine"] = json!(machine);
     value["id"] = json!(id);
     value["version"] = json!(3);
-    EngineItem { key: EngineKey { machine: machine.into(), kind: kind.into(), id: id.into() }, version: 3, value }
+    EngineItem {
+        key: EngineKey {
+            machine: machine.into(),
+            kind: kind.into(),
+            id: id.into(),
+        },
+        version: 3,
+        value,
+    }
 }
 
 fn need() -> NeedItem {
-    NeedItem::of(&item("needs_me", "need-1", "remote", json!({"sessionId":"asker","kind":"question","state":"open"}))).unwrap()
+    NeedItem::of(&item(
+        "needs_me",
+        "need-1",
+        "remote",
+        json!({"sessionId":"asker","kind":"question","state":"open"}),
+    ))
+    .unwrap()
 }
 
 fn session(id: &str, machine: &str) -> SessionItem {
@@ -29,7 +43,10 @@ fn explain_more_names_the_exact_need_and_sends_only_a_message() {
     assert!(command.command["text"].as_str().unwrap().contains("need-1"));
     assert_eq!((command.expected_version, command.epoch), (0, 9));
     assert_eq!(command.machine.as_deref(), Some("remote"));
-    assert_ne!(command.entity_id, "need-1", "the message is its own entity, so the need stays open");
+    assert_ne!(
+        command.entity_id, "need-1",
+        "the message is its own entity, so the need stays open"
+    );
 }
 
 #[test]

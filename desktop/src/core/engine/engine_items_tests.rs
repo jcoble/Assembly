@@ -139,7 +139,11 @@ fn only_a_recorded_steer_grant_lets_a_session_take_a_message_mid_turn() {
             value,
         }
     };
-    let can = |steer| super::engine_items::SessionItem::of(&row(steer)).unwrap().can_steer;
+    let can = |steer| {
+        super::engine_items::SessionItem::of(&row(steer))
+            .unwrap()
+            .can_steer
+    };
     assert!(can(Some(true)));
     assert!(!can(Some(false)));
     assert!(!can(None));
@@ -147,11 +151,18 @@ fn only_a_recorded_steer_grant_lets_a_session_take_a_message_mid_turn() {
 
 #[test]
 fn need_addressee_requires_its_actual_exported_owner() {
-    let mut row=item("child-owner");row.value["addresseeSessionId"]=json!("same");
+    let mut row = item("child-owner");
+    row.value["addresseeSessionId"] = json!("same");
     assert!(NeedItem::of(&row).unwrap().addressee().is_none());
-    row.value["addresseeMachine"]=json!("parent-owner");
-    assert_eq!(NeedItem::of(&row).unwrap().addressee(),Some(super::SessionKey{machine:"parent-owner".into(),id:"same".into()}));
-    row.value["addresseeMachine"]=json!("");
+    row.value["addresseeMachine"] = json!("parent-owner");
+    assert_eq!(
+        NeedItem::of(&row).unwrap().addressee(),
+        Some(super::SessionKey {
+            machine: "parent-owner".into(),
+            id: "same".into()
+        })
+    );
+    row.value["addresseeMachine"] = json!("");
     assert!(NeedItem::of(&row).unwrap().addressee().is_none());
 }
 
@@ -170,7 +181,11 @@ fn a_session_decodes_what_the_board_shows_and_a_pr_keeps_its_own_machine() {
     assert_eq!(session.branch.as_deref(), Some("b"));
     assert_eq!(session.updated_ms, Some(9));
     let pr = |machine: &str| EngineItem {
-        key: EngineKey { machine: machine.into(), kind: "pr".into(), id: "pr".into() },
+        key: EngineKey {
+            machine: machine.into(),
+            kind: "pr".into(),
+            id: "pr".into(),
+        },
         version: 1,
         value: json!({"entityKind":"pr","machine":machine,"id":"pr","version":1,"runId":"r","ownerSessionId":"s",
             "repo":"jcoble/Assembly","number":12,"head":"abc","state":"open","observedHead":"abc","url":"https://x"}),

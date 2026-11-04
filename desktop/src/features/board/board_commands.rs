@@ -3,9 +3,9 @@
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use crate::core::engine::EngineRefusal;
 use crate::core::engine::commands::{CommandReceipt, WindowCommand};
 use crate::core::engine::workflow_items::RunItem;
-use crate::core::engine::EngineRefusal;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum BoardRunAction {
@@ -27,11 +27,22 @@ impl BoardRunAction {
 }
 
 fn refused(code: &str, message: &str) -> EngineRefusal {
-    EngineRefusal { code: code.into(), message: message.into() }
+    EngineRefusal {
+        code: code.into(),
+        message: message.into(),
+    }
 }
 
-fn new_run_command(source: &RunItem, kind: &str, command_id: String, new_run_id: Option<String>, request_key: String) -> Result<WindowCommand, EngineRefusal> {
-    let entity_id = new_run_id.filter(|id| Uuid::parse_str(id).is_ok()).ok_or_else(|| refused("bad_args", "A new run needs its own id."))?;
+fn new_run_command(
+    source: &RunItem,
+    kind: &str,
+    command_id: String,
+    new_run_id: Option<String>,
+    request_key: String,
+) -> Result<WindowCommand, EngineRefusal> {
+    let entity_id = new_run_id
+        .filter(|id| Uuid::parse_str(id).is_ok())
+        .ok_or_else(|| refused("bad_args", "A new run needs its own id."))?;
     if request_key.is_empty() {
         return Err(refused("bad_args", "A new run needs a request key."));
     }
@@ -46,8 +57,20 @@ fn new_run_command(source: &RunItem, kind: &str, command_id: String, new_run_id:
     })
 }
 
-fn same_run_command(source: &RunItem, command: Value, command_id: String) -> Result<WindowCommand, EngineRefusal> {
-    let epoch = source.owner_epoch.filter(|epoch| *epoch >= 0).ok_or_else(|| refused("session_unavailable", "The run's owning session is not available."))?;
+fn same_run_command(
+    source: &RunItem,
+    command: Value,
+    command_id: String,
+) -> Result<WindowCommand, EngineRefusal> {
+    let epoch = source
+        .owner_epoch
+        .filter(|epoch| *epoch >= 0)
+        .ok_or_else(|| {
+            refused(
+                "session_unavailable",
+                "The run's owning session is not available.",
+            )
+        })?;
     Ok(WindowCommand {
         command_id,
         entity_id: source.id.clone(),
@@ -59,29 +82,59 @@ fn same_run_command(source: &RunItem, command: Value, command_id: String) -> Res
     })
 }
 
-pub fn run_command(source: &RunItem, action: &BoardRunAction, command_id: String, new_run_id: Option<String>, request_key: String) -> Result<WindowCommand, EngineRefusal> {
+pub fn run_command(
+    source: &RunItem,
+    action: &BoardRunAction,
+    command_id: String,
+    new_run_id: Option<String>,
+    request_key: String,
+) -> Result<WindowCommand, EngineRefusal> {
     let command = match action {
-        BoardRunAction::Rerun => return new_run_command(source, "rerun_workflow", command_id, new_run_id, request_key),
-        BoardRunAction::RetryFailed => return new_run_command(source, "retry_failed", command_id, new_run_id, request_key),
+        BoardRunAction::Rerun => {
+            return new_run_command(
+                source,
+                "rerun_workflow",
+                command_id,
+                new_run_id,
+                request_key,
+            );
+        }
+        BoardRunAction::RetryFailed => {
+            return new_run_command(source, "retry_failed", command_id, new_run_id, request_key);
+        }
         BoardRunAction::Pause => json!({"kind": "pause_workflow"}),
         BoardRunAction::Resume => json!({"kind": "resume_workflow"}),
         BoardRunAction::Cancel => json!({"kind": "cancel_run"}),
         BoardRunAction::Keep => json!({"kind": "keep_succeeded"}),
-        BoardRunAction::Undo { token } if token.is_empty() => return Err(refused("bad_args", "This can no longer be undone.")),
+        BoardRunAction::Undo { token } if token.is_empty() => {
+            return Err(refused("bad_args", "This can no longer be undone."));
+        }
         BoardRunAction::Undo { token } => json!({"kind": "undo_keep_succeeded", "token": token}),
-        BoardRunAction::Grant { step_id, scope } => json!({"kind": "grant_scope", "stepId": step_id, "scope": scope}),
+        BoardRunAction::Grant { step_id, scope } => {
+            json!({"kind": "grant_scope", "stepId": step_id, "scope": scope})
+        }
     };
     same_run_command(source, command, command_id)
 }
 
 /// The run to select once its row arrives: only a new run the engine applied.
-pub fn selected_after(action: &BoardRunAction, new_run_id: Option<&str>, outcome: &Result<CommandReceipt, EngineRefusal>) -> Option<String> {
+pub fn selected_after(
+    action: &BoardRunAction,
+    new_run_id: Option<&str>,
+    outcome: &Result<CommandReceipt, EngineRefusal>,
+) -> Option<String> {
     let applied = matches!(outcome, Ok(receipt) if receipt.applied);
-    (applied && action.starts_a_new_run()).then(|| new_run_id.map(str::to_owned)).flatten()
+    (applied && action.starts_a_new_run())
+        .then(|| new_run_id.map(str::to_owned))
+        .flatten()
 }
 
 /// An applied Keep's command id is the engine's own undo token. Nothing else can be undone.
-pub fn undo_token(action: &BoardRunAction, command_id: &str, outcome: &Result<CommandReceipt, EngineRefusal>) -> Option<String> {
+pub fn undo_token(
+    action: &BoardRunAction,
+    command_id: &str,
+    outcome: &Result<CommandReceipt, EngineRefusal>,
+) -> Option<String> {
     let applied = matches!(outcome, Ok(receipt) if receipt.applied);
     (applied && *action == BoardRunAction::Keep).then(|| command_id.to_owned())
 }

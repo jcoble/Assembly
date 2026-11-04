@@ -41,7 +41,13 @@ pub struct NeedsCard {
 
 /// The body keeps the card's padding, so a caller's body is only its content.
 fn padded(body: CardBody) -> impl Fn(&mut Window, &mut App) -> AnyElement + 'static {
-    move |window, cx| div().px_3().pb_3().child(body(window, cx)).into_any_element()
+    move |window, cx| {
+        div()
+            .px_3()
+            .pb_3()
+            .child(body(window, cx))
+            .into_any_element()
+    }
 }
 
 impl NeedsCard {
@@ -67,7 +73,12 @@ impl NeedsCard {
 impl RenderOnce for NeedsCard {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, border, radius, hover) = (theme.muted_foreground, theme.border, theme.radius, theme.muted);
+        let (muted, border, radius, hover) = (
+            theme.muted_foreground,
+            theme.border,
+            theme.radius,
+            theme.muted,
+        );
         let open = self.drops.read(cx).is_open(&self.key);
         let tone = match self.state {
             NeedsState::Open => Tone::Warning,
@@ -76,18 +87,44 @@ impl RenderOnce for NeedsCard {
         let top = h_flex()
             .gap_2()
             .child(StatusChip::new(self.kind, tone))
-            .child(div().flex_1().min_w_0().truncate().text_role(TextRole::Title, cx).child(self.title))
-            .children(self.time.map(|time| div().text_role(TextRole::Meta, cx).text_color(muted).child(time)))
             .child(
-                Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight })
-                    .xsmall()
-                    .text_color(muted),
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_role(TextRole::Title, cx)
+                    .child(self.title),
+            )
+            .children(self.time.map(|time| {
+                div()
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(muted)
+                    .child(time)
+            }))
+            .child(
+                Icon::new(if open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .xsmall()
+                .text_color(muted),
             );
-        let meta = |text: SharedString, cx: &App| div().text_role(TextRole::Meta, cx).text_color(muted).child(text);
+        let meta = |text: SharedString, cx: &App| {
+            div()
+                .text_role(TextRole::Meta, cx)
+                .text_color(muted)
+                .child(text)
+        };
         let details = match self.state {
             NeedsState::Open => v_flex()
                 .gap_0p5()
-                .child(div().text_role(TextRole::Body, cx).text_color(muted).child(self.why))
+                .child(
+                    div()
+                        .text_role(TextRole::Body, cx)
+                        .text_color(muted)
+                        .child(self.why),
+                )
                 .when_some(self.next_step, |column, next| column.child(meta(next, cx))),
             NeedsState::Answered { summary, delivery } => {
                 let selector = self.key.clone();
@@ -95,7 +132,9 @@ impl RenderOnce for NeedsCard {
                     .debug_selector(move || format!("needs-summary:{selector}"))
                     .gap_0p5()
                     .child(div().text_role(TextRole::Body, cx).child(summary))
-                    .when_some(delivery, |column, delivery| column.child(meta(delivery, cx)))
+                    .when_some(delivery, |column, delivery| {
+                        column.child(meta(delivery, cx))
+                    })
             }
         };
         let (drops, key, body) = (self.drops.clone(), self.key.clone(), self.body);

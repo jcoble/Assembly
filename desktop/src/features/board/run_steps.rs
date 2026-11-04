@@ -57,7 +57,10 @@ pub fn pill(run: &RunItem, steps: &[&StepItem], open_need: bool) -> Pill {
 }
 
 fn is_upcoming(step: &StepItem) -> bool {
-    !matches!(step.state.as_str(), "running" | "waiting" | "succeeded" | "failed" | "cancelled" | "skipped")
+    !matches!(
+        step.state.as_str(),
+        "running" | "waiting" | "succeeded" | "failed" | "cancelled" | "skipped"
+    )
 }
 
 /// Every finished and active step, and the first few upcoming. `more` counts the rest.
@@ -85,8 +88,16 @@ fn step_pills(step: &StepItem, steps: &[&StepItem], finished: bool) -> Vec<(Shar
     match step.state.as_str() {
         "failed" => {
             let retried = step.definition_key.is_some()
-                && steps.iter().any(|later| later.definition_key == step.definition_key && later.attempt > step.attempt && later.state == "succeeded");
-            pills.push(if retried { ("Retried".into(), Tone::Neutral) } else { ("Failed".into(), Tone::Danger) });
+                && steps.iter().any(|later| {
+                    later.definition_key == step.definition_key
+                        && later.attempt > step.attempt
+                        && later.state == "succeeded"
+                });
+            pills.push(if retried {
+                ("Retried".into(), Tone::Neutral)
+            } else {
+                ("Failed".into(), Tone::Danger)
+            });
         }
         "succeeded" if finished => pills.push(("Done".into(), Tone::Success)),
         _ => {}

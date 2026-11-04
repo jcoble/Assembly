@@ -8,8 +8,9 @@ use gpui_kit::component::date_picker::{DatePickerEvent, DateTime};
 use gpui_kit::component::select::SelectEvent;
 use gpui_kit::component::time_field::TimeFieldEvent;
 use gpui_kit::{
-    AppContext as _, Context, Entity, FocusHandle, Focusable as _, InteractiveElement as _, IntoElement, Modifiers,
-    ParentElement as _, Render, Styled as _, Subscription, VisualTestContext, Window, div, px,
+    AppContext as _, Context, Entity, FocusHandle, Focusable as _, InteractiveElement as _,
+    IntoElement, Modifiers, ParentElement as _, Render, Styled as _, Subscription,
+    VisualTestContext, Window, div, px,
 };
 
 use super::super::editor::{ChoiceOption, Editor};
@@ -70,7 +71,12 @@ fn open<'a>(
     let saves = cx.update(|_, cx| host.read(cx).saves.clone());
     // A window that isn't the active one has no focus to lose.
     cx.update(|window, _| window.activate_window());
-    let mut open = Open { host, field, saves, cx };
+    let mut open = Open {
+        host,
+        field,
+        saves,
+        cx,
+    };
     open.draw();
     open
 }
@@ -84,7 +90,8 @@ impl Open<'_> {
 
     fn begin(&mut self) {
         let field = self.field.clone();
-        self.cx.update(|window, cx| field.update(cx, |field, cx| field.edit(window, cx)));
+        self.cx
+            .update(|window, cx| field.update(cx, |field, cx| field.edit(window, cx)));
         self.draw();
     }
 
@@ -93,12 +100,12 @@ impl Open<'_> {
         let field = self.field.clone();
         let text = text.to_owned();
         self.cx.update(|window, cx| match &field.read(cx).editor {
-            Editor::Text { state, .. } => {
-                state.clone().update(cx, |state, cx| state.replace_all(text, window, cx))
-            }
-            Editor::Multiline(state) => {
-                state.clone().update(cx, |state, cx| state.replace_all(text, window, cx))
-            }
+            Editor::Text { state, .. } => state
+                .clone()
+                .update(cx, |state, cx| state.replace_all(text, window, cx)),
+            Editor::Multiline(state) => state
+                .clone()
+                .update(cx, |state, cx| state.replace_all(text, window, cx)),
             _ => panic!("not a text box"),
         });
         self.draw();
@@ -123,13 +130,18 @@ impl Open<'_> {
             let Editor::Combo { state, .. } = &field.read(cx).editor else {
                 panic!("not a choice");
             };
-            state.clone().update(cx, |_, cx| cx.emit(SelectEvent::Confirm(Some(value))));
+            state
+                .clone()
+                .update(cx, |_, cx| cx.emit(SelectEvent::Confirm(Some(value))));
         });
         self.draw();
     }
 
     fn click_the_control(&mut self) {
-        let bounds = self.cx.debug_bounds("the-field").expect("the field is drawn");
+        let bounds = self
+            .cx
+            .debug_bounds("the-field")
+            .expect("the field is drawn");
         // The control sits under the field's label, along the bottom of the row.
         let point = gpui_kit::point(
             bounds.origin.x + px(40.),
@@ -143,7 +155,9 @@ impl Open<'_> {
         let field = self.field.clone();
         let request = self.saves.borrow().last().expect("a save was asked for").0;
         let applied = self.cx.update(|window, cx| {
-            field.update(cx, |field, cx| field.complete_save(request, result, window, cx))
+            field.update(cx, |field, cx| {
+                field.complete_save(request, result, window, cx)
+            })
         });
         self.draw();
         applied
@@ -159,7 +173,11 @@ impl Open<'_> {
     }
 
     fn saved(&self) -> Vec<FieldValue> {
-        self.saves.borrow().iter().map(|(_, value)| value.clone()).collect()
+        self.saves
+            .borrow()
+            .iter()
+            .map(|(_, value)| value.clone())
+            .collect()
     }
 }
 
@@ -172,14 +190,20 @@ fn choice(value: &str) -> FieldValue {
 }
 
 fn plain(cx: &mut TestAppContext) -> Open<'_> {
-    open(cx, |window, cx| InlineField::text("Title", "before", window, cx))
+    open(cx, |window, cx| {
+        InlineField::text("Title", "before", window, cx)
+    })
 }
 
 fn status(cx: &mut TestAppContext) -> Open<'_> {
     open(cx, |window, cx| {
         InlineField::combo(
             "Status",
-            vec![ChoiceOption::new("a", "A"), ChoiceOption::new("b", "B"), ChoiceOption::new("c", "C")],
+            vec![
+                ChoiceOption::new("a", "A"),
+                ChoiceOption::new("b", "B"),
+                ChoiceOption::new("c", "C"),
+            ],
             Some("a".into()),
             window,
             cx,
@@ -202,7 +226,11 @@ fn enter_saves_once(cx: &mut TestAppContext) {
     field.press("enter");
     assert_eq!(field.saved(), [text("after")]);
     field.press("enter");
-    assert_eq!(field.saved(), [text("after")], "Enter while saving sends nothing more");
+    assert_eq!(
+        field.saved(),
+        [text("after")],
+        "Enter while saving sends nothing more"
+    );
     assert!(field.complete(Ok(text("after"))));
     assert!(!field.editing());
     assert_eq!(field.read(|f| f.committed().clone()), text("after"));
@@ -259,7 +287,10 @@ fn invalid_sends_nothing_and_keeps_editor_on_leave(cx: &mut TestAppContext) {
     field.leave();
     assert!(field.saved().is_empty());
     assert!(field.editing());
-    assert_eq!(field.read(|f| f.state.error().map(str::to_owned)), Some("Required".to_owned()));
+    assert_eq!(
+        field.read(|f| f.state.error().map(str::to_owned)),
+        Some("Required".to_owned())
+    );
     field.press("enter");
     assert!(field.saved().is_empty());
 }
@@ -274,7 +305,10 @@ fn escape_restores(cx: &mut TestAppContext) {
     assert!(!field.editing());
     assert_eq!(field.read(|f| f.draft().clone()), text("before"));
     field.leave();
-    assert!(field.saved().is_empty(), "leaving after Escape saves nothing");
+    assert!(
+        field.saved().is_empty(),
+        "leaving after Escape saves nothing"
+    );
 }
 
 #[gpui::test]
@@ -308,7 +342,9 @@ fn date_saves_on_pick_with_no_enter(cx: &mut TestAppContext) {
             panic!("not a date");
         };
         let picked = DateTime::Single(date.and_hms_opt(0, 0, 0));
-        state.clone().update(cx, |_, cx| cx.emit(DatePickerEvent::Change(picked)));
+        state
+            .clone()
+            .update(cx, |_, cx| cx.emit(DatePickerEvent::Change(picked)));
     });
     field.draw();
     assert_eq!(field.saved(), [FieldValue::Date(Some(date))]);
@@ -319,7 +355,9 @@ fn date_time_saves_on_enter_not_on_each_change(cx: &mut TestAppContext) {
     let when = NaiveDate::from_ymd_opt(2026, 11, 4)
         .and_then(|date| date.and_hms_opt(9, 30, 0))
         .expect("a date and time");
-    let mut field = open(cx, |window, cx| InlineField::date_time("Starts", None, window, cx));
+    let mut field = open(cx, |window, cx| {
+        InlineField::date_time("Starts", None, window, cx)
+    });
     field.begin();
     let target = field.field.clone();
     field.cx.update(|window, cx| {
@@ -347,7 +385,10 @@ fn failure_keeps_text_and_enter_retries(cx: &mut TestAppContext) {
     field.complete(Err(SaveFailure::Refused("Notion said no".into())));
     assert!(field.editing());
     assert_eq!(field.read(|f| f.draft().clone()), text("after"));
-    assert_eq!(field.read(|f| f.state.error().map(str::to_owned)), Some("Notion said no".to_owned()));
+    assert_eq!(
+        field.read(|f| f.state.error().map(str::to_owned)),
+        Some("Notion said no".to_owned())
+    );
     field.press("enter");
     assert_eq!(field.saved(), [text("after"), text("after")]);
 }
@@ -359,7 +400,9 @@ fn pushed_value_keeps_open_draft(cx: &mut TestAppContext) {
     field.type_in("mine");
     let target = field.field.clone();
     field.cx.update(|window, cx| {
-        target.update(cx, |f, cx| f.set_committed(text("theirs"), window, cx)).expect("same type");
+        target
+            .update(cx, |f, cx| f.set_committed(text("theirs"), window, cx))
+            .expect("same type");
     });
     field.draw();
     assert_eq!(field.read(|f| f.draft().clone()), text("mine"));
@@ -373,7 +416,9 @@ fn pushed_value_keeps_open_draft(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn read_only_never_opens(cx: &mut TestAppContext) {
-    let mut field = open(cx, |window, cx| InlineField::text("Title", "x", window, cx).read_only());
+    let mut field = open(cx, |window, cx| {
+        InlineField::text("Title", "x", window, cx).read_only()
+    });
     field.begin();
     assert!(!field.editing());
     let target = field.field.clone();
@@ -388,7 +433,9 @@ fn read_only_never_opens(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn in_form_never_emits_on_enter_or_leave(cx: &mut TestAppContext) {
-    let mut field = open(cx, |window, cx| InlineField::text("Title", "before", window, cx).in_form());
+    let mut field = open(cx, |window, cx| {
+        InlineField::text("Title", "before", window, cx).in_form()
+    });
     let target = field.field.clone();
     field.cx.update(|window, cx| {
         target.update(cx, |f, cx| {
@@ -408,7 +455,9 @@ fn in_form_never_emits_on_enter_or_leave(cx: &mut TestAppContext) {
 #[gpui::test]
 fn time_saves_on_leaving_not_on_each_digit(cx: &mut TestAppContext) {
     let time = |hour| NaiveTime::from_hms_opt(hour, 0, 0).expect("a time");
-    let mut field = open(cx, move |window, cx| InlineField::time("Start", time(9), window, cx));
+    let mut field = open(cx, move |window, cx| {
+        InlineField::time("Start", time(9), window, cx)
+    });
     field.begin();
     let target = field.field.clone();
     for hour in [1, 10] {
@@ -416,7 +465,9 @@ fn time_saves_on_leaving_not_on_each_digit(cx: &mut TestAppContext) {
             let Editor::Time(state) = &target.read(cx).editor else {
                 panic!("not a time");
             };
-            state.clone().update(cx, |_, cx| cx.emit(TimeFieldEvent::Change(time(hour))));
+            state
+                .clone()
+                .update(cx, |_, cx| cx.emit(TimeFieldEvent::Change(time(hour))));
         });
         field.draw();
     }
@@ -452,7 +503,9 @@ fn dismissing_a_picker_without_a_pick_cancels(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn shift_enter_adds_a_line_and_enter_saves_multiline(cx: &mut TestAppContext) {
-    let mut field = open(cx, |window, cx| InlineField::multiline("Notes", "", window, cx));
+    let mut field = open(cx, |window, cx| {
+        InlineField::multiline("Notes", "", window, cx)
+    });
     field.begin();
     field.type_in("one");
     field.press("shift-enter");
@@ -479,7 +532,11 @@ fn chip_field(cx: &mut TestAppContext, in_form: bool) -> Open<'_> {
     open(cx, move |window, cx| {
         let field = InlineField::chip(
             "Status",
-            vec![ChoiceOption::new("a", "A"), ChoiceOption::new("b", "B"), ChoiceOption::new("c", "C")],
+            vec![
+                ChoiceOption::new("a", "A"),
+                ChoiceOption::new("b", "B"),
+                ChoiceOption::new("c", "C"),
+            ],
             Some("a".into()),
             window,
             cx,
@@ -492,7 +549,8 @@ impl Open<'_> {
     fn pick_chip(&mut self, value: &str) {
         let field = self.field.clone();
         let value = value.to_owned();
-        self.cx.update(|window, cx| field.update(cx, |field, cx| field.pick_chip(value, window, cx)));
+        self.cx
+            .update(|window, cx| field.update(cx, |field, cx| field.pick_chip(value, window, cx)));
         self.draw();
     }
 }
@@ -522,7 +580,10 @@ fn a_refused_chip_keeps_its_pick_and_can_be_picked_again(cx: &mut TestAppContext
     let mut chip = chip_field(cx, false);
     chip.pick_chip("b");
     chip.complete(Err(SaveFailure::Refused("No".into())));
-    assert_eq!(chip.read(|field| field.state.error().map(str::to_owned)), Some("No".to_owned()));
+    assert_eq!(
+        chip.read(|field| field.state.error().map(str::to_owned)),
+        Some("No".to_owned())
+    );
     chip.pick_chip("c");
     assert_eq!(chip.saved(), [choice("b"), choice("c")]);
 }
@@ -531,7 +592,8 @@ fn a_refused_chip_keeps_its_pick_and_can_be_picked_again(cx: &mut TestAppContext
 fn a_chip_in_a_form_changes_the_draft_and_sends_nothing(cx: &mut TestAppContext) {
     let mut chip = chip_field(cx, true);
     let field = chip.field.clone();
-    chip.cx.update(|window, cx| field.update(cx, |field, cx| field.begin_edit(window, cx)));
+    chip.cx
+        .update(|window, cx| field.update(cx, |field, cx| field.begin_edit(window, cx)));
     chip.pick_chip("b");
     assert!(chip.saved().is_empty());
     assert_eq!(chip.read(|field| field.draft().clone()), choice("b"));

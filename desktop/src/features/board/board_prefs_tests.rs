@@ -13,7 +13,11 @@ fn prefs_cap_at_500_dropping_oldest() {
     assert!(set.contains("1"));
     assert!(set.contains("500"));
     set.insert("500".into());
-    assert_eq!(set.to_json().as_array().unwrap().len(), CAP, "a repeat takes no room");
+    assert_eq!(
+        set.to_json().as_array().unwrap().len(),
+        CAP,
+        "a repeat takes no room"
+    );
     let mut tabs = Vec::new();
     for index in 0..=CAP {
         remember(&mut tabs, index.to_string(), SessionTab::Prs);
@@ -30,7 +34,10 @@ fn saved_values_read_back_and_a_retired_name_falls_back() {
     assert!(!set.contains("a"));
     assert_eq!(BoardTab::named("workflows"), Some(BoardTab::Workflows));
     assert_eq!(BoardTab::named("running"), None);
-    assert_eq!(SessionTab::named(SessionTab::SubAgents.name()), Some(SessionTab::SubAgents));
+    assert_eq!(
+        SessionTab::named(SessionTab::SubAgents.name()),
+        Some(SessionTab::SubAgents)
+    );
 }
 
 #[test]

@@ -27,7 +27,25 @@ fn only_a_step_with_more_to_say_opens() {
         closed: false,
     };
     assert!(!plain.has_more());
-    assert!(StepView { detail: Some("cargo build".into()), ..plain.clone() }.has_more());
-    assert!(StepView { explanation: Some("Why".into()), ..plain.clone() }.has_more());
-    assert!(StepView { scope: Some(("repo".into(), true)), ..plain }.has_more());
+    assert!(
+        StepView {
+            detail: Some("cargo build".into()),
+            ..plain.clone()
+        }
+        .has_more()
+    );
+    assert!(
+        StepView {
+            explanation: Some("Why".into()),
+            ..plain.clone()
+        }
+        .has_more()
+    );
+    assert!(
+        StepView {
+            scope: Some(("repo".into(), true)),
+            ..plain
+        }
+        .has_more()
+    );
 }

@@ -16,9 +16,7 @@ pub fn remove_saved_panel(state: &mut DockAreaState) {
             .children
             .into_iter()
             .enumerate()
-            .filter_map(|(index, child)| {
-                prune(child).inspect(|_| kept.push(index))
-            })
+            .filter_map(|(index, child)| prune(child).inspect(|_| kept.push(index)))
             .collect();
         if kept.len() != old_len {
             match &mut panel.info {

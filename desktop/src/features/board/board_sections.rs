@@ -4,7 +4,10 @@ use std::collections::HashSet;
 use gpui_kit::App;
 
 use super::board_prefs::{BoardPrefs, BoardTab};
-use super::board_queries::{BoardData, answered_today, by_machine, done_runs_today, done_today, live_runs, live_top_level, open_owner_questions};
+use super::board_queries::{
+    BoardData, answered_today, by_machine, done_runs_today, done_today, live_runs, live_top_level,
+    open_owner_questions,
+};
 use crate::core::engine::{EngineFeed, EngineKey};
 use crate::core::socket::client::SocketClient;
 use crate::core::state::machines::Machines;
@@ -18,25 +21,56 @@ pub enum Section {
 }
 
 /// `shown_open` keeps a question answered while the panel is open where it is, until the pointer leaves the list.
-pub fn tab_sections(data: &BoardData, tab: BoardTab, midnight_ms: i64, local: Option<&str>, shown_open: &[EngineKey]) -> Vec<Section> {
+pub fn tab_sections(
+    data: &BoardData,
+    tab: BoardTab,
+    midnight_ms: i64,
+    local: Option<&str>,
+    shown_open: &[EngineKey],
+) -> Vec<Section> {
     match tab {
         BoardTab::Needs => {
             let open = open_owner_questions(data);
             let staying = |key: &&EngineKey| data.needs.contains_key(*key) && !open.contains(*key);
-            let held = shown_open.iter().filter(staying).cloned().collect::<HashSet<_>>();
-            let answered = answered_today(data, midnight_ms).into_iter().filter(|key| !held.contains(key)).collect();
-            let mut listed = shown_open.iter().filter(|key| open.contains(*key) || held.contains(*key)).cloned().collect::<Vec<_>>();
-            listed.extend(open.iter().filter(|key| !shown_open.contains(*key)).cloned());
+            let held = shown_open
+                .iter()
+                .filter(staying)
+                .cloned()
+                .collect::<HashSet<_>>();
+            let answered = answered_today(data, midnight_ms)
+                .into_iter()
+                .filter(|key| !held.contains(key))
+                .collect();
+            let mut listed = shown_open
+                .iter()
+                .filter(|key| open.contains(*key) || held.contains(*key))
+                .cloned()
+                .collect::<Vec<_>>();
+            listed.extend(
+                open.iter()
+                    .filter(|key| !shown_open.contains(*key))
+                    .cloned(),
+            );
             vec![Section::Open(listed), Section::Answered(answered)]
         }
-        BoardTab::Workflows => vec![Section::Live(by_machine(live_runs(data), local)), Section::Done(done_runs_today(data, midnight_ms))],
-        BoardTab::Sessions => vec![Section::Live(by_machine(live_top_level(data), local)), Section::Done(done_today(data, midnight_ms))],
+        BoardTab::Workflows => vec![
+            Section::Live(by_machine(live_runs(data), local)),
+            Section::Done(done_runs_today(data, midnight_ms)),
+        ],
+        BoardTab::Sessions => vec![
+            Section::Live(by_machine(live_top_level(data), local)),
+            Section::Done(done_today(data, midnight_ms)),
+        ],
     }
 }
 
 /// The tab to show on opening: Needs you when any are open, else the last one used.
 pub fn first_tab(data: &BoardData, last: BoardTab) -> BoardTab {
-    if open_owner_questions(data).is_empty() { last } else { BoardTab::Needs }
+    if open_owner_questions(data).is_empty() {
+        last
+    } else {
+        BoardTab::Needs
+    }
 }
 
 pub fn heading(need_count: usize) -> String {
@@ -53,9 +87,15 @@ pub fn summary((running, waiting, done): (usize, usize, usize)) -> String {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Entry {
     /// A section's fold heading, and whether it's folded.
-    Fold { id: &'static str, label: String, folded: bool },
+    Fold {
+        id: &'static str,
+        label: String,
+        folded: bool,
+    },
     /// A machine's group, with why it can't be reached when it can't.
-    Group { machine: String },
+    Group {
+        machine: String,
+    },
     Need(EngineKey),
     Run(EngineKey),
     Session(EngineKey),
@@ -83,10 +123,16 @@ pub fn entries(sections: &[Section], tab: BoardTab, prefs: &BoardPrefs) -> Vec<E
             }
             Section::Live(groups) => {
                 if groups.is_empty() {
-                    rows.push(Entry::Nothing(if tab == BoardTab::Workflows { "No workflows running" } else { "No live sessions" }));
+                    rows.push(Entry::Nothing(if tab == BoardTab::Workflows {
+                        "No workflows running"
+                    } else {
+                        "No live sessions"
+                    }));
                 }
                 for (machine, keys) in groups {
-                    rows.push(Entry::Group { machine: machine.clone() });
+                    rows.push(Entry::Group {
+                        machine: machine.clone(),
+                    });
                     rows.extend(keys.iter().map(row));
                 }
             }
@@ -94,9 +140,17 @@ pub fn entries(sections: &[Section], tab: BoardTab, prefs: &BoardPrefs) -> Vec<E
                 if keys.is_empty() {
                     continue;
                 }
-                let (id, word) = if matches!(section, Section::Answered(_)) { (ANSWERED_FOLD, "Answered today") } else { (DONE_FOLD, "Done today") };
+                let (id, word) = if matches!(section, Section::Answered(_)) {
+                    (ANSWERED_FOLD, "Answered today")
+                } else {
+                    (DONE_FOLD, "Done today")
+                };
                 let folded = !prefs.unfolded.contains(id);
-                rows.push(Entry::Fold { id, label: format!("{word} · {}", keys.len()), folded });
+                rows.push(Entry::Fold {
+                    id,
+                    label: format!("{word} · {}", keys.len()),
+                    folded,
+                });
                 if !folded {
                     rows.extend(keys.iter().map(row));
                 }
@@ -108,7 +162,11 @@ pub fn entries(sections: &[Section], tab: BoardTab, prefs: &BoardPrefs) -> Vec<E
 
 /// A machine's heading. Its rows stay listed while it's offline, and nothing about it is guessed.
 pub fn group_heading(name: &str, offline: bool) -> String {
-    if offline { format!("{name} · offline") } else { name.to_owned() }
+    if offline {
+        format!("{name} · offline")
+    } else {
+        name.to_owned()
+    }
 }
 
 /// "This Mac" for the local engine, a saved remote's own name, or the engine's id until one is known.
@@ -121,7 +179,11 @@ pub fn machine_label(machine: &str, feed: &EngineFeed, cx: &App) -> String {
 }
 
 /// Why a machine's rows can't act now. Only a saved remote can be offline.
-pub fn offline_reason(machine: &str, feed: &EngineFeed, cx: &App) -> Option<gpui_kit::SharedString> {
+pub fn offline_reason(
+    machine: &str,
+    feed: &EngineFeed,
+    cx: &App,
+) -> Option<gpui_kit::SharedString> {
     let name = feed.machine_name(machine)?;
     Machines::offline(Some(name), cx).then(|| format!("{name} is offline").into())
 }

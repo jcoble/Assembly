@@ -14,8 +14,8 @@ use gpui_kit::component::popover::Popover;
 use gpui_kit::*;
 
 use super::{drawer_buttons, top_tabs};
-use crate::core::intents::open_settings::OpenSettings;
 use crate::core::engine::{EngineChanged, EngineFeed};
+use crate::core::intents::open_settings::OpenSettings;
 use crate::features::board::ToggleBoard;
 use crate::features::board::board_panel::{BoardMemory, BoardPanel, top_bar_badge};
 use crate::features::board::owner_notify::{OpenNeed, OwnerNotify};
@@ -152,10 +152,13 @@ impl Render for TopBar {
                             }),
                     )
             });
-        let trigger = Button::new("board").ghost().small().label(match &self.badge {
-            Some(count) => format!("Board · {count}"),
-            None => "Board".to_owned(),
-        });
+        let trigger = Button::new("board")
+            .ghost()
+            .small()
+            .label(match &self.badge {
+                Some(count) => format!("Board · {count}"),
+                None => "Board".to_owned(),
+            });
         let trigger = trigger.tooltip("Build Board");
         // A weak capture prevents the kit's retained content builder from keeping a dismissed Board alive.
         let board = self.board.as_ref().map(Entity::downgrade);
@@ -166,7 +169,10 @@ impl Render for TopBar {
             .on_open_change(cx.listener(|bar, open, _, cx| bar.show_board(*open, cx)))
             .trigger(trigger)
             .content(move |_, _, _| {
-                div().debug_selector(|| "board-dropdown-body".into()).overflow_hidden().children(board.as_ref().and_then(WeakEntity::upgrade))
+                div()
+                    .debug_selector(|| "board-dropdown-body".into())
+                    .overflow_hidden()
+                    .children(board.as_ref().and_then(WeakEntity::upgrade))
             });
         h_flex()
             .h(HEIGHT)

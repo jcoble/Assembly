@@ -117,7 +117,7 @@ impl LayoutStore {
 
     /// Saves the frame's layout once this update has settled, so the changes that follow from it (a tab click reaches
     /// the dock later in the same update) save with it; more changes before then add nothing.
-    pub fn save_soon(&mut self,window:&mut Window,cx: &mut Context<Frame>) {
+    pub fn save_soon(&mut self, window: &mut Window, cx: &mut Context<Frame>) {
         if self.save.is_some() {
             return;
         }

@@ -62,10 +62,27 @@ impl RenderOnce for ActivitySection {
         let header = h_flex()
             .w_full()
             .gap_2()
-            .child(div().size_2().flex_none().rounded_full().bg(self.tone.color(cx)))
-            .child(div().min_w_0().truncate().text_role(TextRole::Title, cx).child(self.title))
+            .child(
+                div()
+                    .size_2()
+                    .flex_none()
+                    .rounded_full()
+                    .bg(self.tone.color(cx)),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_role(TextRole::Title, cx)
+                    .child(self.title),
+            )
             .when_some(self.count, |header, count| {
-                header.child(div().text_role(TextRole::Meta, cx).text_color(muted).child(count.to_string()))
+                header.child(
+                    div()
+                        .text_role(TextRole::Meta, cx)
+                        .text_color(muted)
+                        .child(count.to_string()),
+                )
             })
             .child(div().flex_1())
             .children(self.action);
@@ -75,7 +92,12 @@ impl RenderOnce for ActivitySection {
             .gap_2()
             .child(header)
             .when_some(self.subtitle, |section, subtitle| {
-                section.child(div().text_role(TextRole::Meta, cx).text_color(muted).child(subtitle))
+                section.child(
+                    div()
+                        .text_role(TextRole::Meta, cx)
+                        .text_color(muted)
+                        .child(subtitle),
+                )
             })
             .children(self.children)
     }

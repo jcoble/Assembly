@@ -23,7 +23,13 @@ fn tone_maps_to_the_theme_token(cx: &mut TestAppContext) {
 fn unknown_choice_value_shows_itself_with_a_neutral_tone() {
     let options = [ChoiceOption::new("done", "Done").tone(Tone::Success)];
     let shown = |value| ChoiceOption::shown(&options, value);
-    assert_eq!(shown(Some("done")), (SharedString::from("Done"), Tone::Success));
-    assert_eq!(shown(Some("Renamed")), (SharedString::from("Renamed"), Tone::Neutral));
+    assert_eq!(
+        shown(Some("done")),
+        (SharedString::from("Done"), Tone::Success)
+    );
+    assert_eq!(
+        shown(Some("Renamed")),
+        (SharedString::from("Renamed"), Tone::Neutral)
+    );
     assert_eq!(shown(None), (SharedString::from("Empty"), Tone::Neutral));
 }

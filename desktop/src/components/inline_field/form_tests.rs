@@ -25,7 +25,10 @@ struct Host {
 
 impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().track_focus(&self.surface).child(div().w(px(300.)).child(self.form.clone()))
+        div()
+            .size_full()
+            .track_focus(&self.surface)
+            .child(div().w(px(300.)).child(self.form.clone()))
     }
 }
 
@@ -70,8 +73,20 @@ fn open(cx: &mut TestAppContext) -> Open<'_> {
     });
     cx.update(|window, _| window.activate_window());
     let form = cx.update(|_, cx| host.read(cx).form.clone());
-    let fields = cx.update(|_, cx| form.read(cx).fields.iter().map(|(_, field)| field.clone()).collect());
-    let mut open = Open { host, form, fields, saves, cx };
+    let fields = cx.update(|_, cx| {
+        form.read(cx)
+            .fields
+            .iter()
+            .map(|(_, field)| field.clone())
+            .collect()
+    });
+    let mut open = Open {
+        host,
+        form,
+        fields,
+        saves,
+        cx,
+    };
     open.draw();
     open
 }
@@ -81,7 +96,10 @@ fn text(value: &str) -> FieldValue {
 }
 
 fn values(name: &str, destination: &str) -> FormValues {
-    FormValues(vec![("name".into(), text(name)), ("destination".into(), text(destination))])
+    FormValues(vec![
+        ("name".into(), text(name)),
+        ("destination".into(), text(destination)),
+    ])
 }
 
 impl Open<'_> {
@@ -93,7 +111,8 @@ impl Open<'_> {
 
     fn act(&mut self, act: impl FnOnce(&mut InlineForm, &mut Window, &mut Context<InlineForm>)) {
         let form = self.form.clone();
-        self.cx.update(|window, cx| form.update(cx, |form, cx| act(form, window, cx)));
+        self.cx
+            .update(|window, cx| form.update(cx, |form, cx| act(form, window, cx)));
         self.draw();
     }
 
@@ -101,9 +120,9 @@ impl Open<'_> {
         let field = self.fields[index].clone();
         let value = value.to_owned();
         self.cx.update(|window, cx| match &field.read(cx).editor {
-            Editor::Text { state, .. } => {
-                state.clone().update(cx, |state, cx| state.replace_all(value, window, cx))
-            }
+            Editor::Text { state, .. } => state
+                .clone()
+                .update(cx, |state, cx| state.replace_all(value, window, cx)),
             _ => panic!("not a text box"),
         });
         self.draw();
@@ -121,7 +140,8 @@ impl Open<'_> {
 
     fn error(&mut self, index: usize) -> Option<String> {
         let field = self.fields[index].clone();
-        self.cx.update(|_, cx| field.read(cx).state.error().map(str::to_owned))
+        self.cx
+            .update(|_, cx| field.read(cx).state.error().map(str::to_owned))
     }
 
     fn focused_inside(&mut self, index: usize) -> bool {
@@ -133,7 +153,11 @@ impl Open<'_> {
     }
 
     fn sent(&self) -> Vec<FormValues> {
-        self.saves.borrow().iter().map(|(_, values)| values.clone()).collect()
+        self.saves
+            .borrow()
+            .iter()
+            .map(|(_, values)| values.clone())
+            .collect()
     }
 
     fn last_request(&self) -> SaveRequest {
@@ -149,10 +173,19 @@ fn one_save_sends_every_value_and_commits_them_together(cx: &mut TestAppContext)
     form.type_in(1, "new destination");
     form.act(|form, window, cx| form.save(window, cx));
     assert_eq!(form.sent(), [values("new name", "new destination")]);
-    assert_eq!(form.committed(0), text("old name"), "nothing commits before the answer");
+    assert_eq!(
+        form.committed(0),
+        text("old name"),
+        "nothing commits before the answer"
+    );
     let request = form.last_request();
     form.act(|form, window, cx| {
-        form.complete_save(request, Ok(values("New Name", "new destination")), window, cx);
+        form.complete_save(
+            request,
+            Ok(values("New Name", "new destination")),
+            window,
+            cx,
+        );
     });
     assert_eq!(form.committed(0), text("New Name"));
     assert_eq!(form.committed(1), text("new destination"));

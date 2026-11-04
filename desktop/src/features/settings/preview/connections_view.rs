@@ -1,6 +1,6 @@
 //! One machine-centric surface for connection and provider maintenance.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::*;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::collapsible::Collapsible;
 use gpui_kit::component::form::{Field, Form};

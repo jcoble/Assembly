@@ -83,7 +83,12 @@ impl BoundedSet {
 
     fn of(value: Option<Value>) -> Self {
         let mut set = Self::default();
-        for id in value.iter().flat_map(|value| value.as_array()).flatten().filter_map(Value::as_str) {
+        for id in value
+            .iter()
+            .flat_map(|value| value.as_array())
+            .flatten()
+            .filter_map(Value::as_str)
+        {
             set.insert(id.to_owned());
         }
         set
@@ -105,7 +110,10 @@ fn remember(tabs: &mut Vec<(String, SessionTab)>, id: String, tab: SessionTab) {
 fn saved_tabs(value: &Value) -> Vec<(String, SessionTab)> {
     let mut tabs = Vec::new();
     for pair in value.as_array().into_iter().flatten() {
-        if let (Some(id), Some(tab)) = (pair[0].as_str(), pair[1].as_str().and_then(SessionTab::named)) {
+        if let (Some(id), Some(tab)) = (
+            pair[0].as_str(),
+            pair[1].as_str().and_then(SessionTab::named),
+        ) {
             remember(&mut tabs, id.to_owned(), tab);
         }
     }
@@ -126,10 +134,15 @@ pub struct BoardPrefs {
 impl BoardPrefs {
     pub fn read(cx: &App) -> Self {
         Self {
-            tab: Preferences::value("board.current_tab", cx).and_then(|tab| tab.as_str().and_then(BoardTab::named)).unwrap_or_default(),
+            tab: Preferences::value("board.current_tab", cx)
+                .and_then(|tab| tab.as_str().and_then(BoardTab::named))
+                .unwrap_or_default(),
             unfolded: BoundedSet::of(Preferences::value("board.folds", cx)),
             open: BoundedSet::of(Preferences::value("board.open", cx)),
-            session_tabs: Preferences::value("board.tabs", cx).as_ref().map(saved_tabs).unwrap_or_default(),
+            session_tabs: Preferences::value("board.tabs", cx)
+                .as_ref()
+                .map(saved_tabs)
+                .unwrap_or_default(),
         }
     }
 
@@ -146,12 +159,19 @@ impl BoardPrefs {
     }
 
     pub fn session_tab(&self, id: &str) -> Option<SessionTab> {
-        self.session_tabs.iter().find(|(held, _)| held == id).map(|(_, tab)| *tab)
+        self.session_tabs
+            .iter()
+            .find(|(held, _)| held == id)
+            .map(|(_, tab)| *tab)
     }
 
     pub fn remember_session_tab(&mut self, id: String, tab: SessionTab, cx: &mut App) {
         remember(&mut self.session_tabs, id, tab);
-        let tabs = self.session_tabs.iter().map(|(id, tab)| json!([id, tab.name()])).collect();
+        let tabs = self
+            .session_tabs
+            .iter()
+            .map(|(id, tab)| json!([id, tab.name()]))
+            .collect();
         Preferences::save("board.tabs", Value::Array(tabs), cx);
     }
 }

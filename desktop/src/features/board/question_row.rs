@@ -50,7 +50,10 @@ pub fn age(asked_ms: i64, now_ms: i64) -> (String, bool) {
     let ago = (now_ms - asked_ms).max(0);
     if ago >= DAY_MS {
         let days = ago / DAY_MS;
-        return (format!("asked {days} day{} ago", if days == 1 { "" } else { "s" }), true);
+        return (
+            format!("asked {days} day{} ago", if days == 1 { "" } else { "s" }),
+            true,
+        );
     }
     let minutes = ago / 60_000;
     let words = match minutes {
@@ -70,16 +73,33 @@ pub fn card_state(need: &NeedItem) -> NeedsState {
             Some(surface) => format!("Answered in the {surface}"),
             None => format!("Answered on {}", origin.channel),
         })
-        .or_else(|| need.answered_by.as_ref().map(|by| format!("Answered by {by}")));
+        .or_else(|| {
+            need.answered_by
+                .as_ref()
+                .map(|by| format!("Answered by {by}"))
+        });
     match need.state.as_str() {
         "open" => NeedsState::Open,
         "answered" => NeedsState::Answered {
-            summary: need.answer_text.clone().unwrap_or_else(|| "Answered".into()).into(),
+            summary: need
+                .answer_text
+                .clone()
+                .unwrap_or_else(|| "Answered".into())
+                .into(),
             delivery: Some(by.unwrap_or_else(|| "Answered elsewhere".into()).into()),
         },
-        "dismissed" => NeedsState::Answered { summary: "Dismissed".into(), delivery: None },
-        "cancelled" => NeedsState::Answered { summary: "Session ended".into(), delivery: None },
-        other => NeedsState::Answered { summary: other.to_owned().into(), delivery: None },
+        "dismissed" => NeedsState::Answered {
+            summary: "Dismissed".into(),
+            delivery: None,
+        },
+        "cancelled" => NeedsState::Answered {
+            summary: "Session ended".into(),
+            delivery: None,
+        },
+        other => NeedsState::Answered {
+            summary: other.to_owned().into(),
+            delivery: None,
+        },
     }
 }
 
@@ -92,16 +112,34 @@ pub fn asked_by(asker: &str, machine: &str, parent: Option<&str>) -> String {
 }
 
 /// Who's asking, in words, from the shared rows. A row that hasn't arrived reads as a plain session.
-pub fn need_card(need: &NeedItem, rows: &Entity<QuestionRows>, data: &BoardData, feed: &EngineFeed, now_ms: i64, cx: &App) -> NeedsCard {
+pub fn need_card(
+    need: &NeedItem,
+    rows: &Entity<QuestionRows>,
+    data: &BoardData,
+    feed: &EngineFeed,
+    now_ms: i64,
+    cx: &App,
+) -> NeedsCard {
     let name = |key: &SessionKey| {
-        data.session(key).map_or_else(|| "A session".to_owned(), |session| session.title.clone().unwrap_or_else(|| session.provider.clone()))
+        data.session(key).map_or_else(
+            || "A session".to_owned(),
+            |session| {
+                session
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| session.provider.clone())
+            },
+        )
     };
     let asker = name(&need.session);
     let parent = need.addressee().map(|parent| name(&parent));
     let machine = super::board_sections::machine_label(&need.key.machine, feed, cx);
     let time = need.created_ms.map(|asked| age(asked, now_ms).0.into());
     let stale = need.created_ms.is_some_and(|asked| age(asked, now_ms).1);
-    let recommended = need.presentation.as_ref().and_then(|presentation| presentation.recommendation.clone());
+    let recommended = need
+        .presentation
+        .as_ref()
+        .and_then(|presentation| presentation.recommendation.clone());
     let reader = rows.read(cx);
     NeedsCard {
         key: card_key(&need.key),
@@ -109,7 +147,11 @@ pub fn need_card(need: &NeedItem, rows: &Entity<QuestionRows>, data: &BoardData,
         title: title(need).into(),
         why: asked_by(&asker, &machine, parent.as_deref()).into(),
         next_step: recommended.map(|text| format!("Recommended: {text}").into()),
-        chips: if stale { vec![StatusChip::new("Old", Tone::Warning).into_any_element()] } else { Vec::new() },
+        chips: if stale {
+            vec![StatusChip::new("Old", Tone::Warning).into_any_element()]
+        } else {
+            Vec::new()
+        },
         time,
         state: card_state(need),
         drops: reader.drops().clone(),
@@ -128,8 +170,19 @@ pub struct QuestionRows {
 }
 
 impl QuestionRows {
-    pub fn new(feed: Entity<EngineFeed>, drops: Entity<RowDropDowns>, viewed: Option<SessionKey>) -> Self {
-        Self { feed, drops, rows: HashMap::new(), refusals: HashMap::new(), explaining: HashMap::new(), viewed }
+    pub fn new(
+        feed: Entity<EngineFeed>,
+        drops: Entity<RowDropDowns>,
+        viewed: Option<SessionKey>,
+    ) -> Self {
+        Self {
+            feed,
+            drops,
+            rows: HashMap::new(),
+            refusals: HashMap::new(),
+            explaining: HashMap::new(),
+            viewed,
+        }
     }
 
     pub fn drops(&self) -> &Entity<RowDropDowns> {
@@ -142,16 +195,35 @@ impl QuestionRows {
         self.refusals.retain(|key, _| keys.contains(key));
         self.explaining.retain(|key, _| keys.contains(key));
         let shown = keys.iter().map(card_key).collect::<Vec<_>>();
-        self.drops.update(cx, |drops, cx| drops.retain_keys(|key| shown.contains(key), cx));
+        self.drops.update(cx, |drops, cx| {
+            drops.retain_keys(|key| shown.contains(key), cx)
+        });
     }
 
-    fn row(&mut self, key: &EngineKey, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<NeedRow>> {
+    fn row(
+        &mut self,
+        key: &EngineKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<NeedRow>> {
         if let Some((row, _)) = self.rows.get(key) {
             return Some(row.clone());
         }
-        let scope = EngineScope { machine: key.machine.clone(), topic: "needs_me".into(), key: None };
+        let scope = EngineScope {
+            machine: key.machine.clone(),
+            topic: "needs_me".into(),
+            key: None,
+        };
         let made = match self.viewed.clone() {
-            Some(viewed) => NeedRow::create_for(viewed, key.clone(), scope, self.feed.clone(), "board", window, cx),
+            Some(viewed) => NeedRow::create_for(
+                viewed,
+                key.clone(),
+                scope,
+                self.feed.clone(),
+                "board",
+                window,
+                cx,
+            ),
             None => NeedRow::create(key.clone(), scope, self.feed.clone(), "board", window, cx),
         };
         let row = made.ok()?;
@@ -175,7 +247,10 @@ impl QuestionRows {
         let need = feed.need(key);
         let asker = need.as_ref().and_then(|need| feed.session(&need.session));
         let (Some(need), Some(asker)) = (need, asker) else {
-            self.refusals.insert(key.clone(), "The session that asked is not available.".into());
+            self.refusals.insert(
+                key.clone(),
+                "The session that asked is not available.".into(),
+            );
             cx.notify();
             return;
         };
@@ -210,7 +285,9 @@ impl QuestionRows {
     pub fn body(this: WeakEntity<Self>, key: EngineKey, need: &NeedItem) -> CardBody {
         let explainable = need.kind == "question" || need.kind == "choice";
         Rc::new(move |window, cx| {
-            let Some(rows) = this.upgrade() else { return Empty.into_any_element() };
+            let Some(rows) = this.upgrade() else {
+                return Empty.into_any_element();
+            };
             let row = rows.update(cx, |rows, cx| rows.row(&key, window, cx));
             let Some(row) = row else {
                 return div()
@@ -226,7 +303,11 @@ impl QuestionRows {
             row.update(cx, |row, cx| row.set_offline(offline, cx));
             let open = row.read(cx).need().state == "open";
             let refusal = rows.read(cx).refusals.get(&key).cloned();
-            let (sending, for_click, target) = (rows.read(cx).explaining.contains_key(&key), rows.downgrade(), key.clone());
+            let (sending, for_click, target) = (
+                rows.read(cx).explaining.contains_key(&key),
+                rows.downgrade(),
+                key.clone(),
+            );
             v_flex()
                 .gap_2()
                 .child(row)
@@ -240,7 +321,10 @@ impl QuestionRows {
                         })
                 }))
                 .children(refusal.map(|line| {
-                    div().text_role(TextRole::Meta, cx).text_color(cx.theme().muted_foreground).child(line)
+                    div()
+                        .text_role(TextRole::Meta, cx)
+                        .text_color(cx.theme().muted_foreground)
+                        .child(line)
                 }))
                 .into_any_element()
         })

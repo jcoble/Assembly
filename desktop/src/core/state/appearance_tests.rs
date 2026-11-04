@@ -156,9 +156,15 @@ fn role_size_follows_the_interface_size() {
     for (interface, expected) in [(16, 14.), (13, 11.375), (18, 15.75)] {
         let appearance = saved(&[(UI_FONT_SIZE.key, json!(interface))]);
         let size = kit_size(appearance.ui_text(TextRole::Body).0);
-        assert!(matches!(size, Size::Size(_)), "the kit reads it as a custom size");
+        assert!(
+            matches!(size, Size::Size(_)),
+            "the kit reads it as a custom size"
+        );
         let mut text = div().input_text_size(size);
-        let drawn = text.text_style().font_size.expect("the kit sets a text size");
+        let drawn = text
+            .text_style()
+            .font_size
+            .expect("the kit sets a text size");
         assert_eq!(drawn, px(expected).into());
     }
 }
