@@ -10,15 +10,15 @@ internal interface IUpdateSource
 {
     Task<UpdateWanted> WantedAsync(CancellationToken ct);
     /// <summary>Updates everything behind, reporting what it's doing. Throws <see cref="CallFailed"/> with the reason when it can't.</summary>
-    Task UpdateAsync(Action<string> progress, CancellationToken ct);
+    Task UpdateAsync(IReadOnlyList<string> remotes, Action<string> progress, CancellationToken ct);
 }
 
 internal static class UpdateSources
 {
     /// <summary>app-dev names its checkout; anything else is a delivered app.</summary>
-    internal static IUpdateSource ForHost(HttpClient http, TimeProvider time, string? checkout = null) =>
+    internal static IUpdateSource ForHost(HttpClient http, TimeProvider time, IReleaseInstall? release = null, string? checkout = null) =>
         (checkout ?? Environment.GetEnvironmentVariable("ASSEMBLY_DEV_CHECKOUT")) is { Length: > 0 } root
-            ? new CheckoutUpdateSource(root, new(http, time)) : new ReleaseUpdateSource(new(http, time));
+            ? new CheckoutUpdateSource(root, new(http, time)) : new ReleaseUpdateSource(new(http, time), release);
 
     internal static async Task<IReadOnlyDictionary<string, string?>> LatestAsync(IEnumerable<string> names, Func<string, string> package, CliReleaseSource npm, CancellationToken ct)
     {
@@ -43,7 +43,7 @@ internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm) : 
         await UpdateSources.LatestAsync(UpdateSources.AdapterNames, UpdateSources.AdapterPackage, npm, ct), BackendBuild.AdapterSources,
         await UpdateSources.CliVersionsAsync(npm, ct));
 
-    public async Task UpdateAsync(Action<string> progress, CancellationToken ct)
+    public async Task UpdateAsync(IReadOnlyList<string> remotes, Action<string> progress, CancellationToken ct)
     {
         var start = new ProcessStartInfo("node", [Path.Combine(root, "scripts/update-machines.ts")])
         { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
@@ -74,17 +74,33 @@ internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm) : 
     private static extern int Kill(int pid, int signal);
 }
 
-/// <summary>
-/// A delivered app: the backend must carry this app's own version, and CLIs have npm. The release feed plugs in here once
-/// signed releases are published: the newest app version, the adapters in the newest provider release, and an update that
-/// has a remote fetch its backend and adapters from GitHub itself.
-/// </summary>
-internal sealed class ReleaseUpdateSource(CliReleaseSource npm) : IUpdateSource
+/// <summary>The production install, which has each remote fetch its signed backend and adapters from GitHub itself.</summary>
+internal interface IReleaseInstall
 {
-    public async Task<UpdateWanted> WantedAsync(CancellationToken ct) => new(null, backend => backend.VersionDiffers, BackendBuild.Version,
-        UpdateSources.AdapterNames.ToDictionary(name => name, _ => (string?)null, StringComparer.Ordinal), null,
-        await UpdateSources.CliVersionsAsync(npm, ct));
+    /// <summary>The newest signed backend version.</summary>
+    Task<string> LatestBackendAsync(CancellationToken ct);
+    Task InstallAsync(string machine, Action<string> progress, CancellationToken ct);
+}
 
-    public Task UpdateAsync(Action<string> progress, CancellationToken ct) =>
-        throw new CallFailed("No signed release is published yet, so there's nothing to update from.", "no_release");
+/// <summary>
+/// A delivered app: a remote's backend must be on the newest signed release, and CLIs have npm. A build with no
+/// <see cref="IReleaseInstall"/> has nothing to update from. The app's own feed and the published adapter versions plug in here.
+/// </summary>
+internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall? release) : IUpdateSource
+{
+    public async Task<UpdateWanted> WantedAsync(CancellationToken ct)
+    {
+        string? latest = null;
+        if (release is not null)
+            try { latest = await release.LatestBackendAsync(ct); }
+            catch (CallFailed) { }
+        return new(null, backend => latest is not null && backend.Version is { } have && CliVersion.Compare(have, latest) == "update_available", latest,
+            UpdateSources.AdapterNames.ToDictionary(name => name, _ => (string?)null, StringComparer.Ordinal), null, await UpdateSources.CliVersionsAsync(npm, ct));
+    }
+
+    public async Task UpdateAsync(IReadOnlyList<string> remotes, Action<string> progress, CancellationToken ct)
+    {
+        if (release is null) throw new CallFailed("No signed release is published yet, so there's nothing to update from.", "no_release");
+        foreach (var machine in remotes) await release.InstallAsync(machine, progress, ct);
+    }
 }

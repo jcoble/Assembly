@@ -30,13 +30,10 @@ public sealed class UpdateCheckTests
     }
 
     [Fact]
-    public void Development_goes_by_the_list_and_a_release_by_its_version()
+    public void Development_goes_by_the_list()
     {
         var unrelated = Same with { Commit = "b", Differs = true };
         Assert.Empty(Behind(UpdateCheck.Remote(unrelated, Tools(), Dev())));
-        var release = Dev() with { BackendBehind = backend => backend.VersionDiffers };
-        Assert.Empty(Behind(UpdateCheck.Remote(unrelated with { ListDiffers = true }, Tools(), release)));
-        Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { Version = "0.9.0" }, Tools(), release)));
     }
 
     [Fact]
@@ -91,7 +88,7 @@ public sealed class UpdateCheckTests
     private sealed class FakeSource(Func<Action<string>, CancellationToken, Task> update) : IUpdateSource
     {
         public Task<UpdateWanted> WantedAsync(CancellationToken ct) => Task.FromResult(Dev());
-        public Task UpdateAsync(Action<string> progress, CancellationToken ct) => update(progress, ct);
+        public Task UpdateAsync(IReadOnlyList<string> remotes, Action<string> progress, CancellationToken ct) => update(progress, ct);
     }
 
     private static MachineUpdates Updates(IUpdateSource source, MachineStatus status, BackgroundWork work, Action? reload = null) =>
@@ -140,10 +137,42 @@ public sealed class UpdateCheckTests
     [Fact]
     public async Task A_delivered_app_refuses_to_update_until_a_release_exists()
     {
-        var source = UpdateSources.ForHost(new HttpClient(), TimeProvider.System, "");
+        var source = UpdateSources.ForHost(new HttpClient(), TimeProvider.System, checkout: "");
         Assert.IsType<ReleaseUpdateSource>(source);
-        var refused = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync(_ => { }, CancellationToken.None));
+        var refused = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync(["box"], _ => { }, CancellationToken.None));
         Assert.Equal("no_release", refused.Reason);
+    }
+
+    private sealed class FakeRelease : IReleaseInstall
+    {
+        public List<string> Installed { get; } = [];
+        public Task<string> LatestBackendAsync(CancellationToken ct) => Task.FromResult("2.0.0");
+        public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct)
+        {
+            Installed.Add(machine);
+            progress("Downloading.");
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class NoNetwork : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) => throw new HttpRequestException("offline");
+    }
+
+    [Fact]
+    public async Task A_release_install_runs_on_every_remote_and_a_backend_behind_the_newest_release_shows()
+    {
+        var release = new FakeRelease();
+        var source = UpdateSources.ForHost(new HttpClient(new NoNetwork()), TimeProvider.System, release, "");
+        var notes = new List<string>();
+        await source.UpdateAsync(["box", "other"], notes.Add, CancellationToken.None);
+        Assert.Equal(["box", "other"], release.Installed);
+        Assert.Equal(["Downloading.", "Downloading."], notes);
+        var wanted = await source.WantedAsync(CancellationToken.None);
+        Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same, null, wanted)));
+        Assert.Empty(Behind(UpdateCheck.Remote(Same with { Version = "2.0.0" }, null, wanted)));
+        Assert.Empty(Behind(UpdateCheck.Remote(Same with { Version = "2.1.0" }, null, wanted)));
     }
 
     [Fact]
@@ -159,8 +188,8 @@ public sealed class UpdateCheckTests
                 process.exitCode = 1;
                 """);
             var notes = new List<string>();
-            var source = UpdateSources.ForHost(new HttpClient(), TimeProvider.System, root);
-            var failed = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync(notes.Add, CancellationToken.None));
+            var source = UpdateSources.ForHost(new HttpClient(), TimeProvider.System, checkout: root);
+            var failed = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync([], notes.Add, CancellationToken.None));
             Assert.Equal(["Waiting."], notes);
             Assert.Equal("Workbox Test sync: nope", failed.Message);
         }

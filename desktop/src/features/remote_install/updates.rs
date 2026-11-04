@@ -62,11 +62,13 @@ pub fn tell_when_behind(cx: &mut App) {
             });
         });
     });
-    cx.set_global(BehindNotice(heard));
+    cx.set_global(BehindNotice { _heard: heard });
 }
 
 /// Holds the notice's subscription for as long as the app runs.
-struct BehindNotice(Subscription);
+struct BehindNotice {
+    _heard: Subscription,
+}
 
 impl Global for BehindNotice {}
 

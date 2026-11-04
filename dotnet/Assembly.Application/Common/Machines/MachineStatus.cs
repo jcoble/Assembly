@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Assembly.Application.Common.Topics;
 using Assembly.Application.Features.Chat.Sessions;
 
@@ -13,7 +14,10 @@ namespace Assembly.Application.Common.Machines;
 /// failure is <paramref name="UpdateNote"/>.
 /// </summary>
 public sealed record MachineItem(string? Name, string Kind, bool Reachable, string? Reason, bool Checked, string? Ssh = null, int? Port = null, string? TokenFile = null,
-    RemoteBackend? Backend = null, IReadOnlyList<UpdateItem>? Updates = null, bool Updating = false, string? UpdateNote = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] RemoteBackend? Backend = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] IReadOnlyList<UpdateItem>? Updates = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Updating = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? UpdateNote = null);
 
 /// <summary>One piece the update check looked at: <paramref name="Kind"/> is desktop, backend, adapter or cli.</summary>
 public sealed record UpdateItem(string Kind, string Name, string? Current, string? Wanted, string State)
@@ -89,7 +93,18 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
             lock (parent._gate) if (_active) parent.Backend(machine, backend);
             return;
         }
-        Change(machine, item => item with { Backend = backend });
+        // Comes just before the reachable it's part of: one change, not two.
+        lock (_gate)
+        {
+            var index = Array.FindIndex(_items, item => item.Name == machine);
+            if (index < 0 || _items[index].Reachable) Change(machine, item => item with { Backend = backend });
+            else
+            {
+                var next = (MachineItem[])_items.Clone();
+                next[index] = next[index] with { Backend = backend };
+                _items = next;
+            }
+        }
         Welcomed?.Invoke(machine);
     }
 

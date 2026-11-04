@@ -66,7 +66,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         try
         {
             Show(true, null);
-            await source.UpdateAsync(note => Show(true, note), stop);
+            await source.UpdateAsync([.. machines.OfType<string>()], note => Show(true, note), stop);
             reload?.Invoke();
         }
         catch (CallFailed error) { ending = "Update failed: " + error.Message; }

@@ -400,3 +400,24 @@ console.log(JSON.stringify(process.argv.some(arg => arg.includes("claude-agent-a
     }
   }));
 }
+
+// The desktop release uses releases/latest/download/latest.json, so an adapter release must never take GitHub's Latest.
+test("publishing adapters never takes GitHub's Latest", () => fixture(root => {
+  const assets = join(root, "assets"), log = join(root, "gh-calls");
+  mkdirSync(assets);
+  for (const target of ["darwin-arm64", "darwin-x64", "linux-x64"]) {
+    const file = "assembly-adapters-" + target + ".tar.gz";
+    writeFileSync(join(assets, file), target);
+    writeFileSync(join(assets, "assembly-adapters-" + target + ".json"), JSON.stringify({ schemaVersion: 1, target, versions,
+      archive: { file, sha256: createHash("sha256").update(target).digest("hex") },
+      smoke: Object.fromEntries(Object.entries(versions).map(([name, version]) => [name, { protocolVersion: 2, canSteer: true, info: { version } }])) }));
+  }
+  writeFileSync(join(root, "gh"), "#!/bin/sh\necho \"$*\" >> \"$GH_LOG\"\n", { mode: 0o755 });
+  const run = spawnSync(process.execPath, [fileURLToPath(new URL("./package-adapters.ts", import.meta.url)), "publish", assets, JSON.stringify(versions), "assembly-providers-9-1", "abc"], {
+    encoding: "utf8", env: { PATH: root + ":" + process.env.PATH, GH_LOG: log, HOME: root } });
+  assert.equal(run.status, 0, run.stderr);
+  const calls = readFileSync(log, "utf8").trim().split("\n");
+  assert.match(calls[0], /^release create .*--draft/);
+  assert.match(calls.at(-1)!, /^release edit assembly-providers-9-1 --draft=false --latest=false$/);
+  assert.ok(!calls.some(call => /--latest(=true)?( |$)/.test(call)));
+}));

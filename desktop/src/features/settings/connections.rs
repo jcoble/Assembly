@@ -102,10 +102,27 @@ impl SettingsPage {
                             .child(row_status(&machine, reached, &status)),
                     ),
             );
-        let failure = machine
-            .name
-            .as_ref()
-            .and_then(|name| self.failure_about(Some(name), cx));
+        // This machine's row has no name, but its update button still needs somewhere to say why it failed.
+        let key = machine.name.clone().unwrap_or("local".to_string());
+        let failure = self.failure_about(Some(&key), cx);
+        let update = (machine.behind().next().is_some() || machine.updating).then(|| {
+            self.machine_button(format!("start-{key}").into(), UPDATE)
+                .primary()
+                .loading(machine.updating)
+                .disabled(machine.updating || self.machine_call.is_some())
+                .on_click(cx.listener(move |page, _, window, cx| {
+                    let about = Some(key.clone());
+                    page.machine_call(
+                        about,
+                        "updates",
+                        "start",
+                        json!({}),
+                        "Couldn't update",
+                        window,
+                        cx,
+                    )
+                }))
+        });
         let actions = machine
             .name
             .is_some()
@@ -119,6 +136,7 @@ impl SettingsPage {
                     .gap_4()
                     .justify_between()
                     .child(label)
+                    .children(update)
                     .children(actions),
             )
             .children(failure)
@@ -150,7 +168,7 @@ impl SettingsPage {
             .outline()
             .on_click(cx.listener(move |page, _, window, cx| {
                 let (about, args) = (about.clone(), args.clone());
-                page.machine_call(about, method, args, doing, window, cx)
+                page.machine_call(about, "machines", method, args, doing, window, cx)
             }));
         let edit = self
             .machine_button(format!("edit-{name}").into(), "Edit")
@@ -311,7 +329,7 @@ impl SettingsPage {
         }
         let name = edited.unwrap_or(name.to_string());
         match set_args(&name, &ssh, &port, &token_file) {
-            Ok(args) => self.machine_call(None, "set", args, "Not saved", window, cx),
+            Ok(args) => self.machine_call(None, "machines", "set", args, "Not saved", window, cx),
             Err(why) => {
                 self.machine_edits.failure = Some((None, why));
                 cx.notify();
@@ -322,7 +340,9 @@ impl SettingsPage {
     fn remove_machine(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
         let about = Some(name.clone());
         match remove_args(&name) {
-            Ok(args) => self.machine_call(about, "remove", args, "Not removed", window, cx),
+            Ok(args) => {
+                self.machine_call(about, "machines", "remove", args, "Not removed", window, cx)
+            }
             Err(why) => {
                 self.machine_edits.failure = Some((about, why));
                 cx.notify();
@@ -335,6 +355,7 @@ impl SettingsPage {
     fn machine_call(
         &mut self,
         about: Option<String>,
+        feature: &'static str,
         method: &'static str,
         args: Value,
         doing: &'static str,
@@ -348,9 +369,7 @@ impl SettingsPage {
             cx.notify();
             return;
         };
-        let call = socket
-            .read(cx)
-            .call::<Value>("machines", method, args, None);
+        let call = socket.read(cx).call::<Value>(feature, method, args, None);
         let id = match &about {
             Some(name) => format!("{method}-{name}").into(),
             None => method.into(),
@@ -408,6 +427,10 @@ fn field(label: &'static str, state: &Entity<InputState>, locked: bool, cx: &App
 #[cfg(test)]
 #[path = "connections_tests.rs"]
 mod tests;
+
+/// The one button, on each card with something behind. It updates everything behind on every machine, in development and
+/// from a release: where it comes from is the backend's to decide.
+const UPDATE: &str = "Update everything";
 
 /// Where the machine is, how it answered, then its backend and what's behind, all as information.
 pub(crate) fn row_status(machine: &Machine, reached: &str, status: &str) -> String {

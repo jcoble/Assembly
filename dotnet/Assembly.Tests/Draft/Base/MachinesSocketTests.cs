@@ -523,7 +523,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
             message.Write(buffer, 0, received.Count);
         }
         while (!received.EndOfMessage);
-        // The error frames escape an apostrophe; compare on one spelling.
-        return Encoding.UTF8.GetString(message.ToArray()).Replace("\\u0027", "'");
+        // The error frames escape an apostrophe; compare on one spelling. The backend a remote runs has its own test.
+        return System.Text.RegularExpressions.Regex.Replace(Encoding.UTF8.GetString(message.ToArray()).Replace("\\u0027", "'"), ",\"backend\":\\{[^}]*\\}", "");
     }
 }
