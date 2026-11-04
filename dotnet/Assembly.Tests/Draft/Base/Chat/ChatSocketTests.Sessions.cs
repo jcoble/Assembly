@@ -103,7 +103,16 @@ public sealed partial class ChatSocketTests
         using var change = JsonDocument.Parse(await ReadAsync(socket));
         Assert.Equal("change", change.RootElement.GetProperty("t").GetString());
         var made = change.RootElement.GetProperty("key").GetString();
-        using var answer = JsonDocument.Parse(await ReadAsync(socket));
+        var frame = await ReadAsync(socket);
+        while (true)
+        {
+            using var pushed = JsonDocument.Parse(frame);
+            if (pushed.RootElement.GetProperty("t").GetString() != "change") break;
+            Assert.Equal(1, pushed.RootElement.GetProperty("sub").GetInt32());
+            Assert.Equal(made, pushed.RootElement.GetProperty("key").GetString());
+            frame = await ReadAsync(socket);
+        }
+        using var answer = JsonDocument.Parse(frame);
         Assert.Equal("result", answer.RootElement.GetProperty("t").GetString());
         Assert.Equal(2, answer.RootElement.GetProperty("id").GetInt32());
         Assert.Equal(made, answer.RootElement.GetProperty("result").GetProperty("sessionId").GetString());

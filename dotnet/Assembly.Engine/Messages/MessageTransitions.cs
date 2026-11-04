@@ -58,7 +58,7 @@ public static partial class MessageTransitions
         };
         List<EventDraft> events = [Changed(c, updated)];
         List<EffectDraft> effects = [];
-        if (outcome.State == "next_turn")
+        if (outcome.State == "next_turn" && outcome.CompletedTurn is null)
         {
             var sessionVersion = s.QueryFirst("""
                 UPDATE engine_session SET state='running',activity_state='running',version=version+1,updated_ms=$now

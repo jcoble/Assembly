@@ -89,7 +89,13 @@ public sealed partial class AdapterEffects
             _ => throw new CallFailed("delivery_ack_conflict")
         };
         rows.AcknowledgeUser(scope, delivery.Intent.ToSessionId, delivery.Intent.ClientId, acknowledgment);
-        if (data.State != "next_turn" || AuthDeliveryProof.Read(scope, effect, delivery, row) is not { } proof) return null;
+        if (data.State != "next_turn") return null;
+        if (AuthDeliveryProof.Read(scope, effect, delivery, row) is not { } proof)
+        {
+            var run = data.RetryExecution?.ChatRunId ?? row.RunId;
+            var terminal = run is null ? null : RowStore.TerminalReply(scope, delivery.Intent.ToSessionId, run);
+            return terminal is null ? null : new(data.State, data.ProviderTurnId, data.Reason) { CompletedTurn = terminal };
+        }
         if (proof.Version != 1 || proof.ProviderMessageId is not null && proof.ProviderMessageId != data.ProviderTurnId)
             throw new CallFailed("bad_receipt");
         return new("failed", data.ProviderTurnId, "inserted_before_sign_in");

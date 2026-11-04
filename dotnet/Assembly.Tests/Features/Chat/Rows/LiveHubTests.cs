@@ -191,6 +191,25 @@ public sealed class LiveHubTests : IDisposable
         Assert.False(hub.HasSubscribers("b"));
     }
 
+    [Fact]
+    public void Rail_notifications_observe_the_committed_turn_summary()
+    {
+        var topics = new Assembly.Infrastructure.Topics.Topics();
+        var summaries = SessionSummaries.Load(_store);
+        using var hub = new LiveHub(_store, topics: topics, summaries: summaries);
+        var observed = new List<string?>();
+        using var subscription = topics.Subscribe(Assembly.Application.Features.Chat.Sessions.SessionsFeature.RailTopic,
+            "a", _ => { }, (_, _) => observed.Add(summaries.Get("a").TurnState));
+        foreach (var state in new[] { "started", "failed" })
+        {
+            var batch = new RowBatch();
+            batch.Rows.Add(new NewRow("run-1", null, RowKind.Turn, JsonSerializer.SerializeToElement(new { state }), 1));
+            hub.Publish("a", batch);
+        }
+        Assert.Equal(["started", "failed"], observed);
+        Assert.Equal(2, summaries.Get("a").EndSeq);
+    }
+
     private static RowBatch Batch(params string[] texts)
     {
         var batch = new RowBatch();

@@ -27,11 +27,13 @@ public sealed partial class RemoteMachineTests
         await desktop.InsertAsync(parentPrompt, "restart-parent-provider");
         await ProviderInsertionAsync(_desktop!, DesktopToken, parent, "restart-parent", "restart-parent-provider");
         var engineMachine = (await RestartCallAsync(_box, BoxToken, "engine", "machine", new { })).GetProperty("machine").GetString()!;
-        var helperId = (await ToolAsync(_desktop!, parentToken, "start_session", new { prompt = "Count the lines.", title = "Count the lines.", provider = "codex", folder = _boxHome, machine = engineMachine }))
-            .GetProperty("sessionId").GetString()!;
+        var started = await ToolAsync(_desktop!, parentToken, "start_session", new { prompt = "Count the lines.", title = "Count the lines.", provider = "codex", folder = _boxHome, machine = engineMachine });
+        var helperId = started.GetProperty("sessionId").GetString()!;
         var box = await _boxLauncher.NextAsync();
         await box.StartAsync(acpSessionId: "acp-helper");
         var helperPrompt = await box.ReadAsync("session/prompt");
+        await box.InsertAsync(helperPrompt, "restart-helper-initial-provider");
+        await ApiTests.MessageInsertedAsync(_desktop!, DesktopToken, started.GetProperty("messageId").GetString()!);
         await UntilRestartStateAsync(parent, helperId, "running");
 
         // The desktop stops as if before it copied any of the helper's rows, and the helper finishes on the box meanwhile.
@@ -151,11 +153,13 @@ public sealed partial class RemoteMachineTests
         await desktop.InsertAsync(parentPrompt, "restart-parent-provider");
         await ProviderInsertionAsync(_desktop!, DesktopToken, parent, "restart-parent", "restart-parent-provider");
         var engineMachine = (await RestartCallAsync(_box, BoxToken, "engine", "machine", new { })).GetProperty("machine").GetString()!;
-        var helperId = (await ToolAsync(_desktop!, parentToken, "start_session", new { prompt = "Count the lines.", title = "Count the lines.", provider = "codex", folder = _boxHome, machine = engineMachine }))
-            .GetProperty("sessionId").GetString()!;
+        var started = await ToolAsync(_desktop!, parentToken, "start_session", new { prompt = "Count the lines.", title = "Count the lines.", provider = "codex", folder = _boxHome, machine = engineMachine });
+        var helperId = started.GetProperty("sessionId").GetString()!;
         var box = await _boxLauncher.NextAsync();
         await box.StartAsync(acpSessionId: "acp-helper");
         var helperPrompt = await box.ReadAsync("session/prompt");
+        await box.InsertAsync(helperPrompt, "restart-helper-initial-provider");
+        await ApiTests.MessageInsertedAsync(_desktop!, DesktopToken, started.GetProperty("messageId").GetString()!);
         await UntilRestartStateAsync(parent, helperId, "running");
         await box.FinishAsync(helperPrompt, """{"stopReason":"end_turn"}""");
         await UntilRestartStateAsync(parent, helperId, "idle");
@@ -177,23 +181,7 @@ public sealed partial class RemoteMachineTests
 
     private static async Task ProviderInsertionAsync(DesktopBackend backend, string token, string session, string clientId, string providerMessageId)
     {
-        using var socket = await ApiTests.OpenOwnerSocketAsync(backend.Address, token);
-        var messageId = $"prompt/{session}/{clientId}";
-        await SocketSendAsync(socket, JsonSerializer.Serialize(new { t = "sub", id = 1, stream = "engine", topic = "messages", key = messageId }));
-        while (true)
-        {
-            var frame = await ApiTests.ReadFrameAsync(socket);
-            var kind = frame.GetProperty("t").GetString();
-            Assert.True(kind is "engine_snapshot" or "engine_events", frame.GetRawText());
-            var inserted = kind == "engine_snapshot"
-                ? frame.GetProperty("items").EnumerateArray().Any(item => item.GetProperty("id").GetString() == messageId && item.GetProperty("state").GetString() == "next_turn")
-                : frame.GetProperty("events").EnumerateArray().Any(item => item.GetProperty("entityId").GetString() == messageId && item.GetProperty("data").GetProperty("state").GetString() == "next_turn");
-            var more = frame.GetProperty("more").GetBoolean();
-            if (kind != "engine_snapshot" || !more)
-                await SocketSendAsync(socket, JsonSerializer.Serialize(new { t = "ack", id = 1, stream = "engine", after = frame.GetProperty("through").GetInt64() }));
-            if (inserted) break;
-            if (more) await SocketSendAsync(socket, "{\"t\":\"next\",\"id\":1}");
-        }
+        await ApiTests.MessageInsertedAsync(backend, token, $"prompt/{session}/{clientId}");
         var page = await RowsPageAsync(backend, token, session);
         var user = Assert.Single(page.GetProperty("rows").EnumerateArray(), row => row.GetProperty("kind").GetString() == "user" &&
             row.GetProperty("payload").TryGetProperty("clientId", out var client) && client.GetString() == clientId);

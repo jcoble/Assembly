@@ -174,8 +174,15 @@ public sealed class AskOwnerToolTests
         using var f = new EngineFixture(); f.SeedSession();
         Assert.True((ended ? f.Apply(Question(), "n", actor: Adapter) : OpenProvider(f, "n")).Applied);
         if (ended) Assert.True(f.Apply(new SetSessionState("ended", "done", null), "s", f.Number("SELECT version FROM engine_session"), actor: Adapter).Applied);
-        Assert.True((ended ? f.Apply(new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes")), "n", 1)
-            : AnswerProvider(f, "n")).Applied);
+        if (ended)
+        {
+            Assert.Equal("cancelled", f.State("engine_needs_me", "n"));
+            var late = f.Apply(new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes")), "n", 1);
+            Assert.False(late.Applied);
+            Assert.Equal("already_resolved", late.Error);
+            Assert.Equal("cancelled", f.State("engine_needs_me", "n"));
+        }
+        else Assert.True(AnswerProvider(f, "n").Applied);
         Assert.Equal(0, f.Count("engine_message"));
     }
 

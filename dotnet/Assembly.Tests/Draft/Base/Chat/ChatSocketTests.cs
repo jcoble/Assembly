@@ -48,6 +48,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
     private SessionSummaries _summaries = null!;
     private SessionStore _sessions = null!;
     private EngineRuntime _engine = null!;
+    private EngineRuntime _remoteRuntime = null!;
     private ProjectStore _projects = null!;
     private EngineFixture _remoteOwner = null!;
     private SessionStore _remoteSessions = null!;
@@ -71,10 +72,19 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         _sessions = SessionStore.Open(_db, _time, "checkouts", _summaries);
         _projects = new ProjectStore(_db, _time);
         var roots = new ProjectRoots(_projects);
+        _hub = new LiveHub(_rows, topics: topics, summaries: _summaries, summaryChanged: _sessions.PublishSummary);
         _engine = EngineRuntime.Start(_db, topics, _time, new(() => 5, () => 10),
             cutover: new SessionCutover(_db, _sessions, _launcher, "checkouts", _time,
-                projectRoots: roots, projectUse: roots, owningHome: _home.FullName));
+                projectRoots: roots, projectUse: roots, owningHome: _home.FullName),
+            effectsFactory: runtime =>
+            {
+                _work = new(_time, _log);
+                _registry = new(_hub, _sessions, _launcher, _time, _log, _work,
+                    feed: new EngineFeed(runtime, _log, _time));
+                return new AdapterEffects(_db, _registry, _sessions, _rows);
+            }, effectsReady: _providerReady.Task);
         _remoteOwner = new();
+        _remoteRuntime = EngineRuntime.Start(_remoteOwner.Db, new TopicSet(), _time, _remoteOwner.Limits);
         _remoteHome = _home.CreateSubdirectory("remote-owner").FullName;
         _remoteSessions = SessionStore.Open(_remoteOwner.Db, _time, _remoteHome);
         var remoteCutover = new SessionCutover(_remoteOwner.Db, _remoteSessions, _launcher, _remoteHome,
@@ -82,7 +92,6 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         _remoteOwner.Db.Writer.Write("test.remote-schema", scope => { remoteCutover.EnsureSchema(scope); return 0; });
         remoteCutover.Attach(new EngineCommands(_remoteOwner.Machine, _remoteOwner.Limits,
             projectStart: remoteCutover.ProjectStart, projectProjection: _remoteSessions), _remoteOwner.Machine);
-        _hub = new LiveHub(_rows, topics: topics, summaries: _summaries, summaryChanged: _sessions.PublishSummary);
         var rows = _rows;
         _here = new FakeMachine(null, _sessions);
         _box = new FakeMachine("box", _sessions);
@@ -103,6 +112,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         new MachinesFeature(machines, new MachineStatus(topics, ["box"]), () => { }, TimeProvider.System).Register(calls);
         new PreferencesFeature(_db).Register(calls);
         _attachments = new AttachmentStore(Path.Combine(_home.FullName, "attachments"));
+        _answers.OwnerPrompt = PrepareTransportPrompt;
         new AttachmentsFeature(_sessions, machines, Staging).Register(calls);
         calls.Closed(connection => _socketClosed.TrySetResult(connection));
         var builder = WebApplication.CreateSlimBuilder();
@@ -129,6 +139,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         await _app.DisposeAsync();
         _hub.Dispose();
         await _engine.DisposeAsync();
+        await _remoteRuntime.DisposeAsync();
         _remoteOwner.Dispose();
         _db.Dispose();
         _file.Dispose();

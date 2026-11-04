@@ -40,6 +40,6 @@ public sealed partial class ChatSocketTests
         Assert.Equal(["stop task native-child"], _box.Asked);
         _box.Release();
         Assert.Equal([1, 2], (await ReadAnswersAsync(socket, 2)).Keys.Order());
-        Assert.Equal(["stop task native-child", $"send {parent.SessionId} after cancellation"], _box.Asked);
+        Assert.Equal(["stop task native-child", $"owner prompt {parent.SessionId} after cancellation"], _box.Asked);
     }
 }

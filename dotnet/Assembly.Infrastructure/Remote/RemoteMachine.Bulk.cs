@@ -80,8 +80,6 @@ internal sealed partial class RemoteMachine
             }
             if (frame.GetProperty("id").GetInt64() != id) throw new IOException("remote bulk response id differs");
             var succeeded = frame.GetProperty("t").GetString() == "result";
-            if (!succeeded && relayBinding is null && !(feature == "engine" && method == "entities"))
-                throw new CallFailed(frame.GetProperty("message").GetString()!);
             if (expectedEngineId is not null)
             {
                 await _socketSend.WaitAsync(ct);

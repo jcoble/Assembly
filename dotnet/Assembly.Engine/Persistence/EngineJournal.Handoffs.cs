@@ -228,7 +228,17 @@ public static partial class EngineJournal
             // Expiry/failure may restore idle while this exact operation is retiring. Its real late completion
             // must drain the old ordered release, without gaining transfer authority or touching a replacement.
             var restored = source.State == "failed" && source.ReservedEpoch is null && source.SessionState == "idle";
-            if (!fenced && !restored) return false;
+            // A new request may reserve the source again before the old release finishes. Its exact
+            // positive operation receipt can drain the old outbox row; it grants no old transfer authority.
+            var replaced = source.State == "failed" && source.SessionState == "handing_off" && source.ReservedEpoch is not null
+                && scope.QueryFirst("""
+                    SELECT EXISTS(SELECT 1 FROM engine_handoff WHERE session_id=$session AND id<>$old
+                        AND machine=$machine AND old_epoch=$epoch AND next_epoch=$reserved
+                        AND state IN ('requested','accepted'))
+                    """, r => r.Long(0), new SqlArg("$session", intent.Identity.SourceSessionId),
+                    new("$old", intent.Identity.HandoffId), new("$machine", context.Machine),
+                    new("$epoch", source.Epoch), new("$reserved", source.ReservedEpoch)) != 0;
+            if (!fenced && !restored && !replaced) return false;
             return scope.QueryFirst("""
                 SELECT COUNT(*) FROM engine_session WHERE id=$id AND machine=$machine AND provider=$provider
                     AND account_context=$account AND provider_session_id=$acp

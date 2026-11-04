@@ -129,6 +129,7 @@ public sealed class DesktopBackend : IAsyncDisposable
 
     /// <summary>How many of its background works are still running.</summary>
     internal int BackgroundRunning => _work.Running;
+    internal RemoteConnections Connections => _connections;
 
     /// <summary>
     /// Starts local serving independently of saved connection attempts. A supplied remote is a direct test endpoint;
@@ -385,7 +386,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
                 [new RemoteInstallFeature(remoteInstalls), cliUpdates, new ProviderRuntimeCalls(engine.Machine, agentsFile, machineForward, providerRuntimeSubscriptions), new Assembly.Infrastructure.Engine.Messages.MessagesCalls(engine, db, machineForward), new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts, door, new WorkflowCommandRecovery(db, Path.Combine(home, "workflow-proof"))), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward, project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore, connections: connections), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, localEngineMachine: engine.Machine, readRemoteChallenge: signInRelay.ReadChallengeAsync, submitRemoteCode: signInRelay.SubmitCodeAsync, acknowledgeRemoteUrl: signInRelay.AcknowledgeUrlAsync), new TerminalFeature(routedTerminals), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome,
                         (args, call) => connections.CreateSessionAsync(db, projectStore, engine.Machine, args, call),
-                        (args, call) => connections.ReadCreatedSessionAsync(db, projectStore, args, call)),
+                        (args, call) => connections.ReadCreatedSessionAsync(db, projectStore, args, call), remoteFolders: localFolders),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(home, "staging", "attachments"), sessionSources),
                     new FilesFeature(sessionStore, fileOwners, work, new FileRemoteRoutes(db, fileOwners, connections, work), sessionSources),

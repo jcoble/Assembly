@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Desktop.Serve;
 using System.Net.WebSockets;
 
 namespace Assembly.Tests.Infrastructure.Http;
@@ -90,4 +91,24 @@ public sealed partial class ApiTests
         Assert.False(string.IsNullOrEmpty(runId));
         return runId!;
     }
+    internal static async Task MessageInsertedAsync(DesktopBackend backend, string token, string messageId)
+    {
+        using var socket = await ApiTests.OpenOwnerSocketAsync(backend.Address, token);
+        await SendTextAsync(socket, JsonSerializer.Serialize(new { t = "sub", id = 1, stream = "engine", topic = "messages", key = messageId }));
+        while (true)
+        {
+            var frame = await ApiTests.ReadFrameAsync(socket);
+            var kind = frame.GetProperty("t").GetString();
+            Assert.True(kind is "engine_snapshot" or "engine_events", frame.GetRawText());
+            var inserted = kind == "engine_snapshot"
+                ? frame.GetProperty("items").EnumerateArray().Any(item => item.GetProperty("id").GetString() == messageId && item.GetProperty("state").GetString() == "next_turn")
+                : frame.GetProperty("events").EnumerateArray().Any(item => item.GetProperty("entityId").GetString() == messageId && item.GetProperty("data").GetProperty("state").GetString() == "next_turn");
+            var more = frame.GetProperty("more").GetBoolean();
+            if (kind != "engine_snapshot" || !more)
+                await SendTextAsync(socket, JsonSerializer.Serialize(new { t = "ack", id = 1, stream = "engine", after = frame.GetProperty("through").GetInt64() }));
+            if (inserted) break;
+            if (more) await SendTextAsync(socket, "{\"t\":\"next\",\"id\":1}");
+        }
+    }
+
 }

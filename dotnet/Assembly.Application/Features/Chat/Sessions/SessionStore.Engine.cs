@@ -309,6 +309,6 @@ public sealed partial class SessionStore : ISessionProjectProjection
                     SessionsJson.Default.IReadOnlyDictionaryStringString)), new("$target", initialConfig.TargetId));
         _engine.Started(scope, session, initiatingSessionId, projectId, checkout, preparation);
         Publish(scope, session.SessionId);
-        return session;
+        return Get(scope, session.SessionId)!;
     }
 }

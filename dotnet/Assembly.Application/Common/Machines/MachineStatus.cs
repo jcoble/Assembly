@@ -78,9 +78,11 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
         }
         lock (_gate)
         {
-            (deployment ? _deployments : _backendMismatches)[machine] = reason;
+            var warnings = deployment ? _deployments : _backendMismatches;
+            if (warnings.GetValueOrDefault(machine) == reason) return;
+            warnings[machine] = reason;
             var item = _items.FirstOrDefault(item => item.Name == machine);
-            if (item is not null) Set(machine, item.Reachable, _connectionReasons.GetValueOrDefault(machine));
+            if (item is not null) Set(machine, item.Reachable, _connectionReasons.GetValueOrDefault(machine), item.Checked);
         }
     }
 
@@ -89,12 +91,12 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
     public void Unreachable(string machine, string reason) => Set(machine, false, reason);
 
     // A name it doesn't hold is ignored, and an unchanged item isn't swapped.
-    private void Set(string machine, bool reachable, string? reason)
+    private void Set(string machine, bool reachable, string? reason, bool checkedState = true)
     {
         if (_parent is { } parent)
         {
             lock (parent._gate)
-                if (_active) parent.Set(machine, reachable, reason);
+                if (_active) parent.Set(machine, reachable, reason, checkedState);
             return;
         }
         lock (_gate)
@@ -105,10 +107,10 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
             if (reason.Length == 0) reason = null;
             var items = _items;
             var index = Array.FindIndex(items, item => item.Name == machine);
-            if (index < 0 || (items[index].Checked && items[index].Reachable == reachable && items[index].Reason == reason))
+            if (index < 0 || (items[index].Checked == checkedState && items[index].Reachable == reachable && items[index].Reason == reason))
                 return;
             var next = (MachineItem[])items.Clone();
-            next[index] = items[index] with { Reachable = reachable, Checked = true, Reason = reason };
+            next[index] = items[index] with { Reachable = reachable, Checked = checkedState, Reason = reason };
             _items = next;
             topics.Publish(MachinesFeature.Topic, machine, JsonSerializer.Serialize(next[index], SessionsJson.Default.MachineItem));
         }

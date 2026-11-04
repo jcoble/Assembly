@@ -340,6 +340,32 @@ public sealed class EngineHelperCardsTests
             epoch = 0
         });
 
+    [Fact]
+    public async Task A_newer_observation_during_a_card_write_is_not_lost_when_it_matches_the_previous_card()
+    {
+        await using var f = new Fixture(start: false);
+        f.Mirror("running", 1);
+        f.Registry.Helpers.Row.Show(f.Store.Get("remote-child")!, "running");
+        f.Cards.Refresh("remote-child");
+        using var live = f.Hub.Subscribe(f.Parent.SessionId, f.Rows.LastSeq(f.Parent.SessionId));
+        var changed = false;
+        using var observer = f.Topics.Subscribe(RowsFeature.Topic, f.Parent.SessionId, _ => { }, (_, raw) =>
+        {
+            using var json = JsonDocument.Parse(raw);
+            if (!changed && json.RootElement.GetProperty("payload").GetProperty("state").GetString() == "idle")
+            {
+                changed = true;
+                f.Mirror("running", 3);
+            }
+        });
+        f.Mirror("idle", 2);
+        f.Cards.Start(f.Registry.Helpers.Row);
+        Assert.Equal("idle", Card(await NextCard(live)).State);
+        Assert.Equal("running", Card(await NextCard(live)).State);
+        Assert.True(changed);
+        Assert.True(f.Cards.Working(f.Parent.SessionId));
+    }
+
     private static SubagentPayload Card(StoredRow row) => row.Payload.Deserialize(RowJsonContext.Rows.SubagentPayload)!;
     private static async Task<StoredRow> NextCard(LiveSubscription live)
     {
@@ -353,6 +379,7 @@ public sealed class EngineHelperCardsTests
     {
         public EngineFixture Engine { get; } = new();
         public RelayTestLauncher Launcher { get; } = new();
+        public Topics Topics { get; } = new();
         public RowStore Rows { get; }
         public SessionStore Store { get; }
         public LiveHub Hub { get; }
@@ -370,9 +397,9 @@ public sealed class EngineHelperCardsTests
             var summaries = SessionSummaries.Load(Rows);
             Store = SessionStore.Open(Engine.Db, Engine.Time, "/checkouts", summaries);
             Parent = Store.Create("codex", "repo");
-            Hub = new(Rows, summaries: summaries);
+            Hub = new(Rows, summaries: summaries, topics: Topics);
             Cards = new(Engine.Db, Engine.Time, TextWriter.Null, Store);
-            Runtime = EngineRuntime.Start(Engine.Db, new Topics(), Engine.Time, Engine.Limits,
+            Runtime = EngineRuntime.Start(Engine.Db, Topics, Engine.Time, Engine.Limits,
                 cutover: new(Engine.Db, Store, Launcher, "/checkouts", Engine.Time, helperCards: Cards));
             _feed = new(Runtime, TextWriter.Null, Engine.Time, Cards);
             _work = new(Engine.Time, TextWriter.Null);

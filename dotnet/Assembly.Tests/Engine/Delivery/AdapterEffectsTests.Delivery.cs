@@ -53,6 +53,31 @@ public sealed partial class AdapterEffectsTests
     }
 
     [Fact]
+    public async Task A_late_insertion_receipt_does_not_reopen_its_already_finished_provider_turn()
+    {
+        await using var f = new AdapterDeliveryFixture();
+        var id = f.Queue("Finish before the effect confirms", "completed-turn");
+        var effect = f.Claim(id);
+        var executing = f.Effects.ExecuteAsync(effect, default);
+        var agent = await f.Launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        var ended = f.Hosts.For(f.Session.SessionId).CurrentTurn.Done;
+        await agent.InsertAsync(prompt, "finished-provider-insertion");
+        var receipt = await executing.WaitAsync(DeliveryWait);
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+        await ended.WaitAsync(DeliveryWait);
+        Assert.Equal("idle", f.State("engine_session", f.Session.SessionId));
+        Assert.True(f.Complete(effect, receipt).Applied);
+        Assert.Equal("next_turn", f.State("engine_message", id));
+        Assert.Equal("idle", f.State("engine_session", f.Session.SessionId));
+        using var snapshot = f.Db.OpenSnapshot(default);
+        Assert.Equal(new UserAcknowledgment("prompt_inserted", "finished-provider-insertion"),
+            f.Rows.UserDeliveryOfClient(snapshot, f.Session.SessionId, "completed-turn")!.Acknowledgment);
+    }
+
+    [Fact]
     public async Task Actual_positive_provider_insertion_wins_after_deadline_with_atomic_ack()
     {
         await using var f = new AdapterDeliveryFixture(); var message = f.Queue("late accepted", "late", refs: ["original.png"]); var effect = f.Claim(message);
