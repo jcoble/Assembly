@@ -280,7 +280,7 @@ impl Render for PrFiles {
         let shown = self
             .parsed
             .iter()
-            .any(|file| matches_filter(&file.path().to_string(), &self.filter));
+            .any(|file| matches_filter(file.path().as_ref(), &self.filter));
         let reading = self.reading.clone();
         let notes: Vec<(String, &'static str, bool)> = self
             .notes

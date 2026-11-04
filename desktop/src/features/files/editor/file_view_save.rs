@@ -216,7 +216,7 @@ pub(super) async fn upload_draft(
         .update(cx, |view, _| view.upload = Some(upload.clone()))
         .is_err()
     {
-        let _ = cx.update(|cx| {
+        cx.update(|cx| {
             socket
                 .read(cx)
                 .call::<Value>("files", "dropSave", json!({ "upload": upload }), None)

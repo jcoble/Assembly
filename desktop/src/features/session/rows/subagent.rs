@@ -19,6 +19,18 @@ pub struct SubagentPayload {
     pub helper: bool,
 }
 
+impl SubagentPayload {
+    /// A persisted provider-child Stop target, distinct from the payload's parent correlation or history identity.
+    pub fn stop_target<'a>(&self, item_id: &'a str, seq: i64) -> Option<&'a str> {
+        if self.helper || !self.can_stop || self.state == "idle" || seq <= 0 {
+            return None;
+        }
+        item_id
+            .strip_prefix("subagent:")
+            .filter(|task| !task.is_empty())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::SubagentPayload;
@@ -50,17 +62,5 @@ mod tests {
         card.can_stop = true;
         card.state = "idle".into();
         assert!(card.stop_target("subagent:child", 7).is_none());
-    }
-}
-
-impl SubagentPayload {
-    /// A persisted provider-child Stop target, distinct from the payload's parent correlation or history identity.
-    pub fn stop_target<'a>(&self, item_id: &'a str, seq: i64) -> Option<&'a str> {
-        if self.helper || !self.can_stop || self.state == "idle" || seq <= 0 {
-            return None;
-        }
-        item_id
-            .strip_prefix("subagent:")
-            .filter(|task| !task.is_empty())
     }
 }

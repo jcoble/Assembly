@@ -272,7 +272,7 @@ fn default_project<'a>(
 }
 impl Render for ProjectChooser {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut view = v_flex()
+        let view = v_flex()
             .gap_1()
             .capture_key_down(cx.listener(Self::key_down))
             .child(Input::new(&self.filter))

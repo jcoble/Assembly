@@ -43,12 +43,7 @@ pub fn remove_saved_panel(state: &mut DockAreaState) {
             .children
             .into_iter()
             .enumerate()
-            .filter_map(|(index, child)| {
-                prune(child).map(|child| {
-                    kept.push(index);
-                    child
-                })
-            })
+            .filter_map(|(index, child)| prune(child).inspect(|_| kept.push(index)))
             .collect();
         if kept.len() != old_len {
             match &mut panel.info {
@@ -401,7 +396,7 @@ impl BoardPane {
                 match &event.result {
                     Ok(()) => cx.emit(DismissEvent),
                     Err(error) => {
-                        pane.detail_failed = Some(error.message.clone().into());
+                        pane.detail_failed = Some(error.message.clone());
                         pane.redraw(cx);
                     }
                 }

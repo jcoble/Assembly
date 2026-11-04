@@ -173,7 +173,7 @@ impl NewSessionForm {
                 if original.is_none_or(|original|original!=&source.source) {
                     form.start_error("The original start source changed. The request and draft were retained.",cx);return None;
                 }
-                let Some(attempt)=form.attempt.as_mut()else{return None;};
+                let attempt=form.attempt.as_mut()?;
                 attempt.source=Some(source.clone());
                 attempt.connections=source.sockets().iter().map(|socket|cx.observe(socket,|form:&mut Self,_,cx|{
                     if form.attempt.as_ref().and_then(|attempt|attempt.source.as_ref()).is_some_and(|source|!source.current(cx)) {

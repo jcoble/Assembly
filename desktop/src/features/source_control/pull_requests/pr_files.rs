@@ -244,7 +244,7 @@ impl PrFiles {
         let shown: Vec<DiffFile> = self
             .parsed
             .iter()
-            .filter(|file| matches_filter(&file.path().to_string(), &self.filter))
+            .filter(|file| matches_filter(file.path().as_ref(), &self.filter))
             .cloned()
             .collect();
         let viewed = self.viewed.clone();

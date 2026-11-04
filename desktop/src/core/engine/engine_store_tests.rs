@@ -115,7 +115,7 @@ fn sparse_events_identify_rows_without_pretending_to_be_display_or_advancing_cur
         kind: "session".into(),
         id: "s".into(),
     };
-    assert_eq!(changed, [key.clone()]);
+    assert_eq!(changed, std::slice::from_ref(&key));
     assert_eq!(store.item(&key).unwrap().value["state"], "idle");
     assert_eq!(store.cursor(&scope).unwrap().through, 1);
     assert_eq!(

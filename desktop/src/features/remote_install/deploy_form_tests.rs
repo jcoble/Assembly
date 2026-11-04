@@ -75,10 +75,7 @@ fn backend(
     (fake, frames, changed, changes)
 }
 
-fn open<'a>(
-    port: u16,
-    cx: &'a mut TestAppContext,
-) -> (Entity<DeployForm>, &'a mut VisualTestContext) {
+fn open(port: u16, cx: &mut TestAppContext) -> (Entity<DeployForm>, &mut VisualTestContext) {
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
