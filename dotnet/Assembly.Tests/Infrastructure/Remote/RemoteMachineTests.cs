@@ -146,7 +146,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
             JsonSerializer.Serialize(new { agent = "claude", clientId = Guid.NewGuid().ToString("N"), machine = Box }));
 
         Assert.Equal("error", created.GetProperty("t").GetString());
-        Assert.Equal("failed", created.GetProperty("code").GetString());
+        Assert.Equal("unreachable", created.GetProperty("code").GetString());
         Assert.Contains("format 99", created.GetProperty("message").GetString());
     }
 

@@ -136,7 +136,7 @@ public sealed partial class SessionStore
             scope.Execute("UPDATE session_info SET acp_session_id=$native WHERE session_id=$id", new SqlArg("$native", nativeId), new SqlArg("$id", expected.SessionId));
             SaveOptions(scope, expected.SessionId, options ?? "null");
             SaveChoices(scope, expected.SessionId, choices);
-            if (commands is not null) SaveCommands(scope, expected.SessionId, commands);
+            SaveCommands(scope, expected.SessionId, commands);
             if (agentOptions is not null) SaveAgentOptions(scope, expected.Agent, agentOptions);
             if (confirmedModel is { } selected && HasPendingModel)
             {

@@ -130,17 +130,23 @@ public sealed class EffectTests
         var topics = new Topics();
         using var f = new EngineFixture(topics: topics);
         f.SeedSession();
+        f.Db.Writer.Write("test.native", s => s.Execute("UPDATE engine_session SET provider_session_id='native' WHERE id='s'"));
         Assert.True(f.Apply(new SendMessage(null, "s", "hello", "prompt"), "z").Applied);
         Assert.True(f.Apply(new RequestHandoff("s", "workbox-test"), "h", 0).Applied);
         var release = new TaskCompletionSource<EffectReceipt>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var fake = new FakeEffects { Execute = (e, ct) => e.Kind == "send" ? release.Task.WaitAsync(ct) : Task.FromResult(new EffectReceipt(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new HandoffEffectData("accepted", 1, null), EngineJson.Default.HandoffEffectData), null)) };
+        var fake = new FakeEffects
+        {
+            Execute = (e, ct) => e.Kind == "send" ? release.Task.WaitAsync(ct) : Task.FromResult(new EffectReceipt(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new HandoffReleaseEffectData(
+            e.Payload.Deserialize(EngineJson.Default.HandoffReleaseEffect)!.Identity, "s", 0, "native", "fixture-operation", e.Id, e.Attempt),
+            EngineJson.Default.HandoffReleaseEffectData), null))
+        };
         await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
         await fake.FirstAttempt.WaitAsync(Timeout);
         Assert.Equal("send", Assert.Single(fake.Attempts).Kind);
-        Assert.Equal("pending", f.Text("SELECT state FROM engine_outbox WHERE kind='handoff'"));
+        Assert.Equal("pending", f.Text("SELECT state FROM engine_outbox WHERE kind='release'"));
         release.SetResult(new(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new MessageEffectData("next_turn", null, null), EngineJson.Default.MessageEffectData), null));
         await fake.SecondAttempt.WaitAsync(Timeout);
-        Assert.Equal("handoff", fake.Attempts[1].Kind);
+        Assert.Equal("release", fake.Attempts[1].Kind);
     }
 
     [Fact]

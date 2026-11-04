@@ -189,6 +189,20 @@ public sealed partial class MachinesSocketTests
                                 await Send($$"""{"t":"welcome","protocol":1,"machine":"box","format":{{Format}},"engine":{{JsonSerializer.Serialize(EngineMachine)}}}""");
                                 break;
                             case "sub":
+                                if (json.TryGetProperty("stream", out var stream) && stream.GetString() == "engine")
+                                {
+                                    await Send(JsonSerializer.Serialize(new
+                                    {
+                                        t = "engine_snapshot",
+                                        id = json.GetProperty("id").GetInt64(),
+                                        machine = EngineMachine,
+                                        through = 0,
+                                        items = Array.Empty<object>(),
+                                        more = false,
+                                        at = (object?)null
+                                    }));
+                                    break;
+                                }
                                 if (json.GetProperty("topic").GetString() == "sessions")
                                 {
                                     await Send($$"""{"t":"state","sub":{{json.GetProperty("id")}},"items":[]}""");

@@ -13,7 +13,7 @@ internal sealed partial class RemoteMachine
         await _socketSend.WaitAsync(cancellationToken);
         try
         {
-            var identity = _engineIdentity ?? throw Unreachable("unverified engine peer", $"{_name}: engine identity is unverified");
+            var identity = _engineIdentity ?? throw (_socketFailure ?? Unreachable("unverified engine peer", $"{_name}: engine identity is unverified"));
             var socket = RequireEngine(identity);
             if (expectedEngineId is not null && expectedEngineId != identity)
                 throw Unreachable("unverified engine peer", $"{_name}: owning engine identity differs");

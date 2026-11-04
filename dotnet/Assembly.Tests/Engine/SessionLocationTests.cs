@@ -98,6 +98,8 @@ public sealed class SessionLocationTests
         var childFolder = Directory.CreateDirectory(Path.Combine(h.Home, "child-location")).FullName;
         var context = new CommandContext(Guid.NewGuid(), h.Runtime.Machine, new(ActorKind.Window, "owner"), "helper", 0, 0, 1000);
         Assert.True(h.Runtime.Submit(context, new StartSession("claude", null, childFolder, "Helper", "root", null, null, ManagedCheckout: false)).Applied);
+        Assert.True(h.Runtime.Submit(context with { CommandId = Guid.NewGuid(), ExpectedVersion = 1, Actor = new(ActorKind.System, "start-confirmed") },
+            new SetSessionState("idle", null, null)).Applied);
         var native = h.Store.Child(h.Store.Get("helper")!, "native-acp", "Native");
         AssertLocation(h, native.SessionId, childFolder, false);
         var foreign = h.Store.Add("peer", "claude", "repo", "foreign-machine");

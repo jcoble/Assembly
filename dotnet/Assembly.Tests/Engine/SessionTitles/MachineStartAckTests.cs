@@ -10,7 +10,9 @@ public sealed class MachineStartAckTests
 {
     private static (MachineStartAckArgs Query, CommandResult Result) Started(EngineFixture f, string title = "Title")
     {
-        Assert.True(f.Apply(new RegisterForeignSession("source", "codex", "Parent"), "parent", actor: new(ActorKind.System, "machine:source")).Applied);
+        var commands = new EngineCommands(f.Machine, f.Limits);
+        var ancestry = commands.PrepareForeignAncestry(new("source", "parent", [new("parent", "source", "codex", "Parent", null)]));
+        Assert.True(f.Db.Writer.Write("test.known-parent", scope => commands.ApplyForeignAncestryBatch(scope, ancestry)).Applied);
         var command = EngineCommands.PrepareSessionTitle(new StartSession("codex", null, "/folder", title, "parent", null, "https://task", ManagedCheckout: false));
         var context = new CommandContext(Guid.NewGuid(), f.Machine, new(ActorKind.System, "machine:source"), Guid.NewGuid().ToString(), 0, 0, 1000);
         var result = f.Db.Writer.Write("test.start", s => new EngineCommands(f.Machine, f.Limits).ApplyPreparedSessionTitle(s, context, command));

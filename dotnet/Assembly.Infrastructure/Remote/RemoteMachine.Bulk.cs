@@ -104,6 +104,11 @@ internal sealed partial class RemoteMachine
         }
         // A refused call is a completed exchange, so both machine connections remain usable.
         catch (CallFailed) { startIntent?.SendFailed(); throw; }
+        catch (ObjectDisposedException) when (_socketStop.IsCancellationRequested)
+        {
+            startIntent?.SendFailed();
+            throw new OperationCanceledException(_socketStop.Token);
+        }
         catch (Exception error)
         {
             startIntent?.SendFailed();

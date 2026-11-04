@@ -11,6 +11,7 @@ public sealed class BoardQueryTests(Xunit.Abstractions.ITestOutputHelper output)
     internal sealed class Fixture : IDisposable
     {
         private readonly TempDatabase _file = new();
+        public string Folder => _file.Folder;
         public TopicSet Topics { get; } = new();
         public FakeTimeProvider Time { get; } = new(DateTimeOffset.FromUnixTimeMilliseconds(1000));
         public AppDatabase Db { get; }

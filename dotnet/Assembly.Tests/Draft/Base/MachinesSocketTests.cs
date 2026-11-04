@@ -56,6 +56,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
         _hub = new LiveHub(RowStore.Open(_db), topics: topics);
         _sessions = SessionStore.Open(_db, TimeProvider.System, "checkouts");
+        Assembly.Engine.Persistence.EngineSchema.Open(_db, Start.ToUnixTimeMilliseconds());
         var status = _status = new MachineStatus(topics, ["box"]);
         _box = new RemoteMachine("box", _stub.Address, "box-token", _hub, _sessions, TextWriter.Null, status);
         status.Profile(new SavedMachine("box", "box"));
@@ -117,6 +118,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         using var socket = await OpenAsync();
         await SubAsync(socket, 1, "machines");
         await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 2, "machines", "agents", """{"machine":"box"}""");
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
         Assert.Contains("\"result\":", await ReadAsync(socket));
@@ -134,6 +136,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         using var socket = await OpenAsync();
         await SubAsync(socket, 1, "machines");
         await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 2, "machines", "agents", """{"machine":"box"}""");
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
         Assert.Contains("\"result\":", await ReadAsync(socket));
@@ -299,6 +302,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         using var socket = await OpenAsync();
         await SubAsync(socket, 1, "machines");
         await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 2, "machines", "agents", """{"machine":"box"}""");
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
         Assert.Contains("\"result\":", await ReadAsync(socket));
@@ -337,6 +341,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
 
         await _box.ProbeAsync(CancellationToken.None);
         await _box.ReadMirrorOwnerAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 1, "machines", "agents", """{"machine":"box"}""");
         var error = await ReadAsync(socket);
         Assert.Contains("\"code\":\"failed\"", error);
@@ -355,6 +360,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
 
         await _box.ProbeAsync(CancellationToken.None);
         await _box.ReadMirrorOwnerAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 1, "machines", "agents", """{"machine":"box"}""");
         var error = await ReadAsync(socket);
         Assert.Contains("\"code\":\"unreachable\"", error);
@@ -369,6 +375,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         using var socket = await OpenAsync();
         await _box.ProbeAsync(CancellationToken.None);
         await _box.ReadMirrorOwnerAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 1, "machines", "agents", """{"machine":"box"}""");
         Assert.Contains("\"result\":", await ReadAsync(socket));
         Assert.Equal(List(2, Box(true, null)), await ListAsync(socket, 2));
@@ -380,6 +387,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
 
         _stub.Drop = false;
         await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 5, "machines", "agents", """{"machine":"box"}""");
         Assert.Contains("\"result\":", await ReadAsync(socket));
@@ -417,6 +425,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         var session = new SessionInfo("s1", "claude", "https://github.com/o/r", "", null, 0);
 
         await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         string outcome;
         try
         {

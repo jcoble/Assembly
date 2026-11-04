@@ -25,7 +25,7 @@ public sealed partial class ExpiryIntegrationTests
         Assert.True(f.Apply(new SendMessage(null, "s", "body", "prompt"), "m").Applied);
         const string effect = "send/m/1";
         Assert.True(f.Apply(new ClaimEffect(), effect, f.Number("SELECT version FROM engine_outbox WHERE id='send/m/1'"), actor: new(ActorKind.System, "worker")).Applied);
-        if (blocker == "need") Assert.True(f.Apply(new Assembly.Engine.NeedsMe.OpenNeed("s", null, null, "question", "Waiting", ["yes", "no"], "provider-request", null, null), "need", actor: new(ActorKind.System, "observer")).Applied);
+        if (blocker == "need") Assert.True(f.Apply(new Assembly.Engine.NeedsMe.OpenNeed("s", null, null, "question", "Waiting", ["yes", "no"], null, null, null), "need", actor: new(ActorKind.System, "observer")).Applied);
         if (blocker == "lost") Assert.True(f.Apply(new Assembly.Engine.Sessions.SetSessionState("lost", null, "test"), "s", f.Number("SELECT version FROM engine_session WHERE id='s'"), actor: new(ActorKind.System, "observer")).Applied);
         f.Time.Advance(TimeSpan.FromMinutes(30));
         var receipt = new EffectReceipt(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new MessageEffectData("queued", null, "busy"), global::Assembly.Engine.EngineJson.Default.MessageEffectData), null);

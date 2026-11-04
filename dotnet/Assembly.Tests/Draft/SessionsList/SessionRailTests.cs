@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Assembly.Application.Common.Topics;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Rows;
@@ -181,6 +182,11 @@ public sealed partial class SessionRailTests : IDisposable
         Running(b);
         var c = Parent("claude", machine: "workbox-test");
         Asking(c);
+        var remote = _sessions.Get(c)!;
+        _database.Writer.Write("test.filtered-owner", scope => scope.Execute("""
+            UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.provider',$provider,'$.folder','/recorded/remote','$.updatedMs',$updated)
+            WHERE entity_kind='session' AND entity_id=$id;
+            """, new("$provider", remote.Agent), new("$updated", remote.UpdatedAt), new("$id", c)));
         Parent("codex", machine: "workbox-test");
         var settled = Parent("claude");
         Running(settled);
@@ -190,8 +196,9 @@ public sealed partial class SessionRailTests : IDisposable
         Running(Helper(mixed, "codex"));
 
         Assert.Equal((3, 0), (Sessions(Read(providers: ["codex"])).Count, Read(providers: ["codex"]).Totals.Needs));
-        Assert.Equal((4, 1), (Sessions(Read(providers: ["claude"])).Count, Read(providers: ["claude"]).Totals.Needs));
-        Assert.Equal((2, 1), (Sessions(Read(locations: ["remote"])).Count, Read(locations: ["remote"]).Totals.Needs));
+        // The actual source row and the unbound legacy facade remain separately qualified.
+        Assert.Equal((5, 1), (Sessions(Read(providers: ["claude"])).Count, Read(providers: ["claude"]).Totals.Needs));
+        Assert.Equal((3, 1), (Sessions(Read(locations: ["remote"])).Count, Read(locations: ["remote"]).Totals.Needs));
         Assert.Equal(5, Sessions(Read(providers: ["claude", "codex"], locations: ["local"])).Count);
         var none = Read(providers: ["nobody"]);
         Assert.Equal(new RailTotals(0), none.Totals);
@@ -499,14 +506,19 @@ public sealed partial class SessionRailTests : IDisposable
     private static List<string> Collect(Func<RailCursor?, Rail> read)
     {
         var seen = new List<string>();
+        var identities = new HashSet<(string Id, string? Route, ExpectedSource? Source)>();
         RailCursor? next = null;
         do
         {
             var page = read(next);
-            seen.AddRange(page.Sessions.Where(entry => entry.Kind == "session").Select(entry => entry.SessionId));
+            foreach (var entry in page.Sessions.Where(entry => entry.Kind == "session"))
+            {
+                Assert.True(identities.Add((entry.SessionId, entry.Machine, entry.Source)), "A source-qualified rail session repeated across pages.");
+                seen.Add(entry.SessionId);
+            }
             next = page.Next;
         } while (next is not null);
-        Assert.Equal(seen.Count, seen.Distinct().Count());
+        Assert.Equal(seen.Count, identities.Count);
         return seen;
     }
 
