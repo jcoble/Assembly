@@ -20,7 +20,9 @@ use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
 use crate::core::socket::real_backend::RealBackend;
-use crate::core::socket::real_backend_cancel_tests::backend_with_stub;
+use crate::core::socket::real_backend_cancel_tests::{
+    add_project, backend_with_stub, stub_session,
+};
 use crate::core::socket::test_wait::until;
 use crate::core::state::selected_session::SelectedSession;
 
@@ -51,9 +53,15 @@ async fn selected_session(cx: &mut TestAppContext, files: &[&str]) -> (RealBacke
                 .call::<Value>("sessions", method, args, None)
         })
     };
-    let Outcome::Ok(created) =
-        call("create", json!({ "agent": "stub", "repoUrl": repo }), cx).await
-    else {
+    let adding = cx.read(|cx| {
+        socket
+            .read(cx)
+            .call::<Value>("projects", "add", add_project(&repo), None)
+    });
+    let Outcome::Ok(added) = adding.await else {
+        panic!("the project wasn't added");
+    };
+    let Outcome::Ok(created) = call("create", stub_session(&added), cx).await else {
         panic!("the session wasn't made");
     };
     let id = created["sessionId"].as_str().unwrap().to_string();

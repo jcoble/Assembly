@@ -3,6 +3,7 @@
 //! since the draft keeps focus. Drawn on the popover ground, as the kit's menus are. Replaces the slash list in
 //! Composer.svelte.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
@@ -43,7 +44,7 @@ impl RenderOnce for SlashList {
                     .px_2p5()
                     .py_1p5()
                     .rounded(ROW_RADIUS)
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .cursor_pointer()
                     .when(at == self.selected, |row| row.bg(theme.secondary_hover))
                     .hover(|row| row.bg(theme.secondary_hover))

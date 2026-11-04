@@ -1,4 +1,5 @@
 //! Provider card hierarchy, using explicitly illustrative preview facts only.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::*;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::collapsible::Collapsible;
@@ -88,13 +89,13 @@ impl SettingsPreview {
                                 "last-known sample version"
                             }
                         ))
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(cx.theme().muted_foreground),
                     )
-                    .child(Label::new(format!("Sample models: {}", example.models)).text_sm())
+                    .child(Label::new(format!("Sample models: {}", example.models)).text_role(TextRole::Body, cx))
                     .child(
                         Label::new(example.permissions)
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .text_color(cx.theme().muted_foreground),
                     );
             } else {
@@ -102,22 +103,22 @@ impl SettingsPreview {
                     Label::new(
                         "Install and connect this machine to discover its providers and models.",
                     )
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(cx.theme().muted_foreground),
                 );
             }
             let detail = v_flex().gap_3().pt_3()
                 .child(Label::new("Updates for this provider on this machine")
-                    .text_sm().text_color(cx.theme().muted_foreground))
-                .child(Label::new(format!("Adapter · Installed: {} · Latest: unknown", if installed { example.version } else { "unknown" })).text_sm())
-                .child(Label::new(if example.separate_cli { "CLI · Installed: unknown · Latest: not checked" } else { "Runtime updates with the Antigravity adapter." }).text_sm())
+                    .text_role(TextRole::Body, cx).text_color(cx.theme().muted_foreground))
+                .child(Label::new(format!("Adapter · Installed: {} · Latest: unknown", if installed { example.version } else { "unknown" })).text_role(TextRole::Body, cx))
+                .child(Label::new(if example.separate_cli { "CLI · Installed: unknown · Latest: not checked" } else { "Runtime updates with the Antigravity adapter." }).text_role(TextRole::Body, cx))
                 .child(Label::new("Sample details · live checks are not connected in this preview.")
-                    .text_sm().text_color(cx.theme().muted_foreground))
+                    .text_role(TextRole::Body, cx).text_color(cx.theme().muted_foreground))
                 .child(h_flex().gap_2().flex_wrap()
                     .child(Button::new(("signin", control_id)).outline().small().label("Sign in").disabled(true))
                     .child(Button::new(("models", control_id)).outline().small().label("Refresh models").disabled(true)))
                 .child(Label::new("Use Update CLI's and Adapters above this connection to update its providers together. Items needing updates and their progress appear here.")
-                    .text_sm().text_color(cx.theme().muted_foreground));
+                    .text_role(TextRole::Body, cx).text_color(cx.theme().muted_foreground));
             rows = rows.child(
                 div()
                     .p_3()

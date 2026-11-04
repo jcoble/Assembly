@@ -1,5 +1,6 @@
 //! The Git history tab's table, the way GitHistoryView.svelte drew it: one 24 px row per commit with the branching
 //! picture, then Message, Date, Author and Hash each in a column of their own. Read only: nothing here moves a branch.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::inline::{commit_file_menu, commit_tip, files_sentence};
 use super::{CommitFiles, CommitTimeline};
 use crate::features::source_control::git_labels::{RefKind, commit_age, ref_pills, split_path};
@@ -208,8 +209,8 @@ fn graph_cell(row: Option<LaneRow>, width: f32, drawn: usize, cx: &App) -> Div {
         })
         .children(dot)
 }
-fn cell(width: f32, text: String, color: Hsla) -> Div {
-    div().flex_none().w(px(width)).truncate().text_sm().text_color(color).child(text)
+fn cell(width: f32, text: String, color: Hsla, cx: &App) -> Div {
+    div().flex_none().w(px(width)).truncate().text_role(TextRole::Body, cx).text_color(color).child(text)
 }
 impl CommitTimeline {
     pub(super) fn render_table(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -227,7 +228,7 @@ impl CommitTimeline {
             .border_b_1()
             .border_color(border)
             .bg(surface)
-            .text_sm()
+            .text_role(TextRole::Body, cx)
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(muted)
             .child(div().flex_none().w(px(graph)).child("GRAPH"))
@@ -235,7 +236,7 @@ impl CommitTimeline {
             .child(div().flex_none().w(px(DATE_WIDTH)).text_right().child("DATE"))
             .child(div().flex_none().w(px(AUTHOR_WIDTH)).child("AUTHOR"))
             .child(div().flex_none().w(px(HASH_WIDTH)).child("HASH"));
-        let notice = |text: String, color: Hsla| div().px(px(10.)).py(px(12.)).text_sm().text_color(color).child(text);
+        let notice = |text: String, color: Hsla| div().px(px(10.)).py(px(12.)).text_role(TextRole::Body, cx).text_color(color).child(text);
         let body = if self.history.commits.is_empty() {
             let (line, bad) = empty_line(self.error.as_deref(), self.reading);
             notice(line, if bad { danger } else { muted }).into_any_element()
@@ -318,9 +319,9 @@ impl CommitTimeline {
                     )
                     .child(Tag::secondary().xsmall().rounded_full().child(row.count_label)),
             )
-            .child(cell(DATE_WIDTH, "Now".into(), muted).text_right())
-            .child(cell(AUTHOR_WIDTH, row.detail, muted))
-            .child(cell(HASH_WIDTH, "*".into(), muted))
+            .child(cell(DATE_WIDTH, "Now".into(), muted, cx).text_right())
+            .child(cell(AUTHOR_WIDTH, row.detail, muted, cx))
+            .child(cell(HASH_WIDTH, "*".into(), muted, cx))
             .into_any_element()
     }
     fn table_row(&mut self, at: usize, index: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -388,13 +389,13 @@ impl CommitTimeline {
                     .w(px(DATE_WIDTH))
                     .truncate()
                     .text_right()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(muted)
                     .tooltip(move |window, cx| Tooltip::new(age.clone()).build(window, cx))
                     .child(date),
             )
-            .child(cell(AUTHOR_WIDTH, commit.author.clone(), muted))
-            .child(cell(HASH_WIDTH, commit.short_sha.clone(), muted).font_family(mono))
+            .child(cell(AUTHOR_WIDTH, commit.author.clone(), muted, cx))
+            .child(cell(HASH_WIDTH, commit.short_sha.clone(), muted, cx).font_family(mono))
             .context_menu(move |menu, _, _| {
                 let (toggle, sha, subject, view) =
                     (menu_toggle.clone(), menu_sha.clone(), menu_subject.clone(), view.clone());
@@ -433,7 +434,7 @@ impl CommitTimeline {
             theme.secondary,
         );
         let merge = commit.parents.len() > 1;
-        let note = |text: String, color: Hsla| div().py(px(3.)).pr(px(COLUMN_GAP)).text_sm().text_color(color).child(text);
+        let note = |text: String, color: Hsla| div().py(px(3.)).pr(px(COLUMN_GAP)).text_role(TextRole::Body, cx).text_color(color).child(text);
         let files = self.files.get(&commit.sha);
         let failed = matches!(files, Some(CommitFiles::Failed(_)));
         let mut block = v_flex()
@@ -501,7 +502,7 @@ impl CommitTimeline {
                     }))
                     .child(div().flex_none().child(name.to_string()))
                     .when(!folder.is_empty(), |row| {
-                        row.child(div().min_w_0().truncate().text_sm().text_color(muted).child(folder.to_string()))
+                        row.child(div().min_w_0().truncate().text_role(TextRole::Body, cx).text_color(muted).child(folder.to_string()))
                     })
                     .child(
                         div()
@@ -509,7 +510,7 @@ impl CommitTimeline {
                             .flex_none()
                             .w(px(12.))
                             .text_center()
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(super::inline::letter_tone(file.letter, cx))
                             .child(file.letter.to_string()),
@@ -544,7 +545,7 @@ impl CommitTimeline {
         v_flex()
             .w_full()
             .children(self.error.clone().map(|error| {
-                div().px(px(COLUMN_GAP)).pt_2().text_sm().text_color(danger).child(error)
+                div().px(px(COLUMN_GAP)).pt_2().text_role(TextRole::Body, cx).text_color(danger).child(error)
             }))
             .child(
                 h_flex()
@@ -552,7 +553,7 @@ impl CommitTimeline {
                     .px(px(COLUMN_GAP))
                     .pt_2()
                     .pb_3()
-                    .child(div().min_w_0().text_sm().text_color(muted).child(sentence))
+                    .child(div().min_w_0().text_role(TextRole::Body, cx).text_color(muted).child(sentence))
                     .child(
                         Button::new("history-more")
                             .ghost()

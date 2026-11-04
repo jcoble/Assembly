@@ -1,5 +1,6 @@
 //! The one section heading in Source control: a muted uppercase name with its count, a chevron when it folds, and the
 //! section's actions at the right edge.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::tag::Tag;
@@ -11,7 +12,7 @@ use std::time::Duration;
 pub fn heading_label(title: &'static str, count: Option<String>, cx: &App) -> Div {
     h_flex()
         .gap_1()
-        .text_sm()
+        .text_role(TextRole::Body, cx)
         .font_weight(FontWeight::MEDIUM)
         .text_color(cx.theme().muted_foreground)
         .child(title.to_uppercase())

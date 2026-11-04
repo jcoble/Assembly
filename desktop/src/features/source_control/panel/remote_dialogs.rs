@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::git_action::GitAction;
 use super::git_target::GitTarget;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -63,7 +64,7 @@ impl Render for RemoteDialog {
         let field = |label: &'static str, input: &Entity<InputState>| {
             v_flex()
                 .gap_1()
-                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(label))
+                .child(div().text_role(TextRole::Body, cx).font_weight(FontWeight::MEDIUM).child(label))
                 .child(Input::new(input).disabled(busy))
         };
         v_flex()

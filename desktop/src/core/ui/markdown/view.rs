@@ -2,6 +2,7 @@
 //! open file intents, lane g0-host) and code blocks in the theme's mono font. It only lays out what the backend
 //! parsed. Replaces chat/Text.svelte, chat/markdown/CodeBlock.svelte and the spike's session/markdown.rs.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::ops::Range;
 
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
@@ -174,11 +175,14 @@ impl Draw<'_> {
             Block::Paragraph { parts } => self.text(parts),
             Block::Heading { level, parts } => div()
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_size(match level {
-                    1 => rems(1.25),
-                    2 => rems(1.1),
-                    _ => rems(1.0),
-                })
+                .text_role(
+                    match level {
+                        1 => TextRole::Display,
+                        2 => TextRole::Heading,
+                        _ => TextRole::Title,
+                    },
+                    self.cx,
+                )
                 .child(self.text(parts))
                 .into_any_element(),
             Block::Code { value, .. } => div()
@@ -186,7 +190,7 @@ impl Draw<'_> {
                 .rounded(theme.radius)
                 .bg(theme.muted)
                 .font_family(theme.mono_font_family.clone())
-                .text_xs()
+                .text_role(TextRole::Meta, self.cx)
                 .overflow_x_hidden()
                 .child(value.strip_suffix('\n').unwrap_or(value).to_string())
                 .into_any_element(),
@@ -244,7 +248,7 @@ impl Draw<'_> {
                     .border_color(border)
                     .rounded(radius)
                     .overflow_hidden()
-                    .text_size(px(12.5));
+                    .text_role(TextRole::Meta, self.cx);
                 // A header row of blank cells is no header, so it draws no header band.
                 let has_header = headers
                     .iter()

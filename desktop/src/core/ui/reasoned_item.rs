@@ -1,4 +1,5 @@
 //! A menu row that can't run stays visible and says why on a second line, because a disabled row shows no tooltip.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
@@ -14,7 +15,7 @@ pub fn reasoned_item(
         Some(reason) => PopupMenuItem::element(move |_, cx| {
             v_flex().child(label.clone()).child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(cx.theme().muted_foreground)
                     .child(reason.clone()),
             )

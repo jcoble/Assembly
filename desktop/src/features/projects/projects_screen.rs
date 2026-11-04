@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::project_dialog::{DialogMode, ProjectDialog};
 use super::sample::{Machine, SampleProject, SampleProjects};
 use gpui_kit::assets::IconName;
@@ -120,7 +121,7 @@ impl ProjectsSampleScreen {
                                     .child(div().truncate().child(project.title.clone()))
                                     .child(
                                         div()
-                                            .text_xs()
+                                            .text_role(TextRole::Meta, cx)
                                             .text_color(cx.theme().muted_foreground)
                                             .truncate()
                                             .child(format!(
@@ -196,7 +197,7 @@ impl ProjectsSampleScreen {
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_role(TextRole::Meta, cx)
                             .text_color(cx.theme().muted_foreground)
                             .truncate()
                             .child(project.root.clone()),
@@ -205,7 +206,7 @@ impl ProjectsSampleScreen {
             .child(
                 div()
                     .w(px(130.))
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(cx.theme().muted_foreground)
                     .child(format!(
                         "{}{}",
@@ -220,7 +221,7 @@ impl ProjectsSampleScreen {
             .child(
                 div()
                     .w(px(100.))
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(cx.theme().muted_foreground)
                     .child(project.last_used),
             )
@@ -382,7 +383,7 @@ impl ProjectsSampleScreen {
             );
             pane = pane.child(
                 div()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(cx.theme().muted_foreground)
                     .child(if connected {
                         "Sample · Connected"
@@ -501,7 +502,7 @@ impl ProjectsSampleScreen {
         let screen = cx.entity().downgrade();
         v_flex().flex_1().items_center().justify_center().gap_4()
             .child(h_flex().gap_2().child(div().font_weight(FontWeight::SEMIBOLD).child("What should we build in")).child(Button::new("choose-project").secondary().label(self.sample.selected_title()).dropdown_caret(true).on_click(cx.listener(|s,_,w,cx|s.choose_project(w,cx)))))
-            .child(v_flex().w_full().max_w(px(800.)).gap_2().child(Textarea::new(&self.draft)).child(h_flex().justify_between().child(div().text_xs().text_color(cx.theme().muted_foreground).child("Codex · This is a sample draft"))
+            .child(v_flex().w_full().max_w(px(800.)).gap_2().child(Textarea::new(&self.draft)).child(h_flex().justify_between().child(div().text_role(TextRole::Meta, cx).text_color(cx.theme().muted_foreground).child("Codex · This is a sample draft"))
                 .child(Button::new("sample-send").primary().label("Preview session").on_click(move |_,_,cx|{_=screen.update(cx,|s,cx|{s.notice="Sample draft retained. No agent or session was started.".into();cx.notify();});}))))
             .child(Button::new("session-new-project").ghost().small().icon(IconName::FolderPlus).label("New project").on_click(cx.listener(|s,_,w,cx|s.open_dialog(DialogMode::Create,w,cx))))
     }
@@ -513,10 +514,10 @@ impl Render for ProjectsSampleScreen {
         } else {
             self.home(cx).into_any_element()
         };
-        v_flex().size_full().min_h_0().p_4().gap_3().text_sm().text_color(cx.theme().foreground)
-            .child(h_flex().justify_between().child(div().text_xs().text_color(cx.theme().muted_foreground).child("Sample data · Changes stay in this preview. No folders, repositories or sessions are created."))
+        v_flex().size_full().min_h_0().p_4().gap_3().text_role(TextRole::Body, cx).text_color(cx.theme().foreground)
+            .child(h_flex().justify_between().child(div().text_role(TextRole::Meta, cx).text_color(cx.theme().muted_foreground).child("Sample data · Changes stay in this preview. No folders, repositories or sessions are created."))
                 .child(Button::new("sample-view-toggle").ghost().small().label(if self.session{"← Projects"}else{"New session"}).on_click(cx.listener(|s,_,_,cx|{s.session = !s.session;cx.notify();}))))
-            .when(!self.notice.is_empty(),|v|v.child(div().text_xs().child(self.notice.clone())))
+            .when(!self.notice.is_empty(),|v|v.child(div().text_role(TextRole::Meta, cx).child(self.notice.clone())))
             .child(body)
     }
 }

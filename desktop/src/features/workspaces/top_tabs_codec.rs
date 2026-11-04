@@ -4,7 +4,7 @@ use gpui_kit::*;
 use gpui_kit::component::dock::{DockArea,DockPlacement,PaneRef,PanelId,NodeId,PanelHandle,Panel,PanelRegistry,PanelBuildContext,InsertTarget};
 use serde_json::Value;
 use crate::core::{state::workspace_panes::{PaneCodec,WorkspaceKey,WorkspacePanes},ui::center_panes::CenterPanes};
-use crate::features::{changes::changes_pane::ChangesPane,source_control::{history_pane::HistoryPane,pull_requests::pr_pane::PrPane},files::file_view::FileView};
+use crate::features::{changes::changes_pane::ChangesPane,source_control::{history_pane::HistoryPane,pull_requests::pr_pane::PrPane}};
 use super::center_tabs::{self,Tabs};
 pub struct TopTabsCodec;
 impl PaneCodec for TopTabsCodec {

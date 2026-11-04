@@ -1,4 +1,5 @@
 //! How the Changes tab looks: the bar, what's being waited on, the stacked diff and the file tree.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{ChangesPane, Target};
 use crate::core::intents::open_file::OpenFile;
 use crate::core::socket::{error_code::ErrorCode, row_source::ExpectedRowSource};
@@ -209,7 +210,7 @@ impl ChangesPane {
             .gap_3()
             .border_b_1()
             .border_color(border)
-            .text_sm()
+            .text_role(TextRole::Body, cx)
             .children(label.map(|label| div().flex_none().child(label)))
             .children(stack.then(|| self.scope_menu(cx)))
             .children(folder.map(|folder| {
@@ -223,7 +224,7 @@ impl ChangesPane {
                 h_flex()
                     .flex_none()
                     .gap_1()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .font_family(mono)
                     .child(div().text_color(added).child(format!("+{}", self.totals.0)))
                     .child(
@@ -399,7 +400,7 @@ impl ChangesPane {
                     .child(
                         div()
                             .px_3()
-                            .text_xs()
+                            .text_role(TextRole::Meta, cx)
                             .text_color(muted)
                             .child(format!("{} · {} · {COMBINED}", view.path, view.patch.label)),
                     )
@@ -431,7 +432,8 @@ impl Render for ChangesPane {
             .min_h_0()
             .child(bar);
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
-        let note = |text: String| div().flex_none().px_3().py_1().text_sm().child(text);
+        let (note_size, note_height) = Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Body));
+        let note = |text: String| div().flex_none().px_3().py_1().text_size(note_size).line_height(note_height).child(text);
         match self.waiting(cx) {
             Some(Waiting::Busy(text)) => {
                 return pane.child(
@@ -439,7 +441,7 @@ impl Render for ChangesPane {
                         .px_3()
                         .py_2()
                         .gap_1()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(muted)
                         .child(Spinner::new().xsmall())
                         .child(text),

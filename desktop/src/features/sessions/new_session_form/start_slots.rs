@@ -1,6 +1,7 @@
 //! A new session's own controls inside the shared composer: which agent runs it and its settings in the box's footer,
 //! and where it works directly under the box. They only present the form's pickers; what a pick does stays in the form.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{NewSessionForm, Rc};
 use crate::features::session::composer::composer_view::StartSlots;
 use crate::features::session::composer::config_pills::{ConfigPills, OnSelect};
@@ -131,7 +132,7 @@ fn place_picker(form: Entity<NewSessionForm>, cx: &App) -> AnyElement {
         return match here {
             Some(machine) => h_flex()
                 .gap(px(6.))
-                .text_size(px(12.))
+                .text_role(TextRole::Meta, cx)
                 .text_color(muted)
                 .child(Icon::new(Glyph::Cloud).size(px(14.)))
                 .child(machine)

@@ -1,5 +1,6 @@
 //! The sessions column uses the kit's outline tabs. Selection and pane drag/drop stay owned by the dock.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::dock::{DragPanel, TabGroupContext};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
@@ -90,7 +91,7 @@ impl Render for Preview {
             .rounded(px(6.))
             .bg(cx.theme().secondary)
             .text_color(cx.theme().foreground)
-            .text_size(px(13.))
+            .text_role(TextRole::Body, cx)
             .child(self.0)
     }
 }

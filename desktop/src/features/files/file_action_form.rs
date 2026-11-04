@@ -1,4 +1,5 @@
 //! Native confirmation/name dialog. One owned socket attempt; confirmed filesystem changes precede tab metadata.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::document_store::{DocumentKey, DocumentStore};
 use super::entry::FileOwnership;
 use super::file_actions::{ActionReply, ActionRun, ActionState, named_target};
@@ -203,7 +204,7 @@ impl Render for FileActionForm {
                 self.run
                     .error
                     .clone()
-                    .map(|error| div().text_sm().text_color(cx.theme().danger).child(error)),
+                    .map(|error| div().text_role(TextRole::Body, cx).text_color(cx.theme().danger).child(error)),
             )
             .child(
                 h_flex()

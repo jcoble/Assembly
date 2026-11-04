@@ -5,11 +5,11 @@
 //! title. It's an `ExpandRow` (pane_expand.rs), so its line opens and shuts it like any row that grows; a settled one
 //! opens to what it asked. Replaces chat/Ask.svelte.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::Value;
 
@@ -146,7 +146,7 @@ impl AskRow {
             return h_flex()
                 .h(px(22.))
                 .gap_2()
-                .text_size(px(13.))
+                .text_role(TextRole::Body, cx)
                 .text_color(theme.muted_foreground)
                 .child(Icon::new(mark).xsmall())
                 .child(div().flex_none().max_w(px(240.)).truncate().child(word))
@@ -163,7 +163,7 @@ impl AskRow {
         h_flex()
             .h(px(28.))
             .gap_2()
-            .text_size(px(13.))
+            .text_role(TextRole::Body, cx)
             .child(Icon::new(mark).size(px(15.)).text_color(theme.warning))
             .child(
                 div()
@@ -175,7 +175,7 @@ impl AskRow {
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(theme.muted_foreground)
                     .child("Needs you"),
             )

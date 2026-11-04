@@ -306,7 +306,7 @@ impl PrDetail {
                 let review = review_entity.clone();
                 h_flex()
                     .gap_2()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .child(div().flex_none().font_weight(FontWeight::SEMIBOLD).child(format!(
                         "{}:{}",
                         line.target.path, line.target.line
@@ -335,7 +335,7 @@ impl PrDetail {
                     )
             }))
             .children(draft_error.map(|error| {
-                div().text_sm().text_color(danger).child(error)
+                div().text_role(TextRole::Body, cx).text_color(danger).child(error)
             }))
             .child(
                 h_flex()
@@ -394,7 +394,7 @@ impl PrDetail {
                 .bg(surface)
                 .child(
                     div()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(format!("Reply to {} on {place}", reply.author)),
                 )

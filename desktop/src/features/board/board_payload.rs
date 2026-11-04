@@ -80,7 +80,7 @@ pub struct BoardPageResult {
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BoardTaskResult {
     #[serde(default)]

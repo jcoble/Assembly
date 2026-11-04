@@ -15,14 +15,14 @@ const TWO_COLUMNS: f32 = 1180.;
 
 pub(super) fn quiet(text: impl Into<SharedString>, cx: &App) -> Div {
     div()
-        .text_sm()
+        .text_role(TextRole::Body, cx)
         .text_color(cx.theme().muted_foreground)
         .child(text.into())
 }
 fn link_notice(id: &'static str, text: &'static str, url: String, cx: &App) -> impl IntoElement {
     h_flex()
         .gap_1()
-        .text_sm()
+        .text_role(TextRole::Body, cx)
         .text_color(cx.theme().muted_foreground)
         .child(text)
         .child(
@@ -219,7 +219,7 @@ impl PrDetail {
                 .gap_2()
                 .min_h(px(38.))
                 .px_3()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .text_color(muted)
                 .children(avatar(who))
                 .child(div().font_weight(FontWeight::SEMIBOLD).child(who.to_string()))
@@ -234,7 +234,7 @@ impl PrDetail {
                 .gap_2()
                 .min_h(px(38.))
                 .px_3()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .text_color(muted)
                 .child("This pull request was closed")
                 .children(age(&at))
@@ -248,7 +248,7 @@ impl PrDetail {
                 .gap_2()
                 .min_h(px(38.))
                 .px_3()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .text_color(muted)
                 .child(Icon::new(IconName::GitCommitHorizontal).size(px(14.)))
                 .child(div().flex_1().min_w_0().truncate().child(headline))
@@ -283,7 +283,7 @@ impl PrDetail {
                     .child(
                         h_flex()
                             .gap_2()
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .text_color(muted)
                             .children(avatar(&comment.author))
                             .child(div().font_weight(FontWeight::SEMIBOLD).child(comment.author.clone()))
@@ -315,7 +315,7 @@ impl PrDetail {
                     .child(
                         h_flex()
                             .gap_2()
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .text_color(muted)
                             .children(avatar(&review.author))
                             .child(div().font_weight(FontWeight::SEMIBOLD).child(review.author.clone()))

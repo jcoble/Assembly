@@ -18,7 +18,7 @@ impl RenderOnce for StartedSessions {
     fn render(self,_:&mut Window,cx:&mut App)->impl IntoElement {
         let children=self.children;
         let theme=cx.theme();
-        let (size,height)=Preferences::read(cx,|appearance|appearance.ui_text(TextRole::Second));
+        let (size,height)=Preferences::read(cx,|appearance|appearance.ui_text(TextRole::Meta));
         let mut column=v_flex().gap_1();
         if children.is_empty() {return column;}
         column=column.child(div().text_color(theme.muted_foreground).text_size(size).line_height(height).child("Started sessions"));

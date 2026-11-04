@@ -505,7 +505,7 @@ async fn closing_board_drops_owned_work(cx: &mut TestAppContext) {
                 .is_some_and(|id| !seen.unsubs.contains(id))
     })
     .await;
-    pane.update(cx, |pane, cx| pane.select("local", "t1", cx));
+    pane.update(cx, |pane, cx| pane.select("local", "t1", "s1", cx));
     until(
         "the card's detail read sent",
         &mut changes,

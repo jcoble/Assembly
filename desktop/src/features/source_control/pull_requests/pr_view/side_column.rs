@@ -130,7 +130,7 @@ impl PrDetail {
             .map(|(index, check)| check_row(index, check, cx))
             .collect();
         v_flex()
-            .text_sm()
+            .text_role(TextRole::Body, cx)
             .child(section("Threads", None, true, false, cx).children(threads))
             .child(section("Comments", None, false, false, cx).child(comments))
             .child(

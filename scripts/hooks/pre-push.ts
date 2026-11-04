@@ -10,17 +10,21 @@ export function updates(input: string): Update[] {
     return { local: fields[1], remote: fields[3], remoteRef: fields[2] };
   });
 }
+export type Git = (args: string[]) => string;
+// The commits this update puts on origin: a commit any origin branch already has isn't outgoing, so a new branch built
+// on another unmerged branch answers only for its own commits. A pull request's commits are still checked by CI.
+export function outgoing(update: Update, git: Git): string[] {
+  if (/^0+$/.test(update.local) || !update.remoteRef.startsWith('refs/heads/')) return [];
+  const replaced = /^0+$/.test(update.remote) ? [] : ['^' + update.remote];
+  return git(['rev-list', '--no-merges', update.local, ...replaced, '--not', '--remotes=origin']).split('\n').filter(Boolean);
+}
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   let input = ''; for await (const chunk of process.stdin) input += chunk;
   try {
     const commits = new Set<string>();
-    const git = (args: string[]) => execFileSync('git', args, { encoding: 'utf8' }).trim();
+    const git: Git = args => execFileSync('git', args, { encoding: 'utf8' }).trim();
     const branch = git(['branch', '--show-current']);
-    for (const update of updates(input)) {
-      if (/^0+$/.test(update.local) || !update.remoteRef.startsWith('refs/heads/')) continue;
-      const base = /^0+$/.test(update.remote) ? git(['merge-base', update.local, 'refs/remotes/origin/main']) : update.remote;
-      for (const commit of git(['rev-list', '--no-merges', base + '..' + update.local]).split('\n').filter(Boolean)) commits.add(commit);
-    }
+    for (const update of updates(input)) for (const commit of outgoing(update, git)) commits.add(commit);
     for (const commit of commits) execFileSync('bash', ['scripts/check-commit-msg.sh', '--commit', commit, branch], { stdio: 'inherit' });
     process.stdout.write('Pre-push: outgoing commit messages, architecture declarations and test integrity passed; no build or test suite was started.\n');
   } catch (error) { process.stderr.write('Pre-push stopped: ' + String(error) + '\n'); process.exitCode = 1; }

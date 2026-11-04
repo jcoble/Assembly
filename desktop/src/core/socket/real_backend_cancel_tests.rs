@@ -43,6 +43,16 @@ pub(crate) fn backend_with_stub() -> Option<(RealBackend, String)> {
     Some((backend, repo.expect("the repo")))
 }
 
+/// What `projects/add` takes for the stub's repo: a session starts in a project, not at a folder.
+pub(crate) fn add_project(repo: &str) -> Value {
+    json!({ "machine": "local", "path": repo })
+}
+
+/// What `sessions/create` takes for one new stub session in the project `projects/add` answered with.
+pub(crate) fn stub_session(added: &Value) -> Value {
+    json!({ "agent": "stub", "clientId": uuid::Uuid::new_v4().to_string(), "projectId": added["project"]["id"] })
+}
+
 fn git_repo(folder: &Path) -> String {
     for args in [
         &["init", "--quiet"][..],
@@ -97,12 +107,9 @@ fn dropping_a_config_change_the_agent_never_answers_cancels_it_on_the_backend() 
     assert_eq!(client.state(), ConnectionState::Connecting);
     assert!(matches!(client.state(), ConnectionState::Connected { .. }));
 
-    let (_, created) = client.call_with(
-        "sessions",
-        "create",
-        json!({ "agent": "stub", "repoUrl": repo }),
-        None,
-    );
+    let (_, added) = client.call_with("projects", "add", add_project(&repo), None);
+    let added = answer(outcome(added));
+    let (_, created) = client.call_with("sessions", "create", stub_session(&added), None);
     let created = answer(outcome(created));
     let session = created["sessionId"].as_str().expect("a session id");
     let rows = updates(client.rows_of(session, None));

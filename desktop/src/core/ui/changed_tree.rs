@@ -1,6 +1,7 @@
 //! The changed-file tree beside a stacked diff, one implementation for Changes and for a pull request. Rows are built
 //! when the files or the filter change, not on each frame, and only the rows in view are drawn. Replaces the tree half
 //! of MultiFileDiff.svelte and diffRows.ts changedFileTree.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::file_icon::file_icon;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::tooltip::Tooltip;
@@ -236,7 +237,7 @@ fn tree_row(
         .gap_1()
         .pl(px(8. + row.depth as f32 * 12.))
         .pr_2()
-        .text_sm()
+        .text_role(TextRole::Body, cx)
         .cursor_pointer();
     if let Some(folder) = row.folder.clone() {
         let toggle = on_fold.clone();
@@ -270,7 +271,7 @@ fn tree_row(
             line.child(
                 div()
                     .flex_none()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(muted)
                     .child(format!("+{additions} -{deletions}")),
             )

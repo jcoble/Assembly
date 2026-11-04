@@ -4,6 +4,7 @@
 //! draws no tab row over a lone pane, so this button stands in for the one that row had. It follows the `sessions`
 //! topic keyed on the open session. Replaces SessionHeader.svelte.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::dock::DockPlacement;
 use gpui_kit::component::tooltip::Tooltip;
@@ -115,7 +116,7 @@ impl Render for Header {
             .px(px(14.))
             .border_b_1()
             .border_color(border)
-            .text_size(px(13.5))
+            .text_role(TextRole::Body, cx)
             .child(sessions);
         let Some(item) = &self.item else {
             return div().child(row);
@@ -144,7 +145,7 @@ impl Render for Header {
                     h_flex()
                         .flex_none()
                         .gap_1()
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(muted)
                         .child(item.place())
                         .when_some(parent, |line, parent| {

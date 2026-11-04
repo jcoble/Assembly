@@ -8,6 +8,7 @@
 //! the backend; the tab leaving the dock closes the shell (g0-host#9). What's typed goes out one write at a time,
 //! what's typed meanwhile in the next, in order (terminal#2). The backend routes remote sessions to their machine (terminal#12).
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::mem;
 use std::time::Duration;
 
@@ -469,7 +470,7 @@ impl Render for TerminalPane {
             .on_mouse_up(MouseButton::Right, cx.listener(Self::mouse_up))
             .on_scroll(cx.listener(Self::wheel))
             .size_full()
-            .text_size(px(13.));
+            .text_role(TextRole::Body, cx);
         let note = |text: SharedString| div().p_2().text_color(muted).child(text);
         match &self.shown {
             Shown::Nothing => pane.child(note("Pick a session to open its terminal.".into())),

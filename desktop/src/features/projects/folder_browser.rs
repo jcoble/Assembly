@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
@@ -126,7 +127,7 @@ impl Render for FolderBrowser {
                                 }
                             })),
                     )
-                    .child(div().flex_1().overflow_hidden().text_sm().child(path))
+                    .child(div().flex_1().overflow_hidden().text_role(TextRole::Body, cx).child(path))
                     .child(
                         Button::new("folder-choose")
                             .primary()
@@ -177,7 +178,7 @@ impl Render for FolderBrowser {
                     .as_ref()
                     .filter(|listing| listing.truncated)
                     .map(|_| {
-                        div().text_sm().child(
+                        div().text_role(TextRole::Body, cx).child(
                             "More folders are not listed. Type a path to open another folder.",
                         )
                     }),
@@ -185,7 +186,7 @@ impl Render for FolderBrowser {
             .children(
                 self.error
                     .clone()
-                    .map(|error| div().text_sm().text_color(danger).child(error)),
+                    .map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)),
             )
     }
 }

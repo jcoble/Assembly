@@ -2,11 +2,12 @@
 //! removes it, its name and size. A click on the thumbnail opens it full size. While it uploads a spinner sits on the
 //! thumbnail; one whose upload failed is red and says why on hover.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName as Glyph;
-use gpui_kit::component::spinner::Spinner;
+use crate::core::ui::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -136,7 +137,7 @@ impl RenderOnce for AttachmentCard {
                     .child(
                         div()
                             .truncate()
-                            .text_size(px(13.))
+                            .text_role(TextRole::Meta, cx)
                             .text_color(if self.failed.is_some() {
                                 theme.danger
                             } else {
@@ -147,7 +148,7 @@ impl RenderOnce for AttachmentCard {
                     .when(self.size > 0, |caption| {
                         caption.child(
                             div()
-                                .text_size(px(12.))
+                                .text_role(TextRole::Meta, cx)
                                 .text_color(theme.muted_foreground)
                                 .child(Attachment::size_text(self.size)),
                         )

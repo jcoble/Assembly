@@ -2,12 +2,13 @@
 //! runs, then its kind's 14 px icon, faint, or a check or a cross once done, a still dot for one left unfinished), its
 //! title and summary (in the code face), the chevron after them for a step that opens, faint, and at the right its line
 //! counts and how long it ran. A failed step reads in the danger colour.
-//! The running step's title shimmers. A tool call's line is one, in the timeline and in a running turn's activity
+//! The running step's title shimmers once as it starts. A tool call's line is one, in the timeline and in a running turn's activity
 //! card; a workflow run's steps can be drawn with it too. Section 11's StepRow.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::shimmer::ShimmerText;
-use gpui_kit::component::spinner::Spinner;
+use crate::core::ui::spinner::Spinner;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -61,8 +62,10 @@ impl RenderOnce for StepRow {
             StepState::Unfinished => mark(Glyph::Dot, muted),
         };
         let title = if self.state == StepState::Running {
+            // Once, when it starts: the kit's shimmer moves on every display frame, and a step can run for hours.
             ShimmerText::new(self.title)
                 .id(SharedString::from(format!("{}:shimmer", self.id)))
+                .once(true)
                 .into_any_element()
         } else {
             div().child(self.title).into_any_element()
@@ -71,7 +74,7 @@ impl RenderOnce for StepRow {
             .id(self.id)
             .h(px(22.))
             .gap_2()
-            .text_size(px(13.))
+            .text_role(TextRole::Body, cx)
             .text_color(if failed { theme.danger } else { muted })
             .child(sign)
             .child(div().flex_none().child(title))
@@ -80,7 +83,7 @@ impl RenderOnce for StepRow {
                     .min_w_0()
                     .truncate()
                     .font_family(theme.mono_font_family.clone())
-                    .text_size(px(12.))
+                    .text_role(TextRole::Meta, cx)
                     .child(self.summary.unwrap_or_default()),
             )
             .children(
@@ -92,11 +95,11 @@ impl RenderOnce for StepRow {
                 h_flex()
                     .flex_none()
                     .gap_2()
-                    .text_size(px(12.))
+                    .text_role(TextRole::Meta, cx)
                     .children(self.tags),
             )
             .when_some(self.took_ms, |line, ms| {
-                line.child(div().flex_none().text_xs().child(worked_for(ms)))
+                line.child(div().flex_none().text_role(TextRole::Meta, cx).child(worked_for(ms)))
             })
     }
 }

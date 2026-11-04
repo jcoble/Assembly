@@ -2,13 +2,13 @@
 //! ask, a task, a subagent, a note, the line under a turn, an error notice, or a kind it doesn't know by name.
 //! Replaces TimelineItem.svelte and the spike's item_view.rs.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::core::state::preferences::Preferences;
-use crate::core::theme::text::TextRole;
 
 use super::grow::chevron;
 use super::message_meta::MessageMeta;
@@ -83,7 +83,7 @@ impl RenderOnce for ItemRow {
                     .items_end()
                     .gap_1()
                     .when_some(self.checkout.clone(), |column, checkout| {
-                        column.child(div().w_full().text_xs().text_color(muted).child(checkout))
+                        column.child(div().w_full().text_role(TextRole::Meta, cx).text_color(muted).child(checkout))
                     })
                     .child(SentMessage {
                         key: key.clone(),
@@ -118,7 +118,7 @@ impl RenderOnce for ItemRow {
                 match Notice::of_error(&message, code.as_deref()) {
                     Some(notice) => v_flex()
                         .gap_1()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .child(
                             div()
                                 .font_weight(FontWeight::MEDIUM)
@@ -146,18 +146,18 @@ impl RenderOnce for ItemRow {
             }
             .into_any_element(),
             ItemKind::Note { text } => div()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .italic()
                 .text_color(muted)
                 .child(text)
                 .into_any_element(),
             ItemKind::Stats { stats } => v_flex()
-                .text_xs()
+                .text_role(TextRole::Meta, cx)
                 .text_color(muted)
                 .child(turn_line(Some(&stats), None, self.now))
                 .into_any_element(),
             ItemKind::Other { kind } => div()
-                .text_xs()
+                .text_role(TextRole::Meta, cx)
                 .text_color(muted)
                 .child(format!("[{kind}]"))
                 .into_any_element(),
@@ -183,7 +183,7 @@ pub fn thinking_title(done: bool, grown: f32, cx: &App) -> AnyElement {
     h_flex()
         .h(px(22.))
         .gap_2()
-        .text_size(px(13.))
+        .text_role(TextRole::Body, cx)
         .text_color(muted)
         .child(Icon::new(Glyph::Lightbulb).size(px(14.)).text_color(faint))
         .child(if done { "Thought" } else { "Thinking" })
@@ -199,7 +199,7 @@ pub fn thinking_body(text: SharedString, cx: &App) -> AnyElement {
         .pl(px(15.))
         .border_l_1()
         .border_color(theme.border)
-        .text_sm()
+        .text_role(TextRole::Body, cx)
         .text_color(theme.muted_foreground)
         .child(text)
         .into_any_element()

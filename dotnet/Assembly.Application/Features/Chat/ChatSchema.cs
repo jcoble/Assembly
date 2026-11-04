@@ -301,13 +301,16 @@ internal static class Schema
              WHERE p.kind = 'session' AND w.session_id = p.facade_id AND {SummaryKinds} AND w.kind = 'task'
                AND json_extract(w.payload, '$.state') IN ('running', 'requires_action')
                AND NOT EXISTS (SELECT 1 FROM rows l INDEXED BY rows_summary WHERE l.session_id = w.session_id AND {SummaryKinds}
-                               AND l.kind = w.kind AND l.item_id = w.item_id AND l.seq > w.seq)) AS busy
+                               AND l.kind = w.kind AND l.item_id = w.item_id AND l.seq > w.seq)) AS busy,
+            EXISTS (SELECT 1 FROM rows n INDEXED BY rows_summary
+             WHERE p.kind = 'session' AND n.session_id = p.facade_id AND {SummaryKinds} AND n.kind = 'subagent'
+               AND n.item_id IS NOT NULL) AS native_activity
           FROM page p)
         SELECT 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, needs, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM totals
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM totals
         UNION ALL
         SELECT 1, ROW_NUMBER() OVER (ORDER BY agent), NULL, NULL, NULL, agent, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
         FROM (SELECT DISTINCT agent FROM rail_roster)
         UNION ALL
         SELECT 2, p.n, p.session_id, p.kind, p.section, p.agent, p.repo_url, p.group_label, p.count, p.machines, CAST(p.title AS BLOB),
@@ -326,7 +329,7 @@ internal static class Schema
           (SELECT substr(trim(replace(replace(replace(replace(replace(replace(
              json_extract(err.payload,'$.message'),char(9),' '),char(10),' '),char(13),' '),char(133),' '),char(8232),' '),char(8233),' ')),1,200)
            FROM rows err WHERE p.kind='session' AND err.session_id=p.facade_id AND err.kind='error' ORDER BY err.seq DESC LIMIT 1),
-          NULL, NULL, CASE WHEN e.parent_id IS NULL THEN 0 ELSE 1 END
+          NULL, NULL, CASE WHEN e.parent_id IS NULL THEN 0 ELSE 1 END, p.native_activity
         FROM family p
         LEFT JOIN rail_roster s ON p.kind='session' AND s.session_id=p.session_id AND s.source_machine IS p.source_machine
           AND s.source_generation IS p.source_generation AND s.source_route IS p.source_route
