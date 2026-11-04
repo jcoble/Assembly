@@ -51,7 +51,7 @@ public sealed partial class AdapterEffectsTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Actual_registered_legacy_http_send_waits_for_insertion_and_keeps_response_shape(bool legacyFrame)
+    public async Task Retired_desktop_http_send_never_inserts_or_launches_a_provider(bool legacyFrame)
     {
         await using var f = new AdapterDeliveryFixture(); var attachments = new AttachmentStore(Path.GetTempPath());
         var local = new LocalMachine(f.Hub, f.Sessions, f.Hosts, attachments);
@@ -60,17 +60,12 @@ public sealed partial class AdapterEffectsTests
         http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "isolated-token");
         var text = legacyFrame ? Assembly.Application.Features.Chat.Helpers.MessageFrame.Of("old-message", f.Session, "HTTP body") : "HTTP body";
         var body = JsonSerializer.Serialize(new { text, clientId = "http-client" });
-        var sending = http.PostAsync($"/sessions/{f.Session.SessionId}/send", new StringContent(body, Encoding.UTF8, "application/json"));
-        var agent = await f.Launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt"); Assert.False(sending.IsCompleted);
-        var pending = Assert.Single(f.Rows.RowsAfter(f.Session.SessionId, 0), row => row.Kind == "user");
-        Assert.Equal(text, prompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
-        Assert.Equal(legacyFrame ? f.Session.SessionId : null, pending.Payload.TryGetProperty("from", out var from) ? from.GetString() : null);
-        Assert.False(pending.Payload.TryGetProperty("senderLabel", out _));
-        await agent.InsertAsync(prompt, "http-provider"); using var response = await sending.WaitAsync(DeliveryWait); response.EnsureSuccessStatusCode();
-        using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync()); Assert.Equal(pending.RunId, result.RootElement.GetProperty("runId").GetString());
-        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}"""); await agent.CloseAsync();
+        using var response = await http.PostAsync($"/sessions/{f.Session.SessionId}/send", new StringContent(body, Encoding.UTF8, "application/json"));
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
         using var duplicate = await http.PostAsync($"/sessions/{f.Session.SessionId}/send", new StringContent(body, Encoding.UTF8, "application/json"));
-        duplicate.EnsureSuccessStatusCode(); Assert.Single(f.Rows.RowsAfter(f.Session.SessionId, 0), row => row.Kind == "user"); Assert.Equal(1, f.Launcher.Launches);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, duplicate.StatusCode);
+        Assert.Empty(f.Rows.RowsAfter(f.Session.SessionId, 0));
+        Assert.Equal(0, f.Launcher.Launches);
         await app.StopAsync();
     }
 

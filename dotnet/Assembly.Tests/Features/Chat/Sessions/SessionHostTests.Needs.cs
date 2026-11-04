@@ -46,7 +46,7 @@ public sealed partial class SessionHostTests
         string kind, string? title, string? message)
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work,
             feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(_session.SessionId); host.Send("question");
@@ -93,7 +93,7 @@ public sealed partial class SessionHostTests
     public async Task Actual_large_form_answer_settles_chat_and_need_without_the_ordinary_journal_cap()
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work,
             feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(_session.SessionId); host.Send("form");

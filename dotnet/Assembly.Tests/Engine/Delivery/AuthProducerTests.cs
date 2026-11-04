@@ -151,6 +151,7 @@ public sealed class AuthProducerTests
     {
         await using var f = new AdapterDeliveryFixture(configured: (provider, account) => provider == "claude" && account == "");
         var child = f.Sessions.Helper(f.Session, "claude", "Compatibility helper");
+        await f.StartAsync(child.SessionId);
         var host = f.Hosts.For(child.SessionId);
         var sending = host.SendAsync("compatibility body", "compatibility-client", null, default);
         var agent = await f.Launcher.NextAsync();

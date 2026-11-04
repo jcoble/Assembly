@@ -72,7 +72,7 @@ public sealed class ProviderAdapterTests : IAsyncDisposable
     public async Task A_probe_preserves_an_active_prompt_and_only_closes_its_own_temporary_session()
     {
         var providers = Providers;
-        var session = _sessions.Create("claude", "https://example.invalid/repo");
+        var session = _sessions.CreateReady("claude", "https://example.invalid/repo");
         var host = _registry.For(session.SessionId);
         var run = host.Send("continue the original work");
         var link = await _launcher.NextAsync();

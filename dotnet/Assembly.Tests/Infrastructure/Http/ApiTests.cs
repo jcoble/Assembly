@@ -370,7 +370,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.InsertAsync(prompt, "tool-inserted");
-        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","title":"Terminal","kind":"execute","status":"pending","rawInput":{"command":"ls"}}""");
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","title":"Terminal","kind":"execute","status":"pending","rawInput":{"command":"ls"},"_meta":{"claudeCode":{"toolName":"Bash"}}}""");
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","rawOutput":"a.txt"}""");
         await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", prompt.GetProperty("params").GetProperty("sessionId").GetString()!);
         using var socket = await OpenRowsAsync(_base, Token, sessionId, after: 0);
@@ -379,7 +379,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         Assert.Equal("ls", detail.GetProperty("summary").GetString());
         Assert.Equal("""{"command":"ls"}""", detail.GetProperty("input").GetString());
         Assert.Equal("a.txt", detail.GetProperty("output").GetString());
-        Assert.Equal(JsonValueKind.Null, detail.GetProperty("diff").ValueKind);
+        Assert.False(detail.TryGetProperty("diff", out _));
         Assert.Equal("failed", (await RequestAsync("rows", "tool", JsonSerializer.Serialize(new { session = sessionId, item = "nope" }), bulk: true)).GetProperty("code").GetString());
     }
 
@@ -437,7 +437,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         Result(await RequestAsync(feature, method, args, bulk));
     internal static JsonElement Result(JsonElement frame)
     {
-        Assert.Equal("result", frame.GetProperty("t").GetString());
+        Assert.True(frame.GetProperty("t").GetString() == "result", frame.GetRawText());
         return frame.GetProperty("result").Clone();
     }
     private async Task<JsonElement> TopicAsync(string topic, string? key = null)

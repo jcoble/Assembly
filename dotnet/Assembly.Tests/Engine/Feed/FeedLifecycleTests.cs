@@ -17,13 +17,13 @@ public sealed class FeedLifecycleTests
     {
         var topics = new global::Assembly.Infrastructure.Topics.Topics();
         using var f = new EngineFixture(topics: topics);
-        var store = SessionStore.Open(f.Db, f.Time, "checkouts");
-        var session = store.Create("claude", "https://github.com/o/r");
+        var store = SessionStore.Open(f.Db, f.Time, f.Folder);
+        var session = store.CreateReady("claude", "https://github.com/o/r");
         var launcher = new FakeLauncher(); var log = new StringWriter();
         using var hub = new LiveHub(RowStore.Open(f.Db));
         await using var work = new BackgroundWork(f.Time, log);
         await using var adapter = new SharedAdapter(launcher, "claude", f.Time, log);
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits, cutover: new(f.Db, store, launcher, "checkouts", f.Time));
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits, cutover: new(f.Db, store, launcher, f.Folder, f.Time));
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var subscription = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
         var host = new SessionHost(session.SessionId, hub, store, new(store, launcher, _ => adapter), f.Time, log, work,
@@ -66,19 +66,28 @@ public sealed class FeedLifecycleTests
     {
         var topics = new global::Assembly.Infrastructure.Topics.Topics();
         using var f = new EngineFixture(topics: topics);
-        var store = SessionStore.Open(f.Db, f.Time, "checkouts");
-        var session = store.Create("claude", "https://github.com/o/r");
+        var store = SessionStore.Open(f.Db, f.Time, f.Folder);
+        var session = store.CreateReady("claude", "https://github.com/o/r");
         var launcher = new FakeLauncher(); var log = new StringWriter();
         using var hub = new LiveHub(RowStore.Open(f.Db));
         await using var work = new BackgroundWork(f.Time, log);
         await using var adapter = new SharedAdapter(launcher, "claude", f.Time, log);
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits, cutover: new(f.Db, store, launcher, "checkouts", f.Time));
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits, cutover: new(f.Db, store, launcher, f.Folder, f.Time));
         f.Db.Writer.Write("test.initial", s => s.Execute("UPDATE engine_session SET state=$state", new Assembly.Application.Common.Database.SqlArg("$state", initial)));
         var host = new SessionHost(session.SessionId, hub, store, new(store, launcher, _ => adapter), f.Time, log, work,
             feed: new EngineFeed(runtime, log, f.Time));
         try
         {
-            host.Send("hi"); var agent = await launcher.NextAsync(); await agent.StartAsync(canSteer: true);
+            host.Send("hi");
+            if (initial == "starting")
+            {
+                await host.CurrentTurn.Done;
+                Assert.Equal("starting", f.State("engine_session", session.SessionId));
+                Assert.Equal(0, launcher.Launches);
+                Assert.Contains("checkout and session start are not ready", f.Text("SELECT payload FROM rows WHERE kind='error'"));
+                return;
+            }
+            var agent = await launcher.NextAsync(); await agent.StartAsync(canSteer: true);
             var prompt = await agent.ReadAsync("session/prompt");
             Assert.Equal(expected, f.State("engine_session", session.SessionId));
             Assert.Equal(1, f.Number("SELECT can_steer FROM engine_session"));

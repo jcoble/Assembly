@@ -113,9 +113,8 @@ public sealed partial class RemoteMachineTests
         if (remote) parent = await CreateSessionAsync();
         else
         {
-            using var http = Client(_desktop!, DesktopToken);
-            var created = await http.PostAsync("/sessions", Json("""{"agent":"claude","repoUrl":"https://github.com/o/r"}"""));
-            parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("sessionId").GetString()!;
+            parent = (await FeatureResultAsync(_desktop!, DesktopToken, "sessions", "create",
+                new { agent = "claude", clientId = Guid.NewGuid().ToString("N") })).GetProperty("sessionId").GetString()!;
         }
         Assert.NotEqual("native-parent", parent);
         await SendAsync(parent);

@@ -20,16 +20,23 @@ internal sealed class EngineFixture : IDisposable
     public FakeTimeProvider Time { get; } = new(DateTimeOffset.FromUnixTimeMilliseconds(1000));
     public string Machine { get; private set; }
     public string DatabasePath => _file.Path;
+    public string Folder => _file.Folder;
     public SessionLimits Limits { get; }
     private readonly Func<int>? _messageLimit;
 
-    public EngineFixture(SessionLimits? limits = null, ITopics? topics = null, Func<int>? messageLimit = null)
+    public EngineFixture(SessionLimits? limits = null, ITopics? topics = null, Func<int>? messageLimit = null,
+        Action<IWriteScope>? predecessor = null)
     {
         _topics = topics ?? new global::Assembly.Infrastructure.Topics.Topics();
         Limits = limits ?? new(() => 1, () => 5);
         _messageLimit = messageLimit;
         Db = OpenDatabase();
-        Machine = EngineSchema.Open(Db, Time.GetUtcNow().ToUnixTimeMilliseconds());
+        Machine = predecessor is null ? EngineSchema.Open(Db, Time.GetUtcNow().ToUnixTimeMilliseconds())
+            : Db.Writer.Write("test.predecessor", scope =>
+            {
+                predecessor(scope);
+                return scope.QueryFirst("SELECT machine_id FROM engine_meta", row => row.Text(0))!;
+            });
     }
 
     private AppDatabase OpenDatabase()

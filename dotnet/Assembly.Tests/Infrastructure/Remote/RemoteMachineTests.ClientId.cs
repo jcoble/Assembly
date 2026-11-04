@@ -14,7 +14,7 @@ public sealed partial class RemoteMachineTests
     public async Task A_send_retried_after_a_restart_replays_its_committed_ack_and_starts_no_turn()
     {
         var created = await FeatureResultAsync(_desktop!, DesktopToken, "sessions", "create",
-            new { agent = "claude", repoUrl = "https://github.com/o/r" });
+            new { agent = "claude", clientId = Guid.NewGuid().ToString("N") });
         var sessionId = created.GetProperty("sessionId").GetString()!;
         using var rows = await OpenLiveAsync(_desktop!, DesktopToken, sessionId, 0);
         JsonElement accepted;

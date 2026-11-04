@@ -108,8 +108,7 @@ public sealed partial class AdapterEffectsTests
         var first = f.Claim("auth-source"); var sending = f.Effects.ExecuteAsync(first, default); var agent = await f.Launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt");
         await agent.ReplyErrorAsync(prompt, -32000, "sign in"); var refused = await sending.WaitAsync(DeliveryWait); Assert.True(f.Complete(first, refused).Applied); var reference = Message(refused).UserRow;
         await agent.CloseAsync(); await f.RestartAsync(); f.Sessions.SetTitle(source.SessionId, "Changed current title", "manual");
-        Assert.True(f.Apply(new SetSessionState("lost", null, "test"), f.Session.SessionId, f.Number("SELECT version FROM engine_session WHERE id=$id", f.Session.SessionId)).Applied);
-        Assert.True(f.Apply(new SetSessionState("idle", null, null), f.Session.SessionId, f.Number("SELECT version FROM engine_session WHERE id=$id", f.Session.SessionId)).Applied);
+        AuthRetryStartTests.SignIn(f);
         var retry = f.Claim("auth-source"); var resending = f.Effects.ExecuteAsync(retry, default); var next = await f.Launcher.NextAsync(); await next.StartAsync(); var actual = await next.ReadAsync("session/prompt");
         await next.InsertAsync(actual, "one-successful-source"); var receipt = await resending.WaitAsync(DeliveryWait); Assert.Equal(reference, Message(receipt).UserRow); Assert.True(f.Complete(retry, receipt).Applied);
         using (var scope = f.Db.OpenSnapshot(default)) { var row = f.Rows.UserDeliveryOfClient(scope, f.Session.SessionId, "auth-source")!; Assert.Equal(source.SessionId, row.From); Assert.Equal(MessageText.Label("Original title", source.SessionId, "session"), row.SenderLabel); }

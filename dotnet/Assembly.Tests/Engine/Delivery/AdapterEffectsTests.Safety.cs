@@ -82,8 +82,7 @@ public sealed partial class AdapterEffectsTests
         var refused = await sending.WaitAsync(DeliveryWait); var original = Message(refused).UserRow!; Assert.True(f.Complete(effect, refused).Applied); await agent.CloseAsync();
         if (!ambiguous) f.Db.Writer.Write("test.prune", s => s.Execute("DELETE FROM rows WHERE session_id=$id AND seq=$seq", new SqlArg("$id", f.Session.SessionId), new("$seq", original.Seq)));
         f.Rows.Commit(f.Session.SessionId, new RowConverter().Apply(new TurnStarted(2000, original.RunId, "exact body", "C")));
-        Assert.True(f.Apply(new SetSessionState("lost", null, "test"), f.Session.SessionId, f.Number("SELECT version FROM engine_session WHERE id=$id", f.Session.SessionId)).Applied);
-        Assert.True(f.Apply(new SetSessionState("idle", null, null), f.Session.SessionId, f.Number("SELECT version FROM engine_session WHERE id=$id", f.Session.SessionId)).Applied);
+        AuthRetryStartTests.SignIn(f);
         var retry = f.Claim(id);
         Assert.Equal(EffectDisposition.Unknown, (await f.Effects.ExecuteAsync(retry, default)).Disposition);
         Assert.Equal(1, f.Launcher.Launches);

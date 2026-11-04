@@ -19,7 +19,7 @@ public sealed partial class RemoteMachineTests
     public async Task A_remote_helper_that_finished_while_the_desktop_was_stopped_shows_idle_after_a_restart()
     {
         var parent = (await RestartCallAsync(_desktop!, DesktopToken, "sessions", "create",
-            new { agent = "claude", repoUrl = "https://github.com/o/r" })).GetProperty("sessionId").GetString()!;
+            new { agent = "claude", clientId = Guid.NewGuid().ToString("N") })).GetProperty("sessionId").GetString()!;
         await RestartSendAsync(_desktop!, DesktopToken, parent, "hi", "restart-parent");
         var desktop = await _desktopLauncher.NextAsync();
         var parentToken = SessionToken(await desktop.StartAsync(acpSessionId: "acp-parent"));
@@ -143,7 +143,7 @@ public sealed partial class RemoteMachineTests
     private async Task<(string Parent, string HelperId, FakeLink Box)> RemoteHelperIdleAsync()
     {
         var parent = (await RestartCallAsync(_desktop!, DesktopToken, "sessions", "create",
-            new { agent = "claude", repoUrl = "https://github.com/o/r" })).GetProperty("sessionId").GetString()!;
+            new { agent = "claude", clientId = Guid.NewGuid().ToString("N") })).GetProperty("sessionId").GetString()!;
         await RestartSendAsync(_desktop!, DesktopToken, parent, "hi", "restart-parent");
         var desktop = await _desktopLauncher.NextAsync();
         var parentToken = SessionToken(await desktop.StartAsync(acpSessionId: "acp-parent"));

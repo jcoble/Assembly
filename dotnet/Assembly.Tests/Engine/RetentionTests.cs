@@ -77,7 +77,7 @@ public sealed class RetentionTests
             VALUES('need',0,$machine,0,0,'s','question','Decision','[]','answered','{"answer":"yes"}');
             INSERT INTO engine_pr(id,version,machine,created_ms,updated_ms,run_id,repo,state,url)
             VALUES('pr',0,$machine,0,0,'r','repo','merged','https://example.com/pr/1');
-            INSERT INTO engine_step_attempt VALUES('step',1,'succeeded',0,1,'{}','done',0);
+            INSERT INTO engine_step_attempt(step_id,attempt,state,started_ms,ended_ms,proof_json,reason,late) VALUES('step',1,'succeeded',0,1,'{}','done',0);
             INSERT INTO engine_step_fact VALUES('fact','step',1,'outcome',1,'{}',0);
             INSERT INTO engine_command_receipt VALUES('receipt','hash','{}');
             INSERT INTO engine_outbox(id,version,machine,created_ms,updated_ms,event_seq,kind,payload_json,state,attempt,receipt_json)

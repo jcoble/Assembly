@@ -281,7 +281,7 @@ public sealed partial class SessionHostTests
     [Fact]
     public async Task Sessions_share_one_adapter_initialized_once_and_each_gets_its_own_updates()
     {
-        var other = _sessionStore.Create("claude", "https://github.com/o/r");
+        var other = _sessionStore.CreateReady("claude", "https://github.com/o/r");
         var otherHost = new SessionHost(other.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
         using var otherLive = _hub.Subscribe(other.SessionId, after: 0);
 
@@ -309,7 +309,7 @@ public sealed partial class SessionHostTests
     [Fact]
     public async Task When_the_shared_adapter_dies_every_turn_on_it_ends_as_lost()
     {
-        var other = _sessionStore.Create("claude", "https://github.com/o/r");
+        var other = _sessionStore.CreateReady("claude", "https://github.com/o/r");
         var otherHost = new SessionHost(other.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
         using var otherLive = _hub.Subscribe(other.SessionId, after: 0);
         _host.Send("one");

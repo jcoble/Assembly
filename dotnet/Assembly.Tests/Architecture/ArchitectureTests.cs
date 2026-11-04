@@ -276,9 +276,9 @@ public sealed partial class ArchitectureTests
 
     private static string Relative(string path) => Path.GetRelativePath(Root, path);
 
-    private static string FindRoot(string? start = null)
+    private static string FindRoot(string? start = null, [System.Runtime.CompilerServices.CallerFilePath] string source = "")
     {
-        for (var folder = new DirectoryInfo(start ?? AppContext.BaseDirectory); folder is not null; folder = folder.Parent)
+        for (var folder = new DirectoryInfo(start ?? Path.GetDirectoryName(source)!); folder is not null; folder = folder.Parent)
             if (File.Exists(Path.Combine(folder.FullName, "dotnet", "Assembly.slnx"))
                 && Directory.Exists(Path.Combine(folder.FullName, "desktop", "src")))
                 return folder.FullName;
