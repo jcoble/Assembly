@@ -10,6 +10,7 @@ use crate::core::socket::{
 };
 use crate::core::state::{selected_session::SelectedSession, sessions::Sessions};
 use crate::features::source_control::branch_menu::BranchPicked;
+use crate::features::source_control::result_line::PaneResult;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::{TestAppContext, VisualTestContext};
 use gpui_kit::component::dock::BasePanel as _;
@@ -77,6 +78,14 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
             }
             (Some("call"), Some("command")) => {
                 seen.commands.push(frame["args"].clone());
+                let folder = frame["args"]["command"]["folder"].as_str();
+                let moved = folder == Some("/always-moving")
+                    || folder == Some("/moved-once") && seen.commands.len() == 1;
+                if moved {
+                    return vec![result(
+                        json!({"applied":false,"late":false,"error":"version_conflict","version":5,"seq":0,"epoch":1}),
+                    )];
+                }
                 let mut replies = vec![result(
                     json!({"applied":true,"late":false,"error":null,"version":2,"seq":2,"epoch":1}),
                 )];
@@ -262,5 +271,52 @@ async fn a_held_branch_submits_the_shared_checkout_and_retains_session_identity(
                 .as_deref(),
             Some("s1")
         );
+    });
+}
+#[gpui::test]
+async fn a_row_that_moved_on_the_way_is_asked_once_more_at_its_new_version(
+    cx: &mut TestAppContext,
+) {
+    let mut open = open(cx).await;
+    let pane = open.pane.clone();
+    pane.update_in(open.cx, |pane, window, cx| {
+        pane.branch_picked(BranchPicked::MoveToFolder("/moved-once".into()), window, cx)
+    });
+    let seen = open.seen.clone();
+    open.until("the checkout landed", |pane, cx| {
+        cx.update(|_, cx| pane.read(cx).checkout.is_none())
+    })
+    .await;
+    let commands = seen.lock().unwrap().commands.clone();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0]["expectedVersion"], 1);
+    assert_eq!(commands[1]["expectedVersion"], 5);
+    assert_ne!(commands[0]["commandId"], commands[1]["commandId"]);
+    assert_eq!(commands[0]["command"], commands[1]["command"]);
+    open.cx.update(|_, cx| {
+        assert!(!matches!(pane.read(cx).result, Some(PaneResult::Failed(_))));
+    });
+}
+#[gpui::test]
+async fn a_row_still_moving_after_that_says_so_in_words(cx: &mut TestAppContext) {
+    let mut open = open(cx).await;
+    let pane = open.pane.clone();
+    pane.update_in(open.cx, |pane, window, cx| {
+        pane.branch_picked(
+            BranchPicked::MoveToFolder("/always-moving".into()),
+            window,
+            cx,
+        )
+    });
+    open.until("the refusal", |pane, cx| {
+        cx.update(|_, cx| pane.read(cx).checkout.is_none())
+    })
+    .await;
+    assert_eq!(open.seen.lock().unwrap().commands.len(), 2);
+    open.cx.update(|_, cx| match &pane.read(cx).result {
+        Some(PaneResult::Failed(failure)) => {
+            assert_eq!(failure.sentence, "The session just changed. Try again.")
+        }
+        _ => panic!("the refusal is shown"),
     });
 }
