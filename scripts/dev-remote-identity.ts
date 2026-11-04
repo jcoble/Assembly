@@ -17,8 +17,10 @@ export async function backendIdentity(root: string, commit: string, signal?: Abo
   return createHash('sha256').update('assembly-dev-remote-v1:ACP2\n' + inputs.join('\n')).digest('hex');
 }
 export async function requireCleanBackend(root: string, signal?: AbortSignal) {
-  const paths = await command('git', ['diff', '--name-only', 'HEAD'], { cwd: root, signal });
-  const untracked = await command('git', ['ls-files', '--others', '--exclude-standard'], { cwd: root, signal });
+  const [paths, untracked] = await Promise.all([
+    command('git', ['diff', '--name-only', 'HEAD'], { cwd: root, signal }),
+    command('git', ['ls-files', '--others', '--exclude-standard'], { cwd: root, signal }),
+  ]);
   if ([...paths.split('\n'), ...untracked.split('\n')].some(backendInput))
     throw new Error('uncommitted backend changes: Workbox Test stays behind this checkout; commit them before launching again');
 }

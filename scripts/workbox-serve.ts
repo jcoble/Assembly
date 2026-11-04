@@ -40,10 +40,11 @@ try {
     transfer({ payload: 'git changed source objects', binaryBytes: 0 });
     const request = JSON.stringify({ lane: target, commit, identity, launcher, probe });
     // Kernel-owned lock covers probe, build, package and activation across Mac/Workbox launches. No stale PID lock.
-    const checkout = `${target.data}/checkouts/${commit}`;
+    const checkout = `${target.data}/checkouts/build`;
     const script = `export PATH="$HOME/.local/bin:$HOME/.dotnet:/usr/local/bin:/usr/bin:/bin"; set -eu; `
       + `test -d "$HOME/${checkout}" || git -C "$HOME/assembly.git" worktree add -q --detach "$HOME/${checkout}" ${quote(commit)}; `
-      + `cd "$HOME/${checkout}"; exec node scripts/workbox-serve-host.ts ${quote(request)}`;
+      + `cd "$HOME/${checkout}"; test -z "$(git status --porcelain)" || { echo 'lane build checkout has edits; preserving it' >&2; exit 1; }; `
+      + `git checkout -q --detach ${quote(commit)}; exec node scripts/workbox-serve-host.ts ${quote(request)}`;
     const remote = `flock -n -E 75 "$HOME/${target.data}/dev-sync.lock" bash -c ${quote(script)}`;
     await command('ssh', [...sshOptions, 'workbox-test', remote], { signal: owner.signal, live: true });
   }

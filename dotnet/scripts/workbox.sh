@@ -20,7 +20,8 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 . scripts/lane-env.sh
 mode=${1:?usage: dotnet/scripts/workbox.sh record|serve|stop|remove|kill-adapter|row-log [branch]}
-branch=${2:-$(git branch --show-current)}
+branch=${2:-HEAD}
+[ "$mode" = serve ] || branch=${2:-$(git branch --show-current)}
 echo "lane ${LANE_NAME:-main}: box port $BOX_PORT, unit $BOX_UNIT, box data ~/$BOX_DATA" >&2
 case "$mode" in
   record|serve) ;;
@@ -90,23 +91,13 @@ BOX
     exit ;;
   *) echo "unknown mode: $mode" >&2; exit 2 ;;
 esac
-commit=$(git rev-parse --verify "$branch^{commit}")
-# Main's host runs only what's on main: a clean checkout of origin/main as it is now. Main's host is anything that
-# resolves to its unit, port or data, whatever the branch or .lane.
-if [ "$mode" = serve ] && { [ "$BOX_UNIT" = assembly-dotnet ] || [ "$BOX_PORT" = 9797 ] || [ "$BOX_DATA" = assembly-dotnet ]; }; then
-  git fetch -q origin main
-  main=$(git rev-parse origin/main)
-  if [ "$commit" != "$main" ] || [ "$(git rev-parse HEAD)" != "$main" ] || [ -n "$(git status --porcelain)" ]; then
-    echo "stop: $BOX_UNIT is main's host and runs only a clean checkout of origin/main ($main); this is $commit" >&2
-    exit 1
-  fi
-fi
-
 if [ "$mode" = serve ]; then
   main_guard=""
   [ -n "$LANE_NAME" ] || main_guard=clean-origin-main
+  # The single serve entry checks clean origin/main before contacting main's host.
   exec node scripts/workbox-serve.ts "$LANE_NAME" "$LANE_NUMBER" "$branch" "$main_guard"
 fi
+commit=$(git rev-parse --verify "$branch^{commit}")
 
 ssh workbox-test 'test -d ~/assembly.git || git init -q --bare ~/assembly.git'
 git push -q --force ssh://workbox-test/~/assembly.git "$commit:refs/heads/$branch"

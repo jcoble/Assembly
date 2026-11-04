@@ -19,6 +19,8 @@ switch(args[0]) {
  case 'ls-tree': console.log('100644 blob '+(state.changed && args.at(-1)==='${current}'?'2':'1').repeat(40)+'\\tdotnet/Assembly.Remote/Assembly.Remote.csproj'); break;
  case 'show': process.stdout.write('launcher\\n'); break;
  case 'push': break;
+ case 'fetch': break;
+ case 'status': console.log(state.mainDirty ? ' M dotnet/Directory.Build.props' : ''); break;
  default: throw Error('unexpected git call '+args);
 }
 `;
@@ -86,6 +88,14 @@ test('automatic sync refuses main before SSH or git', () => {
   try { const result=f.run(['', '0']); assert.equal(result.status,1); assert.match(result.stderr,/refuses main/); assert.deepEqual(f.calls(),[]); }
   finally { f.close(); }
 });
+test('manual main still requires a clean checkout of origin/main before SSH', () => {
+  const f=fixture({mainDirty:true});
+  try {
+    const result=f.run(['','0','HEAD','clean-origin-main']);
+    assert.equal(result.status,1);assert.match(result.stderr,/main host requires a clean checkout of origin\/main/);
+    assert.equal(f.calls().filter(call=>call[0]==='ssh').length,0);
+  }finally{f.close()}
+});
 function untilFile(file: string) {
   return new Promise<void>(resolve => {
     const watcher = watch(join(file, '..'), () => { if(existsSync(file)) { watcher.close(); resolve(); } });
@@ -148,6 +158,10 @@ test('backend identity follows real committed build inputs and ignores Rust-only
     const identity=await backendIdentity(root,first);
     writeFileSync(join(root,'desktop/view.rs'),'second');const desktop=commit();
     assert.equal(await backendIdentity(root,desktop),identity);
+    mkdirSync(join(root,'scripts'));
+    writeFileSync(join(root,'scripts/dev-remote-build-profile.ts'),'export const args = ["linux-x64"];');
+    await assert.rejects(()=>requireCleanBackend(root),/uncommitted/);
+    const profile=commit();assert.notEqual(await backendIdentity(root,profile),identity);
     writeFileSync(join(root,'dotnet/Directory.Build.props'),'<Project />');
     await assert.rejects(()=>requireCleanBackend(root),/uncommitted/);
     const backend=commit();assert.notEqual(await backendIdentity(root,backend),identity);

@@ -1,14 +1,14 @@
 // Workbox Test only. flock owns the whole invocation; SSH stdin EOF cancels this owner and its build children.
 import { promises as fs } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { writeRemoteBackendPackage } from './remote-backend-package.ts';
+import { prepareBackend } from './dev-remote-build.ts';
+import { sameBackendFiles } from './remote-backend-package.ts';
 import { backendIdentity, lane, type Lane } from './dev-remote-identity.ts';
 import { command, lifetime } from './dev-remote-process.ts';
 import { probeSource, type Probe } from './dev-remote-probe.ts';
 import { stage } from './dev-remote-timing.ts';
-import { remotePublishArguments } from './dev-remote-build-profile.ts';
 
 const owner = lifetime(true);
 const request = JSON.parse(process.argv[2]);
@@ -48,7 +48,6 @@ async function ready(pid: string) {
     if (owner.signal.aborted) abort();
   });
 }
-let temporary: string | undefined;
 let stopped = false, candidateStarted = false, originalUnit: string | undefined;
 try {
   if (process.env.HOME !== '/home/blackcolours') throw Error('unexpected Workbox Test account');
@@ -74,28 +73,17 @@ try {
     if (!adapterState.adapterOK || adapterState.launcherSha !== request.launcher)
       throw Error('lane ACP 2 adapter bundle does not satisfy this checkout launcher; update lane adapters before syncing (existing configuration preserved)');
     if (!before.missing) await idle(before.pid);
-    temporary = await fs.mkdtemp(join(root, '.dev-sync-'));
-    const publish = join(temporary, 'publish'), archive = join(temporary, 'backend.tar.gz');
-    const buildTime = stage('build');
-    await run('dotnet', ['publish', 'dotnet/Assembly.Remote', ...remotePublishArguments, `-p:SourceRevisionId=${request.commit}`, '-o', publish], true);
-    buildTime();
-    const packageTime = stage('package');
-    const bundle = await writeRemoteBackendPackage({ publishDir: publish, commit: request.commit, outputFile: archive, sourceDir: process.cwd() });
-    const destination = join(root, 'bin', request.commit + '-' + bundle.sha256);
-    await fs.mkdir(join(root, 'bin'), { recursive: true });
-    await fs.mkdir(join(temporary, 'package'));
-    await run('tar', ['-xzf', archive, '-C', join(temporary, 'package')]);
-    const manifest = JSON.parse(await fs.readFile(join(temporary, 'package/manifest.json'), 'utf8'));
-    for (const item of manifest.files) {
-      const bytes = await fs.readFile(join(temporary, 'package', item.path));
-      if (bytes.length !== item.bytes || digest(bytes) !== item.sha256) throw Error('staged backend package differs');
-    }
-    await fs.rename(join(temporary, 'package'), destination);
-    packageTime({ archiveBytes: bundle.bytes, files: manifest.files.length });
-    const latest = await probe();
-    if (latest.missing !== before.missing || latest.pid !== before.pid || latest.unitSha !== before.unitSha) throw Error('lane host changed during build; no restart performed');
-    if (!before.missing) await idle(before.pid);
-    const unit = before.missing ? `[Unit]
+    const prepared = await prepareBackend(root, request, before.missing ? undefined : before.dll, owner.signal);
+    const destination = prepared.directory;
+    const candidateManifest = JSON.parse(await fs.readFile(join(destination, 'manifest.json'), 'utf8'));
+    const previousManifest = before.missing ? undefined : JSON.parse(await fs.readFile(join(dirname(dirname(before.dll)), 'manifest.json'), 'utf8'));
+    if (previousManifest && sameBackendFiles(previousManifest.files, candidateManifest.files)) {
+      console.log('Workbox Test compiled backend files are unchanged; no restart');
+    } else {
+      const latest = await probe();
+      if (latest.missing !== before.missing || latest.pid !== before.pid || latest.unitSha !== before.unitSha) throw Error('lane host changed during build; no restart performed');
+      if (!before.missing) await idle(before.pid);
+      const unit = before.missing ? `[Unit]
 Description=Assembly Workbox Test development host
 [Service]
 Type=simple
@@ -108,33 +96,34 @@ ExecStart=%h/.dotnet/dotnet INITIAL_BACKEND serve --port ${target.port} --home $
 KillMode=control-group
 TimeoutStopSec=30
 ` : await fs.readFile(unitFile, 'utf8');
-    if (!before.missing) {
-      originalUnit = unit;
-      if (digest(unit) !== before.unitSha) throw Error('unit changed before activation');
+      if (!before.missing) {
+        originalUnit = unit;
+        if (digest(unit) !== before.unitSha) throw Error('unit changed before activation');
+      }
+      const dll = join(destination, 'backend/Assembly.Remote.dll');
+      const updated = unit.replace(before.missing ? 'INITIAL_BACKEND' : (before.unitDll ?? before.dll), dll);
+      if (updated === unit || updated.split(dll).length !== 2) throw Error('ambiguous unit backend path');
+      owner.signal.throwIfAborted();
+      const restartTime = stage('restart');
+      if (!before.missing) {
+        await run('systemctl', ['--user', 'stop', target.unit]);
+        stopped = true;
+      }
+      await fs.mkdir(join(process.env.HOME!, '.config/systemd/user'), { recursive: true });
+      await atomic(unitFile, updated);
+      await run('systemctl', ['--user', 'daemon-reload']);
+      // Candidate startup may migrate the DB; never roll code back automatically after this point.
+      candidateStarted = true;
+      await run('systemctl', ['--user', 'start', target.unit]);
+      const pid = await run('systemctl', ['--user', 'show', target.unit, '-p', 'MainPID', '--value']);
+      restartTime();
+      const answerTime = stage('answer');
+      await ready(pid);
+      const after = await probe();
+      if (after.commit !== prepared.commit || (!before.missing && after.engine !== before.engine) || after.dll !== dll) throw Error('new host identity could not be verified; inspect lane host before retrying');
+      answerTime();
+      console.log(`Workbox Test ${target.unit} deployed backend ${identity}; authenticated host commit ${after.commit}; PID ${after.pid}; engine preserved ${after.engine}`);
     }
-    const dll = join(destination, 'backend/Assembly.Remote.dll');
-    const updated = unit.replace(before.missing ? 'INITIAL_BACKEND' : (before.unitDll ?? before.dll), dll);
-    if (updated === unit || updated.split(dll).length !== 2) throw Error('ambiguous unit backend path');
-    owner.signal.throwIfAborted();
-    const restartTime = stage('restart');
-    if (!before.missing) {
-      await run('systemctl', ['--user', 'stop', target.unit]);
-      stopped = true;
-    }
-    await fs.mkdir(join(process.env.HOME!, '.config/systemd/user'), { recursive: true });
-    await atomic(unitFile, updated);
-    await run('systemctl', ['--user', 'daemon-reload']);
-    // Candidate startup may migrate the DB; never roll code back automatically after this point.
-    candidateStarted = true;
-    await run('systemctl', ['--user', 'start', target.unit]);
-    const pid = await run('systemctl', ['--user', 'show', target.unit, '-p', 'MainPID', '--value']);
-    restartTime();
-    const answerTime = stage('answer');
-    await ready(pid);
-    const after = await probe();
-    if (after.commit !== request.commit || (!before.missing && after.engine !== before.engine) || after.dll !== dll) throw Error('new host identity could not be verified; inspect lane host before retrying');
-    answerTime();
-    console.log(`Workbox Test ${target.unit} deployed backend ${identity}; authenticated host commit ${after.commit}; PID ${after.pid}; engine preserved ${after.engine}`);
   }
 } catch (error) {
   if (stopped && !candidateStarted && originalUnit) {
@@ -147,4 +136,4 @@ TimeoutStopSec=30
   console.error(`Workbox Test sync failed${candidateStarted ? ' after candidate startup (host state needs inspection)' : ''}: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 }
-finally { if (temporary) await fs.rm(temporary, { recursive: true, force: true }); owner.close(); }
+finally { owner.close(); }
