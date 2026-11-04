@@ -282,7 +282,7 @@ fn picker(
     current: Option<String>,
     pane: WeakEntity<HistoryPane>,
     pick: fn(&mut HistoryFilter, Option<String>),
-) -> Button {
+) -> impl IntoElement + use<> {
     Button::new(id)
         .outline()
         .small()

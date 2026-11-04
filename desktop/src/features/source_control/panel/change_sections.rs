@@ -465,7 +465,7 @@ impl SourceControlPane {
             let absolute = root
                 .as_ref()
                 .map(|root| format!("{}/{}", root.trim_end_matches('/'), file.path));
-            menu.w(px(220.))
+            menu.min_w(px(220.)).max_w(px(220.))
                 .item(reasoned_item("View changes", reason(reasons.open), move |window, cx| {
                     window.dispatch_action(Box::new(view.clone()), cx)
                 }))
