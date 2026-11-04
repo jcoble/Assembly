@@ -1,13 +1,16 @@
 //! Pieces of interface every feature shares.
 
 pub mod center_panes;
+pub mod changed_tree;
 pub mod diff;
+pub mod diff_header;
 pub mod expand_row;
 #[cfg(test)]
 mod expand_row_tests;
 pub mod filter_pills;
 #[cfg(test)]
 mod filter_pills_tests;
+pub mod file_icon;
 pub mod pane_names;
 pub mod spinner;
 
