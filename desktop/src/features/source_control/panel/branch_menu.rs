@@ -1,5 +1,6 @@
 //! The header's branch menu: switch branch, new branch, and stash. It draws what the pane read and says what was picked;
 //! the pane owns the read and the write, so nothing here reaches the backend.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::git_branches::GitBranch;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -161,7 +162,7 @@ impl BranchMenu {
     fn heading(title: &'static str, cx: &App) -> Div {
         div()
             .px_2()
-            .text_sm()
+            .text_role(TextRole::Body, cx)
             .font_weight(FontWeight::MEDIUM)
             .text_color(cx.theme().muted_foreground)
             .child(title)
@@ -169,7 +170,7 @@ impl BranchMenu {
     fn branch_rows(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
-        let line = |text: String, color: Hsla| div().px_2().py_1().text_sm().text_color(color).child(text);
+        let line = |text: String, color: Hsla| div().px_2().py_1().text_role(TextRole::Body, cx).text_color(color).child(text);
         if let Some(failure) = &self.failure {
             return line(failure.clone(), danger).into_any_element();
         }
@@ -215,7 +216,7 @@ impl BranchMenu {
                                     .child(div().truncate().child(branch.name.clone()))
                                     .child(
                                         div()
-                                            .text_sm()
+                                            .text_role(TextRole::Body, cx)
                                             .truncate()
                                             .text_color(muted)
                                             .child(branch_detail(&branch)),
@@ -253,7 +254,7 @@ impl Render for BranchMenu {
             .child(Self::heading("NEW BRANCH", cx))
             .child(Input::new(&self.name).small().disabled(busy))
             .when_some(problem, |menu, problem| {
-                menu.child(div().px_2().text_sm().text_color(danger).child(problem))
+                menu.child(div().px_2().text_role(TextRole::Body, cx).text_color(danger).child(problem))
             })
             .child(
                 Button::new("branch-create")

@@ -5,7 +5,7 @@ use super::HistoryPane;
 use crate::core::socket::{checkout_selector::CheckoutSelector, client::SocketClient, outcome::Outcome};
 use crate::core::ui::center_panes::CenterPanes;
 use crate::features::source_control::git_checkouts::{CheckoutChoice, CheckoutHint, GitCheckouts};
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{Button};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Disableable as _, Sizable as _};
 use gpui_kit::*;

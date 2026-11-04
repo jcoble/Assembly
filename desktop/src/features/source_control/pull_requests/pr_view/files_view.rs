@@ -1,4 +1,5 @@
 //! How the Changes page looks: the stacked diff with its file header buttons, comment cards and the file tree.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::pr_stack::changed_tree;
 use super::*;
 use crate::core::{intents::open_file::OpenFile, state::selected_session::SelectedSession};
@@ -146,7 +147,7 @@ impl PrFiles {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scrollbar()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .children(rows.into_iter().enumerate().map(|(index, row)| {
                         let indent = px(8. + row.depth as f32 * 12.);
                         let icon = if row.path.is_some() {
@@ -292,12 +293,12 @@ impl Render for PrFiles {
             .h_full()
             .min_h_0()
             .children((!current).then(|| {
-                div().px_3().py_1().text_sm().child(
+                div().px_3().py_1().text_role(TextRole::Body, cx).child(
                     "This review draft is for an earlier head. Its comments are kept; refresh before posting.",
                 )
             }))
             .children(self.failure.clone().map(|error| {
-                div().px_3().py_1().text_sm().text_color(danger).child(error)
+                div().px_3().py_1().text_role(TextRole::Body, cx).text_color(danger).child(error)
             }))
             .children(notes.into_iter().map(|(path, note, can_read)| {
                 let is_reading = reading.as_deref() == Some(path.as_str());
@@ -306,7 +307,7 @@ impl Render for PrFiles {
                     .px_3()
                     .py_1()
                     .gap_2()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(muted)
                     .child(div().truncate().child(format!("{path} · {note}")))
                     .children(can_read.then(|| {

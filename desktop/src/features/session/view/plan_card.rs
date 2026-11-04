@@ -128,7 +128,7 @@ fn panel(items: &[PlanItem], running: bool, cx: &App) -> Div {
                 .rounded(px(12.))
                 .bg(theme.popover)
                 .shadow_lg()
-                .text_size(px(14.))
+                .text_role(TextRole::Body, cx)
                 .children(steps),
         )
 }
@@ -172,7 +172,7 @@ impl RenderOnce for PlanCard {
                     .rounded_full()
                     .bg(popover)
                     .shadow_sm()
-                    .text_size(px(14.))
+                    .text_role(TextRole::Body, cx)
                     .when(has_plan, |pill| {
                         pill.cursor_pointer()
                             .hover(move |pill| pill.bg(hover))

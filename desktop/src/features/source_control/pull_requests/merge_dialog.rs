@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{
     pr_activity::merge_method_label, pr_detail::PrDetail, pull_request::PullRequestDetail,
 };
@@ -132,17 +133,17 @@ impl Render for MergeDialog {
                 self.request.base_branch,
                 merge_method_label(&self.request.method)
             ))
-            .child(div().text_sm().text_color(muted).child(format!(
+            .child(div().text_role(TextRole::Body, cx).text_color(muted).child(format!(
                 "Head {} · base {}",
                 short(&self.request.head),
                 short(&self.request.base)
             )))
             .children(self.has_draft.then(|| {
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .child("Your unposted comment will be cleared if the merge succeeds.")
             }))
-            .child(div().text_sm().text_color(muted).child(
+            .child(div().text_role(TextRole::Body, cx).text_color(muted).child(
                 "Assembly checks the PR again before asking GitHub to merge it. GitHub enforces the repository's merge rules.",
             ))
             .children(
@@ -151,7 +152,7 @@ impl Render for MergeDialog {
                     .map(|error| div().text_color(danger).child(error)),
             )
             .children((!current).then(|| {
-                div().text_sm().child(
+                div().text_role(TextRole::Body, cx).child(
                     "Refresh before merging: the pull request changed or is no longer mergeable.",
                 )
             }))

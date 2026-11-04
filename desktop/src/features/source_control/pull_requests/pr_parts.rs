@@ -1,4 +1,5 @@
 //! The small pieces the Pull requests tab draws in many places.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::pr_activity::{PrTone, age_of, pr_state};
 use super::pull_request::{PullRequestDetail, PullRequestSummary};
 use crate::core::socket::picture_client::picture_url;
@@ -110,17 +111,17 @@ impl<'a> PrHeading<'a> {
         v_flex()
             .gap_2()
             .child(
-                h_flex().gap_2().text_sm().children(pill).child(
+                h_flex().gap_2().text_role(TextRole::Body, cx).children(pill).child(
                     div()
                         .text_color(muted)
                         .child(format!("{} #{}", self.repository, self.number)),
                 ),
             )
-            .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(title))
+            .child(div().text_role(TextRole::Heading, cx).font_weight(FontWeight::SEMIBOLD).child(title))
             .child(
                 h_flex()
                     .gap_1()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(muted)
                     .children(avatar(self.author))
                     .children(author)
@@ -143,7 +144,7 @@ fn branches(head: &str, base: &str, cx: &App) -> impl IntoElement + use<> {
 pub fn loading_line(cx: &App) -> Div {
     h_flex()
         .gap_2()
-        .text_sm()
+        .text_role(TextRole::Body, cx)
         .text_color(cx.theme().muted_foreground)
         .child(Spinner::new().small())
         .child("Loading pull request…")

@@ -1,5 +1,6 @@
 //! The pane's one hierarchy: the header, then either why there's nothing to show or a single scroller holding the commit
 //! box, what the last action came to, the three sections, the commits and the pull requests.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::SourceControlPane;
 use super::outcomes::running_label;
 use crate::core::state::session_read::Shown;
@@ -33,7 +34,7 @@ fn empty_state(title: &'static str, body: &'static str, actions: Option<AnyEleme
         .text_center()
         .child(Icon::new(IconName::GitBranch).size(px(24.)).text_color(muted))
         .child(div().max_w(px(300.)).font_weight(FontWeight::MEDIUM).child(title))
-        .child(div().max_w(px(340.)).text_sm().text_color(muted).child(body))
+        .child(div().max_w(px(340.)).text_role(TextRole::Body, cx).text_color(muted).child(body))
         .children(actions)
         .into_any_element()
 }
@@ -66,7 +67,7 @@ impl SourceControlPane {
                     .child(
                         div()
                             .px_3()
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .text_color(cx.theme().muted_foreground)
                             .child("Reading the changes…"),
                     )
@@ -132,7 +133,7 @@ impl SourceControlPane {
                     let chosen = machine.clone();
                     view.child(
                         div()
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .font_weight(FontWeight::MEDIUM)
                             .child(format!("{machine} isn't connected")),
                     )
@@ -157,7 +158,7 @@ impl SourceControlPane {
                     )
                 }
                 None => view
-                    .child(div().text_sm().text_color(danger).child(message))
+                    .child(div().text_role(TextRole::Body, cx).text_color(danger).child(message))
                     .child(self.try_again(cx)),
             })
             .children(result)
@@ -209,14 +210,14 @@ impl SourceControlPane {
                             .children(
                                 status
                                     .more_line()
-                                    .map(|line| div().text_sm().text_color(muted).child(line)),
+                                    .map(|line| div().text_role(TextRole::Body, cx).text_color(muted).child(line)),
                             )
                             .children(sections)
                             .children(timeline)
                             .children((selection.is_some() && pull_requests.is_some()).then(|| {
                                 div()
                                     .debug_selector(|| "git-pr-scope".into())
-                                    .text_sm()
+                                    .text_role(TextRole::Body, cx)
                                     .text_color(muted)
                                     .child(PR_SCOPE)
                             }))
@@ -290,7 +291,7 @@ impl SourceControlPane {
                     .child(
                         h_flex()
                             .gap_2()
-                            .child(div().text_sm().text_color(muted).child(label))
+                            .child(div().text_role(TextRole::Body, cx).text_color(muted).child(label))
                             .child(
                                 Button::new("git-operation-cancel")
                                     .ghost()
@@ -301,7 +302,7 @@ impl SourceControlPane {
                                     }),
                             ),
                     )
-                    .children(note.map(|note| div().text_sm().text_color(muted).child(note)))
+                    .children(note.map(|note| div().text_role(TextRole::Body, cx).text_color(muted).child(note)))
                     .into_any_element(),
             );
         }
@@ -314,7 +315,7 @@ impl SourceControlPane {
         };
         Some(
             div()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .text_color(muted)
                 .child(label)
                 .into_any_element(),

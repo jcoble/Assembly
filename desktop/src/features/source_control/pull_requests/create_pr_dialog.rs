@@ -309,7 +309,7 @@ impl Render for CreatePrForm {
         let can_create = !disabled && self.input(cx).args().is_ok();
         let field = |label: &'static str| {
             div()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
                 .child(label)
@@ -346,7 +346,7 @@ impl Render for CreatePrForm {
             .child(
                 h_flex()
                     .gap_2()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .child(div().truncate().child(self.branch.clone()))
                     .child(div().text_color(muted).child("→"))
                     .child(base_menu),
@@ -367,7 +367,7 @@ impl Render for CreatePrForm {
             )
             .children(drafting.then(|| {
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(muted)
                     .child("Generating title & description...")
             }))

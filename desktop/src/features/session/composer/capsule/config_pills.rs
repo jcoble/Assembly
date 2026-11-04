@@ -3,6 +3,7 @@
 //! it offers is lost. Both open upward, away from the window's edge, and a narrow composer folds them into one ⋯ menu.
 //! Each choice is the agent's own config id and value, set through the same call the composer always used.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName as Glyph;
@@ -39,7 +40,7 @@ impl RenderOnce for ConfigPills {
         let saving = self.saving.then(|| {
             h_flex()
                 .gap_1()
-                .text_size(px(13.))
+                .text_role(TextRole::Meta, cx)
                 .text_color(theme.primary)
                 .child(Spinner::new().xsmall())
                 .child("Saving…")
@@ -235,7 +236,7 @@ fn described(title: String, below: Option<String>) -> PopupMenuItem {
             .child(title.clone())
             .children(below.clone().map(|below| {
                 div()
-                    .text_size(px(13.))
+                    .text_role(TextRole::Meta, cx)
                     .line_height(relative(1.4))
                     .text_color(muted)
                     .child(below)

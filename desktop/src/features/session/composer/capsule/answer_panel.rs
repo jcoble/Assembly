@@ -3,6 +3,7 @@
 //! answers through the owner's one answer path; this only draws. Replaces the old app's ComposerPendingApprovalPanel and
 //! ComposerPendingUserInputPanel.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
@@ -87,14 +88,14 @@ pub fn legend(label: &str, required: bool) -> String {
     }
 }
 
-fn kicker(words: &'static str) -> Div {
+fn kicker(words: &'static str, cx: &App) -> Div {
     div()
-        .text_size(px(12.))
+        .text_role(TextRole::Meta, cx)
         .font_weight(FontWeight::BOLD)
         .child(words)
 }
 
-fn pill(id: String, label: String, color: Hsla, action: ControlAction, on_action: &OnControl) -> Button {
+fn pill(id: String, label: String, color: Hsla, action: ControlAction, on_action: &OnControl, cx: &App) -> Button {
     let on_action = on_action.clone();
     Button::new(SharedString::from(id))
         .compact()
@@ -103,7 +104,7 @@ fn pill(id: String, label: String, color: Hsla, action: ControlAction, on_action
         .rounded(px(999.))
         .child(
             div()
-                .text_size(px(12.))
+                .text_role(TextRole::Meta, cx)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(color)
                 .child(label),
@@ -111,19 +112,19 @@ fn pill(id: String, label: String, color: Hsla, action: ControlAction, on_action
         .on_click(move |_, window, cx| on_action(action.clone(), window, cx))
 }
 
-fn choice_copy(choice: &AskChoice, muted: Hsla) -> Div {
+fn choice_copy(choice: &AskChoice, muted: Hsla, cx: &App) -> Div {
     v_flex()
         .min_w_0()
         .gap(px(2.))
         .items_start()
         .child(
             div()
-                .text_size(px(13.))
+                .text_role(TextRole::Meta, cx)
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(choice.title.clone().unwrap_or(choice.value.clone())),
         )
         .when_some(choice.description.clone(), |copy, description| {
-            copy.child(div().text_size(px(12.)).text_color(muted).child(description))
+            copy.child(div().text_role(TextRole::Meta, cx).text_color(muted).child(description))
         })
 }
 
@@ -147,6 +148,7 @@ impl AnswerPanel {
                 color,
                 ControlAction::Answer(json!({ "optionId": option.option_id })),
                 &self.on_action,
+                cx,
             );
             actions = actions.child(if solid { button.primary() } else { button.outline() });
         }
@@ -156,7 +158,7 @@ impl AnswerPanel {
                     .gap(px(8.))
                     .text_color(theme.warning)
                     .child(Icon::new(Glyph::ShieldAlert).size(px(16.)))
-                    .child(kicker("PENDING APPROVAL"))
+                    .child(kicker("PENDING APPROVAL", cx))
                     .when(self.count > 1, |heading| {
                         heading.child(
                             div()
@@ -164,7 +166,7 @@ impl AnswerPanel {
                                 .py(px(2.))
                                 .rounded(px(6.))
                                 .bg(theme.warning.opacity(0.13))
-                                .text_size(px(12.))
+                                .text_role(TextRole::Meta, cx)
                                 .text_color(theme.muted_foreground)
                                 .child(format!("1/{}", self.count)),
                         )
@@ -173,14 +175,14 @@ impl AnswerPanel {
             .child(
                 div()
                     .mt(px(9.))
-                    .text_size(px(14.))
+                    .text_role(TextRole::Body, cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("Approval needed"),
             )
             .child(
                 div()
                     .mt(px(4.))
-                    .text_size(px(12.))
+                    .text_role(TextRole::Meta, cx)
                     .font_family(theme.mono_font_family.clone())
                     .text_color(theme.muted_foreground)
                     .child(tool),
@@ -197,7 +199,7 @@ impl AnswerPanel {
                         .bg(theme.background.opacity(0.76))
                         .child(
                             div()
-                                .text_size(px(12.))
+                                .text_role(TextRole::Meta, cx)
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(theme.muted_foreground)
                                 .child("Details"),
@@ -208,7 +210,7 @@ impl AnswerPanel {
                                 .mt(px(6.))
                                 .max_h(px(150.))
                                 .overflow_y_scroll()
-                                .text_size(px(12.))
+                                .text_role(TextRole::Meta, cx)
                                 .font_family(theme.mono_font_family.clone())
                                 .child(details),
                         ),
@@ -249,7 +251,7 @@ impl AnswerPanel {
                             .w_full()
                             .justify_between()
                             .gap(px(10.))
-                            .child(choice_copy(&choice, theme.muted_foreground))
+                            .child(choice_copy(&choice, theme.muted_foreground, cx))
                             .when(selected, |row| row.child(Icon::new(Glyph::Check).size(px(14.)))),
                     )
                     .on_click(move |_, window, cx| on_action(action.clone(), window, cx)),
@@ -293,7 +295,7 @@ impl AnswerPanel {
                         row.child(
                             div()
                                 .pl(px(24.))
-                                .text_size(px(12.))
+                                .text_role(TextRole::Meta, cx)
                                 .text_color(theme.muted_foreground)
                                 .child(description),
                         )
@@ -350,7 +352,7 @@ impl AnswerPanel {
                     .min_w_0()
                     .child(
                         div()
-                            .text_size(px(13.))
+                            .text_role(TextRole::Meta, cx)
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(legend(&label, needed)),
                     )
@@ -358,7 +360,7 @@ impl AnswerPanel {
                         column.child(
                             div()
                                 .mt(px(3.))
-                                .text_size(px(12.))
+                                .text_role(TextRole::Meta, cx)
                                 .text_color(theme.muted_foreground)
                                 .child(description),
                         )
@@ -367,7 +369,7 @@ impl AnswerPanel {
             );
         }
         let button = |id: &str, label: &str, color: Hsla, action: ControlAction| {
-            pill(format!("answer:{}:{id}", self.ask_id), label.to_string(), color, action, &self.on_action)
+            pill(format!("answer:{}:{id}", self.ask_id), label.to_string(), color, action, &self.on_action, cx)
         };
         let muted = theme.muted_foreground;
         v_flex()
@@ -375,7 +377,7 @@ impl AnswerPanel {
                 h_flex()
                     .gap(px(8.))
                     .text_color(muted)
-                    .child(kicker("INPUT REQUESTED"))
+                    .child(kicker("INPUT REQUESTED", cx))
                     .when(self.count > 1, |heading| {
                         heading.child(
                             div()
@@ -383,7 +385,7 @@ impl AnswerPanel {
                                 .py(px(2.))
                                 .rounded(px(6.))
                                 .bg(theme.background.opacity(0.8))
-                                .text_size(px(12.))
+                                .text_role(TextRole::Meta, cx)
                                 .child(format!("1/{}", self.count)),
                         )
                     }),
@@ -391,12 +393,12 @@ impl AnswerPanel {
             .child(
                 div()
                     .mt(px(9.))
-                    .text_size(px(14.))
+                    .text_role(TextRole::Body, cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(self.ask.title.clone().unwrap_or_else(|| "Input requested".into())),
             )
             .when_some(self.ask.message.clone(), |panel, message| {
-                panel.child(div().mt(px(5.)).text_size(px(13.)).text_color(muted).child(message))
+                panel.child(div().mt(px(5.)).text_role(TextRole::Meta, cx).text_color(muted).child(message))
             })
             .child(fields)
             .child(

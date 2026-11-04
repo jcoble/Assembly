@@ -1,5 +1,5 @@
 //! The coordinator's one owned CAS writer serves both actual view changes and departure; no timer or second persistence path.
-use gpui_kit::{Window,Context,AppContext as _};
+use gpui_kit::{Window,Context};
 use super::{WorkspaceCoordinator,WorkspacePanes,WorkspaceSaved,Read,Saved,SocketClient,Outcome};
 use serde_json::json;
 impl WorkspaceCoordinator {

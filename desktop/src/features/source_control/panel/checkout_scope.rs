@@ -2,6 +2,7 @@
 //! it's only ever read: writes and opening a file stay with the session's own folder, and the way to work there is to
 //! make it the session's checkout through the Engine. The read drops the choice with its session; the hint, saved with
 //! the layout, is what brings it back, and only after a fresh list still offers it.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{PaneResult, SourceControlPane};
 use crate::core::socket::checkout_selector::CheckoutSelector;
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
@@ -10,7 +11,7 @@ use crate::core::ui::center_panes::CenterPanes;
 use crate::features::source_control::actions_menu::STILL_RUNNING;
 use crate::features::source_control::git_checkouts::{CheckoutHint, GitCheckouts, checkout_gone};
 use crate::features::source_control::git_failure::GitFailure;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{Button};
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, v_flex};
@@ -216,7 +217,7 @@ impl SourceControlPane {
             .gap_2()
             .child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(muted)
                     .child(format!("Viewing {} (read-only)", selection.path)),
             )
@@ -236,7 +237,7 @@ impl SourceControlPane {
                         .on_click(cx.listener(move |pane, _, _, cx| pane.move_to_folder(folder.clone(), cx))),
                 ),
             )
-            .child(div().text_sm().text_color(muted).child(hint))
+            .child(div().text_role(TextRole::Body, cx).text_color(muted).child(hint))
             .into_any_element()
     }
 }

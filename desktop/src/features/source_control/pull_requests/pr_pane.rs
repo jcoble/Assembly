@@ -1,4 +1,3 @@
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{
     pr_detail::{PrBack, PrDetail, PrMerged},
     pr_owner::{PrOwner, ProjectChoice, holders, resolve},

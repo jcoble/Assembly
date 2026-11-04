@@ -64,7 +64,7 @@ impl Render for RemoteDialog {
         let field = |label: &'static str, input: &Entity<InputState>| {
             v_flex()
                 .gap_1()
-                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(label))
+                .child(div().text_role(TextRole::Body, cx).font_weight(FontWeight::MEDIUM).child(label))
                 .child(Input::new(input).disabled(busy))
         };
         v_flex()

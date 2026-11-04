@@ -1,4 +1,5 @@
 //! The one header row: the branch menu at the left, how many files changed, and the more-actions menu at the right.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::SourceControlPane;
 use crate::features::source_control::actions_menu::{MenuAction, PublishRow, READ_ONLY_SCOPE};
 use crate::features::source_control::git_status::GitStatus;
@@ -22,7 +23,7 @@ pub(super) fn reasoned_item(
         Some(reason) => PopupMenuItem::element(move |_, cx| {
             v_flex().child(label.clone()).child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(cx.theme().muted_foreground)
                     .child(reason.clone()),
             )

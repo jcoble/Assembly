@@ -1,5 +1,6 @@
 //! The panel's Open pull requests section: it reads only once opened, and each row opens the pull request. Replaces
 //! PullRequestList.svelte.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::git_action::GitWrites;
 use super::super::git_target::GitTarget;
 use super::super::section_heading::section_heading;
@@ -85,7 +86,7 @@ impl PrSection {
         let check = pr.check_line().map(|(text, check)| {
             div()
                 .flex_none()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .text_color(tone(check))
                 .child(text)
         });
@@ -117,7 +118,7 @@ impl PrSection {
                     .child(
                         div()
                             .flex_none()
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .text_color(muted)
                             .child(format!("#{number}")),
                     )
@@ -125,8 +126,8 @@ impl PrSection {
                         v_flex()
                             .flex_1()
                             .min_w_0()
-                            .child(div().truncate().text_sm().child(title))
-                            .child(div().truncate().text_sm().text_color(muted).child(second)),
+                            .child(div().truncate().text_role(TextRole::Body, cx).child(title))
+                            .child(div().truncate().text_role(TextRole::Body, cx).text_color(muted).child(second)),
                     )
                     .children(check)
                     .child(
@@ -194,7 +195,7 @@ impl Render for PrSection {
                         section.child(
                             div()
                                 .px_2()
-                                .text_sm()
+                                .text_role(TextRole::Body, cx)
                                 .text_color(muted)
                                 .child("Reading open pull requests…"),
                         )
@@ -205,7 +206,7 @@ impl Render for PrSection {
                                 .px_2()
                                 .gap_1()
                                 .items_start()
-                                .child(div().text_sm().text_color(danger).child(failure))
+                                .child(div().text_role(TextRole::Body, cx).text_color(danger).child(failure))
                                 .child(
                                     div().debug_selector(|| "pr-section-retry".into()).child(
                                         Button::new("pr-section-retry")
@@ -223,7 +224,7 @@ impl Render for PrSection {
                         section.child(
                             div()
                                 .px_2()
-                                .text_sm()
+                                .text_role(TextRole::Body, cx)
                                 .text_color(muted)
                                 .child(summary_line(total)),
                         )

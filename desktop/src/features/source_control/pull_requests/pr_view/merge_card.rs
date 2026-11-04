@@ -30,7 +30,7 @@ impl PrDetail {
         let fact = |settled: bool, text: String| {
             h_flex()
                 .gap_2()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .child(
                     div()
                         .flex_none()
@@ -56,7 +56,7 @@ impl PrDetail {
             .child(
                 h_flex()
                     .gap_2()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .child(
                         Button::new("pr-merge")
                             .small()
@@ -116,7 +116,7 @@ impl PrDetail {
                     cx,
                 ))
             })
-            .children(merge_error.map(|error| div().text_sm().text_color(danger).child(error)))
+            .children(merge_error.map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)))
             .when(merge_uncertain, |card| {
                 card.child(quiet(
                     "Refresh this PR to check whether the merge completed before trying again.",
