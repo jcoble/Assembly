@@ -120,7 +120,7 @@ impl RenderOnce for SessionRow {
         let running = entry.running;
         let id = entry.session_id.clone();
         let route = entry.machine.clone();
-        // No spinner: its frames redraw the window for as long as a session runs, about 33% of a core in a debug build.
+        // No spinner: its frames redraw the panel for as long as a session runs, about 33% of a core in a debug build.
         let mark = Icon::empty()
             .path(entry.icon.clone())
             .small()
