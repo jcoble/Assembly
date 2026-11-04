@@ -140,5 +140,5 @@ impl RenderOnce for SentMessage {
 }
 
 #[cfg(test)]
-#[path = "sent_message_tests.rs"]
+#[path = "tests/sent_message_tests.rs"]
 mod tests;

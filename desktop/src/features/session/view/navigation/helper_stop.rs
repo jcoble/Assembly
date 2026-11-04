@@ -32,6 +32,13 @@ pub(super) fn command(
         command: serde_json::json!({"kind":"stop_session"}),
     })
 }
+pub(super) fn refusal_text(error: Option<String>) -> String {
+    match error.as_deref() {
+        Some("version_conflict") => "The helper just changed. Try Stop again.".into(),
+        Some(_) => error.unwrap_or_default(),
+        None => "The helper Stop was refused.".into(),
+    }
+}
 fn unavailable() -> EngineRefusal {
     EngineRefusal {
         code: "helper_unavailable".into(),
@@ -66,7 +73,7 @@ impl SessionPane {
             }
         };
         let request = command.command_id.clone();
-        let call = feed.update(cx, |feed, cx| feed.submit(command, cx));
+        let call = feed.update(cx, |feed, cx| feed.submit_following(command, cx));
         let task = cx.spawn({
             let request = request.clone();
             async move |pane, cx| {
@@ -83,11 +90,7 @@ impl SessionPane {
                     }
                     let error = match result {
                         Ok(receipt) if receipt.applied => None,
-                        Ok(receipt) => Some(
-                            receipt
-                                .error
-                                .unwrap_or_else(|| "The helper Stop was refused.".into()),
-                        ),
+                        Ok(receipt) => Some(refusal_text(receipt.error)),
                         Err(error) => Some(error.message),
                     };
                     if let Some(error) = error {

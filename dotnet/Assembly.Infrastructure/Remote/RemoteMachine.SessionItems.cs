@@ -10,6 +10,9 @@ namespace Assembly.Infrastructure.Remote;
 
 internal sealed partial class RemoteMachine
 {
+    internal void ProjectSessionDisplay(Assembly.Application.Common.Database.IWriteScope scope, string machine) =>
+        _sessionStore.ProjectRemoteBare(scope, machine, _name);
+
     private readonly SemaphoreSlim _sessionTitleSerial = new(1, 1);
     private readonly List<Task> _sessionTitleDrains = [];
     private SessionPublicationOwner? _sessionPublication;

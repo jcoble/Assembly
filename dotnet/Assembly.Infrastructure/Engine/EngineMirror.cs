@@ -167,8 +167,16 @@ internal sealed class EngineMirror : IAsyncDisposable
         ct = ownerStop.Token;
         var machine = info.Machine;
         var watermark = info.Through;
-        var cursor = _writer.Write("engine.mirror.open", s => MirrorApply.Open(s, machine, _remote.Name!, Now));
-        if (cursor.State == "snapshotting") cursor = _writer.Write("engine.mirror.begin", s => MirrorApply.BeginSnapshot(s, machine, Now));
+        var cursor = _writer.Write("engine.mirror.open", s =>
+        {
+            var current = MirrorApply.Open(s, machine, _remote.Name!, Now);
+            // Pre-classification cached rows need a fresh owner snapshot even if no session has changed.
+            var needsDisplay = s.QueryFirst("""
+                SELECT COUNT(*) FROM engine_mirror_row WHERE machine=$machine AND generation=$generation
+                  AND entity_kind='session' AND json_type(row_json,'$.isBare') IS NULL
+                """, r => r.Long(0), new SqlArg("$machine", machine), new("$generation", current.Generation)) > 0;
+            return current.State == "snapshotting" || needsDisplay ? MirrorApply.BeginSnapshot(s, machine, Now) : current;
+        });
         var caughtUp = false;
         while (!ct.IsCancellationRequested)
         {
@@ -210,6 +218,7 @@ internal sealed class EngineMirror : IAsyncDisposable
                         MirrorApply.SnapshotPage(s, machine, frame.GetProperty("items").EnumerateArray().ToArray());
                         if (more) return cursor;
                         var completed = MirrorApply.EndSnapshot(s, machine, through, at, Now);
+                        _remote.ProjectSessionDisplay(s, machine);
                         _mirrored?.Invoke(s, machine);
                         return completed;
                     });

@@ -595,5 +595,5 @@ fn a_workspace_round_trips_through_the_registry_and_only_under_its_own_key(
         );
     });
 }
-#[path = "codec_tests/fence_tests.rs"]
+#[path = "fence_tests.rs"]
 mod fence;

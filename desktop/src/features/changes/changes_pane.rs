@@ -10,6 +10,7 @@ use crate::core::state::{
 };
 use crate::core::ui::{center_panes::CenterPanes, changed_tree::ChangedTree};
 use crate::features::source_control::git_status::GitStatus;
+use crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator;
 use gpui_kit::component::diff::{DiffMode, DiffState};
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, panel_handle, register_panel,
@@ -209,6 +210,7 @@ impl ChangesPane {
                 pane
             });
         }
+        WorkspaceCoordinator::changed(cx);
     }
     fn new(picked: Option<Picked>, cx: &mut Context<Self>) -> Self {
         let status = cx.new(|cx| {
@@ -303,6 +305,7 @@ impl ChangesPane {
         self.mode = mode;
         self.state.update(cx, |state, cx| state.set_mode(mode, cx));
         CenterPanes::save_layout(cx);
+        WorkspaceCoordinator::changed(cx);
         cx.notify();
     }
     fn saved_target(&self) -> Value {
@@ -370,6 +373,9 @@ impl Panel for ChangesPane {
         CHANGES
     }
 }
+#[cfg(test)]
+#[path = "changes_restart_real_tests.rs"]
+mod restart_real_tests;
 #[cfg(test)]
 #[path = "changes_saved_tests.rs"]
 mod saved_tests;

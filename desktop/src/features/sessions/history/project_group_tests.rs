@@ -7,7 +7,7 @@ use crate::core::state::session_item::SessionItem;
 
 fn session(id: &str, folder: &str, machine: Option<&str>) -> SessionItem {
     serde_json::from_value(
-        json!({ "sessionId": id, "agent": "claude", "repoUrl": folder, "projectId": folder, "machine": machine,
+        json!({ "sessionId": id, "agent": "claude", "repoUrl": folder, "machine": machine,
         "updatedAt": 1 }),
     )
     .expect("a session item")
@@ -47,25 +47,36 @@ fn sessions_group_by_project_and_machine_newest_project_first() {
 }
 
 #[test]
-fn sessions_in_no_project_share_one_group_on_each_machine_whatever_their_folder() {
+fn only_backend_classified_bare_sessions_share_one_group_per_machine() {
     let bare = |id: &str, folder: &str, machine: Option<&str>| -> SessionItem {
         serde_json::from_value(
             json!({ "sessionId": id, "agent": "claude", "repoUrl": folder,
-            "machine": machine, "updatedAt": 1 }),
+            "machine": machine, "isBare": true, "updatedAt": 1 }),
         )
         .expect("a session item")
     };
     let items = [
         bare("s3", "/home/me/assembly-bare", None),
         session("s2", "/home/me/assembly-bare", None),
-        bare("s1", "/home/me", None),
+        session("s1", "/home/me", None),
+        bare(
+            "s4",
+            "/different-owner-home/assembly-bare",
+            Some("Workbox Test"),
+        ),
         bare("s0", "/home/me/assembly-bare", Some("Workbox Test")),
     ];
     let groups = ProjectGroup::all(&items);
     let labels: Vec<String> = groups.iter().map(ProjectGroup::label).collect();
     assert_eq!(
         labels,
-        ["No project", "assembly-bare", "No project · Workbox Test"]
+        [
+            "No project",
+            "assembly-bare",
+            "me",
+            "No project · Workbox Test"
+        ]
     );
-    assert_eq!(ids(&groups[0]), ["s3", "s1"]);
+    assert_eq!(ids(&groups[0]), ["s3"]);
+    assert_eq!(ids(&groups[3]), ["s4", "s0"]);
 }

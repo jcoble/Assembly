@@ -63,5 +63,5 @@ impl RenderOnce for TurnFoldRow {
 }
 
 #[cfg(test)]
-#[path = "tests/turn_fold_row_tests.rs"]
+#[path = "turn_fold_row_tests.rs"]
 mod tests;

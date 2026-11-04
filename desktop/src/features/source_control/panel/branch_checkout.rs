@@ -48,6 +48,8 @@ pub(super) fn observe_checkout(value: &Value, operation: &str) -> CheckoutSeen {
     }
 }
 /// The plain sentence for a refusal code; anything else is already the backend's sentence.
+const VERSION_CONFLICT: &str = "version_conflict";
+
 pub(super) fn checkout_sentence(reason: &str) -> String {
     match reason {
         "forbidden" => "This session can't change checkout from here.",
@@ -68,6 +70,7 @@ pub(super) fn checkout_sentence(reason: &str) -> String {
         "invalid_branch" => "That isn't a valid branch name.",
         "invalid_base" => "That base can't be used for a new branch.",
         "not_git" => "This folder isn't a git repository.",
+        VERSION_CONFLICT => "The session just changed. Try again.",
         "unsupported_resume" => {
             "This session's agent can't keep its conversation in another checkout."
         }
@@ -198,11 +201,25 @@ impl SourceControlPane {
                 None => None,
             };
             let Ok(Some(submitted)) = pane.update(cx, |pane, cx| {
-                pane.submit_checkout(wire, operation, read, cx)
+                pane.submit_checkout(wire.clone(), operation, read.clone(), None, cx)
             }) else {
                 return;
             };
-            let answer = submitted.await;
+            let mut answer = submitted.await;
+            // The row moved while this was on its way, which rarely bears on what this person asked. The Engine still
+            // checks the command against the row as it is now, so it's asked once more at the version it named.
+            if let Ok(receipt) = &answer
+                && receipt.error.as_deref() == Some(VERSION_CONFLICT)
+            {
+                let version = receipt.version;
+                let operation = uuid::Uuid::new_v4().to_string();
+                let Ok(Some(again)) = pane.update(cx, |pane, cx| {
+                    pane.submit_checkout(wire, operation, read, Some(version), cx)
+                }) else {
+                    return;
+                };
+                answer = again.await;
+            }
             _ = pane.update(cx, |pane, cx| match answer {
                 Ok(receipt) if receipt.applied => pane.checkout_observed(cx),
                 Ok(receipt) => {
@@ -229,6 +246,7 @@ impl SourceControlPane {
         wire: Value,
         operation: String,
         read: Option<EngineItem>,
+        version: Option<i64>,
         cx: &mut Context<Self>,
     ) -> Option<
         Task<
@@ -238,7 +256,9 @@ impl SourceControlPane {
             >,
         >,
     > {
-        let key = self.checkout.as_ref()?.key.clone();
+        let pending = self.checkout.as_mut()?;
+        pending.operation = operation.clone();
+        let key = pending.key.clone();
         let feed = EngineFeed::global(cx);
         // The feed keeps a row it's asked for only once its subscription holds it, which may not have happened yet.
         let held = feed.read(cx).session(&key);
@@ -249,7 +269,7 @@ impl SourceControlPane {
         let command = WindowCommand {
             command_id: operation,
             entity_id: key.id,
-            expected_version: session.version,
+            expected_version: version.unwrap_or(session.version),
             epoch: session.epoch,
             machine: Some(key.machine),
             surface: None,

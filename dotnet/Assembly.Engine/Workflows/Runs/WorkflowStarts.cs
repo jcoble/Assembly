@@ -7,7 +7,7 @@ using Assembly.Engine.Workflows.Definitions;
 
 namespace Assembly.Engine.Workflows.Runs;
 
-public static class WorkflowStarts
+public static partial class WorkflowStarts
 {
     public static WorkflowStartAck? Existing(IReadScope scope, WorkflowStartRequest request, ProjectRecord project)
     {

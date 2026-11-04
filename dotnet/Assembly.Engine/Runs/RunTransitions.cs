@@ -59,10 +59,20 @@ public static class RunTransitions
         List<EventDraft> events = [Changed(c.EntityId, run.Version + 1, run.Owner, "cancelling")];
         events.AddRange(s.Query("""
             UPDATE engine_step SET state='cancelled',version=version+1,updated_ms=$now,ended_ms=$now
-            WHERE run_id=$id AND attempt=0 AND state='pending'
+            WHERE run_id=$id AND (state='pending' OR kind='gate' AND state='waiting')
             RETURNING id,version,session_id
             """, r => StepCancelled(r.Text(0), r.Long(1), r.IsNull(2) ? null : r.Text(2), c.EntityId, run.Owner),
             new("$now", c.NowMs), new("$id", c.EntityId)));
+        events.AddRange(s.Query("""
+            UPDATE engine_needs_me SET state='cancelled',version=version+1,updated_ms=$now
+            WHERE run_id=$id AND source_kind='workflow_gate' AND state='open' RETURNING id,version,step_id
+            """, r => new EventDraft("needs_me.cancelled", "needs_me", r.Text(0), r.Long(1), false,
+                new(run.Owner, c.EntityId, r.IsNull(2) ? null : r.Text(2), run.Owner, "cancelled", run.Epoch)), new SqlArg("$id", c.EntityId), new("$now", c.NowMs)));
+        s.Execute("""
+            UPDATE engine_step_attempt SET state='cancelled',ended_ms=$now,gate_state='settled'
+            WHERE state='waiting' AND EXISTS(SELECT 1 FROM engine_step st WHERE st.id=step_id AND st.run_id=$run
+              AND st.attempt=engine_step_attempt.attempt AND st.kind='gate' AND st.state='cancelled')
+            """, new("$now", c.NowMs), new("$run", c.EntityId));
         var stoppedSessions = s.Query("""
             UPDATE engine_session SET cancel_requested=1,version=version+1,updated_ms=$now
             WHERE state!='ended' AND id IN (SELECT session_id FROM engine_step WHERE run_id=$id AND attempt>0)

@@ -76,7 +76,7 @@ public sealed class WorkflowDispatchPreparation(IAppDatabase db, EngineCommands 
             JOIN engine_workflow_workspace w ON w.id=st.workspace_id AND w.state='ready'
             LEFT JOIN engine_step_attempt a ON a.step_id=st.id AND a.attempt=st.attempt AND a.generation=st.generation
             WHERE st.kind='command' AND st.authority_machine=$machine AND run.machine=$machine
-              AND run.setup_state='ready' AND run.paused=0 AND run.state IN ('queued','running','needs_me')
+              AND run.setup_state='ready' AND (run.paused=0 OR st.state='running') AND run.state IN ('queued','running','needs_me')
               AND owner.machine=$machine AND owner.holder='local' AND owner.reserved_epoch IS NULL AND owner.cancel_requested=0
               AND owner.state IN ('idle','running','needs_me') AND COALESCE(st.dispatch_state,'')<>'redo_pending'
               AND (st.state='pending' OR st.state='running' AND a.gate_state='ready')

@@ -47,6 +47,17 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (_recovering)
+                {
+                    db.Writer.Write("engine.recover", scope =>
+                    {
+                        var rows = Candidates(scope, "state='inflight'");
+                        foreach (var row in rows) Apply(scope, row, new RecoverEffect());
+                        _recovering = rows.Count == 100;
+                        return rows.Count;
+                    });
+                    if (_recovering) continue;
+                }
                 await CancelWorkflowExecutorsAsync(cancellationToken);
                 foreach (var (owner, active) in _active.Where(pair => pair.Value.Task.IsCompleted).ToArray())
                 {
@@ -118,13 +129,8 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
     private (Candidate? Claim, long? Deadline, bool More) Pass(IWriteScope s)
     {
         var now = time.GetUtcNow().ToUnixTimeMilliseconds();
-        if (_recovering)
-        {
-            var rows = Candidates(s, "state='inflight'");
-            foreach (var row in rows) Apply(s, row, new RecoverEffect());
-            _recovering = rows.Count == 100;
-            if (_recovering) return (null, null, true);
-        }
+        var gates = Workflows.Runs.WorkflowGates.OpenReady(s, machine, now);
+        var undoExpiries = Workflows.Runs.WorkflowControlDeadlines.ExpireUndo(s, machine, now);
         var expiryContext = new CommandContext(Guid.NewGuid(), machine, new(ActorKind.System, "engine.worker"), "message.expiry", 0, 0, now);
         var expiry = MessageExpiry.ExpireDue(s, expiryContext);
         if (expiry.Events.Count > 0)
@@ -228,6 +234,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
         var deadline = s.QueryFirst("""
             SELECT MIN(deadline) FROM (
                 SELECT MIN(deadline_ms) deadline FROM engine_needs_me WHERE state='open'
+                UNION ALL SELECT MIN(keep_until_ms) FROM engine_run WHERE machine=$machine AND keep_token IS NOT NULL
                 UNION ALL SELECT MIN(deadline_ms) FROM engine_sign_in WHERE machine=$machine AND state IN ('starting','waiting_for_person','finishing')
                 UNION ALL SELECT MIN(st.deadline_ms) FROM engine_step st JOIN engine_run r ON r.id=st.run_id
                   JOIN engine_step_attempt a ON a.step_id=st.id AND a.attempt=st.attempt
@@ -246,7 +253,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
         }
         retention.Apply(s, now);
         _retentionDeadline = retention.NextDeadlineMs(s, now);
-        return (claim, Earlier(Earlier(deadline, MessageExpiry.NextDeadline(s, machine)), _retentionDeadline), expiry.More || handoffs.Count == 100 || needs.Count == 100 || runs.Count == 100 || signIns.Count == 100 || commandTimeouts.Count == 100 || commandStops.Count == 100);
+        return (claim, Earlier(Earlier(deadline, MessageExpiry.NextDeadline(s, machine)), _retentionDeadline), gates == 100 || undoExpiries == 100 || expiry.More || handoffs.Count == 100 || needs.Count == 100 || runs.Count == 100 || signIns.Count == 100 || commandTimeouts.Count == 100 || commandStops.Count == 100);
     }
 
     private void Complete(Candidate claimed, EffectReceipt receipt)

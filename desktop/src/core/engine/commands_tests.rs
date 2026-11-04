@@ -197,3 +197,81 @@ async fn a_dispatched_command_with_a_lost_reply_is_unknown_and_is_not_sent_again
         other => panic!("barrier failed: {other:?}"),
     }
 }
+#[gpui::test]
+async fn a_followed_command_is_asked_once_more_at_the_version_the_refusal_named(
+    cx: &mut gpui::TestAppContext,
+) {
+    use super::commands::WindowCommand;
+    use crate::core::socket::{
+        client::SocketClient,
+        connection_state::ConnectionState,
+        endpoint::Endpoint,
+        fake_backend::{FakeBackend, Reply},
+        test_wait::until,
+    };
+    use futures_channel::mpsc::unbounded;
+    use gpui_kit::*;
+    use std::sync::{Arc, Mutex};
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let seen = sent.clone();
+    let backend = FakeBackend::start(move |frame| match frame["t"].as_str() {
+        Some("hello") => vec![Reply::Frame(
+            json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"real-owner"}),
+        )],
+        Some("call") if frame["method"] == "command" => {
+            let mut sent = seen.lock().unwrap();
+            sent.push(frame["args"].clone());
+            let result = if sent.len() < 3 {
+                json!({"applied":false,"late":false,"error":"version_conflict","version":20 + sent.len(),"seq":0,"epoch":9})
+            } else {
+                json!({"applied":true,"late":false,"error":null,"version":30,"seq":1,"epoch":9})
+            };
+            vec![Reply::Frame(
+                json!({"t":"result","id":frame["id"],"result":result}),
+            )]
+        }
+        _ => vec![],
+    });
+    cx.executor().allow_parking();
+    let socket = cx.update(|cx| {
+        SocketClient::start(
+            Endpoint {
+                port: backend.port,
+                token: "secret".into(),
+            },
+            cx,
+        )
+    });
+    let (changed, mut changes) = unbounded();
+    let tell = changed.clone();
+    let _heard = cx.update(|cx| {
+        cx.observe(&socket, move |_, _| {
+            let _ = tell.unbounded_send(());
+        })
+    });
+    until("connected", &mut changes, &changed, || {
+        cx.update(|cx| matches!(socket.read(cx).state(), ConnectionState::Connected { .. }))
+    })
+    .await;
+    let feed = cx.update(super::EngineFeed::global);
+    let command = WindowCommand {
+        command_id: uuid::Uuid::new_v4().to_string(),
+        entity_id: "s".into(),
+        expected_version: 8,
+        epoch: 9,
+        machine: Some("real-owner".into()),
+        surface: None,
+        command: json!({"kind":"stop_session"}),
+    };
+    let receipt = cx
+        .update(|cx| feed.update(cx, |feed, cx| feed.submit_following(command, cx)))
+        .await
+        .unwrap();
+    let sent = sent.lock().unwrap();
+    assert_eq!(sent.len(), 2, "once more, and no more than that");
+    assert_eq!(sent[0]["expectedVersion"], 8);
+    assert_eq!(sent[1]["expectedVersion"], 21);
+    assert_ne!(sent[0]["commandId"], sent[1]["commandId"]);
+    assert_eq!(sent[0]["command"], sent[1]["command"]);
+    assert_eq!(receipt.error.as_deref(), Some("version_conflict"));
+}

@@ -15,6 +15,7 @@ use crate::features::changes::{
     working_copy::{Scope, Selection, read_branch, read_file, wanted_files},
 };
 use crate::features::source_control::{git_checkouts::checkout_gone, git_status::GitStatus};
+use crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator;
 use gpui_kit::component::diff::DiffFile;
 use gpui_kit::*;
 use serde_json::json;
@@ -42,6 +43,7 @@ impl ChangesPane {
             self.forget_stack(cx);
             self.focus_path = Some(path);
             CenterPanes::save_layout(cx);
+            WorkspaceCoordinator::changed(cx);
             if self.active {
                 if was_commit {
                     self.start_status(cx);
@@ -121,6 +123,7 @@ impl ChangesPane {
         self.forget_stack(cx);
         self.refresh(cx);
         CenterPanes::save_layout(cx);
+        WorkspaceCoordinator::changed(cx);
         cx.notify();
     }
     /// Follows the checkout Source control has read for this session. A status it read moves this tab's too.

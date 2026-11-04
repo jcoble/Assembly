@@ -94,6 +94,11 @@ esac
 if [ "$mode" = serve ]; then
   main_guard=""
   [ -n "$LANE_NAME" ] || main_guard=clean-origin-main
+  # Main's host is anything that resolves to its unit, port or data, whatever the .lane says.
+  if [ -n "$LANE_NAME" ] && { [ "$BOX_UNIT" = assembly-dotnet ] || [ "$BOX_PORT" = 9797 ] || [ "$BOX_DATA" = assembly-dotnet ]; }; then
+    echo "stop: lane $LANE_NAME resolves to main's host ($BOX_UNIT, port $BOX_PORT, data $BOX_DATA)" >&2
+    exit 1
+  fi
   # The single serve entry checks clean origin/main before contacting main's host.
   exec node scripts/workbox-serve.ts "$LANE_NAME" "$LANE_NUMBER" "$branch" "$main_guard"
 fi
