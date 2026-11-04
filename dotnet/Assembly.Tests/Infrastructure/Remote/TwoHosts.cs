@@ -1,3 +1,4 @@
+using System.Text;
 using System.Net;
 using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Common.Calls;
@@ -273,7 +274,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         if (forwardCommands) Mac.Forwarder = new(machine => _connections!.ByEngineMachine(Mac.Fixture.Db, machine));
     }
     public EngineMirror Mirror { get; private set; } = null!;
-    public StringWriter MirrorLog { get; } = new();
+    internal LockedLog MirrorLog { get; } = new();
     private RemoteMachine? _machine;
     private LiveHub? _hub;
     public async Task Start() { await Remote.Start(); await Mac.Start(); Remote.Fixture.SeedSession(); }
@@ -364,4 +365,20 @@ internal sealed class TwoHosts : IAsyncDisposable
     public async Task ReplaceRemote() { await Remote.DisposeAsync(); Remote = new(); await Remote.Start(); Remote.Fixture.SeedSession(); }
     public string? RowTitle => Mac.Fixture.Text("SELECT json_extract(r.row_json,'$.title') FROM engine_mirror_row r JOIN engine_mirror m ON m.machine=r.machine AND m.generation=r.generation WHERE m.state='live' AND r.entity_id='s'");
     public async ValueTask DisposeAsync() { await StopMirror(); await Mac.DisposeAsync(); await Remote.DisposeAsync(); MirrorLog.Dispose(); }
+}
+
+/// <summary>A log many background loops write at once and a test reads, which <see cref="StringWriter"/> can't be.</summary>
+internal sealed class LockedLog : TextWriter
+{
+    private readonly StringBuilder _text = new();
+
+    public override Encoding Encoding => Encoding.Unicode;
+
+    public override void Write(char value) { lock (_text) _text.Append(value); }
+
+    public override void Write(string? value) { lock (_text) _text.Append(value); }
+
+    public override void WriteLine(string? value) { lock (_text) _text.Append(value).Append(CoreNewLine); }
+
+    public override string ToString() { lock (_text) return _text.ToString(); }
 }
