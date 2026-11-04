@@ -14,7 +14,7 @@ export function inside(path: string, root = worktreeRoot()) {
 // Split shell command boundaries while keeping quoted text and ${HOME} intact.
 function tokens(command: string) {
   const result: { words: string[]; bare: string[] }[] = [{ words: [], bare: [] }];
-  const heredocs: { delimiter: string; tabs: boolean }[] = [];
+  const heredocs: { delimiter: string; tabs: boolean; expands: boolean }[] = [];
   let lineStart = 0, malformedBody = false;
   let word = '', quote = '', started = false, quoted = false;
   const push = () => { if (started) { result.at(-1)!.words.push(word); if (!quoted) result.at(-1)!.bare.push(word); } word = ''; started = quoted = false; };
@@ -23,16 +23,17 @@ function tokens(command: string) {
     if (c === '\\' && quote !== "'") { word += command[++i] || ''; started = true; continue; }
     if (quote) { if (c === quote) quote = ''; else word += c; started = true; continue; }
     if (c === '"' || c === "'") { quote = c; started = quoted = true; continue; }
-    if (c === '<' && command[i + 1] === '<' && command[i + 2] !== '<') {
+    if (command.startsWith('<<<', i)) { push(); i += 2; continue; }
+    if (c === '<' && command[i + 1] === '<') {
       const match = /^<<(-)?[ \t]*((?:'[^']*'|"[^"]*"|\\.|[^\s;&|<>])+)/.exec(command.slice(i));
       if (match) {
-        push(); heredocs.push({ delimiter: match[2].replace(/['"]|\\(?=.)/g, ''), tabs: !!match[1] });
+        push(); heredocs.push({ delimiter: match[2].replace(/['"]|\\(?=.)/g, ''), tabs: !!match[1], expands: !/['"\\]/.test(match[2]) });
         i += match[0].length - 1; continue;
       }
     }
     if (c === '\n' && heredocs.length) {
       push();
-      const shell = result.slice(lineStart).some(part => /(^|\/)(bash|sh|zsh|dash)$/.test(part.words.find(word => !['command', 'env', 'sudo', 'exec', 'nohup', 'time'].includes(word) && !/^[A-Za-z_][A-Za-z_0-9]*=/.test(word)) || ''));
+      const shell = result.slice(lineStart).some(part => /(^|\/)(bash|sh|zsh|dash)$|^(source|\.)$/.test(part.words.find(word => !['command', 'env', 'sudo', 'exec', 'nohup', 'time'].includes(word) && !/^[A-Za-z_][A-Za-z_0-9]*=/.test(word)) || ''));
       for (const doc of heredocs.splice(0)) {
         let body = '', closed = false;
         while (i < command.length) {
@@ -41,7 +42,7 @@ function tokens(command: string) {
           if ((doc.tabs ? line.replace(/^\t+/, '') : line) === doc.delimiter) { closed = true; break; }
           body += line + '\n';
         }
-        if (shell) { const parsed = tokens(body); result.push(...parsed.commands); malformedBody ||= parsed.malformed || !closed; }
+        if (shell || (doc.expands && /\$\(|`/.test(body))) { const parsed = tokens(body); result.push(...parsed.commands); malformedBody ||= parsed.malformed || !closed; }
       }
       result.push({ words: [], bare: [] }); lineStart = result.length - 1; continue;
     }

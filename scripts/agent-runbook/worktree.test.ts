@@ -56,6 +56,23 @@ test('guard_denies_heredoc_into_shell', t => {
   }
   assert.ok(f.guard("cat <<'EOF' | bash\ngit worktree add /tmp/outside\nEOF").deny);
 });
+test('guard_here_string_does_not_hide_next_command', t => {
+  const f = setup(t), add = 'git worktree add /tmp/outside';
+  for (const command of [`cat <<<'x'\n${add}`, `cat <<< x\n${add}`, `cat <<<EOF\n${add}\nEOF`]) assert.ok(f.guard(command).deny, command);
+  assert.deepEqual(f.guard(`cat <<<'${add}'`), {});
+});
+test('guard_checks_substitution_in_unquoted_heredoc', t => {
+  const f = setup(t), add = 'git worktree add /tmp/outside';
+  for (const body of ['$(' + add + ')', '`' + add + '`']) {
+    assert.ok(f.guard(`cat <<EOF\n${body}\nEOF`).deny, body);
+    assert.deepEqual(f.guard(`cat <<'EOF'\n${body}\nEOF`), {}, body);
+  }
+  assert.deepEqual(f.guard('cat <<EOF\nBuilt on $(date)\nEOF'), {});
+});
+test('guard_denies_heredoc_into_source', t => {
+  const f = setup(t);
+  for (const head of ['source /dev/stdin', '. /dev/stdin']) assert.ok(f.guard(`${head} <<'EOF'\ngit worktree add /tmp/outside\nEOF`).deny, head);
+});
 test('guard_allows_env_options_with_read_only_worktree', t => {
   const f = setup(t);
   for (const options of ['--unset=UNUSED', '-u UNUSED', '--chdir=/tmp', '-C /tmp', '--unknown']) {
