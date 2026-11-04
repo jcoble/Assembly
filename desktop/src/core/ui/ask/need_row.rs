@@ -44,12 +44,18 @@ pub(super) fn validate_scope(key:&EngineKey,scope:&EngineScope)->Result<(),Engin
     if scope.machine==key.machine&&key.kind=="needs_me"&&scope.topic=="needs_me"&&scope.key.is_none(){Ok(())}
     else{Err(EngineRefusal{code:"need_scope_mismatch".into(),message:"The question does not belong to this machine-wide needs view.".into()})}
 }
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub enum NeedRowEvent {Settled}
 pub struct NeedRow {
     key:EngineKey,scope:EngineScope,feed:Entity<EngineFeed>,surface:&'static str,viewed:Option<SessionKey>,need:NeedItem,state:NeedRowState,available:bool,
-    text:Entity<TextareaState>,form:Option<AskForm>,serial:u64,accepted_here:bool,reconciled:bool,
+    text:Entity<TextareaState>,form:Option<AskForm>,serial:u64,accepted_here:bool,reconciled:bool,settled:bool,unsent:Option<String>,
     _changed:Subscription,_send:Option<Task<()>>,_read:Option<Task<()>>,
 }
+impl EventEmitter<NeedRowEvent> for NeedRow {}
 impl NeedRow {
+    pub fn need(&self)->&NeedItem {&self.need}
+    /// What was being typed when someone else answered. It's shown to copy, and never sent.
+    pub fn unsent_draft(&self)->Option<&str> {self.unsent.as_deref()}
     pub fn create(key:EngineKey,scope:EngineScope,feed:Entity<EngineFeed>,surface:&'static str,window:&mut Window,cx:&mut App)->Result<Entity<Self>,EngineRefusal> {
         validate_scope(&key,&scope)?;
         if !feed.read(cx).loaded(&scope){return Err(EngineRefusal{code:"need_source_unavailable".into(),message:"The owning needs view is not coherent yet.".into()});}
@@ -66,8 +72,8 @@ impl NeedRow {
             if event.keys.contains(&row.key)||event.sessions.contains(&row.need.session)||event.scopes.contains(&row.scope){row.refresh(cx);}
         });
         let text=cx.new(|cx|TextareaState::new(window,cx).auto_grow(1,6).submit_on_enter(true).placeholder("Type your answer"));
-        let state=if need.state=="open"{NeedRowState::Idle}else{settled_state(&need,false)};
-        Self{key,scope,feed,surface,viewed:None,need,state,available:true,text,form:None,serial:0,accepted_here:false,reconciled:true,_changed:changed,_send:None,_read:None}
+        let settled=need.state!="open";let state=if settled{settled_state(&need,false)}else{NeedRowState::Idle};
+        Self{key,scope,feed,surface,viewed:None,need,state,available:true,text,form:None,serial:0,accepted_here:false,reconciled:true,settled,unsent:None,_changed:changed,_send:None,_read:None}
     }
     fn refresh(&mut self,cx:&mut Context<Self>) {
         let next=self.feed.read(cx).need(&self.key);
@@ -76,11 +82,22 @@ impl NeedRow {
             self.need=need;
             if self.need.state!="open" {
                 self.state=settled_state(&self.need,self.accepted_here);
+                self.note_settled(cx);
             }
         }
         cx.notify();
     }
-    fn open(&mut self,window:&mut Window,cx:&mut Context<Self>) {
+    /// Once, when the need stops being open. An answer of ours still on its way isn't known yet, so it waits for the reread.
+    fn note_settled(&mut self,cx:&mut Context<Self>) {
+        if self.settled||!self.reconciled||self.need.state=="open"{return;}
+        self.settled=true;
+        if !self.accepted_here {
+            let draft=self.text.read(cx).value().to_string();
+            if !draft.trim().is_empty(){self.unsent=Some(draft);}
+        }
+        cx.emit(NeedRowEvent::Settled);
+    }
+    pub fn open(&mut self,window:&mut Window,cx:&mut Context<Self>) {
         self.refresh(cx);
         if !self.available||self.need.state!="open"{return;}
         if self.form.is_none() {
@@ -147,7 +164,7 @@ impl NeedRow {
                 match result {
                     Ok(Some(item))=>if let Some(need)=NeedItem::of(&item) {
                         row.need=need;row.available=row.feed.read(cx).loaded(&row.scope);row.reconciled=true;
-                        if row.need.state!="open"{row.state=settled_state(&row.need,row.accepted_here);}
+                        if row.need.state!="open"{row.state=settled_state(&row.need,row.accepted_here);row.note_settled(cx);}
                         else if matches!(row.state,NeedRowState::Sending){row.state=NeedRowState::Open;}
                     }else{row.available=false;},
                     Ok(None)=>row.available=false,
@@ -183,6 +200,10 @@ impl Render for NeedRow {
         if !self.available {return column.child("The current owning source is unavailable.");}
         if self.need.state!="open" {
             if let Some(answer)=&self.need.answer {column=column.child(self.need.answer_text.clone().unwrap_or_else(||AskForm::shown(self.need.presentation.as_ref().and_then(|presentation|presentation.schema.as_ref()),answer).to_string()));}
+            if let Some(unsent)=self.unsent.clone() {
+                column=column.child(h_flex().gap_2().child(div().flex_1().min_w_0().text_color(theme.muted_foreground).child(format!("Your unsent answer: {unsent}")))
+                    .child(Button::new("copy-unsent").ghost().label("Copy").on_click(move|_,_,cx|cx.write_to_clipboard(ClipboardItem::new_string(unsent.clone())))));
+            }
             return column;
         }
         if matches!(self.state,NeedRowState::Sending){return column;}

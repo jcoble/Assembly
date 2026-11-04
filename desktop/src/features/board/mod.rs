@@ -7,6 +7,8 @@ pub mod board_feed;
 pub mod board_pane;
 pub mod board_payload;
 pub mod board_queries;
+pub mod question_actions;
+pub mod question_row;
 pub mod board_question;
 pub mod board_state;
 
