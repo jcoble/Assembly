@@ -37,11 +37,12 @@ public static class EngineSchema
             UpgradeNeedPresentation(scope);
             PrSchemaUpgrade.Apply(scope);
             CheckoutIndex(scope);
+            Messages.Reading.MessageReadSchemaUpgrade.Apply(scope);
             return new(machine, null);
         }
-        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13))
+        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13 or 14))
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
-        if (meta.Version is 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13)
+        if (meta.Version is 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13 or 14)
         {
             projectionSchema?.Invoke(scope);
             if (meta.Version == 6) NeedsMe.RoutedNeedSchemaUpgrade.Apply(scope);
@@ -53,6 +54,7 @@ public static class EngineSchema
             if (meta.Version < 12) UpgradeNeedPresentation(scope);
             if (meta.Version < 13) PrSchemaUpgrade.Apply(scope);
             CheckoutIndex(scope);
+            if (meta.Version < 14) Messages.Reading.MessageReadSchemaUpgrade.Apply(scope);
             return new(meta.Machine, meta.Version);
         }
         if (meta.Version == 1)
@@ -77,6 +79,7 @@ public static class EngineSchema
         UpgradeNeedPresentation(scope);
         PrSchemaUpgrade.Apply(scope);
         CheckoutIndex(scope);
+        Messages.Reading.MessageReadSchemaUpgrade.Apply(scope);
         return new(meta.Machine, meta.Version);
     }
 

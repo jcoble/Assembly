@@ -310,8 +310,7 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
     {
         public bool Available = true; public int ProviderCalls;
         public IReadOnlyList<AgentDescriptor> Agents => Available ? [new("custom", "Target", "unused", [], null)] : [];
-        public void ValidateFolder(string folder) => new AdapterLauncher([], "", new UnclaimedPermissions(), _ => null).ValidateFolder(folder);
-        public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken) { ProviderCalls++; throw new InvalidOperationException("No clone at start"); }
+        public void ValidateFolder(string folder) => new AdapterLauncher([], "", new UnclaimedPermissions()).ValidateFolder(folder);
         public bool CanRunTerminalAuthentication => false;
         public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
             StageTimes stages, CancellationToken cancellationToken) => LaunchAsync(descriptor.Id, stages, cancellationToken);

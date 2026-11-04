@@ -10,6 +10,7 @@ namespace Assembly.Application.Common.Acp;
 /// </summary>
 public interface IPermissionPolicy
 {
+    bool AllowAutomaticBoardUpdates => true;
     Task<PermissionOutcome> DecideAsync(RequestPermissionRequest request, CancellationToken cancellationToken);
 
     /// <summary>Without a person to ask, a question is cancelled, which ends just the asking tool call.</summary>

@@ -23,10 +23,10 @@ public sealed partial class ChatSocketTests
 
         await CallAsync(socket, 1, "config", "set", $$"""{"session":"{{session.SessionId}}","configId":"","value":"x"}""");
         Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
-        await CallAsync(socket, 2, "sessions", "create", """{"agent":"claude","repoUrl":""}""");
-        Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
-        await CallAsync(socket, 3, "sessions", "create", """{"agent":"","repoUrl":"repo"}""");
-        Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
+        await CallAsync(socket, 2, "sessions", "create", """{"agent":"claude","clientId":""}""");
+        Assert.Contains("\"code\":\"bad_args\"", await ReadAsync(socket));
+        await CallAsync(socket, 3, "sessions", "create", """{"agent":"","clientId":"empty_agent"}""");
+        Assert.Contains("\"code\":\"bad_args\"", await ReadAsync(socket));
 
         Assert.Empty(_here.Asked);
     }

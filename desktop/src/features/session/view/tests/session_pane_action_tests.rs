@@ -394,9 +394,6 @@ fn a_questions_form_sends_the_choices_picked(cx: &mut TestAppContext) {
         json!({ "kind": "question", "state": "open", "schema": schema }),
     );
     let (pane, client, cx) = opened(vec![user(1, "go"), ask], cx);
-    pane.update_in(cx, |pane, window, cx| {
-        pane.make_form(&Entry::Item(1), window, cx)
-    });
     let pick = |field: &str, value: &str, many: bool| SessionAction::Pick {
         ask_id: "a1".into(),
         field: field.into(),
@@ -425,6 +422,35 @@ fn a_questions_form_sends_the_choices_picked(cx: &mut TestAppContext) {
         [(
             "send/answer".to_string(),
             json!({ "session": "s1", "ask": "a1", "answer": { "action": "accept", "content": { "zone": "west", "tags": ["b"] } } })
+        )]
+    );
+}
+
+#[gpui::test]
+fn a_check_box_in_a_form_answers_as_a_boolean(cx: &mut TestAppContext) {
+    let schema = json!({ "type": "object", "properties": {
+        "agree": { "type": "boolean" },
+        "keep": { "type": "boolean" },
+    } });
+    let ask = row(
+        2,
+        "ask",
+        Some("ask:a1"),
+        json!({ "kind": "question", "state": "open", "schema": schema }),
+    );
+    let (pane, client, cx) = opened(vec![user(1, "go"), ask], cx);
+    act(
+        &pane,
+        SessionAction::Flag { ask_id: "a1".into(), field: "agree".into(), on: true },
+        cx,
+    );
+    client.queue_answer(Ok(json!({ "ok": true })));
+    act(&pane, SessionAction::SubmitAsk { ask_id: "a1".into() }, cx);
+    assert_eq!(
+        calls_after(&client, 1),
+        [(
+            "send/answer".to_string(),
+            json!({ "session": "s1", "ask": "a1", "answer": { "action": "accept", "content": { "agree": true, "keep": false } } })
         )]
     );
 }

@@ -1,14 +1,12 @@
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Common.Calls;
-using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Transcript;
 
 namespace Assembly.Infrastructure.Agents;
 
-/// <summary>Checks sessions out in <c>checkouts/&lt;session id&gt;</c> (a helper uses its parent's), and starts an agent's ACP adapter in <c>checkouts</c>.</summary>
-public sealed partial class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, string checkouts, IPermissionPolicy permissions,
-    Func<SessionInfo, string?> checkoutFolder) : IAgentLauncher
+/// <summary>Starts configured ACP adapters; session checkout preparation belongs to the Engine.</summary>
+public sealed partial class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, string checkouts, IPermissionPolicy permissions) : IAgentLauncher
 {
     public IReadOnlyList<AgentDescriptor> Agents => agents.ToArray();
 
@@ -29,14 +27,6 @@ public sealed partial class AdapterLauncher(IReadOnlyList<AgentDescriptor> agent
 
         Directory.Move(old, checkouts);
         log.WriteLine($"checkouts: moved {old} to {checkouts}");
-    }
-
-    public async Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken)
-    {
-        var folder = checkoutFolder(session) ?? throw new InvalidOperationException($"{session.SessionId} has no folder");
-        await GitCheckout.EnsureAsync(session.RepoUrl, folder, cancellationToken);
-        stages.Mark("clone");
-        return folder;
     }
 
     public void ValidateFolder(string folder)

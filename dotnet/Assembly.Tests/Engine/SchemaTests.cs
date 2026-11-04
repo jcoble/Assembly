@@ -78,12 +78,12 @@ public sealed class SchemaTests
     }
 
     [Fact]
-    public void Version_14_refuses()
+    public void Version_15_refuses()
     {
         using var f = new EngineFixture();
-        f.Db.Writer.Write("test.newer-schema", s => s.Execute("UPDATE engine_meta SET schema_version=14"));
+        f.Db.Writer.Write("test.newer-schema", s => s.Execute("UPDATE engine_meta SET schema_version=15"));
         Assert.Throws<InvalidOperationException>(() => EngineSchema.Open(f.Db, 1000));
-        Assert.Equal(14, f.Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(15, f.Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
     }
 
     [Fact]
@@ -167,7 +167,7 @@ public sealed class SchemaTests
 
         Assert.Equal("original-machine", EngineSchema.Open(db, 2000));
 
-        Assert.Equal(13, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(14, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
         Assert.Equal(before, StoredRows(db, originalColumns));
         Assert.Equal("s", db.QueryFirst("SELECT order_key FROM engine_outbox WHERE id='effect'", r => r.Text(0), default));
         Assert.Null(db.QueryFirst("SELECT executor_json FROM engine_outbox WHERE id='effect'", r => r.IsNull(0) ? null : r.Text(0), default));

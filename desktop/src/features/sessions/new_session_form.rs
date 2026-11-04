@@ -1,11 +1,8 @@
-//! `NewSessionForm` starts a session: the machine (from the machines list) and its agent (`machines/agents`), and the
-//! folder, then `sessions/create`. The new session is selected and opens empty, ready for its first message.
-//! Replaces the new session form in routes/+page.svelte.
+//! One project chooser and Composer draft. The first send owns a stable create request;
+//! the initial prompt waits for the accepted checkout, idle state and guarded session navigation.
 
-use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::*;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::rc::Rc;
 
 use crate::core::state::machines::Machines;
@@ -16,6 +13,21 @@ use crate::features::session::composer::draft_config::{self, Catalogue, DraftCon
 use crate::features::settings::sign_in_panel::{self, SignInTarget};
 
 pub struct NewSessionForm {
+    /// Drawn as the Chat pane's draft, not in a dialog.
+    centered: bool,
+    chooser_open: bool,
+    chooser_focus: FocusHandle,
+    project_chooser: Entity<crate::features::projects::project_chooser::ProjectChooser>,
+    start_composer: Entity<crate::features::session::composer::composer_view::Composer>,
+    _project_choice: Subscription,
+    _start_requested: Subscription,
+    location_source: Option<Rc<start_source::StartSource>>,
+    inspection: Option<crate::features::projects::new_project::FolderInspection>,
+    location_read: Option<Task<()>>,
+    location_generation: u64,
+    attempt: Option<first_send::StartAttempt>,
+    selected_project: Option<crate::features::projects::projects::ProjectRecord>,
+    _project_created: Option<Subscription>,
     /// `None` for this computer.
     machine: Option<String>,
     agent: Option<String>,
@@ -32,13 +44,14 @@ pub struct NewSessionForm {
     list_generation: u64,
     discovering: bool,
     _discover: Option<Task<()>>,
-    _folder: Subscription,
     route: String,
     backend_connected: bool,
     backend_generation: Option<u64>,
     _connection: Option<Subscription>,
+    _bulk_connection: Option<Subscription>,
     _preferences: Option<Subscription>,
-    folder: Entity<TextareaState>,
+    cwd: Option<String>,
+    draft_window: AnyWindowHandle,
     /// Why the last load or create failed, or what's missing.
     error: SharedString,
     /// An agents load or a create is on its way: the agents load again when the machines change while neither is,
@@ -57,24 +70,14 @@ pub struct Created;
 
 impl EventEmitter<Created> for NewSessionForm {}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Made {
-    session_id: String,
+/// What a draft in the Chat pane asks of whoever holds it.
+pub enum DraftEvent {
+    Discard,
+    /// Its start failed, so it has to show again.
+    Failed,
 }
 
-/// `sessions/create`'s args, or `None` while the agent or folder is missing.
-pub fn create_args(agent: Option<&str>, folder: &str, machine: Option<&str>) -> Option<Value> {
-    let (agent, folder) = (agent?, folder.trim());
-    if folder.is_empty() {
-        return None;
-    }
-    let mut args = json!({ "agent": agent, "repoUrl": folder });
-    if let Some(machine) = machine {
-        args["machine"] = json!(machine);
-    }
-    Some(args)
-}
+impl EventEmitter<DraftEvent> for NewSessionForm {}
 
 impl NewSessionForm {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -86,25 +89,37 @@ impl NewSessionForm {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let folder = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .auto_grow(1, 2)
-                .placeholder("Folder or https://github.com/owner/repo")
+        let project_chooser = cx.new(|cx| crate::features::projects::project_chooser::ProjectChooser::new(None, window, cx));
+        let start_composer = cx.new(|cx| crate::features::session::composer::composer_view::Composer::new_start_draft(client.clone(), window, cx));
+        let slots = start_slots::start_slots(cx.weak_entity());
+        start_composer.update(cx, |composer, cx| composer.set_start_slots(slots, cx));
+        let project_choice = cx.subscribe_in(&project_chooser, window, |form: &mut Self, _, event, window, cx| {
+            match event {
+                crate::features::projects::project_chooser::ProjectChooserEvent::Picked { project, .. } => {
+                    form.chooser_open=false;form.select_project(project.clone(), window, cx);
+                }
+                crate::features::projects::project_chooser::ProjectChooserEvent::Cancelled => {
+                    form.chooser_open=false;window.focus(&form.chooser_focus,cx);cx.notify();
+                }
+            }
         });
-        let folder_changed = cx.subscribe(&folder, |form: &mut Self, _, event, cx| {
-            if matches!(event, InputEvent::Change) && !form.starting {
-                form.discover(cx);
+        let start_requested = cx.subscribe_in(&start_composer, window, |form: &mut Self, _, event, window, cx| {
+            if let crate::features::session::composer::composer_view::ComposerEvent::StartRequested { text, images } = event {
+                form.first_send(text.clone(), images.clone(), window, cx);
             }
         });
         // An agents load the connection dropped is made again once the machines list changes (after a reconnect).
         let machines = Machines::try_global(cx).map(|machines| {
             cx.observe(&machines, |form: &mut Self, _, cx| {
+                if form.attempt.is_some(){cx.notify();return;}
                 let route = form.machine_route(cx);
                 if form.route != route {
                     form.route = route;
                     form.agents.clear();
                     form.auth_machine = None;
                     form._auth_machine = None;
+                    form.location_source = None; form.inspection = None; form.cwd = None;
+                    form.reload_location(cx);
                     form.discover(cx);
                     form.load_agents(cx);
                 } else if form.retry_agents && !form.loading {
@@ -136,10 +151,15 @@ impl NewSessionForm {
                 form.observe_connection(connected, generation, cx);
             })
         });
+        let bulk_connection=crate::core::socket::client::SocketClient::try_bulk(cx).map(|socket|cx.observe(&socket,|form:&mut Self,_,cx| {
+            if form.attempt.is_some(){return;}
+            form.location_read=None;form.location_source=None;form.inspection=None;form.cwd=None;
+            form.sync_start_state(cx);form.reload_location(cx);
+        }));
         let preferences =
             crate::core::state::preferences::Preferences::try_global(cx).map(|preferences| {
                 cx.observe(&preferences, |form: &mut Self, _, cx| {
-                    if form.starting || form.picks != 0 {
+                    if form.attempt.is_some() || form.starting || form.picks != 0 {
                         return;
                     }
                     let remembered = form
@@ -154,6 +174,11 @@ impl NewSessionForm {
                 })
             });
         let mut form = NewSessionForm {
+            centered:false, chooser_open:false, chooser_focus:cx.focus_handle(),
+            project_chooser, start_composer, _project_choice: project_choice, _start_requested: start_requested,
+            location_source: None, inspection: None, location_read: None, location_generation: 0, attempt: None,
+            selected_project: None,
+            _project_created: None,
             machine: None,
             agent: None,
             agents: Vec::new(),
@@ -170,11 +195,11 @@ impl NewSessionForm {
             backend_connected,
             backend_generation,
             _connection: connection,
+            _bulk_connection:bulk_connection,
             _preferences: preferences,
             discovering: false,
             _discover: None,
-            _folder: folder_changed,
-            folder,
+            cwd: None, draft_window: window.window_handle(),
             error: SharedString::default(),
             loading: false,
             starting: false,
@@ -184,35 +209,22 @@ impl NewSessionForm {
             _machines: machines,
         };
         form.load_agents(cx);
+        form.reload_location(cx);
         form
-    }
-
-    /// Fills in a project's folder and machine, for its header's New session.
-    pub fn fill(
-        &mut self,
-        folder: &str,
-        machine: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.starting {
-            return;
-        }
-        let folder = folder.to_string();
-        self.folder
-            .update(cx, |input, cx| input.set_value(folder, window, cx));
-        self.pick_machine(machine, cx);
-        self.discover(cx);
     }
 
     fn pick_machine(&mut self, machine: Option<String>, cx: &mut Context<Self>) {
         if self.starting {
             return;
         }
+        if self.attempt.is_some() { self.start_error("The original start keeps its project and machine. Reconcile it before making another request.",cx); return; }
         if self.machine != machine {
+            self.selected_project = None;
+            self.location_source = None; self.inspection = None; self.cwd = None;
             (self.machine, self.agent, self.agents) = (machine, None, Vec::new());
             self.error = SharedString::default();
             self.route = self.machine_route(cx);
+            self.reload_location(cx);
             self.discover(cx);
             self.load_agents(cx);
             cx.notify();
@@ -287,6 +299,11 @@ impl NewSessionForm {
         }
         self.backend_connected = connected;
         self.backend_generation = generation;
+        if self.attempt.is_some() {
+            self._load=None;self._discover=None;
+            self.start_error("The original start connection changed. Its request, settings and draft were retained.",cx);
+            return;
+        }
         self.list_generation += 1;
         self._load = None;
         self.loading = false;
@@ -297,9 +314,11 @@ impl NewSessionForm {
         self.auth_machine = None;
         self._auth_machine = None;
         self._sign_in = None;
+        self.location_source = None; self.inspection = None; self.cwd = None;
         self.discover(cx);
         if connected {
             self.load_agents(cx);
+            self.reload_location(cx);
         }
     }
 
@@ -341,7 +360,7 @@ impl NewSessionForm {
         }));
     }
     fn pick_agent(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self.starting || self.agent.as_deref() == Some(id) {
+        if self.attempt.is_some() || self.starting || self.agent.as_deref() == Some(id) {
             return;
         }
         self.agent = Some(id.into());
@@ -390,6 +409,7 @@ impl NewSessionForm {
         if self.list_generation == revision
             && self.sign_in_target().as_ref() == Some(expected)
             && !self.starting
+            && self.attempt.is_none()
             && self.config.is_none()
         {
             self.discover(cx);
@@ -428,12 +448,13 @@ impl NewSessionForm {
         self.config = None;
         self.discovering = false;
         self.error = SharedString::default();
+        self.sync_start_state(cx);
         if !self.backend_connected || Machines::offline(self.machine.as_deref(), cx) {
             self.error = "Agent settings unavailable: the selected machine is disconnected.".into();
             cx.notify();
             return;
         }
-        let cwd = self.folder.read(cx).value().trim().to_string();
+        let cwd = self.cwd.clone().unwrap_or_default();
         if !std::path::Path::new(&cwd).is_absolute() || self.agent.is_none() {
             cx.notify();
             return;
@@ -459,7 +480,7 @@ impl NewSessionForm {
                     || form.machine != machine
                     || form.agent.as_deref() != Some(&agent)
                     || form.selected_target() != Some(target.as_str())
-                    || form.folder.read(cx).value().trim() != cwd
+                    || form.cwd.as_deref() != Some(cwd.as_str())
                 {
                     return;
                 }
@@ -475,6 +496,7 @@ impl NewSessionForm {
                         form.error = format!("Agent settings unavailable: {reason}").into()
                     }
                 }
+                form.sync_start_state(cx);
                 cx.notify();
             });
         }));
@@ -482,7 +504,7 @@ impl NewSessionForm {
     }
 
     fn choose(&mut self, id: &str, value: &str, cx: &mut Context<Self>) {
-        if self.starting {
+        if self.starting || self.attempt.is_some() {
             return;
         }
         let remembered = self
@@ -506,79 +528,27 @@ impl NewSessionForm {
             }
             Err(reason) => self.error = format!("Agent settings unavailable: {reason}").into(),
         }
+        self.sync_start_state(cx);
         cx.notify();
-    }
-
-    fn create(&mut self, cx: &mut Context<Self>) {
-        if self.starting {
-            return;
-        }
-        let folder = self.folder.read(cx).value().to_string();
-        let Some(mut args) = create_args(self.agent.as_deref(), &folder, self.machine.as_deref())
-        else {
-            self.error = "Pick an agent and type a folder.".into();
-            cx.notify();
-            return;
-        };
-        if std::path::Path::new(folder.trim()).is_absolute() {
-            let (Some(config), Some(target)) = (&self.config, self.selected_target()) else {
-                self.error = if self.discovering {
-                    "Wait for this machine's agent settings."
-                } else {
-                    "Agent settings unavailable: choose a ready provider and folder."
-                }
-                .into();
-                cx.notify();
-                return;
-            };
-            if !config.ready() {
-                self.error = "Choose a model offered by this provider before starting.".into();
-                cx.notify();
-                return;
-            }
-            args["workingFolder"] = json!(folder.trim());
-            args["initialConfig"] = json!({"targetId":target,"choices":config.config.choices});
-        }
-        let created_route=self.machine.clone();
-        let call = self.client.call("sessions", "create", args, None, cx);
-        (self.starting, self.error) = (true, SharedString::default());
-        cx.notify();
-        self._create = Some(cx.spawn(async move |form, cx| {
-            let outcome = call.await;
-            form.update(cx, |form, cx| {
-                form.starting = false;
-                match outcome {
-                    Ok(value) => {
-                        let made = match serde_json::from_value::<Made>(value) {
-                            Ok(made) => made,
-                            Err(error) => {
-                                form.error =
-                                    format!("Couldn't read the created session: {error}").into();
-                                cx.notify();
-                                return;
-                            }
-                        };
-                        cx.dispatch_action(&crate::core::intents::open_session::OpenSession {
-                            id:made.session_id,route_machine:created_route,request_id:uuid::Uuid::new_v4().to_string(),historical:false,
-                        });
-                        cx.emit(Created);
-                    }
-                    Err(error @ CallError::Uncertain { .. }) => form.error = error.reason().into(),
-                    Err(CallError::Aborted | CallError::Unreachable { .. }) => {
-                        form.error = "The connection dropped; the session may have started.".into()
-                    }
-                    Err(error) => {
-                        form.error =
-                            format!("Couldn't start the session: {}", error.reason()).into()
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        }));
     }
 }
 
+#[path = "new_session_form/start_request.rs"]
+mod start_request;
+#[path = "new_session_form/create_reply.rs"]
+mod create_reply;
+#[path = "new_session_form/start_source.rs"]
+mod start_source;
+#[path = "new_session_form/checkout_wait.rs"]
+mod checkout_wait;
+#[path = "new_session_form/first_send.rs"]
+mod first_send;
+#[path = "new_session_form/location.rs"]
+mod location;
+#[path = "new_session_form/project.rs"]
+mod project;
+#[path = "new_session_form/start_slots.rs"]
+mod start_slots;
 #[path = "new_session_form/view.rs"]
 mod view;
 

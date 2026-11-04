@@ -12,7 +12,7 @@ using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Draft.SourceControl;
 
-public sealed class GitSessionOperationsTests
+public sealed partial class GitSessionOperationsTests
 {
     [Fact]
     public async Task A_lost_pr_write_preserves_actual_host_machine_and_never_replays()
@@ -20,7 +20,7 @@ public sealed class GitSessionOperationsTests
         await using var f = await Fixture.Create();
         var execute = f.Producer.Prepare(f.Request());
         var failure = await Assert.ThrowsAsync<CallUncertain>(() => execute(default));
-        Assert.Equal("actual-owning-backend", failure.Machine);
+        Assert.Equal(f.Machine, failure.Machine);
         Assert.Equal("This may have posted. Refresh before trying again.", failure.Message);
         Assert.Equal(1, f.Gh.Writes);
     }
@@ -50,6 +50,7 @@ public sealed class GitSessionOperationsTests
         private readonly TempDatabase file = new();
         private readonly BackgroundWork work = new(TimeProvider.System, TextWriter.Null);
         public AppDatabase Db { get; private set; } = null!;
+        public string Machine { get; private set; } = null!;
         public SessionStore Sessions { get; private set; } = null!;
         public string Session { get; private set; } = null!;
         public LostGh Gh { get; } = new();
@@ -62,10 +63,14 @@ public sealed class GitSessionOperationsTests
             var f = new Fixture(); await f.Repo.InitializeAsync();
             await f.Repo.Run("remote", "add", "origin", "https://github.com/owner/repo");
             var topics = new TopicSet(); f.Db = AppDatabase.Open(f.file.Path, TimeProvider.System, topics);
+            f.Machine = Assembly.Engine.Persistence.EngineSchema.Open(f.Db, TimeProvider.System.GetUtcNow().ToUnixTimeMilliseconds());
             f.Sessions = SessionStore.Open(f.Db, TimeProvider.System, f.Repo.Root);
             f.Session = f.Sessions.Create("claude", "https://github.com/owner/repo", workingFolder: f.Repo.Root).SessionId;
-            f.operations = new(f.work, topics, TimeProvider.System, "actual-owning-backend");
-            f.Producer = new(f.Sessions, f.Repo.Git, new(f.Repo.Git, f.Gh, new(f.Repo.Git, f.Gh, f.Repo.Root, new GitTextPatch(f.Repo.Git))), new(), f.operations);
+            f.operations = new(f.work, topics, TimeProvider.System, f.Machine);
+            var prReader = new PullRequestReader(f.Repo.Git, f.Gh, f.Repo.Root, new GitTextPatch(f.Repo.Git));
+            var utilityPreferences = new Assembly.Application.Features.Preferences.PreferenceStore(f.Db);
+            var utility = new Assembly.Infrastructure.Agents.AcpUtilityModel([], () => utilityPreferences.Read("utilityModel"), TimeProvider.System, TextWriter.Null);
+            f.Producer = new(f.Sessions, f.Repo.Git, new(f.Repo.Git, f.Gh, prReader), new(), f.operations, new(f.Repo.Git, utility), prReader, f.Db);
             return f;
         }
         public async ValueTask DisposeAsync() { await operations.DisposeAsync(); await work.DisposeAsync(); Db.Dispose(); file.Dispose(); Repo.Dispose(); }
@@ -73,10 +78,11 @@ public sealed class GitSessionOperationsTests
     private sealed class LostGh : IGh
     {
         public int Reads, Writes;
+        internal Action? OnRead;
         public Task<GhRun> RunAsync(string root, IReadOnlyList<string> args, string? input, TimeSpan limit, CancellationToken ct)
         {
             if (args.Contains("POST")) { Writes++; throw new GhInterrupted("lost", new IOException("fixture"), ct); }
-            Reads++;
+            Reads++; OnRead?.Invoke();
             return Task.FromResult(new GhRun(0, args[0] == "pr" ? """{"number":7,"state":"OPEN","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}""" : "[]", ""));
         }
     }

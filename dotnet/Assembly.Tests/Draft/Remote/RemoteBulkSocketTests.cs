@@ -67,7 +67,7 @@ public sealed class RemoteBulkSocketTests : IAsyncLifetime
         new RowsFeature(_ownerHub, _ownerRows, ownerSessions, ownerMachines).Register(new GatedRegistry(ownerCalls, _gate));
         new SessionsFeature(ownerSessions, ownerMachines).Register(ownerCalls);
         new AttachmentsFeature(ownerSessions, ownerMachines, Path.Combine(_ownerImageRoot.FullName, "staging")).Register(ownerCalls);
-        _terminals = new TerminalHost(new FakePtyStarter(), ownerTopics, TimeProvider.System);
+        _terminals = new TerminalHost(new FakePtyStarter(), ownerTopics, TimeProvider.System, ("/bin/sh", null));
         new TerminalFeature(_terminals).Register(ownerCalls);
         _ownerApp = CreateApp();
         Map(_ownerApp, ownerCalls, "/socket");

@@ -43,12 +43,59 @@ public sealed partial class SessionRailTests : IDisposable
         var starter = Parent(machine: remote ? "workbox-test" : null);
         var other = Parent();
         var started = Helper(starter);
+        if (remote)
+        {
+            // Source-derived SQL reader control for an already-known foreign owner, not transfer acceptance proof.
+            _database.Writer.Write("test.known-foreign-family", scope =>
+            {
+                // The actual foreign parent must exist before its linked child (engine_session.parent_id FK).
+                foreach (var id in new[] { starter, started })
+                    scope.Execute("""
+                        INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
+                            activity_state,parent_id,holder,epoch,cancel_requested,account_context,managed_checkout)
+                        SELECT s.session_id,0,m.machine,s.created_at,s.updated_at,s.agent,NULL,'',COALESCE(s.title,''),'foreign',
+                            'idle',s.parent_session_id,m.machine,0,0,'',0
+                        FROM session_info s JOIN engine_mirror_row m ON m.entity_kind='session' AND m.entity_id=s.session_id
+                        JOIN engine_mirror owner ON owner.machine=m.machine AND owner.generation=m.generation
+                            AND owner.name=s.machine AND owner.state='live'
+                        WHERE s.session_id=$id;
+                        """, new Assembly.Application.Common.Database.SqlArg("$id", id));
+                scope.Execute("""
+                    UPDATE engine_mirror_row AS m SET row_json=json_set(m.row_json,
+                        '$.provider',s.agent,'$.folder',s.repo_url,'$.updatedMs',s.updated_at,'$.title',s.title)
+                    FROM session_info s
+                    WHERE m.entity_kind='session' AND m.entity_id=s.session_id AND s.session_id IN ($parent,$child)
+                        AND EXISTS (SELECT 1 FROM engine_mirror owner WHERE owner.machine=m.machine
+                            AND owner.generation=m.generation AND owner.name=s.machine AND owner.state='live');
+                    """, new("$parent", starter), new("$child", started));
+                return 0;
+            });
+        }
         Running(started);
         Asking(started);
         Assert.Equal([started, other, starter], Collect(next => Read(after: next, limit: 1)));
         Assert.Equal(new RailTotals(1), Read().Totals);
         Assert.False(Entry(Read(), starter).Running);
         Assert.True(Entry(Read(), started).Running);
+        if (remote)
+        {
+            _database.Writer.Write("test.contradict-provider", scope => scope.Execute("""
+                UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.provider','different-provider')
+                WHERE entity_kind='session' AND entity_id=$child;
+                """, new Assembly.Application.Common.Database.SqlArg("$child", started)));
+            var wrongProvider = Entry(Read(), started);
+            Assert.Null(wrongProvider.Source);
+            Assert.Null(wrongProvider.Model);
+            Assert.Equal(new RailTotals(0), Read().Totals);
+            _database.Writer.Write("test.contradict-parent", scope => scope.Execute("""
+                UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.provider',$provider,'$.parentId','different-parent')
+                WHERE entity_kind='session' AND entity_id=$child;
+                """, new("$provider", _sessions.Get(started)!.Agent), new("$child", started)));
+            var wrongParent = Entry(Read(), started);
+            Assert.Null(wrongParent.Source);
+            Assert.Null(wrongParent.Model);
+            Assert.Equal(new RailTotals(0), Read().Totals);
+        }
     }
 
     // Pins: sessions-list#1, sessions-list#6
@@ -200,7 +247,7 @@ public sealed partial class SessionRailTests : IDisposable
         // It moves ahead of every row held before it.
         _time.Advance(TimeSpan.FromSeconds(1));
         _sessions.Touch(reader);
-        var moved = Read(groupBy: new(false, false), anchor: reader, above: 130, limit: 200);
+        var moved = Read(groupBy: new(false, false), anchor: reader, after: Cursor(held.Sessions[130]), above: 130, limit: 200);
         Assert.Equal((0, reader), (moved.Start, moved.Sessions[0].SessionId));
 
         // 60 sessions start ahead of it: it stays at the same place in what's read.

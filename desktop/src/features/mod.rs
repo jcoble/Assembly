@@ -6,6 +6,7 @@ pub mod files;
 pub mod meter;
 pub mod palette;
 pub mod projects;
+pub mod remote_install;
 pub mod session;
 pub mod sessions;
 pub mod settings;

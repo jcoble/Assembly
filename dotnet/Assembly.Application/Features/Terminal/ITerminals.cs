@@ -9,6 +9,7 @@ internal interface ITerminals
     Task ResizeAsync(string terminal, int cols, int rows, CancellationToken cancellation);
     Task<OutputPiece> ReadAsync(string terminal, long offset, CancellationToken cancellation);
     ValueTask CloseAsync(string terminal, CancellationToken cancellation = default);
+    ValueTask CloseOwnerAsync(string owner, CancellationToken cancellation = default);
 }
 
 internal sealed record ListArgs(string? Owner = null);

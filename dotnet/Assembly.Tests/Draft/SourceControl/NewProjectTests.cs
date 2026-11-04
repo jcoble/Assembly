@@ -108,7 +108,8 @@ public sealed partial class NewProjectTests
         internal string LocalParent => Path.Combine(_root, "desktop");
         internal string RemoteParent => Path.Combine(_root, "workbox-test");
         private readonly List<JsonElement> _changes = [];
-        internal static async Task<Harness> Start(IGit? localGit = null, IGit? remoteGit = null)
+        internal static async Task<Harness> Start(IGit? localGit = null, IGit? remoteGit = null,
+            Assembly.Application.Common.GitHub.IGh? localGhClient = null, Assembly.Application.Common.GitHub.IGh? remoteGhClient = null)
         {
             var h = new Harness();
             try
@@ -125,24 +126,37 @@ public sealed partial class NewProjectTests
                 h.Hosts.Remote.AdditionalFeatures = calls =>
                 {
                     new FoldersFeature(remoteFolders).Register(calls);
-                    var gh = new GhCli();
-                    var prs = new PullRequestWriter(remoteGit, gh, new(remoteGit, gh, h.RemoteParent, new GitTextPatch(remoteGit)));
-                    var sessionOperations = new GitSessionOperations(h.Hosts.Remote.Sessions, remoteGit, prs, remoteWrites, h.RemoteOperations);
-                    var routes = new SourceControlFeature(h.Hosts.Remote.Sessions, h.Hosts.Remote.Fixture.Db, h.RemoteOperations, null, null);
+                    var gh = remoteGhClient ?? new GhCli();
+                    var remotePrReader = new PullRequestReader(remoteGit, gh, h.RemoteParent, new GitTextPatch(remoteGit));
+                    var prs = new PullRequestWriter(remoteGit, gh, remotePrReader);
+                    var sessionOperations = new GitSessionOperations(h.Hosts.Remote.Sessions, remoteGit, prs, remoteWrites, h.RemoteOperations, new(remoteGit, new UnavailableUtility()), remotePrReader, h.Hosts.Remote.Fixture.Db);
+                    var routes = new SourceControlFeature(h.Hosts.Remote.Sessions, h.Hosts.Remote.Fixture.Db, h.RemoteOperations, null, null, remoteGit);
                     routes.Register(calls);
                     new SourceControlWrites(h.Hosts.Remote.Sessions, remoteGit, remoteWrites, TimeProvider.System, routes).Register(calls);
-                    new GitProjectOperations(h.RemoteOperations, new(remoteFolders, remoteWriter, remoteWrites, h.RemoteOperations), sessionOperations, routes).Register(calls);
+                    var projectPrReads = new ProjectPullRequestReads(h.Hosts.Remote.Fixture.Db,
+                        new ProjectRoots(new ProjectStore(h.Hosts.Remote.Fixture.Db, TimeProvider.System)),
+                        new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(h.Hosts.Remote.Fixture.Db, h.Hosts.Remote.Sessions,
+                            new Assembly.Application.Common.Machines.MachineSet(new Assembly.Tests.Draft.Base.Chat.FakeMachine(null, h.Hosts.Remote.Sessions))),
+                        h.Hosts.Remote.Fixture.Machine, remotePrReader, null, null);
+                    new GitProjectOperations(h.RemoteOperations, new(remoteFolders, remoteWriter, remoteWrites, h.RemoteOperations), sessionOperations, routes,
+                        new(projectPrReads, h.RemoteOperations, sessionOperations, null)).Register(calls);
                 };
                 await h.Hosts.Start(); await h.Hosts.StartMirror();
                 h.Store = new(h.Hosts.Mac.Fixture.Db, TimeProvider.System);
                 var coordinator = new NewProjectCoordinator(h.Store, h.Hosts.Mac.Fixture.Db, localFolders, localWriter, localWrites, h.LocalOperations, h.Hosts.Connections);
-                var localGh = new GhCli();
-                var localPrs = new PullRequestWriter(localGit, localGh, new(localGit, localGh, h.LocalParent, new GitTextPatch(localGit)));
-                var localSessionOperations = new GitSessionOperations(h.Hosts.Mac.Sessions, localGit, localPrs, localWrites, h.LocalOperations);
-                var routes = new SourceControlFeature(h.Hosts.Mac.Sessions, h.Hosts.Mac.Fixture.Db, h.LocalOperations, h.Hosts.Mac.Forwarder, h.Hosts.Connections);
+                var localGh = localGhClient ?? new GhCli();
+                var localPrReader = new PullRequestReader(localGit, localGh, h.LocalParent, new GitTextPatch(localGit));
+                var localPrs = new PullRequestWriter(localGit, localGh, localPrReader);
+                var localSessionOperations = new GitSessionOperations(h.Hosts.Mac.Sessions, localGit, localPrs, localWrites, h.LocalOperations, new(localGit, new UnavailableUtility()), localPrReader, h.Hosts.Mac.Fixture.Db);
+                var routes = new SourceControlFeature(h.Hosts.Mac.Sessions, h.Hosts.Mac.Fixture.Db, h.LocalOperations, h.Hosts.Mac.Forwarder, h.Hosts.Connections, localGit);
                 routes.Register(localCalls!);
                 new SourceControlWrites(h.Hosts.Mac.Sessions, localGit, localWrites, TimeProvider.System, routes).Register(localCalls!);
-                new GitProjectOperations(h.LocalOperations, new(localFolders, localWriter, localWrites, h.LocalOperations), localSessionOperations, routes, coordinator).Register(localCalls!);
+                var projectPrReadsLocal = new ProjectPullRequestReads(h.Hosts.Mac.Fixture.Db, new ProjectRoots(h.Store),
+                    new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(h.Hosts.Mac.Fixture.Db, h.Hosts.Mac.Sessions,
+                        new Assembly.Application.Common.Machines.MachineSet(new Assembly.Tests.Draft.Base.Chat.FakeMachine(null, h.Hosts.Mac.Sessions)), h.Hosts.Connections),
+                    h.Hosts.Mac.Fixture.Machine, localPrReader, h.Hosts.Mac.Forwarder, h.Hosts.Connections);
+                new GitProjectOperations(h.LocalOperations, new(localFolders, localWriter, localWrites, h.LocalOperations), localSessionOperations, routes,
+                    new(projectPrReadsLocal, h.LocalOperations, localSessionOperations, h.Hosts.Mac.Forwarder), coordinator).Register(localCalls!);
                 return h;
             }
             catch { await h.DisposeAsync(); throw; }
@@ -176,7 +190,7 @@ public sealed partial class NewProjectTests
             {
                 GitOperationStart start => JsonSerializer.SerializeToElement(start, GitOperationsJson.Default.GitOperationStart),
                 GitOperationArgs operation => JsonSerializer.SerializeToElement(operation, GitOperationsJson.Default.GitOperationArgs),
-                _ => JsonSerializer.SerializeToElement(args)
+                _ => JsonSerializer.SerializeToElement(args, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })
             };
             await Send(socket, JsonSerializer.Serialize(new { t = "call", id, feature = "git", method, args = payload }));
             while (true)
@@ -224,4 +238,10 @@ public sealed partial class NewProjectTests
             Directory.Delete(_root, true);
         }
     }
+}
+
+internal sealed class UnavailableUtility : Assembly.Application.Common.Agents.IUtilityModel
+{
+    public Task<Assembly.Application.Common.Agents.UtilityResult> CompleteAsync(string prompt, CancellationToken ct) =>
+        Task.FromResult(new Assembly.Application.Common.Agents.UtilityResult(Assembly.Application.Common.Agents.UtilityStatus.Unavailable, null, "fixture_unconfigured"));
 }

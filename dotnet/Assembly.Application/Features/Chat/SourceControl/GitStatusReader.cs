@@ -7,13 +7,13 @@ namespace Assembly.Application.Features.Chat.SourceControl;
 /// <summary>The same full porcelain stream supplies both the display cap and the mutation fingerprint.</summary>
 public sealed class GitStatusReader(IGit git)
 {
-    public Task<GitStatus> ReadAsync(string root, CancellationToken ct) =>
-        GitStatusPorcelain.ParseAsync(Records(root, ct));
+    public async Task<GitStatus> ReadAsync(string root, CancellationToken ct) =>
+        (await GitStatusPorcelain.ParseAsync(Records(root, ct))) with { CheckoutRoot = Path.GetFullPath(root) };
 
     public async Task<(GitStatus Status, IReadOnlyList<ChangedFile> All)> ReadFullAsync(string root, CancellationToken ct)
     {
         var full = await GitStatusPorcelain.ParseAsync(Records(root, ct), int.MaxValue);
-        return (full with { Files = full.Files.Take(1000).ToArray() }, full.Files);
+        return (full with { Files = full.Files.Take(1000).ToArray(), CheckoutRoot = Path.GetFullPath(root) }, full.Files);
     }
     private async IAsyncEnumerable<string> Records(string root, [EnumeratorCancellation] CancellationToken ct)
     {

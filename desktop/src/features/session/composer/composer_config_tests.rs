@@ -461,7 +461,6 @@ fn returning_to_a_session_cancels_its_previous_visits_read(cx: &mut TestAppConte
 fn only_models_stay_inline_while_effort_and_other_provider_selects_use_settings(
     cx: &mut TestAppContext,
 ) {
-    use crate::features::session::composer::config_menu::inline;
     let (composer, client, cx) = on_s1(cx);
     let mut offered = config("sonnet");
     // Providers can choose their own model option ID; category still identifies it.
@@ -483,7 +482,7 @@ fn only_models_stay_inline_while_effort_and_other_provider_selects_use_settings(
             .into_iter()
             .map(|(option, current)| {
                 (
-                    inline(option),
+                    option.model(),
                     option.id.clone(),
                     option.name.clone(),
                     current.to_string(),
@@ -531,7 +530,7 @@ fn only_models_stay_inline_while_effort_and_other_provider_selects_use_settings(
     legacy_model.id = "model".into();
     legacy_model.category = None;
     assert!(
-        inline(&legacy_model),
+        legacy_model.model(),
         "the actual model ID also stays inline without a category"
     );
 }

@@ -21,7 +21,7 @@ public sealed partial class ProviderRuntimeForwardTests
         try
         {
             var source = Source(Path.Combine(home, "selected-agents.json"), "/fixture/desktop-before");
-            var launcher = new AdapterLauncher(source, Path.Combine(home, "sessions"), new UnclaimedPermissions(), _ => null);
+            var launcher = new AdapterLauncher(source, Path.Combine(home, "sessions"), new UnclaimedPermissions());
             var effects = new NoProviderEffects();
             EngineRuntime? runtime = null;
             await using var backend = await DesktopBackend.StartAsync(home, "runtime-host-token", 0, launcher, TextWriter.Null,

@@ -41,7 +41,7 @@ public sealed class TerminalProgramTests
     public async Task A_program_executes_exact_argv_env_cwd_and_size_without_any_session_lookup()
     {
         var starter = new FakePtyStarter();
-        await using var host = new TerminalHost(starter, new RecordingTopics(), TimeProvider.System,
+        await using var host = new TerminalHost(starter, new RecordingTopics(), TimeProvider.System, ("/bin/sh", null),
             _ => throw new InvalidOperationException("must not look up a sign-in as a session"));
         IProgramTerminals programs = host;
         var start = Start();
@@ -61,14 +61,24 @@ public sealed class TerminalProgramTests
     [Fact]
     public async Task A_program_is_neither_reused_nor_returned_as_the_owners_shell()
     {
-        var starter = new FakePtyStarter();
-        await using var host = new TerminalHost(starter, new RecordingTopics(), TimeProvider.System);
-        IProgramTerminals programs = host;
-        var first = await programs.StartProgramAsync(Start(), CancellationToken.None);
-        var second = await programs.StartProgramAsync(Start(), CancellationToken.None);
-        var shell = await host.StartAsync(new StartArgs("/cwd", Owner: "signin:operation"));
-        Assert.Equal(3, new[] { first.Id, second.Id, shell.Id }.Distinct().Count());
-        Assert.Equal(["-l"], starter.Started[2].Request.Arguments);
+        var folder = Directory.CreateTempSubdirectory("assembly-program-owner-").FullName;
+        try
+        {
+            using var file = new TempDatabase();
+            using var db = TestDatabase.Open(file.Path);
+            var sessions = Assembly.Application.Features.Chat.Sessions.SessionStore.Open(db, TimeProvider.System, folder);
+            var owner = sessions.Create("fixture", "", workingFolder: folder);
+            var starter = new FakePtyStarter();
+            await using var host = new TerminalHost(starter, new RecordingTopics(), TimeProvider.System, ("/bin/sh", null),
+                Assembly.Infrastructure.Chat.SessionTerminalFolders.ExistingFolder(folder, sessions));
+            IProgramTerminals programs = host;
+            var first = await programs.StartProgramAsync(Start(owner.SessionId), CancellationToken.None);
+            var second = await programs.StartProgramAsync(Start(owner.SessionId), CancellationToken.None);
+            var shell = await host.StartAsync(new StartArgs(folder, Owner: owner.SessionId));
+            Assert.Equal(3, new[] { first.Id, second.Id, shell.Id }.Distinct().Count());
+            Assert.Equal(["-l"], starter.Started[2].Request.Arguments);
+        }
+        finally { Directory.Delete(folder, true); }
     }
 
     [Fact]
@@ -76,7 +86,7 @@ public sealed class TerminalProgramTests
     {
         var starter = new FakePtyStarter();
         var topics = new RecordingTopics();
-        await using var host = new TerminalHost(starter, topics, TimeProvider.System);
+        await using var host = new TerminalHost(starter, topics, TimeProvider.System, ("/bin/sh", null));
         IProgramTerminals programs = host;
         var terminal = await programs.StartProgramAsync(Start(), CancellationToken.None);
         var output = Collect(programs.OutputAsync(terminal.Id, CancellationToken.None));
@@ -96,7 +106,7 @@ public sealed class TerminalProgramTests
     public async Task Cancelling_a_subscriber_or_exit_wait_does_not_cancel_the_program_or_another_owner()
     {
         var starter = new FakePtyStarter();
-        await using var host = new TerminalHost(starter, new RecordingTopics(), TimeProvider.System);
+        await using var host = new TerminalHost(starter, new RecordingTopics(), TimeProvider.System, ("/bin/sh", null));
         IProgramTerminals programs = host;
         var first = await programs.StartProgramAsync(Start(), CancellationToken.None);
         var second = await programs.StartProgramAsync(Start("signin:other"), CancellationToken.None);
@@ -120,7 +130,7 @@ public sealed class TerminalProgramTests
     public async Task Closing_joins_the_pending_input_and_reader_and_removes_only_its_terminal()
     {
         var starter = new FakePtyStarter();
-        await using var host = new TerminalHost(starter, new RecordingTopics(), TimeProvider.System);
+        await using var host = new TerminalHost(starter, new RecordingTopics(), TimeProvider.System, ("/bin/sh", null));
         IProgramTerminals programs = host;
         var terminal = await programs.StartProgramAsync(Start(), CancellationToken.None);
         var pty = starter.Started[0];
@@ -140,7 +150,7 @@ public sealed class TerminalProgramTests
     {
         using var cancelled = new CancellationTokenSource();
         var starter = new FakePtyStarter { BeforeStart = cancelled.Cancel };
-        await using var host = new TerminalHost(starter, new RecordingTopics(), TimeProvider.System);
+        await using var host = new TerminalHost(starter, new RecordingTopics(), TimeProvider.System, ("/bin/sh", null));
         IProgramTerminals programs = host;
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => programs.StartProgramAsync(Start(), cancelled.Token));
         Assert.True(Assert.Single(starter.Started).Disposed);
@@ -151,7 +161,7 @@ public sealed class TerminalProgramTests
     public async Task Stopping_during_start_disposes_the_late_program_and_keeps_no_terminal()
     {
         var starter = new FakePtyStarter();
-        await using var host = new TerminalHost(starter, new RecordingTopics(), TimeProvider.System);
+        await using var host = new TerminalHost(starter, new RecordingTopics(), TimeProvider.System, ("/bin/sh", null));
         starter.BeforeStart = () => host.DisposeAsync().AsTask().GetAwaiter().GetResult();
         var error = await Assert.ThrowsAsync<CallFailed>(() => host.StartProgramAsync(Start(), CancellationToken.None));
         Assert.Equal("signin_start_failed", error.Message);
@@ -174,7 +184,7 @@ public sealed class TerminalProgramTests
         var topics = new RecordingTopics();
         try
         {
-            await using var host = new TerminalHost(starter, topics, TimeProvider.System);
+            await using var host = new TerminalHost(starter, topics, TimeProvider.System, ("/bin/sh", null));
             IProgramTerminals programs = host;
             CallFailed error;
             if (stage == "start")

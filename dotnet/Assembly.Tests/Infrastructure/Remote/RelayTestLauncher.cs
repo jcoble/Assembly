@@ -13,8 +13,6 @@ internal sealed class RelayTestLauncher : IAgentLauncher
     {
         if (!Path.IsPathFullyQualified(folder) || !Directory.Exists(folder)) throw new CallFailed("Invalid folder");
     }
-    public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken)
-    { Interlocked.Increment(ref ProviderCalls); throw new InvalidOperationException("No provider expected"); }
     public bool CanRunTerminalAuthentication => false;
     public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
         StageTimes stages, CancellationToken cancellationToken) => LaunchAsync(descriptor.Id, stages, cancellationToken);

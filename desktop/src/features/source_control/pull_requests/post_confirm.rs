@@ -1,11 +1,8 @@
-use super::super::git_operation::GitOperation;
 use super::{
     pr_detail::PrDetail,
     review_draft::{LineComment, ReviewDraft, ReviewIdentity},
 };
-use crate::core::intents::open_url::OpenUrl;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Textarea, TextareaState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -76,7 +73,17 @@ impl PostRequest {
             _ => &[],
         }
     }
-    fn action(&self) -> &'static str {
+    pub fn is_reply(&self) -> bool {
+        matches!(self.action, Action::Reply(_))
+    }
+    fn title(&self) -> &'static str {
+        match self.action {
+            Action::Review(_) => "Post this review?",
+            Action::Reply(_) => "Post this reply?",
+            Action::Comment => "Post this comment?",
+        }
+    }
+    pub(super) fn action(&self) -> &'static str {
         match self.action {
             Action::Review(_) => "review",
             Action::Reply(_) => "reply",
@@ -98,214 +105,143 @@ impl PostRequest {
         Ok(args)
     }
 }
+/// What will be posted, and the go-ahead. Confirming closes this; the page shows the post running and how it went.
 pub struct PostConfirm {
-    session: String,
-    request: PostRequest,
-    detail: Option<WeakEntity<PrDetail>>,
-    operation: Entity<GitOperation>,
-    submitted: bool,
-    preview: Option<Entity<TextareaState>>,
-    line_previews: Vec<Entity<TextareaState>>,
-    failure: Option<String>,
-    posted: Option<String>,
-    _operation: Subscription,
-}
-pub fn open(
-    session: String,
     request: PostRequest,
     detail: WeakEntity<PrDetail>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let confirm = cx.new(|cx| PostConfirm::new(session, request, Some(detail), cx));
+    failure: Option<String>,
+}
+pub fn open(request: PostRequest, detail: WeakEntity<PrDetail>, window: &mut Window, cx: &mut App) {
+    let title = request.title();
+    let confirm = cx.new(|_| PostConfirm {
+        request,
+        detail,
+        failure: None,
+    });
     window.open_dialog(cx, move |dialog, _, _| {
-        dialog
-            .title("Confirm GitHub post")
-            .footer(Empty)
-            .child(confirm.clone())
+        dialog.title(title).footer(Empty).child(confirm.clone())
     });
 }
 impl PostConfirm {
-    pub fn new(
-        session: String,
-        request: PostRequest,
-        detail: Option<WeakEntity<PrDetail>>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let operation = cx.new(|_| GitOperation::default());
-        let heard = cx.observe(&operation, |view: &mut Self, _, cx| {
-            if let Some(status) = &view.operation.read(cx).status {
-                if status.state == "succeeded" {
-                    let url = status
-                        .result
-                        .as_ref()
-                        .and_then(Value::as_str)
-                        .filter(|value| {
-                            url::Url::parse(value).is_ok_and(|url| {
-                                url.scheme() == "https" && url.host_str() == Some("github.com")
-                            })
-                        });
-                    if let Some(url) = url {
-                        view.posted = Some(url.into());
-                    } else {
-                        view.failure =
-                            Some("The post was not confirmed. Refresh before trying again.".into());
-                    }
-                }
-            }
-            cx.notify();
-        });
-        Self {
-            session,
-            request,
-            detail,
-            operation,
-            submitted: false,
-            preview: None,
-            line_previews: Vec::new(),
-            failure: None,
-            posted: None,
-            _operation: heard,
-        }
-    }
-    pub fn confirm(&mut self, current: &ReviewIdentity, cx: &mut Context<Self>) {
-        if self.submitted {
-            return;
-        }
-        match self.request.args(current) {
-            Ok(args) => {
-                self.submitted = true;
-                self.failure = None;
-                let session = self.session.clone();
-                let action = self.request.action();
-                self.operation.update(cx, |operation, cx| {
-                    operation.start(action, Some(session), args, cx)
-                });
-            }
-            Err(error) => self.failure = Some(error),
-        }
-        cx.notify();
-    }
-    pub fn uncertain(&self, cx: &App) -> bool {
-        self.operation
-            .read(cx)
-            .status
-            .as_ref()
-            .is_some_and(|status| status.state == "uncertain")
-    }
     fn current(&self, cx: &App) -> Option<ReviewIdentity> {
-        self.detail.as_ref()?.upgrade()?.read(cx).current_identity()
+        self.detail.upgrade()?.read(cx).current_identity()
+    }
+    fn free(&self, cx: &App) -> bool {
+        self.detail
+            .upgrade()
+            .is_some_and(|detail| detail.read(cx).writes_free(cx))
+    }
+    fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let request = self.request.clone();
+        let started = self
+            .detail
+            .update(cx, |detail, cx| detail.start_post(&request, cx));
+        match started {
+            Ok(Err(error)) => {
+                self.failure = Some(error);
+                cx.notify();
+            }
+            _ => window.close_dialog(cx),
+        }
     }
     fn refresh(&self, window: &mut Window, cx: &mut App) {
-        if let Some(detail) = self.detail.as_ref().and_then(WeakEntity::upgrade) {
-            detail.update(cx, |detail, cx| detail.refresh(cx));
-        }
+        _ = self.detail.update(cx, |detail, cx| detail.refresh(cx));
         window.close_dialog(cx);
     }
 }
 impl Render for PostConfirm {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.preview.is_none() {
-            self.preview = Some(cx.new(|cx| {
-                TextareaState::new(window, cx)
-                    .default_value(self.request.body.clone())
-                    .auto_grow(3, 8)
-            }));
-            self.line_previews = self
-                .request
-                .comments()
-                .iter()
-                .map(|comment| {
-                    cx.new(|cx| {
-                        TextareaState::new(window, cx)
-                            .default_value(comment.body.clone())
-                            .auto_grow(2, 5)
-                    })
-                })
-                .collect();
-        }
-        let busy = self.operation.read(cx).busy;
-        let danger = cx.theme().danger;
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let (danger, muted, border, radius) = (
+            theme.danger,
+            theme.muted_foreground,
+            theme.border,
+            theme.radius,
+        );
         let current = self.current(cx);
-        let can_post = !self.submitted
+        let can_post = self.free(cx)
             && current
                 .as_ref()
                 .is_some_and(|current| self.request.args(current).is_ok());
-        let mut root = v_flex()
+        let identity = &self.request.identity;
+        let is_comment = matches!(self.request.action, Action::Comment);
+        let head: String = identity.head.chars().take(10).collect();
+        v_flex()
             .gap_2()
-            .child(format!(
-                "{} #{} · {}",
-                self.request.identity.repository,
-                self.request.identity.number,
-                self.request.identity.head
-            ))
-            .child("This exact text and these targets will be sent to GitHub.")
-            .child(Textarea::new(self.preview.as_ref().unwrap()).readonly(true));
-        if let Action::Reply(id) = self.request.action {
-            root = root.child(format!("Reply to review comment {id}"));
-        }
-        for (index, comment) in self.request.comments().iter().enumerate() {
-            root = root
-                .child(format!(
-                    "{} · {} · line {}",
-                    comment.path, comment.side, comment.line
-                ))
-                .child(Textarea::new(&self.line_previews[index]).readonly(true));
-        }
-        root = root
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(format!(
+                "{} #{} · head {head}",
+                identity.repository, identity.number
+            )))
+            .children(match self.request.action {
+                Action::Reply(id) => Some(format!("Reply to review comment {id}")),
+                _ => None,
+            })
+            .child(
+                div()
+                    .id("post-body")
+                    .max_h(px(240.))
+                    .overflow_y_scroll()
+                    .p_2()
+                    .rounded(radius)
+                    .border_1()
+                    .border_color(border)
+                    .child(self.request.body.clone()),
+            )
+            .children(self.request.comments().iter().map(|comment| {
+                h_flex()
+                    .gap_2()
+                    .text_sm()
+                    .child(
+                        div()
+                            .flex_none()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("{}:{}", comment.path, comment.line)),
+                    )
+                    .child(comment.body.clone())
+            }))
+            .child(div().text_sm().text_color(muted).child(if is_comment {
+                "GitHub will notify participants."
+            } else {
+                "GitHub will notify participants. Assembly will check the PR head again before posting."
+            }))
             .children(
                 self.failure
                     .clone()
                     .map(|error| div().text_color(danger).child(error)),
             )
-            .children(
-                self.operation
-                    .read(cx)
-                    .error
-                    .clone()
-                    .map(|error| div().text_color(danger).child(error)),
-            );
-        if self.uncertain(cx) {
-            root = root.child("This may have posted. Refresh before trying again.");
-        }
-        if current.is_none() && !self.submitted {
-            root = root.child("Refresh the pull request before posting. Your draft is kept.");
-        }
-        if let Some(url) = self.posted.clone() {
-            root = root.child(
-                Button::new("posted-pr-link")
-                    .ghost()
-                    .label("Posted · Open on GitHub")
-                    .on_click(move |_, _, cx| cx.dispatch_action(&OpenUrl { url: url.clone() })),
-            );
-        }
-        root.child(
-            h_flex()
-                .gap_2()
-                .child(
-                    Button::new("post-close")
-                        .ghost()
-                        .label("Close")
-                        .on_click(|_, window, cx| window.close_dialog(cx)),
-                )
-                .child(
-                    Button::new("post-refresh")
-                        .ghost()
-                        .label("Refresh pull request")
-                        .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx))),
-                )
-                .child(
-                    Button::new("post-confirm")
-                        .primary()
-                        .label(if busy { "Posting…" } else { "Confirm post" })
-                        .disabled(!can_post)
-                        .on_click(cx.listener(|view, _, _, cx| {
-                            if let Some(current) = view.current(cx) {
-                                view.confirm(&current, cx);
-                            }
-                        })),
-                ),
-        )
+            .children(current.is_none().then(|| {
+                div()
+                    .text_sm()
+                    .child("Refresh the pull request before posting. Your draft is kept.")
+            }))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .justify_end()
+                    .child(
+                        Button::new("post-close")
+                            .ghost()
+                            .label("Cancel")
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .children(current.is_none().then(|| {
+                        Button::new("post-refresh")
+                            .ghost()
+                            .label("Refresh this pull request")
+                            .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx)))
+                    }))
+                    .child(
+                        Button::new("post-confirm")
+                            .primary()
+                            .label(if self.request.is_reply() {
+                                "Post reply to GitHub"
+                            } else {
+                                "Post to GitHub"
+                            })
+                            .disabled(!can_post)
+                            .on_click(cx.listener(|view, _, window, cx| view.confirm(window, cx))),
+                    ),
+            )
     }
 }
 #[cfg(test)]

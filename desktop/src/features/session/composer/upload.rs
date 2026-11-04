@@ -23,6 +23,8 @@ pub const CHUNK_BYTES: usize = 1024 * 1024;
 pub enum UploadSource {
     Path(PathBuf),
     Bytes(Arc<[u8]>),
+    /// The same immutable local image owned by the start draft/preview.
+    Image(Arc<Image>),
 }
 
 /// A file's size on disk, to turn away one too large before it uploads; `None` when it can't be read.
@@ -36,25 +38,21 @@ pub fn upload_image(
     session: String,
     source: UploadSource,
     mime: &'static str,
+    expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     cx: &mut App,
 ) -> Task<Result<String, CallError>> {
     let read = cx.background_spawn(async move {
+        let encode=|bytes:&[u8]|(bytes.len(),bytes.chunks(CHUNK_BYTES).map(|chunk|STANDARD.encode(chunk)).collect::<Vec<_>>());
         match source {
-            UploadSource::Path(path) => std::fs::read(&path)
-                .map(Arc::from)
-                .map_err(|error| CallError::Failed(format!("Couldn't read the image: {error}"))),
-            UploadSource::Bytes(bytes) => Ok(bytes),
+            UploadSource::Path(path)=>std::fs::read(path).map(|bytes|encode(&bytes)).map_err(|error|CallError::Failed(format!("Couldn't read the image: {error}"))),
+            UploadSource::Bytes(bytes)=>Ok(encode(&bytes)),
+            UploadSource::Image(image)=>Ok(encode(&image.bytes)),
         }
-        .map(|bytes| {
-            let chunks = bytes
-                .chunks(CHUNK_BYTES)
-                .map(|chunk| STANDARD.encode(chunk));
-            (bytes.len(), chunks.collect::<Vec<_>>())
-        })
     });
     cx.spawn(async move |cx| {
         let (size, chunks) = read.await?;
-        let begin = json!({ "session": session, "mime": mime, "size": size });
+        let mut begin = json!({ "session": session, "mime": mime, "size": size });
+        if let Some(source)=expected_source{begin["expectedSource"]=json!(source);}
         let begun = cx
             .update(|cx| client.call("attachments", "begin", begin, None, cx))
             .await?;

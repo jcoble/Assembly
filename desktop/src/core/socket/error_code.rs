@@ -31,12 +31,18 @@ impl ErrorCode {
             "bad_args" => ErrorCode::BadArgs,
             "timeout" => ErrorCode::Timeout,
             "source_changed"
+            | "checkout_root_changed"
+            | "checkout_unavailable"
             | "native_card_changed"
             | "native_history_unavailable"
             | "owner_validation_required"
             | "unknown_engine_session"
             | "unknown_session"
-            | "nonresumable" => ErrorCode::Refused { code: code.into() },
+            | "nonresumable"
+            | "operation_id_conflict"
+            | "install_busy"
+            | "operation_capacity"
+            | "operation_unknown" => ErrorCode::Refused { code: code.into() },
             "uncertain" => ErrorCode::Uncertain {
                 machine: machine.unwrap_or_default(),
             },

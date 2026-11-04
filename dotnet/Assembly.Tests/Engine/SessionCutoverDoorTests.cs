@@ -28,13 +28,16 @@ public sealed class SessionCutoverDoorTests
     public async Task Authenticated_socket_owners_create_the_same_untitled_checked_start()
     {
         await using var h = await Host.Start();
+        var sentinel = Path.Combine(h.Home, "notes.md");
+        await File.WriteAllTextAsync(sentinel, "owner draft");
+        var before = Directory.EnumerateFileSystemEntries(h.Home).Select(Path.GetFileName).Order().ToArray();
         using var firstSocket = await h.Open();
-        await Send(firstSocket, """{"t":"call","id":1,"feature":"sessions","method":"create","args":{"agent":"claude","repoUrl":"https://example.com/repo"}}""");
+        await Send(firstSocket, """{"t":"call","id":1,"feature":"sessions","method":"create","args":{"agent":"claude","clientId":"cutover_claude_1"}}""");
         var first = await Read(firstSocket);
         Assert.Equal("result", first.GetProperty("t").GetString());
         var firstId = first.GetProperty("result").GetProperty("sessionId").GetString()!;
         using var socket = await h.Open();
-        await Send(socket, """{"t":"call","id":1,"feature":"sessions","method":"create","args":{"agent":"codex","repoUrl":"repo"}}""");
+        await Send(socket, """{"t":"call","id":1,"feature":"sessions","method":"create","args":{"agent":"codex","clientId":"cutover_codex_1"}}""");
         var socketId = (await Read(socket)).GetProperty("result").GetProperty("sessionId").GetString()!;
         Assert.NotEqual(firstId, socketId);
         foreach (var id in new[] { firstId, socketId })
@@ -45,7 +48,10 @@ public sealed class SessionCutoverDoorTests
         Assert.Equal(2, h.F.Count("engine_session"));
         Assert.Equal(2, h.F.Events().Count(e => e.Kind == "session.started"));
         Assert.Equal(2, h.F.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='start'"));
-        Assert.Equal(0, h.F.Count("engine_message")); Assert.Equal(0, h.Launcher.Launches); Assert.Empty(h.Launcher.CheckedOut);
+        Assert.Equal(0, h.F.Count("engine_message")); Assert.Equal(0, h.Launcher.Launches);
+        Assert.Equal("owner draft", await File.ReadAllTextAsync(sentinel));
+        Assert.Equal(before, Directory.EnumerateFileSystemEntries(h.Home).Select(Path.GetFileName).Order());
+        Assert.False(Directory.Exists(Path.Combine(h.Home, "checkouts")));
     }
 
     [Fact]
@@ -65,7 +71,7 @@ public sealed class SessionCutoverDoorTests
         Assert.Equal(h.Home, session.RepoUrl); Assert.Equal(h.Home, h.Store.Root(session)); Assert.Equal(h.Home, h.Store.Item(session).Root);
         Assert.Equal(JsonValueKind.Null, h.Runtime.Reader.Entity("session", "engine-root", default)!.Value.GetProperty("model").ValueKind);
         Assert.Equal(1, h.F.Count("engine_session")); Assert.Equal(0, h.F.Count("engine_message"));
-        Assert.Equal(0, h.Launcher.Launches); Assert.Empty(h.Launcher.CheckedOut);
+        Assert.Equal(0, h.Launcher.Launches);
     }
 
     [Theory]
@@ -118,12 +124,12 @@ public sealed class SessionCutoverDoorTests
             F = new(topics: _topics); Store = SessionStore.Open(F.Db, F.Time, Path.Combine(Home, "checkouts"));
             _hub = new LiveHub(RowStore.Open(F.Db)); _work = new(F.Time, TextWriter.Null);
             _registry = new(_hub, Store, Launcher, F.Time, TextWriter.Null, _work);
-            Runtime = EngineRuntime.Start(F.Db, _topics, F.Time, F.Limits, cutover: new(F.Db, Store, Launcher, Path.Combine(Home, "checkouts"), F.Time));
+            Runtime = EngineRuntime.Start(F.Db, _topics, F.Time, F.Limits, cutover: new(F.Db, Store, Launcher, Path.Combine(Home, "checkouts"), F.Time, owningHome: Home));
             _needs = new(new(Runtime, F.Limits, F.Time), Runtime, _registry, F.Time);
             var attachments = new AttachmentStore(Path.Combine(Home, "attachments"));
             var machines = new MachineSet(new LocalMachine(_hub, Store, _registry, attachments));
             _app = ApiServer.Build(new(_hub, Store, machines, attachments, "token", Writer: F.Db.Writer, Topics: _topics,
-                Features: [new SessionsFeature(Store, machines), new EngineCalls(Runtime, F.Time, _needs)], Engine: Runtime), 0, out _);
+                Features: [new SessionsFeature(Store, machines, owningMachine: Runtime.Machine, owningHome: Home), new EngineCalls(Runtime, F.Time, _needs)], Engine: Runtime), 0, out _);
         }
         public static async Task<Host> Start()
         {

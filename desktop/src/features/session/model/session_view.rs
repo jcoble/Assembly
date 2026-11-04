@@ -18,6 +18,16 @@ pub struct RowReference {
     pub seq: i64,
 }
 
+/// One context window report as the agent sent it; a count it didn't send stays `None`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContextReport {
+    pub seq: i64,
+    pub used: i64,
+    pub size: i64,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+}
+
 #[derive(Default)]
 pub struct SessionView {
     pub items: Vec<Item>,
@@ -29,8 +39,8 @@ pub struct SessionView {
     /// The newest plan row's seq and items.
     pub plan: Option<(i64, Vec<PlanItem>)>,
     pub turn: Option<Turn>,
-    /// The newest context window report, for the composer's ring: (seq, used, size).
-    pub context: Option<(i64, i64, i64)>,
+    /// The newest context window report, for the composer's ring.
+    pub context: Option<ContextReport>,
     /// The lowest seq loaded (the next page's `before`), and whether older rows exist.
     pub oldest: Option<i64>,
     pub has_before: bool,
@@ -103,9 +113,20 @@ impl SessionView {
                 }
                 return Change::Nothing;
             }
-            RowBody::Context { used, size } => {
-                if self.context.is_none_or(|(seq, ..)| row.seq > seq) {
-                    self.context = Some((row.seq, used, size));
+            RowBody::Context {
+                used,
+                size,
+                input_tokens,
+                output_tokens,
+            } => {
+                if self.context.is_none_or(|context| row.seq > context.seq) {
+                    self.context = Some(ContextReport {
+                        seq: row.seq,
+                        used,
+                        size,
+                        input_tokens,
+                        output_tokens,
+                    });
                 }
                 return Change::Nothing;
             }

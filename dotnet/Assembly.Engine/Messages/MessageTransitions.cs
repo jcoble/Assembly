@@ -240,8 +240,9 @@ public static partial class MessageTransitions
         foreach (var released in MessageRelease.Next(s, c, sessionId, effects))
         {
             // Publish the final revision when this transaction also inserted or requeued the selected message.
+            var created = events.Any(e => e.EntityKind == "message" && e.EntityId == released.EntityId && e.MessageCreated);
             events.RemoveAll(e => e.EntityKind == "message" && e.EntityId == released.EntityId);
-            events.Add(released);
+            events.Add(released with { MessageCreated = created });
         }
     }
 
@@ -254,6 +255,8 @@ public static partial class MessageTransitions
             """, new("$id", message.Id), new("$machine", c.Machine), new("$now", c.NowMs), new("$from", message.From),
             new("$sender", senderKind), new("$to", message.To), new("$text", bodyUtf8 ?? new System.Text.UTF8Encoding(false, true).GetBytes(message.Text)), new("$mode", message.Mode),
             new("$state", message.State), new("$reason", reason), new("$expires", expiresMs));
+        s.Execute("UPDATE engine_message SET origin_machine=$origin WHERE id=$id",
+            new("$origin", Reading.MessageReadProvenance.Origin(s, c, message.From)), new("$id", message.Id));
         var title = labelUtf8 is not null || message.From is null ? null : s.QueryFirst("SELECT CAST(title AS BLOB) FROM engine_session WHERE id=$id", r => new System.Text.UTF8Encoding(false, true).GetString(r.Blob(0)), new SqlArg("$id", message.From));
         s.Execute("UPDATE engine_message SET delivery=$delivery,sender_label=CAST($label AS TEXT) WHERE id=$id",
             new("$delivery", DeliveryRule.For(s, message.From, senderKind, message.To)),
@@ -261,7 +264,8 @@ public static partial class MessageTransitions
     }
 
     private static EventDraft Changed(CommandContext c, Message message) => new("message.changed", "message", message.Id,
-        message.Version, false, new(message.To, null, null, message.From, message.State, c.Epoch));
+        message.Version, false, new(message.To, null, null, message.From, message.State, c.Epoch))
+    { MessageCreated = message.Version == 1 };
     private static Recipient? FindRecipient(IWriteScope s, string id) => s.QueryFirst(
         "SELECT epoch,state,cancel_requested,run_id,machine FROM engine_session WHERE id=$id",
         r => new Recipient(r.Long(0), r.Text(1), r.Long(2) != 0, r.IsNull(3) ? null : r.Text(3), r.Text(4)), new SqlArg("$id", id));

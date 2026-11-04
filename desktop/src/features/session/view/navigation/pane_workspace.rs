@@ -6,6 +6,19 @@ use crate::features::session::model::change::Change;
 use super::{SessionPane,opening::refused};
 
 impl SessionPane {
+    /// Returns the actual existing Chat composer only for a matching completed canonical open.
+    pub fn composer_for_open(key:&crate::core::engine::SessionKey,request_id:&str,cx:&App)->Result<Entity<crate::features::session::composer::composer_view::Composer>,String> {
+        let pane=CenterPanes::find::<SessionPane>("Chat",cx).ok_or("The Chat pane is unavailable.")?;
+        let pane=pane.read(cx);
+        let matches=pane.active_reopen.as_ref().is_some_and(|(request,_)|request.request_id==request_id&&request.key==*key&&matches!(request.target,crate::core::intents::session_open::SessionOpenTarget::Engine));
+        if !matches||pane.read_only||pane.pending_open.is_some()||pane.session.as_deref()!=Some(key.id.as_str())
+            ||pane.row_source.as_ref().is_none_or(|source|source.machine!=key.machine)
+            ||!pane.active_source_cut.as_ref().is_some_and(|cut|cut.current(cx)) {
+            return Err("The first prompt no longer matches the completed session open.".into());
+        }
+        Ok(pane.composer.clone())
+    }
+
     pub(super) fn workspace_if_ready(&mut self,serial:u64,cx:&mut Context<Self>) {
         let Some(pending)=self.pending_open.as_mut().filter(|pending|pending.serial==serial&&!pending.workspace_queued)else{return;};
         if !pending.stage.as_ref().is_some_and(|stage|stage.ready()){return;}
@@ -72,6 +85,8 @@ impl SessionPane {
         // Every fallible identity/page check precedes mutation. The prepared watch becomes the live watch unchanged.
         self._rows=pending.rows.take();self._page=None;self._loads.clear();
         self._source_connections.clear();self.active_source_cut=None;
+        // Another session opening takes the pane from a draft; the same one reopening after a reconnect doesn't.
+        if !self.shows(&key){self.draft=None;}
         self.session=Some(key.id.clone());self.row_source=Some(source.clone());self.read_only=read_only;self.active_provider=provider;
         self.active_open_serial=Some(serial);self.view=prepared.view;self.known_run=prepared.known_run;
         self.read_to=0;self.held=None;self.loading=false;self.retry_first=None;self.failed_before=None;self.status=SharedString::default();

@@ -13,7 +13,7 @@ fn same_id_on_two_actual_owners_never_reuses_the_other_draft_attachment_or_pendi
     composer.update_in(cx,|composer,window,cx| {
         composer.set_target(Some(key("a")),Some(source("a")),window,cx);
         composer.draft.update(cx,|draft,cx|draft.set_value("alpha",window,cx));
-        composer.attachments.push(Attachment{id:1,name:"a.png".into(),size:4,state:AttachmentState::Saved{path:"/owner-a/a.png".into()}});
+        composer.attachments.push(Attachment{id:1,name:"a.png".into(),size:4,state:AttachmentState::Saved{path:"/owner-a/a.png".into()},preview:None});
         composer.pending.insert(key("a"),vec![PendingPrompt::sending(PromptRequest{text:"A pending".into(),client_id:"original-a".into(),attachment_ids:vec![],epoch:None})]);
         composer.set_target(Some(key("b")),Some(source("b")),window,cx);
         assert!(composer.draft.read(cx).value().is_empty());assert!(composer.attachments.is_empty());assert!(composer.pending("same").is_empty());

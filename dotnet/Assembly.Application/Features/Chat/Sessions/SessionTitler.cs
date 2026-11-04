@@ -36,7 +36,7 @@ public sealed class SessionTitler(SessionStore sessionStore, RowStore rows, IUti
              row = rows.RunMessageAfter(sessionId, runId, row.Seq))
             reply.Append(PlainText.Of(row.Payload.GetProperty("blocks")));
         var answer = await model.CompleteAsync(Prompt($"{Cut(prompt, InputLength)}\n\n{Cut(reply.ToString(), InputLength)}"), cancellationToken);
-        if (Clean(answer) is { } title && FromPrompt(sessionId))
+        if (answer.Status == UtilityStatus.Succeeded && Clean(answer.Text) is { } title && FromPrompt(sessionId))
             sessionStore.SetTitle(sessionId, title, "helper");
     }
 

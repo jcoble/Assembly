@@ -5,7 +5,6 @@
 use gpui_kit::component::Theme;
 use gpui_kit::{App, Global, Pixels, SharedString, Styled, px};
 
-use crate::core::state::appearance::UI_FONT_SIZE;
 use crate::core::state::preferences::Preferences;
 
 /// The kit draws its controls, and its spacing helpers resolve, against the window's rem, which the kit's root takes from

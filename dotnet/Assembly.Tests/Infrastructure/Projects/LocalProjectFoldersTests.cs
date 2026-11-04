@@ -11,7 +11,7 @@ public sealed class LocalProjectFoldersTests : IDisposable
     private readonly LocalProjectFolders _folders = new(new GitCli());
     public void Dispose() => Directory.Delete(_root, true);
     private string Folder(string name) => Directory.CreateDirectory(Path.Combine(_root, name)).FullName;
-    private Task<Assembly.Application.Features.Projects.FolderInspection> Inspect(string path) => _folders.InspectAsync(path, default);
+    private Task<Assembly.Application.Common.Projects.FolderInspection> Inspect(string path) => _folders.InspectAsync(path, default);
     [Fact]
     public async Task Plain_no_remote_unborn_and_upstream_inspection_are_distinct()
     {
@@ -121,7 +121,7 @@ public sealed class LocalProjectFoldersTests : IDisposable
         var repo = Folder("collision"); GitFolder.Run(repo, "init", "-b", "same");
         File.WriteAllText(Path.Combine(repo, "kept"), "x"); GitFolder.Commit(repo);
         GitFolder.Run(repo, "tag", "same"); GitFolder.Run(repo, "update-ref", "refs/remotes/same", "HEAD");
-        var all = new List<Assembly.Application.Features.Projects.GitRef>(); string? after = null;
+        var all = new List<Assembly.Application.Common.Projects.GitRef>(); string? after = null;
         do
         {
             var page = await _folders.RefsAsync(repo, null, "same", after, 1, default);

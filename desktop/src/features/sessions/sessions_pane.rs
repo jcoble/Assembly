@@ -46,7 +46,7 @@ pub struct SessionsPane {
     focus: FocusHandle,
     pub(super) drops:Entity<crate::core::ui::row_drop_down::RowDropDowns>,
     /// The new-session form while it's open, with the subscription that closes it once it's made a session.
-    pub(super) creating: Option<(Entity<NewSessionForm>, Subscription)>,
+    pub(super) creating: Option<(Entity<NewSessionForm>, [Subscription; 2])>,
     /// The marks on their way, each until its answer, by `next_mark`.
     pub(super) marking: HashMap<u64, Task<()>>,
     pub(super) next_mark: u64,
@@ -91,6 +91,7 @@ impl SessionsPane {
     /// registration for a name wins.
     pub fn register(cx: &mut App) {
         super::search_keys::register_search_keys(cx);
+        NewSessionForm::register_projects(cx);
         register_panel(cx, "Sessions", |_, window, cx| {
             panel_handle(cx.new(|cx| SessionsPane::new(window, cx)))
         });
@@ -125,7 +126,7 @@ impl SessionsPane {
         });
         let engine=crate::core::engine::EngineFeed::global(cx);
         let engine_changed=cx.subscribe(&engine,|pane,_,changed:&crate::core::engine::EngineChanged,cx| {
-            if changed.scopes.iter().any(|scope|scope.topic=="needs_me")||changed.keys.iter().any(|key|key.kind=="needs_me") {
+            if changed.scopes.iter().any(|scope|matches!(scope.topic.as_str(),"sessions"|"needs_me"))||changed.keys.iter().any(|key|matches!(key.kind.as_str(),"session"|"needs_me")) {
                 let read=pane.rail.changed();pane.send(read,cx);
             }
             cx.notify();
@@ -455,19 +456,14 @@ impl Render for SessionsPane {
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
         let (warning, border) = (cx.theme().warning, cx.theme().border.opacity(0.6));
         let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
-        let creating = self.creating.is_some();
         let pane = cx.entity().downgrade();
         let on_view: OnView = Rc::new(move |view, _: &mut Window, cx: &mut App| {
             pane.update(cx, |pane, cx| pane.set_view(view, cx)).ok();
         });
         let new_session = header_button(Button::new("new-session"), cx)
-            .icon(if creating {
-                IconName::X
-            } else {
-                IconName::Plus
-            })
-            .tooltip(if creating { "Cancel" } else { "New session" })
-            .on_click(cx.listener(|pane, _, window, cx| pane.toggle_form(window, cx)));
+            .icon(IconName::Plus)
+            .tooltip("New session")
+            .on_click(cx.listener(|pane, _, window, cx| pane.show_draft(window, cx)));
         self.follow_entries(window, cx);
         self.running_drawn.set(false);
         let list = list(self.lines.clone(), self.line_renderer(cx)).flex_1();
@@ -513,7 +509,6 @@ impl Render for SessionsPane {
                             )
                     })),
             )
-            .children(self.creating.as_ref().map(|(form, _)| form.clone()))
             // Above the list, which takes all the height there is and would push this out of the window.
             .when_some(self.row_error.clone(), |pane, error| {
                 pane.child(
@@ -576,6 +571,9 @@ fn refusal_words(route: Option<&str>, error: &crate::core::engine::EngineRefusal
 #[cfg(test)]
 #[path = "sessions_pane_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "sessions_pane_refusal_tests.rs"]
+mod refusal_tests;
 
 #[path="drop_down/rail_engine.rs"]
 pub(super) mod engine_rows;

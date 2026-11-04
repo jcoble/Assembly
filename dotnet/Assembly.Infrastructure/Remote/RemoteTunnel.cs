@@ -20,6 +20,11 @@ public sealed class RemoteTunnel : IAsyncDisposable
     private readonly string _file;
     private readonly string[] _args;
     private readonly TextWriter _log;
+    private readonly bool _restart;
+    private readonly TaskCompletionSource<int> _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal Task<int> ProcessStarted => _started.Task;
+    internal Task<bool> ForwardReady => _forwardReady.Task;
+    public Task Completion => _supervising;
     private readonly CancellationTokenSource _stopping = new();
     private readonly Task _supervising;
     private readonly TaskCompletionSource<bool> _forwardReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -28,14 +33,19 @@ public sealed class RemoteTunnel : IAsyncDisposable
     // The wait before ssh starts again, while there is one: TryNow cuts it short.
     private CancellationTokenSource? _waiting;
 
-    public RemoteTunnel(string file, IReadOnlyList<string> args, TextWriter log)
+    public RemoteTunnel(string file, IReadOnlyList<string> args, TextWriter log, bool restart = true)
     {
         _file = file;
         _args = [.. args];
         _log = log;
+        _restart = restart;
         AppDomain.CurrentDomain.ProcessExit += OnExit;
         AppDomain.CurrentDomain.UnhandledException += OnExit;
-        _supervising = Task.Run(SuperviseAsync);
+        _supervising = Task.Run(async () =>
+        {
+            try { await SuperviseAsync(); }
+            finally { _forwardReady.TrySetResult(false); }
+        });
     }
 
     /// <summary>The pid of the command running now (the wrapper's, which is its group's id), or 0 between starts.</summary>
@@ -56,8 +66,8 @@ public sealed class RemoteTunnel : IAsyncDisposable
         + """exit($? & 127 ? 128 + ($? & 127) : $? >> 8);""";
 
     /// <summary>Runs <paramref name="command"/> under the wrapper: in its own group, which ends when this process does.</summary>
-    public static RemoteTunnel Wrapped(IReadOnlyList<string> command, TextWriter log) =>
-        new("/usr/bin/perl", ["-e", Wrapper, "--", .. command], log);
+    public static RemoteTunnel Wrapped(IReadOnlyList<string> command, TextWriter log, bool restart = true) =>
+        new("/usr/bin/perl", ["-e", Wrapper, "--", .. command], log, restart);
 
     public static RemoteTunnel ForSsh(string host, int localPort, int remotePort, TextWriter log) =>
         Wrapped(
@@ -67,6 +77,15 @@ public sealed class RemoteTunnel : IAsyncDisposable
                 "-L", $"127.0.0.1:{localPort}:127.0.0.1:{remotePort}", host,
             ],
             log);
+
+    public static RemoteTunnel ForwardOnce(string host, IReadOnlyList<(string Bind, string Target)> forwards, int port, TextWriter log)
+    {
+        var command = new List<string> { "ssh", "-v", "-N", "-n", "-S", "none", "-o", "BatchMode=yes",
+            "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3" };
+        foreach (var (bind, target) in forwards) command.AddRange(["-L", $"{bind}:{port}:{target}:{port}"]);
+        command.Add(host);
+        return Wrapped(command, log, restart: false);
+    }
 
     /// <summary>
     /// Starts an independent loopback forward and reads the remote token. Cancellation stops setup and its processes.
@@ -184,6 +203,7 @@ public sealed class RemoteTunnel : IAsyncDisposable
             using var process = Process.Start(start)!;
             Volatile.Write(ref _pid, process.Id);
             Starts++;
+            _started.TrySetResult(process.Id);
             var startedAt = DateTime.UtcNow;
             var errors = ReadErrorsAsync(process);
             var output = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
@@ -213,6 +233,7 @@ public sealed class RemoteTunnel : IAsyncDisposable
                 backoff = TimeSpan.FromSeconds(1);
             Exited?.Invoke();
             await output;
+            if (!_restart) return;
             _log.WriteLine($"tunnel: ssh exited ({process.ExitCode}: {(await errors).Trim()}); again in {backoff.TotalSeconds:0} s");
             using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token))
             {

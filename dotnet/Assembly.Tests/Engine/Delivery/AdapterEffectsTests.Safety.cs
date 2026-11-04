@@ -19,7 +19,7 @@ public sealed partial class AdapterEffectsTests
         var started = f.Sessions.Create("claude", "https://github.com/other/repo");
         var id = f.Db.QueryFirst("SELECT id FROM engine_outbox WHERE kind='start' AND session_id=$id", r => r.Text(0), default, new SqlArg("$id", started.SessionId))!;
         await f.StateAsync("engine_outbox", id, "done");
-        Assert.Equal("idle", f.State("engine_session", started.SessionId)); Assert.Equal(0, f.Launcher.Launches); Assert.Empty(f.Launcher.CheckedOut);
+        Assert.Equal("idle", f.State("engine_session", started.SessionId)); Assert.Equal(0, f.Launcher.Launches);
     }
 
     [Fact]

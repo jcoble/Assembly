@@ -15,6 +15,7 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
     private readonly Lock _gate = new();
     private readonly MachineStore _store;
     private readonly IAtomicWriter _writer;
+    private readonly EngineRuntime? _acceptanceEngine;
     private readonly MachineSet _machines;
     private readonly MachineStatus _status;
     private readonly LiveHub _hub;
@@ -44,11 +45,12 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
         global::Assembly.Infrastructure.Topics.Topics topics, TextWriter log, MachinesFeature feature,
         Action<string>? turnEnded = null,
         Func<SavedMachine, CancellationToken, Task<(RemoteConfig Config, IAsyncDisposable? Tunnel)>>? open = null,
-        Action<IWriteScope, string>? mirrored = null)
+        Action<IWriteScope, string>? mirrored = null, EngineRuntime? acceptanceEngine = null)
     {
         (_store, _machines, _status, _hub, _sessions, _topics, _log, _feature, _turnEnded) =
             (store, machines, status, hub, sessions, topics, log, feature, turnEnded);
         _writer = writer;
+        _acceptanceEngine = acceptanceEngine;
         _mirrored = mirrored;
         _store.Status = status;
         _open = open ?? OpenAsync;
@@ -220,7 +222,7 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
                         stop.Token.ThrowIfCancellationRequested();
                         if (tunnel is RemoteTunnel ssh) ssh.Exited += () => scoped.Unreachable(name, "ssh tunnel exited");
                         var remote = new RemoteMachine(name, opened.Config.Address, opened.Config.Token, _hub, _sessions, _log, scoped, _turnEnded, _topics,
-                            connectionIdentity: $"{profile.Ssh.Length}:{profile.Ssh}{profile.Port}:{profile.TokenFile.Length}:{profile.TokenFile}");
+                            connectionIdentity: $"{profile.Ssh.Length}:{profile.Ssh}{profile.Port}:{profile.TokenFile.Length}:{profile.TokenFile}", acceptanceEngine: _acceptanceEngine);
                         var mirror = new EngineMirror(remote, _writer, TimeProvider.System, _log, _mirrored);
                         var cli = new CliRefresh();
                         lock (_gate) _cliRefresh[name] = cli;

@@ -11,15 +11,18 @@ public sealed partial class EngineCommands
 {
     public static PreparedSessionTitleCommand PrepareSessionTitle(SessionCommand command) => PreparedSessionTitleCommand.Prepare(command);
 
-    public CommandResult ApplyPreparedSessionTitle(IWriteScope scope, CommandContext context, PreparedSessionTitleCommand prepared) => ApplyPreparedSessionTitle(scope, context, prepared, null);
+    public CommandResult ApplyPreparedSessionTitle(IWriteScope scope, CommandContext context, PreparedSessionTitleCommand prepared,
+        Action<IWriteScope, CommandContext, StartSession>? projectStart = null) =>
+        ApplyPreparedSessionTitle(scope, context, prepared, preparedError: null, projectStart: projectStart);
 
-    internal CommandResult ApplyPreparedSessionTitle(IWriteScope scope, CommandContext context, PreparedSessionTitleCommand prepared, string? preparedError) =>
+    internal CommandResult ApplyPreparedSessionTitle(IWriteScope scope, CommandContext context, PreparedSessionTitleCommand prepared, string? preparedError,
+        Action<IWriteScope, CommandContext, StartSession>? projectStart = null) =>
         EngineJournal.Execute(scope, context, prepared.CanonicalJournal, () => context.Machine != _machine
             ? new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch)
             : prepared.Command is AdoptSession ? new(false, false, "forbidden", context.ExpectedVersion, 0, context.Epoch)
             : preparedError is not null ? new(false, false, preparedError, context.ExpectedVersion, 0, context.Epoch)
             : ApplySession(scope, context, prepared.Command, prepared.TitleUtf8, prepared.Command is StartSession
-                ? prepared.StartEffectPayload ?? throw new InvalidOperationException("Prepared Start payload missing.") : null));
+                ? prepared.StartEffectPayload ?? throw new InvalidOperationException("Prepared Start payload missing.") : null, projectStart));
 
     public CommandResult ApplyPreparedHelperPrompt(IWriteScope scope, CommandContext context, PreparedHelperPrompt prepared) =>
         EngineJournal.Execute(scope, context, prepared.CanonicalJournal, () =>

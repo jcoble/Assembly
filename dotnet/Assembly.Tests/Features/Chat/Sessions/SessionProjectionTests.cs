@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Projects;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Engine;
@@ -148,7 +149,7 @@ public sealed class SessionProjectionTests : IDisposable
     {
         public bool Fail; public bool FailStart; public string? Model;
         public List<(string, string?)> Starts { get; } = [];
-        public void Started(IWriteScope scope, SessionInfo session, string? initiatingSessionId)
+        public void Started(IWriteScope scope, SessionInfo session, string? initiatingSessionId, string? projectId = null, CheckoutIntent? checkout = null, SessionCreationPreparation? preparation = null)
         {
             Assert.Equal(session.Agent, scope.QueryFirst("SELECT agent FROM session_info WHERE session_id=$id", r => r.Text(0), new SqlArg("$id", session.SessionId)));
             if (FailStart) throw new IOException("start refused");

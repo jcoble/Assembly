@@ -388,7 +388,6 @@ public sealed class ProviderEffectsTests
         public IReadOnlyList<AgentDescriptor> Agents => [Agent];
         public bool CanRunTerminalAuthentication => false;
         public void ValidateFolder(string folder) => throw new NotSupportedException();
-        public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken ct) => throw new NotSupportedException();
         public Task<IAgentLink> LaunchAsync(string id, StageTimes stages, CancellationToken ct) { Launches++; throw new NotSupportedException(); }
         public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> environment, StageTimes stages, CancellationToken ct) => LaunchAsync(descriptor.Id, stages, ct);
         public Task<IAgentLink> LaunchSignInAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> environment, IPermissionPolicy policy, StageTimes stages, CancellationToken ct) => LaunchAsync(descriptor.Id, stages, ct);

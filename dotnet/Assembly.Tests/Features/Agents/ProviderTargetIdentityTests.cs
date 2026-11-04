@@ -42,7 +42,7 @@ public sealed class ProviderTargetIdentityTests
         var args = new List<string> { "--original" };
         var env = new Dictionary<string, string> { ["CODEX_HOME"] = "/original" };
         var descriptor = new AgentDescriptor("codex", "Codex", "program", args, env, VendorFamily: "codex");
-        var launcher = new AdapterLauncher([descriptor], Path.GetTempPath(), new UnclaimedPermissions(), _ => null);
+        var launcher = new AdapterLauncher([descriptor], Path.GetTempPath(), new UnclaimedPermissions());
         var captured = ConfigTargetIdentity.Capture(launcher, "codex");
         args[0] = "--replaced";
         env["CODEX_HOME"] = "/replaced";
@@ -61,7 +61,7 @@ public sealed class ProviderTargetIdentityTests
         var descriptor = new AgentDescriptor("codex", "Codex", "/missing-provider-canary", ["--base"],
             new Dictionary<string, string> { ["CODEX_HOME"] = "/original" }, Cli: "/original-cli", VendorFamily: "codex");
         var agents = new List<AgentDescriptor> { descriptor };
-        var launcher = new AdapterLauncher(agents, Path.GetTempPath(), new UnclaimedPermissions(), _ => null);
+        var launcher = new AdapterLauncher(agents, Path.GetTempPath(), new UnclaimedPermissions());
         var captured = ConfigTargetIdentity.Capture(launcher, "codex");
         agents[0] = replacement switch
         {
@@ -87,7 +87,7 @@ public sealed class ProviderTargetIdentityTests
     public async Task Same_invalid_configuration_can_be_observed_but_still_cannot_launch()
     {
         var descriptor = new AgentDescriptor("fixture", "Fixture", "", [], null);
-        var launcher = new AdapterLauncher([descriptor], Path.GetTempPath(), new UnclaimedPermissions(), _ => null);
+        var launcher = new AdapterLauncher([descriptor], Path.GetTempPath(), new UnclaimedPermissions());
         var captured = ConfigTargetIdentity.Capture(launcher, descriptor.Id);
         Assert.Same(descriptor, ConfigTargetIdentity.RequireSameConfiguration(launcher, captured.Descriptor, captured.Environment));
         Assert.Throws<CallFailed>(() => ConfigTargetIdentity.Validate(launcher, captured.Descriptor, captured.Environment));
@@ -106,7 +106,7 @@ public sealed class ProviderTargetIdentityTests
         var descriptor = new AgentDescriptor("fixture", "Fixture", "program", [],
             new Dictionary<string, string> { ["CODEX_HOME"] = "/fixture" }, VendorFamily: "codex");
         var agents = new List<AgentDescriptor> { descriptor };
-        var launcher = new AdapterLauncher(agents, Path.GetTempPath(), new UnclaimedPermissions(), _ => null);
+        var launcher = new AdapterLauncher(agents, Path.GetTempPath(), new UnclaimedPermissions());
         var captured = ConfigTargetIdentity.Capture(launcher, descriptor.Id);
         if (replacement == "removed") agents.Clear();
         else agents[0] = replacement switch

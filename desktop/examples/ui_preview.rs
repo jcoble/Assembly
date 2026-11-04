@@ -4,8 +4,10 @@ mod core;
 #[allow(dead_code)]
 #[path = "../src/components/inline_field/mod.rs"]
 mod inline_field;
-#[path = "../src/features/source_control/git_operation.rs"]
+#[path = "../src/features/source_control/git/git_operation.rs"]
 mod git_operation;
+#[path = "../src/features/source_control/git/git_target.rs"]
+mod git_target;
 #[path = "../src/features/projects/mod.rs"]
 mod projects;
 #[path = "../src/features/settings/preview/mod.rs"]

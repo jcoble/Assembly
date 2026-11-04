@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Agents;
 using Assembly.Infrastructure.Engine.Workflows;
 using Assembly.Infrastructure.Chat.SourceControl;
 using Assembly.Application.Common.Calls;
@@ -62,6 +63,12 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
         var remote = byMachineId(machine) ?? throw new MachineUnreachable(machine, "Remote engine machine is disconnected");
         try
         {
+            if (feature == "messages" && method is "body" or "match" or "sender_order" or "receiver_order")
+            {
+                if (!bulk) throw new Assembly.Application.Common.Calls.CallBadArguments("Message authority reads require bulk.");
+                var captured = await remote.CaptureOwnerReadAsync(machine, ct).ConfigureAwait(false);
+                return await remote.CallAsync(feature, method, args, true, ct, machine, captured.Socket, expectedOwner, expectedMirror).ConfigureAwait(false);
+            }
             return feature == "engine" && method is "session_title" or "session_title_chunk" or "entities"
             ? await remote.ReadOwnerPromptAsync(method, args, bulk, machine, ct)
             : gitWrite && feature == "git" && expectedConnection is not null
@@ -75,6 +82,45 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
             throw new MachineUnreachable(remote.Name!, $"{remote.Name}: machine socket closed", error);
         }
     }
+    internal async Task<(RemoteMachine Remote, RemoteMachine.OwnerConnectionBinding Binding)> CaptureMessageOwnerAsync(string machine, CancellationToken ct)
+    {
+        var remote = byMachineId(machine) ?? throw new MachineUnreachable(machine, "Message authority is unavailable");
+        var binding = await remote.CaptureOwnerBindingAsync(machine, ct).ConfigureAwait(false);
+        if (!ReferenceEquals(byMachineId(machine), remote)) throw new MachineUnreachable(machine, "Message authority changed");
+        return (remote, binding);
+    }
+
+    internal async Task<JsonElement> ReadMessageOnAsync((RemoteMachine Remote, RemoteMachine.OwnerConnectionBinding Binding) held,
+        string method, JsonElement args, CancellationToken ct)
+    {
+        if (method is not ("sender_order" or "receiver_order" or "match") || !ReferenceEquals(byMachineId(held.Binding.Machine), held.Remote))
+            throw new MachineUnreachable(held.Binding.Machine, "Message authority changed");
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, held.Binding.Invalidated);
+        try
+        {
+            return await held.Remote.CallAsync("messages", method, args, true, stop.Token, held.Binding.Machine, expectedOwner: held.Binding).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is WebSocketException or IOException or ObjectDisposedException ||
+            error is OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            throw new MachineUnreachable(held.Remote.Name!, $"{held.Remote.Name}: machine socket closed", error);
+        }
+    }
+
+    internal async Task<bool> MessageSourceAvailableAsync(string machine, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        try
+        {
+            var remote = byMachineId(machine);
+            if (remote is null) return false;
+            await remote.CaptureOwnerReadAsync(machine, ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception error) when (error is MachineUnreachable or KeyNotFoundException or IOException or ObjectDisposedException or WebSocketException)
+        { return false; }
+    }
+
     internal Task<HandoffAck> HandoffAckAsync(EngineMirror.LiveMirrorBinding live, HandoffIdentity identity, CancellationToken ct) =>
         HandoffAckAsync(HandoffOwner(live, ct), live.OwnerBinding, identity, ct, live);
 
@@ -150,6 +196,130 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
             JsonSerializer.SerializeToElement(args, WorkflowReadCallsJson.Default.WorkflowDefinitionsAtRootArgs), true, ct,
             expectedConnection: owner.Socket, expectedOwner: owner.Binding);
     }
+
+    internal async Task<ChallengeReply?> SignInChallengeAsync(string machine, string operationId, CallContext call, SignInTarget? held = null)
+    {
+        var (remote, original, source) = await CaptureSignInSourceAsync(machine, call, held);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, original.Invalidated);
+        var args = JsonSerializer.SerializeToElement(new ChallengeArgs(operationId), ProvidersJson.Default.ChallengeArgs);
+        var result = await remote.CallAsync("providers", "challenge", args, false, linked.Token, machine, expectedOwner: original);
+        source.EnsureCurrent();
+        if (result.ValueKind == JsonValueKind.Null) return null;
+        ChallengeReply challenge;
+        try
+        {
+            challenge = result.Deserialize(ProvidersJson.Default.ChallengeReply) ?? throw InvalidSignInChallenge();
+            if (challenge.OperationId != operationId || challenge.Generation <= 0 ||
+                challenge.TerminalId is not null && string.IsNullOrWhiteSpace(challenge.TerminalId)) throw InvalidSignInChallenge();
+        }
+        catch (JsonException) { throw InvalidSignInChallenge(); }
+        if (challenge.TerminalId is { } id)
+        {
+            var qualified = await remote.Terminals.RegisterAsync(machine, id, original, linked.Token);
+            source.EnsureCurrent();
+            challenge = challenge with { TerminalId = qualified };
+        }
+        source.EnsureCurrent();
+        return challenge;
+    }
+
+    internal async Task<ProviderInputReply> SignInCodeAsync(SubmitCodeArgs request, CallContext call, SignInTarget? held = null)
+    {
+        var machine = request.Machine!;
+        var (remote, original, source) = await CaptureSignInSourceAsync(machine, call, held);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, original.Invalidated);
+        var args = JsonSerializer.SerializeToElement(request with { Machine = null }, ProvidersJson.Default.SubmitCodeArgs);
+        var result = await remote.CallAsync("providers", "submitCode", args, false, linked.Token, machine, expectedOwner: original);
+        source.EnsureCurrent();
+        return ReadSignInInputReply(result);
+    }
+
+    internal async Task<ProviderInputReply> SignInUrlAsync(AcknowledgeUrlArgs request, CallContext call, SignInTarget? held = null)
+    {
+        var machine = request.Machine!;
+        var (remote, original, source) = await CaptureSignInSourceAsync(machine, call, held);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, original.Invalidated);
+        var args = JsonSerializer.SerializeToElement(request with { Machine = null }, ProvidersJson.Default.AcknowledgeUrlArgs);
+        var result = await remote.CallAsync("providers", "acknowledgeUrl", args, false, linked.Token, machine, expectedOwner: original);
+        source.EnsureCurrent();
+        return ReadSignInInputReply(result);
+    }
+
+    internal async Task CancelSignInAsync(SignInTarget target, string operation, long version, CancellationToken ct)
+    {
+        target.EnsureCurrent();
+        var machine = target.Binding.Machine;
+        var command = new WindowCommand(Guid.NewGuid(), operation, version, 0, new CancelSignIn(), machine);
+        var args = JsonSerializer.SerializeToElement(command, EngineSocketJson.Default.WindowCommand);
+        var result = await target.Remote.CallAsync("engine", "command", args, false, ct, machine, expectedOwner: target.Binding);
+        target.EnsureCurrent();
+        if (result.Deserialize(EngineJson.Default.CommandResult) is not { Applied: true })
+            throw new CallFailed("The original sign-in cancellation is unconfirmed.", "signin_cancel_unconfirmed");
+    }
+
+    internal sealed class SignInTarget(RemoteMachine remote, RemoteMachine.OwnerConnectionBinding binding, Func<bool> sameOwner)
+    {
+        internal RemoteMachine Remote => remote;
+        internal RemoteMachine.OwnerConnectionBinding Binding => binding;
+        internal void EnsureCurrent()
+        {
+            try { if (binding.IsInvalidated || !sameOwner()) throw SignInSourceChanged(); }
+            catch (Exception error) when (error is KeyNotFoundException or MachineUnreachable or ObjectDisposedException)
+            { throw SignInSourceChanged(); }
+        }
+    }
+
+    internal async Task<SignInTarget> CaptureSignInTargetAsync(string machine, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var remote = byMachineId(machine) ?? throw new MachineUnreachable(machine, "Remote engine machine is disconnected");
+        var original = await remote.CaptureOwnerBindingAsync(machine, ct);
+        var target = new SignInTarget(remote, original, () => ReferenceEquals(byMachineId(machine), remote));
+        target.EnsureCurrent();
+        return target;
+    }
+
+    private async Task<(RemoteMachine Remote, RemoteMachine.OwnerConnectionBinding Original, SignInReplySource Source)>
+        CaptureSignInSourceAsync(string machine, CallContext call, SignInTarget? held)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.SourceGuard is not null) throw SignInSourceChanged();
+        var target = held ?? await CaptureSignInTargetAsync(machine, call.Cancellation);
+        if (target.Binding.Machine != machine) throw SignInSourceChanged();
+        target.EnsureCurrent();
+        var source = new SignInReplySource(target.Binding, () => { target.EnsureCurrent(); return true; });
+        call.SourceGuard = source;
+        source.EnsureCurrent();
+        return (target.Remote, target.Binding, source);
+    }
+
+    private static ProviderInputReply ReadSignInInputReply(JsonElement result)
+    {
+        try { return result.Deserialize(ProvidersJson.Default.ProviderInputReply) ?? throw InvalidSignInChallenge(); }
+        catch (JsonException) { throw InvalidSignInChallenge(); }
+    }
+
+    private static CallFailed InvalidSignInChallenge() => new("Provider sign-in is unavailable.", "signin_input_failed");
+    private static CallFailed SignInSourceChanged() => new("Provider sign-in is unavailable.", "source_changed");
+
+    // The reply owns this guard until its existing socket queue sends or discards the prepared frame.
+    // The connection continues to own the captured binding; disposing a reply never revokes it.
+    private sealed class SignInReplySource(RemoteMachine.OwnerConnectionBinding original, Func<bool> sameOwner) : IExpectedSourceGuard
+    {
+        private int _disposed;
+        public CancellationToken Changed => original.Invalidated;
+        public void EnsureCurrent()
+        {
+            try
+            {
+                if (Volatile.Read(ref _disposed) != 0 || original.IsInvalidated || !sameOwner()) throw SignInSourceChanged();
+            }
+            catch (Exception error) when (error is KeyNotFoundException or MachineUnreachable or ObjectDisposedException)
+            { throw SignInSourceChanged(); }
+        }
+        public void Dispose() => Interlocked.Exchange(ref _disposed, 1);
+    }
+
 }
 
 /// <summary>Only a named read registered on its actual channel may cross the machine read door.</summary>
@@ -157,6 +327,8 @@ internal static class MachineReads
 {
     internal static bool AllowRead(ICallRegistry registry, string feature, string method, bool bulk)
     {
+        if (feature == "messages")
+            return bulk && method is ("body" or "match" or "sender_order" or "receiver_order") && registry.KindOf(feature, method) == CallKind.BulkRead;
         var expected = GitCallKinds.KindOf(method);
         return feature == "git" && expected == (bulk ? CallKind.BulkRead : CallKind.Read) &&
             registry.KindOf(feature, method) == expected;

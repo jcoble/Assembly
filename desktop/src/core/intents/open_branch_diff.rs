@@ -7,4 +7,6 @@ use gpui_kit::*;
 pub struct OpenBranchDiff {
     pub session_id: String,
     pub expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    /// A linked checkout to read instead of the session's own.
+    pub checkout: Option<crate::core::socket::checkout_selector::CheckoutSelector>,
 }

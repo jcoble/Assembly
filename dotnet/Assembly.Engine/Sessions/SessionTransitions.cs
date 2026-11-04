@@ -42,7 +42,7 @@ public static partial class SessionTransitions
         if ((current?.Version ?? 0) != context.ExpectedVersion)
             return Refused(context, "version_conflict", current);
         if (command is StartSession start)
-            return current is null ? Start(scope, context, start, depthLimit, childLimit, accountContext, titleUtf8, startEffectPayload) : Refused(context, "invalid_transition", current);
+            return current is null ? Start(scope, context, start, depthLimit, childLimit, accountContext, titleUtf8, startEffectPayload, projectProjection) : Refused(context, "invalid_transition", current);
         if (current is null)
             return Refused(context, "bad_args");
         if (scope.QueryFirst("SELECT checkout_state FROM engine_session WHERE id=$id", row => row.Text(0),
@@ -97,7 +97,7 @@ public static partial class SessionTransitions
         return new(true, false, null, 0, 0, 0);
     }
 
-    private static CommandResult Start(IWriteScope scope, CommandContext context, StartSession command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8, PreparedStartEffectPayload? startEffectPayload)
+    private static CommandResult Start(IWriteScope scope, CommandContext context, StartSession command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8, PreparedStartEffectPayload? startEffectPayload, ISessionProjectProjection? projection)
     {
         var untitledOwnerRoot = command.Title == "" && context.Actor == new EngineActor(ActorKind.Window, "owner") &&
             command.ParentId is null && command.RunId is null;
@@ -149,19 +149,36 @@ public static partial class SessionTransitions
             return Refused(context, "child_limit");
         if (context.Epoch != 0)
             return new(false, false, "stale_epoch", 0, 0, 0);
+        var projectId = command.ProjectId ?? parent?.ProjectId;
+        if (parent is not null && command.ProjectId is not null && command.ProjectId != parent.ProjectId)
+            return Refused(context, "project_mismatch");
+        if (command.Checkout is not null && (projectId is null || command.ManagedCheckout == true))
+            return Refused(context, "bad_args");
+        if (command.Checkout is { } intent && !(intent.Kind switch
+        {
+            "current" => intent.Branch is null && intent.Base is null,
+            "branch" => !string.IsNullOrWhiteSpace(intent.Branch) && intent.Base is null,
+            "worktree" => !string.IsNullOrWhiteSpace(intent.Base) && intent.Branch is null,
+            _ => false
+        })) return Refused(context, "bad_args");
+        if (projectId is not null && projection is null)
+            throw new InvalidOperationException("The session project projection is required.");
         var startPayload = startEffectPayload is null ? JsonSerializer.SerializeToElement(SessionStartEffect.From(command), EngineJson.Default.SessionStartEffect)
             : startEffectPayload.ForExact(command);
         scope.Execute("""
             INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,task_url,
-                provider,model,folder,title,state,activity_state,parent_id,run_id,holder,epoch,cancel_requested,account_context,managed_checkout)
+                provider,model,folder,title,state,activity_state,parent_id,run_id,holder,epoch,cancel_requested,account_context,managed_checkout,project_id)
             VALUES($id,1,$machine,$now,$now,$task,$provider,$model,$folder,CAST($title AS TEXT),
-                'starting','idle',$parent,$run,'local',0,0,$account,$managed)
+                'starting','idle',$parent,$run,'local',0,0,$account,$managed,$project)
             """, new("$id", context.EntityId), new("$machine", context.Machine), new("$now", context.NowMs),
             new("$task", command.TaskUrl), new("$provider", command.Provider), new("$model", command.Model),
-            new("$folder", command.Folder), new("$title", titleUtf8 ?? new System.Text.UTF8Encoding(false, true).GetBytes(command.Title)), new("$parent", command.ParentId), new("$run", command.RunId), new("$account", accountContext), new("$managed", command.ManagedCheckout == true ? 1 : 0));
-        var created = new Session(1, 0, "starting", "idle", command.ParentId, command.RunId, context.Machine);
-        return Commit(scope, context, created, "session.started",
-            [new("", "start", context.EntityId, command.RunId, startPayload)]);
+            new("$folder", command.Folder), new("$title", titleUtf8 ?? new System.Text.UTF8Encoding(false, true).GetBytes(command.Title)), new("$parent", command.ParentId), new("$run", command.RunId), new("$account", accountContext), new("$managed", command.ManagedCheckout == true ? 1 : 0), new("$project", projectId));
+        List<EventDraft> events = [new("session.started", "session", context.EntityId, 1, false,
+            new(context.EntityId, command.RunId, null, command.ParentId, "starting", 0))];
+        List<EffectDraft> effects = [new("", "start", context.EntityId, command.RunId, startPayload)];
+        if (command.Checkout is not null)
+            QueueInitialCheckout(scope, context, command.Checkout, events, effects);
+        return EngineJournal.Commit(scope, context, 1, 0, events, effects);
     }
 
     private static CommandResult Capabilities(IWriteScope scope, CommandContext context, Session current, ReportCapabilities command)

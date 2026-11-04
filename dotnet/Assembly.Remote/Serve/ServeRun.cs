@@ -39,6 +39,7 @@ using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Topics;
 using Assembly.Application.Features.Preferences;
 using Assembly.Application.Features.Terminal;
+using Assembly.Application.Common.Terminals;
 using Assembly.Infrastructure.Terminal;
 using Assembly.Infrastructure.Git;
 using Assembly.Infrastructure.Projects;
@@ -65,7 +66,9 @@ public static class ServeRun
     }
 
     internal static async Task<int> RunAsync(ServeOptions options, IAgentLauncher? launcher,
-        IEngineEffects? engineEffects, Action<Uri, EngineRuntime>? started, CancellationToken cancellationToken)
+        IEngineEffects? engineEffects, Action<Uri, EngineRuntime>? started, CancellationToken cancellationToken,
+        Func<CancellationToken, Task<(string? Path, string? Error)>>? loginShell = null,
+        Action<IProgramTerminals>? programTerminals = null)
     {
         Directory.CreateDirectory(options.Home);
         // Before the database opens, so a second host on this home writes nothing into the live one's; disposed last.
@@ -85,11 +88,14 @@ public static class ServeRun
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
         AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
         var agents = launcher is null ? new AgentsFile(options.AgentsFile) : null;
-        launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions(), session => SessionStore.Folder(options.Checkouts, session));
+        launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions());
         var preferences = new PreferenceStore(db);
+        var utility = new AcpUtilityModel(agents is not null ? agents : launcher.Agents, () => preferences.Read("utilityModel"), TimeProvider.System, Console.Out);
         await using var work = new BackgroundWork(TimeProvider.System, Console.Out);
-        await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
+        var accountShell = await (loginShell is null ? AccountLoginShell.ReadAsync(cancellationToken) : loginShell(cancellationToken));
+        await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, accountShell,
             SessionTerminalFolders.ExistingFolder(options.Checkouts, sessionStore));
+        programTerminals?.Invoke(terminals);
         using var hostStop = new CancellationTokenSource();
         var tokens = new McpTokens();
         var endpoint = new McpEndpointReady(tokens);
@@ -135,7 +141,10 @@ public static class ServeRun
                 }
                 catch (CallFailed) { return false; }
             }
-            var cutover = new SessionCutover(db, sessionStore, launcher, options.Checkouts, TimeProvider.System, helperCards: helperCards);
+            var owningHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var projectRoots = new ProjectRoots(projectStore);
+            var cutover = new SessionCutover(db, sessionStore, launcher, options.Checkouts, TimeProvider.System, helperCards: helperCards,
+                projectRoots: projectRoots, projectUse: projectRoots, owningHome: owningHome);
             var checkoutWrites = new CheckoutWrites();
             engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits,
                 cutover: cutover,
@@ -143,9 +152,7 @@ public static class ServeRun
                 {
                     agents?.BindOwner(runtime.Machine, topics);
                     sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work,
-                        titler: agents is null ? null : new SessionTitler(sessionStore, store, new CliUtilityModel(
-                            AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex"),
-                            () => preferences.Read("utilityModel"), TimeProvider.System, Console.Out)),
+                        titler: agents is null ? null : new SessionTitler(sessionStore, store, utility),
                         feed: new EngineFeed(runtime, Console.Out, TimeProvider.System, helperCards),
                         mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens));
                     sessions.BindHelperWorking(helperCards.Working, helperCards.Refresh);
@@ -204,20 +211,22 @@ public static class ServeRun
             var patches = new GitTextPatch(git);
             var prReader = new PullRequestReader(git, gh, options.Home, patches);
             var prWriter = new PullRequestWriter(git, gh, prReader);
-            var sessionGit = new GitSessionOperations(sessionStore, git, prWriter, checkoutWrites, gitOperations);
+            var sessionGit = new GitSessionOperations(sessionStore, git, prWriter, checkoutWrites, gitOperations, new(git, utility), prReader, db);
             var localFolders = new LocalProjectFolders(git);
             var projectFolders = new ProjectFolderCreation(localFolders, new GitWriter(git), checkoutWrites, gitOperations);
-            var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, null, null);
+            var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, null, null, git);
+            var projectPrReads = new ProjectPullRequestReads(db, projectRoots, sessionSources, engine.Machine, prReader, null, null);
+            var projectPrActions = new ProjectPullRequestActions(projectPrReads, gitOperations, sessionGit, null);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
-                [new EngineCalls(engine, TimeProvider.System, answers, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, resolveProject: project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore), new SessionTitleCalls(engine, sessionStore), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines), ownerMachineCalls,
-                    new ProvidersFeature(challenges, engine.Machine), new ProviderRuntimeCalls(engine.Machine, agents), new TerminalFeature(terminals), workflowCalls,
-                    new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources),
+                [new Assembly.Infrastructure.Engine.Messages.MessagesCalls(engine, db), new EngineCalls(engine, TimeProvider.System, answers, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, resolveProject: project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore), new SessionTitleCalls(engine, sessionStore), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines), ownerMachineCalls,
+                    new ProvidersFeature(challenges, localEngineMachine: engine.Machine), new ProviderRuntimeCalls(engine.Machine, agents), new TerminalFeature(terminals), workflowCalls,
+                    new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome, remoteFolders: localFolders),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(options.Home, "staging", "attachments"), sessionSources),
                     new FilesFeature(sessionStore, new FileOwner(sessionStore, db), work, sources: sessionSources),
                     gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes),
-                    new PullRequestsFeature(sessionStore, prReader, gitRoutes), new FoldersFeature(localFolders),
-                    new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes)],
+                    new PullRequestsFeature(sessionStore, prReader, gitRoutes, projectPrReads), new FoldersFeature(localFolders),
+                    new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes, projectPrActions)],
                 board, Engine: engine), options.Port, out _);
             using var stopping = app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });
             await app.StartAsync(cancellationToken);

@@ -58,6 +58,7 @@ internal static class DisplayQueries
         if (kind == "session") fields = fields.Select(field => field == "'title',t.title" ? "'title',NULL" : field);
         if (kind == "needs_me") fields = fields.Select(field => field == "'text',t.text" ? "'text',NULL" : field);
         if (kind == "session") return $"json_object('entityKind','{kind}',{string.Join(",", fields)}," +
+            "'canSteer',json(CASE WHEN t.can_steer=1 THEN 'true' ELSE 'false' END)," +
             "'parentMachine',(SELECT parent.machine FROM engine_session parent WHERE parent.id=t.parent_id)," +
             "'checkoutReason',(SELECT CASE WHEN json_type(o.receipt_json,'$.data.reason')='text' AND " +
             "length(CAST(json_extract(o.receipt_json,'$.data.reason') AS BLOB))<=1024 THEN json_extract(o.receipt_json,'$.data.reason') END " +
@@ -69,6 +70,14 @@ internal static class DisplayQueries
             fields = fields.Select(field => field == "'text',t.text"
                 ? "'text',CASE WHEN t.framed=0 THEN substr(t.text,1,256) ELSE '' END" : field);
             return $"json_object('entityKind','{kind}',{string.Join(",", fields)}," +
+                "'originMachine',t.origin_machine,'messageCreatedSeq',t.message_created_seq,'delivery',t.delivery," +
+                "'fromMachine',CASE WHEN t.from_session_id IS NULL THEN t.origin_machine ELSE (SELECT machine FROM engine_session WHERE id=t.from_session_id) END," +
+                "'toMachine',(SELECT machine FROM engine_session WHERE id=t.to_session_id)," +
+                "'senderNameComplete',json(CASE WHEN octet_length(t.sender_label)>1024 THEN 'false' WHEN t.sender_label COLLATE BINARY=substr(t.sender_label,1,256) COLLATE BINARY THEN 'true' ELSE 'false' END)," +
+                "'senderName',substr(t.sender_label,1,256),'receiverName',(SELECT substr(title,1,256) FROM engine_session WHERE id=t.to_session_id)," +
+                "'runMachine',(SELECT machine FROM engine_run WHERE id=t.run_id)," +
+                "'runOwnerMachine',(SELECT s.machine FROM engine_run r JOIN engine_session s ON s.id=r.owner_session_id WHERE r.id=t.run_id)," +
+                "'runOwnerSessionId',(SELECT owner_session_id FROM engine_run WHERE id=t.run_id)," +
                 "'framed',t.framed,'clientId',t.client_id,'providerTurnId',t.provider_turn_id,'inFlight',t.in_flight," +
                 "'textComplete',CASE WHEN t.framed=0 AND length(CAST(substr(t.text,1,256) AS BLOB))=length(CAST(t.text AS BLOB)) THEN 1 ELSE 0 END," +
                 "'textUtf8Bytes',length(CAST(t.text AS BLOB)),'attachmentJsonUtf8Bytes',length(CAST(t.attachment_ids_json AS BLOB))," +

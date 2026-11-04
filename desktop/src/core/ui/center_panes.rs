@@ -231,6 +231,15 @@ impl CenterPanes {
         cx.try_global::<CenterPanes>()?.dock.upgrade()
     }
 
+    /// Saves the layout for a pane whose own saved state changed, which the layout doesn't otherwise notice.
+    pub fn save_layout(cx: &mut App) {
+        cx.defer(|cx| {
+            if let Some(dock) = Self::dock(cx) {
+                dock.update(cx, |_, cx| cx.emit(gpui_kit::component::dock::DockEvent::LayoutChanged));
+            }
+        });
+    }
+
     /// Records a pane under its key when it was built some other way, as a pane restored from the saved layout is, so
     /// opening that key finds it.
     pub fn remember(key: impl Into<String>, id: PanelId, cx: &mut App) {

@@ -63,26 +63,6 @@ public sealed partial class SessionRegistry : IAsyncDisposable, Assembly.Applica
     public Task<ComposerCatalogue> DiscoverConfigAsync(string agent, string targetId, string cwd, CancellationToken ct) =>
         new ComposerConfigDiscovery(_launcher, _time).DiscoverAsync(agent, targetId, cwd, ct);
 
-    /// <summary>Creates through the existing writer, retaining one captured configuration through final validation.</summary>
-    public SessionInfo CreateSession(string agent, string repoUrl, CancellationToken ct,
-        InitialSessionConfig? initialConfig = null, string? workingFolder = null)
-    {
-        Action? validateTarget = null;
-        if (initialConfig is not null)
-        {
-            var captured = ConfigTargetIdentity.Capture(_launcher, agent, initialConfig.TargetId);
-            validateTarget = () => ConfigTargetIdentity.Validate(_launcher, captured.Descriptor, captured.Environment);
-        }
-        void Validate()
-        {
-            ct.ThrowIfCancellationRequested();
-            if (workingFolder is not null) _launcher.ValidateFolder(workingFolder);
-            validateTarget?.Invoke();
-        }
-        Validate();
-        return _sessionStore.Create(agent, repoUrl, initialConfig, workingFolder, Validate);
-    }
-
     /// <summary>The existing parent-card writer used by the Engine helper projection.</summary>
     public HelperSessions Helpers { get; }
 

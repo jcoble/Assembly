@@ -82,7 +82,7 @@ public sealed class AgentsFileTests : IDisposable
     public void Home_save_atomically_replaces_the_actual_file_preserves_unrelated_configuration_and_updates_the_same_launcher()
     {
         var source = Open();
-        var launcher = new AdapterLauncher(source, _home, new UnclaimedPermissions(), _ => _home);
+        var launcher = new AdapterLauncher(source, _home, new UnclaimedPermissions());
         var before = source.Read("codex");
         var capture = ConfigTargetIdentity.Capture(launcher, "codex");
         var published = new List<string>();
@@ -201,7 +201,7 @@ public sealed class AgentsFileTests : IDisposable
         document[0]!["env"]!["CLAUDE_CODE_EXECUTABLE"] = "/fixture/explicit-claude";
         File.WriteAllText(FilePath, document.ToJsonString());
         var source = Bound(FilePath);
-        var launcher = new AdapterLauncher(source, _home, new UnclaimedPermissions(), _ => _home);
+        var launcher = new AdapterLauncher(source, _home, new UnclaimedPermissions());
         var captured = ConfigTargetIdentity.Capture(launcher, "codex");
         var before = source.Read("codex");
 
@@ -245,7 +245,7 @@ public sealed class AgentsFileTests : IDisposable
     {
         var source = Open();
         var before = source.Read("codex");
-        var launcher = new AdapterLauncher(source, _home, new UnclaimedPermissions(), _ => _home);
+        var launcher = new AdapterLauncher(source, _home, new UnclaimedPermissions());
         var captured = ConfigTargetIdentity.Capture(launcher, "codex");
         var empty = source.Save("codex", before.Revision, before.Settings with { ConfigHome = "" });
         Assert.Equal("", source.Single(agent => agent.Id == "codex").Env!["CODEX_HOME"]);

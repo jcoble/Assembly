@@ -327,11 +327,44 @@ internal sealed partial class RemoteMachine
                             && _subscriptions.TryGetValue(rowsId.GetInt64(), out var refused) && refused.Owner is not null)
                             refused.Frames.Writer.TryComplete(new CallFailed("The owning row subscription was refused.",
                                 frame.TryGetProperty("code", out var reason) ? reason.GetString() : "failed"));
+                        else if (frame.GetProperty("t").GetString() == "error" && frame.TryGetProperty("id", out var createdId)
+                            && _createdTitles.TryGetValue(createdId.GetInt64(), out var created) && ReferenceEquals(created.Socket, socket))
+                            created.State.TrySetException(new CallFailed("The owner session metadata was refused.",
+                                frame.TryGetProperty("code", out var code) ? code.GetString() : "failed"));
                         else if (frame.TryGetProperty("id", out var callId) && _calls.Remove(callId.GetInt64(), out var pending))
                             pending.Completion.TrySetResult(frame);
                         else if (frame.TryGetProperty("sub", out var sub))
                         {
-                            if (sub.GetInt64() == _sessionsSub)
+                            if (_createdTitles.TryGetValue(sub.GetInt64(), out var createdTitle) && ReferenceEquals(createdTitle.Socket, socket))
+                            {
+                                try { RequireOwnerBinding(createdTitle.Owner); RequireLiveMirror(createdTitle.Owner, createdTitle.Live); }
+                                catch (CallFailed)
+                                {
+                                    createdTitle.State.TrySetException(new CallFailed("The accepting source changed.", "source_changed"));
+                                    continue;
+                                }
+                                if (frame.GetProperty("t").GetString() == "state")
+                                {
+                                    var entries = frame.GetProperty("items");
+                                    if (entries.GetArrayLength() != 1)
+                                        createdTitle.State.TrySetException(new CallFailed("The accepting owner returned no session metadata.", "source_changed"));
+                                    else
+                                    {
+                                        var session = entries[0].GetProperty("item").GetProperty("sessionId").GetString()!;
+                                        if (session != createdTitle.SessionId)
+                                        {
+                                            createdTitle.State.TrySetException(new CallFailed("The owner session metadata identity differs.", "source_changed"));
+                                            continue;
+                                        }
+                                        ReceiveSessionPublication(frame, socket, createdTitle.Owner, createdTitle.Live, createdTitle.Cancellation);
+                                        createdTitle.State.TrySetResult(_sessionPublication!.Items.TryGetValue(session, out var item) ? item.Resolution?.Work : null);
+                                    }
+                                }
+                                else if (frame.TryGetProperty("item", out var update) &&
+                                    update.GetProperty("sessionId").GetString() == createdTitle.SessionId)
+                                    ReceiveSessionPublication(frame, socket, createdTitle.Owner, createdTitle.Live, createdTitle.Cancellation);
+                            }
+                            else if (sub.GetInt64() == _sessionsSub)
                             {
                                 ReceiveSessionPublication(frame, socket);
                             }

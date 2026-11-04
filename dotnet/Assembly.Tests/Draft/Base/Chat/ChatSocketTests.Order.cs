@@ -61,7 +61,7 @@ public sealed partial class ChatSocketTests
         _box.Hold();
         using var socket = await OpenAsync();
 
-        await CallAsync(socket, 1, "sessions", "create", """{"agent":"claude","repoUrl":"repo","machine":"box"}""");
+        await CallAsync(socket, 1, "sessions", "create", """{"agent":"claude","clientId":"hung_create","machine":"box"}""");
         await _box.Reached.Task.WaitAsync(Wait);
         await CallAsync(socket, 2, "preferences", "set", Save);
 

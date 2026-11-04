@@ -13,6 +13,7 @@ pub mod open_settings;
 pub mod open_url;
 
 pub mod open_new_project;
+pub mod open_project;
 
 pub mod open_pull_requests;
 

@@ -39,6 +39,7 @@ fn main() {
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(|cx| {
             gpui_kit::init(cx);
+            crate::core::socket::picture_client::register(cx);
             inline_field::init(cx);
             features::shell::workspace_preview::register(cx);
             features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
@@ -62,7 +63,9 @@ fn main() {
             features::workspaces::init(cx).expect("one workspace registry after concrete pane registration");
             let (read_layout, write_layout) = start_backend(cx);
             PaletteView::init(cx);
+            core::intents::open_url::register(cx);
             features::settings::init(cx);
+            features::remote_install::init(cx);
             features::meter::start_if_on(cx);
             // The window opens once the theme files have loaded, already in its theme. The kit calls this once, so
             // the layout's read and write are taken out on that call.

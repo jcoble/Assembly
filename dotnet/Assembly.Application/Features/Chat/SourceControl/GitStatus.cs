@@ -5,4 +5,5 @@ public sealed record GitStatus(string? Branch, string? Head, int Ahead, int Behi
     bool HasUpstream, IReadOnlyList<ChangedFile> Files, int TotalFiles, string Fingerprint = "")
 {
     public int? TotalStaged { get; init; }
+    public string? CheckoutRoot { get; init; }
 }

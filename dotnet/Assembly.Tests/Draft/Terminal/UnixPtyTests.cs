@@ -173,7 +173,8 @@ public sealed class UnixPtyTests
         Environment.SetEnvironmentVariable(key, value);
         try
         {
-            await using var host = new TerminalHost(new UnixPtyStarter(), new RecordingTopics(), TimeProvider.System);
+            await using var host = new TerminalHost(new UnixPtyStarter(), new RecordingTopics(), TimeProvider.System,
+                (null, "the configured account login shell is unavailable"));
             IProgramTerminals programs = host;
             var terminal = await programs.StartProgramAsync(new ProgramStart("/usr/bin/perl", ["-e", printSelected, key],
                 captured, Path.GetTempPath(), "signin:synthetic-environment"), default);

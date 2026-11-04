@@ -2,7 +2,8 @@ use super::*;
 impl Composer {
     /// Sends the draft once every attachment has uploaded; one whose upload failed is removed first.
     pub(super) fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.operational(){return;}
+        if self.start_draft.is_some(){self.send_start(cx);return;}
+        if !self.operational()||self.locked.is_some(){return;}
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -17,6 +18,10 @@ impl Composer {
         let attached = std::mem::take(&mut self.attachments);
         self.uploads.clear();
         (self.slash_selected, self.error) = (None, None);
+        // A steer joins a turn whose five seconds already ran; nothing reopens the box for it.
+        if self.running.is_some() {
+            self.has_opened = false;
+        }
         self.draft
             .update(cx, |draft, cx| draft.set_value("", window, cx));
         let attachment_ids: Vec<String> = attached
@@ -72,6 +77,7 @@ impl Composer {
                     name: name.into(),
                     size: 0,
                     state: AttachmentState::Saved { path },
+                    preview: None,
                 }
             })
             .collect();
@@ -104,7 +110,7 @@ impl Composer {
         self.read_pending(cx);
     }
 
-    fn submit(
+    pub(super) fn submit(
         &mut self,
         session: String,
         request: PromptRequest,

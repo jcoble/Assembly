@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Projects;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Common.Git;
