@@ -275,7 +275,7 @@ impl Panel for HistoryPane {
 }
 /// One of the toolbar's pickers: its value on the trigger, "All…" and each choice in its menu.
 fn picker(
-    id: &'static str,
+    trigger: Button,
     label: String,
     all: &'static str,
     options: Vec<String>,
@@ -283,7 +283,7 @@ fn picker(
     pane: WeakEntity<HistoryPane>,
     pick: fn(&mut HistoryFilter, Option<String>),
 ) -> impl IntoElement + use<> {
-    Button::new(id)
+    trigger
         .outline()
         .small()
         .dropdown_caret(true)
@@ -373,20 +373,18 @@ impl Render for HistoryPane {
                         ),
                     )
             }))
-            .child(
-                picker(
-                    "history-branch",
-                    branch_label,
-                    "All branches",
-                    branches,
-                    self.filter.branch.clone(),
-                    weak.clone(),
-                    |filter, value| filter.branch = value,
-                )
-                .tooltip("Filters the history shown here. It does not switch the working directory."),
-            )
             .child(picker(
-                "history-author",
+                Button::new("history-branch")
+                    .tooltip("Filters the history shown here. It does not switch the working directory."),
+                branch_label,
+                "All branches",
+                branches,
+                self.filter.branch.clone(),
+                weak.clone(),
+                |filter, value| filter.branch = value,
+            ))
+            .child(picker(
+                Button::new("history-author"),
                 self.filter.author.clone().unwrap_or_else(|| "All authors".into()),
                 "All authors",
                 authors,
