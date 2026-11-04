@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, readdirSync, lstatSync, readFileSync } from 'node:fs';
+import { mkdirSync, existsSync, readdirSync, lstatSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { atomicWrite } from './runbook.ts';
@@ -75,8 +75,10 @@ function remove(path: string, owner?: string, idle = false) {
   // Save recovery information before deletion, retaining the branch locally and remotely.
   withLock('removals', () => atomicWrite(join(stateRoot(), 'removed-worktrees.json'), JSON.stringify({ ...removals(), [path]: { repo: row.repo, branch: row.branch, removed: new Date().toISOString() } })));
   git(row.repo, 'worktree', 'remove', '--', path);
-  if (existsSync(path)) throw Error('Git left the worktree directory; keep residual files for inspection.');
+  // Git has let go of it by now, so the record goes even when files remain. Finder can recreate .DS_Store here.
   mutateRegistry(rows => { delete rows[path]; });
+  rmSync(join(path, '.DS_Store'), { force: true });
+  try { rmdirSync(path); } catch (error: any) { if (error.code !== 'ENOENT') throw Error('Git left the worktree directory; keep residual files for inspection.'); }
 }
 export function done(path: string, owner?: string) {
   path = canonical(path);
@@ -105,19 +107,20 @@ export function sweep(opts: { legacy: boolean; dryRun: boolean; hourly?: boolean
             const main = git(path, 'worktree', 'list', '--porcelain').split('\n')[0].slice(9);
             if (canonical(main) === canonical(path) || canonical(row.repo) === canonical(path)) throw Error('Main checkout is never removed.');
             const hours = idleHours(path, row);
-            checkRemovalSafety(path, row);
+            // An idle worktree can still be pushed below, so only the final removal requires it on the remote.
+            checkRemovalSafety(path, row, false);
             const idle = hours >= 12;
             if (!idle) { removable(path); }
             if (!opts.dryRun) {
-              // A clean tree needs only a fresh remote confirmation, never a speculative push.
+              // Merged work needs only a fresh confirmation. Idle work gets the backup its session could not finish.
               const clean = !git(path, 'status', '--porcelain');
-              const backup = backupUnderLock(path, undefined, clean);
+              const backup = backupUnderLock(path, undefined, clean && !idle);
               if (!['pushed', 'clean'].includes(backup.status)) {
                 const reason = (backup.reason || 'Backup failed; kept.') + (backup.kept.length ? ' ' + backup.kept.slice(0, 10).join(', ') : '');
                 mutateRegistry(rows => { rows[path].flag = reason; });
                 throw Error(reason);
               }
-              if (clean) mutateRegistry(rows => { rows[path].backedUpHead = git(path, 'rev-parse', 'HEAD'); });
+              if (clean && !idle) mutateRegistry(rows => { rows[path].backedUpHead = git(path, 'rev-parse', 'HEAD'); });
               remove(path, undefined, idle);
             } else if (git(path, 'status', '--porcelain')) throw Error('Dirty worktree needs backup; dry run keeps it.');
             report.removedBranches.push({ path, branch: registry()[path]?.branch || row.branch });

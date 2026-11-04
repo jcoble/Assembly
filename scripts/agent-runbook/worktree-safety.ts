@@ -5,7 +5,7 @@ import type { WorktreeRecord } from './worktree-state.ts';
 
 const regenerable = new Set(['target', 'node_modules', 'bin', 'obj', 'dist', 'build', '.build', '.next', '.svelte-kit', '__pycache__', '.turbo', '.cache']);
 const gitPath = (path: string, name: string) => git(path, 'rev-parse', '--path-format=absolute', '--git-path', name);
-export function checkRemovalSafety(path: string, row: WorktreeRecord) {
+export function checkRemovalSafety(path: string, row: WorktreeRecord, requirePushed = true) {
   if (row.flag) throw Error('Worktree flagged: ' + row.flag);
   const operation = gitOperation(path);
   if (operation) throw Error('Git operation in progress: ' + operation);
@@ -16,7 +16,7 @@ export function checkRemovalSafety(path: string, row: WorktreeRecord) {
   const unique = ignored.filter(file => file.split('/').at(-1) !== '.DS_Store' && !file.startsWith('gen/schemas/') && !file.split('/').slice(0, -1).some(part => regenerable.has(part)));
   if (unique.length) throw Error('Ignored files need preservation: ' + unique.slice(0, 10).join(', '));
   const head = git(path, 'rev-parse', 'HEAD');
-  if (git(path, 'ls-remote', '--heads', 'origin', 'refs/heads/' + branch).split(/\s/)[0] !== head && !onDefault(path)) {
+  if (requirePushed && git(path, 'ls-remote', '--heads', 'origin', 'refs/heads/' + branch).split(/\s/)[0] !== head && !onDefault(path)) {
     throw Error('Unpushed commits or remote lacks HEAD; worktree kept.');
   }
 }

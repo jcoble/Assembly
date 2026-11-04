@@ -41,8 +41,11 @@ export function defaultBranch(repo: string): string {
   if (!ref.startsWith('origin/')) throw Error('Default branch is unknown; set origin/HEAD before backup.');
   return ref.slice('origin/'.length);
 }
+// True when the default branch already holds HEAD, locally or on origin, so removing the worktree loses nothing.
 export function onDefault(path: string) {
-  try { git(path, 'merge-base', '--is-ancestor', 'HEAD', 'refs/remotes/origin/' + defaultBranch(path)); return true; } catch { return false; }
+  return ['refs/remotes/origin/', 'refs/heads/'].some(prefix => {
+    try { git(path, 'merge-base', '--is-ancestor', 'HEAD', prefix + defaultBranch(path)); return true; } catch { return false; }
+  });
 }
 export function liveCwds(): { pid: number; path: string }[] {
   // lsof exit 1 also means no matches, but an empty/failed inventory is not proof of safety.
