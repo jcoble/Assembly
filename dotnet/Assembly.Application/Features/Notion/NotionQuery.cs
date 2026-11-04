@@ -1,7 +1,7 @@
 namespace Assembly.Application.Features.Notion;
 
 public sealed record NotionQuery(int Offset = 0, int Limit = 25, string? Search = null, string? ProjectId = null,
-    string[]? Statuses = null, string[]? Priorities = null, string Sort = "number", string Direction = "asc")
+    string[]? Statuses = null, string[]? Priorities = null, string Sort = "number", string Direction = "desc")
 {
     public void Validate()
     {
@@ -12,7 +12,8 @@ public sealed record NotionQuery(int Offset = 0, int Limit = 25, string? Search 
 }
 public sealed record NotionTaskRow(string SourceId, string PageId, string Title, long KeyNumber, string TaskKey,
     string ProjectId, string ProjectTitle, string Status, string Priority, string Assignee, string? Due, string Url, long FetchedMs);
-public sealed record NotionTaskPage(IReadOnlyList<NotionTaskRow> Rows, bool HasMore, IReadOnlyList<string> Statuses, IReadOnlyList<string> Priorities,
+public sealed record NotionProjectOption(string Id, string Title);
+public sealed record NotionTaskPage(IReadOnlyList<NotionTaskRow> Rows, bool HasMore, IReadOnlyList<string> Statuses, IReadOnlyList<string> Priorities, IReadOnlyList<NotionProjectOption> Projects,
     long FetchedMs, bool Truncated, long Generation, long Revision);
 public sealed record NotionRefreshReceipt(int Count, long FetchedMs, bool Truncated, long Generation);
 public sealed record NotionRefreshArgs(long ExpectedGeneration);

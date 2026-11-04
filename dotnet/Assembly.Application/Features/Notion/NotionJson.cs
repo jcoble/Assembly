@@ -23,6 +23,7 @@ namespace Assembly.Application.Features.Notion;
 [JsonSerializable(typeof(NotionAppendArgs))]
 [JsonSerializable(typeof(NotionQuery))]
 [JsonSerializable(typeof(NotionTaskRow))]
+[JsonSerializable(typeof(NotionProjectOption))]
 [JsonSerializable(typeof(NotionTaskPage))]
 [JsonSerializable(typeof(NotionRefreshReceipt))]
 [JsonSerializable(typeof(NotionRefreshArgs))]

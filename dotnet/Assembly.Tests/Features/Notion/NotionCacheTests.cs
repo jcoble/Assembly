@@ -24,12 +24,51 @@ public sealed class NotionCacheTests
         var cache = new NotionCache(f.Database, f.Settings);
         var rows = Enumerable.Range(1, 60).Select(i => Row(i) with { Status = i <= 30 ? "Doing" : "Done" }).ToArray();
         f.Database.Writer.Write("test.seed", s => cache.Replace(s, connection.Generation, rows, 10, false));
-        var page = cache.Query(new(Statuses: ["Doing"], Priorities: ["High"], ProjectId: "project-a"), default);
+        var page = cache.Query(new(Statuses: ["Doing"], Priorities: ["High"], ProjectId: "project-a", Direction: "asc"), default);
         Assert.Equal(25, page.Rows.Count); Assert.True(page.HasMore);
         Assert.Equal(1, page.Rows[0].KeyNumber);
         Assert.Equal(5, cache.Query(new(Offset: 25, Statuses: ["Doing"]), default).Rows.Count);
         Assert.Empty(cache.Query(new(Search: "%"), default).Rows);
         Assert.Throws<NotionException>(() => cache.Query(new(Limit: 101), default));
+    }
+    [Fact]
+    public async Task Refresh_names_each_related_project_once_and_offers_it_as_a_filter()
+    {
+        await using var f = new NotionFixture();
+        var connection = await f.Settings.SaveAsync(NotionFixture.Source, "fake", default);
+        var cache = new NotionCache(f.Database, f.Settings);
+        const string project = "44444444-4444-4444-4444-444444444444", hidden = "55555555-5555-5555-5555-555555555555";
+        object Result(string id, string name, string relation) => new
+        {
+            id,
+            parent = new { data_source_id = NotionFixture.Source },
+            url = "https://www.notion.so/" + id.Replace("-", ""),
+            properties = new
+            {
+                Name = new { type = "title", title = new[] { new { plain_text = name } } },
+                Project = new { type = "relation", relation = new[] { new { id = relation } } }
+            }
+        };
+        f.Enqueue("/v1/data_sources/" + NotionFixture.Source + "/query", System.Text.Json.JsonSerializer.Serialize(new
+        {
+            results = new[]
+            {
+                Result(NotionFixture.Page, "One", project),
+                Result("66666666-6666-6666-6666-666666666666", "Two", project),
+                Result("77777777-7777-7777-7777-777777777777", "Three", hidden)
+            },
+            has_more = false
+        }));
+        f.Enqueue("/v1/pages/" + project, System.Text.Json.JsonSerializer.Serialize(new { properties = new { Name = new { type = "title", title = new[] { new { plain_text = "Assembly" } } } } }));
+        f.Enqueue("/v1/pages/" + hidden, "{}", 404);
+        await new NotionRefresh(f.Http, cache, f.Settings, TimeProvider.System).RefreshAsync(connection.Generation, default);
+        var page = cache.Query(new(), default);
+        Assert.Equal(new NotionProjectOption(project, "Assembly"), Assert.Single(page.Projects));
+        Assert.Equal(2, cache.Query(new(ProjectId: project), default).Rows.Count);
+        Assert.Equal(2, cache.Query(new(Search: "assembly"), default).Rows.Count);
+        Assert.Equal("", page.Rows.Single(r => r.Title == "Three").ProjectTitle);
+        Assert.Equal(3, f.Handler.Requests.Count);
+        Assert.Equal("descending", System.Text.Json.JsonDocument.Parse(f.Handler.Requests[0].Body).RootElement.GetProperty("sorts")[0].GetProperty("direction").GetString());
     }
     [Fact]
     public async Task Cleared_generation_cannot_recreate_cache()

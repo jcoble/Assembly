@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Assembly.Application.Common.Database;
-using Assembly.Application.Common.Projects;
 
 namespace Assembly.Application.Features.Notion;
 
@@ -8,11 +7,10 @@ public sealed class NotionCache
 {
     private readonly IAppDatabase _db;
     private readonly NotionSettings _settings;
-    private readonly IProjectRoots? _projects;
     private const string Columns = "source_id,page_id,title,key_number,task_key,project_id,project_title,status,priority,assignee,due,url,fetched_ms";
-    public NotionCache(IAppDatabase db, NotionSettings settings, IProjectRoots? projects = null)
+    public NotionCache(IAppDatabase db, NotionSettings settings)
     {
-        _db = db; _settings = settings; _projects = projects;
+        _db = db; _settings = settings;
         db.Writer.Write("notion.cacheSchema", s => s.Execute("""
             CREATE TABLE IF NOT EXISTS notion_tasks(source_id TEXT NOT NULL,page_id TEXT NOT NULL,title TEXT NOT NULL,key_number INTEGER NOT NULL,task_key TEXT NOT NULL,
               project_id TEXT NOT NULL,project_title TEXT NOT NULL,status TEXT NOT NULL,priority TEXT NOT NULL,assignee TEXT NOT NULL,due TEXT,url TEXT NOT NULL,fetched_ms INTEGER NOT NULL,PRIMARY KEY(source_id,page_id));
@@ -33,12 +31,11 @@ public sealed class NotionCache
         var parameters = new List<SqlArg> { new("$source", source), new("$limit", query.Limit + 1), new("$offset", query.Offset) };
         if (query.Search is { Length: > 0 } search)
         {
-            conditions += " AND (title LIKE $search ESCAPE '\\' OR task_key LIKE $search ESCAPE '\\')";
+            conditions += " AND (title LIKE $search ESCAPE '\\' OR task_key LIKE $search ESCAPE '\\' OR project_title LIKE $search ESCAPE '\\' OR status LIKE $search ESCAPE '\\')";
             parameters.Add(new("$search", "%" + search.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal) + "%"));
         }
         if (query.ProjectId is { } project)
         {
-            if (_projects is not null && _projects.Find(project) is not { Removed: false }) throw new NotionException("unknown_project");
             conditions += " AND project_id=$project"; parameters.Add(new("$project", project));
         }
         AddIn("status", query.Statuses, ref conditions, parameters);
@@ -51,7 +48,8 @@ public sealed class NotionCache
         var meta = snapshot.QueryFirst("SELECT fetched_ms,truncated,revision FROM notion_cache_meta WHERE source_id=$source", r => (Fetched: r.Long(0), Truncated: r.Long(1) != 0, Revision: r.Long(2)), new SqlArg("$source", source));
         var statuses = snapshot.Query("SELECT DISTINCT status FROM notion_tasks WHERE source_id=$source ORDER BY status", r => r.Text(0), new SqlArg("$source", source));
         var priorities = snapshot.Query("SELECT DISTINCT priority FROM notion_tasks WHERE source_id=$source ORDER BY priority", r => r.Text(0), new SqlArg("$source", source));
-        var result = new NotionTaskPage(rows, more, statuses, priorities, meta.Fetched, meta.Truncated, connection.Generation, meta.Revision);
+        var projects = snapshot.Query("SELECT DISTINCT project_id,project_title FROM notion_tasks WHERE source_id=$source AND project_id<>'' ORDER BY project_title COLLATE NOCASE,project_id", r => new NotionProjectOption(r.Text(0), r.Text(1)), new SqlArg("$source", source));
+        var result = new NotionTaskPage(rows, more, statuses, priorities, projects, meta.Fetched, meta.Truncated, connection.Generation, meta.Revision);
         if (JsonSerializer.SerializeToUtf8Bytes(result, NotionJson.Default.NotionTaskPage).Length > 256 * 1024 - 1024) throw new NotionException("notion_too_large");
         return result;
     }
