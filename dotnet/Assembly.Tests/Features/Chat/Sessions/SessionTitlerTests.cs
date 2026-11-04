@@ -13,6 +13,7 @@ namespace Assembly.Tests.Features.Chat.Sessions;
 public sealed class SessionTitlerTests : IAsyncDisposable
 {
     private readonly TempDatabase _db = new();
+    private readonly DirectoryInfo _folder = Directory.CreateTempSubdirectory("assembly-session-title-");
     private readonly FakeTimeProvider _time = new(DateTimeOffset.FromUnixTimeMilliseconds(1_000_000));
     private readonly AppDatabase _database;
     private readonly RowStore _rows;
@@ -32,8 +33,8 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         _database = TestDatabase.Open(_db.Path);
         _rows = RowStore.Open(_database);
         _hub = new LiveHub(_rows);
-        _sessionStore = SessionStore.Open(_database, _time, "checkouts");
-        _session = _sessionStore.Create("claude", "https://github.com/o/r");
+        _sessionStore = SessionStore.Open(_database, _time, _folder.FullName);
+        _session = _sessionStore.Create("claude", "https://github.com/o/r", workingFolder: _folder.FullName);
         _adapter = new SharedAdapter(_launcher, "claude", _time, _log);
         _opener = new SessionOpener(_sessionStore, _launcher, _ => _adapter);
         _work = new BackgroundWork(_time, _log);
@@ -61,6 +62,19 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         Assert.Equal(new string('a', SessionTitler.TitleLength), SessionTitler.Clean(new string('a', 100)));
         Assert.Null(SessionTitler.Clean("  \"\"  \n"));
         Assert.Null(SessionTitler.Clean(null));
+    }
+
+    [Theory]
+    [InlineData(UtilityStatus.Unavailable)]
+    [InlineData(UtilityStatus.Failed)]
+    public async Task A_negative_helper_result_keeps_the_existing_prompt_title(UtilityStatus status)
+    {
+        _model.Status = status;
+        await TurnAsync("Keep this prompt title", "Completed.");
+        await _work.StopAsync(TimeSpan.FromSeconds(5));
+        var titled = _sessionStore.Get(_session.SessionId)!;
+        Assert.Equal("Keep this prompt title", titled.Title);
+        Assert.Equal("prompt", titled.TitleSource);
     }
 
     [Fact]
@@ -303,11 +317,13 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         _hub.Dispose();
         _database.Dispose();
         _db.Dispose();
+        _folder.Delete(recursive: true);
     }
 
     private sealed class FakeModel(string? answer) : IUtilityModel
     {
         private readonly List<string> _prompts = [];
+        internal UtilityStatus? Status;
 
         public IReadOnlyList<string> Prompts
         {
@@ -318,11 +334,11 @@ public sealed class SessionTitlerTests : IAsyncDisposable
             }
         }
 
-        public Task<string?> CompleteAsync(string prompt, CancellationToken cancellationToken)
+        public Task<UtilityResult> CompleteAsync(string prompt, CancellationToken cancellationToken)
         {
             lock (_prompts)
                 _prompts.Add(prompt);
-            return Task.FromResult(answer);
+            return Task.FromResult(new UtilityResult(Status ?? (answer is null ? UtilityStatus.Failed : UtilityStatus.Succeeded), answer, answer is null ? "fixture_failure" : null));
         }
     }
 }

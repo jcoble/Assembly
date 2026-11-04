@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Database;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Engine.Messages;
@@ -60,8 +61,10 @@ public sealed class StartSessionTool(McpGate gate, Func<IReadOnlyList<string>> c
                 throw Bad("folder", "must be an absolute existing folder on this machine");
             var childId = Guid.NewGuid().ToString();
             var messageId = Guid.NewGuid().ToString();
+            var projectId = write.Scope.QueryFirst("SELECT project_id FROM engine_session WHERE id=$id",
+                row => row.IsNull(0) ? null : row.Text(0), new SqlArg("$id", write.Caller.SessionId));
             write.Apply(childId, 0, 0, new StartSession(provider, model, folder, args.Title, write.Caller.SessionId, null, args.TaskUrl,
-                ManagedCheckout: args.Folder is null && write.Caller.ManagedCheckout));
+                ManagedCheckout: args.Folder is null && write.Caller.ManagedCheckout, ProjectId: projectId));
             var prompt = $"Session \"{write.Caller.Title}\" ({write.Caller.SessionId}) started you. Do the task below. Your last reply each turn goes back to it as a message; you can also message it with the Assembly MCP server's send_message tool.\n\n{args.Prompt}";
             write.ApplyHelperPrompt(childId, messageId, prompt);
             return new StartSessionAnswer(childId, messageId);

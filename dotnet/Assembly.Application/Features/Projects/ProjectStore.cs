@@ -16,6 +16,7 @@ public sealed partial class ProjectStore
     }
     public ProjectRecord? Get(string id) => _db.QueryFirst($"SELECT {Columns} FROM projects WHERE id=$id", Read,
         CancellationToken.None, new SqlArg("$id", id));
+    public ProjectRecord? Get(IReadScope scope, string id) => scope.QueryFirst($"SELECT {Columns} FROM projects WHERE id=$id", Read, new SqlArg("$id", id));
     public ProjectRecord? AtRoot(string machine, string rootPath) => _db.QueryFirst(
         $"SELECT {Columns} FROM projects WHERE machine=$machine AND root_path=$root", Read,
         CancellationToken.None, new SqlArg("$machine", machine), new SqlArg("$root", rootPath));

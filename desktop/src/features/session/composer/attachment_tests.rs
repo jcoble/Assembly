@@ -11,6 +11,7 @@ fn saved(path: &str, name: &str) -> Attachment {
         name: name.to_string().into(),
         size: 1,
         state: AttachmentState::Saved { path: path.into() },
+        preview: None,
     }
 }
 

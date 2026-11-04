@@ -1,40 +1,20 @@
+use super::pr_search::{PrScope, PrState, pr_query};
 use super::pull_request::PullRequestPage;
-use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::socket::{client::SocketClient, outcome::Outcome, row_source::ExpectedRowSource};
 use gpui_kit::*;
 use serde_json::json;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub enum QueueState {
-    #[default]
-    Open,
-    Mine,
-    Review,
-}
-impl QueueState {
-    pub fn wire(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Mine => "mine",
-            Self::Review => "review",
-        }
-    }
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Open => "Open",
-            Self::Mine => "Mine",
-            Self::Review => "Needs review",
-        }
-    }
-}
 /// One visible queue owns its pending request; hiding it cancels reads, and no timer refreshes it.
 pub struct PrQueue {
     pub page: PullRequestPage,
-    pub state: QueueState,
+    pub state: PrState,
+    pub scope: PrScope,
     pub search: String,
     pub failure: Option<String>,
     pub loading: bool,
     session: Option<String>,
     repositories: Vec<String>,
+    expected_source: Option<ExpectedRowSource>,
     active: bool,
     loaded: bool,
     revision: u64,
@@ -44,12 +24,14 @@ impl PrQueue {
     pub fn new(session: Option<String>, repositories: Vec<String>) -> Self {
         Self {
             page: PullRequestPage::default(),
-            state: QueueState::Open,
+            state: PrState::Open,
+            scope: PrScope::Everyone,
             search: String::new(),
             failure: None,
             loading: false,
             session,
             repositories,
+            expected_source: None,
             active: false,
             loaded: false,
             revision: 0,
@@ -70,9 +52,15 @@ impl PrQueue {
         }
         cx.notify();
     }
-    pub fn select_state(&mut self, state: QueueState, cx: &mut Context<Self>) {
+    pub fn select_state(&mut self, state: PrState, cx: &mut Context<Self>) {
         if self.state != state {
             self.state = state;
+            self.refresh(cx);
+        }
+    }
+    pub fn select_scope(&mut self, scope: PrScope, cx: &mut Context<Self>) {
+        if self.scope != scope {
+            self.scope = scope;
             self.refresh(cx);
         }
     }
@@ -82,11 +70,30 @@ impl PrQueue {
             self.refresh(cx);
         }
     }
+    /// A session's queue reads the source its pane read, and refuses rather than answering from anywhere else.
+    pub fn set_source(&mut self, source: Option<ExpectedRowSource>, cx: &mut Context<Self>) {
+        if self.expected_source != source {
+            self.expected_source = source;
+            self.refresh(cx);
+        }
+    }
     pub fn set_repositories(&mut self, repositories: Vec<String>, cx: &mut Context<Self>) {
         if self.repositories != repositories {
             self.repositories = repositories;
             self.refresh(cx);
         }
+    }
+    /// A merged pull request leaves the list right away, without waiting for the next read.
+    pub fn merged(&mut self, repository: &str, number: u64, cx: &mut Context<Self>) {
+        let before = self.page.items.len();
+        self.page
+            .items
+            .retain(|pr| pr.number != number || !pr.repository.eq_ignore_ascii_case(repository));
+        self.page.total = self
+            .page
+            .total
+            .saturating_sub(before - self.page.items.len());
+        cx.notify();
     }
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.read = None;
@@ -123,7 +130,11 @@ impl PrQueue {
         self.failure = None;
         self.revision += 1;
         let revision = self.revision;
-        let args = json!({"session":self.session,"repositories":self.repositories,"state":self.state.wire(),"search":self.search,"cursor":if more{self.page.cursor.clone()}else{None}});
+        let query = pr_query(self.state, self.scope, &self.search);
+        let mut args = json!({"session":self.session,"repositories":self.repositories,"state":query.state,"search":query.search,"cursor":if more{self.page.cursor.clone()}else{None}});
+        if let Some(source) = &self.expected_source {
+            args["expectedSource"] = json!(source);
+        }
         let call = socket
             .read(cx)
             .call::<PullRequestPage>("git", "prs", args, None);

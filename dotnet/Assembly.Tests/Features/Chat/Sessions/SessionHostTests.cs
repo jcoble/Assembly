@@ -37,8 +37,8 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         _database = TestDatabase.Open(_db.Path);
         _store = RowStore.Open(_database);
         _hub = new LiveHub(_store);
-        _sessionStore = SessionStore.Open(_database, _time, "checkouts");
-        _session = _sessionStore.Create("claude", "https://github.com/o/r");
+        _sessionStore = SessionStore.Open(_database, _time, _db.Folder);
+        _session = _sessionStore.CreateReady("claude", "https://github.com/o/r");
         _adapter = new SharedAdapter(_launcher, "claude", _time, _log);
         _opener = new SessionOpener(_sessionStore, _launcher, _ => _adapter);
         _work = new BackgroundWork(_time, _log);
@@ -57,7 +57,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         var agent = await _launcher.NextAsync();
         var open = await agent.StartAsync();
         Assert.Equal("session/new", open.GetProperty("method").GetString());
-        Assert.Equal("/work/session", open.GetProperty("params").GetProperty("cwd").GetString());
+        Assert.Equal(_sessionStore.Root(_session), open.GetProperty("params").GetProperty("cwd").GetString());
         var prompt = await agent.ReadAsync("session/prompt");
         Assert.Equal("hi", prompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
 
@@ -520,21 +520,6 @@ public sealed partial class SessionHostTests : IAsyncDisposable
             if (row.Kind == "stats")
                 return row.Payload;
         }
-    }
-
-    [Fact]
-    public async Task A_grandchild_s_agent_works_in_the_top_session_s_checkout()
-    {
-        var child = _sessionStore.Child(_session, "acp-child", "Child");
-        var grandchild = _sessionStore.Helper(child, "claude", "Grandchild");
-        var host = new SessionHost(grandchild.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
-        Assert.NotNull(host.Send("hi"));
-        var agent = await _launcher.NextAsync();
-        await agent.StartAsync();
-        var prompt = await agent.ReadAsync("session/prompt");
-        Assert.Equal([_session.SessionId], _launcher.CheckedOut);
-        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
-        await Until(() => host.ActiveRunId is null);
     }
 
     private static async Task<string> MessageTextAsync(LiveSubscription live)

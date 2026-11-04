@@ -9,8 +9,11 @@ use serde_json::{Value, json};
 
 use super::selected_session::SelectedSession;
 use super::sessions::Sessions;
+use crate::core::socket::checkout_selector::CheckoutSelector;
 use crate::core::socket::client::SocketClient;
+use crate::core::socket::error_code::ErrorCode;
 use crate::core::socket::outcome::Outcome;
+use crate::core::socket::row_source::ExpectedRowSource;
 
 /// What the tab shows.
 #[derive(Clone, Debug, PartialEq)]
@@ -27,12 +30,20 @@ pub enum Shown<T> {
 pub struct SessionRead<T> {
     feature: &'static str,
     method: &'static str,
+    /// A newer read on this key cancels the last one, so two owners of the same call each need their own.
+    key: String,
     /// The tab is shown.
     active: bool,
     /// The session what's shown, or the read on its way, is for.
     read_for: Option<String>,
-    source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    source: Option<ExpectedRowSource>,
+    /// A linked checkout to read instead, for the session and source it was picked under and no other.
+    checkout: Option<(String, Option<ExpectedRowSource>, CheckoutSelector)>,
     shown: Shown<T>,
+    /// Why the shown failure failed, for a next step such as Connect.
+    failure_code: Option<ErrorCode>,
+    /// Counts answers from the backend. A status a write returned through `show` isn't one.
+    answers: u64,
     reading: bool,
     /// The read on its way; dropping it cancels the call on the backend.
     _read: Option<Task<()>>,
@@ -52,16 +63,26 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         Self {
             feature,
             method,
+            key: format!("{feature}/{method}"),
             active: false,
             read_for: None,
             source: None,
+            checkout: None,
             shown: Shown::NoSession,
+            failure_code: None,
+            answers: 0,
             reading: false,
             _read: None,
             _selected: selected,
             _settled: None,
             settled_state: None,
         }
+    }
+
+    /// For a second owner of the same call.
+    pub fn keyed(mut self, key: &str) -> Self {
+        self.key = key.to_string();
+        self
     }
 
     /// Refreshes on the selected session's actual running-to-settled transition; never polls.
@@ -108,12 +129,63 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         self.read_for.as_deref()
     }
 
-    pub fn source(&self) -> Option<&crate::core::socket::row_source::ExpectedRowSource> {
+    pub fn source(&self) -> Option<&ExpectedRowSource> {
         self.source.as_ref()
+    }
+
+    /// The linked checkout being read, if it isn't the session's own.
+    pub fn checkout(&self) -> Option<&CheckoutSelector> {
+        self.checkout.as_ref().map(|(_, _, checkout)| checkout)
+    }
+
+    /// Why the shown failure failed.
+    pub fn failure_code(&self) -> Option<&ErrorCode> {
+        self.failure_code.as_ref()
+    }
+
+    /// Reads another checkout of the session it's on, or its own again. What was shown belongs to the last one.
+    pub fn set_checkout(&mut self, checkout: Option<CheckoutSelector>, cx: &mut Context<Self>) {
+        let bound = match (checkout, &self.read_for) {
+            (Some(checkout), Some(session)) => {
+                Some((session.clone(), self.source.clone(), checkout))
+            }
+            _ => None,
+        };
+        if bound == self.checkout {
+            return;
+        }
+        self.checkout = bound;
+        self.failure_code = None;
+        self.shown = Shown::Reading;
+        cx.notify();
+        if self.active {
+            self.read(true, cx);
+        }
     }
 
     pub fn reading(&self) -> bool {
         self.reading
+    }
+
+    pub fn answers(&self) -> u64 {
+        self.answers
+    }
+
+    /// The machine that didn't answer, when that is why the read failed.
+    pub fn unreachable_machine(&self) -> Option<&str> {
+        match &self.failure_code {
+            Some(ErrorCode::Unreachable { machine }) => Some(machine),
+            _ => None,
+        }
+    }
+
+    /// Shows what a write returned with no second read. A read on its way is older, so it stops.
+    pub fn show(&mut self, value: T, cx: &mut Context<Self>) {
+        self.reading = false;
+        self._read = None;
+        self.failure_code = None;
+        self.shown = Shown::Read(value);
+        cx.notify();
     }
 
     /// Shown, it reads again, since what it shows may have changed while hidden; hidden, a read on its way stops.
@@ -147,10 +219,15 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
             self.reading = false;
             self._read = None;
             self.source = None;
+            self.checkout = None;
             self.shown = Shown::NoSession;
             cx.notify();
             return;
         };
+        self.checkout = self
+            .checkout
+            .take()
+            .filter(|(bound, from, _)| *bound == session && *from == source);
         let same = self.read_for.as_deref() == Some(session.as_str()) && self.source == source;
         if same && !again && !matches!(self.shown, Shown::Failed(_)) {
             return;
@@ -164,24 +241,32 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         let Some(socket) = SocketClient::try_global(cx) else {
             self.reading = false;
             self._read = None;
+            self.failure_code = None;
             self.shown = Shown::Failed("The backend isn't running.".into());
             cx.notify();
             return;
         };
         // Keyed, so a newer read answers this one Aborted and cancels it on the backend.
-        let key = format!("{}/{}", self.feature, self.method);
-        let call = socket.read(cx).call::<Value>(
-            self.feature,
-            self.method,
+        let args = CheckoutSelector::applied(
+            self.checkout(),
             json!({ "session": session, "expectedSource": source }),
-            Some(&key),
         );
+        let call = socket
+            .read(cx)
+            .call::<Value>(self.feature, self.method, args, Some(&self.key));
         self.reading = true;
         self._read = Some(cx.spawn(async move |read, cx| {
             let outcome = call.await;
             _ = read.update(cx, |read, cx| {
-                if read.read_for.as_deref() != Some(session.as_str()) || read.source != source { return; }
+                if read.read_for.as_deref() != Some(session.as_str()) || read.source != source {
+                    return;
+                }
                 read.reading = false;
+                read.answers += 1;
+                read.failure_code = match &outcome {
+                    Outcome::Failed(failure) => Some(failure.code.clone()),
+                    _ => None,
+                };
                 read.shown = match outcome {
                     Outcome::Ok(result) => match serde_json::from_value(result) {
                         Ok(answer) => Shown::Read(answer),

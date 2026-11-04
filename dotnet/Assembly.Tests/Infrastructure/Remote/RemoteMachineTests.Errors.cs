@@ -23,7 +23,7 @@ public sealed partial class RemoteMachineTests
 
         using var socket = await ApiTests.OpenOwnerSocketAsync(desktop.Address, DesktopToken);
         var created = await ApiTests.SocketRequestAsync(socket, 1, "sessions", "create",
-            JsonSerializer.Serialize(new { agent = "claude", repoUrl = "https://github.com/o/r", machine = Box }));
+            JsonSerializer.Serialize(new { agent = "claude", clientId = Guid.NewGuid().ToString("N"), machine = Box }));
 
         Assert.Equal("error", created.GetProperty("t").GetString());
         Assert.Equal("failed", created.GetProperty("code").GetString());
@@ -50,7 +50,7 @@ public sealed partial class RemoteMachineTests
         var home = Directory.CreateTempSubdirectory("assembly-desktop-").FullName;
         await using var desktop = await DesktopOnAsync(remote, home);
         var parent = (await RestartCallAsync(desktop, DesktopToken, "sessions", "create",
-            new { agent = "claude", repoUrl = "https://github.com/o/r" })).GetProperty("sessionId").GetString()!;
+            new { agent = "claude", clientId = Guid.NewGuid().ToString("N") })).GetProperty("sessionId").GetString()!;
         await RestartSendAsync(desktop, DesktopToken, parent, "hi", "errors-parent");
         var agent = await _desktopLauncher.NextAsync();
         var parentToken = SessionToken(await agent.StartAsync(acpSessionId: "acp-parent"));
@@ -98,7 +98,7 @@ public sealed partial class RemoteMachineTests
         await using (var first = await DesktopOnAsync(remote, home))
         {
             var created = await RestartCallAsync(first, DesktopToken, "sessions", "create",
-                new { agent = "claude", repoUrl = "https://github.com/o/r", machine = Box });
+                new { agent = "claude", clientId = Guid.NewGuid().ToString("N"), machine = Box });
             sessionId = created.GetProperty("sessionId").GetString()!;
             Assert.Equal("claude", (await SessionAsync(_box, BoxToken, sessionId)).GetProperty("agent").GetString());
         }

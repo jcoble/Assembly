@@ -4,6 +4,8 @@ using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Remote;
+using Assembly.Infrastructure.Engine;
+using Assembly.Engine.Sessions;
 using Assembly.Tests.Infrastructure.Http;
 
 namespace Assembly.Tests.Infrastructure.Remote;
@@ -42,11 +44,24 @@ public sealed partial class RemoteMachineTests
         var topics = new global::Assembly.Infrastructure.Topics.Topics();
         using var file = new TempDatabase();
         using var db = AppDatabase.Open(file.Path, TimeProvider.System, topics);
+        Assembly.Engine.Persistence.EngineSchema.Open(db, TimeProvider.System.GetUtcNow().ToUnixTimeMilliseconds());
         var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
         using var hub = new LiveHub(RowStore.Open(db));
-        await using var machine = new RemoteMachine(Box, _box.Address, BoxToken, hub, sessions, _log, new MachineStatus(topics, [Box]));
+        await using var engine = EngineRuntime.Start(db, topics, TimeProvider.System, new SessionLimits(() => 5, () => 10));
+        await using var machine = new RemoteMachine(Box, _box.Address, BoxToken, hub, sessions, _log, new MachineStatus(topics, [Box]),
+            acceptanceEngine: engine);
         await machine.ProbeAsync(CancellationToken.None);
-        var session = await machine.CreateSessionAsync("claude", "https://github.com/o/r", CancellationToken.None);
+        var identity = await machine.ReadMirrorOwnerAsync(CancellationToken.None);
+        var read = await machine.CaptureOwnerReadAsync(identity.Info.Machine, CancellationToken.None);
+        var owner = identity.Binding;
+        var accepted = await machine.CreateBoundSessionAsync(new("claude", Guid.NewGuid().ToString("N")), null,
+            owner, read.Socket, null, CancellationToken.None);
+        var session = sessions.Get(accepted.SessionId);
+        Assert.NotNull(session);
+        Assert.Equal(Box, session.Machine);
+        Assert.NotNull(accepted.Facts);
+        Assert.Equal(accepted.Facts.Agent, session.Agent);
+        Assert.Equal(accepted.Facts.ParentSessionId, session.ParentSessionId);
         sessions.SetTitle(session.SessionId, local.Title, local.Source);
         // The next change to the session here is the refresh after its turn: its title, or only its time.
         var refreshed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

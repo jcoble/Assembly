@@ -249,6 +249,10 @@ impl FileView {
                             return;
                         }
                         view.owner = Some(owner);
+                        // A person's open was refused a save while its owner was unknown, so it's retried now.
+                        if view.expected_workspace.is_none() {
+                            crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
+                        }
                         if view.document.is_some() && view.reload_version.is_none() {
                             cx.notify();
                             return;
@@ -276,7 +280,10 @@ impl FileView {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(coordinator)=crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::try_global(cx)
+        // A restore runs inside the coordinator's own update, for the checkout it has already validated; its current
+        // target is still the session being left, so only a person's open asks it.
+        if !crate::core::state::workspace_panes::WorkspacePanes::is_restoring(cx)
+            && let Some(coordinator)=crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::try_global(cx)
             && coordinator.read(cx).current_target().is_some_and(|target|matches!(target,crate::features::workspaces::workspace_coordinator::WorkspaceTarget::TranscriptOnly(_))) {
             coordinator.update(cx,|view,cx| {view.status=Some("This transcript has no recorded checkout to open files from.".into());cx.notify();});return;
         }

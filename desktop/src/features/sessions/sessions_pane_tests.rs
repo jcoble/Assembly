@@ -200,10 +200,13 @@ fn selected(cx: &mut VisualTestContext) -> Option<String> {
     })
 }
 
-/// The pane takes `answer` as its read's.
+/// The pane takes `answer` as its read's: the one already out if the rail topic started one, or a new one.
 fn answer(pane: &Entity<SessionsPane>, answer: RailPage, cx: &mut VisualTestContext) {
     pane.update(cx, |pane, cx| {
-        let (id, _) = pane.rail.changed().unwrap();
+        let id = pane
+            .rail
+            .reading_id()
+            .unwrap_or_else(|| pane.rail.changed().unwrap().0);
         pane.answer(id, Outcome::Ok(answer), cx);
     });
     draw(cx);
@@ -575,20 +578,14 @@ fn status_then_location_picks_keep_their_query_meaning(cx: &mut TestAppContext) 
     });
 }
 
-#[test]
-fn a_refused_open_names_the_machine_it_could_not_reach_and_otherwise_gives_the_reason() {
-    use crate::core::engine::EngineRefusal;
-    let refused = |code: &str| EngineRefusal { code: code.into(), message: "The reason.".into() };
-    assert_eq!(
-        super::refusal_words(Some("Workbox"), &refused("source_changed")),
-        "That session is on Workbox, which this app isn't connected to."
-    );
-    assert_eq!(
-        super::refusal_words(Some("Workbox"), &refused("nonresumable")),
-        "That session didn't open: The reason."
-    );
-    assert_eq!(
-        super::refusal_words(None, &refused("source_changed")),
-        "That session didn't open: The reason."
-    );
+#[gpui::test]
+fn the_draft_says_when_it_has_no_chat_pane_and_a_second_press_keeps_the_same_one(cx: &mut TestAppContext) {
+    let (pane, cx) = open(cx);
+    pane.update_in(cx, |pane, window, cx| pane.show_draft(window, cx));
+    let first = pane.read_with(cx, |pane, _| pane.creating.as_ref().map(|(form, _)| form.clone()));
+    assert!(first.is_some());
+    pane.read_with(cx, |pane, _| assert!(pane.row_error.is_some()));
+    pane.update_in(cx, |pane, window, cx| pane.show_draft(window, cx));
+    let second = pane.read_with(cx, |pane, _| pane.creating.as_ref().map(|(form, _)| form.clone()));
+    assert_eq!(first, second);
 }

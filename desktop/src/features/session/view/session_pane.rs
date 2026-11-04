@@ -26,6 +26,7 @@ use crate::features::session::client::session_client::{
     RowUpdate, RowsSink, SessionClient,
 };
 use crate::features::session::composer::composer_view::{Composer, ComposerEvent};
+use crate::features::session::composer::shape::pending_answer;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::entries::{Entry, entry_key};
 use crate::features::session::model::fold::Fold;
@@ -50,6 +51,7 @@ pub struct SessionPane {
     _source_connections: Vec<Subscription>,
     active_source_cut: Option<opening::ConnectionCut>,
     focus: FocusHandle,
+    draft: Option<AnyView>,
     session: Option<String>,
     row_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     view: SessionView,
@@ -140,7 +142,6 @@ impl SessionPane {
                 return div().into_any_element();
             };
             let (row, fresh, fold, space) = pane.update(cx, |pane, cx| {
-                pane.make_form(entry, window, cx);
                 (
                     pane.row(entry, cx),
                     pane.fresh_key(entry),
@@ -180,6 +181,7 @@ impl SessionPane {
         let header = cx.new(|_| Header::default());
         let heard = [
             cx.subscribe(&composer, |pane, _, event, cx| match event {
+                ComposerEvent::StartRequested{..} => {}
                 ComposerEvent::Sending => {
                     pane.refresh(Change::Nothing, cx);
                     pane.timeline
@@ -215,6 +217,7 @@ impl SessionPane {
             _source_connections: Vec::new(),
             active_source_cut: None,
             focus: cx.focus_handle(),
+            draft: None,
             session: None,
             row_source: None,
             view: SessionView::default(),
@@ -471,15 +474,15 @@ impl SessionPane {
             (false, true) => (self._clock, self.now, self.plan_open) = (None, None, false),
             _ => {}
         }
-        let context = self.view.context.map(|(_, used, size)| (used, size));
+        let context = self.view.context;
         let running = active.is_some();
         let branch = latest_branch(&self.view.stats);
-        let messages = !self.view.items.is_empty();
+        let lock = pending_answer(&self.view.items);
         self.composer.update(cx, |composer, cx| {
             composer.set_running(active, cx);
             composer.set_context(context, cx);
             composer.set_branch(branch, cx);
-            composer.set_messages(messages, cx);
+            composer.set_locked(lock, cx);
         });
         self.tell_read(running, cx);
         cx.notify();

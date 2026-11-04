@@ -143,7 +143,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
 
         using var owner = await ApiTests.OpenOwnerSocketAsync(desktop.Address, DesktopToken);
         var created = await ApiTests.SocketRequestAsync(owner, 1, "sessions", "create",
-            JsonSerializer.Serialize(new { agent = "claude", repoUrl = "https://github.com/o/r", machine = Box }));
+            JsonSerializer.Serialize(new { agent = "claude", clientId = Guid.NewGuid().ToString("N"), machine = Box }));
 
         Assert.Equal("error", created.GetProperty("t").GetString());
         Assert.Equal("failed", created.GetProperty("code").GetString());
@@ -164,7 +164,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
 
         using var http = new HttpClient { BaseAddress = _box.Address };
         http.DefaultRequestHeaders.Authorization = AuthenticationHeaderValue.Parse(token);
-        var call = """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"start_session","arguments":{"prompt":"Count the lines.","agent":"codex"}}}""";
+        var call = """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"start_session","arguments":{"prompt":"Count the lines.","title":"Count the lines.","provider":"codex"}}}""";
         var answer = JsonDocument.Parse(await (await http.PostAsync("/mcp", Json(call))).Content.ReadAsStringAsync()).RootElement;
         var helperId = JsonDocument.Parse(answer.GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString()!)
             .RootElement.GetProperty("sessionId").GetString()!;
@@ -221,7 +221,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         var parentToken = SessionToken(await parentAgent.StartAsync());
         var parentPrompt = await parentAgent.ReadAsync("session/prompt");
         await parentAgent.InsertAsync(parentPrompt, "remote-parent-prompt");
-        var helperId = (await ToolAsync(_box, parentToken, "start_session", new { prompt = "Count the lines.", agent = "codex" })).GetProperty("sessionId").GetString()!;
+        var helperId = (await ToolAsync(_box, parentToken, "start_session", new { prompt = "Count the lines.", title = "Count the lines.", provider = "codex" })).GetProperty("sessionId").GetString()!;
         var helperAgent = await _boxLauncher.NextAsync();
         await helperAgent.StartAsync(acpSessionId: "acp-helper");
         var helperPrompt = await helperAgent.ReadAsync("session/prompt");
@@ -255,7 +255,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     public async Task A_mac_session_starts_a_helper_on_the_remote_and_each_messages_the_other_once()
     {
         var created = await FeatureResultAsync(_desktop!, DesktopToken, "sessions", "create",
-            new { agent = "claude", repoUrl = "https://github.com/o/r" });
+            new { agent = "claude", clientId = Guid.NewGuid().ToString("N") });
         var parent = created.GetProperty("sessionId").GetString()!;
         await SendAsync(parent);
         var desktop = await _desktopLauncher.NextAsync();
@@ -263,7 +263,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         var parentPrompt = await desktop.ReadAsync("session/prompt");
         await desktop.InsertAsync(parentPrompt, "local-parent-prompt");
 
-        var started = await ToolAsync(_desktop!, parentToken, "start_session", new { prompt = "Count the lines.", agent = "codex", machine = Box });
+        var started = await ToolAsync(_desktop!, parentToken, "start_session", new { prompt = "Count the lines.", title = "Count the lines.", provider = "codex", folder = _boxHome, machine = await RemoteEngineMachineAsync() });
         var helperId = started.GetProperty("sessionId").GetString()!;
         var box = await _boxLauncher.NextAsync();
         var helperToken = SessionToken(await box.StartAsync(acpSessionId: "acp-helper"));
@@ -307,14 +307,14 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     public async Task A_message_left_queued_after_its_helper_ended_is_still_delivered_and_says_how_long_it_waited()
     {
         var created = await FeatureResultAsync(_desktop!, DesktopToken, "sessions", "create",
-            new { agent = "claude", repoUrl = "https://github.com/o/r" });
+            new { agent = "claude", clientId = Guid.NewGuid().ToString("N") });
         var parent = created.GetProperty("sessionId").GetString()!;
         await SendAsync(parent);
         var desktop = await _desktopLauncher.NextAsync();
         var parentToken = SessionToken(await desktop.StartAsync(acpSessionId: "acp-parent"));
         var parentPrompt = await desktop.ReadAsync("session/prompt");
         await desktop.InsertAsync(parentPrompt, "local-parent-prompt");
-        var helperId = (await ToolAsync(_desktop!, parentToken, "start_session", new { prompt = "Count the lines.", agent = "codex", machine = Box }))
+        var helperId = (await ToolAsync(_desktop!, parentToken, "start_session", new { prompt = "Count the lines.", title = "Count the lines.", provider = "codex", folder = _boxHome, machine = await RemoteEngineMachineAsync() }))
             .GetProperty("sessionId").GetString()!;
         var box = await _boxLauncher.NextAsync();
         await box.StartAsync(acpSessionId: "acp-helper");
@@ -337,14 +337,14 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     public async Task Stop_on_a_remote_helper_s_row_stops_its_run_there_and_the_row_ends_stopped()
     {
         var created = await FeatureResultAsync(_desktop!, DesktopToken, "sessions", "create",
-            new { agent = "claude", repoUrl = "https://github.com/o/r" });
+            new { agent = "claude", clientId = Guid.NewGuid().ToString("N") });
         var parent = created.GetProperty("sessionId").GetString()!;
         await SendAsync(parent);
         var desktop = await _desktopLauncher.NextAsync();
         var parentToken = SessionToken(await desktop.StartAsync(acpSessionId: "acp-parent"));
         var parentPrompt = await desktop.ReadAsync("session/prompt");
         await desktop.InsertAsync(parentPrompt, "stop-parent-prompt");
-        var helperId = (await ToolAsync(_desktop!, parentToken, "start_session", new { prompt = "Count the lines.", agent = "codex", machine = Box }))
+        var helperId = (await ToolAsync(_desktop!, parentToken, "start_session", new { prompt = "Count the lines.", title = "Count the lines.", provider = "codex", folder = _boxHome, machine = await RemoteEngineMachineAsync() }))
             .GetProperty("sessionId").GetString()!;
         var box = await _boxLauncher.NextAsync();
         await box.StartAsync(acpSessionId: "acp-helper");
@@ -435,6 +435,9 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     private static string SessionToken(JsonElement open) =>
         open.GetProperty("params").GetProperty("mcpServers")[0].GetProperty("headers")[0].GetProperty("value").GetString()!["Bearer ".Length..];
 
+    private async Task<string> RemoteEngineMachineAsync() =>
+        (await FeatureResultAsync(_box, BoxToken, "engine", "machine", new { })).GetProperty("machine").GetString()!;
+
     private static async Task<JsonElement> ToolAsync(DesktopBackend backend, string sessionToken, string tool, object arguments)
     {
         var answer = await ToolResultAsync(backend, sessionToken, tool, arguments);
@@ -517,7 +520,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     private async Task<string> CreateSessionAsync()
     {
         var created = await FeatureResultAsync(_desktop!, DesktopToken, "sessions", "create",
-            new { agent = "claude", repoUrl = "https://github.com/o/r", machine = Box });
+            new { agent = "claude", clientId = Guid.NewGuid().ToString("N"), machine = Box });
         return created.GetProperty("sessionId").GetString()!;
     }
 

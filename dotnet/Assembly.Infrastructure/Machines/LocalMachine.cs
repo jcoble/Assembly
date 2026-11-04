@@ -17,13 +17,6 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
     public Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken) =>
         Task.FromResult(sessions.ConfigTargets);
 
-    public Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken,
-        InitialSessionConfig? initialConfig = null, string? workingFolder = null) =>
-        Task.FromResult(sessions.CreateSession(agent, repoUrl, cancellationToken, initialConfig, workingFolder));
-
-    public Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken) =>
-        Task.FromResult(sessionStore.Helper(parent, agent, title));
-
     public Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken) =>
         Task.FromResult(sessions.Stop(runId));
 

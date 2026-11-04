@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Assembly.Domain.Sessions;
+using Assembly.Application.Common.Agents;
+using Assembly.Application.Features.Chat.Sessions;
 
 namespace Assembly.Tests.Draft.Base.Chat;
 
@@ -57,12 +59,18 @@ public sealed partial class ChatSocketTests
     public async Task Composer_port_create_saves_initial_choices_and_actual_folder_before_reply()
     {
         using var socket = await OpenAsync();
-        await CallAsync(socket, 1, "sessions", "create", """{"agent":"claude","repoUrl":"repo","workingFolder":"/fixture/项目","initialConfig":{"targetId":"selected-target","choices":{"raw/模型":"m/二","effort":"medium"}}}""");
+        var target = ConfigTargetIdentity.Capture(_launcher, "claude").TargetId;
+        var project = CreateProject("项目");
+        var create = new SessionsFeature.CreateArgs("claude", "composer_choices", project.Id,
+            InitialConfig: new(target, new Dictionary<string, string> { ["raw/模型"] = "m/二", ["effort"] = "medium" }),
+            ExpectedSource: new(_engine.Machine, 0, null));
+        await CallAsync(socket, 1, "sessions", "create", JsonSerializer.Serialize(create, SessionsJson.Default.CreateArgs));
         using var reply = JsonDocument.Parse(await ReadAsync(socket));
         Assert.Equal("result", reply.RootElement.GetProperty("t").GetString());
         var id = reply.RootElement.GetProperty("result").GetProperty("sessionId").GetString()!;
-        Assert.Equal("/fixture/项目", _sessions.Get(id)!.WorkingFolder);
-        Assert.Equal("selected-target", _sessions.Config(id).ConfigTarget);
+        Assert.Equal(project.RootPath, _sessions.Get(id)!.WorkingFolder);
+        Assert.Equal(project.Id, _sessions.Get(id)!.ProjectId);
+        Assert.Equal(target, _sessions.Config(id).ConfigTarget);
         Assert.Equal("m/二", _sessions.Config(id).Choices["raw/模型"]);
         Assert.Equal("medium", _sessions.Config(id).Choices["effort"]);
     }
@@ -73,10 +81,10 @@ public sealed partial class ChatSocketTests
     public async Task Composer_port_helper_refuses_owner_form_payload_without_creation(string field, string value)
     {
         using var socket = await OpenAsync();
-        await CallAsync(socket, 1, "sessions", "create", $$"""{"agent":"claude","repoUrl":"repo","parentSessionId":"parent","{{field}}":{{value}}}""");
+        await CallAsync(socket, 1, "sessions", "create", $$"""{"agent":"claude","clientId":"invalid_helper","parentSessionId":"parent","{{field}}":{{value}}}""");
         using var reply = JsonDocument.Parse(await ReadAsync(socket));
         Assert.Equal("error", reply.RootElement.GetProperty("t").GetString());
-        Assert.Equal("failed", reply.RootElement.GetProperty("code").GetString());
+        Assert.Equal(field == "workingFolder" ? "bad_args" : "wrong_machine", reply.RootElement.GetProperty("code").GetString());
         Assert.DoesNotContain("helper", _here.Asked);
         Assert.Empty(_sessions.List(null, 50, default).Sessions);
     }

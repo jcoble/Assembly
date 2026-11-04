@@ -10,6 +10,7 @@ gpui_kit::assets::icon_assets!(
     Extra,
     [
         House,
+        RefreshCw,
         CircleQuestionMark,
         ShieldQuestionMark,
         Dot,
@@ -49,7 +50,30 @@ gpui_kit::assets::icon_assets!(
         Rocket,
         ListFilter,
         MessageCircle,
-        LayoutDashboard
+        LayoutDashboard,
+        GitPullRequest,
+        GitPullRequestClosed,
+        GitPullRequestDraft,
+        GitMerge,
+        GitCommitHorizontal,
+        MessageSquare,
+        Code,
+        CodeXml,
+        Flame,
+        Cog,
+        Hash,
+        Palette,
+        Braces,
+        FileText,
+        Database,
+        SquareTerminal,
+        Lock,
+        Bird,
+        Gem,
+        Coffee,
+        Container,
+        Table,
+        Binary
     ]
 );
 

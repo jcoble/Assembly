@@ -26,6 +26,8 @@ internal sealed class UnixPtyStarter : IPtyStarter
             throw new CallFailed(File.Exists(request.Cwd)
                 ? $"This session's folder isn't a folder: {request.Cwd}"
                 : $"This session's folder no longer exists: {request.Cwd}");
+        if (!AccountLoginShell.IsUsable(request.FileName))
+            throw new CallFailed($"The terminal executable is unavailable: {request.FileName}");
         var (master, slavePath) = PtyNative.OpenMaster();
         var slave = -1;
         try

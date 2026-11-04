@@ -228,6 +228,7 @@ impl FilesPane {
                                 session_id: session.clone(),
                                 path: Some(history_path.clone()),
                                 expected_source: history_source.clone(),
+                                checkout: None,
                             }),
                             cx,
                         )

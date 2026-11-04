@@ -1,6 +1,4 @@
-use super::BranchDiff;
 use crate::core::ui::diff::parse_patch;
-use crate::features::changes::file_diff::CUT;
 
 // Pins: scm#18, scm#20
 #[test]
@@ -16,27 +14,4 @@ fn branch_paths_binary_and_rename_are_preserved_by_the_kit_document() {
     );
     assert!(files[1].is_binary());
     assert_eq!(files[2].original_path().unwrap().as_ref(), "old.rs");
-}
-
-// Pins: scm#20
-#[test]
-fn empty_and_cut_branch_diffs_have_visible_notes() {
-    assert_eq!(
-        BranchDiff {
-            base: "main".into(),
-            diff: "".into(),
-            truncated: false
-        }
-        .notes(),
-        ["No changes."]
-    );
-    assert_eq!(
-        BranchDiff {
-            base: "main".into(),
-            diff: "patch".into(),
-            truncated: true
-        }
-        .notes(),
-        [CUT]
-    );
 }

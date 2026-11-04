@@ -81,6 +81,16 @@ async fn one_collection_subscribes_before_read_and_pages_without_duplicate_recor
         cx.update(|cx| projects.read(cx).rows().len() == 2)
     })
     .await;
+    let intent = crate::core::intents::open_project::OpenProject {
+        project_id: "one".into(), machine: "local".into(), root_path: "/owned/one".into(),
+    };
+    cx.update(|cx| assert_eq!(projects.read(cx).resolve_open(&intent).unwrap().id, "one"));
+    projects.update(cx, |projects, _| projects.rows[0].root_path = "/replacement".into());
+    cx.update(|cx| assert!(projects.read(cx).resolve_open(&intent).is_none()));
+    let changed = crate::core::intents::open_project::OpenProject { root_path: "/replacement".into(), ..intent };
+    cx.update(|cx| assert!(projects.read(cx).resolve_open(&changed).is_some()));
+    projects.update(cx, |projects, _| projects.rows[0].removed_at = Some(2));
+    cx.update(|cx| assert!(projects.read(cx).resolve_open(&changed).is_none()));
     let seen = seen.lock().unwrap();
     assert_eq!(seen.iter().filter(|frame| frame["t"] == "sub").count(), 1);
     assert_eq!(seen.iter().filter(|frame| frame["t"] == "call").count(), 2);

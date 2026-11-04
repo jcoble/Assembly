@@ -32,9 +32,12 @@ fn staged_and_working_patches_keep_their_identity() {
 fn binary_empty_and_cut_diffs_say_so_without_losing_a_text_side() {
     assert_eq!(
         diff("", "", true, false).notes(),
-        ["Binary file, so there's no line-by-line comparison."]
+        ["Binary file, so there is no line-by-line comparison."]
     );
-    assert_eq!(diff("", "", false, false).notes(), ["No changes."]);
+    assert_eq!(
+        diff("", "", false, false).notes(),
+        ["No line changes to show."]
+    );
     assert_eq!(diff("", EDIT, false, true).notes(), [CUT]);
     let mixed = diff(EDIT, "", true, false);
     assert_eq!(mixed.parts().len(), 1);

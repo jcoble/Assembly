@@ -15,15 +15,15 @@ internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, Check
     {
         calls = routes.Route(calls);
         calls.Write("git", "stage", GitWritesJson.Default.PathsArgs, GitWritesJson.Default.GitWriteResult,
-            (args, call) => Write(args.Session, call, root => args.Paths is null
+            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => args.Paths is null
                 ? git.StageAllAsync(root, RequireFingerprint(args.ExpectedFingerprint), call.Cancellation)
                 : git.StageAsync(root, Paths(root, args.Paths), call.Cancellation)), args => args.Session);
         calls.Write("git", "unstage", GitWritesJson.Default.PathsArgs, GitWritesJson.Default.GitWriteResult,
-            (args, call) => Write(args.Session, call, root => args.Paths is null
+            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => args.Paths is null
                 ? git.UnstageAllAsync(root, RequireFingerprint(args.ExpectedFingerprint), call.Cancellation)
                 : git.UnstageAsync(root, Paths(root, args.Paths), call.Cancellation)), args => args.Session);
         calls.Write("git", "discard", GitWritesJson.Default.DiscardArgs, GitWritesJson.Default.GitWriteResult,
-            (args, call) => Write(args.Session, call, root =>
+            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root =>
             {
                 if (args.ExpectedFingerprint is not null)
                 {
@@ -34,46 +34,62 @@ internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, Check
                 return git.DiscardAsync(root, Paths(root, args.Tracked), Paths(root, args.Untracked), args.Expected, call.Cancellation);
             }), args => args.Session);
         calls.Write("git", "commit", GitWritesJson.Default.CommitArgs, GitWritesJson.Default.GitWriteResult,
-            (args, call) => Write(args.Session, call, root => git.CommitAsync(root, args.Message, args.Amend, args.ExpectedHead, call.Cancellation)), args => args.Session);
+            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => git.CommitAsync(root, args.Message, args.Amend, args.ExpectedHead, call.Cancellation)), args => args.Session);
         calls.Write("git", "addRemote", GitWritesJson.Default.RemoteArgs, GitWritesJson.Default.GitWriteResult,
-            (args, call) => Write(args.Session, call, root => git.AddRemoteAsync(root, args.Name, args.Url, call.Cancellation)), args => args.Session);
+            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => git.AddRemoteAsync(root, args.Name, args.Url, call.Cancellation)), args => args.Session);
         calls.Write("git", "init", GitWritesJson.Default.SessionArgs, GitWritesJson.Default.GitWriteResult,
-            (args, call) => Write(args.Session, call, root => git.InitAsync(root, call.Cancellation)), args => args.Session);
+            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => git.InitAsync(root, call.Cancellation)), args => args.Session);
         calls.Write("git", "createBranch", GitWritesJson.Default.BranchArgs, GitWritesJson.Default.GitWriteResult,
-            (args, call) => Write(args.Session, call, root => new GitBranches(cli).CreateAsync(root, args.Name, args.ExpectedHead, call.Cancellation)), args => args.Session);
+            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitBranches(cli).CreateAsync(root, args.Name, args.ExpectedHead, call.Cancellation)), args => args.Session);
         calls.Write("git", "stash", GitWritesJson.Default.StashArgs, GitWritesJson.Default.GitWriteResult,
-            (args, call) => Write(args.Session, call, root => new GitStashes(cli, time).StashAsync(root, args.Session, args.Message, args.IncludeUntracked, call.Cancellation)), args => args.Session);
+            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitStashes(cli, time).StashAsync(root, args.Session, args.Message, args.IncludeUntracked, call.Cancellation)), args => args.Session);
         calls.Write("git", "applyStash", GitWritesJson.Default.StashShaArgs, GitWritesJson.Default.GitWriteResult,
-            (args, call) => Write(args.Session, call, root => new GitStashes(cli, time).ApplyAsync(root, args.Sha, call.Cancellation)), args => args.Session);
+            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitStashes(cli, time).ApplyAsync(root, args.Sha, call.Cancellation)), args => args.Session);
         calls.Write("git", "dropStash", GitWritesJson.Default.StashShaArgs, GitWritesJson.Default.GitWriteResult,
-            (args, call) => Write(args.Session, call, root => new GitStashes(cli, time).DropAsync(root, args.Sha, call.Cancellation)), args => args.Session);
+            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitStashes(cli, time).DropAsync(root, args.Sha, call.Cancellation)), args => args.Session);
     }
-    private async Task<Func<IWriteScope, GitWriteResult>> Write(string session, CallContext call, Func<string, Task<GitWriteResult>> execute)
+    private async Task<Func<IWriteScope, GitWriteResult>> Write(string session, CallContext call, string? expectedRoot, ExpectedSource? expectedSource, Func<string, Task<GitWriteResult>> execute)
     {
         if (call.Peer is not OwnerPeer) throw new CallFailed("forbidden");
-        var root = SessionPaths.RootOf(sessions, session);
+        call.SourceGuard?.EnsureCurrent();
+        var root = RequireRoot(sessions, session, expectedRoot, expectedSource is not null || call.ExpectedSource is not null);
         var result = await writes.RunAsync(root, async () =>
         {
             call.Cancellation.ThrowIfCancellationRequested();
-            if (SessionPaths.RootOf(sessions, session) != root) throw new CallFailed("The session's checkout changed. Refresh Source Control and try again.");
+            call.SourceGuard?.EnsureCurrent();
+            if (RequireRoot(sessions, session, expectedRoot, expectedSource is not null || call.ExpectedSource is not null) != root) throw ChangedRoot();
             return await execute(root);
         });
         return _ => result;
     }
+    internal static string RequireRoot(SessionStore sessions, string session, string? expectedRoot, bool required)
+    {
+        if (sessions.Get(session) is not { Machine: null }) throw ChangedRoot();
+        var actual = Path.GetFullPath(SessionPaths.RootOf(sessions, session));
+        if (expectedRoot is null)
+        {
+            if (required) throw ChangedRoot();
+            return actual; // Only the existing local, unqualified caller has no observed-root assertion.
+        }
+        if (!Path.IsPathFullyQualified(expectedRoot) || !string.Equals(actual, Path.GetFullPath(expectedRoot), StringComparison.Ordinal))
+            throw ChangedRoot();
+        return actual;
+    }
+    private static CallFailed ChangedRoot() => new("The session's checkout changed. Refresh and try again.", "source_changed");
     private static IReadOnlyList<string> Paths(string root, IReadOnlyList<string> paths) => paths.Select(path =>
     {
         var relative = Path.GetRelativePath(root, SessionPaths.Resolve(root, path));
         return relative == "." ? throw new CallBadArguments("Choose files to change.") : relative;
     }).Distinct(StringComparer.Ordinal).ToArray();
     private static string RequireFingerprint(string? fingerprint) => fingerprint ?? throw new CallBadArguments("Refresh Source Control before changing all files.");
-    internal sealed record BranchArgs([property: JsonRequired] string Session, [property: JsonRequired] string Name, string? ExpectedHead);
-    internal sealed record StashArgs([property: JsonRequired] string Session, [property: JsonRequired] string Message, bool IncludeUntracked);
-    internal sealed record StashShaArgs([property: JsonRequired] string Session, [property: JsonRequired] string Sha);
-    internal sealed record SessionArgs([property: JsonRequired] string Session);
-    internal sealed record PathsArgs([property: JsonRequired] string Session, IReadOnlyList<string>? Paths, string? ExpectedFingerprint);
-    internal sealed record DiscardArgs([property: JsonRequired] string Session, IReadOnlyList<string>? Tracked, IReadOnlyList<string>? Untracked, IReadOnlyList<ChangedFile>? Expected, string? ExpectedFingerprint, bool IncludeUntracked);
-    internal sealed record CommitArgs([property: JsonRequired] string Session, [property: JsonRequired] string Message, bool Amend, string? ExpectedHead);
-    internal sealed record RemoteArgs([property: JsonRequired] string Session, [property: JsonRequired] string Name, [property: JsonRequired] string Url);
+    internal sealed record BranchArgs([property: JsonRequired] string Session, [property: JsonRequired] string Name, string? ExpectedHead, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
+    internal sealed record StashArgs([property: JsonRequired] string Session, [property: JsonRequired] string Message, bool IncludeUntracked, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
+    internal sealed record StashShaArgs([property: JsonRequired] string Session, [property: JsonRequired] string Sha, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
+    internal sealed record SessionArgs([property: JsonRequired] string Session, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
+    internal sealed record PathsArgs([property: JsonRequired] string Session, IReadOnlyList<string>? Paths, string? ExpectedFingerprint, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
+    internal sealed record DiscardArgs([property: JsonRequired] string Session, IReadOnlyList<string>? Tracked, IReadOnlyList<string>? Untracked, IReadOnlyList<ChangedFile>? Expected, string? ExpectedFingerprint, bool IncludeUntracked, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
+    internal sealed record CommitArgs([property: JsonRequired] string Session, [property: JsonRequired] string Message, bool Amend, string? ExpectedHead, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
+    internal sealed record RemoteArgs([property: JsonRequired] string Session, [property: JsonRequired] string Name, [property: JsonRequired] string Url, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
 }
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(SourceControlWrites.SessionArgs))]

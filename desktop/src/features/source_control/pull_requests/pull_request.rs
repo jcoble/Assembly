@@ -15,6 +15,36 @@ pub struct PullRequestSummary {
     pub author: String,
     pub head_branch: String,
     pub base_branch: String,
+    /// `passing`, `failing`, `pending` or `none`, when the backend knows.
+    pub checks: Option<String>,
+    pub check_summary: Option<String>,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CheckTone {
+    Passing,
+    Failing,
+    Pending,
+    Quiet,
+}
+impl PullRequestSummary {
+    /// The row's check text and how it reads; nothing when the backend didn't say.
+    pub fn check_line(&self) -> Option<(String, CheckTone)> {
+        let checks = self.checks.as_deref();
+        let tone = match checks {
+            Some("passing") => CheckTone::Passing,
+            Some("failing") => CheckTone::Failing,
+            Some("pending") => CheckTone::Pending,
+            _ => CheckTone::Quiet,
+        };
+        if checks == Some("none") {
+            return Some(("no checks".into(), tone));
+        }
+        let text = self
+            .check_summary
+            .clone()
+            .or_else(|| checks.map(|checks| format!("checks {checks}")))?;
+        Some((text, tone))
+    }
 }
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,6 +166,15 @@ pub struct PullRequestComment {
     pub line: Option<usize>,
     pub side: Option<String>,
     pub reply_to_id: Option<u64>,
+}
+impl PullRequestComment {
+    /// GitHub takes a reply only on the comment that opened a thread on a file, by its number. A comment no longer on
+    /// a line of the diff still qualifies.
+    pub fn reply_id(&self) -> Option<u64> {
+        (self.path.is_some() && self.reply_to_id.is_none())
+            .then(|| self.id.parse().ok())
+            .flatten()
+    }
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

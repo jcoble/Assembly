@@ -30,7 +30,27 @@ fn in_force(on_theme: &SharedString, asked: &SharedString, named: &Option<NamedF
     on_theme == asked || named.as_ref().is_some_and(|named| named.0 == *asked && named.1 == *on_theme)
 }
 
+/// The interface size text was last drawn at.
+struct DrawnSize(f32);
+
+impl Global for DrawnSize {}
+
+/// Text sizes aren't on the theme, and a view that doesn't observe the preferences, or that the dock caches, keeps the
+/// old ones until it's invalidated.
+fn redraw_for_a_new_size(cx: &mut App) {
+    let size = Preferences::read(cx, |appearance| appearance.number(&UI_FONT_SIZE));
+    let drawn = cx.try_global::<DrawnSize>().map(|drawn| drawn.0);
+    if drawn == Some(size) {
+        return;
+    }
+    cx.set_global(DrawnSize(size));
+    if drawn.is_some() {
+        cx.refresh_windows();
+    }
+}
+
 pub fn apply_text(cx: &mut App) {
+    redraw_for_a_new_size(cx);
     let (ui, code) = Preferences::read(cx, |appearance| (appearance.ui_font(), appearance.code_font()));
     let theme = Theme::global(cx);
     let named = cx.try_global::<NamedFaces>();

@@ -1,110 +1,99 @@
-//! One owned diff response per pick. The kit retains viewer state until a newer response replaces it.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use super::{branch_diff::BranchDiff, file_diff::FileDiff};
-use crate::core::intents::{
-    open_branch_diff::OpenBranchDiff, open_commit_diff::OpenCommitDiff, open_diff::OpenDiff,
+//! The Changes tab beside Chat: the whole working copy stacked file by file, under the changed-file tree, or one
+//! commit's file on its own. Replaces GitDiffView.svelte. It reads only while shown, and only the checkout Source
+//! control has actually read for the selected session; reads for anything else stop as the selection moves.
+use super::working_copy::{CombinedPatch, Scope, Selection, WorkingCopy};
+use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_diff::OpenDiff};
+use crate::core::socket::{checkout_selector::CheckoutSelector, row_source::ExpectedRowSource};
+use crate::core::state::{
+    inspected_checkout::InspectedCheckout, preferences::Preferences,
+    selected_session::SelectedSession, session_read::SessionRead,
 };
-use crate::core::socket::{client::SocketClient, outcome::Outcome};
-use crate::core::state::preferences::Preferences;
-use crate::core::ui::{
-    center_panes::CenterPanes,
-    diff::{SuppliedPatch, supplied_patch},
-};
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::diff::{Diff, DiffMode, DiffState};
+use crate::core::ui::{center_panes::CenterPanes, changed_tree::ChangedTree};
+use crate::features::source_control::git_status::GitStatus;
+use gpui_kit::component::diff::{DiffMode, DiffState};
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, panel_handle, register_panel,
 };
-use gpui_kit::component::input::{Editor, EditorState};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
+use gpui_kit::component::input::{EditorState, InputState};
 use gpui_kit::*;
 use serde_json::{Value, json};
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+
+#[path = "changes_reads.rs"]
+mod reads;
+#[path = "changes_view.rs"]
+mod view;
 
 pub const CHANGES: &str = "Changes";
-const KEY: &str = "git/diff";
 struct Open(WeakEntity<ChangesPane>);
 impl Global for Open {}
 
 #[derive(Clone, Debug, PartialEq)]
+struct CommitPick {
+    session: String,
+    expected_source: Option<ExpectedRowSource>,
+    sha: String,
+    path: String,
+    title: String,
+    checkout: Option<CheckoutSelector>,
+}
+#[derive(Clone, Debug, PartialEq)]
+enum Target {
+    /// The checkout's changes, file by file.
+    Stack,
+    /// A commit's file, kept apart from the working copy and from whatever Source control moves on to.
+    Commit(CommitPick),
+}
+#[derive(Clone, Debug, PartialEq)]
 enum Picked {
-    File {
-        session: String,
-        expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
-        path: String,
-        original_path: Option<String>,
-    },
-    Branch {
-        session: String,
-        expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
-    },
-    Commit {
-        session: String,
-        expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
-        sha: String,
-        path: String,
-        title: String,
-    },
+    File(String),
+    Commit(CommitPick),
 }
-struct PatchView {
-    label: &'static str,
-    content: PatchContent,
-}
-enum PatchContent {
-    Unified(Entity<DiffState>),
-    Combined {
-        text: String,
-        editor: Option<Entity<EditorState>>,
-    },
-}
-enum Shown {
-    Reading,
-    Read {
-        views: Vec<PatchView>,
-        notes: Vec<&'static str>,
-        base: Option<String>,
-    },
-    Failed(String),
-}
-impl Shown {
-    fn patches(
-        parts: Vec<(&'static str, &str)>,
-        truncated: bool,
-        notes: Vec<&'static str>,
-        base: Option<String>,
-        mode: DiffMode,
-        cx: &mut App,
-    ) -> Self {
-        let mut views = Vec::new();
-        for (label, text) in parts {
-            match supplied_patch(text, truncated) {
-                Ok(SuppliedPatch::Unified(files)) if !files.is_empty() => views.push(PatchView {
-                    label,
-                    content: PatchContent::Unified(
-                        cx.new(|cx| DiffState::new(files, cx).with_mode(mode)),
-                    ),
-                }),
-                Ok(SuppliedPatch::Combined(text)) => views.push(PatchView {
-                    label,
-                    content: PatchContent::Combined { text, editor: None },
-                }),
-                Ok(_) => {}
-                Err(error) => return Self::Failed(error),
-            }
-        }
-        Self::Read { views, notes, base }
-    }
-    fn file(diff: FileDiff, mode: DiffMode, cx: &mut App) -> Self {
-        Self::patches(diff.parts(), diff.truncated, diff.notes(), None, mode, cx)
-    }
+struct CombinedView {
+    path: String,
+    patch: CombinedPatch,
+    editor: Option<Entity<EditorState>>,
 }
 
 pub struct ChangesPane {
     focus: FocusHandle,
-    picked: Option<Picked>,
-    shown: Shown,
+    target: Target,
+    /// The session this tab saves itself under. A workspace owns the tab, so this doesn't follow the selection.
+    owner: Option<(String, Option<ExpectedRowSource>)>,
+    scope: Scope,
     mode: DiffMode,
-    _read: Option<Task<()>>,
-    _preferences: Option<Subscription>,
+    active: bool,
+    status: Entity<SessionRead<GitStatus>>,
+    /// The status answer the current round came from.
+    started_for: Option<u64>,
+    selection: Option<Selection>,
+    working: WorkingCopy,
+    /// Dropping one stops its read on the backend.
+    reads: HashMap<String, Task<()>>,
+    branch_read: Option<Task<()>>,
+    base: Option<String>,
+    branch_failure: Option<String>,
+    commit_read: Option<Task<()>>,
+    commit_waiting: bool,
+    commit_failure: Option<String>,
+    state: Entity<DiffState>,
+    tree: ChangedTree,
+    filter: String,
+    filter_input: Option<(Entity<InputState>, Subscription)>,
+    focus_path: Option<String>,
+    active_file: Option<String>,
+    viewed: HashSet<String>,
+    /// The files showing a staged part and a working-tree part.
+    both: Rc<HashSet<String>>,
+    combined: Vec<CombinedView>,
+    notes: Vec<(String, &'static str)>,
+    totals: (usize, usize),
+    more_line: Option<String>,
+    /// What Source control last published that this tab has read since.
+    published: Option<(String, u64)>,
+    line_notice: Option<&'static str>,
+    _heard: Vec<Subscription>,
 }
 impl ChangesPane {
     /// Validates saved target metadata before a workspace coordinator rebuilds this registered pane.
@@ -138,6 +127,11 @@ impl ChangesPane {
                 return Err(invalid());
             }
         }
+        if let Some(scope) = info.get("scope") {
+            if scope.as_str().and_then(Scope::from_saved).is_none() {
+                return Err(invalid());
+            }
+        }
         if let Some(sha) = info.get("sha") {
             if sha.as_str().is_none_or(|sha| {
                 sha.len() != 40 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -146,8 +140,11 @@ impl ChangesPane {
                 return Err(invalid());
             }
         }
-        if let Some(source) = info.get("expectedSource").filter(|source| !source.is_null()) {
-            if serde_json::from_value::<crate::core::socket::row_source::ExpectedRowSource>(source.clone()).is_err() {
+        if let Some(source) = info
+            .get("expectedSource")
+            .filter(|source| !source.is_null())
+        {
+            if serde_json::from_value::<ExpectedRowSource>(source.clone()).is_err() {
                 return Err(invalid());
             }
         }
@@ -159,31 +156,9 @@ impl ChangesPane {
                 PanelInfo::Panel(saved) => saved,
                 _ => Value::Null,
             };
-            let text = |key: &str| saved[key].as_str().map(String::from);
-            let picked = text("session").map(|session| match (text("sha"), text("path")) {
-                (Some(sha), Some(path)) => Picked::Commit {
-                    expected_source: saved.get("expectedSource").cloned().and_then(|value| serde_json::from_value(value).ok()),
-                    session,
-                    sha,
-                    path,
-                    title: text("title").unwrap_or_default(),
-                },
-                (_, Some(path)) => Picked::File {
-                    expected_source: saved.get("expectedSource").cloned().and_then(|value| serde_json::from_value(value).ok()),
-                    session,
-                    path,
-                    original_path: text("originalPath"),
-                },
-                _ => Picked::Branch { session, expected_source: saved.get("expectedSource").cloned().and_then(|value| serde_json::from_value(value).ok()) },
-            });
             let pane = cx.new(|cx| {
                 let mut pane = ChangesPane::new(None, cx);
-                if saved["split"] == true {
-                    pane.mode = DiffMode::Split;
-                }
-                if let Some(picked) = picked {
-                    pane.show(picked, cx);
-                }
+                pane.restore(&saved, cx);
                 pane
             });
             CenterPanes::remember(CHANGES, PanelId::from(pane.entity_id()), cx);
@@ -191,34 +166,24 @@ impl ChangesPane {
             panel_handle(pane)
         });
         cx.on_action(|intent: &OpenDiff, cx| {
-            Self::open_later(
-                Picked::File {
-                    expected_source: intent.expected_source.clone(),
-                    session: intent.session_id.clone(),
-                    path: intent.path.clone(),
-                    original_path: intent.original_path.clone(),
-                },
-                cx,
-            )
-        });
-        cx.on_action(|intent: &OpenBranchDiff, cx| {
-            Self::open_later(
-                Picked::Branch {
-                    expected_source: intent.expected_source.clone(),
-                    session: intent.session_id.clone(),
-                },
-                cx,
-            )
+            let selected = SelectedSession::global(cx)
+                .read(cx)
+                .session_id()
+                .map(String::from);
+            if selected.as_deref() == Some(intent.session_id.as_str()) {
+                Self::open_later(Picked::File(intent.path.clone()), cx);
+            }
         });
         cx.on_action(|intent: &OpenCommitDiff, cx| {
             Self::open_later(
-                Picked::Commit {
+                Picked::Commit(CommitPick {
                     expected_source: intent.expected_source.clone(),
                     session: intent.session_id.clone(),
                     sha: intent.sha.clone(),
                     path: intent.path.clone(),
                     title: intent.title.clone(),
-                },
+                    checkout: intent.checkout.clone(),
+                }),
                 cx,
             )
         });
@@ -246,132 +211,130 @@ impl ChangesPane {
         }
     }
     fn new(picked: Option<Picked>, cx: &mut Context<Self>) -> Self {
+        let status = cx.new(|cx| {
+            let mut read = SessionRead::new("git", "status", cx).keyed("changes/git/status");
+            read.refresh_on_settle(cx);
+            read
+        });
+        let inspected = InspectedCheckout::global(cx);
+        let mut heard = vec![
+            cx.observe(&status, |pane, _, cx| pane.status_changed(cx)),
+            cx.observe(&inspected, |pane, _, cx| pane.sync_inspected(true, cx)),
+        ];
+        heard.extend(
+            Preferences::try_global(cx)
+                .map(|preferences| cx.observe(&preferences, |_, _, cx| cx.notify())),
+        );
         let mut pane = Self {
             focus: cx.focus_handle(),
-            picked: None,
-            shown: Shown::Reading,
+            target: Target::Stack,
+            owner: None,
+            scope: Scope::default(),
             mode: DiffMode::Unified,
-            _read: None,
-            _preferences: Preferences::try_global(cx)
-                .map(|preferences| cx.observe(&preferences, |_, _, cx| cx.notify())),
+            active: false,
+            status,
+            started_for: None,
+            selection: None,
+            working: WorkingCopy::default(),
+            reads: HashMap::new(),
+            branch_read: None,
+            base: None,
+            branch_failure: None,
+            commit_read: None,
+            commit_waiting: false,
+            commit_failure: None,
+            state: cx.new(|cx| DiffState::new(Vec::new(), cx)),
+            tree: ChangedTree::new(),
+            filter: String::new(),
+            filter_input: None,
+            focus_path: None,
+            active_file: None,
+            viewed: HashSet::new(),
+            both: Rc::new(HashSet::new()),
+            combined: Vec::new(),
+            notes: Vec::new(),
+            totals: (0, 0),
+            more_line: None,
+            published: None,
+            line_notice: None,
+            _heard: heard,
         };
         if let Some(picked) = picked {
             pane.show(picked, cx);
         }
         pane
     }
-    fn show(&mut self, picked: Picked, cx: &mut Context<Self>) {
-        self.picked = Some(picked);
-        self.shown = Shown::Reading;
-        self.read(cx);
-    }
-    fn read(&mut self, cx: &mut Context<Self>) {
-        let Some(picked) = self.picked.clone() else {
+    /// An old layout's target with no scope was the branch diff, or one file of the working copy.
+    fn restore(&mut self, saved: &Value, cx: &mut Context<Self>) {
+        if saved["split"] == true {
+            self.mode = DiffMode::Split;
+            self.state
+                .update(cx, |state, cx| state.set_mode(DiffMode::Split, cx));
+        }
+        let text = |key: &str| saved[key].as_str().map(String::from);
+        let Some(session) = text("session") else {
             return;
         };
-        let Some(socket) = SocketClient::try_global(cx) else {
-            self.shown = Shown::Failed("The backend isn't running.".into());
-            self._read = None;
-            cx.notify();
-            return;
-        };
-        let socket = socket.read(cx);
-        self._read = Some(match picked {
-            Picked::File {
+        let source: Option<ExpectedRowSource> = saved
+            .get("expectedSource")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok());
+        self.owner = Some((session.clone(), source.clone()));
+        if let (Some(sha), Some(path)) = (text("sha"), text("path")) {
+            self.target = Target::Commit(CommitPick {
                 session,
+                expected_source: source,
+                sha,
                 path,
-                original_path,
-                expected_source,
-            } => {
-                let call = socket.call::<FileDiff>(
-                    "git",
-                    "diff",
-                    json!({"session":session,"path":path,"originalPath":original_path,"expectedSource":expected_source}),
-                    Some(KEY),
-                );
-                cx.spawn(async move |pane, cx| Self::answered(pane, call.await, Shown::file, cx))
-            }
-            Picked::Commit {
-                session, sha, path, expected_source, ..
-            } => {
-                let call = socket.call::<FileDiff>(
-                    "git",
-                    "commitDiff",
-                    json!({"session":session,"sha":sha,"path":path,"expectedSource":expected_source}),
-                    Some(KEY),
-                );
-                cx.spawn(async move |pane, cx| {
-                    Self::answered(
-                        pane,
-                        call.await,
-                        |diff, mode, cx| {
-                            Shown::patches(
-                                vec![("Commit", &diff.unstaged)],
-                                diff.truncated,
-                                diff.notes(),
-                                None,
-                                mode,
-                                cx,
-                            )
-                        },
-                        cx,
-                    )
-                })
-            }
-            Picked::Branch { session, expected_source } => {
-                let call = socket.call::<BranchDiff>(
-                    "git",
-                    "branchDiff",
-                    json!({"session":session,"expectedSource":expected_source}),
-                    Some(KEY),
-                );
-                cx.spawn(async move |pane, cx| {
-                    Self::answered(
-                        pane,
-                        call.await,
-                        |branch, mode, cx| {
-                            Shown::patches(
-                                vec![("Branch", &branch.diff)],
-                                branch.truncated,
-                                branch.notes(),
-                                Some(branch.base.clone()),
-                                mode,
-                                cx,
-                            )
-                        },
-                        cx,
-                    )
-                })
-            }
-        });
-        cx.notify();
-    }
-    fn answered<T>(
-        pane: WeakEntity<Self>,
-        outcome: Outcome<T>,
-        shown: impl FnOnce(T, DiffMode, &mut App) -> Shown,
-        cx: &mut AsyncApp,
-    ) {
-        _ = pane.update(cx, |pane, cx| {
-            pane.shown = match outcome {
-                Outcome::Ok(answer) => shown(answer, pane.mode, cx),
-                Outcome::Failed(failure) => Shown::Failed(failure.message),
-                Outcome::Aborted => Shown::Failed("The connection dropped.".into()),
-            };
-            pane._read = None;
-            cx.notify();
-        });
+                title: text("title").unwrap_or_default(),
+                checkout: None,
+            });
+            self.commit_waiting = true;
+            return;
+        }
+        self.focus_path = text("path");
+        self.scope = match text("scope").as_deref().and_then(Scope::from_saved) {
+            Some(scope) => scope,
+            None if self.focus_path.is_none() => Scope::Branch,
+            None => Scope::Uncommitted,
+        };
     }
     fn set_mode(&mut self, mode: DiffMode, cx: &mut Context<Self>) {
         self.mode = mode;
-        if let Shown::Read { views, .. } = &self.shown {
-            for view in views {
-                if let PatchContent::Unified(state) = &view.content {
-                    state.update(cx, |state, cx| state.set_mode(mode, cx));
+        self.state.update(cx, |state, cx| state.set_mode(mode, cx));
+        CenterPanes::save_layout(cx);
+        cx.notify();
+    }
+    fn saved_target(&self) -> Value {
+        match &self.target {
+            // Another checkout's diff isn't restored: only a fresh `git/checkouts` answer may offer a selector.
+            Target::Commit(pick) if pick.checkout.is_some() => Value::Null,
+            Target::Commit(pick) => json!({
+                "session": pick.session, "sha": pick.sha, "path": pick.path, "title": pick.title,
+                "expectedSource": pick.expected_source,
+            }),
+            Target::Stack => {
+                let Some((session, source)) = &self.owner else {
+                    return Value::Null;
+                };
+                let mut saved = json!({
+                    "session": session, "expectedSource": source, "scope": self.scope.saved(),
+                });
+                let own_folder = self
+                    .selection
+                    .as_ref()
+                    .is_none_or(|selection| selection.checkout.is_none());
+                if let Some(path) = self
+                    .focus_path
+                    .as_ref()
+                    .or(self.active_file.as_ref())
+                    .filter(|_| own_folder)
+                {
+                    saved["path"] = json!(path);
                 }
+                saved
             }
         }
-        cx.notify();
     }
 }
 impl EventEmitter<PanelEvent> for ChangesPane {}
@@ -384,27 +347,14 @@ impl BasePanel for ChangesPane {
     fn panel_name(&self) -> &'static str {
         CHANGES
     }
-    fn on_removed(&mut self, _: &mut Window, _: &mut Context<Self>) {
-        self._read = None;
+    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
+        self.activate(active, cx);
+    }
+    fn on_removed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.activate(false, cx);
     }
     fn dump(&self, _: &App) -> PanelState {
-        let mut info = match &self.picked {
-            Some(Picked::File {
-                session,
-                path,
-                original_path,
-                expected_source,
-            }) => json!({"session":session,"path":path,"originalPath":original_path,"expectedSource":expected_source}),
-            Some(Picked::Commit {
-                session,
-                sha,
-                path,
-                title,
-                expected_source,
-            }) => json!({"session":session,"sha":sha,"path":path,"title":title,"expectedSource":expected_source}),
-            Some(Picked::Branch { session, expected_source }) => json!({"session":session,"expectedSource":expected_source}),
-            None => Value::Null,
-        };
+        let mut info = self.saved_target();
         if info.is_object() {
             info["split"] = json!(self.mode == DiffMode::Split);
         }
@@ -420,132 +370,9 @@ impl Panel for ChangesPane {
         CHANGES
     }
 }
-impl Render for ChangesPane {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
-        let (font, size, _) = Preferences::editor_text(cx);
-        let reading = matches!(self.shown, Shown::Reading) && self.picked.is_some();
-        let title = match (&self.picked, &self.shown) {
-            (
-                Some(Picked::File {
-                    path,
-                    original_path: Some(from),
-                    ..
-                }),
-                _,
-            ) => format!("{from} → {path}"),
-            (Some(Picked::File { path, .. }), _) => path.clone(),
-            (Some(Picked::Commit { title, path, .. }), _) => format!("{title} — {path}"),
-            (
-                Some(Picked::Branch { .. }),
-                Shown::Read {
-                    base: Some(base), ..
-                },
-            ) => format!("Branch vs {base}"),
-            (Some(Picked::Branch { .. }), _) => "Branch".into(),
-            (None, _) => "Pick a changed file in the Source control tab.".into(),
-        };
-        let header = h_flex()
-            .px_3()
-            .py_1()
-            .gap_2()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_role(TextRole::Body, cx)
-                    .text_color(muted)
-                    .child(title),
-            )
-            .child(
-                Button::new("diff-unified")
-                    .ghost()
-                    .compact()
-                    .label("Unified")
-                    .disabled(self.mode == DiffMode::Unified)
-                    .on_click(cx.listener(|pane, _, _, cx| pane.set_mode(DiffMode::Unified, cx))),
-            )
-            .child(
-                Button::new("diff-split")
-                    .ghost()
-                    .compact()
-                    .label("Split")
-                    .disabled(self.mode == DiffMode::Split)
-                    .on_click(cx.listener(|pane, _, _, cx| pane.set_mode(DiffMode::Split, cx))),
-            )
-            .child(
-                Button::new("changes-refresh")
-                    .ghost()
-                    .compact()
-                    .label(if reading { "Reading…" } else { "Refresh" })
-                    .disabled(reading || self.picked.is_none())
-                    .on_click(cx.listener(|pane, _, _, cx| {
-                        pane.shown = Shown::Reading;
-                        pane.read(cx);
-                    })),
-            );
-        let pane = v_flex()
-            .track_focus(&self.focus)
-            .size_full()
-            .min_h_0()
-            .child(header);
-        let (note_size, note_height) = Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Body));
-        let note = |text: String| div().px_3().py_2().text_size(note_size).line_height(note_height).child(text);
-        match &mut self.shown {
-            _ if self.picked.is_none() => pane,
-            Shown::Reading => pane.child(note("Reading the diff…".into()).text_color(muted)),
-            Shown::Failed(message) => pane.child(note(message.clone()).text_color(danger)),
-            Shown::Read { views, notes, .. } => pane
-                .children(views.iter_mut().map(|view| {
-                    let body = match &mut view.content {
-                        PatchContent::Unified(state) => Diff::new(state).into_any_element(),
-                        PatchContent::Combined { text, editor } => {
-                            let state = editor.get_or_insert_with(|| {
-                                cx.new(|cx| {
-                                    EditorState::new(window, cx)
-                                        .default_value(text.clone())
-                                        .line_number(false)
-                                        .soft_wrap(false)
-                                })
-                            });
-                            v_flex()
-                                .size_full()
-                                .min_h_0()
-                                .child(div().px_3().text_role(TextRole::Meta, cx).text_color(muted).child(
-                                    "Combined conflict diff — shown exactly as Git returned it.",
-                                ))
-                                .child(
-                                    Editor::new(state)
-                                        .readonly(true)
-                                        .appearance(false)
-                                        .bordered(false)
-                                        .h_full(),
-                                )
-                                .into_any_element()
-                        }
-                    };
-                    v_flex()
-                        .flex_1()
-                        .min_h_0()
-                        .child(div().px_3().text_role(TextRole::Meta, cx).text_color(muted).child(view.label))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_h_0()
-                                .font_family(font.clone())
-                                .text_size(size)
-                                .child(body),
-                        )
-                }))
-                .children(
-                    notes
-                        .iter()
-                        .map(|text| note((*text).into()).text_color(muted)),
-                ),
-        }
-    }
-}
+#[cfg(test)]
+#[path = "changes_saved_tests.rs"]
+mod saved_tests;
 #[cfg(test)]
 #[path = "changes_pane_tests.rs"]
 mod tests;

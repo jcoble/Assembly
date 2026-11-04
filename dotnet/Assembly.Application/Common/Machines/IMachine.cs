@@ -22,12 +22,6 @@ public interface IMachine
     /// <summary>Asks whether the machine answers, recording what it finds; this machine always does.</summary>
     Task ProbeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken,
-        InitialSessionConfig? initialConfig = null, string? workingFolder = null);
-
-    /// <summary>A helper session under <paramref name="parent"/>, which may be on another machine, in its repo.</summary>
-    Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken);
-
     /// <summary>Stops the run. False if the session isn't running it.</summary>
     Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken);
 

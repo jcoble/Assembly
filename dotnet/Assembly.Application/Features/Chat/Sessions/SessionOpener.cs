@@ -51,18 +51,8 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         var location = sessionStore.Location(session) ?? throw new CallFailed($"This session has no working folder: {sessionId}");
         if (!location.Ready)
             throw new CallFailed("The checkout and session start are not ready.", "checkout_not_ready");
-        string folder;
-        if (location.ManagedCheckout && !configWarm)
-        {
-            if (!string.Equals(location.Folder, sessionStore.ManagedFolder(session), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
-                throw new CallFailed($"This session's managed checkout does not match its working folder: {location.Folder}");
-            folder = await launcher.CheckoutAsync(sessionStore.Top(session), stages, cancellationToken);
-        }
-        else
-        {
-            folder = location.Folder;
-            launcher.ValidateFolder(folder);
-        }
+        var folder = location.Folder;
+        launcher.ValidateFolder(folder);
         var adapter = adapters(session.Agent);
         var running = await adapter.GetForSessionAsync(session.AcpSessionId, stages, cancellationToken, captured.TargetId,
             suppliedDescriptor: captured.Descriptor with { Env = captured.Environment },

@@ -410,6 +410,10 @@ mod migration;
 #[path = "workspace_restore_tests.rs"]
 mod restore_tests;
 
+#[cfg(test)]
+#[path = "workspace_file_restore_tests.rs"]
+mod file_restore_tests;
+
 #[path="workspace_saving.rs"]
 mod saving;
 #[cfg(test)]

@@ -134,7 +134,7 @@ fn saved_layout_load_migrates_board_only_and_leaves_an_unrelated_layout_exact() 
 }
 
 #[gpui::test]
-fn board_button_and_palette_share_a_dropdown_that_releases_its_reader_on_dismiss(
+async fn board_button_and_palette_share_a_dropdown_that_releases_its_reader_on_dismiss(
     cx: &mut gpui::TestAppContext,
 ) {
     use super::super::OpenBoard;
@@ -147,6 +147,7 @@ fn board_button_and_palette_share_a_dropdown_that_releases_its_reader_on_dismiss
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
         PlaceholderPane::register_all(cx);
@@ -207,6 +208,15 @@ fn board_button_and_palette_share_a_dropdown_that_releases_its_reader_on_dismiss
     cx.simulate_click(button.center(), Modifiers::none());
     cx.run_until_parked();
     let reader = cx.read(|cx| bar.read(cx).board_reader().unwrap());
+    // The expanded card this session created, which is all the Board opens a session from.
+    cx.update(|_, cx| {
+        reader.upgrade().unwrap().update(cx, |pane, _| {
+            let mut cards = super::tests::page(&["task"], None);
+            cards.items[0].task.creator_session_id = "selected".into();
+            pane.state.items = cards.items;
+            pane.state.selected = Some(("local".into(), "task".into()));
+        })
+    });
     cx.update(|window, cx| {
         reader
             .upgrade()
@@ -219,14 +229,19 @@ fn board_button_and_palette_share_a_dropdown_that_releases_its_reader_on_dismiss
         cx.debug_bounds("board-dropdown-body").is_some(),
         "an unhandled action must leave the Board open"
     );
-    cx.update(|_, cx| crate::features::session::view::session_pane::SessionPane::register(cx));
+    let mut nav = cx.update(|window, cx| {
+        crate::features::session::view::session_pane::test_navigation::NavigationFixture::new(
+            false, window, cx,
+        )
+    });
+    nav.ready(cx).await;
     cx.update(|window, cx| {
         reader
             .upgrade()
             .unwrap()
             .update(cx, |pane, cx| pane.open_session("selected", window, cx))
     });
-    cx.run_until_parked();
+    nav.opened("selected", cx).await;
     cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         cx.read(
@@ -242,12 +257,22 @@ fn board_button_and_palette_share_a_dropdown_that_releases_its_reader_on_dismiss
     cx.simulate_click(button.center(), Modifiers::none());
     cx.run_until_parked();
     let reader = cx.read(|cx| bar.read(cx).board_reader().unwrap());
+    cx.update(|_, cx| {
+        reader.upgrade().unwrap().update(cx, |pane, _| {
+            let mut cards = super::tests::page(&["task"], None);
+            cards.items[0].task.creator_session_id = "selected".into();
+            pane.state.items = cards.items;
+            pane.state.selected = Some(("local".into(), "task".into()));
+        })
+    });
+    nav.forget_results();
     cx.update(|window, cx| {
         reader
             .upgrade()
             .unwrap()
             .update(cx, |pane, cx| pane.open_session("selected", window, cx))
     });
+    nav.opened("selected", cx).await;
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(

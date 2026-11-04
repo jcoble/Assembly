@@ -43,12 +43,16 @@ internal sealed class TwoHosts : IAsyncDisposable
         public Uri Address { get; private set; } = null!;
         public SocketEndpoint Endpoint { get; private set; } = null!;
         public SocketEndpoint BulkEndpoint { get; private set; } = null!;
+        public SocketEndpoint TerminalEndpoint { get; private set; } = null!;
+        public int TerminalConnections;
+        public Func<Task>? OpeningTerminal { get; set; }
         private bool _running;
         public int MachineCalls;
         public event Action? RetentionCommitted;
         private readonly IEngineEffects? _effects;
         private readonly Func<string, string, bool>? _isConfiguredProvider;
         public Action<ICallRegistry>? AdditionalFeatures { get; set; }
+        public Func<Host, IFeature>? SessionFeature { get; set; }
         public IRowSourceBindings? SessionSources { get; set; }
         public Assembly.Application.Common.Engine.IEngineDoor? ChatDoor { get; set; }
         public Action? CommandCommitted { get; set; }
@@ -75,7 +79,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         private EngineRuntime StartRuntime()
         {
             Sessions = SessionStore.Open(Fixture.Db, Fixture.Time, _checkouts ?? Path.GetTempPath());
-            var cutover = _machineLauncher is null ? null : new SessionCutover(Fixture.Db, Sessions, _machineLauncher, _checkouts!, Fixture.Time);
+            var cutover = _machineLauncher is null ? null : new SessionCutover(Fixture.Db, Sessions, _machineLauncher, _checkouts!, Fixture.Time, owningHome: _owningHome);
             var runtime = EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time,
                 Fixture.Limits, _effects, cutover: cutover, isConfiguredProvider: _isConfiguredProvider);
             _needHub = new(RowStore.Open(Fixture.Db)); _needWork = new(Fixture.Time, TextWriter.Null);
@@ -88,11 +92,12 @@ internal sealed class TwoHosts : IAsyncDisposable
         private readonly bool _windowCalls;
         private readonly IAgentLauncher? _machineLauncher;
         private readonly string? _checkouts;
+        private readonly string? _owningHome;
         private MachineCalls? _machineCalls;
         public Host(bool windowCalls = false, IEngineEffects? effects = null, IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? limits = null,
-            Func<string, string, bool>? isConfiguredProvider = null)
+            Func<string, string, bool>? isConfiguredProvider = null, string? owningHome = null)
         {
-            _windowCalls = windowCalls; _effects = effects; _machineLauncher = machineLauncher; _checkouts = checkouts; _isConfiguredProvider = isConfiguredProvider;
+            _windowCalls = windowCalls; _effects = effects; _machineLauncher = machineLauncher; _checkouts = checkouts; _isConfiguredProvider = isConfiguredProvider; _owningHome = owningHome;
             if (machineLauncher is not null && checkouts is null) throw new ArgumentException("Isolated checkouts required", nameof(checkouts));
             Fixture = new(topics: Topics, limits: limits); Runtime = StartRuntime();
         }
@@ -116,20 +121,27 @@ internal sealed class TwoHosts : IAsyncDisposable
                 _machineCalls = new(Runtime, Fixture.Time, _machineLauncher, _checkouts!, Needs);
                 _machineCalls.Register(new IdentityGate(calls, this, machineReads: true));
             }
-            new SessionsFeature(Sessions, new MachineSet(new FakeMachine(null, Sessions)), SessionSources).Register(calls);
+            (SessionFeature?.Invoke(this) ?? new SessionsFeature(Sessions, new MachineSet(new FakeMachine(null, Sessions)), SessionSources, owningMachine: Runtime.Machine)).Register(calls);
             AdditionalFeatures?.Invoke(calls);
             var builder = WebApplication.CreateSlimBuilder(); builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, port));
             App = builder.Build(); App.UseWebSockets();
             Endpoint = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, engineMachine: Runtime.Machine);
             var bulk = BulkEndpoint = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, bulk: true, engineMachine: OmitBulkIdentity ? null : BulkIdentity ?? Runtime.Machine);
+            var terminal = TerminalEndpoint = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, terminal: true, engineMachine: Runtime.Machine);
             App.Map("/socket", Endpoint.HandleAsync);
+            App.Map("/socket/terminal", async context =>
+            {
+                Interlocked.Increment(ref TerminalConnections);
+                if (OpeningTerminal is { } opening) await opening().WaitAsync(context.RequestAborted);
+                await terminal.HandleAsync(context);
+            });
             App.Map("/socket/bulk", async context =>
             {
                 if (OpeningBulk is { } opening) await opening().WaitAsync(context.RequestAborted);
                 await bulk.HandleAsync(context);
             });
-            App.Lifetime.ApplicationStopping.Register(Endpoint.CloseAll); App.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
+            App.Lifetime.ApplicationStopping.Register(Endpoint.CloseAll); App.Lifetime.ApplicationStopping.Register(bulk.CloseAll); App.Lifetime.ApplicationStopping.Register(terminal.CloseAll);
             await App.StartAsync();
             _running = true;
             Address = new(App.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
@@ -189,7 +201,7 @@ internal sealed class TwoHosts : IAsyncDisposable
                         Interlocked.Increment(ref host.OwnerReadCalls);
                         if (host.OwnerReading is { } reading) await reading(method, call).WaitAsync(call.Cancellation);
                     }
-                    if (machineReads && feature == "engine" && method is ("foreign_title_source_close" or "relay_source_open" or "relay_source_part" or "relay_send_ack") && host.MachineReading is { } machineRead)
+                    if (machineReads && feature == "engine" && method is ("foreign_title_source_check" or "foreign_title_source_close" or "relay_source_open" or "relay_source_part" or "relay_send_ack") && host.MachineReading is { } machineRead)
                         await machineRead(method, call).WaitAsync(call.Cancellation);
                     if (feature == "engine" && method == "legacy_session_title_chunk" && value is Assembly.Application.Common.Engine.LegacySessionTitleChunkArgs chunk && host.LegacyTitleReading is { } titleRead)
                         await titleRead(chunk, call).WaitAsync(call.Cancellation);
@@ -252,12 +264,12 @@ internal sealed class TwoHosts : IAsyncDisposable
     private readonly Dictionary<string, Host> _additionalHosts = new(StringComparer.Ordinal);
     public TwoHosts(bool windowCalls = false, bool forwardCommands = false, IEngineEffects? effects = null,
         IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? macLimits = null, SessionLimits? remoteLimits = null, IEngineEffects? macEffects = null, TextWriter? remoteLog = null,
-        Func<string, string, bool>? isConfiguredProvider = null)
+        Func<string, string, bool>? isConfiguredProvider = null, string? owningHome = null, string? remoteOwningHome = null)
     {
         _forwardCommands = forwardCommands; _remoteLog = remoteLog;
-        Remote = new(forwardCommands, effects, machineLauncher, checkouts is null ? null : Path.Combine(checkouts, "remote"), remoteLimits, isConfiguredProvider);
+        Remote = new(forwardCommands, effects, machineLauncher, checkouts is null ? null : Path.Combine(checkouts, "remote"), remoteLimits, isConfiguredProvider, remoteOwningHome ?? owningHome);
         Mac = new(windowCalls, effects: macEffects, machineLauncher: machineLauncher, checkouts: checkouts is null ? null : Path.Combine(checkouts, "mac"), limits: macLimits,
-            isConfiguredProvider: isConfiguredProvider);
+            isConfiguredProvider: isConfiguredProvider, owningHome: owningHome);
         if (forwardCommands) Mac.Forwarder = new(machine => _connections!.ByEngineMachine(Mac.Fixture.Db, machine));
     }
     public EngineMirror Mirror { get; private set; } = null!;
@@ -271,7 +283,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         _hub = new LiveHub(store, topics: Mac.Topics);
         var sessions = Mac.Sessions;
         if (!_forwardCommands)
-            _machine = new("workbox-test", Remote.Address, "isolated-token", _hub, sessions, _remoteLog ?? TextWriter.Null, new MachineStatus(Mac.Topics, []), topics: Mac.Topics);
+            _machine = new("workbox-test", Remote.Address, "isolated-token", _hub, sessions, _remoteLog ?? TextWriter.Null, new MachineStatus(Mac.Topics, []), topics: Mac.Topics, acceptanceEngine: Mac.Runtime);
         var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sub = Mac.Topics.Subscribe("__engine_mirrored", Remote.Fixture.Machine, _ => { }, (_, _) =>
         {
@@ -288,7 +300,7 @@ internal sealed class TwoHosts : IAsyncDisposable
                 _machinesFeature = new(machines, status, () => { }, TimeProvider.System);
                 _connections = new(profiles, Mac.Fixture.Db.Writer, machines, status, _hub, sessions, Mac.Topics, MirrorLog, _machinesFeature,
                     open: (profile, _) => Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((new(profile.Name,
-                        (profile.Name == "workbox-test" ? Remote : _additionalHosts[profile.Name]).Address, "isolated-token"), null)));
+                        (profile.Name == "workbox-test" ? Remote : _additionalHosts[profile.Name]).Address, "isolated-token"), null)), acceptanceEngine: Mac.Runtime);
                 _connections.Start(new("workbox-test", "isolated"));
                 await _connections.ReadyAsync("workbox-test");
                 _machine = _connections.StartupSnapshot("workbox-test")!.Value.Machine;

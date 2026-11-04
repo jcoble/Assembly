@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::change::Change;
 use super::item::{Item, ItemKind};
-use super::session_view::SessionView;
+use super::session_view::{ContextReport, SessionView};
 use super::test_rows::{all, fixture, keys, live, message, newest_form, row};
 use crate::features::session::rows::plan::PlanStatus;
 use crate::features::session::rows::row::{Row, TurnState};
@@ -530,13 +530,22 @@ fn the_newest_context_report_wins_live_or_paged_and_draws_no_item() {
         )
     };
     let mut view = live(SessionView::default(), &[context(5, 100), context(9, 300)]);
-    assert_eq!(view.context, Some((9, 300, 1000)));
+    assert_eq!(
+        view.context,
+        Some(ContextReport {
+            seq: 9,
+            used: 300,
+            size: 1000,
+            input_tokens: None,
+            output_tokens: None,
+        })
+    );
     assert!(view.items.is_empty());
     view.prepend_page(vec![context(2, 50)], false);
-    assert_eq!(view.context.unwrap().1, 300);
+    assert_eq!(view.context.unwrap().used, 300);
     let mut fresh = SessionView::default();
     fresh.prepend_page(vec![context(2, 50)], false);
-    assert_eq!(fresh.context.unwrap().1, 50);
+    assert_eq!(fresh.context.unwrap().used, 50);
 }
 
 // Pins: g0-session#3

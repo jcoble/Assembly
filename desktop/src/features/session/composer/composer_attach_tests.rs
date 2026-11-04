@@ -46,6 +46,7 @@ fn chips(composer: &Entity<Composer>, cx: &mut VisualTestContext) -> Vec<(String
             .iter()
             .map(|attachment| {
                 let state = match &attachment.state {
+                    AttachmentState::Staged { .. } => "staged".to_string(),
                     AttachmentState::Uploading => "uploading".to_string(),
                     AttachmentState::Saved { path } => format!("saved {path}"),
                     AttachmentState::Failed(why) => format!("failed {why}"),

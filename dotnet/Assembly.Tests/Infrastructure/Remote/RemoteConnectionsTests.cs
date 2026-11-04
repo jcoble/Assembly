@@ -21,6 +21,7 @@ public sealed class RemoteConnectionsTests
         using var db = AppDatabase.Open(file.Path, TimeProvider.System, topics);
         using var hub = new LiveHub(RowStore.Open(db));
         var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
+        global::Assembly.Engine.Persistence.EngineSchema.Open(db, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         var machines = new MachineSet(new FakeMachine(null, sessions));
         var status = new MachineStatus(topics, []);
         var store = new MachineStore(db);
@@ -60,6 +61,7 @@ public sealed class RemoteConnectionsTests
         using var db = AppDatabase.Open(file.Path, TimeProvider.System, topics);
         using var hub = new LiveHub(RowStore.Open(db));
         var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
+        global::Assembly.Engine.Persistence.EngineSchema.Open(db, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         var machines = new MachineSet(new FakeMachine(null, sessions));
         var status = new MachineStatus(topics, []);
         var store = new MachineStore(db);
@@ -98,6 +100,7 @@ public sealed class RemoteConnectionsTests
         using var db = AppDatabase.Open(file.Path, TimeProvider.System, topics);
         using var hub = new LiveHub(RowStore.Open(db));
         var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
+        global::Assembly.Engine.Persistence.EngineSchema.Open(db, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         var machines = new MachineSet(new FakeMachine(null, sessions));
         var status = new MachineStatus(topics, []);
         var store = new MachineStore(db);
@@ -146,6 +149,7 @@ public sealed class RemoteConnectionsTests
         using var db = AppDatabase.Open(file.Path, TimeProvider.System, topics);
         using var hub = new LiveHub(RowStore.Open(db));
         var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
+        global::Assembly.Engine.Persistence.EngineSchema.Open(db, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         sessions.Add("existing", "codex", "repo", "box");
         var session = sessions.Get("existing")!;
         var machines = new MachineSet(new FakeMachine(null, sessions));
@@ -236,6 +240,7 @@ public sealed class RemoteConnectionsTests
             var rows = RowStore.Open(db);
             using var hub = new LiveHub(rows);
             var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
+            global::Assembly.Engine.Persistence.EngineSchema.Open(db, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             var local = new FakeMachine(null, sessions);
             var machines = new MachineSet(local);
             var status = new MachineStatus(topics, []);
@@ -309,6 +314,7 @@ public sealed class RemoteConnectionsTests
             var rows = RowStore.Open(db);
             using var hub = new LiveHub(rows);
             var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
+            global::Assembly.Engine.Persistence.EngineSchema.Open(db, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             var machines = new MachineSet(new FakeMachine(null, sessions));
             var status = new MachineStatus(topics, []);
             var attempting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -344,6 +350,7 @@ public sealed class RemoteConnectionsTests
         var rows = RowStore.Open(db);
         using var hub = new LiveHub(rows);
         var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
+        global::Assembly.Engine.Persistence.EngineSchema.Open(db, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         sessions.Add("running", "claude", "repo", "box");
         sessions.Add("helper", "codex", "repo", "box", "running", helper: true);
         // The copied unfinished turn must be followed again after a connect.

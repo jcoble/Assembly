@@ -335,8 +335,6 @@ public sealed class SignInRunnerTests
             StageTimes stages, CancellationToken cancellationToken) => throw new InvalidOperationException("ordinary configured launcher must never run");
         public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("shared launcher must never run");
-        public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("no chat checkout");
         public void ValidateFolder(string folder) { }
     }
 

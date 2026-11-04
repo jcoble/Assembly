@@ -32,7 +32,7 @@ public sealed class ProviderRuntimeBinaryTests : IDisposable
     public async Task Selected_binary_overrides_only_its_private_adapter_input_preserving_command_arguments_and_capture(string family)
     {
         var descriptor = Descriptor(family, "/fixture/selected binary");
-        var launcher = new AdapterLauncher([descriptor], _home, new UnclaimedPermissions(), _ => _home);
+        var launcher = new AdapterLauncher([descriptor], _home, new UnclaimedPermissions());
         var captured = ConfigTargetIdentity.Capture(launcher, descriptor.Id);
         var snapshot = captured.Environment.OrderBy(pair => pair.Key).ToArray();
 
@@ -59,7 +59,7 @@ public sealed class ProviderRuntimeBinaryTests : IDisposable
     public async Task Unset_empty_and_unmapped_binary_metadata_leave_the_frozen_environment_unchanged(string family, string? binary)
     {
         var descriptor = Descriptor(family, binary);
-        var launcher = new AdapterLauncher([descriptor], _home, new UnclaimedPermissions(), _ => _home);
+        var launcher = new AdapterLauncher([descriptor], _home, new UnclaimedPermissions());
         var captured = ConfigTargetIdentity.Capture(launcher, descriptor.Id);
 
         await using (var link = await launcher.LaunchConfiguredAsync(captured.Descriptor, captured.Environment,
@@ -75,7 +75,7 @@ public sealed class ProviderRuntimeBinaryTests : IDisposable
     {
         var descriptor = Descriptor("codex", "/fixture/original");
         var configured = new List<AgentDescriptor> { descriptor };
-        var launcher = new AdapterLauncher(configured, _home, new UnclaimedPermissions(), _ => _home);
+        var launcher = new AdapterLauncher(configured, _home, new UnclaimedPermissions());
         var captured = ConfigTargetIdentity.Capture(launcher, descriptor.Id);
         configured[0] = descriptor with { Cli = "/fixture/replacement" };
 

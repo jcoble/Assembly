@@ -4,7 +4,7 @@ using Assembly.Application.Common.Agents;
 namespace Assembly.Application.Common.Acp;
 
 /// <summary>
-/// Reads an agent's session config options (ACP <c>configOptions</c>: <c>[{ id, name, category, type, currentValue,
+/// Reads an agent's session config options (ACP <c>configOptions</c>: <c>[{ configId, name, category, type, currentValue,
 /// options: [{ value, name }] }]</c>), which stay raw JSON everywhere else, so the menus show whatever the agent offers.
 /// </summary>
 public static class ConfigOptions
@@ -16,7 +16,7 @@ public static class ConfigOptions
             yield break;
         foreach (var option in options.EnumerateArray())
         {
-            if (Text(option, "type") != "select" || Text(option, "id") is not { } id)
+            if (Text(option, "type") != "select" || Id(option) is not { } id)
                 continue;
             var values = option.TryGetProperty("options", out var list) && list.ValueKind == JsonValueKind.Array
                 ? list.EnumerateArray().Select(value => Text(value, "value")).OfType<string>().ToList()
@@ -68,10 +68,13 @@ public static class ConfigOptions
     {
         if (options.ValueKind != JsonValueKind.Array) return null;
         foreach (var option in options.EnumerateArray())
-            if (Text(option, "category") == "model" && Text(option, "type") == "select" && Text(option, "id") is { } id)
+            if (Text(option, "category") == "model" && Text(option, "type") == "select" && Id(option) is { } id)
                 return Selects(options).First(select => select.Id == id);
         return null;
     }
+
+    // ACP 2 sends configId; a session saved before it holds id.
+    private static string? Id(JsonElement option) => Text(option, "configId") ?? Text(option, "id");
 
     private static string? Text(JsonElement json, string name) =>
         json.ValueKind == JsonValueKind.Object && json.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String

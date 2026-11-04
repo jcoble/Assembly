@@ -12,7 +12,9 @@ use super::SessionPane;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
-use crate::core::socket::real_backend_cancel_tests::backend_with_stub;
+use crate::core::socket::real_backend_cancel_tests::{
+    add_project, backend_with_stub, stub_session,
+};
 use crate::core::socket::test_wait::until;
 use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::model::item::ItemKind;
@@ -67,15 +69,10 @@ async fn clicking_across_real_sessions_shows_only_the_last_ones_messages(cx: &mu
         cx.update(|cx| matches!(socket.read(cx).state(), ConnectionState::Connected { .. }))
     })
     .await;
+    let added = call(&socket, ("projects", "add"), add_project(&repo), cx).await;
     let mut sessions = Vec::new();
     for at in 1..=5 {
-        let created = call(
-            &socket,
-            ("sessions", "create"),
-            json!({ "agent": "stub", "repoUrl": repo }),
-            cx,
-        )
-        .await;
+        let created = call(&socket, ("sessions", "create"), stub_session(&added), cx).await;
         let session = created["sessionId"]
             .as_str()
             .expect("a session id")

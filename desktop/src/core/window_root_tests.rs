@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 use futures_channel::mpsc::unbounded;
 use gpui_kit::component::{Theme, ThemeRegistry};
 use gpui_kit::{
-    AppContext as _, Context, IntoElement, Render, TestAppContext, VisualTestContext, Window, div,
-    gpui, px,
+    AnyView, AppContext as _, Context, IntoElement, ParentElement as _, Render, StyleRefinement,
+    TestAppContext, VisualTestContext, Window, div, gpui, px,
 };
 use serde_json::{Value, json};
 
@@ -234,4 +234,69 @@ async fn an_unrelated_preference_and_a_theme_switch_keep_the_saved_size(cx: &mut
     window.run_until_parked();
     window.update(|_, cx| assert_eq!(Theme::global(cx).theme_name().as_ref(), "Dracula"));
     assert_eq!(drawn_size(window), (px(16.), px(16.)));
+}
+
+/// Counts its renders and, like a panel in the dock, doesn't observe the preferences.
+struct UnobservingPanel(Rc<Cell<u32>>);
+
+impl Render for UnobservingPanel {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        self.0.set(self.0.get() + 1);
+        div()
+    }
+}
+
+/// Draws the panel cached, as the dock does, so only an invalidation reaches it.
+struct Dock(AnyView);
+
+impl Render for Dock {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().child(self.0.clone().cached(StyleRefinement::default()))
+    }
+}
+
+/// Draws the window, then says how many times the panel has rendered.
+fn renders_after_a_draw(window: &mut VisualTestContext, renders: &Cell<u32>) -> u32 {
+    window.run_until_parked();
+    window.update(|window, cx| window.draw(cx).clear(cx));
+    window.run_until_parked();
+    renders.get()
+}
+
+#[gpui::test]
+async fn only_a_new_interface_size_redraws_a_cached_panel(cx: &mut TestAppContext) {
+    let (_backend, _sets, window) = open_with(&[(UI_FONT_SIZE.key, json!(16))], cx).await;
+    let renders = Rc::new(Cell::new(0));
+    let counter = renders.clone();
+    let (_, window) = window.add_window_view(|window, cx| {
+        let panel = cx.new(|_| UnobservingPanel(counter));
+        let dock = cx.new(|_| Dock(panel.into()));
+        let root = cx.new(|cx| WindowRoot::new(dock, window, cx));
+        gpui_kit::base::Root::new(root, window, cx)
+    });
+    let before = renders_after_a_draw(window, &renders);
+    assert!(before > 0, "the panel never drew");
+    assert_eq!(
+        renders_after_a_draw(window, &renders),
+        before,
+        "the panel isn't cached"
+    );
+
+    window.update(|_, cx| Preferences::save(EDITOR_FONT_SIZE.key, json!(20), cx));
+    assert_eq!(
+        renders_after_a_draw(window, &renders),
+        before,
+        "an unrelated preference redrew it"
+    );
+
+    window.update(|_, cx| Preferences::save(UI_FONT_SIZE.key, json!(18), cx));
+    let after = renders_after_a_draw(window, &renders);
+    assert!(after > before, "the new size didn't reach a cached panel");
+
+    window.update(|_, cx| Preferences::save(UI_FONT_SIZE.key, json!(18), cx));
+    assert_eq!(
+        renders_after_a_draw(window, &renders),
+        after,
+        "the same size redrew it"
+    );
 }

@@ -36,16 +36,20 @@ public sealed class TerminalSocketTests : IAsyncLifetime
     {
         var topics = _remoteTopics;
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
-        _host = new TerminalHost(_pty, topics, TimeProvider.System, _ => _folder.FullName);
+        _host = new TerminalHost(_pty, topics, TimeProvider.System, ("/bin/sh", null), _ => _folder.FullName);
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
+        var machine = global::Assembly.Engine.Persistence.EngineSchema.Open(_db, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var reader = new global::Assembly.Engine.Reading.EngineReader(_db, machine);
+        calls.Read("engine", "machine", global::Assembly.Infrastructure.Engine.EngineSocketJson.Default.JsonElement,
+            global::Assembly.Infrastructure.Engine.EngineSocketJson.Default.MachineInfo, (_, c) => Task.FromResult(reader.Machine(c.Cancellation)));
         new TerminalFeature(_host).Register(calls);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
         _app = builder.Build();
         _app.UseWebSockets();
-        var main = new SocketEndpoint("terminal-token", calls, "test-machine", TimeProvider.System);
-        var terminal = _terminalEndpoint = new SocketEndpoint("terminal-token", calls, "test-machine", TimeProvider.System, terminal: true);
+        var main = new SocketEndpoint("terminal-token", calls, "test-machine", TimeProvider.System, engineMachine: machine);
+        var terminal = _terminalEndpoint = new SocketEndpoint("terminal-token", calls, "test-machine", TimeProvider.System, terminal: true, engineMachine: machine);
         _app.Map("/socket", main.HandleAsync);
         _app.Map("/socket/terminal", terminal.HandleAsync);
         _app.Lifetime.ApplicationStopping.Register(main.CloseAll);
@@ -100,11 +104,14 @@ public sealed class TerminalSocketTests : IAsyncLifetime
         await using var remote = new RemoteMachine("workbox-test", address, "terminal-token", hub, sessions, TextWriter.Null,
             new MachineStatus(topics, []), topics: topics);
         var localPty = new FakePtyStarter();
-        await using var local = new TerminalHost(localPty, topics, TimeProvider.System);
+        await using var local = new TerminalHost(localPty, topics, TimeProvider.System, ("/bin/sh", null));
         var machines = new MachineSet(remote, remote);
-        var routed = new RoutedTerminals(local, sessions, machines);
+        await using var work = new global::Assembly.Application.Common.BackgroundWork(TimeProvider.System, TextWriter.Null);
+        await using var routed = new RoutedTerminals(local, sessions, machines, topics, work);
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var ct = limit.Token;
+        await remote.ProbeAsync(ct);
+        await remote.ReadMirrorOwnerAsync(ct);
         var started = await routed.StartAsync(new StartArgs(Owner: "remote-session"), ct);
         Assert.StartsWith("assembly-remote-terminal://workbox-test/term-", started.Id);
         Assert.Equal(_folder.FullName, started.Cwd);
@@ -117,6 +124,7 @@ public sealed class TerminalSocketTests : IAsyncLifetime
         var output = new TaskCompletionSource<OutputRow>(TaskCreationOptions.RunContinuationsAsynchronously);
         var subscription = topics.Subscribe("terminal", started.Id, _ => { }, (_, json) =>
             output.TrySetResult(JsonSerializer.Deserialize(json, TerminalJson.Default.OutputRow)!));
+        await routed.ReadAsync(started.Id, 0, ct);
         _pty.Started[0].Emit("remote output"u8.ToArray());
         Assert.Equal("remote output"u8.ToArray(), (await output.Task.WaitAsync(ct)).Data);
         Assert.Equal("remote output"u8.ToArray(), (await routed.ReadAsync(started.Id, 0, ct)).Data);

@@ -49,7 +49,7 @@ internal sealed class OpenTool(string itemId, string? runId = null)
         var input = _fields.Input is { } fields && (fields.ValueKind != JsonValueKind.Object || fields.EnumerateObject().Any()) ? fields.GetRawText() : null;
         // Some agents fill the shown text with a description while the tool runs, so it counts as output only at the end.
         var output = _fields.Output ?? (IsDone ? _fields.ContentText : null);
-        var path = ToolSummary.Path(_fields.Input) ?? (_fields.Diffs is { Count: > 0 } diffs ? diffs[0].Path : null) ?? _fields.Paths?[0];
+        var path = ToolSummary.Path(_fields.Input) ?? _fields.Diffs?.SelectMany(diff => diff.Paths).FirstOrDefault() ?? _fields.Paths?[0];
         var detail = new ToolDetail(ItemId, input, output, diff?.Text, path,
             TerminalIds: _fields.TerminalIds, AcpSessionId: _fields.AcpSessionId,
             OutputSource: _fields.Output is not null ? "raw" : output is not null ? "content" : null);

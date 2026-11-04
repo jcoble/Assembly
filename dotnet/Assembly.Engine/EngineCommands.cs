@@ -100,14 +100,15 @@ public sealed partial class EngineCommands
         return result.Error == "command_id_conflict" ? result with { Error = "client_id_conflict" } : result;
     }
 
-    private CommandResult ApplySession(IWriteScope scope, CommandContext context, SessionCommand command, byte[]? titleUtf8 = null, PreparedStartEffectPayload? startEffectPayload = null)
+    private CommandResult ApplySession(IWriteScope scope, CommandContext context, SessionCommand command, byte[]? titleUtf8 = null, PreparedStartEffectPayload? startEffectPayload = null,
+        Action<IWriteScope, CommandContext, StartSession>? projectStart = null)
     {
         var depth = _limits.ReadDepth();
         var children = _limits.ReadChildren();
         var accountContext = command is StartSession start ? _accountContext?.Invoke(start.Provider) ?? "" : "";
         var result = SessionTransitions.ApplyPreparedTitle(scope, context, command, depth, children, accountContext, titleUtf8, _expiryPolicy, startEffectPayload, _projectProjection);
         if (result.Applied && command is StartSession accepted)
-            _projectStart?.Invoke(scope, context, accepted);
+            (projectStart ?? _projectStart)?.Invoke(scope, context, accepted);
         return result;
     }
 }

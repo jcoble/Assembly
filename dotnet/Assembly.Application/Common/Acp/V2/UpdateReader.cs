@@ -23,30 +23,37 @@ public sealed class UpdateReader
 
     /// <summary>Applies updates in arrival order; one reader belongs to one provider session.</summary>
     public IReadOnlyList<AgentEvent> Read(SessionNotification notification, long? timestamp = null)
+        => Read(notification.Update, notification.Kind, notification.SessionId, timestamp);
+
+    /// <summary>The proposed tool snapshot in a permission uses the same reader as tool notifications.</summary>
+    public IReadOnlyList<AgentEvent> ReadPermission(RequestPermissionRequest request, long? timestamp = null) =>
+        request.ToolCall.ValueKind == JsonValueKind.Object && request.ToolCall.TryGetProperty("content", out _)
+            ? Read(request.ToolCall, "tool_call_update", request.SessionId, timestamp) : [];
+
+    private IReadOnlyList<AgentEvent> Read(JsonElement update, string kind, string sessionId, long? timestamp)
     {
         var at = timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var update = notification.Update;
         List<AgentEvent> events = [];
-        switch (notification.Kind)
+        switch (kind)
         {
             case "agent_message_chunk":
             case "agent_thought_chunk":
                 if (ChunkText(update) is { } chunk)
-                    events.Add(notification.Kind == "agent_message_chunk"
+                    events.Add(kind == "agent_message_chunk"
                         ? new TextChunk(at, String(update, "messageId"), chunk)
                         : new ThoughtChunk(at, String(update, "messageId"), chunk));
                 break;
             case "agent_message":
             case "agent_thought":
                 if (update.TryGetProperty("content", out _))
-                    events.Add(notification.Kind == "agent_message"
+                    events.Add(kind == "agent_message"
                         ? new TextChunk(at, String(update, "messageId"), MessageText(update), Replace: true)
                         : new ThoughtChunk(at, String(update, "messageId"), MessageText(update), Replace: true));
                 break;
             case "user_message":
             case "user_message_chunk":
                 events.Add(new SessionMessage(at, String(update, "messageId"),
-                    notification.Kind == "user_message" ? MessageText(update) : ChunkText(update) ?? ""));
+                    kind == "user_message" ? MessageText(update) : ChunkText(update) ?? ""));
                 break;
             case "session_message":
             case "session_message_chunk":
@@ -54,13 +61,13 @@ public sealed class UpdateReader
                 _providerMessages.TryGetValue(messageId, out var message);
                 var blocks = message?.Content ?? [];
                 if (update.TryGetProperty("content", out var messageContent))
-                    blocks = notification.Kind == "session_message"
+                    blocks = kind == "session_message"
                         ? Array.AsReadOnly(messageContent.ValueKind == JsonValueKind.Array
                             ? messageContent.EnumerateArray().Select(block => block.Clone()).ToArray() : [])
                         : Array.AsReadOnly(blocks.Append(messageContent.Clone()).ToArray());
-                string? Participant(string field, string? prior) => notification.Kind == "session_message"
+                string? Participant(string field, string? prior) => kind == "session_message"
                     && update.TryGetProperty(field, out _) ? String(update, field) : prior;
-                var observed = new ProviderSessionMessage(at, notification.SessionId, messageId,
+                var observed = new ProviderSessionMessage(at, sessionId, messageId,
                     Participant("senderSessionId", message?.SenderSessionId),
                     Participant("recipientSessionId", message?.RecipientSessionId),
                     Participant("senderMessageId", message?.SenderMessageId),
@@ -75,7 +82,7 @@ public sealed class UpdateReader
                 if (!_toolContent.TryGetValue(id, out var toolContent)) _toolContent[id] = toolContent = [];
                 if (update.TryGetProperty("content", out _))
                 {
-                    if (notification.Kind == "tool_call_update") toolContent.Clear();
+                    if (kind == "tool_call_update") toolContent.Clear();
                     toolContent.AddRange(ContentItems(update).Select(item => item.Clone()));
                 }
                 string? Patch(string key, string? prior) => update.TryGetProperty(key, out _) ? String(update, key) : prior;
@@ -89,7 +96,7 @@ public sealed class UpdateReader
                     update.TryGetProperty("locations", out _) ? Paths(update) : previous?.Paths, ContentReplaced: true,
                     TerminalIds: Array.AsReadOnly(toolContent.Where(item => String(item, "type") == "terminal")
                         .Select(item => String(item, "terminalId")).OfType<string>().Distinct().ToArray()),
-                    AcpSessionId: notification.SessionId, Snapshot: true);
+                    AcpSessionId: sessionId, Snapshot: true);
                 _tools[id] = fields;
                 events.Add(new ToolCallChanged(at, id, started, fields));
                 if (update.TryGetProperty("status", out _) && fields.Status is "completed" or "failed" or "cancelled")
@@ -103,15 +110,15 @@ public sealed class UpdateReader
             case "terminal_update":
             case "terminal_output_chunk":
                 if (String(update, "terminalId") is not { } terminalId) break;
-                var replaced = notification.Kind == "terminal_update" && update.TryGetProperty("output", out _);
-                var data = notification.Kind == "terminal_output_chunk" ? String(update, "data")
+                var replaced = kind == "terminal_update" && update.TryGetProperty("output", out _);
+                var data = kind == "terminal_output_chunk" ? String(update, "data")
                     : update.TryGetProperty("output", out var terminalOutput) ? String(terminalOutput, "data") : null;
                 var exitReplaced = update.TryGetProperty("exitStatus", out var exit);
                 events.Add(new TerminalChanged(at, terminalId, data, replaced,
                     update.TryGetProperty("command", out _), String(update, "command"),
                     update.TryGetProperty("cwd", out _), String(update, "cwd"),
                     exitReplaced, exit.ValueKind == JsonValueKind.Object ? new TerminalExit(Long(exit, "exitCode"), String(exit, "signal")) : null,
-                    notification.SessionId));
+                    sessionId));
                 break;
             case "subagent_update":
                 if (String(update, "sessionId") is not { } childId) break;
@@ -167,7 +174,7 @@ public sealed class UpdateReader
                         events.Add(new TurnEnded(at, reason, state.ReportedUsage is { } usage
                             ? new TokenUsage(usage.InputTokens, usage.OutputTokens, usage.CachedReadTokens, usage.CachedWriteTokens) : null));
                     if (state.ReportedUsage is { } report)
-                        events.Add(new UsageReported(at, report.CostUsd, report.Model, report.Used, report.Size));
+                        events.Add(new UsageReported(at, report.CostUsd, report.Model, report.Used, report.Size, report.InputTokens, report.OutputTokens));
                 }
                 else if (state.State == "unknown")
                 {
@@ -266,8 +273,10 @@ public sealed class UpdateReader
     private static IReadOnlyList<FileDiff>? Diffs(IEnumerable<JsonElement> content)
     {
         var diffs = content
-            .Where(item => String(item, "type") == "diff" && String(item, "path") is not null && String(item, "newText") is not null)
-            .Select(item => new FileDiff(String(item, "path")!, String(item, "oldText"), String(item, "newText")!))
+            .Where(item => String(item, "type") == "diff" && item.TryGetProperty("changes", out var changes) && changes.ValueKind == JsonValueKind.Array)
+            .Select(item => new FileDiff(Array.AsReadOnly(item.GetProperty("changes").EnumerateArray()
+                .Select(change => String(change, "path")).OfType<string>().Distinct().ToArray()),
+                item.TryGetProperty("patch", out var patch) && String(patch, "format") == "git_patch" ? String(patch, "text") : null))
             .ToList();
         return diffs.Count == 0 ? null : Array.AsReadOnly(diffs.ToArray());
     }

@@ -183,7 +183,7 @@ public sealed partial class ChatSocketTests
         var session = _sessions.Create("claude", "repo").SessionId;
         var tool = new OpenTool("t1");
         tool.Apply(new ToolCallFields(Name: "apply_patch", Kind: "edit", Status: "completed",
-            Diffs: [new FileDiff("a.rs", "x", "x\ny\nz"), new FileDiff("b.rs", null, "1\n2\n3")]));
+            Diffs: [new FileDiff(["a.rs", "b.rs"], "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1,3 @@\n x\n+y\n+z\ndiff --git a/b.rs b/b.rs\n--- /dev/null\n+++ b/b.rs\n@@ -0,0 +1,3 @@\n+1\n+2\n+3\n")]));
         Row(session, RowKind.Tool, "t1", JsonSerializer.Serialize(tool.TakeChanges().Line, RowJsonContext.Rows.ToolPayload));
         using var socket = await OpenAsync();
 

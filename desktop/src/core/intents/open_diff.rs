@@ -1,4 +1,5 @@
-//! `OpenDiff`: open a file's changes in the diff view. The session says which machine and folder the path is on.
+//! `OpenDiff`: go to a file in the Changes tab of the selected session. The tab decides what it reads from its own
+//! accepted status, never from this.
 
 use gpui_kit::*;
 
@@ -6,8 +7,5 @@ use gpui_kit::*;
 #[action(namespace = intents, no_json)]
 pub struct OpenDiff {
     pub session_id: String,
-    pub expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     pub path: String,
-    /// A staged rename's old path, so its diff shows the rename.
-    pub original_path: Option<String>,
 }

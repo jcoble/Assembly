@@ -37,7 +37,11 @@ public sealed partial class SessionHost
                 held = true;
                 turn.OpenAttempt = new AuthOpenAttempt();
                 session = await _opener.OpenAsync(_sessionId, text, turn.Stages, turn.Stopping.Token,
-                    observation: turn.Observation, authAttempt: turn.OpenAttempt);
+                    observation: turn.Observation, authAttempt: turn.OpenAttempt, validate: () =>
+                    {
+                        if (turn.Delivery is { } opening && !CurrentAdmission(opening, text, opening.ClientId, opening.SenderLabel, opening.FromSessionId))
+                            throw new CallFailed("The delivery owner changed.", "delivery_owner_changed");
+                    });
                 updates = session.Adapter.Updates.For(session.AcpSessionId);
                 BindPolicy(session, turn);
                 lock (_gate)
@@ -130,7 +134,8 @@ public sealed partial class SessionHost
         }
         catch (Exception error)
         {
-            turn.Inserted.TrySetResult(error is CallFailed { Reason: { } reason } ? new SendResult.Failed(reason) :
+            turn.Inserted.TrySetResult(error is CallFailed { Reason: "delivery_owner_changed" } ? new SendResult.Unknown() :
+                error is CallFailed { Reason: { } reason } ? new SendResult.Failed(reason) :
                 turn.Prompt is null ? new SendResult.Failed(error.Message) : new SendResult.Unknown());
             end = at => new TurnFailed(at, error.Message, null);
         }

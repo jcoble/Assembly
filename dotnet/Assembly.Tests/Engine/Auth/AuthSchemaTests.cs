@@ -13,7 +13,7 @@ public sealed class AuthSchemaTests
     public void Fresh_auth_schema_has_one_order_key_nullable_safe_facts_and_required_attempt_deadline()
     {
         using var f = new EngineFixture();
-        Assert.Equal(10, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(14, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(5, f.Number("PRAGMA user_version"));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM pragma_table_info('engine_outbox') WHERE name='order_key' AND type='TEXT' AND [notnull]=1"));
         Assert.Equal(2, f.Number("SELECT COUNT(*) FROM pragma_table_info('engine_provider') WHERE name IN ('facts_json','checked_ms') AND [notnull]=0"));
@@ -32,14 +32,14 @@ public sealed class AuthSchemaTests
         var identity = old.Meta();
         var result = old.Db.Writer.Write("test.auth.initialize", s => EngineSchema.Initialize(s, 9_000_000));
         Assert.Equal(version, result.PreviousVersion);
-        Assert.Equal(10, old.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(14, old.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(identity, old.Meta());
         Assert.Equal(before, old.RetainedRows());
         Assert.Equal(new[] { "effect/legacy-null", "session/%_literal/" }, old.Db.Query("SELECT order_key FROM engine_outbox ORDER BY id", r => r.Text(0), default));
         Assert.Equal(0, old.Number("SELECT COUNT(*) FROM engine_needs_me WHERE addressee_session_id IS NOT NULL"));
         Assert.Empty(old.Db.Query("PRAGMA foreign_key_check", r => r.Text(0), default));
         var reopen = old.Db.Writer.Write("test.auth.reopen", s => EngineSchema.Initialize(s, 9_000_001));
-        Assert.Equal(10, reopen.PreviousVersion);
+        Assert.Equal(14, reopen.PreviousVersion);
         Assert.Equal(result.Machine, reopen.Machine);
         Assert.Equal(before, old.RetainedRows());
     }
@@ -74,7 +74,7 @@ public sealed class AuthSchemaTests
             _ => $"DROP TABLE {boundary}"
         }));
         EngineSchema.Open(old.Db, 9_000_000);
-        Assert.Equal(10, old.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(14, old.Number("SELECT schema_version FROM engine_meta"));
     }
 
     [Fact]
@@ -86,10 +86,10 @@ public sealed class AuthSchemaTests
             s.Execute("CREATE TABLE projection_fault(value TEXT)"); throw new InvalidOperationException("projection fault");
         }));
         Assert.Equal(schema, old.Schema()); Assert.Equal(retained, old.RetainedRows());
-        old.Db.Writer.Write("test.auth.future", s => s.Execute("UPDATE engine_meta SET schema_version=11"));
+        old.Db.Writer.Write("test.auth.future", s => s.Execute("UPDATE engine_meta SET schema_version=15"));
         var meta = old.Meta();
         Assert.Throws<InvalidOperationException>(() => EngineSchema.Open(old.Db, 9_000_000));
-        Assert.Equal(11, old.Number("SELECT schema_version FROM engine_meta")); Assert.Equal(meta, old.Meta());
+        Assert.Equal(15, old.Number("SELECT schema_version FROM engine_meta")); Assert.Equal(meta, old.Meta());
         Assert.Equal(schema, old.Schema()); Assert.Equal(retained, old.RetainedRows());
     }
 
@@ -124,11 +124,12 @@ public sealed class AuthSchemaTests
         internal string?[] Schema() => Db.Query("SELECT sql FROM sqlite_master ORDER BY name", r => r.IsNull(0) ? null : r.Text(0), default).ToArray();
         internal string[] RetainedRows()
         {
-            var tables = Db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'engine_%' AND name NOT IN ('engine_meta','engine_provider','engine_sign_in') ORDER BY name", r => r.Text(0), default);
+            var tables = Db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'engine_%' AND name NOT IN ('engine_meta','engine_provider','engine_sign_in') AND name NOT LIKE 'engine_workflow_%' ORDER BY name", r => r.Text(0), default);
             return tables.SelectMany(table =>
             {
                 var columns = Db.Query($"PRAGMA table_info({table})", r => r.Text(1), default)
-                    .Where(column => column != "order_key" && column != "addressee_session_id" &&
+                    .Where(column => column != "order_key" && column != "executor_json" && column != "addressee_session_id" &&
+                        (table != "engine_message" || column is not ("origin_machine" or "message_created_seq")) &&
                         (table != "engine_session" || column is not ("project_id" or "branch" or "checkout_state" or "checkout_operation_id" or "checkout_intent_json")))
                     .OrderBy(column => column, StringComparer.Ordinal);
                 return Db.Query($"SELECT json_array({string.Join(',', columns)}) FROM {table} ORDER BY 1", r => table + ":" + r.Text(0), default);

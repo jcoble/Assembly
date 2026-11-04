@@ -13,12 +13,17 @@ use gpui_kit::*;
 use std::rc::Rc;
 
 use super::SessionPane;
+use crate::core::engine::SessionKey;
 use crate::core::intents::open_session::OpenSession;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::ui::center_panes::CenterPanes;
 use crate::features::session::client::session_client::SessionClient;
 use crate::features::session::client::socket_session_client::SocketSessionClient;
-use crate::features::session::view::plan_card::PlanCard;
+use crate::core::ui::ask::form::AskForm;
+use crate::features::session::composer::answer_panel::AnswerPanel;
+use crate::features::session::composer::shape::next_answer;
+use crate::features::session::view::ask_row::AskRow;
+use crate::features::session::view::plan_card::{PlanCard, turn_file_changes};
 use crate::features::session::view::session_action::SessionAction;
 
 impl SessionPane {
@@ -36,6 +41,7 @@ impl SessionPane {
             let Some(handle)=cx.active_window().or_else(||cx.windows().into_iter().next()) else {return;};
             cx.defer(move|cx|{let _=handle.update(cx,|_,window,cx| {
                 if let Some(pane)=CenterPanes::find::<SessionPane>("Chat",cx) {
+                    pane.update(cx,|pane,_|pane.uncover_route(request.route_machine.as_deref(),&request.id));
                     pane.update(cx,|pane,cx|pane.request_current_route(request.route_machine,request.id,request.request_id,
                         if request.historical {crate::core::intents::session_open::SessionOpenTarget::Historical} else {crate::core::intents::session_open::SessionOpenTarget::Engine},window,cx));
                 } else {
@@ -50,6 +56,7 @@ impl SessionPane {
             let Some(handle)=cx.active_window().or_else(||cx.windows().into_iter().next()) else {return;};
             cx.defer(move|cx|{let _=handle.update(cx,|_,window,cx| {
                 if let Some(pane)=CenterPanes::find::<SessionPane>("Chat",cx) {
+                    pane.update(cx,|pane,_|pane.uncover(&request.key));
                     pane.update(cx,|pane,cx|pane.request_open(request,window,cx));
                 } else {
                     SelectedSession::global(cx).update(cx,|_,cx|cx.emit(crate::core::intents::session_open::SessionOpenResult {
@@ -97,10 +104,97 @@ impl Panel for SessionPane {
     }
 }
 
+impl SessionPane {
+    /// Puts a new session's draft in the Chat pane, in front. False when there's no Chat pane to hold it.
+    pub fn open_draft(draft: AnyView, window: &mut Window, cx: &mut App) -> bool {
+        CenterPanes::open("Chat", window, cx, |window, cx| {
+            cx.new(|cx| SessionPane::chat(Rc::new(SocketSessionClient), window, cx))
+        });
+        let Some(pane) = CenterPanes::find::<SessionPane>("Chat", cx) else {
+            return false;
+        };
+        pane.update(cx, |pane, cx| {
+            pane.draft = Some(draft);
+            cx.notify();
+        });
+        true
+    }
+
+    /// Takes this draft back out, showing the session under it.
+    pub fn close_draft(draft: EntityId, cx: &mut App) {
+        if let Some(pane) = CenterPanes::find::<SessionPane>("Chat", cx) {
+            pane.update(cx, |pane, cx| {
+                if pane.draft.as_ref().is_some_and(|shown| shown.entity_id() == draft) {
+                    pane.draft = None;
+                    cx.notify();
+                }
+            });
+        }
+    }
+
+    /// This exact session is on screen. An id alone doesn't say so: another Engine can hold the same one.
+    pub(in crate::features::session::view) fn shows(&self, key: &SessionKey) -> bool {
+        self.session.as_deref() == Some(key.id.as_str())
+            && self.row_source.as_ref().is_some_and(|source| source.machine == key.machine)
+    }
+
+    /// Going to the session already under the draft uncovers it; it opens no differently, so nothing else would.
+    fn uncover(&mut self, key: &SessionKey) {
+        if self.shows(key) {
+            self.draft = None;
+        }
+    }
+
+    /// The same for a request that names the route to the session, not its Engine.
+    fn uncover_route(&mut self, route: Option<&str>, session: &str) {
+        if self.session.as_deref() == Some(session)
+            && self.row_source.as_ref().is_some_and(|source| source.route_machine.as_deref() == route)
+        {
+            self.draft = None;
+        }
+    }
+
+    /// The ask the box answers next, its form made the first time it's drawn: text fields need the window.
+    /// The chip shows for a plan, or for a turn that changed files without one.
+    fn plan_chip(&self) -> Option<PlanCard> {
+        let items = (self.view.plan.as_ref()).map_or_else(Vec::new, |(_, items)| items.clone());
+        let changes = turn_file_changes(&self.view.items);
+        (!items.is_empty() || changes.is_some()).then(|| PlanCard {
+            items,
+            changes,
+            open: self.plan_open,
+            running: self.view.active_run(self.known_run.as_deref()).is_some(),
+            on_action: self.on_action.clone(),
+        })
+    }
+
+    fn answer_panel(&mut self, window: &mut Window, cx: &mut App) -> Option<AnswerPanel> {
+        let (ask_id, ask, count) = next_answer(&self.view.items)
+            .map(|(ask_id, ask, count)| (ask_id.to_string(), ask.clone(), count))?;
+        if !self.forms.contains_key(&ask_id)
+            && let Some(form) = AskForm::of(&ask, window, cx)
+        {
+            self.forms.insert(ask_id.clone(), form);
+        }
+        let form = self.forms.get(&ask_id).cloned();
+        let on_action = AskRow {
+            ask_id: ask_id.clone(),
+            ask: ask.clone(),
+            form: None,
+            on_action: self.on_action.clone(),
+        }
+        .on_control();
+        Some(AnswerPanel { ask_id, ask, form, count, on_action })
+    }
+}
+
 impl Render for SessionPane {
     /// The header, the timeline, the plan card, the status (why the last call failed, or "Offline, showing the saved
     /// session") and the composer, top to bottom.
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(draft) = self.draft.clone() {
+            return div().size_full().child(draft).into_any_element();
+        }
         if self.reveal.is_some() && !self.frame_asked {
             self.frame_asked = true;
             cx.on_next_frame(window, |pane, window, cx| pane.reveal_frame(window, cx));
@@ -109,25 +203,21 @@ impl Render for SessionPane {
             self.grow_asked = true;
             cx.on_next_frame(window, |pane, window, cx| pane.grow_frame(window, cx));
         }
+        let answer = self.answer_panel(window, cx);
+        self.composer.update(cx, |composer, _| composer.set_answer(answer));
         div()
             .size_full()
             .flex()
             .flex_col()
+            .on_key_down(cx.listener(|pane, event: &KeyDownEvent, _, cx| {
+                if pane.plan_open && event.keystroke.key == "escape" {
+                    pane.plan_open = false;
+                    cx.notify();
+                }
+            }))
             .child(self.header.clone())
             .child(div().flex_1().min_h_0().child(self.timeline.clone()))
-            .when_some(
-                self.view
-                    .plan
-                    .as_ref()
-                    .filter(|(_, items)| !items.is_empty()),
-                |pane, (_, items)| {
-                    pane.child(PlanCard {
-                        items: items.clone(),
-                        open: self.plan_open,
-                        on_action: self.on_action.clone(),
-                    })
-                },
-            )
+            .when_some(self.plan_chip(), |pane, chip| pane.child(chip))
             .when(!self.status.is_empty(), |pane| {
                 let on_action = self.on_action.clone();
                 pane.child(
@@ -152,5 +242,10 @@ impl Render for SessionPane {
                 )
             })
             .when(!self.read_only, |pane| pane.child(self.composer.clone()))
+            .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "navigation/draft_tests.rs"]
+mod draft_tests;

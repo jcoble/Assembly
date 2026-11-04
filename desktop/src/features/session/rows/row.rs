@@ -61,6 +61,11 @@ pub enum RowBody {
     Context {
         used: i64,
         size: i64,
+        /// Only what the agent reported; absent means not reported, never zero.
+        #[serde(default, rename = "inputTokens")]
+        input_tokens: Option<i64>,
+        #[serde(default, rename = "outputTokens")]
+        output_tokens: Option<i64>,
     },
     #[serde(skip)]
     Other {

@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Projects;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Engine;
 using Assembly.Application.Common.Calls;
@@ -112,7 +113,7 @@ public sealed partial class SessionHostTests
     private sealed class ModelObserver : IEngineSessions
     {
         public bool Fail;
-        public void Started(IWriteScope scope, SessionInfo session, string? initiatingSessionId) { }
+        public void Started(IWriteScope scope, SessionInfo session, string? initiatingSessionId, string? projectId = null, CheckoutIntent? checkout = null, SessionCreationPreparation? preparation = null) { }
         public void Titled(IWriteScope scope, string sessionId, string actualStoredTitle, ReadOnlyMemory<byte> exactTitleUtf8) { }
         public void Configured(IWriteScope scope, string sessionId, string? model) { if (Fail) throw new IOException("local observation failed"); }
         public SessionLocation? Location(string sessionId) => null;

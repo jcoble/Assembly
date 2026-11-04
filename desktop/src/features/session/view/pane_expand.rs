@@ -106,13 +106,13 @@ impl SessionPane {
                 self.read_detail_if_stale(at, cx);
             }
         }
-        // A question answered since it was last drawn open shrinks shut, whether the answer came live or on a page
-        // loaded after a reconnect; one opened again by hand after that stays open.
+        // A question answered since it was last open is shut, whether the answer came live or on a page loaded after a
+        // reconnect. It was answered in the composer's box, so its line simply arrives; opened by hand, it stays open.
         if let ItemKind::Ask { ask, .. } = &item.kind {
             if ask.state == "open" {
                 self.open_asks.insert(item.key.clone());
             } else if self.open_asks.remove(&item.key) {
-                row.update(cx, |row, cx| row.set_open(false, true, cx));
+                row.update(cx, |row, cx| row.set_open(false, false, cx));
             }
         }
         Some(row.into_any_element())

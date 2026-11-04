@@ -4,12 +4,13 @@ use std::rc::Rc;
 use gpui_kit::*;
 use gpui_kit::component::{ActiveTheme as _,h_flex,v_flex};
 use gpui_kit::component::button::{Button,ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::Input;
 use gpui_kit::prelude::FluentBuilder as _;
 use serde_json::{Value,json};
 use super::{form::AskForm,payload::{AskPayload,AskInput,AskSchema}};
 #[derive(Clone)]
-pub enum ControlAction {Answer(Value),Pick{field:String,value:String,many:bool},Submit}
+pub enum ControlAction {Answer(Value),Pick{field:String,value:String,many:bool},Flag{field:String,on:bool},Submit}
 pub type OnControl=Rc<dyn Fn(ControlAction,&mut Window,&mut App)>;
 /// What a question asked, for its settled card: each field's label, its hint, and its choices joined ("" for text).
 pub fn asked(ask: &AskPayload) -> Vec<(String, Option<String>, String)> {
@@ -25,7 +26,7 @@ pub fn asked(ask: &AskPayload) -> Vec<(String, Option<String>, String)> {
                     .map(|choice| choice.title.clone().unwrap_or(choice.value.clone()))
                     .collect::<Vec<_>>()
                     .join(", "),
-                AskInput::Text => String::new(),
+                AskInput::Text | AskInput::Secret | AskInput::Flag => String::new(),
             };
             (
                 field.title.clone().unwrap_or(name),
@@ -88,7 +89,18 @@ pub fn render(key:&str,ask:&AskPayload,form:Option<&AskForm>,choices:&[(String,S
         for (name, field) in fields.map(|fields| fields.properties).unwrap_or_default() {
             let label = field.title.clone().unwrap_or_else(|| name.clone());
             let value = match field.input() {
-                AskInput::Text => match form.texts.iter().find(|(text, _)| *text == name) {
+                AskInput::Flag => {
+                    let on = form.picked.get(&name).and_then(Value::as_bool).unwrap_or(false);
+                    let on_action = on_action.clone();
+                    let flag = ControlAction::Flag { field: name.clone(), on: !on };
+                    h_flex().flex_1().child(
+                        Checkbox::new(SharedString::from(format!("ask:{ask_id}:{name}")))
+                            .checked(on)
+                            .label("Yes")
+                            .on_click(move |_, window, cx| on_action(flag.clone(), window, cx)),
+                    )
+                }
+                AskInput::Text | AskInput::Secret => match form.texts.iter().find(|(text, _)| *text == name) {
                     Some((_, input)) => {
                         let on_action = on_action.clone();
                         let submit=ControlAction::Submit;

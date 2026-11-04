@@ -16,6 +16,27 @@ namespace Assembly.Tests.Engine;
 public sealed class SessionLocationTests
 {
     [Theory]
+    [InlineData("claude")]
+    [InlineData("codex")]
+    public async Task Existing_projectless_home_session_keeps_home_on_restart_and_provider_resume(string provider)
+    {
+        await using var h = new Host(managed: false, git: false, originalHome: true, provider: provider);
+        await h.Restart();
+        Assert.Null(h.Store.Get("root")!.ProjectId);
+        AssertLocation(h, "root", h.Home, false);
+        var opening = h.Opener.OpenAsync("root", "First", new(h.F.Time), CancellationToken.None);
+        var agent = await h.Launcher.Fake.NextAsync();
+        Assert.Equal(h.Home, (await agent.StartAsync()).GetProperty("params").GetProperty("cwd").GetString());
+        await h.Close(await opening, agent);
+        var resuming = h.Opener.OpenAsync("root", "Again", new(h.F.Time), CancellationToken.None);
+        var resume = await agent.OpenAsync();
+        Assert.Equal("session/resume", resume.GetProperty("method").GetString());
+        Assert.Equal(h.Home, resume.GetProperty("params").GetProperty("cwd").GetString());
+        await h.Close(await resuming, agent);
+        Assert.False(Directory.Exists(Path.Combine(h.Home, "assembly-bare")));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Direct_Git_and_nonGit_managed_shaped_folders_survive_restart_and_reach_new_resume_files_and_terminal(bool git)
@@ -36,19 +57,22 @@ public sealed class SessionLocationTests
         Assert.Equal("session/resume", resume.GetProperty("method").GetString());
         Assert.Equal(h.Folder, resume.GetProperty("params").GetProperty("cwd").GetString());
         await h.Close(await resuming, agent);
-        Assert.Equal(0, h.Launcher.Checkouts);
+        Assert.Contains(h.Folder, h.Launcher.Validated);
         Assert.Equal("draft", File.ReadAllText(Path.Combine(h.Folder, "notes.md")));
         Assert.Equal("unrelated user data", File.ReadAllText(Path.Combine(partial, "keep")));
     }
 
     [Fact]
-    public async Task Identical_repo_and_folder_strings_in_managed_mode_retain_actual_clone_failure_after_restart()
+    public async Task Legacy_managed_metadata_keeps_the_recorded_existing_root_without_cloning_on_open()
     {
         await using var h = new Host(managed: true, git: false);
         await h.Restart(); AssertLocation(h, "root", h.Folder, true);
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Opener.OpenAsync("root", "First", new(h.F.Time), CancellationToken.None));
-        Assert.Contains("git clone", error.Message);
-        Assert.Equal(1, h.Launcher.Checkouts); Assert.Equal(0, h.Launcher.Fake.Launches);
+        var opening = h.Opener.OpenAsync("root", "First", new(h.F.Time), CancellationToken.None);
+        var agent = await h.Launcher.Fake.NextAsync();
+        var first = await agent.StartAsync();
+        Assert.Equal(h.Folder, first.GetProperty("params").GetProperty("cwd").GetString());
+        await h.Close(await opening, agent);
+        Assert.Contains(h.Folder, h.Launcher.Validated);
         Assert.Equal("draft", File.ReadAllText(Path.Combine(h.Folder, "notes.md")));
         Assert.False(Directory.Exists(h.Folder + ".partial"));
     }
@@ -62,8 +86,9 @@ public sealed class SessionLocationTests
         Assert.Contains(h.Folder, missing.Message); Assert.False(Directory.Exists(h.Folder));
         h.F.Db.Writer.Write("test.contradictory", scope => scope.Execute("UPDATE engine_session SET managed_checkout=1,folder=$folder WHERE id='root'", new Assembly.Application.Common.Database.SqlArg("$folder", Path.Combine(h.Home, "different"))));
         var contradiction = await Assert.ThrowsAsync<CallFailed>(() => h.Opener.OpenAsync("root", "First", new(h.F.Time), CancellationToken.None));
-        Assert.Contains("managed checkout", contradiction.Message);
-        Assert.Equal(0, h.Launcher.Checkouts); Assert.Equal(0, h.Launcher.Fake.Launches);
+        Assert.Contains(Path.Combine(h.Home, "different"), contradiction.Message);
+        Assert.Equal(0, h.Launcher.Fake.Launches);
+        Assert.False(Directory.Exists(Path.Combine(h.Home, "different")));
     }
 
     [Fact]
@@ -100,22 +125,26 @@ public sealed class SessionLocationTests
         public SharedAdapter Adapter { get; }
         public SessionOpener Opener { get; private set; }
         public string Checkouts => Path.Combine(Home, "checkouts");
-        public string Folder => Path.Combine(Checkouts, "root");
-        public Host(bool managed, bool git)
+        private readonly bool _originalHome;
+        public string Folder => _originalHome ? Home : Path.Combine(Checkouts, "root");
+        public Host(bool managed, bool git, bool originalHome = false, string provider = "claude")
         {
+            _originalHome = originalHome;
             Directory.CreateDirectory(Folder); File.WriteAllText(Path.Combine(Folder, "notes.md"), "draft");
             if (git) Git(Folder, "init", "--quiet");
             F = new(topics: _topics); Launcher = new(Checkouts);
-            Assert.True(F.Apply(new StartSession("claude", null, Folder, "Root", null, null, null, ManagedCheckout: managed), "root", actor: new(ActorKind.Window, "owner")).Applied);
+            Assert.True(F.Apply(new StartSession(provider, null, Folder, "Root", null, null, null, ManagedCheckout: managed), "root", actor: new(ActorKind.Window, "owner")).Applied);
+            Assert.True(F.Apply(new SetSessionState("idle", null, null), "root", version: 1,
+                actor: new(ActorKind.System, "start-confirmed")).Applied);
             Store = SessionStore.Open(F.Db, F.Time, Checkouts);
-            Runtime = EngineRuntime.Start(F.Db, _topics, F.Time, F.Limits, cutover: new(F.Db, Store, Launcher, Checkouts, F.Time));
-            Adapter = new(Launcher, "claude", F.Time, TextWriter.Null); Opener = new(Store, Launcher, _ => Adapter);
+            Runtime = EngineRuntime.Start(F.Db, _topics, F.Time, F.Limits, cutover: new(F.Db, Store, Launcher, Checkouts, F.Time, owningHome: Home));
+            Adapter = new(Launcher, provider, F.Time, TextWriter.Null); Opener = new(Store, Launcher, _ => Adapter);
             Assert.Equal(Folder, Store.Get("root")!.RepoUrl);
         }
         public async Task Restart()
         {
             await Runtime.DisposeAsync(); Store = SessionStore.Open(F.Db, F.Time, Checkouts);
-            Runtime = EngineRuntime.Start(F.Db, _topics, F.Time, F.Limits, cutover: new(F.Db, Store, Launcher, Checkouts, F.Time));
+            Runtime = EngineRuntime.Start(F.Db, _topics, F.Time, F.Limits, cutover: new(F.Db, Store, Launcher, Checkouts, F.Time, owningHome: Home));
             Opener = new(Store, Launcher, _ => Adapter);
         }
         public async Task Close(OpenSession session, FakeLink agent)
@@ -128,14 +157,14 @@ public sealed class SessionLocationTests
 
     private sealed class TrackingLauncher(string checkouts) : IAgentLauncher
     {
-        public FakeLauncher Fake { get; } = new(); public int Checkouts;
+        public FakeLauncher Fake { get; } = new();
+        public List<string> Validated { get; } = [];
         public IReadOnlyList<AgentDescriptor> Agents => Fake.Agents;
-        public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken)
+        public void ValidateFolder(string folder)
         {
-            Checkouts++;
-            return new AdapterLauncher([], checkouts, new UnclaimedPermissions(), item => SessionStore.Folder(checkouts, item)).CheckoutAsync(session, stages, cancellationToken);
+            Validated.Add(folder);
+            new AdapterLauncher([], checkouts, new UnclaimedPermissions()).ValidateFolder(folder);
         }
-        public void ValidateFolder(string folder) => new AdapterLauncher([], checkouts, new UnclaimedPermissions(), item => SessionStore.Folder(checkouts, item)).ValidateFolder(folder);
         public bool CanRunTerminalAuthentication => false;
         public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
             StageTimes stages, CancellationToken cancellationToken) => LaunchAsync(descriptor.Id, stages, cancellationToken);

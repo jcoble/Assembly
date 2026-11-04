@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Projects;
 using Assembly.Application.Common.Acp;
 using System.Text.Json;
 using Assembly.Application.Common.Agents;
@@ -16,7 +17,8 @@ namespace Assembly.Infrastructure.Engine;
 
 /// <summary>Imports and projects owning chat sessions in the Engine's single initialization transaction.</summary>
 public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgentLauncher launcher, string checkouts,
-    TimeProvider time, Func<string, string?>? inheritedEnvironment = null, EngineHelperCards? helperCards = null) : IEngineSessions
+    TimeProvider time, Func<string, string?>? inheritedEnvironment = null, EngineHelperCards? helperCards = null,
+    IProjectRoots? projectRoots = null, IProjectUse? projectUse = null, string? owningHome = null) : IEngineSessions
 {
     private EngineCommands? _commands;
     private string? _machine;
@@ -29,7 +31,7 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
         launcher.Agents.FirstOrDefault(agent => agent.Id == configuredAgentId) is { } descriptor
             ? Application.Common.Agents.AccountContext.Of(descriptor, inheritedEnvironment ?? Environment.GetEnvironmentVariable) : "";
 
-    private ImportedSession Metadata(IReadScope scope, SessionInfo session)
+    private ImportedSession Metadata(IReadScope scope, SessionInfo session, string? folder = null)
     {
         var config = sessions.ConfigForEngineInitialization(scope, session.SessionId);
         var optionsJson = config.Options ?? sessions.AgentConfig(scope, session.Agent);
@@ -49,7 +51,7 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
                         !string.IsNullOrWhiteSpace(chosen) && select.Values.Contains(chosen)) model = chosen;
                 }
         }
-        var folder = SessionStore.Folder(checkouts, sessions.Top(scope, session))
+        folder ??= SessionStore.Folder(checkouts, sessions.Top(scope, session))
             ?? throw new CallFailed("This session has no working folder.");
         return new(session.SessionId, session.ParentSessionId, session.Agent, model, folder, session.Title ?? "", AccountContext(session.Agent));
     }
@@ -71,7 +73,10 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
         Recover(scope, commands, machine, nowMs);
     }
 
-    public void ProjectStart(IWriteScope scope, CommandContext context, StartSession command)
+    public void ProjectStart(IWriteScope scope, CommandContext context, StartSession command) =>
+        ProjectStart(scope, context, command, null);
+
+    private void ProjectStart(IWriteScope scope, CommandContext context, StartSession command, SessionCreationPreparation? preparation)
     {
         if (context.Actor.Kind == ActorKind.System && context.Actor.Id.StartsWith("machine:", StringComparison.Ordinal))
         {
@@ -87,6 +92,25 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
                 throw new CallFailed("A direct peer folder cannot override its repository.");
         }
         Project(scope, context.EntityId, command.RepoUrl);
+        // MCP starts project their chat row here; create already inserted it on this same writer.
+        var checkout = scope.QueryFirst("SELECT project_id,folder,branch FROM engine_session WHERE id=$id",
+            row => (Project: row.IsNull(0) ? null : row.Text(0), Folder: row.Text(1), Branch: row.IsNull(2) ? null : row.Text(2)),
+            new SqlArg("$id", context.EntityId));
+        if (checkout.Project is not null)
+        {
+            if (preparation is not null)
+                ValidatePreparation(scope, context.EntityId, checkout.Project, command.ParentId, checkout.Folder, preparation);
+            else
+            {
+                var project = projectRoots?.Find(scope, checkout.Project);
+                if (project is null || project.Removed || project.Machine != "local")
+                    throw new CallFailed("The selected project is unavailable on this owner.", "wrong_machine");
+                if (projectUse is null) throw new CallFailed("Project usage is unavailable.", "configuration_unavailable");
+                projectUse.Touched(scope, checkout.Project);
+            }
+            sessions.Assigned(scope, context.EntityId, checkout.Project);
+            sessions.CheckoutChanged(scope, context.EntityId, checkout.Folder, checkout.Branch);
+        }
         helperCards?.Observe(scope, context.EntityId);
     }
 
@@ -121,8 +145,45 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
         sessions.BindEngine(this);
     }
 
-    public void Started(IWriteScope scope, SessionInfo session, string? initiatingSessionId)
+    public void Started(IWriteScope scope, SessionInfo session, string? initiatingSessionId,
+        string? projectId = null, CheckoutIntent? checkout = null, SessionCreationPreparation? preparation = null)
     {
+        if (session.WorkingFolder is not null)
+        {
+            SessionLocation? parentLocation = null;
+            if (session.ParentSessionId is not null)
+            {
+                parentLocation = Location(scope, session.ParentSessionId);
+                if (parentLocation is null || !parentLocation.Ready)
+                    throw new CallFailed("The parent's checkout is not ready.", "checkout_not_ready");
+            }
+            var folder = parentLocation?.Folder ?? preparation?.CanonicalRoot ?? BareSessionFolder.ForHome(owningHome);
+            if (preparation is not null)
+                ValidatePreparation(scope, session.SessionId, projectId, session.ParentSessionId, session.WorkingFolder, preparation);
+            if (projectId is not null && preparation is null)
+            {
+                var project = projectRoots?.Find(scope, projectId);
+                if (project is null || project.Removed || project.Machine != "local")
+                    throw new CallFailed("The selected project is unavailable on this owner.", "wrong_machine");
+                if (parentLocation is null) folder = project.RootPath;
+            }
+            if (string.IsNullOrWhiteSpace(folder) || !Path.IsPathFullyQualified(folder) || session.WorkingFolder != folder)
+                throw new CallFailed("The owning folder is unavailable.", "configuration_unavailable");
+            var config = sessions.ConfigForEngineInitialization(scope, session.SessionId);
+            var captured = config.ConfigTarget is null ? null
+                : ((AgentDescriptor Descriptor, IReadOnlyDictionary<string, string> Environment, string TargetId)?)
+                    ConfigTargetIdentity.Capture(launcher, session.Agent, config.ConfigTarget);
+            if (projectId is null && parentLocation is null && preparation is null)
+                Directory.CreateDirectory(folder);
+            launcher.ValidateFolder(folder);
+            if (captured is { } target)
+                ConfigTargetIdentity.Validate(launcher, target.Descriptor, target.Environment);
+            Apply(scope, session.SessionId, 0, 0, initiatingSessionId is null
+                ? new(ActorKind.Window, "owner") : new(ActorKind.Session, initiatingSessionId),
+                new StartSession(session.Agent, Metadata(scope, session, folder).Model, folder, session.Title ?? "", session.ParentSessionId,
+                    null, null, ManagedCheckout: false, ProjectId: projectId, Checkout: checkout), preparation: preparation);
+            return;
+        }
         var metadata = Metadata(scope, session);
         Apply(scope, session.SessionId, 0, 0, initiatingSessionId is null ? new(ActorKind.Window, "owner") : new(ActorKind.Session, initiatingSessionId),
             new StartSession(metadata.Provider, metadata.Model, metadata.Folder, metadata.Title, metadata.ParentId, null, null, session.RepoUrl, true));
@@ -141,6 +202,19 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
         if (row is null || row.Title == actualStoredTitle) return;
         Apply(scope, sessionId, row.Version, row.Epoch, new(ActorKind.System, "session.titled"), new ReportSessionTitle(actualStoredTitle), exactTitleUtf8);
         helperCards?.Observe(scope, sessionId);
+    }
+
+    private void ValidatePreparation(IReadScope scope, string sessionId, string? projectId, string? parentId,
+        string folder, SessionCreationPreparation preparation)
+    {
+        var client = scope.QueryFirst("SELECT client_id FROM session_info WHERE session_id=$id", row => row.Text(0), new SqlArg("$id", sessionId));
+        if (preparation.TargetMachine != _machine || string.IsNullOrWhiteSpace(preparation.FromMachine) ||
+            preparation.FromMachine == preparation.TargetMachine || preparation.ClientId != client ||
+            preparation.ProjectId != projectId || string.IsNullOrWhiteSpace(projectId) ||
+            !Path.IsPathFullyQualified(preparation.CanonicalRoot))
+            throw new CallFailed("The prepared project owner changed.", "source_changed");
+        var expected = parentId is null ? preparation.CanonicalRoot : Location(scope, parentId)?.Folder;
+        if (expected != folder) throw new CallFailed("The prepared project folder changed.", "source_changed");
     }
 
     private sealed record OwningSession(long Version, long Epoch, string? Model, string Title);
@@ -168,11 +242,12 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
     public string? Folder(string sessionId) => Location(sessionId)?.Folder;
     public string? Folder(IReadScope scope, string sessionId) => Location(scope, sessionId)?.Folder;
 
-    private void Apply(IWriteScope scope, string id, long version, long epoch, EngineActor actor, EngineCommand command, ReadOnlyMemory<byte>? exactTitleUtf8 = null)
+    private void Apply(IWriteScope scope, string id, long version, long epoch, EngineActor actor, EngineCommand command, ReadOnlyMemory<byte>? exactTitleUtf8 = null, SessionCreationPreparation? preparation = null)
     {
         var context = new CommandContext(Guid.NewGuid(), _machine!, actor, id, version, epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
         var result = command is StartSession or ReportSessionTitle
-            ? _commands!.ApplyPreparedSessionTitle(scope, context, PreparedSessionTitleCommand.Prepare((SessionCommand)command, exactTitleUtf8))
+            ? _commands!.ApplyPreparedSessionTitle(scope, context, PreparedSessionTitleCommand.Prepare((SessionCommand)command, exactTitleUtf8),
+                projectStart: preparation is null ? null : (writer, startContext, start) => ProjectStart(writer, startContext, start, preparation))
             : _commands!.Apply(scope, context, command);
         if (!result.Applied) throw new CallFailed($"The session operation was refused: {result.Error}.");
     }

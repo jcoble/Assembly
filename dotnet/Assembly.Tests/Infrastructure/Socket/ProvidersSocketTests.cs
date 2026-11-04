@@ -65,6 +65,7 @@ public sealed class ProvidersSocketTests : IAsyncLifetime
         {
             var answer = (await Call(socket, "challenge", new { operationId = "op" })).GetProperty("result");
             Assert.Equal(url, answer.GetProperty("link").GetString());
+            Assert.True(answer.GetProperty("ready").GetBoolean());
             Assert.False(consent.IsCompleted);
             Assert.Equal(_board.Current("op")!.Generation, answer.GetProperty("generation").GetInt64());
             Assert.DoesNotContain(_log.Entries, entry => entry.Message.Contains("URL_CANARY", StringComparison.Ordinal));
@@ -100,6 +101,8 @@ public sealed class ProvidersSocketTests : IAsyncLifetime
         using var socket = await Open();
         var input = new Input();
         var old = _board.Post("op", null, null, null, true, "terminal", input);
+        AssertError(await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = 0, code = "not delivered" }), "stale_challenge");
+        Assert.Empty(input.Values);
         var current = _board.Post("op", null, null, null, true, "terminal", input);
         AssertError(await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = old.Generation, code = "old" }), "stale_challenge");
         Assert.Empty(input.Values);

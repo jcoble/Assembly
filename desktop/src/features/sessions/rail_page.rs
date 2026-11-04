@@ -77,6 +77,9 @@ pub struct RailEntry {
     pub last_seen_ms: Option<i64>,
     /// Recorded candidate identity only; opening still resolves and validates the current route.
     pub source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    /// Native subagents are recorded on this session. Their detail is only read once the row opens.
+    #[serde(default)]
+    pub native_activity: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -130,6 +133,12 @@ pub struct Rail {
 }
 
 impl Rail {
+    /// The read that's out, for a test to answer.
+    #[cfg(test)]
+    pub fn reading_id(&self) -> Option<u64> {
+        self.reading.map(|(id, _)| id)
+    }
+
     /// A change came: read now, or once the read that's out answers.
     pub fn changed(&mut self) -> Option<Request> {
         if self.reading.is_some() {

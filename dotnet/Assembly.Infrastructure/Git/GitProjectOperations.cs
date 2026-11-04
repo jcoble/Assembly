@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Projects;
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
@@ -9,27 +10,35 @@ namespace Assembly.Infrastructure.Git;
 
 /// <summary>The fixed project and session producers share one host-owned operation lifetime.</summary>
 internal sealed class GitProjectOperations(GitOperations operations, ProjectFolderCreation folders,
-    GitSessionOperations sessionOperations, SourceControlFeature routes, NewProjectCoordinator? projects = null) : IFeature
+    GitSessionOperations sessionOperations, SourceControlFeature routes, ProjectPullRequestActions projectPr, NewProjectCoordinator? projects = null) : IFeature
 {
     private static readonly JsonElement Empty = JsonDocument.Parse("{}").RootElement.Clone();
     public void Register(ICallRegistry calls)
     {
+        projectPr.Register(calls);
         calls = routes.Route(calls);
         calls.Read("git", "operation_host", GitOperationsJson.Default.GitOperationHostArgs, GitOperationsJson.Default.GitOperationHost,
-            (args, call) =>
+            async (args, call) =>
             {
+                if (args.ProjectId is not null) return await projectPr.HostAsync(args, call);
                 Admit(args.Action, args.Session, args.Machine, call);
-                return Task.FromResult(new GitOperationHost(operations.InstanceId, operations.Machine));
+                return new GitOperationHost(operations.InstanceId, operations.Machine);
             });
         calls.Read("git", "operation", GitOperationsJson.Default.GitOperationArgs, GitOperationsJson.Default.GitOperationStatus,
-            (args, call) =>
+            async (args, call) =>
             {
+                if (args.ProjectId is not null) return await projectPr.StatusAsync(args, call);
                 Admit(args.Action, args.Session, args.Machine, call); operations.RequireScope(args);
-                return Task.FromResult(operations.Status(args.OperationId));
+                return operations.Status(args.OperationId);
             });
         calls.Write("git", "start", GitOperationsJson.Default.GitOperationStart, GitOperationsJson.Default.GitOperationStatus,
-            (args, call) =>
+            async (args, call) =>
             {
+                if (args.ProjectId is not null)
+                {
+                    var projectAccepted = await projectPr.StartAsync(args, call);
+                    return _ => projectAccepted;
+                }
                 Admit(args.Action, args.Session, args.Machine, call);
                 GitOperationStatus accepted;
                 if (args.Action == "createProject")
@@ -45,11 +54,12 @@ internal sealed class GitProjectOperations(GitOperations operations, ProjectFold
                         await folders.CreateAsync(request, args.OperationId, ct), ProjectsJson.Default.FolderInspection));
                 }
                 else accepted = operations.Start(args, sessionOperations.Prepare(args));
-                return Task.FromResult<Func<IWriteScope, GitOperationStatus>>(_ => accepted);
+                return _ => accepted;
             });
         calls.Write("git", "cancel", GitOperationsJson.Default.GitOperationArgs, GitOperationsJson.Default.JsonElement,
             async (args, call) =>
             {
+                if (args.ProjectId is not null) { var result = await projectPr.StopAsync(args, call, false); return _ => result; }
                 Admit(args.Action, args.Session, args.Machine, call); operations.RequireScope(args);
                 if (args.Action is "createProject" or "prepareProjectFolder")
                     await operations.CancelProjectAsync(args.OperationId, call.Cancellation);
@@ -57,11 +67,12 @@ internal sealed class GitProjectOperations(GitOperations operations, ProjectFold
                 return _ => Empty;
             });
         calls.Write("git", "release", GitOperationsJson.Default.GitOperationArgs, GitOperationsJson.Default.JsonElement,
-            (args, call) =>
+            async (args, call) =>
             {
+                if (args.ProjectId is not null) { var result = await projectPr.StopAsync(args, call, true); return _ => result; }
                 Admit(args.Action, args.Session, args.Machine, call); operations.RequireScope(args);
                 operations.Release(args.OperationId);
-                return Task.FromResult<Func<IWriteScope, JsonElement>>(_ => Empty);
+                return _ => Empty;
             });
         calls.Topic("gitOperation", GitOperationsJson.Default.GitOperationStatus, status => operations.Key(status.OperationId),
             (key, call) =>

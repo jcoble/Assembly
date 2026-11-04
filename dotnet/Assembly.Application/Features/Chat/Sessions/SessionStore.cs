@@ -333,7 +333,7 @@ public sealed partial class SessionStore
                 Text(17), Long(18), ProviderGlyph.Of(row.Text(5)), (int)row.Long(19), (int)row.Long(20),
                 row.Text(21), Text(22), Text(26), (int)row.Long(35), Long(27), Long(28), Long(29),
                 Text(30), Text(31), Text(32), Text(33), Long(34),
-                Text(23) is { } machine ? new(machine, row.Long(24), Text(25)) : null),
+                Text(23) is { } machine ? new(machine, row.Long(24), Text(25)) : null, row.Long(36) == 1),
         };
     }
 
@@ -382,17 +382,18 @@ public sealed partial class SessionStore
     public void ApplyRemote(SessionItem item) => ApplyRemoteCore(item, null);
 
     /// <summary>Applies only to a row still copied from the expected machine when its writer runs.</summary>
-    public bool ApplyRemote(SessionItem item, string expectedCopiedMachine)
+    public bool ApplyRemote(SessionItem item, string expectedCopiedMachine, Action<IWriteScope>? validate = null)
     {
         ArgumentNullException.ThrowIfNull(expectedCopiedMachine);
-        return ApplyRemoteCore(item, expectedCopiedMachine);
+        return ApplyRemoteCore(item, expectedCopiedMachine, validate);
     }
 
-    private bool ApplyRemoteCore(SessionItem item, string? expectedCopiedMachine)
+    private bool ApplyRemoteCore(SessionItem item, string? expectedCopiedMachine, Action<IWriteScope>? validate = null)
     {
         var exactTitle = item.Title is null ? null : TitleUtf8.GetBytes(item.Title);
         return _writer.Write("sessions.remote", scope =>
         {
+            validate?.Invoke(scope);
             if (expectedCopiedMachine is not null && scope.QueryFirst(
                     "SELECT COUNT(*) FROM session_info WHERE session_id=$id AND machine=$machine",
                     row => row.Long(0), new SqlArg("$id", item.SessionId), new SqlArg("$machine", expectedCopiedMachine)) == 0)
@@ -411,6 +412,7 @@ public sealed partial class SessionStore
                 """, new SqlArg("$id", item.SessionId), new SqlArg("$title", exactTitle),
                 new SqlArg("$source", item.TitleSource ?? "prompt"), new SqlArg("$at", item.UpdatedAt),
                 new SqlArg("$project", item.ProjectId), new SqlArg("$checkout", item.CheckoutRoot), new SqlArg("$branch", item.Branch));
+            validate?.Invoke(scope);
             if (Get(scope, item.SessionId) is { } session)
             {
                 // Capture the publication now, so serialization can still fail before commit. A concurrent local
@@ -420,6 +422,7 @@ public sealed partial class SessionStore
                 Publish(scope, session, SessionItem.From(session, summary, Root(scope, session)));
             }
             if (_summaries is { } summaries) scope.AfterCommit(() => summaries.ApplyRemote(item));
+            validate?.Invoke(scope);
             return true;
         });
     }

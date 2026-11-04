@@ -16,7 +16,7 @@ use serde_json::json;
 
 use super::entry::{ContentMatch, NameMatch, SearchResult};
 use super::file_view::FileView;
-use super::files_pane::{TREE_LINE, TREE_TEXT};
+use super::files_pane::TREE_LINE;
 use crate::core::intents::reveal_file_folder::RevealFileFolder;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
@@ -267,7 +267,7 @@ impl SearchPane {
             .overflow_hidden()
             .when(picked, |row| row.bg(secondary))
             .when(!picked, |row| row.hover(|row| row.bg(accent)))
-            .child(div().flex_none().text_size(TREE_TEXT).child(format!(
+            .child(div().flex_none().text_role(TextRole::Title, cx).child(format!(
                 "{}{}",
                 found.name,
                 if found.is_directory { "/" } else { "" }

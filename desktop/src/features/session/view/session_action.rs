@@ -29,6 +29,12 @@ pub enum SessionAction {
         value: String,
         many: bool,
     },
+    /// Turn a check box in an open question's form on or off.
+    Flag {
+        ask_id: String,
+        field: String,
+        on: bool,
+    },
     /// Send an open question's form as it's filled in.
     SubmitAsk { ask_id: String },
     /// `send/answer`: the option's `{ optionId }` or the form's `{ action, content }`.

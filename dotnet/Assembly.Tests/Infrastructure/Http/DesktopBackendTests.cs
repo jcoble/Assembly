@@ -360,10 +360,10 @@ public sealed class DesktopBackendTests : IAsyncLifetime
 
         Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"unknown session"}""", await ReadTextAsync(socket));
     }
-
     private static async Task<string> CreateSocketSessionAsync(WebSocket socket)
     {
-        await SendTextAsync(socket, """{"t":"call","id":1,"feature":"sessions","method":"create","args":{"agent":"claude","repoUrl":"https://github.com/o/r"}}""");
+        var args = JsonSerializer.Serialize(new { agent = "claude", clientId = Guid.NewGuid().ToString("N") });
+        await SendTextAsync(socket, $$"""{"t":"call","id":1,"feature":"sessions","method":"create","args":{{args}}}""");
         using var answer = JsonDocument.Parse(await ReadTextAsync(socket));
         Assert.Equal("result", answer.RootElement.GetProperty("t").GetString());
         return answer.RootElement.GetProperty("result").GetProperty("sessionId").GetString()!;

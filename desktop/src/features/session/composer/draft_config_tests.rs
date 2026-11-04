@@ -148,3 +148,14 @@ fn draft_menus_show_validated_remembered_and_explicit_picks_and_actual_model_def
         json!({"model":"A","effort":"high"})
     );
 }
+#[test]
+fn an_acp_2_catalogue_with_config_ids_and_an_on_off_option_gives_a_ready_draft() {
+    let option = json!({"configId":"model","name":"Model","category":"model","type":"select","currentValue":"A",
+      "options":[{"value":"A","name":"A"}]});
+    let catalogue: Catalogue = serde_json::from_value(json!({"options":[option],"choices":{},"commands":null,
+      "modelOptions":{"A":[option, {"configId":"fast","name":"Fast","type":"boolean","currentValue":false}]}}))
+    .unwrap();
+    let draft = DraftConfig::new(catalogue, None).unwrap();
+    assert!(draft.ready());
+    assert_eq!(draft.config.choices["model"], "A");
+}

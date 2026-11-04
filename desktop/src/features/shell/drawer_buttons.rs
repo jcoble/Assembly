@@ -1,5 +1,6 @@
-//! The drawer's compact tool capsule, overflow menu and close button. The dock remains the authority for the shown
-//! pane and its saved layout; selecting an overflow tool adds just its icon to the primary capsule.
+//! The drawer's tool capsule, overflow menu and close button, as RightPanelTabs.svelte drew them: the permanent tools,
+//! then the one overflow tool last picked, which the next pick replaces. Only the close button shuts the drawer. The dock
+//! remains the authority for the shown pane and its saved layout.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -14,26 +15,33 @@ use super::default_layout::{
     AGENTS, CONTEXT, FILES, HISTORY, RUN, SOURCE_CONTROL, TASKS, TERMINAL, WORKTREES,
 };
 
-const SIZE: Pixels = px(30.);
+const PILL_W: Pixels = px(28.);
+const PILL_H: Pixels = px(24.);
+const CONTROL: Pixels = px(28.);
+const GLYPH: Pixels = px(14.);
+
+/// The overflow tool in the capsule. Memory only, as the old app kept it: after a relaunch it follows the shown pane.
+#[derive(Default)]
+struct LastExtra(Option<&'static str>);
+impl Global for LastExtra {}
 
 /// What pressing a drawer pane's button does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Press {
     /// The drawer is shut: open it on this pane.
     Open,
-    /// The drawer shows another pane: show this one.
+    /// The drawer is open: show this pane, which leaves it open even if it's the one shown.
     Show,
-    /// The drawer shows this pane: close it.
-    Close,
 }
 
-/// What a press does, from whether the drawer is open and the pane is the one it shows.
-pub fn press(open: bool, shown: bool) -> Press {
-    match (open, shown) {
-        (false, _) => Press::Open,
-        (true, true) => Press::Close,
-        (true, false) => Press::Show,
-    }
+/// What a press does, from whether the drawer is open.
+pub fn press(open: bool) -> Press {
+    if open { Press::Show } else { Press::Open }
+}
+
+/// The overflow tool the capsule keeps: the one the drawer shows, or else the last one it showed.
+pub fn extra_after(last: Option<&'static str>, shown: Option<&'static str>) -> Option<&'static str> {
+    shown.filter(|name| !primary(name)).or(last)
 }
 
 #[derive(IntoElement)]
@@ -61,6 +69,12 @@ impl RenderOnce for DrawerButtons {
                 }
             });
         }
+        let shown = panes.iter().find(|pane| pane.2).map(|pane| pane.1);
+        let last = cx.default_global::<LastExtra>().0;
+        let extra = extra_after(last, shown);
+        if extra != last {
+            cx.set_global(LastExtra(extra));
+        }
         let theme = cx.theme();
         let (lit, color, foreground, capsule) = (
             theme.secondary_hover,
@@ -72,7 +86,8 @@ impl RenderOnce for DrawerButtons {
             div()
                 .id(name)
                 .debug_selector(move || format!("drawer-button-{name}"))
-                .size(SIZE)
+                .w(PILL_W)
+                .h(PILL_H)
                 .flex()
                 .items_center()
                 .justify_center()
@@ -82,7 +97,7 @@ impl RenderOnce for DrawerButtons {
                 .when(on, |button| button.bg(lit).text_color(foreground))
                 .hover(|button| button.bg(lit))
                 .tooltip(move |window, cx| Tooltip::new(name).build(window, cx))
-                .child(Icon::new(glyph).size(px(17.)))
+                .child(Icon::new(glyph).size(GLYPH))
         };
         let overflow: Vec<_> = panes
             .iter()
@@ -91,39 +106,36 @@ impl RenderOnce for DrawerButtons {
             .collect();
         let panes = panes
             .into_iter()
-            .filter(|(_, name, shown)| primary(name) || *shown)
+            .filter(|(_, name, _)| primary(name) || extra == Some(*name))
             .map(|(id, name, shown)| {
                 let dock = self.dock.clone();
                 button(name, icon(name), open && shown).on_click(move |_, window, cx| {
                     cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
-                    dock.update(cx, |dock, cx| match press(open, shown) {
+                    dock.update(cx, |dock, cx| match press(open) {
                         Press::Open => {
                             dock.select_panel(id, window, cx);
                             dock.toggle_dock(DockPlacement::Right, window, cx);
                         }
                         Press::Show => dock.select_panel(id, window, cx),
-                        Press::Close => dock.toggle_dock(DockPlacement::Right, window, cx),
                     })
                 })
             });
         let dock = self.dock.clone();
         let menu = Button::new("drawer-overflow")
             .ghost()
-            .icon(Icon::new(IconName::Ellipsis).size(px(18.)))
-            .w(SIZE)
-            .h(SIZE)
-            .rounded(px(15.))
-            .tooltip("More tools")
+            .icon(Icon::new(IconName::Ellipsis).size(GLYPH))
+            .w(CONTROL)
+            .h(CONTROL)
+            .tooltip("More panels")
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                 let menu =
                     overflow
                         .iter()
-                        .fold(menu.min_w(px(190.)), |menu, &(id, name, shown)| {
+                        .fold(menu.min_w(px(176.)), |menu, &(id, name, _)| {
                             let dock = dock.clone();
                             menu.item(
                                 PopupMenuItem::new(name)
                                     .icon(icon(name))
-                                    .checked(open && shown)
                                     .on_click(move |_, window, cx| {
                     cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
                                         dock.update(cx, |dock, cx| {
@@ -146,14 +158,14 @@ impl RenderOnce for DrawerButtons {
                 )
             });
         let dock = self.dock.clone();
-        let close = button("Close tools", IconName::X, false).on_click(move |_, window, cx| {
+        let close = button("Close side panel", IconName::X, false).w(CONTROL).h(CONTROL).rounded_md().on_click(move |_, window, cx| {
                     cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
             dock.update(cx, |dock, cx| {
                 dock.toggle_dock(DockPlacement::Right, window, cx)
             })
         });
         h_flex()
-            .h(px(48.))
+            .h(px(44.))
             .px_2()
             .gap_1()
             .child(
@@ -172,10 +184,7 @@ impl RenderOnce for DrawerButtons {
 }
 
 fn primary(name: &str) -> bool {
-    matches!(
-        name,
-        SOURCE_CONTROL | AGENTS | TASKS | WORKTREES | RUN | CONTEXT
-    )
+    matches!(name, SOURCE_CONTROL | AGENTS | TASKS)
 }
 
 /// The chrome keeps a single, discoverable control while the drawer is closed.

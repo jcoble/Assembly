@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Projects;
 using Assembly.Application.Common.Calls;
 
 namespace Assembly.Application.Features.Projects;

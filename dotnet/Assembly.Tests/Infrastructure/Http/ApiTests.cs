@@ -14,6 +14,8 @@ using Assembly.Infrastructure.Http;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Machines;
+using Assembly.Application.Common.Calls;
+using Assembly.Infrastructure.Engine.Sessions;
 using Assembly.Infrastructure.Machines;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Application.Common;
@@ -139,7 +141,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         var limits = new SessionLimits(() => 5, () => 10);
         _workQueue = new BackgroundWork(TimeProvider.System, TextWriter.Null);
         _engine = EngineRuntime.Start(_database, _topics, TimeProvider.System, limits,
-            cutover: new SessionCutover(_database, _sessionStore, _launcher, "checkouts", TimeProvider.System),
+            cutover: new SessionCutover(_database, _sessionStore, _launcher, "checkouts", TimeProvider.System, owningHome: _work),
             effectsFactory: runtime =>
             {
                 _sessions = new SessionRegistry(_hub, _sessionStore, _launcher, TimeProvider.System, TextWriter.Null, _workQueue,
@@ -151,7 +153,8 @@ public sealed partial class ApiTests : IAsyncLifetime
         var machines = new MachineSet(new LocalMachine(_hub, _sessionStore, _sessions, attachments));
         _machinesFeature = new MachinesFeature(machines, new MachineStatus(_topics, []), () => { }, TimeProvider.System);
         _app = ApiServer.Build(new ApiServices(_hub, _sessionStore, machines, attachments, Token,
-            Writer: _database.Writer, Topics: _topics, Features: [new SessionsFeature(_sessionStore, machines),
+            Writer: _database.Writer, Topics: _topics, Features: [new SessionsFeature(_sessionStore, machines, new SessionRowSources(_database, _sessionStore, machines),
+                    owningMachine: _engine.Machine, owningHome: _work),
                 new SendFeature(_sessionStore, machines, _hub, new EngineDoor(_engine, _sessionStore, machines, attachments, TimeProvider.System, _answers)), new RowsFeature(_hub, store, _sessionStore, machines),
                 new ConfigFeature(_sessionStore, machines), _machinesFeature,
                 new AttachmentsFeature(_sessionStore, machines, Path.Combine(_work, "staging"))]), port: 0, out _);
@@ -263,7 +266,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         var agents = (await ResultAsync("machines", "agents", "{}")).GetProperty("agents").EnumerateArray()
             .Select(agent => (agent.GetProperty("id").GetString(), agent.GetProperty("name").GetString()));
         Assert.Equal([("claude", "Claude Code"), ("codex", "Codex")], agents);
-        var created = await ResultAsync("sessions", "create", """{"agent":"codex","repoUrl":"https://github.com/o/r"}""");
+        var created = await ResultAsync("sessions", "create", CreateArgs("codex"));
         var sessionId = created.GetProperty("sessionId").GetString()!;
         Assert.Equal("codex", (await SessionAsync(sessionId)).GetProperty("agent").GetString());
         var clientId = await QueueAsync(sessionId);
@@ -296,12 +299,12 @@ public sealed partial class ApiTests : IAsyncLifetime
         var first = await CreateSessionAsync();
         _time.Advance(TimeSpan.FromMilliseconds(10));
         var second = await CreateSessionAsync();
-        Assert.Equal("failed", (await RequestAsync("sessions", "create", """{"agent":"gemini","repoUrl":"x"}""")).GetProperty("code").GetString());
+        Assert.Equal("bad_args", (await RequestAsync("sessions", "create", CreateArgs("gemini"))).GetProperty("code").GetString());
         var list = await ResultAsync("sessions", "page", "{}");
         var sessions = list.GetProperty("sessions").EnumerateArray().ToList();
         Assert.Equal([second, first], sessions.Select(t => t.GetProperty("sessionId").GetString()));
         Assert.Equal("claude", sessions[0].GetProperty("agent").GetString());
-        Assert.Equal("https://github.com/o/r", sessions[0].GetProperty("repoUrl").GetString());
+        Assert.Equal(_work, sessions[0].GetProperty("repoUrl").GetString());
         Assert.Equal(JsonValueKind.Null, sessions[0].GetProperty("title").ValueKind);
         Assert.Equal(JsonValueKind.Null, sessions[0].GetProperty("machine").ValueKind);
         Assert.True(sessions[0].GetProperty("updatedAt").GetInt64() > 0);
@@ -331,7 +334,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         Assert.Equal(Environment.MachineName, welcome.GetProperty("machine").GetString());
         var machines = (await TopicAsync("machines")).GetProperty("items").EnumerateArray().ToList();
         Assert.Equal("local", Assert.Single(machines).GetProperty("key").GetString());
-        Assert.Equal("failed", (await RequestAsync("sessions", "create", """{"agent":"claude","repoUrl":"r","machine":"nope"}""")).GetProperty("code").GetString());
+        Assert.Equal("source_changed", (await RequestAsync("sessions", "create", CreateArgs("claude", "nope"))).GetProperty("code").GetString());
     }
 
     [Fact]
@@ -367,7 +370,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.InsertAsync(prompt, "tool-inserted");
-        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","title":"Terminal","kind":"execute","status":"pending","rawInput":{"command":"ls"}}""");
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","title":"Terminal","kind":"execute","status":"pending","rawInput":{"command":"ls"},"_meta":{"claudeCode":{"toolName":"Bash"}}}""");
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","rawOutput":"a.txt"}""");
         await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", prompt.GetProperty("params").GetProperty("sessionId").GetString()!);
         using var socket = await OpenRowsAsync(_base, Token, sessionId, after: 0);
@@ -376,7 +379,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         Assert.Equal("ls", detail.GetProperty("summary").GetString());
         Assert.Equal("""{"command":"ls"}""", detail.GetProperty("input").GetString());
         Assert.Equal("a.txt", detail.GetProperty("output").GetString());
-        Assert.Equal(JsonValueKind.Null, detail.GetProperty("diff").ValueKind);
+        Assert.False(detail.TryGetProperty("diff", out _));
         Assert.Equal("failed", (await RequestAsync("rows", "tool", JsonSerializer.Serialize(new { session = sessionId, item = "nope" }), bulk: true)).GetProperty("code").GetString());
     }
 
@@ -425,55 +428,6 @@ public sealed partial class ApiTests : IAsyncLifetime
         Assert.Equal("failed", (await RequestAsync("attachments", "read", JsonSerializer.Serialize(new { session, name = Guid.NewGuid() + ".png" }), true)).GetProperty("code").GetString());
     }
 
-    [Fact]
-    public async Task Composer_socket_discovery_returns_actual_metadata_without_a_session()
-    {
-        var targetId = _sessions.ConfigTargets[0].TargetId;
-        var pending = ResultAsync("config", "discover", JsonSerializer.Serialize(new { agent = "claude", targetId, cwd = _work }));
-        var agent = await _launcher.NextAsync();
-        var opened = await agent.StartAsync(configOptions: "[]");
-        Assert.Equal(_work, opened.GetProperty("params").GetProperty("cwd").GetString());
-        var result = await pending.WaitAsync(Wait);
-        Assert.Equal(JsonValueKind.Array, result.GetProperty("options").ValueKind);
-        Assert.Equal(JsonValueKind.Object, result.GetProperty("modelOptions").ValueKind);
-        Assert.True(agent.Disposed);
-        Assert.Empty(_sessionStore.List(null, 50, default).Sessions);
-    }
-
-    [Fact]
-    public async Task Composer_socket_warm_resumes_the_saved_native_identity_without_a_prompt()
-    {
-        var session = _sessionStore.Create("claude", "repo", workingFolder: _work);
-        _sessionStore.SetAcpSession(session.SessionId, "phone-restored");
-        var targetId = _sessions.ConfigTargets[0].TargetId;
-        var pending = ResultAsync("config", "warm", JsonSerializer.Serialize(new { session = session.SessionId, targetId }));
-        var agent = await _launcher.NextAsync();
-        var opened = await agent.StartAsync("phone-restored", configOptions: SessionWarmConfigTests.Options);
-        Assert.Equal("session/resume", opened.GetProperty("method").GetString());
-        Assert.Equal("phone-restored", opened.GetProperty("params").GetProperty("sessionId").GetString());
-        Assert.Equal(_work, opened.GetProperty("params").GetProperty("cwd").GetString());
-        var result = await pending.WaitAsync(Wait);
-        Assert.Equal("b", result.GetProperty("options")[0].GetProperty("currentValue").GetString());
-        Assert.Equal("phone-restored", _sessionStore.Get(session.SessionId)!.AcpSessionId);
-        Assert.True(agent.Disposed);
-    }
-
-    [Fact]
-    public async Task Composer_socket_cancel_ends_its_exact_private_discovery_link()
-    {
-        using var socket = await OpenOwnerSocketAsync(_base, Token);
-        var targetId = _sessions.ConfigTargets[0].TargetId;
-        var pending = SocketRequestAsync(socket, 1, "config", "discover", JsonSerializer.Serialize(new { agent = "claude", targetId, cwd = _work }));
-        var agent = await _launcher.NextAsync();
-        await agent.ReadAsync("initialize");
-        await SendTextAsync(socket, """{"t":"cancel","id":1}""");
-        Assert.Equal("cancelled", (await pending).GetProperty("code").GetString());
-        await agent.Exited.WaitAsync(Wait);
-        Assert.True(agent.Disposed);
-        Assert.Empty(_sessionStore.List(null, 50, default).Sessions);
-    }
-    private async Task<string> CreateSessionAsync() =>
-        (await ResultAsync("sessions", "create", """{"agent":"claude","repoUrl":"https://github.com/o/r"}""")).GetProperty("sessionId").GetString()!;
     private async Task<JsonElement> RequestAsync(string feature, string method, string args, bool bulk = false)
     {
         using var socket = await OpenOwnerSocketAsync(_base, Token, bulk ? "/socket/bulk" : "/socket");
@@ -483,7 +437,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         Result(await RequestAsync(feature, method, args, bulk));
     internal static JsonElement Result(JsonElement frame)
     {
-        Assert.Equal("result", frame.GetProperty("t").GetString());
+        Assert.True(frame.GetProperty("t").GetString() == "result", frame.GetRawText());
         return frame.GetProperty("result").Clone();
     }
     private async Task<JsonElement> TopicAsync(string topic, string? key = null)

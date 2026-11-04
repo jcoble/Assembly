@@ -450,8 +450,9 @@ public static class NeedTransitions
             foreach (var released in MessageRelease.Next(s, c, need.SessionId, effects))
             {
                 // An inserted answer may be released in this transaction; publish its final revision once.
+                var created = events.Any(e => e.EntityKind == "message" && e.EntityId == released.EntityId && e.MessageCreated);
                 events.RemoveAll(e => e.EntityKind == "message" && e.EntityId == released.EntityId);
-                events.Add(released);
+                events.Add(released with { MessageCreated = created });
             }
         if (need.RunId is not null) events.AddRange(RunTransitions.Recompute(s, c, need.RunId));
         return EngineJournal.Commit(s, c, need.Version, c.Epoch, events, effects);

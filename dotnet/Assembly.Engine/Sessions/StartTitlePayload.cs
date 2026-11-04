@@ -7,7 +7,7 @@ namespace Assembly.Engine.Sessions;
 internal static class StartTitlePayload
 {
     internal static byte[] Facts(StartSession start) => JsonSerializer.SerializeToUtf8Bytes(
-        new StartTitleFacts(start.Provider, start.Model, start.Folder, start.ParentId, start.RunId, start.TaskUrl, start.RepoUrl, start.ManagedCheckout),
+        new StartTitleFacts(start.Provider, start.Model, start.Folder, start.ParentId, start.RunId, start.TaskUrl, start.RepoUrl, start.ManagedCheckout, start.ProjectId, start.Checkout),
         StartTitleJson.Default.StartTitleFacts);
 
     internal static StartTitleBeginArgs Freeze(StartTitleBeginArgs args)
@@ -37,7 +37,7 @@ internal static class StartTitlePayload
         if (decoded is null || !facts.AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(decoded, StartTitleJson.Default.StartTitleFacts)))
             throw new ArgumentException("bad_parts");
         var command = new StartSession(decoded.Provider, decoded.Model, decoded.Folder, RelayHash.Utf8.GetString(title),
-            decoded.ParentId, decoded.RunId, decoded.TaskUrl, decoded.RepoUrl, decoded.ManagedCheckout);
+            decoded.ParentId, decoded.RunId, decoded.TaskUrl, decoded.RepoUrl, decoded.ManagedCheckout, decoded.ProjectId, decoded.Checkout);
         var prepared = EngineCommands.PrepareSessionTitle(command);
         if (prepared.CanonicalJournal != MachineStartCanonical.Json(frozen.Start.Canonical)) throw new ArgumentException("bad_parts");
         return prepared;

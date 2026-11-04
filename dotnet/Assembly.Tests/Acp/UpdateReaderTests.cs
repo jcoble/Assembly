@@ -13,6 +13,31 @@ public sealed class UpdateReaderTests
     private static SessionNotification Update(string json) => new("s", JsonDocument.Parse(json).RootElement.Clone());
 
     [Fact]
+    public void Context_usage_preserves_nullable_token_counts_from_the_same_typed_report()
+    {
+        var reader = new UpdateReader();
+        reader.Read(Update("""{"sessionUpdate":"state_update","state":"running"}"""));
+        var events = reader.Read(Update("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn","usage":{"inputTokens":123,"outputTokens":null,"used":800,"size":10000}}"""));
+        var report = Assert.Single(events.OfType<UsageReported>());
+        Assert.Equal(123, report.InputTokens); Assert.Null(report.OutputTokens);
+        Assert.Equal(800, report.Used); Assert.Equal(10000, report.Size);
+        var converter = new RowConverter(); converter.Apply(new TurnStarted(0, "run", "prompt"));
+        var context = Assert.Single(converter.Apply(report).Rows, row => row.Kind == RowKind.Context);
+        Assert.Equal(123, context.Payload.GetProperty("inputTokens").GetInt64());
+        Assert.False(context.Payload.TryGetProperty("outputTokens", out _));
+    }
+
+    [Fact]
+    public void Standalone_context_report_does_not_invent_token_breakdowns()
+    {
+        var report = Assert.IsType<UsageReported>(Assert.Single(new UpdateReader().Read(Update(
+            """{"used":14601,"size":475000,"sessionUpdate":"usage_update"}"""))));
+        Assert.Null(report.InputTokens); Assert.Null(report.OutputTokens);
+        Assert.Equal(14601, report.Used); Assert.Equal(475000, report.Size);
+    }
+
+
+    [Fact]
     public void Chunks_and_replacement_keep_one_message_with_the_replaced_text()
     {
         var reader = new UpdateReader(); var converter = new RowConverter();
@@ -224,9 +249,9 @@ public sealed class UpdateReaderTests
                 return change;
             }
             Apply("""{"sessionUpdate":"tool_call_update","toolCallId":"t","status":"in_progress"}""");
-            Apply("""{"sessionUpdate":"tool_call_content_chunk","toolCallId":"t","content":{"type":"diff","path":"a.txt","oldText":"old","newText":"new"}}""");
-            var both = Apply("""{"sessionUpdate":"tool_call_content_chunk","toolCallId":"t","content":{"type":"diff","path":"b.txt","oldText":"old","newText":"new"}}""");
-            Assert.Equal(new[] { "a.txt", "b.txt" }, both.Fields.Diffs!.Select(diff => diff.Path));
+            Apply("""{"sessionUpdate":"tool_call_content_chunk","toolCallId":"t","content":{"type":"diff","changes":[{"operation":"modify","path":"a.txt"}],"patch":{"format":"git_patch","text":"diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n"}}}""");
+            var both = Apply("""{"sessionUpdate":"tool_call_content_chunk","toolCallId":"t","content":{"type":"diff","changes":[{"operation":"modify","path":"b.txt"}],"patch":{"format":"git_patch","text":"diff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-old\n+new\n"}}}""");
+            Assert.Equal(new[] { "a.txt", "b.txt" }, both.Fields.Diffs!.SelectMany(diff => diff.Paths));
             var detail = store.ToolCall("s", "t")!;
             Assert.Contains("a.txt", detail.Diff);
             Assert.Contains("b.txt", detail.Diff);

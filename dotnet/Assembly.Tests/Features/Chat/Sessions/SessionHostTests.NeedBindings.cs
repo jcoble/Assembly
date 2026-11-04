@@ -13,7 +13,7 @@ public sealed partial class SessionHostTests
     public async Task Prepared_permission_retains_every_original_binding_field_and_only_exact_options_normalize()
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(_session.SessionId); host.Send("permission");
         var agent = await _launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt");
@@ -58,7 +58,7 @@ public sealed partial class SessionHostTests
     public async Task Numeric_and_string_RPC_ids_and_reused_numeric_id_remain_bound_to_their_original_chat_asks()
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(_session.SessionId); host.Send("concurrent asks");
         var agent = await _launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt");
@@ -89,7 +89,7 @@ public sealed partial class SessionHostTests
     public async Task Bound_terminal_cancellation_ends_only_the_original_request_with_actual_cancel_response(string kind)
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(_session.SessionId); host.Send("cancel one ask");
         var agent = await _launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt");

@@ -24,8 +24,6 @@ use crate::core::socket::outcome::Outcome;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::ui::pane_names::FILES;
 
-/// The design system's `tree` type: 15 px text on 26 px lines.
-pub const TREE_TEXT: Pixels = px(15.);
 pub const TREE_LINE: Pixels = px(26.);
 /// How far each level of the tree steps in.
 const INDENT: Pixels = px(14.);

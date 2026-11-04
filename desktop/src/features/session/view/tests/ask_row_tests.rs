@@ -126,3 +126,17 @@ fn a_permission_offers_deny_then_allow() {
         ])
     );
 }
+
+#[test]
+fn a_settled_card_never_shows_a_password() {
+    let ask: AskPayload = serde_json::from_value(json!({
+        "kind": "question", "state": "answered", "options": [],
+        "schema": { "properties": {
+            "token": { "type": "string", "format": "password" },
+            "agree": { "type": "boolean" },
+        } },
+        "answer": { "action": "accept", "content": { "token": "s3cret", "agree": true } },
+    }))
+    .unwrap();
+    assert_eq!(outcome(&ask), "true");
+}

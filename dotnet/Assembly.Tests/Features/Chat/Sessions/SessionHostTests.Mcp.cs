@@ -17,7 +17,7 @@ public sealed partial class SessionHostTests
         var endpoint = new McpEndpointReady(tokens);
         endpoint.Listening(new Uri("http://localhost:12345"));
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
-            cutover: new(_database, _sessionStore, _launcher, "checkouts", _time), effectsReady: endpoint.Ready);
+            cutover: new(_database, _sessionStore, _launcher, _db.Folder, _time), effectsReady: endpoint.Ready);
         var callbacks = McpSessionCallbacks.Create(runtime, endpoint, tokens);
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work,
             feed: new EngineFeed(runtime, _log, _time), mcp: callbacks);
