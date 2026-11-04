@@ -54,22 +54,6 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         _follower = new RemoteFollower(hub, RowsAsync, ReadRowsAsync, ProbeAsync, RefreshAsync, AddSubagentSession, log);
     }
 
-    private volatile string? _backendMismatch;
-    private volatile string? _bulkBackendMismatch;
-
-    internal void RequireMatchingBackendForStart()
-    {
-        if ((_backendMismatch ?? _bulkBackendMismatch) is { } reason) throw new CallFailed(reason, "backend_mismatch");
-    }
-
-    private void RequireMatchingBackendForStart(string feature, string method, JsonElement args)
-    {
-        var creates = feature == "sessions" && method is "create" or "create_at_root"
-            || feature == "engine" && (method is "start_title_begin" or "start_title_commit"
-                || method == "machine_command" && args.TryGetProperty("command", out var command) && command.TryGetProperty("kind", out var kind) && kind.GetString() == "start_session");
-        if (creates) RequireMatchingBackendForStart();
-    }
-
     public string? Name => _name;
     internal RemoteTerminalSocket Terminals { get; }
 

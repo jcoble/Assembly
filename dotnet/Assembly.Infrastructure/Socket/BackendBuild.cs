@@ -1,4 +1,5 @@
 using System.Reflection;
+using Assembly.Application.Common.Machines;
 
 namespace Assembly.Infrastructure.Socket;
 
@@ -8,12 +9,21 @@ internal static class BackendBuild
     internal static string? Commit { get; } = ReadCommit(typeof(BackendBuild).Assembly
         .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion);
 
-    internal static string? Identity { get; } = typeof(BackendBuild).Assembly
-        .GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "BackendIdentity")?.Value;
+    /// <summary>Every compile input: an exact match, what a check before a PR requires.</summary>
+    internal static string? Identity { get; } = Metadata("BackendIdentity");
 
-    internal static string? Mismatch(string? identity, string? commit) =>
-        Identity is { Length: 64 } && identity == Identity ? null :
-        $"Remote is on an older or different backend (remote {commit ?? "unknown"}; desktop {Commit ?? "unknown"}). New remote sessions are blocked until the backends match.";
+    /// <summary>The inputs on the list of changes that need the remote to change too (scripts/dev-remote-identity.ts).</summary>
+    internal static string? RemoteContract { get; } = Metadata("RemoteContract");
+
+    /// <summary>The real release version, which moves only on a release and sign.</summary>
+    internal static string? Version { get; } = Metadata("ReleaseVersion");
+
+    private static string? Metadata(string key) => typeof(BackendBuild).Assembly
+        .GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == key)?.Value;
+
+    /// <summary>What a machine's welcome says it runs, against this build. Information only: nothing is refused on it.</summary>
+    internal static RemoteBackend Compare(string? identity, string? commit, string? version) =>
+        new(commit, Commit, identity != Identity, version, Version);
 
     internal static string? ReadCommit(string? informationalVersion) =>
         informationalVersion?.Split('+') is [_, { Length: > 0 } commit] ? commit : null;

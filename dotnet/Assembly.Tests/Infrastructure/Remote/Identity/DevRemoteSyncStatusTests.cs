@@ -15,7 +15,6 @@ public sealed class DevRemoteSyncStatusTests
         var status = new MachineStatus(topics, ["workbox-test"]);
         var changes = 0;
         using var subscription = topics.Subscribe(MachinesFeature.Topic, "workbox-test", _ => { }, (_, _) => changes++);
-        status.BackendMismatch("workbox-test", null);
         status.Deployment("workbox-test", null);
         Assert.Equal(0, changes);
         Assert.False(status.Items[1].Checked);

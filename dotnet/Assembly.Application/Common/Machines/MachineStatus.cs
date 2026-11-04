@@ -7,10 +7,21 @@ namespace Assembly.Application.Common.Machines;
 /// <summary>
 /// One machine as the <c>machines</c> topic sends it, keyed by its name (<c>local</c> for this machine):
 /// <paramref name="Name"/> is null for this machine, <paramref name="Kind"/> is <c>local</c> or <c>remote</c>,
-/// <paramref name="Reason"/> describes connection, backend version or deployment warnings, and <paramref name="Checked"/> is false for a remote until its
-/// first probe answers or fails (until then it's neither up nor down).
+/// <paramref name="Reason"/> describes connection or deployment warnings, and <paramref name="Checked"/> is false for a remote until its
+/// first probe answers or fails (until then it's neither up nor down). <paramref name="Backend"/> is what a remote's
+/// last welcome said it runs.
 /// </summary>
-public sealed record MachineItem(string? Name, string Kind, bool Reachable, string? Reason, bool Checked, string? Ssh = null, int? Port = null, string? TokenFile = null);
+public sealed record MachineItem(string? Name, string Kind, bool Reachable, string? Reason, bool Checked, string? Ssh = null, int? Port = null, string? TokenFile = null, RemoteBackend? Backend = null);
+
+/// <summary>
+/// Which backend a remote runs, compared with this desktop's. Information only. <paramref name="Differs"/> is any
+/// difference in the backend's build inputs. <see cref="VersionDiffers"/> is a real release difference, the one that
+/// updates the remote automatically; TSK-1405's one-button update reads it.
+/// </summary>
+public sealed record RemoteBackend(string? Commit, string? LocalCommit, bool Differs, string? Version, string? LocalVersion)
+{
+    public bool VersionDiffers => Version != LocalVersion;
+}
 
 /// <summary>
 /// Whether each machine answered last time. This machine always has; a remote starts "not checked yet", and its
@@ -63,26 +74,40 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
     }
 
     private readonly Dictionary<string, string?> _connectionReasons = [];
-    private readonly Dictionary<string, string?> _backendMismatches = [];
     private readonly Dictionary<string, string?> _deployments = [];
 
-    public void BackendMismatch(string machine, string? reason) => Warning(machine, reason, false);
-    public void Deployment(string machine, string? reason) => Warning(machine, reason, true);
-
-    private void Warning(string machine, string? reason, bool deployment)
+    public void Deployment(string machine, string? reason)
     {
         if (_parent is { } parent)
         {
-            lock (parent._gate) if (_active) parent.Warning(machine, reason, deployment);
+            lock (parent._gate) if (_active) parent.Deployment(machine, reason);
             return;
         }
         lock (_gate)
         {
-            var warnings = deployment ? _deployments : _backendMismatches;
-            if (warnings.GetValueOrDefault(machine) == reason) return;
-            warnings[machine] = reason;
+            if (_deployments.GetValueOrDefault(machine) == reason) return;
+            _deployments[machine] = reason;
             var item = _items.FirstOrDefault(item => item.Name == machine);
             if (item is not null) Set(machine, item.Reachable, _connectionReasons.GetValueOrDefault(machine), item.Checked);
+        }
+    }
+
+    public void Backend(string machine, RemoteBackend backend)
+    {
+        if (_parent is { } parent)
+        {
+            lock (parent._gate) if (_active) parent.Backend(machine, backend);
+            return;
+        }
+        lock (_gate)
+        {
+            var items = _items;
+            var index = Array.FindIndex(items, item => item.Name == machine);
+            if (index < 0 || items[index].Backend == backend) return;
+            var next = (MachineItem[])items.Clone();
+            next[index] = items[index] with { Backend = backend };
+            _items = next;
+            topics.Publish(MachinesFeature.Topic, machine, JsonSerializer.Serialize(next[index], SessionsJson.Default.MachineItem));
         }
     }
 
@@ -102,7 +127,7 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
         lock (_gate)
         {
             _connectionReasons[machine] = reason;
-            reason = string.Join(" ", new[] { reason, _backendMismatches.GetValueOrDefault(machine), _deployments.GetValueOrDefault(machine) }
+            reason = string.Join(" ", new[] { reason, _deployments.GetValueOrDefault(machine) }
                 .Where(value => !string.IsNullOrWhiteSpace(value)));
             if (reason.Length == 0) reason = null;
             var items = _items;

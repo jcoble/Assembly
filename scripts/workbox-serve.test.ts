@@ -5,10 +5,13 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { adapterSources, digestContract, digestInputs, remoteContractInput, sourcesDigest } from './dev-remote-identity.ts';
 
 const current = 'a'.repeat(40), previous = 'b'.repeat(40);
-const previousIdentity = createHash('sha256').update('assembly-dev-remote-v2:ACP2\n100644 blob ' + '1'.repeat(40) + '\tdotnet/Assembly.Remote/Assembly.Remote.csproj').digest('hex');
+const hostEntries = ['100644 blob ' + '1'.repeat(40) + '\tdotnet/Assembly.Remote/Assembly.Remote.csproj', '100644 blob ' + '3'.repeat(40) + '\tdotnet/Assembly.Infrastructure/Notion/NotionCalls.cs'];
+const previousIdentity = digestInputs(hostEntries, 'none'), previousContract = digestContract(hostEntries.filter(line => remoteContractInput(line.split('\t')[1])), 'none');
 const launcher = createHash('sha256').update('launcher\n').digest('hex');
+const sources = await sourcesDigest(adapterSources, async () => 'launcher\n');
 const fakeGit = `#!/usr/bin/env node
 import fs from 'node:fs';
 const args=process.argv.slice(2), state=JSON.parse(fs.readFileSync(process.env.STATE,'utf8'));
@@ -17,8 +20,8 @@ switch(args[0]) {
  case 'rev-parse': console.log('${current}'); break;
  case 'diff': console.log(state.dirty ?? ''); break;
  case 'ls-files': console.log(state.untracked ?? ''); break;
- case 'ls-tree': console.log('100644 blob '+(state.changed && args.at(-1)==='${current}'?'2':'1').repeat(40)+'\\tdotnet/Assembly.Remote/Assembly.Remote.csproj'); break;
- case 'show': process.stdout.write('launcher\\n'); break;
+ case 'ls-tree': console.log('100644 blob '+(state.changed?'2':'1').repeat(40)+'\\tdotnet/Assembly.Remote/Assembly.Remote.csproj\\n100644 blob '+(state.unrelated?'4':'3').repeat(40)+'\\tdotnet/Assembly.Infrastructure/Notion/NotionCalls.cs'); break;
+ case 'show': process.stdout.write(args.at(-1).endsWith('Cargo.toml') ? (state.version ? 'version = "'+state.version+'"\\n' : '') : args.at(-1).endsWith(state.adapterChange ?? '?') ? 'changed\\n' : 'launcher\\n'); break;
  case 'push': break;
  case 'fetch': break;
  case 'status': console.log(state.mainDirty ? ' M dotnet/Directory.Build.props' : ''); break;
@@ -39,7 +42,7 @@ if (args.at(-1).startsWith('flock ')) {
   child.on('close',code=>process.exit(code));
  } else console.log('deployed backend; authenticated host commit ${current}');
 } else if(state.missing) console.log(JSON.stringify({missing:true}));
-else console.log(JSON.stringify({commit:'${previous}',backendIdentity:'${previousIdentity}',engine:'test-engine',dll:'/lane/bin/old/backend/Assembly.Remote.dll',pid:'123',unitSha:'f'.repeat(64),adapterOK:true,launcherSha:'${launcher}',toolsKey:state.toolsKey,seedCohort:state.seedCohort}));
+else console.log(JSON.stringify({commit:'${previous}',backendIdentity:'${previousIdentity}',remoteContract:state.hostContract===undefined?'${previousContract}':state.hostContract,engine:'test-engine',dll:'/lane/bin/old/backend/Assembly.Remote.dll',pid:'123',unitSha:'f'.repeat(64),adapterOK:true,launcherSha:'${launcher}',toolsKey:state.toolsKey,adapterSources:'${sources}',seedCohort:state.seedCohort}));
 `;
 function fixture(state: object = {}) {
   const root = mkdtempSync(join(tmpdir(), 'assembly-devsync-'));
@@ -53,21 +56,74 @@ function fixture(state: object = {}) {
   writeFileSync(join(root, 'bin/ssh'), fakeSsh, { mode: 0o755 });
   const holder = join(root, 'holder.ts');
   writeFileSync(holder, `import fs from 'node:fs';\nconst finish=()=>{if(fs.existsSync(${JSON.stringify(paths.release)})){watcher.close();console.log('deploy completed')}};const watcher=fs.watch(${JSON.stringify(root)},finish);fs.writeFileSync(${JSON.stringify(paths.marker)},String(process.pid));finish();`);
-  const env = { ...process.env, PATH: join(root, 'bin') + ':' + process.env.PATH, STATE: paths.state, CALLS: paths.calls, LOCK: join(root, 'lock'), HOLDER: holder };
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: join(root, 'bin') + ':' + process.env.PATH, STATE: paths.state, CALLS: paths.calls, LOCK: join(root, 'lock'), HOLDER: holder };
   const args = [join(root, 'scripts/workbox-serve.ts'), 'test-lane', '9'];
   return { root, paths, env, args, run: (extra: string[] = []) => spawnSync(process.execPath, extra.length ? [args[0], ...extra] : args, { cwd: root, env, encoding: 'utf8' }),
     calls: () => readFileSync(paths.calls, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as string[]),
     close: () => rmSync(root, { recursive: true, force: true }) };
 }
-for (const changed of [false, true]) test(changed ? 'backend content changes deploy through the lane lock' : 'a desktop-only commit reuses the running backend', () => {
-  const f = fixture({ changed });
+const launch = { ASSEMBLY_DEV_REMOTE_SYNC: '1' };
+const deploys = (f: ReturnType<typeof fixture>) => f.calls().filter(call => call[0] === 'ssh' && call.at(-1)?.startsWith('flock ')).length;
+for (const [name, state, expected] of [
+  ['a desktop-only commit', {}, 0],
+  ['an unrelated backend commit', { unrelated: true }, 0],
+  ['a change on the list', { changed: true }, 1],
+  ['a release version bump', { version: '0.2.0' }, 1],
+  ['an adapter packaging script change', { adapterChange: 'scripts/package-adapters.ts' }, 1],
+  ['an adapter install script change', { adapterChange: 'dotnet/scripts/agents-file.sh' }, 1],
+] as const) test(`dev launch: ${name} ${expected ? 'deploys' : 'builds nothing'}`, () => {
+  const f = fixture(state);
+  try {
+    Object.assign(f.env, launch);
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(deploys(f), expected);
+    assert.match(result.stdout, expected ? /building and deploying/ : /no deploy/);
+    if (!expected) assert.equal(f.calls().filter(call => call[0] === 'git' && call[1] === 'push').length, 0);
+    assert.ok(f.calls().filter(call=>call[0]==='ssh').every(call=>call.includes('workbox-test')));
+  } finally { f.close(); }
+});
+test('dev launch: a change on the list deploys once, and the next launch builds nothing', () => {
+  const f = fixture({ changed: true });
+  try {
+    Object.assign(f.env, launch);
+    assert.equal(f.run().status, 0);
+    assert.equal(deploys(f), 1);
+    const deployed = digestContract(['100644 blob ' + '2'.repeat(40) + '\tdotnet/Assembly.Remote/Assembly.Remote.csproj'], 'none');
+    writeFileSync(f.paths.state, JSON.stringify({ changed: true, hostContract: deployed }));
+    const next = f.run();
+    assert.equal(next.status, 0, next.stderr);
+    assert.equal(deploys(f), 1);
+    assert.match(next.stdout, /no deploy/);
+  } finally { f.close(); }
+});
+test('dev launch: uncommitted unrelated backend edits do not stop it; edits on the list say the remote stays behind', () => {
+  const f = fixture({ dirty: 'dotnet/Assembly.Desktop/Serve/DesktopBackend.cs' });
+  try {
+    Object.assign(f.env, launch);
+    let result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    writeFileSync(f.paths.state, JSON.stringify({ dirty: 'dotnet/Assembly.Engine/EngineCommands.cs' }));
+    result = f.run();
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /uncommitted backend changes.*stays behind/);
+    assert.equal(deploys(f), 0);
+  } finally { f.close(); }
+});
+test('the dev serve command matches them exactly: an unrelated backend commit deploys when asked', () => {
+  const f = fixture({ unrelated: true });
   try {
     const result = f.run();
     assert.equal(result.status, 0, result.stderr);
-    const deploys = f.calls().filter(call => call[0] === 'ssh' && call.at(-1)?.startsWith('flock '));
-    assert.equal(deploys.length, changed ? 1 : 0);
-    assert.match(result.stdout, changed ? /building and deploying/ : /no deploy/);
-    assert.ok(f.calls().filter(call=>call[0]==='ssh').every(call=>call.includes('workbox-test')));
+    assert.equal(deploys(f), 1);
+  } finally { f.close(); }
+});
+test('an old host that reports no list identity gets one deploy', () => {
+  const f = fixture({ hostContract: null });
+  try {
+    Object.assign(f.env, launch);
+    assert.equal(f.run().status, 0);
+    assert.equal(deploys(f), 1);
   } finally { f.close(); }
 });
 test('a reserved lane with no installed unit enters the same deploy path', () => {
@@ -231,12 +287,16 @@ test('closing app-dev during adapter setup ends the installer and its remote syn
   }finally{app.kill('SIGTERM');await ended;f.close()}
 });
 
-for (const changed of [false, true]) test(`read-only lane preflight ${changed ? 'refuses mismatched backend' : 'accepts equivalent backend at another commit'}`, () => {
-  const f = fixture({ changed });
+for (const [name, state, matches] of [
+  ['a desktop-only commit', {}, true],
+  ['an unrelated backend commit', { unrelated: true }, false],
+  ['a change on the list', { changed: true }, false],
+] as const) test(`before a PR: ${name} ${matches ? 'passes' : 'requires an exact match and names both commits'}`, () => {
+  const f = fixture(state);
   try {
     copyFileSync(new URL('./check-remote.ts', import.meta.url), join(f.root, 'scripts/check-remote.ts'));
     const result = spawnSync(process.execPath, [join(f.root, 'scripts/check-remote.ts'), 'test-lane', '9'], { cwd: f.root, env: f.env, encoding: 'utf8' });
-    assert.equal(result.status, changed ? 1 : 0, result.stderr);
+    assert.equal(result.status, matches ? 0 : 1, result.stderr);
     assert.match(result.stdout + result.stderr, new RegExp(`remote ${previous}; desktop ${current}`));
     assert.ok(f.calls().every(call => call[0] !== 'git' || call[1] !== 'push'));
     assert.ok(f.calls().every(call => call[0] !== 'ssh' || !call.at(-1)?.startsWith('flock ')));
@@ -246,13 +306,14 @@ for (const changed of [false, true]) test(`read-only lane preflight ${changed ? 
 for (const adopted of [false, true]) test(`managed ${adopted ? 'adopted' : 'creator'} lane with current backend, tools and seed skips transfer/build/deploy`, async () => {
   const { toolKey, packages } = await import('./dev-toolchain.ts');
   const versions = Object.fromEntries(packages.map(name => [name, '1.2.3']));
-  const cohort = 'd'.repeat(64), key = toolKey(versions as any, launcher, 'linux-x64');
+  const cohort = 'd'.repeat(64), key = toolKey(versions as any, sources, 'linux-x64');
   const f = fixture({ toolsKey: key, seedCohort: cohort });
   try {
     f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, versions, cohort, adopted });
+    f.env.ASSEMBLY_DEV_REMOTE_SYNC = '1';
     const result = f.run();
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /already runs backend.*no deploy/);
+    assert.match(result.stdout, /already matches.*no deploy/);
     assert.equal(f.calls().filter(call => call[0] === 'git' && call[1] === 'push').length, 0);
     assert.equal(f.calls().filter(call => call[0] === 'ssh' && call.at(-1)?.startsWith('flock ')).length, 0);
   } finally { f.close(); }

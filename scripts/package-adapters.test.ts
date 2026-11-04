@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { validateVersions, smokeAdapter, archiveBundle, compareClaudeEntrypoints, validateHistoricalProviderAsset, compareWithLastProviderRelease } from "./package-adapters.ts";
+import { validateVersions, smokeAdapter, archiveBundle, compareClaudeEntrypoints, validateHistoricalProviderAsset, compareWithLastProviderRelease, packagingDigest, releaseBehind } from "./package-adapters.ts";
 
 const versions = { "claude-agent-acp": "0.99.1", "codex-acp": "2.5.0" };
 function fixture(run: (root: string) => unknown) {
@@ -18,12 +18,44 @@ function fakeReleaseApi(root: string) {
   writeFileSync(join(root, "curl"), "#!" + process.execPath + "\n" + String.raw`
 const fs = require("node:fs");
 const url = process.argv.at(-1), download = url.match(/^https:\/\/github\.com\/jcoble\/Assembly\/releases\/download\/[^/]+\/([^/]+)$/);
-if (download) { fs.copyFileSync(process.env.RELEASE_DIR + "/" + download[1], process.argv[process.argv.indexOf("-o") + 1]); process.exit(0); }
+if (download) { const from = process.env.RELEASE_DIR + "/" + download[1]; if (process.argv.includes("-o")) fs.copyFileSync(from, process.argv[process.argv.indexOf("-o") + 1]); else process.stdout.write(fs.readFileSync(from)); process.exit(0); }
 if (!url.startsWith("https://api.github.com/repos/jcoble/Assembly/releases?")) throw Error("unexpected curl request");
 console.log(JSON.stringify(JSON.parse(fs.readFileSync(process.env.RELEASES, "utf8")).map(release => ({ tag_name: release.tagName, draft: release.isDraft,
   prerelease: release.isPrerelease, published_at: release.publishedAt, assets: release.assets.map(name => ({ name })) }))));
 `, { mode: 0o755 });
 }
+
+for (const [name, change, expected] of [
+  ["matching versions and packaging inputs skip the build", {}, false],
+  ["a newer upstream adapter builds", { versions: { ...versions, "codex-acp": "2.6.0" } }, true],
+  ["changed packaging inputs build", { packaging: "older" }, true],
+  ["a release from before packaging was recorded builds", { packaging: undefined }, true],
+  ["no published release builds", { noRelease: true }, true],
+] as const) test("scheduled comparison: " + name, () => fixture(async root => {
+  fakeReleaseApi(root);
+  const packaging = await packagingDigest();
+  for (const target of ["darwin-arm64", "darwin-x64", "linux-x64"])
+    writeFileSync(join(root, "assembly-adapters-" + target + ".json"), JSON.stringify({ versions: (change as any).versions ?? versions, packaging: "packaging" in change ? change.packaging : packaging }));
+  writeFileSync(join(root, "releases"), JSON.stringify("noRelease" in change ? [] : [{ tagName: "assembly-providers-1-1", isDraft: false, isPrerelease: false, publishedAt: "2026-11-01T00:00:00Z",
+    assets: ["darwin-arm64", "darwin-x64", "linux-x64"].flatMap(target => ["assembly-adapters-" + target + ".tar.gz", "assembly-adapters-" + target + ".json"]) }]));
+  const before = { PATH: process.env.PATH, RELEASES: process.env.RELEASES, RELEASE_DIR: process.env.RELEASE_DIR };
+  Object.assign(process.env, { PATH: root + ":" + process.env.PATH, RELEASES: join(root, "releases"), RELEASE_DIR: root });
+  try { assert.equal(releaseBehind(versions, packaging, () => {}), expected); }
+  finally { process.env.PATH = before.PATH; for (const key of ["RELEASES", "RELEASE_DIR"] as const) { if (before[key] === undefined) delete process.env[key]; else process.env[key] = before[key]; } }
+}));
+
+test("scheduled comparison: changing the launcher or the packager changes the recorded inputs", () => fixture(async root => {
+  mkdirSync(join(root, "scripts/adapters"), { recursive: true });
+  writeFileSync(join(root, "scripts/adapters/claude-launcher.ts"), "launcher");
+  writeFileSync(join(root, "scripts/package-adapters.ts"), "packager");
+  const first = await packagingDigest(root);
+  assert.equal(await packagingDigest(root), first);
+  writeFileSync(join(root, "scripts/adapters/claude-launcher.ts"), "changed");
+  const second = await packagingDigest(root);
+  assert.notEqual(second, first);
+  writeFileSync(join(root, "scripts/package-adapters.ts"), "changed");
+  assert.notEqual(await packagingDigest(root), second);
+}));
 
 test("only exact stable versions of both supported adapters are accepted", () => {
   assert.deepEqual(validateVersions(versions), versions);

@@ -44,7 +44,6 @@ internal sealed partial class MachineStarts
         {
             var batch = await CapturedLiveBatch.CaptureAsync(owner._connections, owner._runtime.Machine, ct);
             var target = batch.Target(targetMachine);
-            target.Remote.RequireMatchingBackendForStart();
             var local = owner._runtime.Reader.ForeignTitleSource(new(ForeignTitleSourceMode.OwnedAncestry,
                 source.Parent.Id, targetMachine), ct);
             var capture = new StartTitleSources(owner, source, batch, target, local, caller);

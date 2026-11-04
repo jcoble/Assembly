@@ -6,7 +6,7 @@ import { homedir, hostname } from 'node:os';
 import { validateOwner, type LaneOwner } from './dev-lane-clean.ts';
 import { profileFor, takeLauncherLock, main as seed } from './seed-dev.ts';
 import { seedCohort, seedCurrent, recordSeed, trackedManifest } from './dev-seed-cohort.ts';
-import { ensureTools, latestTools, toolKey, toolsCurrent } from './dev-toolchain.ts';
+import { checkoutSources, ensureTools, latestTools, toolKey, toolsCurrent } from './dev-toolchain.ts';
 
 // A lane made by hand or with a copied .lane has no record binding it to this checkout. It still launches, the old
 // way: only the checks and cleanup that could touch a shared reservation stay off.
@@ -34,8 +34,7 @@ export async function prepareManagedLane(root: string, signal: AbortSignal) {
     catch (error) {
       signal.throwIfAborted();
       const cached = JSON.parse(await fs.readFile(join(home, 'adapters/dev-tools.json'), 'utf8'));
-      const launcher = createHash('sha256').update(await fs.readFile(join(root, 'scripts/adapters/claude-launcher.ts'))).digest('hex');
-      if (!cached.versions || !await toolsCurrent(join(home, 'adapters'), join(home, 'agents.json'), toolKey(cached.versions, launcher, process.platform + '-' + process.arch))) throw error;
+      if (!cached.versions || !await toolsCurrent(join(home, 'adapters'), join(home, 'agents.json'), toolKey(cached.versions, await checkoutSources(root), process.platform + '-' + process.arch))) throw error;
       versions = cached.versions; offline = true;
       console.warn('app:dev: update check unavailable; using verified cached tools for offline use');
     }

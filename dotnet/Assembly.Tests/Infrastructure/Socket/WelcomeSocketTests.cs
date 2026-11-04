@@ -41,6 +41,9 @@ public sealed class WelcomeSocketTests
         Assert.Matches("^[a-f0-9]{64}$", welcome.GetProperty("backendIdentity").GetString()!);
         Assert.Equal(BackendBuild.Identity, welcome.GetProperty("backendIdentity").GetString());
         Assert.Equal(BackendBuild.Commit, welcome.GetProperty("commit").GetString());
+        Assert.Matches("^[a-f0-9]{64}$", welcome.GetProperty("remoteContract").GetString()!);
+        Assert.NotEqual(BackendBuild.Identity, BackendBuild.RemoteContract);
+        Assert.Equal(BackendBuild.Version, welcome.GetProperty("version").GetString());
         Assert.Equal("actual-engine-id", welcome.GetProperty("engine").GetString());
     }
 

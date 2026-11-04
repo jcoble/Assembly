@@ -3,6 +3,7 @@ import { constants as fsConstants, promises as fs } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { command } from './dev-remote-process.ts';
+import { adapterSources, sourcesDigest } from './dev-remote-identity.ts';
 // Workbox Test has no npm, so a machine without one gets this pinned copy in the lane's own folder.
 export const npmPin = { version: '11.17.0', integrity: 'sha512-PurxiZexEHDTE4SSaLI3ZrnbAGiZfeyUcQcxcP5D+hfytNAze/D1IzDuInTn9XVLIbAQUnQuSPXJx02LHjLvQw==' };
 export const packages = ['@agentclientprotocol/claude-agent-acp', '@agentclientprotocol/codex-acp', '@anthropic-ai/claude-code', '@openai/codex'] as const;
@@ -16,8 +17,12 @@ export async function latestTools(signal: AbortSignal): Promise<ToolVersions> {
     return [name, version];
   }))) as ToolVersions;
 }
-export function toolKey(versions: ToolVersions, launcher: string, target: string) {
-  return createHash('sha256').update(JSON.stringify({ versions: packages.map(name => [name, versions[name]]), launcher, target })).digest('hex');
+export function toolKey(versions: ToolVersions, sources: string, target: string) {
+  return createHash('sha256').update(JSON.stringify({ versions: packages.map(name => [name, versions[name]]), sources, target })).digest('hex');
+}
+// Upstream versions and this checkout's adapter sources decide whether a machine's tools are current.
+export function checkoutSources(root: string) {
+  return sourcesDigest(adapterSources, file => fs.readFile(join(root, file)).catch(() => undefined));
 }
 export async function toolsCurrent(adapters: string, descriptor: string, key: string) {
   try {
@@ -61,7 +66,8 @@ export async function ensureTools(root: string, adapters: string, descriptor: st
   for (const path of [adapters, descriptor, join(adapters, 'clis'), join(adapters, 'assets'), join(adapters, 'bundles')]) safePath(path, false);
   for (const name of packages) if (!/^\d+\.\d+\.\d+$/.test(versions[name] ?? '')) throw Error('invalid managed version for ' + name);
   const launcher = createHash('sha256').update(await fs.readFile(join(root, 'scripts/adapters/claude-launcher.ts'))).digest('hex');
-  const key = toolKey(versions, launcher, target);
+  const sources = await checkoutSources(root);
+  const key = toolKey(versions, sources, target);
   if (await toolsCurrent(adapters, descriptor, key)) return { key, changed: false };
   await fs.mkdir(adapters, { recursive: true });
   const npmPath = await provideNpm(adapters, signal, run) + ':' + process.env.PATH;
@@ -86,11 +92,12 @@ export async function ensureTools(root: string, adapters: string, descriptor: st
     const { claude: { args: [claude] }, codex: { args: [codex] } } = await readAgents(descriptor);
     if (claude.startsWith(adapters + '/bundles/') && codex.startsWith(adapters + '/bundles/')) {
       const bundle = dirname(claude);
-      keepAdapters = createHash('sha256').update(await fs.readFile(claude)).digest('hex') === launcher;
+      keepAdapters = createHash('sha256').update(await fs.readFile(claude)).digest('hex') === launcher
+        && JSON.parse(await fs.readFile(join(adapters, 'dev-tools.json'), 'utf8')).sources === sources;
       for (const name of packages.slice(0, 2)) keepAdapters &&= JSON.parse(await fs.readFile(join(bundle, 'node_modules', name, 'package.json'), 'utf8')).version === versions[name];
     }
   } catch { }
-  const adapterKey = createHash('sha256').update(JSON.stringify([adapterVersions, launcher, target])).digest('hex');
+  const adapterKey = createHash('sha256').update(JSON.stringify([adapterVersions, sources, target])).digest('hex');
   const assets = join(adapters, 'assets', adapterKey);
   safePath(assets, false);
   // Reuse the existing packager, steering smoke proof, archive validator and atomic descriptor writer.
@@ -117,7 +124,7 @@ export async function ensureTools(root: string, adapters: string, descriptor: st
     packageRecords.push({ path: join(cli, 'node_modules', packages[index + 2], 'package.json'), version: versions[packages[index + 2]] });
     entries.push(agent.args[0], agent.cli);
   }
-  const state = { key, versions, launcherPath: agents.claude.args[0], launcherSha: launcher, packages: packageRecords, entries, descriptorSha: createHash('sha256').update(await fs.readFile(descriptor)).digest('hex') };
+  const state = { key, sources, versions, launcherPath: agents.claude.args[0], launcherSha: launcher, packages: packageRecords, entries, descriptorSha: createHash('sha256').update(await fs.readFile(descriptor)).digest('hex') };
   const temporary = join(adapters, 'dev-tools.' + randomUUID());
   await fs.writeFile(temporary, JSON.stringify(state), { mode: 0o600, flag: 'wx' });
   await fs.rename(temporary, join(adapters, 'dev-tools.json'));
