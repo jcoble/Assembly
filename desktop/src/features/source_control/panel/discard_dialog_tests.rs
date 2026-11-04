@@ -110,7 +110,7 @@ async fn cancel_sends_nothing(cx: &mut TestAppContext) {
     let request = DiscardRequest::Files(vec![file("a.rs", " ", "M")]);
     let asked = |visual: &mut gpui_kit::VisualTestContext| {
         let (request, action) = (request.clone(), writes.action.clone());
-        visual.update(|window, cx| ask(request, GitTarget::new("s1".into()), action, window, cx));
+        visual.update(|window, cx| ask(request, GitTarget::new("s1"), action, window, cx));
         visual.run_until_parked();
         visual.update(|window, cx| window.draw(cx).clear(cx));
     };

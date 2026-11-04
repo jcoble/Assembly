@@ -60,7 +60,7 @@ fn open(cx: &mut TestAppContext, answer: impl Fn(usize, &Value) -> Value + Send 
     });
     let (section, visual) = cx.add_window_view(|_, cx| {
         let writes = GitWrites::new(cx);
-        PrSection::new(GitTarget::new("s1".into()), writes, true, cx)
+        PrSection::new(GitTarget::new("s1"), writes, true, cx)
     });
     let tell = changed.clone();
     let heard = visual.update(|_, cx| {

@@ -58,7 +58,7 @@ fn a_created_pr_offers_to_open_it(cx: &mut TestAppContext) {
     let (_, visual) = cx.add_window_view(move |window, cx| {
         let writes = GitWrites::new(cx);
         let form = cx.new(|cx| {
-            CreatePrForm::new(GitTarget::new("s1".into()), writes, "lane".into(), window, cx)
+            CreatePrForm::new(GitTarget::new("s1"), writes, "lane".into(), window, cx)
         });
         made.replace(Some(form.clone()));
         gpui_kit::base::Root::new(form, window, cx)
