@@ -69,7 +69,7 @@ impl Render for FileComparison {
                     .map(|note| div().px_3().child(note)),
             )
             .children(self.error.clone().map(|error| div().px_3().child(error)))
-            .children(self.diff.as_ref().map(|state| Diff::new(state)))
+            .children(self.diff.as_ref().map(Diff::new))
     }
 }
 #[cfg(test)]

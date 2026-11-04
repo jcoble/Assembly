@@ -135,7 +135,7 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
             )
         });
     });
-    let (pane, visual) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    let (pane, visual) = cx.add_window_view(SourceControlPane::new);
     let tell = changed.clone();
     let heard = visual.update(|_, cx| {
         cx.observe(&pane, move |_, _| {
