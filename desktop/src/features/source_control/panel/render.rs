@@ -48,6 +48,8 @@ impl Render for SourceControlPane {
             .child(body)
     }
 }
+/// Pull requests belong to the session's branch, whichever checkout the rest of the panel is reading.
+const PR_SCOPE: &str = "Pull requests below are for the session folder, not this checkout.";
 impl SourceControlPane {
     fn render_body(&mut self, cx: &mut Context<Self>) -> AnyElement {
         match self.read.read(cx).shown().clone() {
@@ -211,6 +213,13 @@ impl SourceControlPane {
                             )
                             .children(sections)
                             .children(timeline)
+                            .children((selection.is_some() && pull_requests.is_some()).then(|| {
+                                div()
+                                    .debug_selector(|| "git-pr-scope".into())
+                                    .text_sm()
+                                    .text_color(muted)
+                                    .child(PR_SCOPE)
+                            }))
                             .children(pull_requests),
                     ),
             )

@@ -1,5 +1,7 @@
 //! The History tab reading another checkout, which moves nothing in the session or the panel.
 use super::HistoryPane;
+use crate::core::socket::checkout_selector::CheckoutSelector;
+use crate::features::source_control::git_checkouts::CheckoutHint;
 use crate::core::socket::{
     client::SocketClient,
     endpoint::Endpoint,
@@ -9,6 +11,7 @@ use crate::core::socket::{
 };
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::{TestAppContext, VisualTestContext};
+use gpui_kit::component::dock::BasePanel as _;
 use gpui_kit::{Entity, Subscription};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -231,4 +234,100 @@ async fn the_label_names_the_picked_folder_before_its_status_answers(cx: &mut Te
     open.cx.update(|_, cx| assert_eq!(open.pane.read(cx).folder_label(), "owned-linked (feature)"));
     open.pick(None);
     open.cx.update(|_, cx| assert_eq!(open.pane.read(cx).folder_label(), "owned (main)"));
+}
+fn hint(path: &str) -> CheckoutHint {
+    CheckoutHint { session: "s1".into(), source: origin(), path: path.into(), expected_root: OWN.into() }
+}
+impl Open<'_> {
+    /// The tab as a saved layout builds it, up to the next list.
+    fn restore(&mut self, hint: CheckoutHint) {
+        let pane = self.pane.clone();
+        pane.update(self.cx, |pane, cx| {
+            pane.restore_hint(Some(hint), cx);
+            pane.read_status(cx);
+            assert_eq!(pane.checkout, None, "a hint alone reads nothing");
+        });
+    }
+    async fn dropped_and_said(&mut self) {
+        self.until("the hint is dropped", |pane, cx, _| cx.update(|_, cx| pane.read(cx).checkout_hint.is_none())).await;
+        let seen = self.seen.lock().unwrap();
+        assert!(!seen.statuses.iter().chain(seen.histories.iter()).any(selects));
+        drop(seen);
+        self.cx.update(|_, cx| {
+            let pane = self.pane.read(cx);
+            assert_eq!(pane.checkout, None);
+            assert!(pane.notice.as_deref().is_some_and(|notice| notice.contains("went back to the session folder")));
+        });
+    }
+}
+#[gpui::test]
+async fn a_saved_repository_comes_back_once_a_fresh_list_still_offers_it(cx: &mut TestAppContext) {
+    let mut open = open(cx, true, Some(origin())).await;
+    open.restore(hint(LINKED));
+    open.until("its commits", |pane, cx, seen| {
+        let shown = cx.update(|_, cx| pane.read(cx).checkout.is_some());
+        shown && seen.statuses.last().is_some_and(selects) && seen.histories.last().is_some_and(selects)
+    })
+    .await;
+}
+#[gpui::test]
+async fn a_saved_repository_on_an_older_owner_is_dropped_and_said(cx: &mut TestAppContext) {
+    let mut open = open(cx, false, Some(origin())).await;
+    open.restore(hint(LINKED));
+    open.dropped_and_said().await;
+}
+#[gpui::test]
+async fn a_saved_repository_no_longer_listed_is_dropped_and_said(cx: &mut TestAppContext) {
+    let mut open = open(cx, true, Some(origin())).await;
+    open.restore(hint("/home/me/elsewhere"));
+    open.dropped_and_said().await;
+}
+#[gpui::test]
+async fn a_saved_repository_from_a_replaced_owner_is_dropped_and_said(cx: &mut TestAppContext) {
+    let mut open = open(cx, true, Some(origin())).await;
+    open.restore(CheckoutHint {
+        source: ExpectedRowSource { generation: 8, ..origin() },
+        ..hint(LINKED)
+    });
+    open.dropped_and_said().await;
+}
+#[gpui::test]
+async fn a_saved_repository_with_no_source_to_check_is_dropped_and_said(cx: &mut TestAppContext) {
+    let mut open = open(cx, true, None).await;
+    open.restore(hint(LINKED));
+    open.dropped_and_said().await;
+    assert!(open.seen.lock().unwrap().checkouts.is_empty());
+}
+// Another panel's choice is a request: the tab reads it only if its own list offers it.
+#[gpui::test]
+async fn a_checkout_asked_for_by_another_panel_is_read_only_if_the_fresh_list_offers_it(cx: &mut TestAppContext) {
+    let mut open = open(cx, true, Some(origin())).await;
+    let pane = open.pane.clone();
+    let ask = |path: &str, pane: &Entity<HistoryPane>, cx: &mut VisualTestContext| {
+        let asked = CheckoutSelector { path: path.into(), expected_root: OWN.into() };
+        pane.update(cx, |pane, cx| {
+            pane.ask_for(Some(asked), cx);
+            pane.read_status(cx);
+            assert_eq!(pane.checkout, None, "not until the list has answered");
+        });
+    };
+    ask("/home/me/elsewhere", &pane, open.cx);
+    open.dropped_and_said().await;
+    ask(LINKED, &pane, open.cx);
+    open.until("the asked-for checkout", |pane, cx, seen| {
+        let shown = cx.update(|_, cx| pane.read(cx).checkout.is_some() && pane.read(cx).notice.is_none());
+        shown && seen.statuses.last().is_some_and(selects)
+    })
+    .await;
+}
+#[gpui::test]
+async fn the_saved_layout_keeps_only_the_repository_still_chosen(cx: &mut TestAppContext) {
+    let mut open = open(cx, true, Some(origin())).await;
+    let pane = open.pane.clone();
+    let dump = |cx: &mut VisualTestContext| cx.update(|_, cx| CheckoutHint::saved(&pane.read(cx).dump(cx).info));
+    assert_eq!(dump(open.cx), None);
+    open.showing_linked().await;
+    assert_eq!(dump(open.cx), Some(hint(LINKED)));
+    open.pick(None);
+    assert_eq!(dump(open.cx), None);
 }

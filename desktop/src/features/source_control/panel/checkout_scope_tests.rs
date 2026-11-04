@@ -10,7 +10,9 @@ use crate::core::socket::{
     test_wait::until,
 };
 use crate::core::state::{selected_session::SelectedSession, sessions::Sessions};
+use crate::core::intents::open_git_history::OpenGitHistory;
 use crate::features::source_control::actions_menu::{MenuAction, READ_ONLY_SCOPE};
+use crate::features::source_control::git_checkouts::CheckoutHint;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::{TestAppContext, VisualTestContext};
 use gpui_kit::component::dock::BasePanel as _;
@@ -229,6 +231,161 @@ impl Open<'_> {
     fn draw(&mut self) {
         self.cx.update(|window, cx| window.draw(cx).clear(cx));
     }
+}
+fn owner(generation: u64) -> ExpectedRowSource {
+    ExpectedRowSource { machine: "owner".into(), generation, route_machine: None }
+}
+fn saved(generation: u64) -> CheckoutHint {
+    CheckoutHint {
+        session: "s1".into(),
+        source: owner(generation),
+        path: LINKED.into(),
+        expected_root: OWN.into(),
+    }
+}
+impl Open<'_> {
+    /// The panel as a saved layout builds it, up to the next list.
+    fn restore(&mut self, hint: CheckoutHint) {
+        let pane = self.pane.clone();
+        pane.update(self.cx, |pane, cx| {
+            pane.checkout_hint = Some(hint);
+            pane.read.update(cx, |read, cx| read.refresh(cx));
+        });
+        assert_eq!(self.selection(), None, "a hint alone reads nothing");
+    }
+    fn hint(&mut self) -> Option<CheckoutHint> {
+        let pane = self.pane.clone();
+        self.cx.update(|_, cx| pane.read(cx).checkout_hint.clone())
+    }
+    async fn dropped_and_said(&mut self) {
+        self.until("the hint is dropped", |pane, cx, _| {
+            cx.update(|_, cx| pane.read(cx).checkout_hint.is_none())
+        })
+        .await;
+        self.barrier().await;
+        assert_eq!(self.selection(), None);
+        assert!(!self.seen.lock().unwrap().statuses.iter().any(selects));
+        let pane = self.pane.clone();
+        self.cx.update(|_, cx| {
+            assert!(matches!(&pane.read(cx).result, Some(PaneResult::Failed(failure)) if failure.sentence.contains("went back to the session folder")));
+        });
+    }
+}
+#[gpui::test]
+async fn a_saved_checkout_comes_back_once_a_fresh_list_still_offers_it(cx: &mut TestAppContext) {
+    let mut open = open(cx, linked()).await;
+    let before = open.seen.lock().unwrap().checkouts.len();
+    open.restore(saved(0));
+    open.until("the other checkout's status", |pane, cx, seen| {
+        let status = pane.update(cx, |pane, cx| pane.shown_status(cx));
+        seen.checkouts.len() > before && status.is_some_and(|status| status.branch.as_deref() == Some("feature"))
+    })
+    .await;
+    let seen = open.seen.lock().unwrap();
+    let asked = seen.statuses.last().unwrap();
+    assert_eq!(asked["checkoutPath"], LINKED);
+    assert_eq!(asked["expectedCheckoutRoot"], OWN);
+}
+#[gpui::test]
+async fn a_saved_checkout_no_longer_listed_is_dropped_and_said(cx: &mut TestAppContext) {
+    let mut open = open(cx, offering(json!([]))).await;
+    open.restore(saved(0));
+    open.dropped_and_said().await;
+}
+#[gpui::test]
+async fn a_saved_checkout_under_another_root_is_dropped_and_said(cx: &mut TestAppContext) {
+    let mut open = open(cx, linked()).await;
+    open.restore(CheckoutHint { expected_root: "/moved".into(), ..saved(0) });
+    open.dropped_and_said().await;
+}
+#[gpui::test]
+async fn a_saved_checkout_on_an_older_owner_is_dropped_and_said(cx: &mut TestAppContext) {
+    let mut open = open(cx, None).await;
+    open.restore(saved(0));
+    open.dropped_and_said().await;
+}
+#[gpui::test]
+async fn a_saved_checkout_from_a_replaced_owner_is_dropped_and_said(cx: &mut TestAppContext) {
+    let mut open = open(cx, linked()).await;
+    open.restore(saved(9));
+    open.dropped_and_said().await;
+}
+#[gpui::test]
+async fn a_saved_checkout_of_another_session_waits_for_that_session(cx: &mut TestAppContext) {
+    let mut open = open(cx, linked()).await;
+    open.restore(CheckoutHint { session: "s0".into(), ..saved(0) });
+    let before = open.seen.lock().unwrap().checkouts.len();
+    open.until("the next list", |_, _, seen| seen.checkouts.len() > before).await;
+    open.barrier().await;
+    assert_eq!(open.selection(), None);
+    assert!(open.hint().is_some(), "still there for its own session");
+    assert!(!open.seen.lock().unwrap().statuses.iter().any(selects));
+}
+#[gpui::test]
+async fn coming_back_to_the_session_brings_its_checkout_back(cx: &mut TestAppContext) {
+    let mut open = open(cx, linked()).await;
+    open.showing_linked().await;
+    let select = |id: &str, cx: &mut VisualTestContext| {
+        let id = id.to_string();
+        cx.update(|_, cx| {
+            SelectedSession::global(cx).update(cx, |selected, cx| {
+                selected.commit_open(SessionKey { machine: "owner".into(), id }, owner(0), false, cx)
+            })
+        });
+    };
+    select("s2", open.cx);
+    open.until("the next session's list", |_, _, seen| {
+        seen.checkouts.last().is_some_and(|args| args["session"] == "s2")
+    })
+    .await;
+    assert_eq!(open.selection(), None);
+    select("s1", open.cx);
+    open.until("the checkout read again", |pane, cx, seen| {
+        let shown = cx.update(|_, cx| pane.read(cx).selection(cx).is_some());
+        shown && seen.statuses.last().is_some_and(|args| args["session"] == "s1" && selects(args))
+    })
+    .await;
+}
+#[gpui::test]
+async fn the_saved_layout_keeps_only_the_checkout_still_chosen(cx: &mut TestAppContext) {
+    let mut open = open(cx, linked()).await;
+    let pane = open.pane.clone();
+    let bare = open.cx.update(|_, cx| serde_json::to_value(pane.read(cx).dump(cx)).unwrap());
+    let empty = gpui_kit::component::dock::PanelState::new(super::SOURCE_CONTROL);
+    assert_eq!(bare, serde_json::to_value(empty).unwrap(), "nothing new in a layout with no choice");
+    open.showing_linked().await;
+    let kept = open.cx.update(|_, cx| CheckoutHint::saved(&pane.read(cx).dump(cx).info));
+    assert_eq!(kept, Some(saved(0)));
+    open.pick(None);
+    let kept = open.cx.update(|_, cx| CheckoutHint::saved(&pane.read(cx).dump(cx).info));
+    assert_eq!(kept, None);
+}
+#[gpui::test]
+async fn open_history_carries_the_checkout_being_read(cx: &mut TestAppContext) {
+    let mut open = open(cx, linked()).await;
+    let heard = Arc::new(Mutex::new(Vec::<OpenGitHistory>::new()));
+    let keep = heard.clone();
+    open.cx.update(|_, cx| {
+        cx.on_action(move |intent: &OpenGitHistory, _| keep.lock().unwrap().push(intent.clone()));
+    });
+    let pane = open.pane.clone();
+    pane.update_in(open.cx, |pane, window, cx| pane.menu_action(MenuAction::OpenHistory, window, cx));
+    open.cx.run_until_parked();
+    assert_eq!(heard.lock().unwrap().last().map(|intent| intent.checkout.clone()), Some(None));
+    open.showing_linked().await;
+    pane.update_in(open.cx, |pane, window, cx| pane.menu_action(MenuAction::OpenHistory, window, cx));
+    open.cx.run_until_parked();
+    let asked = heard.lock().unwrap().last().and_then(|intent| intent.checkout.clone()).expect("the checkout");
+    assert_eq!(asked.path, LINKED);
+    assert_eq!(asked.expected_root, OWN);
+}
+#[gpui::test]
+async fn the_pull_requests_say_they_stay_with_the_session_folder(cx: &mut TestAppContext) {
+    let mut open = open(cx, linked()).await;
+    open.draw();
+    assert!(open.cx.debug_bounds("git-pr-scope").is_none());
+    open.showing_linked().await;
+    assert!(open.cx.debug_bounds("git-pr-scope").is_some());
 }
 #[gpui::test]
 async fn an_older_owner_gets_no_picker_and_never_a_selector(cx: &mut TestAppContext) {

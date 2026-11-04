@@ -2,7 +2,9 @@
 //! bare and prunable entries are already gone. Only this answer offers a checkout to read; anything else offers none.
 use crate::core::socket::checkout_selector::{CheckoutSelector, folder_name};
 use crate::core::socket::error_code::ErrorCode;
-use serde::Deserialize;
+use crate::core::socket::row_source::ExpectedRowSource;
+use gpui_kit::component::dock::PanelInfo;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +18,49 @@ pub struct GitCheckout {
     pub path: String,
     /// `None` when its head is detached.
     pub branch: Option<String>,
+}
+/// A checkout a panel was reading when its layout was saved, or that another panel sent it to. It names what to look
+/// for and reads nothing: only a fresh answer that still offers that folder, for the same session and owner, makes it a
+/// selector.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckoutHint {
+    pub session: String,
+    pub source: ExpectedRowSource,
+    pub path: String,
+    pub expected_root: String,
+}
+impl CheckoutHint {
+    pub fn new(session: &str, source: &ExpectedRowSource, selector: &CheckoutSelector) -> Self {
+        Self {
+            session: session.to_string(),
+            source: source.clone(),
+            path: selector.path.clone(),
+            expected_root: selector.expected_root.clone(),
+        }
+    }
+    /// The hint in a pane's saved layout. One that doesn't read is no hint.
+    pub fn saved(info: &PanelInfo) -> Option<Self> {
+        let PanelInfo::Panel(info) = info else {
+            return None;
+        };
+        serde_json::from_value(info.get("checkoutHint")?.clone()).ok()
+    }
+    pub fn selector(&self) -> CheckoutSelector {
+        CheckoutSelector {
+            path: self.path.clone(),
+            expected_root: self.expected_root.clone(),
+        }
+    }
+    pub fn qualified(
+        &self,
+        session: &str,
+        source: &ExpectedRowSource,
+        checkouts: Option<&GitCheckouts>,
+    ) -> Option<CheckoutSelector> {
+        let selector = self.selector();
+        (self.session == session && self.source == *source && checkouts?.offers(&selector)).then_some(selector)
+    }
 }
 /// One line of a picker. `path` is `None` for the session's own folder, which is always sent as no selector.
 #[derive(Clone, Debug, PartialEq)]

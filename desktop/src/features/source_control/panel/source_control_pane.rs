@@ -8,7 +8,7 @@ use super::branch_menu::{BranchMenu, BranchPicked};
 use super::commit_box::PLACEHOLDER;
 use super::commit_timeline::CommitTimeline;
 use super::git_action::GitWrites;
-use super::git_checkouts::GitCheckouts;
+use super::git_checkouts::{CheckoutHint, GitCheckouts};
 use super::git_branches::GitBranchList;
 use super::git_failure::{GitFailure, Recovery};
 use super::git_status::{GitStatus, Section};
@@ -18,7 +18,8 @@ use super::result_line::PaneResult;
 use crate::core::state::session_read::{SessionRead, Shown};
 use crate::core::ui::center_panes::CenterPanes;
 use gpui_kit::component::dock::{
-    BasePanel, DockPlacement, PaneRef, Panel, PanelEvent, PanelHandle, panel_handle, register_panel,
+    BasePanel, DockPlacement, PaneRef, Panel, PanelEvent, PanelHandle, PanelInfo, PanelState, panel_handle,
+    register_panel,
 };
 use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::*;
@@ -91,6 +92,9 @@ pub struct SourceControlPane {
     checkouts_read: Option<Task<()>>,
     /// The status answer the list was last read beside; it's read again with each one.
     checkouts_answers: u64,
+    /// The checkout last picked here, saved with the layout. It stays through a visit to another session, and becomes a
+    /// read again only when a fresh list still offers it.
+    checkout_hint: Option<CheckoutHint>,
     scope_open: bool,
     scroll: ScrollHandle,
     _heard: Vec<Subscription>,
@@ -102,8 +106,13 @@ impl SourceControlPane {
     /// Registers the pane under the drawer's Source control name, after the placeholders, since the last registration
     /// wins.
     pub fn register(cx: &mut App) {
-        register_panel(cx, SOURCE_CONTROL, |_, window, cx| {
-            panel_handle(cx.new(|cx| SourceControlPane::new(window, cx)))
+        register_panel(cx, SOURCE_CONTROL, |build, window, cx| {
+            let hint = CheckoutHint::saved(&build.state().info);
+            panel_handle(cx.new(|cx| {
+                let mut pane = SourceControlPane::new(window, cx);
+                pane.checkout_hint = hint;
+                pane
+            }))
         });
         cx.on_action(|_: &ShowSourceControl, cx| {
             let Some(window) = cx.active_window().or_else(|| cx.windows().into_iter().next()) else {
@@ -238,6 +247,7 @@ impl SourceControlPane {
             checkouts_for: None,
             checkouts_read: None,
             checkouts_answers: 0,
+            checkout_hint: None,
             scope_open: false,
             scroll: ScrollHandle::new(),
             _heard: heard,
@@ -350,6 +360,14 @@ impl BasePanel for SourceControlPane {
             section.update(cx, |section, cx| section.set_active(active, cx));
         }
         self.sync_children(cx);
+    }
+
+    fn dump(&self, _: &App) -> PanelState {
+        let mut state = PanelState::new(SOURCE_CONTROL);
+        if let Some(hint) = &self.checkout_hint {
+            state.info = PanelInfo::panel(serde_json::json!({"checkoutHint":hint}));
+        }
+        state
     }
 }
 

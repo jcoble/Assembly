@@ -1,12 +1,14 @@
 //! Which of the session's checkouts the pane reads. Only a successful `git/checkouts` answer offers another one, and
 //! it's only ever read: writes and opening a file stay with the session's own folder, and the way to work there is to
-//! make it the session's checkout through the Engine. The choice lives in the status read, which drops it with its session.
+//! make it the session's checkout through the Engine. The read drops the choice with its session; the hint, saved with
+//! the layout, is what brings it back, and only after a fresh list still offers it.
 use super::{PaneResult, SourceControlPane};
 use crate::core::socket::checkout_selector::CheckoutSelector;
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
 use crate::core::state::sessions::Sessions;
+use crate::core::ui::center_panes::CenterPanes;
 use crate::features::source_control::actions_menu::STILL_RUNNING;
-use crate::features::source_control::git_checkouts::{GitCheckouts, checkout_gone};
+use crate::features::source_control::git_checkouts::{CheckoutHint, GitCheckouts, checkout_gone};
 use crate::features::source_control::git_failure::GitFailure;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::list::ListItem;
@@ -69,8 +71,11 @@ impl SourceControlPane {
     fn checkouts_answered(&mut self, answer: Outcome<GitCheckouts>, cx: &mut Context<Self>) {
         self.checkouts = match answer {
             Outcome::Ok(checkouts) => Some(checkouts),
-            Outcome::Failed(_) | Outcome::Aborted => None,
+            Outcome::Failed(_) => None,
+            // A dropped connection says nothing about the checkouts; the next answer decides.
+            Outcome::Aborted => return,
         };
+        self.settle_hint(cx);
         if let Some(selection) = self.selection(cx)
             && !self.checkouts.as_ref().is_some_and(|checkouts| checkouts.offers(&selection))
         {
@@ -78,11 +83,31 @@ impl SourceControlPane {
         }
         cx.notify();
     }
+    /// A hint for this session becomes a read if this answer offers it, and otherwise is dropped and said so. A hint for
+    /// another session waits for that session.
+    fn settle_hint(&mut self, cx: &mut Context<Self>) {
+        let (Some(hint), Some((session, source))) = (self.checkout_hint.clone(), self.checkouts_for.clone()) else {
+            return;
+        };
+        if hint.session != session || self.selection(cx).as_ref() == Some(&hint.selector()) || self.busy(cx) {
+            return;
+        }
+        match hint.qualified(&session, &source, self.checkouts.as_ref()) {
+            Some(selector) => self.read.update(cx, |read, cx| read.set_checkout(Some(selector), cx)),
+            None => self.leave_checkout(cx),
+        }
+    }
     fn leave_checkout(&mut self, cx: &mut Context<Self>) {
         self.result = Some(PaneResult::Failed(GitFailure::plain(CHECKOUT_GONE)));
         self.details_open = false;
         self.scope_open = false;
+        self.back_to_session_folder(cx);
+    }
+    /// Forgets the choice as well as the read, so it doesn't come back with the next list.
+    pub(super) fn back_to_session_folder(&mut self, cx: &mut Context<Self>) {
+        self.checkout_hint = None;
         self.read.update(cx, |read, cx| read.set_checkout(None, cx));
+        CenterPanes::save_layout(cx);
     }
     /// `None` is the session's own folder.
     pub(super) fn pick_checkout(&mut self, path: Option<String>, cx: &mut Context<Self>) {
@@ -98,6 +123,12 @@ impl SourceControlPane {
                 None => return,
             },
         };
+        let here = self.checkouts_for.clone();
+        self.checkout_hint = match (&selector, &here) {
+            (Some(selector), Some((session, source))) => Some(CheckoutHint::new(session, source, selector)),
+            _ => self.checkout_hint.take().filter(|hint| here.as_ref().is_some_and(|(session, _)| hint.session != *session)),
+        };
+        CenterPanes::save_layout(cx);
         if selector == self.selection(cx) {
             return;
         }
