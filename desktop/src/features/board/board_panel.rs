@@ -10,11 +10,11 @@ use gpui_kit::*;
 
 use super::board_prefs::{BoardPrefs, BoardTab};
 use super::board_queries::{BoardData, badge_count, open_owner_questions, summary_counts};
-use super::board_sections::{Entry, Section, entries, first_tab, heading, summary, tab_sections};
+use super::board_sections::{ANSWERED_FOLD, Entry, Section, entries, first_tab, heading, summary, tab_sections};
 use super::question_row::{QuestionRows, card_key};
 use super::run_card::{RunCard, RunCardEvent};
 use super::session_tabs::SessionTabs;
-use crate::activity::{CardBody, RunRow};
+use crate::activity::{CardBody, NeedsCard, RunRow};
 use crate::core::clock::backend_clock::BackendClock;
 use crate::core::clock::tick::Tick;
 use crate::core::engine::{EngineChanged, EngineFeed, EngineKey, EngineScope, EngineWatch, SessionKey};
@@ -292,6 +292,20 @@ impl BoardPanel {
                 drops.toggle(drawn.clone(), move |window, cx| div().px_3().pb_2().child(body(window, cx)).into_any_element(), cx);
             }
         });
+    }
+
+    /// A notification's question, open and in view. One that's been answered shows its answered row.
+    pub fn show_need(&mut self, key: &EngineKey, cx: &mut Context<Self>) {
+        self.show_tab(BoardTab::Needs, cx);
+        let Some(need) = self.data.needs.get(key).cloned() else { return };
+        if need.state != "open" && !self.prefs.unfolded.contains(ANSWERED_FOLD) {
+            self.toggle_fold(ANSWERED_FOLD, cx);
+        }
+        let Some(at) = self.entries.iter().position(|entry| *entry == Entry::Need(key.clone())) else { return };
+        self.list.scroll_to_reveal_item(at);
+        let drops = self.questions.read(cx).drops().clone();
+        NeedsCard::open(card_key(key), &drops, QuestionRows::body(self.questions.downgrade(), key.clone(), &need), cx);
+        cx.notify();
     }
 
     /// A new run: show it on Workflows, open, when its row arrives. The run it came from stays listed.

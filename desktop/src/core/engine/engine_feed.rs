@@ -69,6 +69,17 @@ impl EngineFeed {
     pub fn items(&self, scope: &EngineScope) -> Vec<EngineItem> {
         self.store.items(scope)
     }
+    /// A whole cut of a scope, as a snapshot delivers it.
+    #[cfg(test)]
+    pub fn test_snapshot(&mut self, scope: EngineScope, values: Vec<serde_json::Value>, cx: &mut Context<Self>) {
+        let keys = self.store.snapshot(scope.clone(), super::EngineCursor { through: 1, at: None }, values).expect("a valid cut");
+        // A watch nothing can run, so the scope reads as someone holding it. The test's lifetime keeps it.
+        let watch = Rc::new(ScopeWatch { _task: Task::ready(()), active: Rc::new(Cell::new(true)), coherent: Rc::new(Cell::new(true)), resnapshot: Box::new(|| {}) });
+        self.watches.insert(scope.clone(), Rc::downgrade(&watch));
+        std::mem::forget(watch);
+        cx.emit(EngineChanged { scopes: vec![scope], keys, sessions: Vec::new() });
+        cx.notify();
+    }
     /// A saved remote's own name for an engine, from whoever resolved it. The local engine has none.
     pub fn name_machine(&mut self, machine: String, name: Option<String>) {
         match name {

@@ -18,6 +18,7 @@ use crate::core::intents::open_settings::OpenSettings;
 use crate::core::engine::{EngineChanged, EngineFeed};
 use crate::features::board::ToggleBoard;
 use crate::features::board::board_panel::{BoardMemory, BoardPanel, top_bar_badge};
+use crate::features::board::owner_notify::{OpenNeed, OwnerNotify};
 
 /// The row's height, the approved mock's `.titlerow`.
 const HEIGHT: Pixels = px(40.);
@@ -38,6 +39,8 @@ pub struct TopBar {
     /// How many need the owner, read when the shared rows change.
     badge: Option<SharedString>,
     _feed: Subscription,
+    /// A notification's click opens the panel on its question.
+    _notifications: Option<Subscription>,
 }
 
 impl TopBar {
@@ -53,9 +56,18 @@ impl TopBar {
                 cx.notify();
             }
         });
+        let _notifications = OwnerNotify::try_global(cx).map(|notify| {
+            cx.subscribe(&notify, |bar, _, OpenNeed(key): &OpenNeed, cx| {
+                bar.show_board(true, cx);
+                if let Some(board) = &bar.board {
+                    board.update(cx, |board, cx| board.show_need(key, cx));
+                }
+            })
+        });
         Self {
             dock,
             _subscription,
+            _notifications,
             board: None,
             board_dismiss: None,
             board_memory: BoardMemory::default(),

@@ -62,7 +62,7 @@ pub enum Entry {
     Nothing(&'static str),
 }
 
-const ANSWERED_FOLD: &str = "answered";
+pub const ANSWERED_FOLD: &str = "answered";
 const DONE_FOLD: &str = "done";
 
 /// Sections as list rows. Answered and Done start folded, and opening one is what's remembered.

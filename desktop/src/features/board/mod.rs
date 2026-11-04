@@ -6,6 +6,7 @@ pub mod board_panel;
 pub mod board_prefs;
 pub mod board_queries;
 pub mod board_sections;
+pub mod owner_notify;
 pub mod question_actions;
 pub mod question_row;
 pub mod run_card;
