@@ -17,7 +17,7 @@ public sealed class RemoteReleaseInstallTests : IDisposable
 {
     private const string Version = "1.2.3";
     private const string Archive = "assembly-remote-backend-1.2.3-x86_64-unknown-linux-gnu.tar.gz";
-    private const string Base = "https://github.com/jcoble/Assembly/releases/download/assembly-backend-v1.2.3/";
+    private const string Base = "https://github.com/jcoble/Assembly/releases/download/assembly-v1.2.3/";
     private static readonly SavedMachine Machine = new("box", "fixture-host");
 
     private readonly string _root = Directory.CreateTempSubdirectory("remote-release-test-").FullName;
@@ -104,7 +104,7 @@ esac
 exit 0
 """);
         Script("ss", "#!/bin/sh\nprintf 'LISTEN 0 128 127.0.0.1:9797 0.0.0.0:*\\n'\n");
-        // agents-file.sh and package-adapters.ts read the adapter release through curl: the API listing, then the two assets.
+        // agents-file.sh reads the adapter release the desktop named through curl: only its two assets.
         Script("curl", """
 #!/bin/sh
 out= url=
@@ -117,10 +117,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 echo "$url" >>"$GITHUB_FIXTURE/fetched"
-case "$url" in
-  *api.github.com*) cat "$GITHUB_FIXTURE/adapter-releases.json" ;;
-  *) cp "$GITHUB_FIXTURE/$(basename "$url")" "$out" ;;
-esac
+cp "$GITHUB_FIXTURE/$(basename "$url")" "$out"
 """);
         File.CreateSymbolicLink(Path.Combine(Bin, "node"), Run("sh", "-c", "command -v node"));
         AdapterRelease();
@@ -132,12 +129,16 @@ esac
         var record = File.ReadAllBytes(Path.Combine(Github, Archive + ".download.json"));
         var signer = new ReleaseSigner();
         var signature = signer.Sign(record);
+        var adapterManifest = File.ReadAllBytes(Path.Combine(Github, RemoteReleaseFeedTests.AdapterManifest));
+        var adapterSignature = signer.Sign(adapterManifest);
         var handler = new RemoteReleaseFeedTests.Handler(new()
         {
             ["https://api.github.com/repos/jcoble/Assembly/releases?per_page=100"] =
-                RemoteReleaseFeedTests.Listing(new FileInfo(Path.Combine(Github, Archive)).Length, record.Length, signature.Length),
+                RemoteReleaseFeedTests.Listing(new FileInfo(Path.Combine(Github, Archive)).Length, record.Length, signature.Length, adapterManifestBytes: adapterManifest.Length, adapterSignatureBytes: adapterSignature.Length),
             [Base + Archive + ".download.json"] = record,
             [Base + Archive + ".download.json.sig"] = signature,
+            [RemoteReleaseFeedTests.AdapterBase + RemoteReleaseFeedTests.AdapterManifest] = adapterManifest,
+            [RemoteReleaseFeedTests.AdapterBase + RemoteReleaseFeedTests.AdapterManifest + ".sig"] = adapterSignature,
         });
         var shell = new LocalShell(Home, Github, Path.Combine(_root, "python"), Bin);
         var install = new RemoteReleaseInstall(new RemoteReleaseFeed(new HttpClient(handler), signer.PublicKey), shell, TimeProvider.System);
@@ -178,11 +179,6 @@ esac
             ["archive"] = new { file = "assembly-adapters-linux-x64.tar.gz", sha256 = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(file))) },
             ["smoke"] = new Dictionary<string, object> { ["claude-agent-acp"] = Smoke("1.0.0"), ["codex-acp"] = Smoke("2.0.0") },
         }));
-        File.WriteAllText(Path.Combine(Github, "adapter-releases.json"), JsonSerializer.Serialize(new object[]
-        {
-            new { tag_name = "assembly-providers-7-1", draft = false, prerelease = false, published_at = "2026-11-01T00:00:00Z", assets = new object[]
-            { new { name = "assembly-adapters-linux-x64.tar.gz" }, new { name = "assembly-adapters-linux-x64.json" } } },
-        }));
     }
 
     [Fact]
@@ -196,11 +192,11 @@ esac
         Assert.Equal(Version, receipt.Version);
         Assert.Matches("^[0-9a-f]{40}$", receipt.Commit);
         Assert.Equal(serverSha, Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(Installed, "bin/assembly-remote-server")))));
-        // Everything heavy went remote -> GitHub; the desktop read only the listing, the record and its signature.
+        // Everything heavy went remote -> GitHub; the desktop read only the listing and the two signed files with their signatures.
         var fetched = File.ReadAllText(Path.Combine(Github, "fetched"));
         Assert.Contains(Base + Archive, fetched, StringComparison.Ordinal);
         Assert.Contains("releases/download/assembly-providers-7-1/assembly-adapters-linux-x64.tar.gz", fetched, StringComparison.Ordinal);
-        Assert.Equal(3, handler.Asked.Count);
+        Assert.Equal(5, handler.Asked.Count);
         Assert.DoesNotContain(handler.Asked, url => url.EndsWith(".tar.gz", StringComparison.Ordinal));
         Assert.All(shell.Targets, target => Assert.Equal("fixture-host", target));
 
@@ -228,6 +224,32 @@ esac
         Assert.False(File.Exists(Path.Combine(Installed, "bin/assembly-remote-server")));
         Assert.False(File.Exists(Path.Combine(Home, "systemctl.log")));
         Assert.Empty(Directory.GetDirectories(Path.Combine(Home, ".cache"), ".assembly-install-*"));
+    }
+
+    [Fact]
+    public async Task An_adapter_manifest_changed_after_the_desktop_verified_it_stops_the_install()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (install, _, _, _) = Fixture();
+        // The desktop's copy stays signed; what the remote then downloads differs. The archive's own hash still matches.
+        var manifest = Path.Combine(Github, RemoteReleaseFeedTests.AdapterManifest);
+        File.WriteAllText(manifest, File.ReadAllText(manifest) + " ");
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => install.InstallLatestAsync(Machine, _ => { }, default));
+        Assert.Contains("does not match its signature", failed.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(Installed, "bin/assembly-remote-server")));
+        Assert.False(File.Exists(Path.Combine(Home, "systemctl.log")));
+    }
+
+    [Fact]
+    public async Task A_cached_adapter_bundle_with_another_manifest_stops_the_install()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (install, _, _, _) = Fixture();
+        await install.InstallLatestAsync(Machine, _ => { }, default);
+        var cached = Directory.GetFiles(Path.Combine(Installed, "adapters/bundles"), "provider-manifest.json", SearchOption.AllDirectories).Single();
+        File.WriteAllText(cached, File.ReadAllText(cached) + " ");
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => install.InstallLatestAsync(Machine, _ => { }, default));
+        Assert.Contains("does not match its signature", failed.Message, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -1,6 +1,5 @@
 // What tauri-action did for the Mac release, for the GPUI window and its C# backend: the signed .app archive and the
 // updater's latest.json, under the same names.
-//   desktop-release.ts version                                  the version, from desktop/Cargo.toml
 //   desktop-release.ts package <window> <backend> <output>      Assembly_<version>_aarch64.app.tar.gz
 //   desktop-release.ts latest-json <version> <notes> <sig> <url> <output>
 import { execFileSync } from 'node:child_process';
@@ -85,9 +84,7 @@ export function latestJson(version: string, notes: string, signature: string, ur
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [command, ...args] = process.argv.slice(2);
-  if (command === 'version') {
-    console.log(desktopVersion());
-  } else if (command === 'package' && args.length === 3) {
+  if (command === 'package' && args.length === 3) {
     if (process.platform !== 'darwin' || process.arch !== 'arm64') throw new Error('The desktop release must be built on macOS arm64');
     const identity = process.env.APPLE_SIGNING_IDENTITY;
     if (!identity) throw new Error('APPLE_SIGNING_IDENTITY is required');
@@ -97,6 +94,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const [version, notes, signature, url, output] = args;
     writeFileSync(output, latestJson(version, notes, readFileSync(signature, 'utf8'), url));
   } else {
-    throw new Error('Usage: desktop-release.ts version | package <window> <backend> <output> | latest-json <version> <notes> <sig> <url> <output>');
+    throw new Error('Usage: desktop-release.ts package <window> <backend> <output> | latest-json <version> <notes> <sig> <url> <output>');
   }
 }

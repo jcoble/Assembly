@@ -174,7 +174,7 @@ export function archiveBundle(bundle: string, output: string, target: string, ve
 function publishBundles(assetPath: string, versions: Versions, tag: string, commit: string) {
   if (!tag || !commit) throw new Error("Publish requires a tag and commit");
   const directory = resolve(assetPath);
-  const expected = targets.flatMap(target => [".tar.gz", ".json"].map(extension => "assembly-adapters-" + target + extension)).sort();
+  const expected = targets.flatMap(target => [".tar.gz", ".json", ".json.sig"].map(extension => "assembly-adapters-" + target + extension)).sort();
   if (JSON.stringify(readdirSync(directory).sort()) !== JSON.stringify(expected)) throw new Error("Incomplete or unexpected release assets");
   for (const target of targets) {
     const file = "assembly-adapters-" + target + ".tar.gz";
@@ -190,7 +190,7 @@ function publishBundles(assetPath: string, versions: Versions, tag: string, comm
   }
   const gh = (args: string[]) => execFileSync("gh", ["release", ...args], { stdio: "inherit" });
   gh(["create", tag, "--target", commit, "--draft", "--title", "Provider adapters " + tag,
-    "--notes", "Exact upstream versions: " + JSON.stringify(versions) + ". Archives contain production lockfiles; manifests contain SHA-256 and ACP initialization responses.", "--latest=false"]);
+    "--notes", "Exact upstream versions: " + JSON.stringify(versions) + ". Archives contain production lockfiles; signed manifests contain SHA-256 and ACP initialization responses.", "--latest=false"]);
   gh(["upload", tag, ...expected.map(file => join(directory, file))]);
   gh(["edit", tag, "--draft=false", "--latest=false"]);
 }
