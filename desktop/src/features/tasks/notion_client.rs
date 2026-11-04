@@ -5,6 +5,14 @@ use gpui_kit::*;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+/// A change to one block of a task's page.
+pub struct BlockEdit {
+    pub block_id: String,
+    pub kind: String,
+    pub text: String,
+    pub checked: Option<bool>,
+}
+
 #[derive(Clone, Default)]
 pub struct NotionClient;
 impl NotionClient {
@@ -147,14 +155,11 @@ impl NotionClient {
     pub fn block(
         &self,
         source: NotionTaskRef,
-        block_id: String,
-        kind: String,
-        text: String,
-        checked: Option<bool>,
+        edit: BlockEdit,
         observed_revision: String,
         cx: &mut App,
     ) -> Task<Result<NotionEditReceipt, NotionError>> {
-        self.call("block", json!({"source":source,"blockId":block_id,"kind":kind,"text":text,"checked":checked,"observedRevision":observed_revision}), false, cx)
+        self.call("block", json!({"source":source,"blockId":edit.block_id,"kind":edit.kind,"text":edit.text,"checked":edit.checked,"observedRevision":observed_revision}), false, cx)
     }
     pub fn append_text(
         &self,

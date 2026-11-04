@@ -1,12 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NotionTaskRef {
-    pub data_source_id: String,
-    pub page_id: String,
-}
+pub use crate::core::intents::open_task::NotionTaskRef;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NotionSource {
@@ -95,7 +91,7 @@ impl Default for NotionQuery {
             statuses: vec![],
             priorities: vec![],
             sort: "number".into(),
-            direction: "asc".into(),
+            direction: "desc".into(),
         }
     }
 }
@@ -118,11 +114,18 @@ pub struct NotionTaskRow {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NotionProjectOption {
+    pub id: String,
+    pub title: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NotionTaskPage {
     pub rows: Vec<NotionTaskRow>,
     pub has_more: bool,
     pub statuses: Vec<String>,
     pub priorities: Vec<String>,
+    pub projects: Vec<NotionProjectOption>,
     pub fetched_ms: i64,
     pub truncated: bool,
     pub generation: i64,

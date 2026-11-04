@@ -73,6 +73,15 @@ pub struct InlineField {
     _heard: Vec<Subscription>,
 }
 impl EventEmitter<SaveRequested> for InlineField {}
+#[cfg(test)]
+impl InlineField {
+    /// A pick from the choice's menu, without opening it.
+    pub fn pick_for_test(&mut self, value: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.edit(window, cx);
+        self.changed(FieldValue::Choice(Some(value.into())), window, cx);
+        self.save_if_single(window, cx);
+    }
+}
 impl InlineField {
     pub fn text(
         title: impl Into<SharedString>,
@@ -258,6 +267,9 @@ impl InlineField {
     pub fn pending(&self) -> bool {
         self.state.pending()
     }
+    pub fn editing(&self) -> bool {
+        self.state.editing()
+    }
     /// Sets an authoritative external value. An open draft stays intact; older save receipts become stale.
     pub fn set_committed(
         &mut self,
@@ -360,7 +372,8 @@ impl InlineField {
             self.editor.focus(window, cx);
         }
     }
-    fn edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens the editor, as a click on the field does.
+    pub fn edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.read_only || self.mode == SaveMode::Form {
             return;
         }

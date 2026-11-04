@@ -59,10 +59,26 @@ public sealed class NotionSettingsTests
         await using var f = new NotionFixture();
         f.Enqueue("/v1/search", "{\"results\":[],\"has_more\":false}");
         Assert.Equal("ambiguous_data_source", (await Assert.ThrowsAsync<NotionException>(() => f.Settings.SaveAsync(null, "fake", default))).Code);
-        f.Enqueue("/v1/search", "{\"results\":[{\"object\":\"data_source\",\"id\":\"" + NotionFixture.Source + "\"}],\"has_more\":false}");
+        f.Enqueue("/v1/search", "{\"results\":[" + TaskDatabase(NotionFixture.Source, "Work") + "],\"has_more\":false}");
         var saved = await f.Settings.SaveAsync(null, "fake", default);
         Assert.Equal(NotionFixture.Source, saved.DataSourceId);
         Assert.True(saved.HasToken);
+    }
+
+    private static string TaskDatabase(string id, string title) =>
+        "{\"object\":\"data_source\",\"id\":\"" + id + "\",\"title\":[{\"plain_text\":\"" + title + "\"}],\"properties\":{\"Name\":{\"type\":\"title\"},\"Status\":{\"type\":\"status\"}}}";
+
+    [Fact]
+    public async Task Discovery_takes_the_database_named_tasks_and_ignores_anything_without_a_status()
+    {
+        await using var f = new NotionFixture();
+        var notes = "{\"object\":\"data_source\",\"id\":\"" + NotionFixture.Other + "\",\"title\":[{\"plain_text\":\"Notes\"}],\"properties\":{\"Name\":{\"type\":\"title\"}}}";
+        f.Enqueue("/v1/search", "{\"results\":[" + notes + "," + TaskDatabase(NotionFixture.Source, "Work") + "],\"has_more\":false}");
+        Assert.Equal(NotionFixture.Source, (await f.Settings.SaveAsync(null, "fake", default)).DataSourceId);
+        f.Enqueue("/v1/search", "{\"results\":[" + TaskDatabase(NotionFixture.Other, "Tasks") + "," + TaskDatabase(NotionFixture.Source, "Work") + "],\"has_more\":true}");
+        Assert.Equal(NotionFixture.Other, (await f.Settings.SaveAsync(null, "fake", default)).DataSourceId);
+        f.Enqueue("/v1/search", "{\"results\":[" + TaskDatabase(NotionFixture.Other, "Alpha") + "," + TaskDatabase(NotionFixture.Source, "Beta") + "],\"has_more\":false}");
+        Assert.Equal("ambiguous_data_source", (await Assert.ThrowsAsync<NotionException>(() => f.Settings.SaveAsync(null, "fake", default))).Code);
     }
 
     [Fact]

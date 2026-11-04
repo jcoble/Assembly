@@ -304,5 +304,5 @@ impl Render for StashList {
     }
 }
 #[cfg(test)]
-#[path = "stash_dialogs_tests.rs"]
+#[path = "tests/stash_dialogs_tests.rs"]
 mod tests;

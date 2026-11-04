@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Security;
 
@@ -54,9 +55,7 @@ public sealed class NotionSettings
             if (id is null)
             {
                 var found = await _http.SendWithTokenAsync(HttpMethod.Post, "/v1/search", System.Text.Json.JsonDocument.Parse("{\"page_size\":100,\"filter\":{\"value\":\"data_source\",\"property\":\"object\"}}").RootElement.Clone(), bytes, ct);
-                var sources = found.GetProperty("results").EnumerateArray().Where(x => x.GetProperty("object").GetString() == "data_source").ToArray();
-                if (sources.Length != 1 || found.GetProperty("has_more").GetBoolean()) throw new NotionException("ambiguous_data_source");
-                id = NotionIds.Canonical(sources[0].GetProperty("id").GetString()!);
+                id = NotionIds.Canonical(TaskSource(found));
             }
             ct.ThrowIfCancellationRequested();
             return new Change(this, id, account, Read().Generation, token is null);
@@ -68,6 +67,18 @@ public sealed class NotionSettings
             throw;
         }
         finally { if (bytes is not null) CryptographicOperations.ZeroMemory(bytes); }
+    }
+    // A task database has a title and a Status. One named Tasks wins, otherwise it must be the only one.
+    private static string TaskSource(JsonElement found)
+    {
+        var sources = found.GetProperty("results").EnumerateArray()
+            .Where(x => x.GetProperty("object").GetString() == "data_source" && x.TryGetProperty("properties", out var p) && p.ValueKind == JsonValueKind.Object
+                && p.TryGetProperty("Status", out _) && p.EnumerateObject().Any(q => q.Value.TryGetProperty("type", out var t) && t.GetString() == "title"))
+            .ToArray();
+        var named = sources.Where(x => x.TryGetProperty("title", out var t) && string.Equals(NotionBody.Plain(t), "tasks", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (named.Length == 1) return named[0].GetProperty("id").GetString()!;
+        if (sources.Length != 1 || found.GetProperty("has_more").GetBoolean()) throw new NotionException("ambiguous_data_source");
+        return sources[0].GetProperty("id").GetString()!;
     }
     public async Task<IDisposable> LeaseAsync(CancellationToken ct)
     {
