@@ -35,7 +35,7 @@ internal sealed class CheckoutEffects(IAppDatabase db, IGit git, CheckoutWrites 
             string? destination = null;
             if (intent.Request.CheckoutKind == "folder")
             {
-                destination = Path.GetFullPath(intent.Request.Folder!);
+                destination = Path.TrimEndingDirectorySeparator(Path.GetFullPath(intent.Request.Folder!));
                 HandoffGit.NoLinks(destination);
                 if (!Directory.Exists(destination)) return Refuse(intent, "folder_unavailable");
             }
@@ -58,7 +58,7 @@ internal sealed class CheckoutEffects(IAppDatabase db, IGit git, CheckoutWrites 
                 var before = top.ExitCode == 0 ? await Inspect(root, ct) : (Head: (string?)null, Branch: (string?)null);
                 if (intent.Request.CheckoutKind == "current") return Confirm(intent, intent.Folder, before.Branch);
                 if (intent.Request.CheckoutKind == "folder")
-                    return await Relocate(effect, intent, lease, destination!, null, ct);
+                    return await Relocate(effect, intent, lease, destination!, (await Inspect(destination!, ct)).Branch, ct);
                 if (intent.Request.CheckoutKind == "worktree" && intent.InitialStart is not null)
                     return await InitialWorktree(effect, intent, root, reconcile, ct);
                 var branch = intent.Request.Branch!;

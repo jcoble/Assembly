@@ -215,8 +215,38 @@ public sealed class NativeResumeTests
             Assert.Equal(held, resumed.GetProperty("cwd").GetString());
             Assert.Equal(held, f.Folder);
             Assert.Equal("feature", f.Provider.Sessions.Get("s")!.Branch);
+            // "Use as session checkout" names the worktree itself; the session still shows that worktree's branch.
+            var back = f.Queue(new("folder", null, null, f.First));
+            var returning = f.Effects.ExecuteAsync(back, default);
+            await f.Provider.AnswerResumeAsync();
+            f.Settle(back, await returning);
+            Assert.Equal(f.First, f.Folder);
+            Assert.Equal("main", f.Provider.Sessions.Get("s")!.Branch);
         }
         finally { Directory.Delete(held, true); }
+    }
+
+    [Fact]
+    public async Task A_folder_receipt_without_the_adapter_capture_is_refused()
+    {
+        await using var f = new Moving("claude");
+        f.Provider.WriteTranscript(f.First);
+        var effect = f.Queue(new("folder", null, null, f.Second));
+        var forged = new EffectReceipt(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(
+            new CheckoutEffectData(f.Second, null, Native, null, true), EngineJson.Default.CheckoutEffectData), null);
+        Assert.Equal("bad_receipt", CheckoutTransitionTests.Complete(f.Db, effect, forged, f.Provider.Sessions).Error);
+        Assert.Equal(f.First, f.Folder);
+    }
+
+    [Fact]
+    public async Task A_never_opened_session_moves_without_touching_a_provider()
+    {
+        await using var f = new Moving("claude");
+        f.Db.Db.Writer.Write("test.no-native", scope => scope.Execute("UPDATE engine_session SET provider_session_id=NULL WHERE id='s'"));
+        var effect = f.Queue(new("folder", null, null, f.Second));
+        f.Settle(effect, await f.Effects.ExecuteAsync(effect, default));
+        Assert.Equal(f.Second, f.Folder);
+        Assert.Equal(0, f.Provider.Launcher.Launches);
     }
 
     [Fact]

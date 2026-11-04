@@ -146,7 +146,7 @@ public static partial class SessionTransitions
 
     private static bool ValidNativeRelocation(IReadScope scope, string session, CheckoutOperation intent, CheckoutEffectData result)
     {
-        if (intent.Request.CheckoutKind == "folder" && Path.GetFullPath(intent.Request.Folder!) != result.Folder) return false;
+        if (intent.Request.CheckoutKind == "folder" && Path.TrimEndingDirectorySeparator(Path.GetFullPath(intent.Request.Folder!)) != result.Folder) return false;
         if (intent.Request.CheckoutKind is not ("folder" or "branch" or "worktree")) return false;
         if (intent.ProviderSessionId is null) return result.NativeResume is null;
         if (result.NativeResume is not { Capture: { Current: { } witness, Storage: { } storage } } evidence ||
