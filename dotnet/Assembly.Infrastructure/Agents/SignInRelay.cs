@@ -89,10 +89,33 @@ public sealed partial class SignInRelay
 
     private static CallFailed Refusal() => new("Provider sign-in is unavailable.", "signin_input_failed");
 
+    private static string UnknownCopy(string cause) => cause + " Original cancellation is unconfirmed; the attempt may remain active until its remote deadline.";
+
+    private static CallFailed CancellationUnconfirmed(string cause) => new(UnknownCopy(cause switch
+    {
+        "source_changed" => "The sign-in source changed.",
+        "signin_callback_port_in_use" => "The sign-in callback port is already in use.",
+        "signin_callback_lost" => "The sign-in callback connection was lost.",
+        _ => "The sign-in callback connection is unavailable."
+    }), cause == "source_changed" ? "source_changed" : "signin_cancel_unconfirmed");
+
+    private static string SafeUnknownCopy(string value)
+    {
+        foreach (var cause in new[] { "signin_callback_port_in_use", "signin_callback_lost", "signin_callback_unavailable" })
+            if (value == CancellationUnconfirmed(cause).Message) return value;
+        return CancellationUnconfirmed("signin_callback_unavailable").Message;
+    }
+
     private static CallFailed SafeRefusal(CallFailed error) => error.Reason switch
     {
         "stale_challenge" or "challenge_consumed" => new("The sign-in challenge is no longer available.", error.Reason),
-        "source_changed" or "forbidden" or "not_found" or "cancelled" or "timeout" or "bad_args" or "wrong_machine" or "failed" or "signin_input_failed"
+        "signin_callback_port_in_use" => new("The sign-in callback port is already in use.", error.Reason),
+        "signin_callback_lost" => new("The sign-in callback connection was lost.", error.Reason),
+        "signin_callback_unavailable" => new("The sign-in callback connection is unavailable.", error.Reason),
+        "signin_cancel_unconfirmed" => new(SafeUnknownCopy(error.Message), error.Reason),
+        "source_changed" => new(error.Message == UnknownCopy("The sign-in source changed.")
+            ? error.Message : "The sign-in source changed.", error.Reason),
+        "forbidden" or "not_found" or "cancelled" or "timeout" or "bad_args" or "wrong_machine" or "failed" or "signin_input_failed"
             => new("Provider sign-in is unavailable.", error.Reason),
         _ => Refusal()
     };

@@ -81,6 +81,6 @@ public sealed record SubmitCodeArgs([property: JsonRequired] string OperationId,
 public sealed record AcknowledgeUrlArgs([property: JsonRequired] string OperationId, [property: JsonRequired] long ExpectedGeneration,
     [property: JsonRequired] string OriginalUrl, string? Machine = null);
 public sealed record ChallengeReply(string OperationId, long Generation, string? Link, string? CallbackHost,
-    int? CallbackPort, bool WantsCode, string? TerminalId, bool? Ready = null, bool LinkLost = false);
+    int? CallbackPort, bool WantsCode, string? TerminalId, bool? Ready = null);
 
 public sealed record ProviderInputReply;

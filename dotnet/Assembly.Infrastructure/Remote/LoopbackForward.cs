@@ -39,7 +39,8 @@ public sealed class LoopbackForward : IAsyncDisposable
         {
             using var listener = new TcpListener(IPAddress.Parse(forward.Bind.Trim('[', ']')), port);
             try { listener.Start(); }
-            catch (SocketException) { throw new CallbackPortInUse(port, sshDestination); }
+            catch (SocketException error) when (error.SocketErrorCode == SocketError.AddressAlreadyInUse)
+            { throw new CallbackPortInUse(port, sshDestination); }
         }
         var tunnel = start is null ? RemoteTunnel.ForwardOnce(sshDestination, forwards, port, log) : start(forwards, port);
         var opened = new LoopbackForward(tunnel, port);

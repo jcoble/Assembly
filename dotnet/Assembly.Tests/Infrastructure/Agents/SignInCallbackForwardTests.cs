@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Features.Agents;
+using Assembly.Application.Common.Calls;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Providers;
 using Assembly.Infrastructure.Agents;
@@ -101,12 +102,22 @@ public sealed class SignInCallbackForwardTests
     [Fact]
     public async Task An_actual_forward_exit_tombstones_the_operation_instead_of_restarting_or_retargeting()
     {
-        await using var f = await Fixture.Start();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        await using var f = await Fixture.Start(reading: async (method, call) =>
+        {
+            if (method != "challenge" || Interlocked.Increment(ref reads) != 2) return;
+            entered.TrySetResult();
+            var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = call.Cancellation.Register(() => cancelled.TrySetCanceled(call.Cancellation));
+            await cancelled.Task;
+        });
         using var socket = await ApiTests.OpenOwnerSocketAsync(f.Hosts.Mac.Address, "isolated-token");
         ApiTests.Result(await f.Read(socket, 1)); var owned = f.Forward!;
+        var waiting = f.Read(socket, 2); await entered.Task.WaitAsync(Fixture.Wait);
         System.Diagnostics.Process.GetProcessById(owned.Pid).Kill(entireProcessTree: true);
         await owned.Lost.WaitAsync(Fixture.Wait); await owned.Completion.WaitAsync(Fixture.Wait);
-        Assert.Equal("error", (await f.Read(socket, 2)).GetProperty("t").GetString()); Assert.Equal(1, f.Opens);
+        Assert.Equal("signin_callback_lost", (await waiting.WaitAsync(Fixture.Wait)).GetProperty("code").GetString()); Assert.Equal(1, f.Opens);
         await f.Relay.DisposeAsync();
         Assert.Equal("cancelled", f.Hosts.Remote.Runtime.Reader.Entity("sign_in", "operation", default)!.Value.GetProperty("state").GetString());
         Assert.Null(f.Hosts.Mac.Runtime.Reader.Entity("sign_in", "operation", default));
@@ -132,6 +143,86 @@ public sealed class SignInCallbackForwardTests
         finally { f.Board.Clear("operation"); await consent.WaitAsync(Fixture.Wait); }
     }
 
+    [Fact]
+    public async Task Same_generation_readers_keep_the_first_queued_reply_and_input_valid()
+    {
+        await using var f = await Fixture.Start();
+        var first = new CallContext(default, "first-reader");
+        var second = new CallContext(default, "second-reader");
+        try
+        {
+            var original = await f.Relay.ReadChallengeAsync(f.Hosts.Remote.Runtime.Machine, "operation", first);
+            var repeated = await f.Relay.ReadChallengeAsync(f.Hosts.Remote.Runtime.Machine, "operation", second);
+            Assert.Equal(original, repeated);
+            first.SourceGuard!.EnsureCurrent(); second.SourceGuard!.EnsureCurrent();
+            await f.Relay.AcknowledgeUrlAsync(f.Hosts.Remote.Runtime.Machine, "operation", original!.Generation, f.Url, default);
+            Assert.True(await f.Consent.WaitAsync(Fixture.Wait));
+            Assert.Equal(1, f.Opens);
+        }
+        finally { first.SourceGuard?.Dispose(); second.SourceGuard?.Dispose(); }
+    }
+
+    [Fact]
+    public async Task Readers_joining_setup_and_the_completed_reply_all_finish_without_an_engine_change()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var f = await Fixture.Start(async ct => { entered.TrySetResult(); await release.Task.WaitAsync(ct); });
+        var first = new CallContext(default, "first-reader");
+        var joining = new CallContext(default, "joining-reader");
+        var following = new CallContext(default, "following-reader");
+        try
+        {
+            var initial = f.Relay.ReadChallengeAsync(f.Hosts.Remote.Runtime.Machine, "operation", first);
+            await entered.Task.WaitAsync(Fixture.Wait);
+            var joined = f.Relay.ReadChallengeAsync(f.Hosts.Remote.Runtime.Machine, "operation", joining);
+            var next = initial.ContinueWith(async _ => await f.Relay.ReadChallengeAsync(f.Hosts.Remote.Runtime.Machine,
+                "operation", following), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default).Unwrap();
+            release.TrySetResult();
+            var replies = await Task.WhenAll(initial, joined, next).WaitAsync(Fixture.Wait);
+            Assert.All(replies, reply => Assert.True(reply!.Ready == true));
+            Assert.All(replies, reply => Assert.Equal(replies[0]!.Generation, reply!.Generation));
+            Assert.Equal(1, f.Opens);
+        }
+        finally { first.SourceGuard?.Dispose(); joining.SourceGuard?.Dispose(); following.SourceGuard?.Dispose(); }
+    }
+
+    [Fact]
+    public async Task An_occupied_callback_port_is_a_safe_distinct_refusal_and_confirms_original_cancellation()
+    {
+        using var occupied = new TcpListener(IPAddress.Loopback, 0); occupied.Start();
+        var port = ((IPEndPoint)occupied.LocalEndpoint).Port;
+        await using var f = await Fixture.Start(callbackPort: port);
+        using var socket = await ApiTests.OpenOwnerSocketAsync(f.Hosts.Mac.Address, "isolated-token");
+        var reply = await f.Read(socket, 1).WaitAsync(Fixture.Wait);
+        Assert.Equal("signin_callback_port_in_use", reply.GetProperty("code").GetString());
+        Assert.DoesNotContain(f.Url, reply.GetRawText(), StringComparison.Ordinal);
+        Assert.DoesNotContain("isolated", reply.GetRawText(), StringComparison.Ordinal);
+        Assert.Null(f.Forward);
+        Assert.Equal("cancelled", f.Hosts.Remote.Runtime.Reader.Entity("sign_in", "operation", default)!.Value.GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public async Task Losing_the_original_owner_during_setup_reports_unconfirmed_cancellation_without_retargeting()
+    {
+        Fixture? fixture = null;
+        await using var f = await Fixture.Start(async _ =>
+        {
+            await fixture!.Hosts.DisconnectMirror();
+            throw new IOException("INERT_PRIVATE_FAILURE");
+        });
+        fixture = f;
+        using var socket = await ApiTests.OpenOwnerSocketAsync(f.Hosts.Mac.Address, "isolated-token");
+        var reply = await f.Read(socket, 1).WaitAsync(Fixture.Wait);
+        Assert.Equal("source_changed", reply.GetProperty("code").GetString());
+        Assert.Contains("unconfirmed", reply.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.Contains("remote deadline", reply.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("INERT_PRIVATE_FAILURE", reply.GetRawText(), StringComparison.Ordinal);
+        Assert.DoesNotContain(f.Url, reply.GetRawText(), StringComparison.Ordinal);
+        Assert.Equal("starting", f.Hosts.Remote.Runtime.Reader.Entity("sign_in", "operation", default)!.Value.GetProperty("state").GetString());
+        Assert.Equal(1, f.Opens); Assert.Null(f.Forward);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         internal static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
@@ -143,12 +234,12 @@ public sealed class SignInCallbackForwardTests
         internal int Opens;
         internal string Url = "";
         internal Task<bool> Consent = null!;
-        internal static async Task<Fixture> Start(Func<CancellationToken, Task>? before = null, bool ignoreOpenCancellation = false)
+        internal static async Task<Fixture> Start(Func<CancellationToken, Task>? before = null, bool ignoreOpenCancellation = false, int? callbackPort = null, Func<string, CallContext, Task>? reading = null)
         {
             var f = new Fixture();
             try
             {
-                f.Hosts.Remote.AdditionalFeatures = calls => new ProvidersFeature(f.Board, f.Hosts.Remote.Runtime.Machine).Register(calls);
+                f.Hosts.Remote.AdditionalFeatures = calls => new ProvidersFeature(f.Board, f.Hosts.Remote.Runtime.Machine).Register(reading is null ? calls : new MessageReadGate(calls, reading));
                 f.Hosts.Mac.AdditionalFeatures = calls => new ProvidersFeature(new(), f.Hosts.Mac.Runtime.Machine,
                     (m, o, c) => f.Relay.ReadChallengeAsync(m, o, c), (a, c) => f.Relay.SubmitCodeAsync(a, c),
                     (a, c) => f.Relay.AcknowledgeUrlAsync(a, c)).Register(calls);
@@ -168,7 +259,7 @@ public sealed class SignInCallbackForwardTests
                     new StartSignIn("codex", "", null, null));
                 Assert.True(start.Applied, start.Error); await f.Hosts.Reached(start.Seq);
                 using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
-                var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                var port = callbackPort ?? ((IPEndPoint)listener.LocalEndpoint).Port;
                 f.Url = "https://example.invalid/inert?redirect_uri=" + Uri.EscapeDataString($"http://127.0.0.1:{port}/callback");
                 listener.Stop();
                 f.Consent = f.Board.RequestUrlConsentAsync("operation", new Uri(f.Url), default).AsTask();

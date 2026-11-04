@@ -40,22 +40,45 @@ public sealed partial class SessionRailTests
     public void Current_generation_and_exact_owner_are_required_for_remote_needs_and_metadata()
     {
         var remote = Parent("codex", machine: "workbox-test");
+        var facade = _sessions.Get(remote)!;
+        // Complete the method-local source-derived snapshot, without inventing a durable copied-owner fact.
+        _database.Writer.Write("test.canonical-mirror", scope => scope.Execute("""
+            UPDATE engine_mirror_row SET row_json=json_set(row_json,
+              '$.provider',$provider,'$.folder','/recorded/remote','$.updatedMs',$updated)
+            WHERE entity_kind='session' AND entity_id=$id AND machine='fixture-engine:workbox-test';
+            """, new("$provider", facade.Agent), new("$updated", facade.UpdatedAt), new("$id", remote)));
         OpenEngineNeed(remote, "remote-a");
-        Assert.Equal(1, Read(locations: ["remote"]).Totals.Needs);
-        Assert.Equal("recorded-model", Entry(Read(), remote).Model);
-        Assert.Equal(new ExpectedSource("fixture-engine:workbox-test", 1, "workbox-test"), Entry(Read(), remote).Source);
+        var expected = new ExpectedSource("fixture-engine:workbox-test", 1, "workbox-test");
+        var initial = Read(locations: ["remote"]);
+        Assert.Equal(1, initial.Totals.Needs);
+        var canonical = Assert.Single(initial.Sessions, row => row.SessionId == remote && row.Source == expected);
+        Assert.Equal("recorded-model", canonical.Model);
+        Assert.Equal(expected, canonical.Source);
+        var unknown = Assert.Single(initial.Sessions, row => row.SessionId == remote && row.Source is null);
+        Assert.Null(unknown.Model);
+        Assert.Null(unknown.Worktree);
         _database.Writer.Write("test.replace-source", scope => scope.Execute(
             "UPDATE engine_mirror SET generation=2 WHERE name='workbox-test'"));
-        Assert.Equal(0, Read(locations: ["remote"]).Totals.Needs);
-        Assert.Null(Entry(Read(), remote).Model);
-        Assert.Null(Entry(Read(), remote).Source);
+        var replaced = Read(locations: ["remote"]);
+        Assert.Equal(0, replaced.Totals.Needs);
+        Assert.Contains(replaced.Sessions, row => row.SessionId == remote);
+        Assert.All(replaced.Sessions.Where(row => row.SessionId == remote), row =>
+        {
+            Assert.Null(row.Model);
+            Assert.Null(row.Source);
+        });
         _database.Writer.Write("test.restore-contradiction", scope => scope.Execute("""
             UPDATE engine_mirror SET generation=1 WHERE name='workbox-test';
             UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.machine','different-owner') WHERE entity_kind='session';
             """));
-        Assert.Equal(0, Read().Totals.Needs);
-        Assert.Null(Entry(Read(), remote).Model);
-        Assert.Null(Entry(Read(), remote).Source);
+        var contradicted = Read(locations: ["remote"]);
+        Assert.Equal(0, contradicted.Totals.Needs);
+        Assert.Contains(contradicted.Sessions, row => row.SessionId == remote);
+        Assert.All(contradicted.Sessions.Where(row => row.SessionId == remote), row =>
+        {
+            Assert.Null(row.Model);
+            Assert.Null(row.Source);
+        });
     }
 
     [Fact]
@@ -67,12 +90,14 @@ public sealed partial class SessionRailTests
             INSERT INTO engine_run(id,version,machine,created_ms,updated_ms,owner_session_id,worktree,state,owner_loss_limit_ms)
             VALUES('recorded-run',1,$machine,1,1,$child,'/recorded/worktree','running',1000);
             UPDATE engine_session SET model='selected-model',run_id='recorded-run' WHERE id=$child;
-            UPDATE session_info SET pinned_at=10,orchestrator_at=20,position=3 WHERE session_id=$child;
+            UPDATE session_info SET pinned_at=10,orchestrator_at=20,position=3,title='Given here',title_source='user' WHERE session_id=$child;
             """, new("$machine", _engineMachine), new("$child", child)));
         Rows(child, (null, RowKind.Error, JsonSerializer.SerializeToElement(
             new ErrorPayload("First line\nSecond line\r" + new string('x', 300), "failed"), RowJsonContext.Rows.ErrorPayload)));
         var entry = Entry(Read(), child);
         Assert.Equal(new ExpectedSource(_engineMachine, 0, null), entry.Source);
+        Assert.Equal("Given here", entry.Title);
+        Assert.Equal("Recorded", _database.QueryFirst("SELECT title FROM engine_session WHERE id=$id", row => row.Text(0), default, new SqlArg("$id", child)));
         Assert.Equal(parent, entry.ParentSessionId);
         Assert.Equal(1, entry.Depth);
         Assert.Equal(0, Entry(Read(), parent).Depth);

@@ -124,7 +124,7 @@ impl SessionsPane {
         });
         let engine=crate::core::engine::EngineFeed::global(cx);
         let engine_changed=cx.subscribe(&engine,|pane,_,changed:&crate::core::engine::EngineChanged,cx| {
-            if changed.scopes.iter().any(|scope|scope.topic=="needs_me")||changed.keys.iter().any(|key|key.kind=="needs_me") {
+            if changed.scopes.iter().any(|scope|matches!(scope.topic.as_str(),"sessions"|"needs_me"))||changed.keys.iter().any(|key|matches!(key.kind.as_str(),"session"|"needs_me")) {
                 let read=pane.rail.changed();pane.send(read,cx);
             }
             cx.notify();

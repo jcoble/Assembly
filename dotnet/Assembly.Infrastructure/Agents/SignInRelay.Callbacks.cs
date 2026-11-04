@@ -31,12 +31,12 @@ public sealed partial class SignInRelay : IAsyncDisposable
     private async Task<CallbackScope> ScopeAsync(string machine, string operation, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        RequireActiveOperation(machine, operation, ct);
         lock (_gate)
         {
             _closing.Token.ThrowIfCancellationRequested();
             if (_callbacks.TryGetValue((machine, operation), out var existing)) return existing;
         }
+        RequireActiveOperation(machine, operation, ct);
         var target = await _forward.CaptureSignInTargetAsync(machine, ct);
         var captured = await _connections.CaptureSignInCallbackAsync(_db, machine, target.Remote, target.Binding, ct);
         captured.EnsureCurrent();
@@ -101,6 +101,7 @@ public sealed partial class SignInRelay : IAsyncDisposable
         { SingleReader = true, FullMode = BoundedChannelFullMode.DropOldest });
         private readonly object _state = new();
         private readonly List<TaskCompletionSource<ChallengeReply?>> _waiters = [];
+        private readonly TaskCompletionSource _outcome = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private IDisposable? _published;
         private EngineMirror? _mirror;
         private CancellationTokenRegistration _ownerLost;
@@ -111,7 +112,7 @@ public sealed partial class SignInRelay : IAsyncDisposable
         private (string Host, int Port)? _callback;
         private Task? _loss;
         private CancellationTokenSource? _forwardStop;
-        private bool _admitted, _terminal;
+        private bool _admitted, _terminal, _cancelUnconfirmed;
         private int _revoked;
         private string _problem = "signin_input_failed";
         private long _lastGeneration, _revision, _replyRevision;
@@ -148,22 +149,32 @@ public sealed partial class SignInRelay : IAsyncDisposable
             }
         }
 
-        private void Wake() { Interlocked.Increment(ref _revision); _signals.Writer.TryWrite(true); }
+        private void Wake() => _signals.Writer.TryWrite(true);
         internal void Revoke()
         {
             if (_target?.Binding.IsInvalidated == true) _problem = "source_changed";
-            Interlocked.Exchange(ref _revoked, 1);
+            if (Interlocked.Exchange(ref _revoked, 1) == 0) Interlocked.Increment(ref _revision);
             Wake();
         }
 
         internal async Task<ChallengeReply?> ReadAsync(CancellationToken ct)
         {
             var waiter = new TaskCompletionSource<ChallengeReply?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            bool closing;
             lock (_state)
             {
-                if (_terminal) return null;
-                EnsureCurrent();
-                _waiters.Add(waiter);
+                closing = Volatile.Read(ref _revoked) != 0 || _stopping.IsCancellationRequested;
+                if (!closing)
+                {
+                    if (_terminal) return null;
+                    EnsureCurrent();
+                    _waiters.Add(waiter);
+                }
+            }
+            if (closing)
+            {
+                await _outcome.Task.WaitAsync(ct);
+                throw Failure();
             }
             // A reader only joins the retained operation. Closing it never cancels an admitted setup.
             _signals.Writer.TryWrite(false);
@@ -191,7 +202,8 @@ public sealed partial class SignInRelay : IAsyncDisposable
             }
         }
 
-        private CallFailed Failure() => new("Provider sign-in is unavailable.", _problem);
+        private CallFailed Failure() => _cancelUnconfirmed ? CancellationUnconfirmed(_problem)
+            : SafeRefusal(new("Provider sign-in is unavailable.", _problem));
 
         private void EnsureCurrent()
         {
@@ -202,23 +214,49 @@ public sealed partial class SignInRelay : IAsyncDisposable
 
         private async Task RunAsync()
         {
-            Task refresh = Task.CompletedTask;
+            Task? refresh = null;
+            Task<bool>? signal = null;
             CancellationTokenSource? refreshing = null;
-            long refreshingRevision = -1;
             try
             {
-                while (await _signals.Reader.WaitToReadAsync(_stopping))
+                while (true)
                 {
-                    while (_signals.Reader.TryRead(out _)) { }
-                    // Another view joins an in-flight read/open; only actual operation invalidation supersedes it.
-                    if (!refresh.IsCompleted && Volatile.Read(ref _revision) == refreshingRevision) continue;
-                    refreshing?.Cancel();
-                    try { await refresh; } catch (OperationCanceledException) { }
-                    refreshing?.Dispose(); refreshing = null;
+                    signal ??= _signals.Reader.WaitToReadAsync(_stopping).AsTask();
+                    if (refresh is null) await signal;
+                    else await Task.WhenAny(signal, refresh);
+                    var observed = signal.IsCompleted;
+                    if (observed)
+                    {
+                        if (!await signal) break;
+                        while (_signals.Reader.TryRead(out _)) { }
+                        signal = null;
+                    }
+                    // Completion is itself an event. A reader arriving after Finish but before completion
+                    // remains queued until this exact task is joined, then receives the follow-up read.
+                    if (refresh is not null)
+                    {
+                        if (!refresh.IsCompleted)
+                        {
+                            // Catch-up is only an observation. It must not cancel an unchanged setup or revoke
+                            // an issued challenge. A committed terminal row does stop the owned in-flight work.
+                            if (observed && Volatile.Read(ref _revoked) == 0)
+                            {
+                                var row = _relay._runtime.Reader.Entity("sign_in", _operation, _stopping, _machine);
+                                if (row is not null && row.Value.GetProperty("state").GetString() is "signed_in" or "failed" or "cancelled" or "expired")
+                                { lock (_state) _terminal = true; Revoke(); }
+                            }
+                            if (Volatile.Read(ref _revoked) == 0) continue;
+                            refreshing!.Cancel();
+                        }
+                        try { await refresh; } catch (OperationCanceledException) { }
+                        refreshing!.Dispose(); refreshing = null; refresh = null;
+                    }
                     if (Volatile.Read(ref _revoked) != 0) break;
+                    bool waiting;
+                    lock (_state) waiting = _waiters.Count != 0;
+                    if (!waiting && !observed) continue;
                     refreshing = CancellationTokenSource.CreateLinkedTokenSource(_stopping);
-                    refreshingRevision = Interlocked.Increment(ref _revision);
-                    refresh = RefreshAsync(refreshingRevision, refreshing.Token);
+                    refresh = RefreshAsync(Volatile.Read(ref _revision), refreshing.Token);
                 }
             }
             catch (OperationCanceledException) when (_stopping.IsCancellationRequested) { }
@@ -226,7 +264,8 @@ public sealed partial class SignInRelay : IAsyncDisposable
             {
                 Interlocked.Exchange(ref _revoked, 1);
                 if (refreshing is not null) await refreshing.CancelAsync();
-                try { await refresh; } catch (OperationCanceledException) { }
+                if (refresh is not null)
+                    try { await refresh; } catch (OperationCanceledException) { }
                 refreshing?.Dispose();
                 await _stop.CancelAsync();
                 if (_mirror is not null) _mirror.CaughtUp -= Wake;
@@ -234,6 +273,7 @@ public sealed partial class SignInRelay : IAsyncDisposable
                 _ownerLost.Dispose(); _liveLost.Dispose(); _ownerLost = default; _liveLost = default;
                 await CloseForwardAsync();
                 if (!_terminal) await CancelOriginalAttemptAsync();
+                _outcome.TrySetResult();
                 Finish(null, Failure());
                 lock (_state) { _reply = null; _callback = null; _ensureCallback = null; _target = null; _ssh = null; }
                 _stop.Dispose();
@@ -275,7 +315,11 @@ public sealed partial class SignInRelay : IAsyncDisposable
                 if (reply is null)
                 {
                     // Consuming a challenge is not completion of its provider callback or engine operation.
-                    lock (_state) { _reply = null; _replyRevision = revision; }
+                    lock (_state)
+                    {
+                        if (_reply is not null) Interlocked.Increment(ref _revision);
+                        _reply = null; _replyRevision = Volatile.Read(ref _revision);
+                    }
                     Finish(null, null); return;
                 }
                 if (reply.Generation < _lastGeneration) throw Refusal();
@@ -303,16 +347,29 @@ public sealed partial class SignInRelay : IAsyncDisposable
                     await CloseForwardAsync(); _callback = null;
                 }
                 EnsureRefresh(revision, token);
-                reply = reply with { Ready = true, LinkLost = false };
-                lock (_state) { _lastGeneration = reply.Generation; _reply = reply; _replyRevision = revision; _admitted = true; }
+                reply = reply with { Ready = true };
+                lock (_state)
+                {
+                    // Re-reading the same Board tuple is observation, not revocation of an issued reply.
+                    if (_reply is { } issued && reply == issued) reply = issued;
+                    else { Interlocked.Increment(ref _revision); _reply = reply; }
+                    _lastGeneration = reply.Generation; _replyRevision = Volatile.Read(ref _revision); _admitted = true;
+                }
                 Finish(reply, null);
             }
             catch (RefreshSuperseded) { }
             catch (OperationCanceledException) when (ct.IsCancellationRequested && !_stopping.IsCancellationRequested) { }
             catch (Exception error) when (error is not OutOfMemoryException)
             {
-                if (error is CallFailed { Reason: "source_changed" }) _problem = "source_changed";
-                Revoke(); Finish(null, error is CallFailed failed ? SafeRefusal(failed) : Failure());
+                _problem = error switch
+                {
+                    CallbackPortInUse => "signin_callback_port_in_use",
+                    CallFailed { Reason: "source_changed" } => "source_changed",
+                    CallFailed failed => SafeRefusal(failed).Reason ?? "signin_input_failed",
+                    _ => "signin_callback_unavailable"
+                };
+                // Cleanup determines whether the original attempt actually stopped before delivering its safe outcome.
+                Revoke();
             }
         }
 
@@ -348,12 +405,25 @@ public sealed partial class SignInRelay : IAsyncDisposable
                 Target.EnsureCurrent();
                 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
                 var row = _relay._runtime.Reader.Entity("sign_in", _operation, deadline.Token, _machine);
-                if (row is null || row.Value.GetProperty("state").GetString() is not ("starting" or "waiting_for_person" or "finishing")) return;
+                if (row is not null && row.Value.GetProperty("state").GetString() is "signed_in" or "failed" or "cancelled" or "expired")
+                { _terminal = true; return; }
+                if (row is null) { _cancelUnconfirmed = true; return; }
                 await _relay._forward.CancelSignInAsync(Target, _operation, row.Value.GetProperty("version").GetInt64(), deadline.Token);
+                // Applied:true means the existing CancelSignIn transition committed its terminal row atomically.
+                _terminal = true;
             }
             catch (Exception error) when (error is not OutOfMemoryException)
             {
                 // The original owner could not confirm cancellation. Never retry on a replacement connection.
+                _cancelUnconfirmed = true;
+                try
+                {
+                    Target.EnsureCurrent();
+                    var row = _relay._runtime.Reader.Entity("sign_in", _operation, default, _machine);
+                    if (row is not null && row.Value.GetProperty("state").GetString() is "signed_in" or "failed" or "cancelled" or "expired")
+                    { _terminal = true; _cancelUnconfirmed = false; }
+                }
+                catch (Exception proofError) when (proofError is not OutOfMemoryException) { }
             }
         }
 
@@ -377,7 +447,7 @@ public sealed partial class SignInRelay : IAsyncDisposable
             try
             {
                 await forward.Lost.WaitAsync(ct);
-                if (ReferenceEquals(_forward, forward)) Revoke();
+                if (ReferenceEquals(_forward, forward)) { _problem = "signin_callback_lost"; Revoke(); }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         }
