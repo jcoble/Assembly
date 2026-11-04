@@ -29,7 +29,10 @@ fn known_levels_read_as_the_old_table_and_unknown_ones_as_the_provider_wrote_the
 
 #[test]
 fn approval_words_ignore_case_and_fall_back_to_the_provider() {
-    let modes = option(&[("acceptEdits", "accept", None), ("yolo", "Yolo", Some("All of it."))]);
+    let modes = option(&[
+        ("acceptEdits", "accept", None),
+        ("yolo", "Yolo", Some("All of it.")),
+    ]);
     assert_eq!(approval_label(Some(&modes), "acceptEdits"), "Accept Edits");
     assert_eq!(approval_label(Some(&modes), "yolo"), "Yolo");
     assert_eq!(approval_label(Some(&modes), ""), "Approvals");
@@ -37,7 +40,10 @@ fn approval_words_ignore_case_and_fall_back_to_the_provider() {
         approval_description(&modes.options[0]).as_deref(),
         Some("File edits are accepted automatically; other actions still ask.")
     );
-    assert_eq!(approval_description(&modes.options[1]).as_deref(), Some("All of it."));
+    assert_eq!(
+        approval_description(&modes.options[1]).as_deref(),
+        Some("All of it.")
+    );
 }
 
 #[test]
@@ -50,7 +56,10 @@ fn a_model_uses_the_providers_label_else_its_raw_id() {
 
 #[test]
 fn the_pill_joins_model_and_effort_and_says_agent_settings_with_neither() {
-    assert_eq!(model_effort_label(Some("Sonnet".into()), Some("High".into())), "Sonnet · High");
+    assert_eq!(
+        model_effort_label(Some("Sonnet".into()), Some("High".into())),
+        "Sonnet · High"
+    );
     assert_eq!(model_effort_label(None, Some("High".into())), "High");
     assert_eq!(model_effort_label(None, None), "Agent settings");
 }

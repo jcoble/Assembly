@@ -20,12 +20,18 @@ struct Host {
 impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let drops = self.drops.clone();
-        v_flex().w(px(240.)).children(["first", "second", "uncapped"].into_iter().map(move |key| {
-            let body = GrowingBody::new(key.into(), drops.clone(), px(40.));
-            div()
-                .debug_selector(move || format!("grown-{key}"))
-                .child(if key == "uncapped" { body.max_rows(None) } else { body })
-        }))
+        v_flex()
+            .w(px(240.))
+            .children(["first", "second", "uncapped"].into_iter().map(move |key| {
+                let body = GrowingBody::new(key.into(), drops.clone(), px(40.));
+                div()
+                    .debug_selector(move || format!("grown-{key}"))
+                    .child(if key == "uncapped" {
+                        body.max_rows(None)
+                    } else {
+                        body
+                    })
+            }))
     }
 }
 
@@ -66,7 +72,10 @@ fn height(key: &str, cx: &mut VisualTestContext) -> gpui_kit::Pixels {
 }
 
 fn body(_: &mut Window, _: &mut App) -> AnyElement {
-    div().h(px(60.)).child("Recorded activity").into_any_element()
+    div()
+        .h(px(60.))
+        .child("Recorded activity")
+        .into_any_element()
 }
 
 #[gpui::test]
@@ -117,7 +126,11 @@ fn a_caller_can_let_a_body_be_as_tall_as_it_needs(cx: &mut TestAppContext) {
         )
     });
     settle(cx);
-    assert!(height("uncapped", cx) >= px(480.), "{:?}", height("uncapped", cx));
+    assert!(
+        height("uncapped", cx) >= px(480.),
+        "{:?}",
+        height("uncapped", cx)
+    );
 }
 
 /// An answered question drops from its whole form to one line while its row stays open.
@@ -147,8 +160,16 @@ fn an_open_body_that_changes_height_tells_its_list(cx: &mut TestAppContext) {
     tall.set(px(10.));
     drops.update(cx, |_, cx| cx.notify());
     settle(cx);
-    assert!(height("first", cx) < before, "{before:?} to {:?}", height("first", cx));
-    assert_eq!(moves.get(), 1, "the list has to hear about it once, then rest");
+    assert!(
+        height("first", cx) < before,
+        "{before:?} to {:?}",
+        height("first", cx)
+    );
+    assert_eq!(
+        moves.get(),
+        1,
+        "the list has to hear about it once, then rest"
+    );
 }
 
 #[gpui::test]
@@ -160,7 +181,10 @@ fn opening_another_shuts_the_first(cx: &mut TestAppContext) {
     drops.read_with(cx, |drops, _| {
         assert!(!drops.is_open(&"first".into()));
         assert!(drops.is_open(&"second".into()));
-        assert!(drops.is_showing(&"first".into()), "closing body stays through its motion");
+        assert!(
+            drops.is_showing(&"first".into()),
+            "closing body stays through its motion"
+        );
     });
     settle(cx);
     drops.read_with(cx, |drops, _| assert!(!drops.is_showing(&"first".into())));
@@ -190,7 +214,10 @@ fn the_body_is_built_only_while_open_and_dropped_when_shut(cx: &mut TestAppConte
     drops.update(cx, |drops, cx| drops.shut(cx));
     assert!(weak.upgrade().is_some());
     settle(cx);
-    assert!(weak.upgrade().is_none(), "the closing row releases its body and owned watches");
+    assert!(
+        weak.upgrade().is_none(),
+        "the closing row releases its body and owned watches"
+    );
     let finished = builds.get();
     draw(cx);
     assert_eq!(builds.get(), finished);
@@ -213,7 +240,10 @@ fn right_opens_left_and_escape_shut(cx: &mut TestAppContext) {
         assert!(drops.handle_key("first".into(), "right", body, cx));
         assert!(drops.is_open(&"first".into()));
         assert!(drops.handle_key("first".into(), "right", body, cx));
-        assert!(drops.is_open(&"first".into()), "Right never toggles an open row shut");
+        assert!(
+            drops.is_open(&"first".into()),
+            "Right never toggles an open row shut"
+        );
         assert!(drops.handle_key("first".into(), "left", body, cx));
         assert!(!drops.is_open(&"first".into()));
         drops.handle_key("second".into(), "right", body, cx);
@@ -275,8 +305,13 @@ fn removing_a_filtered_row_drops_its_body_without_waiting_for_an_invisible_close
         )
     });
     settle(cx);
-    drops.update(cx, |drops, cx| drops.retain_keys(|key| key.as_ref() == "second", cx));
-    assert!(weak.upgrade().is_none(), "filtered rows release their owned tasks even when never painted again");
+    drops.update(cx, |drops, cx| {
+        drops.retain_keys(|key| key.as_ref() == "second", cx)
+    });
+    assert!(
+        weak.upgrade().is_none(),
+        "filtered rows release their owned tasks even when never painted again"
+    );
     drops.read_with(cx, |drops, _| {
         assert_eq!(drops.open_key(), None);
         assert!(!drops.is_showing(&"first".into()));
@@ -291,5 +326,9 @@ fn retaining_the_same_visible_rows_does_not_schedule_another_list_redraw(cx: &mu
     let _observer = cx.update(|_, cx| cx.observe(&drops, move |_, _| seen.set(seen.get() + 1)));
     drops.update(cx, |drops, cx| drops.retain_keys(|_| true, cx));
     cx.run_until_parked();
-    assert_eq!(notices.get(), 0, "rendering an unchanged virtual list must become idle");
+    assert_eq!(
+        notices.get(),
+        0,
+        "rendering an unchanged virtual list must become idle"
+    );
 }

@@ -97,7 +97,9 @@ pub fn card(
         .child(
             h_flex()
                 .gap_1p5()
-                .when(needs_you, |line| line.child(badge("Needs you", warning, cx)))
+                .when(needs_you, |line| {
+                    line.child(badge("Needs you", warning, cx))
+                })
                 .child(badge(label(&task.state), color, cx))
                 .child(
                     div()
@@ -107,7 +109,13 @@ pub fn card(
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(task.title.clone()),
                 )
-                .child(div().flex_none().text_role(TextRole::Meta, cx).text_color(muted).child(time)),
+                .child(
+                    div()
+                        .flex_none()
+                        .text_role(TextRole::Meta, cx)
+                        .text_color(muted)
+                        .child(time),
+                ),
         )
         .child(
             div()
@@ -116,7 +124,12 @@ pub fn card(
                 .text_color(if offline { warning } else { muted })
                 .child(format!("{} · {machine}", task.project)),
         )
-        .child(div().text_role(TextRole::Body, cx).truncate().child(task.summary.clone()));
+        .child(
+            div()
+                .text_role(TextRole::Body, cx)
+                .truncate()
+                .child(task.summary.clone()),
+        );
     let link = |id: &'static str, text: &'static str, url: Option<String>| {
         url.map(|url| {
             Button::new(id)
@@ -163,7 +176,12 @@ pub fn card(
                 .border_color(border.opacity(0.6))
                 .bg(fill.opacity(if open { 0.75 } else { 0.45 }))
                 .when(needs_you, |card| card.border_l_2().border_color(warning))
-                .child(v_flex().gap_1().child(head).when(has_facts, |card| card.child(facts)))
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(head)
+                        .when(has_facts, |card| card.child(facts)),
+                )
                 .child(body),
         )
         .into_any_element()
@@ -186,7 +204,11 @@ pub(super) fn detail(
 ) -> AnyElement {
     let open = (pane.state.selected.as_ref())
         .is_some_and(|(open_machine, open_task)| open_machine == machine && open_task == task);
-    let shown = if open { pane.state.detail.clone() } else { pane.closing_detail(machine, task) };
+    let shown = if open {
+        pane.state.detail.clone()
+    } else {
+        pane.closing_detail(machine, task)
+    };
     let failed = open.then(|| pane.detail_failed.clone()).flatten();
     detail_lines(pane, session, shown, failed, window, cx).into_any_element()
 }
@@ -210,12 +232,20 @@ fn detail_lines(
     // The session link shows whether or not the detail could be read: it's the way back when it can't.
     let link = h_flex().child(open_session);
     if let Some(message) = failed {
-        let error = div().text_role(TextRole::Body, cx).text_color(cx.theme().danger).child(message);
+        let error = div()
+            .text_role(TextRole::Body, cx)
+            .text_color(cx.theme().danger)
+            .child(message);
         return body.child(error).child(link);
     }
     let Some(detail) = shown else {
         return body
-            .child(div().text_role(TextRole::Body, cx).text_color(muted).child("Reading…"))
+            .child(
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(muted)
+                    .child("Reading…"),
+            )
             .child(link);
     };
     let (questions, more_questions) = (

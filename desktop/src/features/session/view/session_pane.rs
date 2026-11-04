@@ -13,18 +13,15 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-
-use crate::core::ui::ask::form::AskForm;
 use super::grow::{grow, turn};
 use super::header::Header;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
 use crate::core::state::machines::GlobalMachines;
 use crate::core::theme::grow::{GROW, faded};
+use crate::core::ui::ask::form::AskForm;
 use crate::core::ui::expand_row::ExpandRow;
-use crate::features::session::client::session_client::{
-    RowUpdate, RowsSink, SessionClient,
-};
+use crate::features::session::client::session_client::{RowUpdate, RowsSink, SessionClient};
 use crate::features::session::composer::composer_view::{Composer, ComposerEvent};
 use crate::features::session::composer::shape::pending_answer;
 use crate::features::session::model::change::Change;
@@ -44,10 +41,13 @@ pub struct SessionPane {
     open_serial: u64,
     pending_open: Option<opening::PendingOpen>,
     active_open_serial: Option<u64>,
-    active_reopen:Option<(crate::core::intents::session_open::SessionOpenRequest,AnyWindowHandle)>,
-    reopen_queued:Option<u64>,
+    active_reopen: Option<(
+        crate::core::intents::session_open::SessionOpenRequest,
+        AnyWindowHandle,
+    )>,
+    reopen_queued: Option<u64>,
     read_only: bool,
-    active_provider:Option<String>,
+    active_provider: Option<String>,
     _source_connections: Vec<Subscription>,
     active_source_cut: Option<opening::ConnectionCut>,
     focus: FocusHandle,
@@ -128,140 +128,6 @@ pub struct SessionPane {
 }
 
 impl SessionPane {
-    pub fn new(client: Rc<dyn SessionClient>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let pane = cx.weak_entity();
-        let on_action: OnAction = {
-            let pane = pane.clone();
-            Rc::new(move |action, window, cx| {
-                pane.update(cx, |pane, cx| pane.on_action(action, window, cx))
-                    .ok();
-            })
-        };
-        let render_row: RenderRow = Rc::new(move |entry, last, window, cx| {
-            let Some(pane) = pane.upgrade() else {
-                return div().into_any_element();
-            };
-            let (row, fresh, fold, space) = pane.update(cx, |pane, cx| {
-                (
-                    pane.row(entry, cx),
-                    pane.fresh_key(entry),
-                    pane.open_fold_of(entry),
-                    pane.space_under(entry),
-                )
-            });
-            let row = match fresh {
-                Some(key) => fade_in(key, row, window, cx),
-                None => row,
-            };
-            // The space under a row by what it is (pane_rows.rs), inside the row so it grows with it.
-            let row = div()
-                .when(!last, |row| row.pb(space))
-                .child(row)
-                .into_any_element();
-            // A fold's work grows in place as the fold opens and shuts.
-            match fold {
-                Some((key, open, toggled_at)) => {
-                    let grown = turn(open, toggled_at, window, cx);
-                    let faded = faded(grown.0);
-                    grow(
-                        format!("{key}:fold-grow").into(),
-                        grown,
-                        open,
-                        faded,
-                        row,
-                        window,
-                        cx,
-                    )
-                }
-                None => row,
-            }
-        });
-        let timeline = cx.new(|cx| Timeline::new(render_row, cx));
-        let composer = cx.new(|cx| Composer::new(client.clone(), window, cx));
-        let header = cx.new(|_| Header::default());
-        let heard = [
-            cx.subscribe(&composer, |pane, _, event, cx| match event {
-                ComposerEvent::StartRequested{..} => {}
-                ComposerEvent::Sending => {
-                    pane.refresh(Change::Nothing, cx);
-                    pane.timeline
-                        .update(cx, |timeline, cx| timeline.follow(FollowEvent::Send, cx));
-                }
-                // Acceptance is queued, even when newer delivered rows already arrived. Only real
-                // pushed turns and the page's activeRunId establish a running turn.
-                ComposerEvent::Accepted{key,receipt}
-                    if pane.session.as_ref() == Some(&receipt.session_id) && pane.row_source.as_ref().is_some_and(|source|source.machine==key.machine) =>
-                {
-                    pane.refresh(Change::Nothing, cx)
-                }
-                ComposerEvent::Accepted{..} => {}
-                ComposerEvent::PendingChanged => pane.refresh(Change::Nothing, cx),
-            }),
-            cx.subscribe(&timeline, |pane, _, TimelineEvent::NearTop, cx| {
-                pane.load_older(cx)
-            }),
-            cx.observe(&header, |pane, _, cx| {
-                pane.tell_offline(cx);
-                cx.notify()
-            }),
-        ];
-        let machines = cx.observe_global::<GlobalMachines>(|pane, cx| pane.follow_machines(cx));
-        let mut pane = SessionPane {
-            client,
-            open_serial: 0,
-            pending_open: None,
-            active_open_serial: None,
-            active_reopen:None,
-            reopen_queued:None,
-            read_only: false,active_provider:None,
-            _source_connections: Vec::new(),
-            active_source_cut: None,
-            focus: cx.focus_handle(),
-            draft: None,
-            session: None,
-            row_source: None,
-            view: SessionView::default(),
-            known_run: None,
-            folds: HashMap::new(),
-            open_folds: HashSet::new(),
-            kept: HashMap::new(),
-            fresh: HashMap::new(),
-            forms: HashMap::new(),
-            plan_open: false,
-            on_action,
-            header,
-            timeline,
-            composer,
-            reveal: None,
-            revealed_at: Instant::now(),
-            frame_asked: false,
-            now: None,
-            live_since: None,
-            reading: HashMap::new(),
-            expands: HashMap::new(),
-            open_asks: HashSet::new(),
-            growing: HashSet::new(),
-            grow_asked: false,
-            _clock: None,
-            held: None,
-            loading: false,
-            failed_before: None,
-            retry_first: None,
-            status: SharedString::default(),
-            _rows: None,
-            _selected: None,
-            _page: None,
-            _loads: HashMap::new(),
-            _writes: HashMap::new(),
-            read_to: 0,
-            _heard: heard,
-            _machines_started: machines,
-            _machines: None,
-        };
-        pane.follow_machines(cx);
-        pane
-    }
-
     /// Shows a session: subscribes to its rows first, then, on the `Jump` that says its seq, loads the page below
     /// `seq + 1`, so the page and the live rows never overlap. A session with no rows yet (a new one) is ready at
     /// once, empty, so its first message sends.
@@ -323,7 +189,8 @@ impl SessionPane {
     fn on_rows(&mut self, event: RowUpdate, cx: &mut Context<Self>) {
         match event {
             RowUpdate::Refused { code: _, message } => {
-                self.composer.update(cx,|composer,cx|composer.invalidate_source(cx));
+                self.composer
+                    .update(cx, |composer, cx| composer.invalidate_source(cx));
                 self._page = None;
                 self._rows = None;
                 self.held = None;
@@ -333,8 +200,10 @@ impl SessionPane {
                 cx.notify();
             }
             RowUpdate::Jump { seq } => {
-                if !self.read_only { self.composer
-                    .update(cx, |composer, cx| composer.recover_pending(cx)); }
+                if !self.read_only {
+                    self.composer
+                        .update(cx, |composer, cx| composer.recover_pending(cx));
+                }
                 self._page = None;
                 self.view = SessionView::default();
                 self.read_to = 0;
@@ -505,6 +374,8 @@ impl SessionPane {
 
 #[path = "pane_actions.rs"]
 mod actions;
+#[path = "pane_construct.rs"]
+mod construct;
 #[path = "pane_expand.rs"]
 mod expand;
 #[path = "pane_machine.rs"]
@@ -556,44 +427,50 @@ mod tests;
 #[path = "tests/session_pane_write_tests.rs"]
 mod write_tests;
 
-#[path="navigation/pane_open.rs"]
-mod opening;
 #[cfg(test)]
-#[path="tests/session_open_tests.rs"]
+#[path = "tests/session_open_native_tests.rs"]
+mod open_native_tests;
+#[cfg(test)]
+#[path = "tests/session_open_refusal_tests.rs"]
+mod open_refusal_tests;
+#[cfg(test)]
+#[path = "tests/session_open_tests.rs"]
 mod open_tests;
+#[path = "navigation/pane_open.rs"]
+mod opening;
+#[path = "navigation/pane_open_read.rs"]
+mod opening_read;
 
-#[path="navigation/pane_workspace.rs"]
+#[path = "navigation/pane_workspace.rs"]
 mod workspace;
 
-
-
-#[path="navigation/pane_discovery.rs"]
+#[path = "navigation/pane_discovery.rs"]
 mod discovery;
 #[cfg(test)]
-#[path="tests/session_route_tests.rs"]
+#[path = "tests/session_route_tests.rs"]
 mod route_tests;
 
-#[path="navigation/chat_codec.rs"]
+#[path = "navigation/chat_codec.rs"]
 pub(super) mod chat_codec;
 #[cfg(test)]
-#[path="navigation/chat_codec_tests.rs"]
+#[path = "navigation/chat_codec_tests.rs"]
 mod chat_codec_tests;
 
-#[path="navigation/helper_stop.rs"]
+#[path = "navigation/helper_stop.rs"]
 mod helper_stop;
 #[cfg(test)]
-#[path="tests/helper_stop_tests.rs"]
+#[path = "tests/helper_stop_tests.rs"]
 mod helper_stop_tests;
 
 #[cfg(test)]
-#[path="navigation/test_navigation.rs"]
-pub(crate) mod test_navigation;
-#[cfg(test)]
-#[path="navigation/navigation_switch_tests.rs"]
+#[path = "navigation/navigation_switch_tests.rs"]
 mod navigation_switch_tests;
+#[cfg(test)]
+#[path = "navigation/test_navigation.rs"]
+pub(crate) mod test_navigation;
 
-#[path="navigation/pane_reconnect.rs"]
+#[path = "navigation/pane_reconnect.rs"]
 mod reconnect;
 #[cfg(test)]
-#[path="navigation/reconnect_tests.rs"]
+#[path = "navigation/reconnect_tests.rs"]
 mod reconnect_tests;

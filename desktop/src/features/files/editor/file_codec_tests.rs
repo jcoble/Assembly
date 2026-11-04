@@ -1,8 +1,11 @@
+use super::{
+    Candidate, DocumentStore, Entry, FilesCodec, WorkspaceKey, document_key, parse, retained_clean,
+    select,
+};
 use crate::core::state::workspace_panes::PaneCodec;
-use super::{parse, select, retained_clean, document_key, FilesCodec, Candidate, Entry, DocumentStore, WorkspaceKey};
 use gpui_kit::{AppContext as _, Context, IntoElement, Render, Window, div};
-use std::collections::HashSet;
 use serde_json::json;
+use std::collections::HashSet;
 fn key() -> WorkspaceKey {
     WorkspaceKey {
         machine: "owning-host".into(),

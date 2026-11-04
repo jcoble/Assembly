@@ -10,7 +10,7 @@ mod pr_parts;
 pub mod pr_queue;
 pub mod pr_search;
 pub mod pr_section;
-mod pr_writes;
 mod pr_stack;
+mod pr_writes;
 pub mod pull_request;
 pub mod review_draft;

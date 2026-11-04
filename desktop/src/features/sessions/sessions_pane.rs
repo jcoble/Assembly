@@ -29,8 +29,8 @@ use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
 use crate::core::socket::update::Update;
 use crate::core::state::machines::GlobalMachines;
-use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::preferences::Preferences;
+use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::GlobalSessions;
 use crate::core::ui::filter_pills::{FilterGroup, FilterOption, FilterPills, FilterPillsChanged};
 
@@ -44,7 +44,7 @@ const LOCATION: usize = 2;
 
 pub struct SessionsPane {
     focus: FocusHandle,
-    pub(super) drops:Entity<crate::core::ui::row_drop_down::RowDropDowns>,
+    pub(super) drops: Entity<crate::core::ui::row_drop_down::RowDropDowns>,
     /// The new-session form while it's open, with the subscription that closes it once it's made a session.
     pub(super) creating: Option<(Entity<NewSessionForm>, [Subscription; 2])>,
     /// The marks on their way, each until its answer, by `next_mark`.
@@ -76,10 +76,11 @@ pub struct SessionsPane {
     /// The last frame drew a running row, so the next tick redraws its running time.
     pub(super) running_drawn: Rc<Cell<bool>>,
     _heard: Vec<Subscription>,
-    pub(super) source_pass:Option<Task<()>>,
-    pub(super) source_serial:u64,
-    pub(super) source_cut:Option<(Entity<SocketClient>,u64,Vec<Option<String>>)>,
-    pub(super) engine_watches: HashMap<crate::core::engine::EngineScope,crate::core::engine::EngineWatch>,
+    pub(super) source_pass: Option<Task<()>>,
+    pub(super) source_serial: u64,
+    pub(super) source_cut: Option<(Entity<SocketClient>, u64, Vec<Option<String>>)>,
+    pub(super) engine_watches:
+        HashMap<crate::core::engine::EngineScope, crate::core::engine::EngineWatch>,
     /// The `sessionRail` feed and the backend clock, once the backend's first ready line started the socket.
     feed: Option<(Task<()>, Entity<BackendClock>, Subscription)>,
     /// The socket's and the machines list's observers.
@@ -124,14 +125,26 @@ impl SessionsPane {
                 cx,
             )
         });
-        let engine=crate::core::engine::EngineFeed::global(cx);
-        let engine_changed=cx.subscribe(&engine,|pane,_,changed:&crate::core::engine::EngineChanged,cx| {
-            if changed.scopes.iter().any(|scope|matches!(scope.topic.as_str(),"sessions"|"needs_me"))||changed.keys.iter().any(|key|matches!(key.kind.as_str(),"session"|"needs_me")) {
-                let read=pane.rail.changed();pane.send(read,cx);
-            }
-            cx.notify();
-        });
-        let (drops,dropdowns)=Self::dropdowns(cx);
+        let engine = crate::core::engine::EngineFeed::global(cx);
+        let engine_changed = cx.subscribe(
+            &engine,
+            |pane, _, changed: &crate::core::engine::EngineChanged, cx| {
+                if changed
+                    .scopes
+                    .iter()
+                    .any(|scope| matches!(scope.topic.as_str(), "sessions" | "needs_me"))
+                    || changed
+                        .keys
+                        .iter()
+                        .any(|key| matches!(key.kind.as_str(), "session" | "needs_me"))
+                {
+                    let read = pane.rail.changed();
+                    pane.send(read, cx);
+                }
+                cx.notify();
+            },
+        );
+        let (drops, dropdowns) = Self::dropdowns(cx);
         let mut heard = vec![
             dropdowns,
             engine_changed,
@@ -196,9 +209,9 @@ impl SessionsPane {
             running_drawn: Rc::default(),
             _heard: heard,
             engine_watches: HashMap::new(),
-            source_pass:None,
-            source_serial:0,
-            source_cut:None,
+            source_pass: None,
+            source_serial: 0,
+            source_cut: None,
             feed: None,
             _backend: Vec::new(),
         };
@@ -318,22 +331,44 @@ impl SessionsPane {
     }
 
     /// Opens a row's session, and clears the filter, as picking a result did in the old rail.
-    pub(super) fn open(&mut self, session_id: String, route_machine: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        let request_id=uuid::Uuid::new_v4().to_string();
-        let expected=request_id.clone();
-        let route=route_machine.clone();
-        let session=session_id.clone();
-        self.row_error=None;
-        self.opening=Some(cx.subscribe(&crate::core::state::selected_session::SelectedSession::global(cx),move|pane,_,event:&crate::core::intents::session_open::SessionOpenResult,cx| {
-            if event.request_id!=expected {return;}
-            pane.opening=None;
-            if let Err(error)=&event.result {
-                eprintln!("sessions: {session} on {route:?} didn't open: {}: {}",error.code,error.message);
-                pane.row_error=Some(refusal_words(route.as_deref(),error).into());
-                cx.notify();
-            }
-        }));
-        window.dispatch_action(Box::new(crate::core::intents::open_session::OpenSession{id:session_id,route_machine,request_id,historical:false}),cx);
+    pub(super) fn open(
+        &mut self,
+        session_id: String,
+        route_machine: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let expected = request_id.clone();
+        let route = route_machine.clone();
+        let session = session_id.clone();
+        self.row_error = None;
+        self.opening = Some(cx.subscribe(
+            &crate::core::state::selected_session::SelectedSession::global(cx),
+            move |pane, _, event: &crate::core::intents::session_open::SessionOpenResult, cx| {
+                if event.request_id != expected {
+                    return;
+                }
+                pane.opening = None;
+                if let Err(error) = &event.result {
+                    eprintln!(
+                        "sessions: {session} on {route:?} didn't open: {}: {}",
+                        error.code, error.message
+                    );
+                    pane.row_error = Some(refusal_words(route.as_deref(), error).into());
+                    cx.notify();
+                }
+            },
+        ));
+        window.dispatch_action(
+            Box::new(crate::core::intents::open_session::OpenSession {
+                id: session_id,
+                route_machine,
+                request_id,
+                historical: false,
+            }),
+            cx,
+        );
         self.clear_filter(window, cx);
     }
 
@@ -425,129 +460,6 @@ pub fn provider_options(agents: &[String], picked: &[String]) -> Vec<FilterOptio
         .collect()
 }
 
-impl EventEmitter<PanelEvent> for SessionsPane {}
-
-impl Focusable for SessionsPane {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-
-impl BasePanel for SessionsPane {
-    /// The sessions pane's name in the saved layout (g0-shape's `SESSIONS`).
-    fn panel_name(&self) -> &'static str {
-        "Sessions"
-    }
-
-    /// The sessions column is a permanent pane.
-    fn closable(&self, _cx: &App) -> bool {
-        false
-    }
-}
-
-impl Panel for SessionsPane {
-    fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        "Sessions"
-    }
-}
-
-impl Render for SessionsPane {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
-        let (warning, border) = (cx.theme().warning, cx.theme().border.opacity(0.6));
-        let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
-        let pane = cx.entity().downgrade();
-        let on_view: OnView = Rc::new(move |view, _: &mut Window, cx: &mut App| {
-            pane.update(cx, |pane, cx| pane.set_view(view, cx)).ok();
-        });
-        let new_session = header_button(Button::new("new-session"), cx)
-            .icon(IconName::Plus)
-            .tooltip("New session")
-            .on_click(cx.listener(|pane, _, window, cx| pane.show_draft(window, cx)));
-        self.follow_entries(window, cx);
-        self.running_drawn.set(false);
-        let list = list(self.lines.clone(), self.line_renderer(cx)).flex_1();
-        let empty = match self.rail.loaded {
-            true => "No sessions here.",
-            false => empty_line(state.as_ref()),
-        };
-        v_flex()
-            .key_context("Sessions")
-            .on_action(cx.listener(
-                |pane, _: &super::search_keys::FocusSessionSearch, window, cx| {
-                    pane.focus_search(window, cx)
-                },
-            ))
-            .track_focus(&self.focus)
-            .size_full()
-            .child(self.search(on_view, new_session, cx))
-            // The pills, then a rule across the card, as the mock's `.pills` has.
-            .child(
-                v_flex()
-                    .border_b_1()
-                    .border_color(border)
-                    .child(self.pills.clone())
-                    // Its own line under the pills, so it never covers one: the rows' amber question chip.
-                    .children(needs_words(self.rail.totals.needs).map(|words| {
-                        h_flex()
-                            .justify_end()
-                            .mt(px(-2.))
-                            .pr(px(12.))
-                            .pb(px(8.))
-                            .child(
-                                h_flex()
-                                    .h(px(18.))
-                                    .px(px(7.))
-                                    .gap(px(4.))
-                                    .rounded_full()
-                                    .bg(warning.opacity(0.12))
-                                    .text_role(TextRole::Meta, cx)
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(warning)
-                                    .child(div().size(px(6.)).rounded_full().bg(warning))
-                                    .child(words),
-                            )
-                    })),
-            )
-            // Above the list, which takes all the height there is and would push this out of the window.
-            .when_some(self.row_error.clone(), |pane, error| {
-                pane.child(
-                    div()
-                        .px_3()
-                        .py_1()
-                        .text_role(TextRole::Body, cx)
-                        .text_color(danger)
-                        .child(error),
-                )
-            })
-            .map(|pane| match self.entries.is_empty() {
-                false => pane.child(list),
-                true => pane.child(div().px_3().py_2().text_role(TextRole::Body, cx).text_color(muted).child(empty)),
-            })
-            .when_some(self.rail.error.clone(), |pane, error| {
-                pane.child(
-                    h_flex()
-                        .px_3()
-                        .py_1()
-                        .gap_2()
-                        .text_role(TextRole::Body, cx)
-                        .text_color(danger)
-                        .child(error)
-                        .child(
-                            Button::new("retry-rail")
-                                .ghost()
-                                .compact()
-                                .label("Retry")
-                                .on_click(cx.listener(|pane, _, _, cx| {
-                                    let read = pane.rail.changed();
-                                    pane.send(read, cx);
-                                })),
-                        ),
-                )
-            })
-    }
-}
-
 /// The rail's filtered "need you" total in words, or nothing at zero.
 fn needs_words(needs: usize) -> Option<String> {
     match needs {
@@ -569,11 +481,13 @@ fn refusal_words(route: Option<&str>, error: &crate::core::engine::EngineRefusal
 }
 
 #[cfg(test)]
-#[path = "sessions_pane_tests.rs"]
-mod tests;
-#[cfg(test)]
 #[path = "sessions_pane_refusal_tests.rs"]
 mod refusal_tests;
+#[path = "sessions_pane_render.rs"]
+mod render;
+#[cfg(test)]
+#[path = "sessions_pane_tests.rs"]
+mod tests;
 
-#[path="drop_down/rail_engine.rs"]
+#[path = "drop_down/rail_engine.rs"]
 pub(super) mod engine_rows;

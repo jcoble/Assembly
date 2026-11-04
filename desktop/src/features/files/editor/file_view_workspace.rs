@@ -24,17 +24,29 @@ pub(crate) struct WorkspaceTab {
 struct Activity(u64);
 impl Global for Activity {}
 impl FileView {
-    pub(crate) fn workspace_source(key: &WorkspaceKey, cx: &App) -> Option<crate::core::socket::row_source::ExpectedRowSource> {
+    pub(crate) fn workspace_source(
+        key: &WorkspaceKey,
+        cx: &App,
+    ) -> Option<crate::core::socket::row_source::ExpectedRowSource> {
         let selected = crate::core::state::selected_session::SelectedSession::try_global(cx)?;
         let selected = selected.read(cx);
         let identity = selected.key()?;
-        if identity.machine != key.machine || identity.id != key.session_id { return None; }
-        selected.source().filter(|source| source.machine == key.machine).cloned()
+        if identity.machine != key.machine || identity.id != key.session_id {
+            return None;
+        }
+        selected
+            .source()
+            .filter(|source| source.machine == key.machine)
+            .cloned()
     }
 
-    pub(crate) fn layout_ref(&self)->(&str,&str) {(&self.session,&self.path)}
-    pub(crate) fn restored_workspace_path(&self,key:&WorkspaceKey)->Option<&str> {
-        (self.owning_workspace().as_ref()==Some(key)||self.expected_workspace.as_ref()==Some(key)).then_some(self.path.as_str())
+    pub(crate) fn layout_ref(&self) -> (&str, &str) {
+        (&self.session, &self.path)
+    }
+    pub(crate) fn restored_workspace_path(&self, key: &WorkspaceKey) -> Option<&str> {
+        (self.owning_workspace().as_ref() == Some(key)
+            || self.expected_workspace.as_ref() == Some(key))
+        .then_some(self.path.as_str())
     }
     pub(crate) fn workspace_path(&self, key: &WorkspaceKey) -> Result<&str, String> {
         if !self.rename_ready() {
@@ -63,11 +75,12 @@ impl FileView {
     pub(crate) fn workspace_tab(&self, key: &WorkspaceKey, cx: &App) -> Option<WorkspaceTab> {
         let matches = self.owning_workspace().as_ref() == Some(key)
             || self.document.as_ref().is_some_and(|document| {
-            document.machine == key.machine && document.checkout_root == key.checkout_root
-        }) || (self.session == key.session_id
-            && self.owner.as_ref().is_none_or(|owner| {
-                owner.machine == key.machine && owner.checkout_root == key.checkout_root
-            }));
+                document.machine == key.machine && document.checkout_root == key.checkout_root
+            })
+            || (self.session == key.session_id
+                && self.owner.as_ref().is_none_or(|owner| {
+                    owner.machine == key.machine && owner.checkout_root == key.checkout_root
+                }));
         if !matches {
             return None;
         }

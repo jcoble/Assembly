@@ -18,9 +18,13 @@ use crate::features::session::view::lightbox::{open_lightbox, read_image};
 impl Composer {
     /// Asks for images with the system's file picker.
     pub(super) fn pick_images(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.start_busy(){return;}
-        if !self.operational()&&self.start_draft.is_none(){return;}
-        let generation=self.source_serial;
+        if self.start_busy() {
+            return;
+        }
+        if !self.operational() && self.start_draft.is_none() {
+            return;
+        }
+        let generation = self.source_serial;
         let session = self.session_key.clone();
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -37,7 +41,12 @@ impl Composer {
                 // Not if another session was picked meanwhile.
                 composer
                     .update(cx, |composer, cx| {
-                        if !composer.start_busy() && (composer.start_draft.is_some() || (composer.session_key == session && composer.source_serial==generation && composer.operational())) {
+                        if !composer.start_busy()
+                            && (composer.start_draft.is_some()
+                                || (composer.session_key == session
+                                    && composer.source_serial == generation
+                                    && composer.operational()))
+                        {
                             composer.attach_paths(&paths, cx)
                         }
                     })
@@ -47,7 +56,9 @@ impl Composer {
 
     /// Attaches each file, by its name's type and its size on disk.
     pub(super) fn attach_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
-        if self.start_busy(){return;}
+        if self.start_busy() {
+            return;
+        }
         for path in paths {
             let name = path
                 .file_name()
@@ -67,7 +78,9 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.start_busy(){return;}
+        if self.start_busy() {
+            return;
+        }
         let (images, others): (Vec<PathBuf>, Vec<PathBuf>) = paths
             .iter()
             .cloned()
@@ -94,7 +107,9 @@ impl Composer {
 
     /// A paste with an image attaches it and pastes no text; `false` leaves any other paste to the draft.
     pub(super) fn pasted(&mut self, item: &ClipboardItem, cx: &mut Context<Self>) -> bool {
-        if self.start_busy(){return true;}
+        if self.start_busy() {
+            return true;
+        }
         if self.session.is_none() && self.start_draft.is_none() {
             return false;
         }
@@ -112,7 +127,12 @@ impl Composer {
             };
             let name = format!("Pasted image{extension}");
             if self.start_draft.is_some() {
-                self.stage_image(name.into(),mime,Arc::new(Image::from_bytes(image.format,image.bytes.clone())),cx);
+                self.stage_image(
+                    name.into(),
+                    mime,
+                    Arc::new(Image::from_bytes(image.format, image.bytes.clone())),
+                    cx,
+                );
             } else {
                 let bytes = UploadSource::Bytes(Arc::from(image.bytes.as_slice()));
                 self.attach(name, mime, image.bytes.len() as u64, bytes, cx);
@@ -123,7 +143,9 @@ impl Composer {
     }
 
     pub(super) fn remove_attachment(&mut self, id: u64, cx: &mut Context<Self>) {
-        if self.start_busy(){return;}
+        if self.start_busy() {
+            return;
+        }
         self.attachments.retain(|attachment| attachment.id != id);
         self.uploads.remove(&id);
         self.previews.remove(&id);
@@ -132,7 +154,11 @@ impl Composer {
 
     /// Opens the card's picture full size.
     pub(super) fn open_attachment(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(attachment) = self.attachments.iter().find(|attachment| attachment.id == id) else {
+        let Some(attachment) = self
+            .attachments
+            .iter()
+            .find(|attachment| attachment.id == id)
+        else {
             return;
         };
         let name = attachment.name.clone();
@@ -147,7 +173,11 @@ impl Composer {
             return;
         };
         let file = path.rsplit(['/', '\\']).next().unwrap_or(path).to_string();
-        let (client, source, serial) = (self.client.clone(), self.expected_source.clone(), self.source_serial);
+        let (client, source, serial) = (
+            self.client.clone(),
+            self.expected_source.clone(),
+            self.source_serial,
+        );
         self._opening = Some(cx.spawn_in(window, async move |composer, cx| {
             let image = read_image(client, session, file, source, cx).await;
             _ = composer.update_in(cx, |composer, window, cx| {
@@ -158,7 +188,8 @@ impl Composer {
                     Ok(image) => open_lightbox(image, name, window, cx),
                     Err(error) => {
                         composer.source_refused(&error, cx);
-                        composer.error = Some(format!("Couldn't open {name}: {}", error.reason()).into());
+                        composer.error =
+                            Some(format!("Couldn't open {name}: {}", error.reason()).into());
                         cx.notify();
                     }
                 }
@@ -167,7 +198,13 @@ impl Composer {
     }
 
     /// The card's picture: at once for pasted bytes, read in the background for a file on disk.
-    fn read_preview(&mut self, id: u64, mime: &'static str, source: &UploadSource, cx: &mut Context<Self>) -> Option<Arc<Image>> {
+    fn read_preview(
+        &mut self,
+        id: u64,
+        mime: &'static str,
+        source: &UploadSource,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<Image>> {
         let format = ImageFormat::from_mime_type(mime)?;
         match source {
             UploadSource::Image(image) => Some(image.clone()),
@@ -181,9 +218,13 @@ impl Composer {
                         let bytes = read.await;
                         _ = composer.update(cx, |composer, cx| {
                             composer.previews.remove(&id);
-                            let attachment = composer.attachments.iter_mut().find(|attachment| attachment.id == id);
+                            let attachment = composer
+                                .attachments
+                                .iter_mut()
+                                .find(|attachment| attachment.id == id);
                             if let (Some(attachment), Ok(bytes)) = (attachment, bytes) {
-                                attachment.preview = Some(Arc::new(Image::from_bytes(format, bytes)));
+                                attachment.preview =
+                                    Some(Arc::new(Image::from_bytes(format, bytes)));
                                 cx.notify();
                             }
                         });
@@ -203,9 +244,14 @@ impl Composer {
         source: UploadSource,
         cx: &mut Context<Self>,
     ) {
-        if self.start_draft.is_some(){self.stage_source(name,mime,size,source,cx);return;}
-        if !self.operational(){return;}
-        let generation=self.source_serial;
+        if self.start_draft.is_some() {
+            self.stage_source(name, mime, size, source, cx);
+            return;
+        }
+        if !self.operational() {
+            return;
+        }
+        let generation = self.source_serial;
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -224,8 +270,17 @@ impl Composer {
             state: AttachmentState::Uploading,
             preview,
         });
-        let Some(binding)=self.expected_source.clone()else{return;};
-        let upload = upload_image(self.client.clone(), session, source, mime, Some(binding), cx);
+        let Some(binding) = self.expected_source.clone() else {
+            return;
+        };
+        let upload = upload_image(
+            self.client.clone(),
+            session,
+            source,
+            mime,
+            Some(binding),
+            cx,
+        );
         self.uploads.retain(|_, task| !task.is_ready());
         self.uploads.insert(
             id,
@@ -233,7 +288,9 @@ impl Composer {
                 let saved = upload.await;
                 composer
                     .update(cx, |composer, cx| {
-                        if composer.source_serial!=generation||!composer.operational(){return;}
+                        if composer.source_serial != generation || !composer.operational() {
+                            return;
+                        }
                         let attachment = composer
                             .attachments
                             .iter_mut()

@@ -1,8 +1,9 @@
 use super::super::WorkspaceTarget;
 use super::super::tests::Host;
-use super::{confirmed, legacy_migration, CenterPanes, FileView, Read, SocketClient, Outcome, SavedEntry, SavedMany, WorkspaceCoordinator, WorkspaceKey, WorkspacePanes};
-use gpui_kit::{AppContext as _, Entity};
-use serde_json::json;
+use super::{
+    CenterPanes, FileView, Outcome, Read, SavedEntry, SavedMany, SocketClient,
+    WorkspaceCoordinator, WorkspaceKey, WorkspacePanes, confirmed, legacy_migration,
+};
 use crate::core::socket::{
     endpoint::Endpoint,
     fake_backend::{FakeBackend, Reply, hello},
@@ -11,7 +12,9 @@ use crate::core::socket::{
 use futures_channel::mpsc::unbounded;
 use gpui::{TestAppContext, VisualTestContext};
 use gpui_kit::component::dock::{BasePanel, DockArea, DockPlacement, panel_handle};
+use gpui_kit::{AppContext as _, Entity};
 use serde_json::Value;
+use serde_json::json;
 use std::sync::{Arc, Mutex};
 #[derive(Default)]
 struct Stored {
@@ -148,28 +151,30 @@ async fn real_existing_owner_migrates_with_canonical_cas_before_old_tabs_are_rem
         )
     });
     let captured = stored.clone();
-    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            WorkspaceTarget::TranscriptOnly(crate::core::engine::SessionKey {
-                machine: "actual-owner".into(),
-                id: "history".into(),
-            }),
-            Box::new(move |_, _, cx| {
-                assert_eq!(
-                    CenterPanes::file_views(cx).len(),
-                    1,
-                    "old tab survives until canonical confirmation"
-                );
-                assert_eq!(
-                    captured.lock().unwrap().snapshot.as_ref().unwrap()["files"][0]["path"],
-                    "src/λ.rs"
-                );
-                Ok(())
-            }),
-            window,
-            cx,
-        );
-    }));
+    cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::TranscriptOnly(crate::core::engine::SessionKey {
+                    machine: "actual-owner".into(),
+                    id: "history".into(),
+                }),
+                Box::new(move |_, _, cx| {
+                    assert_eq!(
+                        CenterPanes::file_views(cx).len(),
+                        1,
+                        "old tab survives until canonical confirmation"
+                    );
+                    assert_eq!(
+                        captured.lock().unwrap().snapshot.as_ref().unwrap()["files"][0]["path"],
+                        "src/λ.rs"
+                    );
+                    Ok(())
+                }),
+                window,
+                cx,
+            );
+        })
+    });
     activated.recv().await.unwrap();
     cx.update(|_, cx| assert!(CenterPanes::file_views(cx).is_empty()));
     let stored = stored.lock().unwrap();
@@ -205,17 +210,19 @@ async fn an_unconfirmed_migration_write_is_never_replayed_or_allowed_to_remove_o
             },
         )
     });
-    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            WorkspaceTarget::TranscriptOnly(crate::core::engine::SessionKey {
-                machine: "actual-owner".into(),
-                id: "history".into(),
-            }),
-            Box::new(|_, _, _| panic!("unconfirmed migration cannot depart")),
-            window,
-            cx,
-        );
-    }));
+    cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::TranscriptOnly(crate::core::engine::SessionKey {
+                    machine: "actual-owner".into(),
+                    id: "history".into(),
+                }),
+                Box::new(|_, _, _| panic!("unconfirmed migration cannot depart")),
+                window,
+                cx,
+            );
+        })
+    });
     assert!(
         refused
             .recv()
@@ -343,19 +350,33 @@ async fn a_changed_existing_group_refuses_the_whole_batch_and_preserves_every_ol
         let file = cx.update(|window, cx| {
             let file = cx.new(|cx| FileView::new(alias.into(), "src/λ.rs".into(), cx));
             _dock.update(cx, |dock, cx| {
-                dock.add_panel_view(panel_handle(file.clone()), DockPlacement::Center, None, window, cx)
+                dock.add_panel_view(
+                    panel_handle(file.clone()),
+                    DockPlacement::Center,
+                    None,
+                    window,
+                    cx,
+                )
             });
             file
         });
         let tell = changed.clone();
         observations.push(cx.update(|_, cx| {
-            cx.observe(&file, move |_, _| { let _ = tell.unbounded_send(()); })
-        }));
-        until("the active legacy file owner is resolved", &mut changes, &changed, || {
-            file.read_with(cx, |file, cx| {
-                file.legacy_capture(cx).unwrap().owner.is_some()
+            cx.observe(&file, move |_, _| {
+                let _ = tell.unbounded_send(());
             })
-        }).await;
+        }));
+        until(
+            "the active legacy file owner is resolved",
+            &mut changes,
+            &changed,
+            || {
+                file.read_with(cx, |file, cx| {
+                    file.legacy_capture(cx).unwrap().owner.is_some()
+                })
+            },
+        )
+        .await;
         files.push(file);
     }
     let groups = cx.update(|_, cx| {
@@ -385,17 +406,19 @@ async fn a_changed_existing_group_refuses_the_whole_batch_and_preserves_every_ol
             },
         )
     });
-    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            WorkspaceTarget::TranscriptOnly(crate::core::engine::SessionKey {
-                machine: "actual-owner".into(),
-                id: "history".into(),
-            }),
-            Box::new(|_, _, _| panic!("conflicting migration must not activate")),
-            window,
-            cx,
-        );
-    }));
+    cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::TranscriptOnly(crate::core::engine::SessionKey {
+                    machine: "actual-owner".into(),
+                    id: "history".into(),
+                }),
+                Box::new(|_, _, _| panic!("conflicting migration must not activate")),
+                window,
+                cx,
+            );
+        })
+    });
     requested.await.unwrap();
     state.lock().unwrap().snapshots.insert(
         existing.session_id.clone(),
@@ -434,157 +457,7 @@ async fn a_changed_existing_group_refuses_the_whole_batch_and_preserves_every_ol
     );
 }
 
-#[test]
-fn batch_receipts_must_match_every_actual_identity_revision_and_input_position() {
-    let key = |session: &str| WorkspaceKey {
-        machine: "actual-owner".into(),
-        session_id: session.into(),
-        checkout_root: "/checkout".into(),
-    };
-    let groups = vec![
-        legacy_migration::Group {
-            key: key("a"),
-            snapshot: json!({"version":1}),
-        },
-        legacy_migration::Group {
-            key: key("b"),
-            snapshot: json!({"version":1}),
-        },
-    ];
-    let receipt = |session: &str, revision| SavedEntry {
-        machine: "actual-owner".into(),
-        session_id: session.into(),
-        checkout_root: "/checkout".into(),
-        revision,
-    };
-    assert!(confirmed(
-        &SavedMany {
-            saved: vec![receipt("a", 6), receipt("b", 1)]
-        },
-        &groups,
-        &[5, 0]
-    ));
-    assert!(!confirmed(
-        &SavedMany {
-            saved: vec![receipt("b", 1), receipt("a", 6)]
-        },
-        &groups,
-        &[5, 0]
-    ));
-    assert!(!confirmed(
-        &SavedMany {
-            saved: vec![receipt("a", 5), receipt("b", 1)]
-        },
-        &groups,
-        &[5, 0]
-    ));
-    assert!(!confirmed(
-        &SavedMany {
-            saved: vec![receipt("a", 6)]
-        },
-        &groups,
-        &[5, 0]
-    ));
-    let mut foreign = receipt("a", 6);
-    foreign.machine = "other-owner".into();
-    assert!(!confirmed(
-        &SavedMany {
-            saved: vec![foreign, receipt("b", 1)]
-        },
-        &groups,
-        &[5, 0]
-    ));
-}
-
-#[gpui::test]
-async fn center_order_uses_confirmed_document_identity_and_the_sole_files_snapshot(
-    cx: &mut TestAppContext,
-) {
-    let (_backend, _stored, _dock, _coordinator, cx) = legacy(cx, ReceiptKind::Confirmed).await;
-    cx.update(|window, cx| {
-        let files = CenterPanes::file_views(cx);
-        assert_eq!(files.len(), 1);
-        let owner = files[0].read(cx).legacy_capture(cx).unwrap().owner.unwrap();
-        WorkspacePanes::set_key(owner.clone(), cx);
-        let snapshot = WorkspacePanes::capture(window, cx).unwrap();
-        let tabs =
-            crate::features::workspaces::center_tabs_capture::capture(&owner, window, cx).unwrap();
-        let document = format!(
-            "document:{}",
-            serde_json::to_string(&("actual-owner", "/real-checkout", "src/λ.rs")).unwrap()
-        );
-        assert_eq!(tabs.order, vec![document.clone()]);
-        assert_eq!(tabs.active_key, Some(document));
-        assert!(
-            tabs.panes.is_empty(),
-            "file content has exactly one codec location"
-        );
-        let value = serde_json::to_value(tabs).unwrap();
-        assert!(
-            crate::features::workspaces::center_tabs::parse(&value, &owner, &snapshot)
-                .unwrap()
-                .is_some()
-        );
-        assert_eq!(snapshot["files"][0]["path"], "src/λ.rs");
-    });
-}
-
-#[gpui::test]
-async fn an_unknown_batch_receipt_is_reconciled_by_exact_saved_bytes_without_replaying_the_write(
-    cx: &mut TestAppContext,
-) {
-    let (_backend, stored, _dock, coordinator, cx) =
-        legacy(cx, ReceiptKind::CommittedMissing).await;
-    let (sent, mut activated) = unbounded();
-    let _terminal = cx.update(|_, cx| {
-        cx.subscribe(
-            &coordinator,
-            move |_, event: &super::super::WorkspaceActivated, _| {
-                sent.unbounded_send(event.clone()).unwrap();
-            },
-        )
-    });
-    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            WorkspaceTarget::TranscriptOnly(crate::core::engine::SessionKey {
-                machine: "actual-owner".into(),
-                id: "history".into(),
-            }),
-            Box::new(|_, _, cx| {
-                assert_eq!(
-                    CenterPanes::file_views(cx).len(),
-                    1,
-                    "old metadata remains until reconciliation"
-                );
-                Ok(())
-            }),
-            window,
-            cx,
-        );
-    }));
-    activated.recv().await.unwrap();
-    cx.update(|_, cx| assert!(CenterPanes::file_views(cx).is_empty()));
-    let stored = stored.lock().unwrap();
-    assert_eq!(
-        stored
-            .calls
-            .iter()
-            .filter(|frame| frame["feature"] == "workspaces" && frame["method"] == "save_many")
-            .count(),
-        1
-    );
-    assert_eq!(
-        stored
-            .calls
-            .iter()
-            .filter(|frame| frame["feature"] == "workspaces" && frame["method"] == "read")
-            .count(),
-        2
-    );
-    assert_eq!(
-        stored.snapshot.as_ref().unwrap()["files"][0]["path"],
-        "src/λ.rs"
-    );
-}
-
 include!("workspace_migration_budget_tests.rs");
+
+#[path = "workspace_migration_receipt_tests.rs"]
+mod receipt_tests;

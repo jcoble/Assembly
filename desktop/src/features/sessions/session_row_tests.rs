@@ -16,24 +16,24 @@ fn a_row_shows_needs_you_first_then_working_failed_done_and_unread() {
         unread: true,
         ..entry()
     };
-    assert_eq!(Presence::of(&all,true), Presence::NeedsYou);
-    assert_eq!(Presence::of(&all,false), Presence::Working);
+    assert_eq!(Presence::of(&all, true), Presence::NeedsYou);
+    assert_eq!(Presence::of(&all, false), Presence::Working);
     let all = RailEntry {
         running: false,
         ..all
     };
-    assert_eq!(Presence::of(&all,false), Presence::Failed);
+    assert_eq!(Presence::of(&all, false), Presence::Failed);
     let all = RailEntry {
         failed: false,
         ..all
     };
-    assert_eq!(Presence::of(&all,false), Presence::Done);
+    assert_eq!(Presence::of(&all, false), Presence::Done);
     let all = RailEntry {
         completed_at: None,
         ..all
     };
-    assert_eq!(Presence::of(&all,false), Presence::Unread);
-    assert_eq!(Presence::of(&entry(),false), Presence::Idle);
+    assert_eq!(Presence::of(&all, false), Presence::Unread);
+    assert_eq!(Presence::of(&entry(), false), Presence::Idle);
     assert_eq!(Presence::NeedsYou.word(), Some("Needs you"));
     assert_eq!(Presence::Unread.word(), None);
 }
@@ -47,9 +47,9 @@ fn a_session_on_a_machine_that_isnt_answering_keeps_its_state_and_says_offline()
         branch: Some("lane/rail".into()),
         ..entry()
     };
-    assert_eq!(Presence::of(&running,false), Presence::Working);
+    assert_eq!(Presence::of(&running, false), Presence::Working);
     assert_eq!(
-        status_words(Presence::of(&running,false), true),
+        status_words(Presence::of(&running, false), true),
         ["offline", "Working"]
     );
     assert_eq!(details(&running), "Workbox Test · lane/rail");
@@ -80,13 +80,16 @@ fn a_finished_row_that_isnt_marked_still_names_its_state() {
         machine: Some("workbox-test".into()),
         ..entry()
     };
-    assert_eq!(Presence::of(&finished,false), Presence::Idle);
-    assert_eq!(status_words(Presence::of(&finished,false), false), ["Idle"]);
+    assert_eq!(Presence::of(&finished, false), Presence::Idle);
+    assert_eq!(
+        status_words(Presence::of(&finished, false), false),
+        ["Idle"]
+    );
     let unread = RailEntry {
         unread: true,
         ..finished
     };
-    assert_eq!(status_words(Presence::of(&unread,false), false), ["Idle"]);
+    assert_eq!(status_words(Presence::of(&unread, false), false), ["Idle"]);
 }
 
 #[test]
@@ -97,7 +100,10 @@ fn the_short_form_drops_this_mac_and_keeps_the_rest() {
         ..entry()
     };
     assert_eq!(short_details(&remote), "Workbox Test · lane/rail");
-    let local = RailEntry { branch: Some("lane/rail".into()), ..entry() };
+    let local = RailEntry {
+        branch: Some("lane/rail".into()),
+        ..entry()
+    };
     assert_eq!(short_details(&local), "lane/rail");
     assert_eq!(short_details(&entry()), "");
 }
@@ -108,11 +114,18 @@ struct OneRow {
 }
 
 impl gpui_kit::Render for OneRow {
-    fn render(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) -> impl gpui_kit::IntoElement {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
         use gpui_kit::{ParentElement as _, Styled as _};
         gpui_kit::div()
             .w(gpui_kit::px(300.))
-            .child(super::SessionRow::new(self.entry.clone(), self.context.clone()))
+            .child(super::SessionRow::new(
+                self.entry.clone(),
+                self.context.clone(),
+            ))
     }
 }
 
@@ -126,7 +139,10 @@ fn clicking_any_line_of_a_row_opens_it_without_touching_its_arrow(cx: &mut gpui:
     let (opened, toggled) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
     let (seen, flipped) = (opened.clone(), toggled.clone());
     let row = OneRow {
-        entry: RailEntry { branch: Some("lane/rail".into()), ..entry() },
+        entry: RailEntry {
+            branch: Some("lane/rail".into()),
+            ..entry()
+        },
         context: super::RowContext {
             selected: false,
             needs_you: true,
@@ -147,9 +163,15 @@ fn clicking_any_line_of_a_row_opens_it_without_touching_its_arrow(cx: &mut gpui:
     let left = bounds.origin.x + px(40.);
     cx.simulate_click(point(left, bounds.origin.y + px(12.)), Modifiers::default());
     assert_eq!(opened.get(), 1, "title line");
-    cx.simulate_click(point(left, bounds.origin.y + bounds.size.height * 0.5), Modifiers::default());
+    cx.simulate_click(
+        point(left, bounds.origin.y + bounds.size.height * 0.5),
+        Modifiers::default(),
+    );
     assert_eq!(opened.get(), 2, "second line, which has its own tooltip");
-    cx.simulate_click(point(left, bounds.origin.y + bounds.size.height - px(10.)), Modifiers::default());
+    cx.simulate_click(
+        point(left, bounds.origin.y + bounds.size.height - px(10.)),
+        Modifiers::default(),
+    );
     assert_eq!(opened.get(), 3, "third line");
     assert_eq!(toggled.get(), 0);
 }

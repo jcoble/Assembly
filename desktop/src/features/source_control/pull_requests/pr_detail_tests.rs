@@ -1,13 +1,13 @@
 use super::{PrDetail, PrOwner};
-use crate::features::source_control::pull_requests::post_confirm::PostRequest;
-use crate::features::source_control::pull_requests::review_draft::{
-    DraftComment, ReviewDraft, ReviewIdentity,
-};
 use crate::core::socket::{
     client::SocketClient,
     endpoint::Endpoint,
     fake_backend::{FakeBackend, Reply, hello},
     test_wait::until,
+};
+use crate::features::source_control::pull_requests::post_confirm::PostRequest;
+use crate::features::source_control::pull_requests::review_draft::{
+    DraftComment, ReviewDraft, ReviewIdentity,
 };
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
@@ -94,7 +94,10 @@ fn page_with_draft(
         serde_json::from_value(json!({"repository":"o/r","localRoot":"/r","number":7,"title":"PR","body":"","bodyBlocks":[],"url":"https://github.com/o/r/pull/7","author":"author","headBranch":"feature","baseBranch":"main","headSha":head,"baseSha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":state,"isDraft":false,"mergeable":"MERGEABLE","reviewDecision":"","createdAt":"","mergedAt":"","mergedBy":"","closedAt":"","commits":[],"comments":[],"reviews":[],"reviewers":[],"checks":[],"files":[],"moreFiles":false,"timeline":[]})).unwrap();
     cx.new(|cx| {
         let mut page = PrDetail::new(
-            PrOwner::Session { id: "session".into(), source: None },
+            PrOwner::Session {
+                id: "session".into(),
+                source: None,
+            },
             Some("o/r".into()),
             7,
             false,
@@ -132,7 +135,12 @@ fn a_moved_head_clears_a_draft_tied_to_it_and_says_so(cx: &mut TestAppContext) {
         assert!(draft.comments.is_empty());
         assert!(draft.body.is_empty());
         assert_eq!(draft.identity.head, NEW_HEAD);
-        assert!(page.failure.as_deref().unwrap().starts_with("The PR changed."));
+        assert!(
+            page.failure
+                .as_deref()
+                .unwrap()
+                .starts_with("The PR changed.")
+        );
     });
 }
 
@@ -158,7 +166,8 @@ fn line_comments_do_not_outlive_an_open_pull_request(cx: &mut TestAppContext) {
     });
 }
 
-fn root_without_a_line() -> crate::features::source_control::pull_requests::pull_request::PullRequestComment {
+fn root_without_a_line()
+-> crate::features::source_control::pull_requests::pull_request::PullRequestComment {
     serde_json::from_value(json!({
         "id":"41","author":"bo","body":"Why?","bodyBlocks":[],"createdAt":"","path":"a.rs",
     }))
@@ -175,7 +184,10 @@ fn a_moved_head_drops_a_reply_written_on_it_and_the_same_head_keeps_it(cx: &mut 
     cx.update(|cx| {
         let page = page.read(cx);
         let reply = page.reply.as_ref().expect("the same head keeps the reply");
-        assert_eq!((reply.id, reply.path.as_str(), reply.line), (41, "a.rs", None));
+        assert_eq!(
+            (reply.id, reply.path.as_str(), reply.line),
+            (41, "a.rs", None)
+        );
     });
     page.update(cx, |page, cx| {
         page.detail.as_mut().unwrap().head_sha = NEW_HEAD.into();
@@ -208,7 +220,9 @@ async fn a_failed_reply_keeps_the_reply_and_the_review_draft_and_says_why(cx: &m
             return reply;
         }
         if frame["t"] == "sub" {
-            return vec![Reply::Frame(json!({"t":"state","sub":frame["id"],"items":[]}))];
+            return vec![Reply::Frame(
+                json!({"t":"state","sub":frame["id"],"items":[]}),
+            )];
         }
         if frame["t"] != "call" {
             return vec![];
@@ -223,12 +237,20 @@ async fn a_failed_reply_keeps_the_reply_and_the_review_draft_and_says_why(cx: &m
         } else {
             return vec![];
         };
-        vec![Reply::Frame(json!({"t":"result","id":frame["id"],"result":result}))]
+        vec![Reply::Frame(
+            json!({"t":"result","id":frame["id"],"result":result}),
+        )]
     });
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
-        SocketClient::start(Endpoint { port: backend.port, token: "secret".into() }, cx);
+        SocketClient::start(
+            Endpoint {
+                port: backend.port,
+                token: "secret".into(),
+            },
+            cx,
+        );
     });
     let page = page_with_draft(cx, OLD_HEAD, "OPEN", 1);
     let sent = changed.clone();

@@ -218,7 +218,7 @@ impl EngineFeed {
         let reset_on_connect = resnapshot.clone();
         let disconnected = coherent.clone();
         let pending_connection = snapshot_pending.clone();
-        let invalidated_scope=scope.clone();
+        let invalidated_scope = scope.clone();
         let main_connection = cx.subscribe(&socket, move |_, _, state, cx| {
             if matches!(
                 state,
@@ -230,7 +230,11 @@ impl EngineFeed {
                 pending_connection.set(false);
                 reset_on_connect();
             }
-            cx.emit(EngineChanged{scopes:vec![invalidated_scope.clone()],keys:Vec::new(),sessions:Vec::new()});
+            cx.emit(EngineChanged {
+                scopes: vec![invalidated_scope.clone()],
+                keys: Vec::new(),
+                sessions: Vec::new(),
+            });
             cx.notify();
         });
         let applied_snapshot = coherent.clone();
@@ -256,9 +260,18 @@ impl EngineFeed {
             let _connection = connection;
             let _main_connection = main_connection;
             'updates: while let Ok(update) = subscription.updates.recv().await {
-                if let EngineUpdate::Refused{code,message}=update {
+                if let EngineUpdate::Refused { code, message } = update {
                     applied_snapshot.set(false);
-                    let _=feed.update(cx,|feed,cx|{feed.error=Some(EngineRefusal{code,message});cx.emit(EngineChanged{scopes:vec![watched.clone()],keys:Vec::new(),sessions:Vec::new()});cx.notify();});return;
+                    let _ = feed.update(cx, |feed, cx| {
+                        feed.error = Some(EngineRefusal { code, message });
+                        cx.emit(EngineChanged {
+                            scopes: vec![watched.clone()],
+                            keys: Vec::new(),
+                            sessions: Vec::new(),
+                        });
+                        cx.notify();
+                    });
+                    return;
                 }
                 let EngineUpdate::Scoped(page) = update else {
                     continue;

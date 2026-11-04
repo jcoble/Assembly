@@ -98,7 +98,7 @@ impl SessionPane {
                                 key: item.key.clone(),
                                 text,
                                 sender: None,
-                                sender_machine:None,
+                                sender_machine: None,
                                 sender_label: None,
                                 images: attached
                                     .into_iter()

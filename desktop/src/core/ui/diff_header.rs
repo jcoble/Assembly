@@ -1,7 +1,7 @@
 //! The header above each file in a stacked diff, shared by Changes and a pull request: its icon, folder and name, its
 //! counts and whatever actions the view gives it. Replaces MultiFileDiff.svelte's section header.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::file_icon::file_icon;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::diff::DiffFile;

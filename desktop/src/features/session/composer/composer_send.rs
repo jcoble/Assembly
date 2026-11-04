@@ -2,8 +2,13 @@ use super::*;
 impl Composer {
     /// Sends the draft once every attachment has uploaded; one whose upload failed is removed first.
     pub(super) fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.start_draft.is_some(){self.send_start(cx);return;}
-        if !self.operational()||self.locked.is_some(){return;}
+        if self.start_draft.is_some() {
+            self.send_start(cx);
+            return;
+        }
+        if !self.operational() || self.locked.is_some() {
+            return;
+        }
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -31,7 +36,7 @@ impl Composer {
                 _ => None,
             })
             .collect();
-        let owner_key=self.session_key.clone().expect("operational owner");
+        let owner_key = self.session_key.clone().expect("operational owner");
         let request = match self.retry_ids.remove(&owner_key) {
             Some(request) if request.text == text && request.attachment_ids == attachment_ids => {
                 request
@@ -52,8 +57,10 @@ impl Composer {
 
     /// Retries a failed prompt's captured payload while preserving any new draft.
     pub fn retry_pending(&mut self, client_id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.operational(){return;}
-        let owner_key=self.session_key.clone().expect("operational owner");
+        if !self.operational() {
+            return;
+        }
+        let owner_key = self.session_key.clone().expect("operational owner");
         let Some(session) = self.session.clone().filter(|_| self.offline.is_none()) else {
             return;
         };
@@ -122,7 +129,13 @@ impl Composer {
         let args = self.source_args(json!({ "session": session, "text": request.text,
             "clientId": request.client_id, "attachmentIds": request.attachment_ids,
             "epoch": request.epoch }));
-        let Some(prompt_key)=self.session_key.clone().filter(|key|key.id==session && self.operational())else{return;};
+        let Some(prompt_key) = self
+            .session_key
+            .clone()
+            .filter(|key| key.id == session && self.operational())
+        else {
+            return;
+        };
         let pending = self.pending.entry(prompt_key.clone()).or_default();
         if !pending
             .iter()
@@ -178,7 +191,10 @@ impl Composer {
                             {
                                 composer.watch_pending(cx);
                             }
-                            cx.emit(ComposerEvent::Accepted{key:prompt_key.clone(),receipt:accepted});
+                            cx.emit(ComposerEvent::Accepted {
+                                key: prompt_key.clone(),
+                                receipt: accepted,
+                            });
                         }
                         // It didn't go out, or the socket closed before it answered (`Aborted`: a send has no key,
                         // so nothing else takes its place): it comes back to its session's draft with its images,
@@ -205,7 +221,7 @@ impl Composer {
                             }
                             cx.emit(ComposerEvent::PendingChanged);
                             if selected {
-                                composer.source_refused(&error,cx);
+                                composer.source_refused(&error, cx);
                                 let hint = if matches!(error, CallError::Unreachable { .. }) {
                                     " Check Settings > Connections."
                                 } else {
@@ -222,11 +238,13 @@ impl Composer {
                             }
                             composer.retry_ids.insert(prompt_key.clone(), request);
                             if !selected {
-                                let draft=composer.drafts.entry(prompt_key.clone()).or_default();
-                                if draft.0.is_empty()&&draft.1.is_empty() {
-                                    *draft=(typed,attached);
+                                let draft = composer.drafts.entry(prompt_key.clone()).or_default();
+                                if draft.0.is_empty() && draft.1.is_empty() {
+                                    *draft = (typed, attached);
                                 } else {
-                                    composer.failed_drafts.insert(prompt_key.clone(), (typed, attached));
+                                    composer
+                                        .failed_drafts
+                                        .insert(prompt_key.clone(), (typed, attached));
                                 }
                             } else if composer.draft.read(cx).value().is_empty()
                                 && composer.attachments.is_empty()
@@ -237,7 +255,9 @@ impl Composer {
                                 composer.attachments = attached;
                                 cx.notify();
                             } else {
-                                composer.failed_drafts.insert(prompt_key.clone(), (typed, attached));
+                                composer
+                                    .failed_drafts
+                                    .insert(prompt_key.clone(), (typed, attached));
                             }
                         }
                     })

@@ -20,6 +20,8 @@ mod connection;
 pub mod connection_state;
 pub mod endpoint;
 #[cfg(test)]
+mod engine_scope_tests;
+#[cfg(test)]
 mod engine_tests;
 pub mod engine_update;
 pub mod error_code;
@@ -56,5 +58,5 @@ pub mod topic_subscription;
 pub mod update;
 
 #[cfg(test)]
-#[path="tests/message_source_tests.rs"]
+#[path = "tests/message_source_tests.rs"]
 mod message_source_tests;

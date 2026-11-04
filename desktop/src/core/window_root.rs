@@ -69,7 +69,13 @@ impl Render for WindowRoot {
                 )
             })
             .on_action(|action: &RevealFileFolder, window, cx| {
-                FilesPane::reveal_folder(&action.session_id, &action.path, action.expected_source.as_ref(), window, cx)
+                FilesPane::reveal_folder(
+                    &action.session_id,
+                    &action.path,
+                    action.expected_source.as_ref(),
+                    window,
+                    cx,
+                )
             })
             .size_full()
             .child(self.content.clone())

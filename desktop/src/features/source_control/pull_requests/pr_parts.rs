@@ -1,11 +1,11 @@
 //! The small pieces the Pull requests tab draws in many places.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::pr_activity::{PrTone, age_of, pr_state, repo_name};
 use super::pull_request::{PullRequestDetail, PullRequestSummary};
 use crate::core::socket::picture_client::picture_url;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::spinner::Spinner;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::avatar::Avatar;
-use crate::core::ui::spinner::Spinner;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -120,13 +120,17 @@ impl<'a> PrHeading<'a> {
         });
         v_flex()
             .gap_2()
-            .child(h_flex().gap_2().text_role(TextRole::Body, cx).children(pill).child(
-                div().text_color(muted).child(format!(
-                    "{} #{}",
-                    repo_name(self.repository),
-                    self.number
-                )),
-            ))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .text_role(TextRole::Body, cx)
+                    .children(pill)
+                    .child(div().text_color(muted).child(format!(
+                        "{} #{}",
+                        repo_name(self.repository),
+                        self.number
+                    ))),
+            )
             .child(
                 div()
                     .text_role(TextRole::Heading, cx)

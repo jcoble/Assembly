@@ -1,8 +1,8 @@
 //! The changed-file tree beside a stacked diff, one implementation for Changes and for a pull request. Rows are built
 //! when the files or the filter change, not on each frame, and only the rows in view are drawn. Replaces the tree half
 //! of MultiFileDiff.svelte and diffRows.ts changedFileTree.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::file_icon::file_icon;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};

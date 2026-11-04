@@ -21,9 +21,7 @@ fn window(cx: &mut TestAppContext) -> &mut VisualTestContext {
 }
 
 fn follow(url: &str, cx: &mut VisualTestContext) {
-    cx.update(|window, cx| {
-        window.dispatch_action(Box::new(OpenUrl { url: url.into() }), cx)
-    });
+    cx.update(|window, cx| window.dispatch_action(Box::new(OpenUrl { url: url.into() }), cx));
     cx.run_until_parked();
 }
 

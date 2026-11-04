@@ -13,7 +13,8 @@ use gpui_kit::{Entity, Modifiers};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
-const NO_GH: &str = "GitHub CLI (gh) isn't installed on this machine. Install it and run gh auth login.";
+const NO_GH: &str =
+    "GitHub CLI (gh) isn't installed on this machine. Install it and run gh auth login.";
 
 struct Open<'a> {
     section: Entity<PrSection>,
@@ -25,7 +26,10 @@ struct Open<'a> {
     _heard: gpui_kit::Subscription,
 }
 /// A section on a session whose Pull requests read answers `answer`, given which read this is.
-fn open(cx: &mut TestAppContext, answer: impl Fn(usize, &Value) -> Value + Send + Sync + 'static) -> Open<'_> {
+fn open(
+    cx: &mut TestAppContext,
+    answer: impl Fn(usize, &Value) -> Value + Send + Sync + 'static,
+) -> Open<'_> {
     let (changed, changes) = unbounded();
     let heard = changed.clone();
     let reads = Arc::new(Mutex::new(0usize));
@@ -98,10 +102,15 @@ impl Open<'_> {
     }
     async fn settled(&mut self) {
         let (section, cx) = (self.section.clone(), &mut *self.cx);
-        until("the read to answer", &mut self.changes, &self.changed, || {
-            cx.run_until_parked();
-            cx.update(|_, cx| !section.read(cx).queue.read(cx).loading)
-        })
+        until(
+            "the read to answer",
+            &mut self.changes,
+            &self.changed,
+            || {
+                cx.run_until_parked();
+                cx.update(|_, cx| !section.read(cx).queue.read(cx).loading)
+            },
+        )
         .await;
     }
 }
@@ -119,7 +128,11 @@ async fn the_section_reads_only_when_expanded(cx: &mut TestAppContext) {
     section.update(open.cx, |section, cx| section.toggle(cx));
     section.update(open.cx, |section, cx| section.toggle(cx));
     open.barrier().await;
-    assert_eq!(*open.reads.lock().unwrap(), 1, "opening it again keeps what it read");
+    assert_eq!(
+        *open.reads.lock().unwrap(),
+        1,
+        "opening it again keeps what it read"
+    );
 }
 // Pins: g9#12, g9#14
 #[gpui::test]

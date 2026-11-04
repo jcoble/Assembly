@@ -1,11 +1,11 @@
 //! Create a pull request: branch into base, title and description drafted once when it opens, and it pushes before it
 //! creates. A draft lands only on the fields it was asked for. Replaces PullRequestPanel.svelte.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::git_action::GitWrites;
 use super::super::git_branches::GitBranchList;
 use super::super::git_operation::OperationStatus;
 use super::super::git_target::GitTarget;
 use super::pull_request::PullRequestCreated;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::{
     intents::{open_pull_requests::OpenPullRequests, open_url::OpenUrl},
     socket::{client::SocketClient, outcome::Outcome},
@@ -377,11 +377,12 @@ impl Render for CreatePrForm {
                     .text_color(muted)
                     .child("Generating title & description...")
             }))
-            .children(
-                self.error
-                    .clone()
-                    .map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)),
-            )
+            .children(self.error.clone().map(|error| {
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(danger)
+                    .child(error)
+            }))
             .children(self.unconfirmed.then(|| {
                 Button::new("create-pr-refresh")
                     .ghost()
@@ -409,7 +410,8 @@ impl Render for CreatePrForm {
                                 .ghost()
                                 .label("Open on GitHub")
                                 .on_click(move |_, window, cx| {
-                                    window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
+                                    window
+                                        .dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
                                 }),
                         ),
                     )

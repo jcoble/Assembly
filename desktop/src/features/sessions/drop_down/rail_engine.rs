@@ -1,26 +1,56 @@
 //! The rail owns one lease per actual source/topic; all rows reuse the same held facts.
-use gpui_kit::*;
-use super::{RAIL_TOPIC,saved_filters,saved_view};
-use crate::core::{clock::{backend_clock::BackendClock,tick::Tick},socket::client::SocketClient,state::machines::Machines};
+use super::{RAIL_TOPIC, saved_filters, saved_view};
+use crate::core::engine::{EngineFeed, EngineScope, SessionKey};
 use crate::core::socket::outcome::Outcome;
-use crate::features::sessions::{rail_page::RailPage,view_options::View};
-use crate::core::engine::{EngineFeed,EngineScope,SessionKey};
-use crate::features::sessions::{rail_page::RailEntry,sessions_pane::SessionsPane};
-fn scope(machine:&str,topic:&str)->EngineScope {EngineScope{machine:machine.into(),topic:topic.into(),key:None}}
-pub(crate) fn needs_you(entry:&RailEntry,cx:&mut App)->bool {
-    let Some(source)=&entry.source else{return false;};
-    let feed=EngineFeed::global(cx);let feed=feed.read(cx);
-    feed.loaded(&scope(&source.machine,"needs_me"))&&feed.needs_for(&SessionKey{machine:source.machine.clone(),id:entry.session_id.clone()}).iter().any(|need|need.state=="open")
+use crate::core::{
+    clock::{backend_clock::BackendClock, tick::Tick},
+    socket::client::SocketClient,
+    state::machines::Machines,
+};
+use crate::features::sessions::{rail_page::RailEntry, sessions_pane::SessionsPane};
+use crate::features::sessions::{rail_page::RailPage, view_options::View};
+use gpui_kit::*;
+fn scope(machine: &str, topic: &str) -> EngineScope {
+    EngineScope {
+        machine: machine.into(),
+        topic: topic.into(),
+        key: None,
+    }
+}
+pub(crate) fn needs_you(entry: &RailEntry, cx: &mut App) -> bool {
+    let Some(source) = &entry.source else {
+        return false;
+    };
+    let feed = EngineFeed::global(cx);
+    let feed = feed.read(cx);
+    feed.loaded(&scope(&source.machine, "needs_me"))
+        && feed
+            .needs_for(&SessionKey {
+                machine: source.machine.clone(),
+                id: entry.session_id.clone(),
+            })
+            .iter()
+            .any(|need| need.state == "open")
 }
 /// Whether the row has anything to open: a question for you, a workflow, sessions it started, or native activity.
-pub(crate) fn has_details(entry:&RailEntry,cx:&mut App)->bool {
-    let Some(source)=&entry.source else{return false;};
-    if entry.native_activity{return true;}
-    let session=SessionKey{machine:source.machine.clone(),id:entry.session_id.clone()};
-    let feed=EngineFeed::global(cx);let feed=feed.read(cx);
+pub(crate) fn has_details(entry: &RailEntry, cx: &mut App) -> bool {
+    let Some(source) = &entry.source else {
+        return false;
+    };
+    if entry.native_activity {
+        return true;
+    }
+    let session = SessionKey {
+        machine: source.machine.clone(),
+        id: entry.session_id.clone(),
+    };
+    let feed = EngineFeed::global(cx);
+    let feed = feed.read(cx);
     !feed.needs_for(&session).is_empty()
-        ||!feed.children_of(&session).is_empty()
-        ||feed.session(&session).is_some_and(|session|session.run_id.is_some())
+        || !feed.children_of(&session).is_empty()
+        || feed
+            .session(&session)
+            .is_some_and(|session| session.run_id.is_some())
 }
 impl SessionsPane {
     pub(in crate::features::sessions) fn set_view(&mut self, view: View, cx: &mut Context<Self>) {
@@ -33,7 +63,12 @@ impl SessionsPane {
 
     /// Takes a read's answer, and sends the read it asks for next. The selection is left alone: a session that left
     /// the current view stays open.
-    pub(in crate::features::sessions) fn answer(&mut self, id: u64, outcome: Outcome<RailPage>, cx: &mut Context<Self>) {
+    pub(in crate::features::sessions) fn answer(
+        &mut self,
+        id: u64,
+        outcome: Outcome<RailPage>,
+        cx: &mut Context<Self>,
+    ) {
         let next = self.rail.finish(id, outcome);
         self.follow_engine_rows(cx);
         self.show_providers(cx);
@@ -41,13 +76,13 @@ impl SessionsPane {
         cx.notify();
     }
 
-    pub(super) fn follow_engine_rows(&mut self,cx:&mut Context<Self>) {
+    pub(super) fn follow_engine_rows(&mut self, cx: &mut Context<Self>) {
         self.follow_sources(cx);
     }
 }
 
 #[cfg(test)]
-#[path="rail_source_tests.rs"]
+#[path = "rail_source_tests.rs"]
 mod tests;
 
 impl SessionsPane {
@@ -91,13 +126,19 @@ impl SessionsPane {
                 }
             }));
         }
-        let mut backend = vec![cx.observe(&socket, |pane, _, cx| {pane.follow_sources(cx);cx.notify();})];
-        backend.extend(
-            Machines::try_global(cx).map(|machines| cx.observe(&machines, |pane, _, cx| {pane.source_cut=None;pane.follow_sources(cx);cx.notify();})),
-        );
+        let mut backend = vec![cx.observe(&socket, |pane, _, cx| {
+            pane.follow_sources(cx);
+            cx.notify();
+        })];
+        backend.extend(Machines::try_global(cx).map(|machines| {
+            cx.observe(&machines, |pane, _, cx| {
+                pane.source_cut = None;
+                pane.follow_sources(cx);
+                cx.notify();
+            })
+        }));
         self._backend = backend;
         self.follow_sources(cx);
         cx.notify();
     }
-
 }

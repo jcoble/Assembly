@@ -6,8 +6,8 @@
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::f32::consts::TAU;
 
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::*;
 
 use crate::features::session::composer::context_meter::ContextMeter;
@@ -37,7 +37,10 @@ impl RenderOnce for ContextGauge {
         let headline = SharedString::from(self.meter.headline);
         let absent = SharedString::from(format!("not reported by {}", self.provider));
         let rows: [(&'static str, SharedString); 2] = [
-            ("In", self.meter.input.map_or_else(|| absent.clone(), Into::into)),
+            (
+                "In",
+                self.meter.input.map_or_else(|| absent.clone(), Into::into),
+            ),
             ("Out", self.meter.output.map_or(absent, Into::into)),
         ];
         div()

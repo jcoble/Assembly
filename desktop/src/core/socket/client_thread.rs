@@ -478,7 +478,7 @@ impl ClientThread {
         self.send(&OutFrame::EngineSub {
             id,
             stream: "engine",
-            expected_source:source.as_ref(),
+            expected_source: source.as_ref(),
             topic: &topic,
             key: key.as_deref(),
             machine: machine.as_deref(),

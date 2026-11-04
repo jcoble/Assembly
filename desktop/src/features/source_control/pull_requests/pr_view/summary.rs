@@ -1,12 +1,12 @@
 //! The Summary page: what the pull request is, everything that happened on it, the comment box and merge card, and
 //! the side column of threads, comments, reviews and checks.
-use crate::core::theme::text::TextRole;
 use super::super::{
     pr_activity::{ActivityRow, PrTone, activity_rows, capitalized, merged_words, words_of},
     pr_parts::{PrHeading, age_label, avatar, loading_line, tone_color},
     pull_request::PullRequestComment,
 };
 use super::*;
+use crate::core::theme::text::TextRole;
 use crate::core::ui::markdown::view::MarkdownView;
 use gpui_kit::component::Icon;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -325,9 +325,12 @@ impl PrDetail {
                             } else {
                                 "commented"
                             })
-                            .children(
-                                place.map(|place| div().text_role(TextRole::Meta, cx).font_family(mono).child(place)),
-                            )
+                            .children(place.map(|place| {
+                                div()
+                                    .text_role(TextRole::Meta, cx)
+                                    .font_family(mono)
+                                    .child(place)
+                            }))
                             .children(entry_age(&at)),
                     )
                     .child(body().child(MarkdownView {

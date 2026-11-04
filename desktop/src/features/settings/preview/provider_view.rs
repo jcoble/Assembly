@@ -1,6 +1,6 @@
 //! Provider card hierarchy, using explicitly illustrative preview facts only.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::*;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::collapsible::Collapsible;
 use gpui_kit::component::tag::Tag;
@@ -92,7 +92,10 @@ impl SettingsPreview {
                         .text_role(TextRole::Body, cx)
                         .text_color(cx.theme().muted_foreground),
                     )
-                    .child(Label::new(format!("Sample models: {}", example.models)).text_role(TextRole::Body, cx))
+                    .child(
+                        Label::new(format!("Sample models: {}", example.models))
+                            .text_role(TextRole::Body, cx),
+                    )
                     .child(
                         Label::new(example.permissions)
                             .text_role(TextRole::Body, cx)

@@ -285,7 +285,13 @@ async fn a_project_write_waits_for_a_read_then_names_the_project_and_no_session(
             .is_err()
     );
     cx.run_until_parked();
-    assert!(!seen.lock().unwrap().iter().any(|frame| frame["t"] == "call"));
+    assert!(
+        !seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame["t"] == "call")
+    );
     writes.update(cx, |writes, _| {
         writes.show_read("o/r".into(), "/read/root".into())
     });
@@ -294,9 +300,8 @@ async fn a_project_write_waits_for_a_read_then_names_the_project_and_no_session(
         .unwrap();
     until("the started merge", &mut changes, &changed, || {
         cx.run_until_parked();
-        !method(&seen, "start").is_empty() && cx.update(|cx| {
-            writes.read(cx).operation.read(cx).status.is_some()
-        })
+        !method(&seen, "start").is_empty()
+            && cx.update(|cx| writes.read(cx).operation.read(cx).status.is_some())
     })
     .await;
     let host = &method(&seen, "operation_host")[0];

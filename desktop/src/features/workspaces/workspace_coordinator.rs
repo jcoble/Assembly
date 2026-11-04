@@ -30,8 +30,11 @@ impl WorkspaceTarget {
     }
 }
 #[derive(Clone, Debug)]
-pub struct WorkspaceSaved { pub key:WorkspaceKey,pub revision:u64 }
-#[derive(Clone,Debug)]
+pub struct WorkspaceSaved {
+    pub key: WorkspaceKey,
+    pub revision: u64,
+}
+#[derive(Clone, Debug)]
 pub struct WorkspaceActivated {
     pub generation: u64,
     pub target: WorkspaceTarget,
@@ -63,7 +66,7 @@ pub type WorkspaceCommit =
 struct Current(Entity<WorkspaceCoordinator>);
 impl Global for Current {}
 pub struct WorkspaceCoordinator {
-    owner_window:Option<AnyWindowHandle>,
+    owner_window: Option<AnyWindowHandle>,
     current: Option<Open>,
     pending: Option<WorkspaceTarget>,
     commit: Option<WorkspaceCommit>,
@@ -87,7 +90,7 @@ impl WorkspaceCoordinator {
             return current.0.clone();
         }
         let view = cx.new(|_| Self {
-            owner_window:None,
+            owner_window: None,
             current: None,
             pending: None,
             commit: None,
@@ -114,17 +117,34 @@ impl WorkspaceCoordinator {
     pub fn current_key(&self) -> Option<&WorkspaceKey> {
         self.current.as_ref().map(|current| &current.key)
     }
-    pub fn layout_to_save(&self,state:&gpui_kit::component::dock::DockAreaState,window:&Window,cx:&App)
-        ->Result<Option<gpui_kit::component::dock::DockAreaState>,String> {
-        if self.current_target().is_none() {return Ok(Some(state.clone()));}
-        let views=crate::core::ui::center_panes::CenterPanes::file_views(cx);
-        if views.is_empty() {return super::legacy_layout::prune_refs(state,&[]).map(Some);}
-        let Some(current)=&self.current else{return Ok(None);};
-        if !current.writable||current.revision==0 {return Ok(None);}
-        let snapshot=WorkspacePanes::capture(window,cx)?;
-        if current.safe_to_leave.as_ref()!=Some(&snapshot) {return Ok(None);}
-        let refs:Vec<_>=views.iter().map(|view|view.read(cx).layout_ref()).collect();
-        super::legacy_layout::prune_refs(state,&refs).map(Some)
+    pub fn layout_to_save(
+        &self,
+        state: &gpui_kit::component::dock::DockAreaState,
+        window: &Window,
+        cx: &App,
+    ) -> Result<Option<gpui_kit::component::dock::DockAreaState>, String> {
+        if self.current_target().is_none() {
+            return Ok(Some(state.clone()));
+        }
+        let views = crate::core::ui::center_panes::CenterPanes::file_views(cx);
+        if views.is_empty() {
+            return super::legacy_layout::prune_refs(state, &[]).map(Some);
+        }
+        let Some(current) = &self.current else {
+            return Ok(None);
+        };
+        if !current.writable || current.revision == 0 {
+            return Ok(None);
+        }
+        let snapshot = WorkspacePanes::capture(window, cx)?;
+        if current.safe_to_leave.as_ref() != Some(&snapshot) {
+            return Ok(None);
+        }
+        let refs: Vec<_> = views
+            .iter()
+            .map(|view| view.read(cx).layout_ref())
+            .collect();
+        super::legacy_layout::prune_refs(state, &refs).map(Some)
     }
     /// Key authority belongs to the source-qualified navigator. This method never derives a root from display metadata.
     pub fn request(
@@ -134,7 +154,7 @@ impl WorkspaceCoordinator {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> u64 {
-        self.owner_window=Some(window.window_handle());
+        self.owner_window = Some(window.window_handle());
         self.refuse(
             "This workspace open was superseded by a newer request.".into(),
             cx,
@@ -213,21 +233,41 @@ impl WorkspaceCoordinator {
         cx.notify();
     }
     /// Pane owners call this only for a person changing view/draft state, never while restoring.
-    pub fn changed(cx:&mut App) {
-        if WorkspacePanes::is_restoring(cx) {return;}
-        let Some(key)=WorkspacePanes::key(cx).cloned() else{return;};
-        let Some(view)=Self::try_global(cx) else{return;};
-        let Some(window)=view.read(cx).owner_window else{return;};
-        cx.defer(move|cx| {let _=window.update(cx,|_,window,cx|view.update(cx,|view,cx| {
-            if let Some(current)=&mut view.current && current.key==key {
-                current.writable=true;view.save_current(window,cx);cx.notify();
-            }
-        }));});
+    pub fn changed(cx: &mut App) {
+        if WorkspacePanes::is_restoring(cx) {
+            return;
+        }
+        let Some(key) = WorkspacePanes::key(cx).cloned() else {
+            return;
+        };
+        let Some(view) = Self::try_global(cx) else {
+            return;
+        };
+        let Some(window) = view.read(cx).owner_window else {
+            return;
+        };
+        cx.defer(move |cx| {
+            let _ = window.update(cx, |_, window, cx| {
+                view.update(cx, |view, cx| {
+                    if let Some(current) = &mut view.current
+                        && current.key == key
+                    {
+                        current.writable = true;
+                        view.save_current(window, cx);
+                        cx.notify();
+                    }
+                })
+            });
+        });
     }
-    fn begin_transition(&mut self,window:&mut Window,cx:&mut Context<Self>) {
-        if !self.active_request {return;}
-        if self.current.is_none()&&!self.migrate_legacy(window,cx) {return;}
-        self.save_current(window,cx);
+    fn begin_transition(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.active_request {
+            return;
+        }
+        if self.current.is_none() && !self.migrate_legacy(window, cx) {
+            return;
+        }
+        self.save_current(window, cx);
     }
     fn guard_outgoing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(current) = &self.current else {
@@ -353,8 +393,14 @@ impl WorkspaceCoordinator {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Err(error)=WorkspacePanes::validate_deactivate(cx) {self.refuse(error,cx);return;}
-        if let Err(error)=self.admit_legacy_cutover(cx) {self.refuse(error,cx);return;}
+        if let Err(error) = WorkspacePanes::validate_deactivate(cx) {
+            self.refuse(error, cx);
+            return;
+        }
+        if let Err(error) = self.admit_legacy_cutover(cx) {
+            self.refuse(error, cx);
+            return;
+        }
         let previous = WorkspacePanes::key(cx).cloned();
         let Some(commit) = self.commit.take() else {
             self.refuse("Prepare this transcript open again.".into(), cx);
@@ -414,12 +460,12 @@ mod restore_tests;
 #[path = "workspace_file_restore_tests.rs"]
 mod file_restore_tests;
 
-#[path="workspace_saving.rs"]
-mod saving;
 #[cfg(test)]
-#[path="workspace_save_tests.rs"]
+#[path = "workspace_save_tests.rs"]
 mod save_tests;
+#[path = "workspace_saving.rs"]
+mod saving;
 
 #[cfg(test)]
-#[path="workspace_layout_tests.rs"]
+#[path = "workspace_layout_tests.rs"]
 mod layout_tests;

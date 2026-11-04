@@ -1,5 +1,5 @@
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::*;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
@@ -44,14 +44,26 @@ impl Render for SignInPanel {
             );
         }
         if let Some(problem) = facts.as_ref().and_then(|facts| facts.problem.as_deref()) {
-            content = content.child(div().text_role(TextRole::Body, cx).child(problem_text(problem)));
+            content = content.child(
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .child(problem_text(problem)),
+            );
         }
         if let Some(row) = &self.projection.operation {
             if let Some(method) = &row.method_id {
-                content = content.child(div().text_role(TextRole::Body, cx).child(format!("Method: {method}")));
+                content = content.child(
+                    div()
+                        .text_role(TextRole::Body, cx)
+                        .child(format!("Method: {method}")),
+                );
             }
             if let Some(reason) = &row.reason {
-                content = content.child(div().text_role(TextRole::Body, cx).child(problem_text(reason)));
+                content = content.child(
+                    div()
+                        .text_role(TextRole::Body, cx)
+                        .child(problem_text(reason)),
+                );
             }
         }
         let state = self
@@ -158,7 +170,11 @@ impl Render for SignInPanel {
             }
             if challenge.wants_code {
                 content = content
-                    .child(div().text_role(TextRole::Body, cx).child("Code from the sign-in page"))
+                    .child(
+                        div()
+                            .text_role(TextRole::Body, cx)
+                            .child("Code from the sign-in page"),
+                    )
                     .child(Input::new(&self.code))
                     .child(
                         Button::new("auth:submit-code")

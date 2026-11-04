@@ -21,7 +21,12 @@ pub fn can_commit(status: Option<&GitStatus>, message: &str, amend: bool, busy: 
     }
     status.has_staged_files() && !message.trim().is_empty()
 }
-pub fn commit_hint(status: Option<&GitStatus>, message: &str, amend: bool, busy: bool) -> &'static str {
+pub fn commit_hint(
+    status: Option<&GitStatus>,
+    message: &str,
+    amend: bool,
+    busy: bool,
+) -> &'static str {
     if busy {
         return STILL_RUNNING;
     }

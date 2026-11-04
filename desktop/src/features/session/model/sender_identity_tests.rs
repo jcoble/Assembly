@@ -17,13 +17,16 @@ fn sender_identity_and_captured_label_survive_live_page_and_reopen() {
     );
     for view in [&live, &page, &reopened] {
         let ItemKind::User {
-            from, from_machine, sender_label, ..
+            from,
+            from_machine,
+            sender_label,
+            ..
         } = &view.items[0].kind
         else {
             panic!("user");
         };
         assert_eq!(from.as_deref(), Some("peer/x"));
-        assert_eq!(from_machine.as_deref(),Some("actual-sender-owner"));
+        assert_eq!(from_machine.as_deref(), Some("actual-sender-owner"));
         assert_eq!(sender_label.as_deref(), Some("Captured title (peer/x)"));
     }
     let old = super::test_rows::live(

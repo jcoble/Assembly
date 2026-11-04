@@ -13,17 +13,22 @@ pub struct AskForm {
 }
 
 impl AskForm {
-    pub fn pick(&mut self,field:String,value:String,many:bool) {
+    pub fn pick(&mut self, field: String, value: String, many: bool) {
         if many {
-            let list=self.picked.entry(field).or_insert_with(||Value::Array(Vec::new()));
-            if let Value::Array(list)=list {
-                match list.iter().position(|item|item.as_str()==Some(&value)) {
-                    Some(at)=>drop(list.remove(at)),None=>list.push(Value::String(value)),
+            let list = self
+                .picked
+                .entry(field)
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Value::Array(list) = list {
+                match list.iter().position(|item| item.as_str() == Some(&value)) {
+                    Some(at) => drop(list.remove(at)),
+                    None => list.push(Value::String(value)),
                 }
             }
-        } else {self.picked.insert(field,Value::String(value));}
+        } else {
+            self.picked.insert(field, Value::String(value));
+        }
     }
-
 
     pub fn set_flag(&mut self, field: String, on: bool) {
         self.picked.insert(field, Value::Bool(on));
@@ -40,7 +45,11 @@ impl AskForm {
                     .first()
                     .map(|choice| (name.clone(), Value::String(choice.value.clone()))),
                 AskInput::Flag => {
-                    let on = field.default.as_ref().and_then(Value::as_bool).unwrap_or(false);
+                    let on = field
+                        .default
+                        .as_ref()
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
                     Some((name.clone(), Value::Bool(on)))
                 }
                 _ => None,
@@ -57,7 +66,11 @@ impl AskForm {
                     ""
                 };
                 let masked = field.input() == AskInput::Secret;
-                let input = cx.new(|cx| InputState::new(window, cx).masked(masked).placeholder(other));
+                let input = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .masked(masked)
+                        .placeholder(other)
+                });
                 (name, input)
             })
             .collect();
@@ -117,8 +130,9 @@ impl AskForm {
                 }
                 Some(field) if field.numeric() && !text.trim().is_empty() => {
                     let label = field.title.clone().unwrap_or_else(|| name.clone());
-                    let number = Self::number(text.trim(), field.kind.as_deref() == Some("integer"))
-                        .ok_or_else(|| format!("{label} must be a number."))?;
+                    let number =
+                        Self::number(text.trim(), field.kind.as_deref() == Some("integer"))
+                            .ok_or_else(|| format!("{label} must be a number."))?;
                     typed.insert(name, number);
                 }
                 _ => plain.push((name, text)),

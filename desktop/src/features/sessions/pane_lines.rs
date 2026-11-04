@@ -23,8 +23,16 @@ impl SessionsPane {
     /// page if the end is in view.
     pub(super) fn follow_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let entries = list_entries(&self.rail);
-        let keys=entries.iter().filter_map(|entry|match entry {ListEntry::Session(row)=>Some(super::drop_down::rail_details_key(row)),_=>None}).collect::<std::collections::HashSet<_>>();
-        self.drops.update(cx,|drops,cx|drops.retain_keys(|key|keys.contains(key),cx));
+        let keys = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ListEntry::Session(row) => Some(super::drop_down::rail_details_key(row)),
+                _ => None,
+            })
+            .collect::<std::collections::HashSet<_>>();
+        self.drops.update(cx, |drops, cx| {
+            drops.retain_keys(|key| keys.contains(key), cx)
+        });
         if entries != *self.entries {
             let (old, count) = changed_lines(&self.entries, &entries);
             // A splice moves a place inside the changed lines to their start, so the line at the top stays in view
@@ -79,7 +87,7 @@ impl SessionsPane {
     ) -> impl FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static {
         let entries = self.entries.clone();
         let now = self.now;
-        let drops=self.drops.clone();
+        let drops = self.drops.clone();
         let running_drawn = self.running_drawn.clone();
         let pane = cx.entity().downgrade();
         let on_mark: OnMark = {
@@ -101,8 +109,15 @@ impl SessionsPane {
                 return Empty.into_any_element();
             };
             let row = |entry: &super::rail_page::RailEntry, cx: &mut App| RowContext {
-                selected: entry.source.as_ref().is_some_and(|source|SelectedSession::global(cx).read(cx).key().is_some_and(|key|key.machine==source.machine&&key.id==entry.session_id)),
-                needs_you: super::sessions_pane::engine_rows::needs_you(entry,cx),
+                selected: entry.source.as_ref().is_some_and(|source| {
+                    SelectedSession::global(cx)
+                        .read(cx)
+                        .key()
+                        .is_some_and(|key| {
+                            key.machine == source.machine && key.id == entry.session_id
+                        })
+                }),
+                needs_you: super::sessions_pane::engine_rows::needs_you(entry, cx),
                 offline: Machines::offline(entry.machine.as_deref(), cx),
                 now,
                 arrow: None,
@@ -165,47 +180,92 @@ impl SessionsPane {
                         running_drawn.set(true);
                     }
                     let mut context = row(&entry, cx);
-                    let key=super::drop_down::rail_details_key(&entry);
-                    let open=drops.read(cx).is_open(&key);
-                    let toggle_key=key.clone();let toggles=drops.clone();
-                    let native_route=entry.machine.clone();
-                    let parent=entry.source.as_ref().map(|source|crate::core::engine::SessionKey{machine:source.machine.clone(),id:entry.session_id.clone()});
-                    let toggle_details:Rc<dyn Fn(&mut App)>=Rc::new(move|cx| {
-                        let Some(parent)=parent.clone()else{return;};
-                        if toggles.read(cx).is_open(&toggle_key){toggles.update(cx,|drops,cx|drops.shut(cx));return;}
-                        let details=cx.new(|cx|super::drop_down::rail_details::RailDetails::new(parent,native_route.clone(),cx));
-                        toggles.update(cx,|drops,cx|drops.toggle(toggle_key.clone(),move|_,_|details.clone().into_any_element(),cx));
+                    let key = super::drop_down::rail_details_key(&entry);
+                    let open = drops.read(cx).is_open(&key);
+                    let toggle_key = key.clone();
+                    let toggles = drops.clone();
+                    let native_route = entry.machine.clone();
+                    let parent =
+                        entry
+                            .source
+                            .as_ref()
+                            .map(|source| crate::core::engine::SessionKey {
+                                machine: source.machine.clone(),
+                                id: entry.session_id.clone(),
+                            });
+                    let toggle_details: Rc<dyn Fn(&mut App)> = Rc::new(move |cx| {
+                        let Some(parent) = parent.clone() else {
+                            return;
+                        };
+                        if toggles.read(cx).is_open(&toggle_key) {
+                            toggles.update(cx, |drops, cx| drops.shut(cx));
+                            return;
+                        }
+                        let details = cx.new(|cx| {
+                            super::drop_down::rail_details::RailDetails::new(
+                                parent,
+                                native_route.clone(),
+                                cx,
+                            )
+                        });
+                        toggles.update(cx, |drops, cx| {
+                            drops.toggle(
+                                toggle_key.clone(),
+                                move |_, _| details.clone().into_any_element(),
+                                cx,
+                            )
+                        });
                     });
                     // An open row keeps its arrow even once its last question is answered, so it can shut.
-                    let openable=open||super::sessions_pane::engine_rows::has_details(&entry,cx);
+                    let openable =
+                        open || super::sessions_pane::engine_rows::has_details(&entry, cx);
                     if openable {
-                        context.arrow=Some(crate::core::ui::three_line_row::RowArrow{open,on_toggle:toggle_details.clone()});
+                        context.arrow = Some(crate::core::ui::three_line_row::RowArrow {
+                            open,
+                            on_toggle: toggle_details.clone(),
+                        });
                     }
-                    let keys=drops.clone();let key_for_header=key.clone();
-                    let showing=drops.read(cx).is_showing(&key);
+                    let keys = drops.clone();
+                    let key_for_header = key.clone();
+                    let showing = drops.read(cx).is_showing(&key);
                     // An open row and its body are one fill, the one a selected row has. The kit's item would lay its own over it.
-                    context.selected=context.selected&&!showing;
-                    let row_height=crate::core::ui::three_line_row::row_height(cx);
-                    let growing=crate::core::ui::row_drop_down::GrowingBody::new(key.clone(),drops.clone(),row_height);
-                    let band=crate::core::ui::three_line_row::selected_fill(cx);
-                    let radius=gpui_kit::component::ActiveTheme::theme(cx).radius;
+                    context.selected = context.selected && !showing;
+                    let row_height = crate::core::ui::three_line_row::row_height(cx);
+                    let growing = crate::core::ui::row_drop_down::GrowingBody::new(
+                        key.clone(),
+                        drops.clone(),
+                        row_height,
+                    );
+                    let band = crate::core::ui::three_line_row::selected_fill(cx);
+                    let radius = gpui_kit::component::ActiveTheme::theme(cx).radius;
                     gpui_kit::component::v_flex()
                         .id(SharedString::from(format!("rail-header:{key}")))
                         .w_full()
                         .rounded(radius)
                         .overflow_hidden()
-                        .when(showing,|row|row.bg(band))
-                        .on_key_down(move|event,_,cx| {
-                            let code=event.keystroke.key.as_str();
-                            if code=="right" {
-                                if openable&&!keys.read(cx).is_open(&key_for_header){toggle_details(cx);}cx.stop_propagation();
-                            }else if matches!(code,"left"|"escape") {
-                                keys.update(cx,|drops,cx|{drops.handle_key(key_for_header.clone(),code,|_,_|Empty.into_any_element(),cx);});cx.stop_propagation();
+                        .when(showing, |row| row.bg(band))
+                        .on_key_down(move |event, _, cx| {
+                            let code = event.keystroke.key.as_str();
+                            if code == "right" {
+                                if openable && !keys.read(cx).is_open(&key_for_header) {
+                                    toggle_details(cx);
+                                }
+                                cx.stop_propagation();
+                            } else if matches!(code, "left" | "escape") {
+                                keys.update(cx, |drops, cx| {
+                                    drops.handle_key(
+                                        key_for_header.clone(),
+                                        code,
+                                        |_, _| Empty.into_any_element(),
+                                        cx,
+                                    );
+                                });
+                                cx.stop_propagation();
                             }
                         })
                         .child(SessionRow::new(*entry, context))
                         .child(growing)
-                        .map(|row|div().w_full().px_2().py_px().child(row))
+                        .map(|row| div().w_full().px_2().py_px().child(row))
                         .into_any_element()
                 }
             }

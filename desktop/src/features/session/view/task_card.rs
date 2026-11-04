@@ -32,7 +32,7 @@ pub fn card(cx: &App) -> Div {
 
 /// A Stop button that sends `send/stopTask` with `task`.
 pub fn stop_button(id: String, task: String, on_action: OnAction) -> Button {
-    stop_action_button(id,SessionAction::StopTask{task},on_action)
+    stop_action_button(id, SessionAction::StopTask { task }, on_action)
 }
 
 /// The same card button; the owning pane validates a native row reference before resolving its Stop target.
@@ -41,9 +41,7 @@ pub fn stop_action_button(id: String, action: SessionAction, on_action: OnAction
         .ghost()
         .compact()
         .label("Stop")
-        .on_click(move |_, window, cx| {
-            on_action(action.clone(), window, cx)
-        })
+        .on_click(move |_, window, cx| on_action(action.clone(), window, cx))
 }
 
 impl RenderOnce for TaskCard {

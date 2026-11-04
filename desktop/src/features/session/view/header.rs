@@ -12,11 +12,14 @@ use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::core::{engine::SessionKey,intents::session_open::{SessionOpenRequest,SessionOpenTarget}};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::update::Update;
 use crate::core::state::session_item::{NO_PROJECT, SessionItem};
 use crate::core::ui::center_panes::CenterPanes;
+use crate::core::{
+    engine::SessionKey,
+    intents::session_open::{SessionOpenRequest, SessionOpenTarget},
+};
 
 /// The project a session is in: its folder's or repo's last name ("Assembly" for `https://github.com/me/Assembly`).
 pub fn project(repo_url: &str) -> &str {
@@ -27,7 +30,9 @@ pub fn project(repo_url: &str) -> &str {
 
 /// What the header calls the session's project.
 fn project_name(item: &SessionItem) -> &str {
-    item.project_id.as_ref().map_or(NO_PROJECT, |_| project(&item.repo_url))
+    item.project_id
+        .as_ref()
+        .map_or(NO_PROJECT, |_| project(&item.repo_url))
 }
 
 #[derive(Default)]
@@ -40,7 +45,10 @@ pub struct Header {
 }
 
 impl Header {
-    pub(super) fn set_parent(&mut self,parent:Option<SessionKey>,cx:&mut Context<Self>){self.parent_key=parent;cx.notify();}
+    pub(super) fn set_parent(&mut self, parent: Option<SessionKey>, cx: &mut Context<Self>) {
+        self.parent_key = parent;
+        cx.notify();
+    }
 
     /// The open session's machine, once the topic has sent it; `None` for this one.
     pub fn machine(&self) -> Option<&str> {
@@ -161,7 +169,14 @@ impl Render for Header {
                                     .cursor_pointer()
                                     .child("Parent session")
                                     .on_click(move |_, window, cx| {
-                                        window.dispatch_action(Box::new(SessionOpenRequest{key:parent.clone(),request_id:uuid::Uuid::new_v4().to_string(),target:SessionOpenTarget::Engine}),cx)
+                                        window.dispatch_action(
+                                            Box::new(SessionOpenRequest {
+                                                key: parent.clone(),
+                                                request_id: uuid::Uuid::new_v4().to_string(),
+                                                target: SessionOpenTarget::Engine,
+                                            }),
+                                            cx,
+                                        )
                                     }),
                             )
                         }),

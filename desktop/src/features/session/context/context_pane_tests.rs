@@ -377,28 +377,116 @@ fn a_remote_sessions_images_dont_open_and_say_which_machine_has_them(cx: &mut Te
 
 // Source-derived admitted selection fixtures; no native/provider authority is inferred.
 #[gpui::test]
-fn context_lists_and_image_reads_keep_the_actual_source_when_two_owners_share_an_id(cx:&mut TestAppContext) {
-    use crate::core::{engine::SessionKey,socket::row_source::ExpectedRowSource};
-    let(pane,client,cx)=open_in_root(cx);
-    let source_a=ExpectedRowSource{machine:"actual-a".into(),generation:0,route_machine:None};
-    let source_b=ExpectedRowSource{machine:"actual-b".into(),generation:7,route_machine:Some("Saved B".into())};
-    cx.update(|_,cx|SelectedSession::global(cx).update(cx,|selected,cx|selected.commit_open(SessionKey{machine:"actual-a".into(),id:"s1".into()},source_a.clone(),true,cx)));
-    client.queue_answer(Ok(json!([])));client.queue_answer(Ok(one_prompt()));shown(&pane,true,cx);
-    assert_eq!(reads(&client),[json!({"session":"s1","expectedSource":source_a})]);
-    client.queue_answer(Ok(json!([])));let mut remote=one_prompt();remote["machine"]=json!("Saved B");client.queue_answer(Ok(remote));
-    cx.update(|_,cx|SelectedSession::global(cx).update(cx,|selected,cx|selected.commit_open(SessionKey{machine:"actual-b".into(),id:"s1".into()},source_b.clone(),true,cx)));cx.run_until_parked();
-    assert_eq!(reads(&client).last().unwrap(),&json!({"session":"s1","expectedSource":source_b}));
-    assert_eq!(calls_of(&client,"rows/attachments").last().unwrap(),&json!({"session":"s1","expectedSource":source_b}));
-    client.queue_answer(Ok(json!({"data":"aA==","size":2,"mime":"image/png"})));client.queue_answer(Ok(json!({"data":"aQ==","size":2,"mime":"image/png"})));
-    click("attachment-/h/attachments/s1/9f.png",cx);
-    assert_eq!(calls_of(&client,"attachments/read"),[json!({"session":"s1","name":"9f.png","offset":0,"expectedSource":source_b}),json!({"session":"s1","name":"9f.png","offset":1,"expectedSource":source_b})]);
+fn context_lists_and_image_reads_keep_the_actual_source_when_two_owners_share_an_id(
+    cx: &mut TestAppContext,
+) {
+    use crate::core::{engine::SessionKey, socket::row_source::ExpectedRowSource};
+    let (pane, client, cx) = open_in_root(cx);
+    let source_a = ExpectedRowSource {
+        machine: "actual-a".into(),
+        generation: 0,
+        route_machine: None,
+    };
+    let source_b = ExpectedRowSource {
+        machine: "actual-b".into(),
+        generation: 7,
+        route_machine: Some("Saved B".into()),
+    };
+    cx.update(|_, cx| {
+        SelectedSession::global(cx).update(cx, |selected, cx| {
+            selected.commit_open(
+                SessionKey {
+                    machine: "actual-a".into(),
+                    id: "s1".into(),
+                },
+                source_a.clone(),
+                true,
+                cx,
+            )
+        })
+    });
+    client.queue_answer(Ok(json!([])));
+    client.queue_answer(Ok(one_prompt()));
+    shown(&pane, true, cx);
+    assert_eq!(
+        reads(&client),
+        [json!({"session":"s1","expectedSource":source_a})]
+    );
+    client.queue_answer(Ok(json!([])));
+    let mut remote = one_prompt();
+    remote["machine"] = json!("Saved B");
+    client.queue_answer(Ok(remote));
+    cx.update(|_, cx| {
+        SelectedSession::global(cx).update(cx, |selected, cx| {
+            selected.commit_open(
+                SessionKey {
+                    machine: "actual-b".into(),
+                    id: "s1".into(),
+                },
+                source_b.clone(),
+                true,
+                cx,
+            )
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        reads(&client).last().unwrap(),
+        &json!({"session":"s1","expectedSource":source_b})
+    );
+    assert_eq!(
+        calls_of(&client, "rows/attachments").last().unwrap(),
+        &json!({"session":"s1","expectedSource":source_b})
+    );
+    client.queue_answer(Ok(json!({"data":"aA==","size":2,"mime":"image/png"})));
+    client.queue_answer(Ok(json!({"data":"aQ==","size":2,"mime":"image/png"})));
+    click("attachment-/h/attachments/s1/9f.png", cx);
+    assert_eq!(
+        calls_of(&client, "attachments/read"),
+        [
+            json!({"session":"s1","name":"9f.png","offset":0,"expectedSource":source_b}),
+            json!({"session":"s1","name":"9f.png","offset":1,"expectedSource":source_b})
+        ]
+    );
 }
 #[gpui::test]
-fn a_source_refused_context_list_cannot_fall_back_to_an_unqualified_image_read(cx:&mut TestAppContext) {
-    use crate::core::{engine::SessionKey,socket::row_source::ExpectedRowSource};
-    let(pane,client,cx)=open_in_root(cx);
-    cx.update(|_,cx|SelectedSession::global(cx).update(cx,|selected,cx|selected.commit_open(SessionKey{machine:"owner".into(),id:"s1".into()},ExpectedRowSource{machine:"owner".into(),generation:0,route_machine:None},true,cx)));
-    client.queue_answer(Ok(json!([])));client.queue_answer(Err(CallError::Refused{code:"source_changed".into(),message:"Owner replaced".into()}));shown(&pane,true,cx);
-    pane.update_in(cx,|pane,window,cx|pane.open("/h/attachments/s1/9f.png".into(),"shot.png".into(),window,cx));cx.run_until_parked();
-    assert!(calls_of(&client,"attachments/read").is_empty());assert_eq!(calls_of(&client,"rows/attachments").len(),1);
+fn a_source_refused_context_list_cannot_fall_back_to_an_unqualified_image_read(
+    cx: &mut TestAppContext,
+) {
+    use crate::core::{engine::SessionKey, socket::row_source::ExpectedRowSource};
+    let (pane, client, cx) = open_in_root(cx);
+    cx.update(|_, cx| {
+        SelectedSession::global(cx).update(cx, |selected, cx| {
+            selected.commit_open(
+                SessionKey {
+                    machine: "owner".into(),
+                    id: "s1".into(),
+                },
+                ExpectedRowSource {
+                    machine: "owner".into(),
+                    generation: 0,
+                    route_machine: None,
+                },
+                true,
+                cx,
+            )
+        })
+    });
+    client.queue_answer(Ok(json!([])));
+    client.queue_answer(Err(CallError::Refused {
+        code: "source_changed".into(),
+        message: "Owner replaced".into(),
+    }));
+    shown(&pane, true, cx);
+    pane.update_in(cx, |pane, window, cx| {
+        pane.open(
+            "/h/attachments/s1/9f.png".into(),
+            "shot.png".into(),
+            window,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert!(calls_of(&client, "attachments/read").is_empty());
+    assert_eq!(calls_of(&client, "rows/attachments").len(), 1);
 }

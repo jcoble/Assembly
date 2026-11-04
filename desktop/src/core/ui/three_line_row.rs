@@ -48,7 +48,10 @@ pub struct ThreeLineRow {
 /// How tall a row is at the current text size, which is the step an open row's body grows in.
 pub fn row_height(cx: &App) -> Pixels {
     let (title, meta) = Preferences::read(cx, |appearance| {
-        (appearance.ui_text(TextRole::Title).1, appearance.ui_text(TextRole::Meta).1)
+        (
+            appearance.ui_text(TextRole::Title).1,
+            appearance.ui_text(TextRole::Meta).1,
+        )
     });
     title + meta * 2. + ROW_PADDING * 2. + px(4.)
 }
@@ -56,7 +59,11 @@ pub fn row_height(cx: &App) -> Pixels {
 /// The fill the kit's list item gives a selected row, for what has to match it, such as an open row's body.
 pub fn selected_fill(cx: &App) -> Hsla {
     let theme = cx.theme();
-    if theme.list.active_highlight { theme.list_active } else { theme.accent }
+    if theme.list.active_highlight {
+        theme.list_active
+    } else {
+        theme.accent
+    }
 }
 
 /// Figures of equal width, so a running time doesn't shift as it counts.
@@ -66,7 +73,8 @@ fn tabular() -> FontFeatures {
 
 impl ThreeLineRow {
     pub fn item(self, cx: &App) -> ListItem {
-        let (_, title_height) = Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Title));
+        let (_, title_height) =
+            Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Title));
         let theme = cx.theme();
         let (muted, accent, radius) = (theme.muted_foreground, theme.caret, theme.radius);
         let key = self.key;
@@ -74,8 +82,16 @@ impl ThreeLineRow {
             Button::new(SharedString::from(format!("details:{key}")))
                 .ghost()
                 .xsmall()
-                .icon(if arrow.open { IconName::ChevronDown } else { IconName::ChevronRight })
-                .tooltip(if arrow.open { "Hide details" } else { "Show details" })
+                .icon(if arrow.open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .tooltip(if arrow.open {
+                    "Hide details"
+                } else {
+                    "Show details"
+                })
                 .on_click(move |_, _, cx| {
                     cx.stop_propagation();
                     (arrow.on_toggle)(cx);
@@ -140,7 +156,15 @@ impl ThreeLineRow {
             .rounded(radius)
             .children(dot)
             // Zero wide but at least full: the kit's wrapper would otherwise hold the row at its text's width.
-            .child(v_flex().w_0().min_w_full().gap_0p5().child(first).child(second).child(third))
+            .child(
+                v_flex()
+                    .w_0()
+                    .min_w_full()
+                    .gap_0p5()
+                    .child(first)
+                    .child(second)
+                    .child(third),
+            )
     }
 }
 

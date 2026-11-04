@@ -1,11 +1,11 @@
 //! A new session's own controls inside the shared composer: which agent runs it and its settings in the box's footer,
 //! and where it works directly under the box. They only present the form's pickers; what a pick does stays in the form.
 
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{NewSessionForm, Rc};
+use crate::core::state::machines::Machines;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::features::session::composer::composer_view::StartSlots;
 use crate::features::session::composer::config_pills::{ConfigPills, OnSelect};
-use crate::core::state::machines::Machines;
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
@@ -27,9 +27,10 @@ pub(super) fn start_slots(form: WeakEntity<NewSessionForm>) -> StartSlots {
                 .map_or_else(|| Empty.into_any_element(), |form| agent_picker(form, cx))
         }),
         settings: Rc::new(move |compact, _, cx| {
-            for_settings
-                .upgrade()
-                .map_or_else(|| Empty.into_any_element(), |form| settings(form, compact, cx))
+            for_settings.upgrade().map_or_else(
+                || Empty.into_any_element(),
+                |form| settings(form, compact, cx),
+            )
         }),
         sub_bar: Rc::new(move |_, cx| {
             for_place
@@ -79,13 +80,14 @@ fn agent_picker(form: Entity<NewSessionForm>, cx: &App) -> AnyElement {
                 let form = form.clone();
                 let usable = target.is_some() && can_sign_in;
                 menu = menu.separator().item(
-                    PopupMenuItem::new("Sign in")
-                        .disabled(!usable)
-                        .on_click(move |_, window, cx| {
+                    PopupMenuItem::new("Sign in").disabled(!usable).on_click(
+                        move |_, window, cx| {
                             if let Some(target) = target.clone() {
-                                _ = form.update(cx, |form, cx| form.open_sign_in(target, window, cx));
+                                _ = form
+                                    .update(cx, |form, cx| form.open_sign_in(target, window, cx));
                             }
-                        }),
+                        },
+                    ),
                 );
             }
             menu
@@ -149,7 +151,11 @@ fn place_picker(form: Entity<NewSessionForm>, cx: &App) -> AnyElement {
         .unwrap_or_default();
     let held = read.attempt.is_some();
     let words = here.clone().unwrap_or_else(|| THIS_COMPUTER.to_string());
-    let glyph = if here.is_some() { Glyph::Cloud } else { Glyph::Monitor };
+    let glyph = if here.is_some() {
+        Glyph::Cloud
+    } else {
+        Glyph::Monitor
+    };
     let form = form.downgrade();
     Button::new("new:place")
         .ghost()

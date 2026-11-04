@@ -62,7 +62,10 @@ impl CenterPanes {
         let dock = panes.dock.upgrade()?;
         let id = panes.open.get(key)?;
         let panel = dock.read(cx).panel(*id)?;
-        gpui_kit::component::dock::PanelHandle::of(panel)?.view().downcast::<P>().ok()
+        gpui_kit::component::dock::PanelHandle::of(panel)?
+            .view()
+            .downcast::<P>()
+            .ok()
     }
 
     /// Files claims its real machine/checkout/path key after the owning backend answers.
@@ -235,7 +238,9 @@ impl CenterPanes {
     pub fn save_layout(cx: &mut App) {
         cx.defer(|cx| {
             if let Some(dock) = Self::dock(cx) {
-                dock.update(cx, |_, cx| cx.emit(gpui_kit::component::dock::DockEvent::LayoutChanged));
+                dock.update(cx, |_, cx| {
+                    cx.emit(gpui_kit::component::dock::DockEvent::LayoutChanged)
+                });
             }
         });
     }

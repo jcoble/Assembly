@@ -1,10 +1,16 @@
-use serde_json::json;
 use super::{session_view::SessionView, test_rows::row};
+use serde_json::json;
 
 #[test]
 fn native_open_references_preserve_the_actual_parent_row_identity_and_latest_seq() {
     let mut view = SessionView::default();
-    let first = row(7,"run",Some("subagent:native"),"subagent",json!({"sessionId":"t","title":"child","state":"running","canStop":false}));
+    let first = row(
+        7,
+        "run",
+        Some("subagent:native"),
+        "subagent",
+        json!({"sessionId":"t","title":"child","state":"running","canStop":false}),
+    );
     view.apply(&first);
     let mut updated = first.clone();
     updated.seq = 12;

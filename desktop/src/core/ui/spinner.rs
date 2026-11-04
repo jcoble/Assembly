@@ -26,7 +26,10 @@ pub struct Spinner {
 
 impl Spinner {
     pub fn new() -> Self {
-        Spinner { size: Size::Medium, color: None }
+        Spinner {
+            size: Size::Medium,
+            color: None,
+        }
     }
 
     pub fn color(mut self, color: Hsla) -> Self {
@@ -54,7 +57,9 @@ impl RenderOnce for Spinner {
             .when_some(self.color, |icon, color| icon.text_color(color))
             .with_animation(
                 "spinner",
-                Animation::new(TURN).repeat_synced().with_max_fps(TICKS_PER_SECOND),
+                Animation::new(TURN)
+                    .repeat_synced()
+                    .with_max_fps(TICKS_PER_SECOND),
                 |icon, turned| icon.transform(Transformation::rotate(percentage(stepped(turned)))),
             )
     }

@@ -1,8 +1,8 @@
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{
     pr_detail::PrDetail,
     review_draft::{LineComment, ReviewDraft, ReviewIdentity},
 };
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex,

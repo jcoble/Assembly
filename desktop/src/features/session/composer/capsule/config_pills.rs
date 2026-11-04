@@ -6,10 +6,10 @@
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 
+use crate::core::ui::spinner::Spinner;
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::button::{Button, ButtonRounded, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
-use crate::core::ui::spinner::Spinner;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
@@ -48,7 +48,12 @@ impl RenderOnce for ConfigPills {
         let row = h_flex().flex_none().min_w_0().gap_1().children(saving);
         let grouped = Grouped::of(self.options);
         if self.compact {
-            return row.child(compact(grouped, self.provider, self.on_select, self.disabled));
+            return row.child(compact(
+                grouped,
+                self.provider,
+                self.on_select,
+                self.disabled,
+            ));
         }
         let approval = grouped.approval.clone().map(|(option, current)| {
             let (provider, on_select) = (self.provider.clone(), self.on_select.clone());
@@ -64,7 +69,8 @@ impl RenderOnce for ConfigPills {
         });
         let (provider, on_select) = (self.provider, self.on_select);
         let label = grouped.pill_label();
-        let empty = grouped.model.is_none() && grouped.effort.is_none() && grouped.others.is_empty();
+        let empty =
+            grouped.model.is_none() && grouped.effort.is_none() && grouped.others.is_empty();
         let model = (!empty).then(|| {
             chip("composer:model")
                 .label(label)
@@ -138,14 +144,23 @@ impl Grouped {
             let label = format!("Model · {}", model_label(&option, shown(&option, &current)));
             let (provider, on_select) = (provider.clone(), on_select.clone());
             menu = menu.submenu(label, window, cx, move |menu, _, _| {
-                model_rows(menu.min_w(px(240.)), &provider, &option, &current, &on_select)
+                model_rows(
+                    menu.min_w(px(240.)),
+                    &provider,
+                    &option,
+                    &current,
+                    &on_select,
+                )
             });
         }
         if let Some((option, current)) = self.effort.clone() {
             if self.model.is_some() {
                 menu = menu.separator();
             }
-            let label = format!("Effort · {}", effort_label(&option, shown(&option, &current)));
+            let label = format!(
+                "Effort · {}",
+                effort_label(&option, shown(&option, &current))
+            );
             let on_select = on_select.clone();
             menu = menu.submenu(label, window, cx, move |menu, _, _| {
                 effort_rows(menu.min_w(px(180.)), &option, &current, &on_select)
@@ -173,19 +188,32 @@ fn compact(
         .accessibility_label("More composer controls")
         .disabled(disabled)
         .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
-            let mut menu = menu.min_w(px(248.)).max_w(px(320.)).label("Composer controls");
+            let mut menu = menu
+                .min_w(px(248.))
+                .max_w(px(320.))
+                .label("Composer controls");
             if let Some((option, current)) = &grouped.model {
                 menu = model_rows(menu.label("Model"), &provider, option, current, &on_select);
             }
             if let Some((option, current)) = &grouped.effort {
-                menu = effort_rows(menu.separator().label("Thinking effort"), option, current, &on_select);
+                menu = effort_rows(
+                    menu.separator().label("Thinking effort"),
+                    option,
+                    current,
+                    &on_select,
+                );
             }
             if let Some((option, current)) = &grouped.approval {
                 menu = menu.separator().label(format!("Access for {provider}"));
                 menu = approval_choices(menu, option, current, &on_select);
             }
             for (option, current) in &grouped.others {
-                menu = other_rows(menu.separator().label(option.name.clone()), option, current, &on_select);
+                menu = other_rows(
+                    menu.separator().label(option.name.clone()),
+                    option,
+                    current,
+                    &on_select,
+                );
             }
             menu
         })
@@ -296,9 +324,12 @@ fn model_rows(
     }
     option.options.iter().fold(menu, |menu, choice| {
         menu.item(
-            described(model_label(option, &choice.value), Some(provider.to_string()))
-                .checked(choice.value == current)
-                .on_click(pick(option, &choice.value, on_select)),
+            described(
+                model_label(option, &choice.value),
+                Some(provider.to_string()),
+            )
+            .checked(choice.value == current)
+            .on_click(pick(option, &choice.value, on_select)),
         )
     })
 }

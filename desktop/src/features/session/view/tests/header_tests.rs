@@ -6,11 +6,11 @@ use gpui_kit::{AppContext as _, Entity};
 use serde_json::{Value, json};
 
 use super::{Header, project, project_name};
-use crate::core::state::session_item::SessionItem;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
 use crate::core::socket::test_wait::until;
+use crate::core::state::session_item::SessionItem;
 
 fn session(id: &str, parent: Option<&str>) -> Value {
     json!({ "sessionId": id, "agent": "claude", "repoUrl": "/r", "title": format!("Session {id}"),
@@ -106,8 +106,10 @@ fn with_no_session_open_the_title_row_keeps_the_sessions_button(cx: &mut TestApp
 #[test]
 fn a_session_in_no_project_says_so_instead_of_naming_its_folder() {
     let item = |project: Option<&str>| -> SessionItem {
-        serde_json::from_value(json!({ "sessionId": "s", "agent": "claude", "repoUrl": "/home/me/assembly-bare",
-            "projectId": project, "updatedAt": 1 }))
+        serde_json::from_value(
+            json!({ "sessionId": "s", "agent": "claude", "repoUrl": "/home/me/assembly-bare",
+            "projectId": project, "updatedAt": 1 }),
+        )
         .expect("a session item")
     };
     assert_eq!(project_name(&item(None)), "No project");

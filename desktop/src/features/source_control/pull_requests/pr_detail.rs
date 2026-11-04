@@ -1,5 +1,4 @@
 //! One pull request: its read, its review draft and the page bar over Summary and Changes.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::git_operation::GitOperation;
 use super::{
     merge_dialog::MergeRequest,
@@ -12,6 +11,7 @@ use super::{
     pull_request::{PullRequestDetail, PullRequestSummary},
     review_draft::{ReviewDraft, ReviewIdentity},
 };
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::{
     intents::open_url::OpenUrl,
     socket::{client::SocketClient, outcome::Outcome},
@@ -177,7 +177,9 @@ impl PrDetail {
         };
         if active {
             detail.refresh(cx);
-            detail.threads.update(cx, |threads, cx| threads.set_active(true, cx));
+            detail
+                .threads
+                .update(cx, |threads, cx| threads.set_active(true, cx));
         }
         detail
     }
@@ -186,7 +188,8 @@ impl PrDetail {
             return;
         }
         self.active = active;
-        self.threads.update(cx, |threads, cx| threads.set_active(active, cx));
+        self.threads
+            .update(cx, |threads, cx| threads.set_active(active, cx));
         if !active {
             self.needs_refresh |= self.loading;
             self.loading = false;
@@ -527,14 +530,20 @@ impl Render for PrDetail {
             .size_full()
             .min_h_0()
             .child(self.page_bar(cx))
-            .children(self.failure.clone().into_iter().chain(post_error).map(|error| {
-                div()
-                    .px_3()
-                    .py_1()
-                    .text_role(TextRole::Body, cx)
-                    .text_color(danger)
-                    .child(error)
-            }))
+            .children(
+                self.failure
+                    .clone()
+                    .into_iter()
+                    .chain(post_error)
+                    .map(|error| {
+                        div()
+                            .px_3()
+                            .py_1()
+                            .text_role(TextRole::Body, cx)
+                            .text_color(danger)
+                            .child(error)
+                    }),
+            )
             .child(page)
     }
 }

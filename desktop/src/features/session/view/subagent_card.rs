@@ -48,17 +48,21 @@ impl RenderOnce for SubagentCard {
         let muted = cx.theme().muted_foreground;
         let running = subagent.state != "idle";
         let (session_id, on_action) = (subagent.session_id.clone(), self.on_action.clone());
-        let key=self.key.clone();let helper=subagent.helper;
+        let key = self.key.clone();
+        let helper = subagent.helper;
         card(cx)
-            .id(SharedString::from(format!(
-                "subagent:{}",
-                self.key
-            )))
+            .id(SharedString::from(format!("subagent:{}", self.key)))
             .cursor_pointer()
             .on_click(move |_, window, cx| {
                 let session_id = session_id.clone();
-                let action=if helper {SessionAction::OpenEngineChild{session_id}}
-                    else {SessionAction::OpenNative{key:key.clone(),payload_session_id:session_id}};
+                let action = if helper {
+                    SessionAction::OpenEngineChild { session_id }
+                } else {
+                    SessionAction::OpenNative {
+                        key: key.clone(),
+                        payload_session_id: session_id,
+                    }
+                };
                 on_action(action, window, cx)
             })
             .child(
@@ -93,9 +97,23 @@ impl RenderOnce for SubagentCard {
                     .when(running && subagent.can_stop, |line| {
                         let id = format!("subagent:{}:stop", self.key);
                         if subagent.helper {
-                            line.child(stop_action_button(id,SessionAction::StopEngineChild{key:self.key.clone(),session_id:subagent.session_id.clone()},self.on_action.clone()))
+                            line.child(stop_action_button(
+                                id,
+                                SessionAction::StopEngineChild {
+                                    key: self.key.clone(),
+                                    session_id: subagent.session_id.clone(),
+                                },
+                                self.on_action.clone(),
+                            ))
                         } else {
-                            line.child(stop_action_button(id,SessionAction::StopNative{key:self.key.clone(),payload_session_id:subagent.session_id.clone()},self.on_action.clone()))
+                            line.child(stop_action_button(
+                                id,
+                                SessionAction::StopNative {
+                                    key: self.key.clone(),
+                                    payload_session_id: subagent.session_id.clone(),
+                                },
+                                self.on_action.clone(),
+                            ))
                         }
                     }),
             )

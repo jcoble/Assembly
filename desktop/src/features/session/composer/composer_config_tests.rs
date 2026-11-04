@@ -69,7 +69,10 @@ fn the_agents_menus_are_read_for_the_session_with_their_values(cx: &mut TestAppC
     let (composer, client, cx) = on_s1(cx);
     assert_eq!(
         client.config_calls(),
-        [("config/get".to_string(), json!({ "session": "s1", "expectedSource":{"machine":"owner","generation":0,"routeMachine":null} }))]
+        [(
+            "config/get".to_string(),
+            json!({ "session": "s1", "expectedSource":{"machine":"owner","generation":0,"routeMachine":null} })
+        )]
     );
     assert_eq!(
         menus(&composer, cx),
@@ -288,7 +291,7 @@ impl crate::features::session::client::session_client::SessionClient for Delayed
         &self,
         message: &str,
         machine: Option<&str>,
-        expected_source:Option<&crate::core::socket::row_source::ExpectedRowSource>,
+        expected_source: Option<&crate::core::socket::row_source::ExpectedRowSource>,
         sink: crate::features::session::client::session_client::MessageSink,
         cx: &gpui_kit::App,
     ) -> gpui_kit::Subscription {
@@ -320,9 +323,15 @@ impl crate::features::session::client::session_client::SessionClient for Delayed
     ) -> gpui_kit::Task<Result<Value, crate::features::session::client::session_client::CallError>>
     {
         use crate::features::session::client::session_client::CallError;
-        if feature=="engine" {
+        if feature == "engine" {
             return crate::features::session::client::session_client::SessionClient::call(
-                &self.messages,feature,method,args,None,cx);
+                &self.messages,
+                feature,
+                method,
+                args,
+                None,
+                cx,
+            );
         }
         assert!(matches!(feature, "config" | "machines"));
         let (answer, receiver) = futures_channel::oneshot::channel();
@@ -350,7 +359,19 @@ fn delayed_on_s1(
     let (composer, cx) =
         cx.add_window_view(move |window, cx| Composer::new(std::rc::Rc::new(held), window, cx));
     composer.update_in(cx, |composer, window, cx| {
-        composer.set_target(Some(crate::core::engine::SessionKey{machine:"owner".into(),id:"s1".into()}),Some(crate::core::socket::row_source::ExpectedRowSource{machine:"owner".into(),generation:7,route_machine:Some("Workbox Test".into())}),window,cx);
+        composer.set_target(
+            Some(crate::core::engine::SessionKey {
+                machine: "owner".into(),
+                id: "s1".into(),
+            }),
+            Some(crate::core::socket::row_source::ExpectedRowSource {
+                machine: "owner".into(),
+                generation: 7,
+                route_machine: Some("Workbox Test".into()),
+            }),
+            window,
+            cx,
+        );
     });
     client
         .take("get", "s1")
@@ -367,8 +388,32 @@ fn leave_and_return(
     cx: &mut VisualTestContext,
 ) -> ConfigCall {
     composer.update_in(cx, |composer, window, cx| {
-        composer.set_target(Some(crate::core::engine::SessionKey{machine:"owner".into(),id:"s2".into()}),Some(crate::core::socket::row_source::ExpectedRowSource{machine:"owner".into(),generation:7,route_machine:Some("Workbox Test".into())}),window,cx);
-        composer.set_target(Some(crate::core::engine::SessionKey{machine:"owner".into(),id:"s1".into()}),Some(crate::core::socket::row_source::ExpectedRowSource{machine:"owner".into(),generation:7,route_machine:Some("Workbox Test".into())}),window,cx);
+        composer.set_target(
+            Some(crate::core::engine::SessionKey {
+                machine: "owner".into(),
+                id: "s2".into(),
+            }),
+            Some(crate::core::socket::row_source::ExpectedRowSource {
+                machine: "owner".into(),
+                generation: 7,
+                route_machine: Some("Workbox Test".into()),
+            }),
+            window,
+            cx,
+        );
+        composer.set_target(
+            Some(crate::core::engine::SessionKey {
+                machine: "owner".into(),
+                id: "s1".into(),
+            }),
+            Some(crate::core::socket::row_source::ExpectedRowSource {
+                machine: "owner".into(),
+                generation: 7,
+                route_machine: Some("Workbox Test".into()),
+            }),
+            window,
+            cx,
+        );
     });
     let abandoned = client.take("get", "s2");
     cx.run_until_parked();

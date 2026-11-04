@@ -66,10 +66,15 @@ fn fixture(server: Arc<Mutex<Server>>) -> FakeBackend {
             return vec![];
         }
         if frame["feature"] == "test" && frame["method"] == "release_provider" {
-            let held=server.held_provider.take().expect("an actual provider read was held");
-            assert_eq!(frame["args"]["heldId"],held);
-            return vec![Reply::Frame(json!({"t":"result","id":held,"result":provider()})),
-                Reply::Frame(json!({"t":"result","id":id,"result":null}))];
+            let held = server
+                .held_provider
+                .take()
+                .expect("an actual provider read was held");
+            assert_eq!(frame["args"]["heldId"], held);
+            return vec![
+                Reply::Frame(json!({"t":"result","id":held,"result":provider()})),
+                Reply::Frame(json!({"t":"result","id":id,"result":null})),
+            ];
         }
         if frame["feature"] == "test" && frame["method"] == "invalidate_provider" {
             let after = server.seq;
@@ -88,7 +93,7 @@ fn fixture(server: Arc<Mutex<Server>>) -> FakeBackend {
         {
             server.provider_reads += 1;
             if std::mem::take(&mut server.hold_provider) {
-                server.held_provider=Some(id.clone());
+                server.held_provider = Some(id.clone());
                 return vec![];
             }
         }
@@ -100,15 +105,25 @@ fn fixture(server: Arc<Mutex<Server>>) -> FakeBackend {
         let result = match (frame["feature"].as_str(), frame["method"].as_str()) {
             (Some("engine"), Some("machine")) => json!({"machine":"owner-engine","through":0}),
             (Some("engine"), Some("entities")) => {
-                let items: Vec<Value> = frame["args"]["refs"].as_array().unwrap().iter().filter_map(|reference| {
-                    if reference["kind"] == "provider" && reference["id"] == "codex/" {
-                        let mut row = provider();
-                        row["version"] = json!(server.provider_version.max(8));
-                        Some(row)
-                    } else if reference["kind"] == "sign_in" {
-                        server.operation.clone().filter(|row| row["id"] == reference["id"])
-                    } else { None }
-                }).collect();
+                let items: Vec<Value> = frame["args"]["refs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|reference| {
+                        if reference["kind"] == "provider" && reference["id"] == "codex/" {
+                            let mut row = provider();
+                            row["version"] = json!(server.provider_version.max(8));
+                            Some(row)
+                        } else if reference["kind"] == "sign_in" {
+                            server
+                                .operation
+                                .clone()
+                                .filter(|row| row["id"] == reference["id"])
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
                 json!({"items":items,"next":null})
             }
             (Some("engine"), Some("entity")) => {
@@ -410,9 +425,18 @@ async fn repeated_committed_invalidations_during_a_read_coalesce_and_do_not_get_
     }
     // A held result does not block this socket's other calls: the real backend
     // dispatches them independently, so later committed invalidations can arrive.
-    let release=cx.read(|cx|SocketClient::try_bulk(cx).unwrap().read(cx).call::<Value>(
-        "test","release_provider",json!({"heldId":entity_id.unwrap()}),None));
-    assert!(matches!(release.await,crate::core::socket::outcome::Outcome::Ok(_)));
+    let release = cx.read(|cx| {
+        SocketClient::try_bulk(cx).unwrap().read(cx).call::<Value>(
+            "test",
+            "release_provider",
+            json!({"heldId":entity_id.unwrap()}),
+            None,
+        )
+    });
+    assert!(matches!(
+        release.await,
+        crate::core::socket::outcome::Outcome::Ok(_)
+    ));
     settled(&panel, cx, |panel| {
         panel._provider.is_none()
             && panel

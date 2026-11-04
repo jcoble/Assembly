@@ -17,20 +17,20 @@ use super::agent_config::AgentConfig;
 use super::answer_panel::AnswerPanel;
 use super::attachment::{Attachment, AttachmentState};
 use super::context_meter::ContextMeter;
-use crate::features::session::model::session_view::ContextReport;
 use super::shape::{Lock, hint};
 use crate::core::engine::EngineFeed;
 use crate::features::session::client::session_client::{CallError, SessionClient};
+use crate::features::session::model::session_view::ContextReport;
 
 pub struct Composer {
     client: Rc<dyn SessionClient>,
     start_draft: Option<start::StartDraft>,
-    initial_upload:Option<std::rc::Weak<()>>,
+    initial_upload: Option<std::rc::Weak<()>>,
     session: Option<String>,
     session_key: Option<crate::core::engine::SessionKey>,
     expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     source_valid: bool,
-    source_serial:u64,
+    source_serial: u64,
     /// Identifies this visit, including leaving and returning to the same session.
     target_generation: u64,
     owner: Option<(String, Option<String>, String)>,
@@ -41,7 +41,7 @@ pub struct Composer {
     _connection: Option<Subscription>,
     draft: Entity<TextareaState>,
     /// The other sessions' unsent drafts, by session id.
-    drafts: HashMap<crate::core::engine::SessionKey, (String,Vec<Attachment>)>,
+    drafts: HashMap<crate::core::engine::SessionKey, (String, Vec<Attachment>)>,
     attachments: Vec<Attachment>,
     /// Each attachment's upload while it goes, by its id; a chip removed drops its upload.
     uploads: HashMap<u64, Task<()>>,
@@ -119,11 +119,17 @@ pub struct Composer {
 /// What the composer tells the session pane.
 pub enum ComposerEvent {
     /// Local draft intent; the form owns creation and checkout, and the draft remains intact.
-    StartRequested { text:String, images:Vec<StagedAttachment> },
+    StartRequested {
+        text: String,
+        images: Vec<StagedAttachment>,
+    },
     /// A local pending prompt was captured before the call.
     Sending,
     /// The owner committed the prompt. Its provider turn arrives later through rows.
-    Accepted { key:crate::core::engine::SessionKey,receipt:OwnerPromptAccepted },
+    Accepted {
+        key: crate::core::engine::SessionKey,
+        receipt: OwnerPromptAccepted,
+    },
     PendingChanged,
 }
 #[path = "owner_prompt.rs"]
@@ -168,12 +174,18 @@ impl Composer {
             })
         });
         let feed = EngineFeed::global(cx);
-        let engine = cx.observe(&feed, |composer: &mut Self, _, cx| composer.read_can_steer(cx));
+        let engine = cx.observe(&feed, |composer: &mut Self, _, cx| {
+            composer.read_can_steer(cx)
+        });
         Composer {
             client,
-            start_draft:None,initial_upload:None,
+            start_draft: None,
+            initial_upload: None,
             session: None,
-            session_key:None,expected_source:None,source_valid:false,source_serial:0,
+            session_key: None,
+            expected_source: None,
+            source_valid: false,
+            source_serial: 0,
             target_generation: 0,
             owner: None,
             advertised_target: None,
@@ -278,7 +290,9 @@ impl Composer {
     fn read_can_steer(&mut self, cx: &mut Context<Self>) {
         let can = self.session_key.as_ref().is_some_and(|key| {
             let feed = EngineFeed::global(cx);
-            feed.read(cx).session(key).is_some_and(|session| session.can_steer)
+            feed.read(cx)
+                .session(key)
+                .is_some_and(|session| session.can_steer)
         });
         if self.can_steer != can {
             self.can_steer = can;
@@ -353,23 +367,31 @@ impl Composer {
 
     /// Stops the run going now. It goes on if the call fails, so Stop stays to be pressed again.
     fn stop(&mut self, cx: &mut Context<Self>) {
-        if !self.operational(){return;}
+        if !self.operational() {
+            return;
+        }
         let Some(run) = self.running.clone().filter(|_| self.offline.is_none()) else {
             return;
         };
-        let Some(session)=self.session.clone()else{return;};
-        let source_serial=self.source_serial;
-        let args=self.source_args(json!({"runId":run,"session":session}));
-        let call=self.client.call("send","stop",args,None,cx);
+        let Some(session) = self.session.clone() else {
+            return;
+        };
+        let source_serial = self.source_serial;
+        let args = self.source_args(json!({"runId":run,"session":session}));
+        let call = self.client.call("send", "stop", args, None, cx);
         self._tasks.retain(|task| !task.is_ready());
-        self._tasks.push(cx.spawn(async move |composer,cx| {
-            if let Err(error)=call.await {let _=composer.update(cx,|composer,cx| {
-                if composer.source_serial==source_serial {composer.source_refused(&error,cx);composer.error=Some(error.reason().into());cx.notify();}
-            });}
+        self._tasks.push(cx.spawn(async move |composer, cx| {
+            if let Err(error) = call.await {
+                let _ = composer.update(cx, |composer, cx| {
+                    if composer.source_serial == source_serial {
+                        composer.source_refused(&error, cx);
+                        composer.error = Some(error.reason().into());
+                        cx.notify();
+                    }
+                });
+            }
         }));
     }
-
-
 }
 
 /// The most lines the draft grows to before it scrolls.
@@ -394,20 +416,20 @@ mod target;
 #[path = "composer_view_tests.rs"]
 mod tests;
 
-#[path="composer_selection.rs"]
-mod selection;
-#[path="composer_send.rs"]
-mod send;
 #[cfg(test)]
-#[path="qualified_tests.rs"]
+#[path = "qualified_tests.rs"]
 mod qualified_tests;
+#[path = "composer_selection.rs"]
+mod selection;
+#[path = "composer_send.rs"]
+mod send;
 
-#[path="composer_start.rs"]
+#[path = "composer_start.rs"]
 mod start;
 pub use start::{StagedAttachment, StartSlots};
 #[cfg(test)]
-#[path="tests/start_tests.rs"]
+#[path = "tests/start_tests.rs"]
 mod start_tests;
 
-#[path="composer_initial.rs"]
+#[path = "composer_initial.rs"]
 mod initial;

@@ -136,13 +136,19 @@ impl RenderOnce for SessionRow {
             (false, false) => cx.theme().foreground,
         };
         let spelled_out: SharedString = {
-            let mut parts: Vec<String> =
-                status_words(presence, offline).into_iter().map(str::to_owned).collect();
+            let mut parts: Vec<String> = status_words(presence, offline)
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
             parts.push(details(&entry));
             parts.join(" · ").into()
         };
         let state = state_icon(presence).map(|icon| {
-            Icon::new(icon).xsmall().flex_none().text_color(tint(presence, cx)).into_any_element()
+            Icon::new(icon)
+                .xsmall()
+                .flex_none()
+                .text_color(tint(presence, cx))
+                .into_any_element()
         });
         let machine = Icon::new(match (offline, entry.machine.is_some()) {
             (true, _) => IconName::WifiOff,
@@ -167,7 +173,11 @@ impl RenderOnce for SessionRow {
             second: short_details(&entry).into(),
             spelled_out,
             // Always a third line, so every row is the same height: its newest answer, or its project before it has one.
-            third: entry.preview.clone().unwrap_or_else(|| entry.group.clone()).into(),
+            third: entry
+                .preview
+                .clone()
+                .unwrap_or_else(|| entry.group.clone())
+                .into(),
             dot: presence == Presence::Unread,
         }
         .item(cx)
@@ -180,8 +190,7 @@ impl RenderOnce for SessionRow {
             for (label, to) in status.moves() {
                 let (id, on_mark) = (id.clone(), on_mark.clone());
                 menu = menu.item(
-                    PopupMenuItem::new(label)
-                        .on_click(move |_, _, cx| on_mark(id.clone(), to, cx)),
+                    PopupMenuItem::new(label).on_click(move |_, _, cx| on_mark(id.clone(), to, cx)),
                 );
             }
             menu

@@ -4,10 +4,10 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::message_scroller::{MessageScroller, MessageScrollerState};
-use gpui_kit::*;
 use crate::core::state::preferences::Preferences;
 use crate::core::theme::text::TextRole;
+use gpui_kit::component::message_scroller::{MessageScroller, MessageScrollerState};
+use gpui_kit::*;
 
 use crate::features::session::model::entries::Entry;
 use crate::features::session::model::follow::{Follow, FollowEvent, FollowStep};
@@ -152,23 +152,37 @@ impl Timeline {
         cx.notify();
     }
 
-    pub(super) fn workspace_place(&self,cx:&App)->super::session_pane::chat_codec::ChatPlace {
-        let scroller=self.scroller.read(cx);let offset=scroller.logical_scroll_top();
+    pub(super) fn workspace_place(&self, cx: &App) -> super::session_pane::chat_codec::ChatPlace {
+        let scroller = self.scroller.read(cx);
+        let offset = scroller.logical_scroll_top();
         super::session_pane::chat_codec::ChatPlace {
-            item_key:self.entries.get(offset.item_ix).map(|(key,_)|key.clone()),
-            offset:f32::from(offset.offset_in_item),following:scroller.is_following_tail(),
+            item_key: self.entries.get(offset.item_ix).map(|(key, _)| key.clone()),
+            offset: f32::from(offset.offset_in_item),
+            following: scroller.is_following_tail(),
         }
     }
-    pub(super) fn restore_workspace_place(&mut self,place:&super::session_pane::chat_codec::ChatPlace,cx:&mut Context<Self>)->Result<(),String> {
+    pub(super) fn restore_workspace_place(
+        &mut self,
+        place: &super::session_pane::chat_codec::ChatPlace,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
         if place.following {
-            self.scroller.update(cx,|scroller,cx|scroller.scroll_to_end(cx));
-        } else if let Some(at)=place.item_key.as_ref().and_then(|key|self.entries.iter().position(|(candidate,_)|candidate==key)) {
-            self.scroller.update(cx,|scroller,cx|scroller.scroll_to_item(at,cx));
+            self.scroller
+                .update(cx, |scroller, cx| scroller.scroll_to_end(cx));
+        } else if let Some(at) = place.item_key.as_ref().and_then(|key| {
+            self.entries
+                .iter()
+                .position(|(candidate, _)| candidate == key)
+        }) {
+            self.scroller
+                .update(cx, |scroller, cx| scroller.scroll_to_item(at, cx));
         } else {
             // An anchor outside the coherent first page stays at the tail; later paging never jumps the reader.
-            self.scroller.update(cx,|scroller,cx|scroller.scroll_to_end(cx));
+            self.scroller
+                .update(cx, |scroller, cx| scroller.scroll_to_end(cx));
         }
-        cx.notify();Ok(())
+        cx.notify();
+        Ok(())
     }
 
     /// Measures and draws one row again, by its key, leaving the entries as they are.

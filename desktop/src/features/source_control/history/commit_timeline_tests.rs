@@ -51,9 +51,19 @@ async fn hidden_history_does_not_read_and_load_more_appends_once(cx: &mut TestAp
         );
     });
     let origin = crate::core::socket::row_source::ExpectedRowSource {
-        machine: "owner-engine".into(), generation: 7, route_machine: Some("workbox-test".into()),
+        machine: "owner-engine".into(),
+        generation: 7,
+        route_machine: Some("workbox-test".into()),
     };
-    let timeline = cx.new(|cx| CommitTimeline::new("s1".into(), Some("a.rs".into()), Some(origin.clone()), false, cx));
+    let timeline = cx.new(|cx| {
+        CommitTimeline::new(
+            "s1".into(),
+            Some("a.rs".into()),
+            Some(origin.clone()),
+            false,
+            cx,
+        )
+    });
     cx.run_until_parked();
     assert!(seen.lock().unwrap().is_empty());
     let tell = changed.clone();
@@ -91,7 +101,10 @@ async fn hidden_history_does_not_read_and_load_more_appends_once(cx: &mut TestAp
     .await;
     assert!(seen.lock().unwrap()[3]["args"]["path"].is_null());
     for request in seen.lock().unwrap().iter() {
-        assert_eq!(request["args"]["expectedSource"], serde_json::to_value(&origin).unwrap());
+        assert_eq!(
+            request["args"]["expectedSource"],
+            serde_json::to_value(&origin).unwrap()
+        );
     }
 }
 fn drawn(visual: &mut VisualTestContext) {
@@ -149,7 +162,11 @@ async fn scrolling_to_the_end_loads_once(cx: &mut TestAppContext) {
         visual.update(|_, cx| timeline.read(cx).history.commits.len() == 30)
     })
     .await;
-    assert_eq!(cursors.lock().unwrap().len(), 1, "the first page alone asks nothing more");
+    assert_eq!(
+        cursors.lock().unwrap().len(),
+        1,
+        "the first page alone asks nothing more"
+    );
     let wheel = ScrollEvent {
         position: point(px(500.), px(200.)),
         delta: ScrollDelta::Pixels(point(px(0.), px(-600.))),

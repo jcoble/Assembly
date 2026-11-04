@@ -441,11 +441,21 @@ fn a_check_box_in_a_form_answers_as_a_boolean(cx: &mut TestAppContext) {
     let (pane, client, cx) = opened(vec![user(1, "go"), ask], cx);
     act(
         &pane,
-        SessionAction::Flag { ask_id: "a1".into(), field: "agree".into(), on: true },
+        SessionAction::Flag {
+            ask_id: "a1".into(),
+            field: "agree".into(),
+            on: true,
+        },
         cx,
     );
     client.queue_answer(Ok(json!({ "ok": true })));
-    act(&pane, SessionAction::SubmitAsk { ask_id: "a1".into() }, cx);
+    act(
+        &pane,
+        SessionAction::SubmitAsk {
+            ask_id: "a1".into(),
+        },
+        cx,
+    );
     assert_eq!(
         calls_after(&client, 1),
         [(

@@ -10,8 +10,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::core::intents::open_file::OpenFile;
-use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::intents::open_url::OpenUrl;
+use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::ui::markdown::payload::{Block, Inline};
 
 #[derive(IntoElement)]
@@ -56,7 +56,11 @@ pub enum LinkTarget {
 }
 
 impl LinkTarget {
-    fn action(&self, session: Option<&str>, expected_source: Option<&ExpectedRowSource>) -> Option<Box<dyn Action>> {
+    fn action(
+        &self,
+        session: Option<&str>,
+        expected_source: Option<&ExpectedRowSource>,
+    ) -> Option<Box<dyn Action>> {
         match self {
             Self::Url(url) => Some(Box::new(OpenUrl { url: url.clone() })),
             Self::File(path) => Some(Box::new(OpenFile {
@@ -330,7 +334,9 @@ impl Draw<'_> {
         let id = ElementId::Name(format!("{}:{}", self.id, self.next).into());
         InteractiveText::new(id, styled)
             .on_click(ranges, move |at, window, cx| {
-                if let Some(action) = targets[at].action(session.as_deref(),expected_source.as_ref()) {
+                if let Some(action) =
+                    targets[at].action(session.as_deref(), expected_source.as_ref())
+                {
                     window.dispatch_action(action, cx);
                 }
             })

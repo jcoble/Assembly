@@ -110,7 +110,11 @@ impl SettingsPage {
         let label = v_flex()
             .gap_0p5()
             .min_w_0()
-            .child(Label::new(row.title).text_role(TextRole::Body, cx).text_color(theme.foreground))
+            .child(
+                Label::new(row.title)
+                    .text_role(TextRole::Body, cx)
+                    .text_color(theme.foreground),
+            )
             .child(
                 Label::new(row.description)
                     .text_role(TextRole::Meta, cx)
@@ -211,7 +215,12 @@ impl SettingsPage {
             .gap_1()
             .child(Input::new(&self.depth).small());
         if let Some(error) = self.depth_error {
-            control = control.child(div().text_role(TextRole::Meta, cx).text_color(theme.danger).child(error));
+            control = control.child(
+                div()
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(theme.danger)
+                    .child(error),
+            );
         }
         h_flex()
             .px_4()

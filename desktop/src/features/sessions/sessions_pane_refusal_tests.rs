@@ -3,7 +3,10 @@ use crate::core::engine::EngineRefusal;
 
 #[test]
 fn a_refused_open_names_the_machine_it_could_not_reach_and_otherwise_gives_the_reason() {
-    let refused = |code: &str| EngineRefusal { code: code.into(), message: "The reason.".into() };
+    let refused = |code: &str| EngineRefusal {
+        code: code.into(),
+        message: "The reason.".into(),
+    };
     assert_eq!(
         refusal_words(Some("Workbox"), &refused("source_changed")),
         "That session is on Workbox, which this app isn't connected to."

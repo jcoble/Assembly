@@ -1,6 +1,6 @@
 //! Native tree rows and controls borrow the pane's owned lazy model and action state.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{FileView, FilesPane, INDENT, Row, TREE_LINE};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::ContextMenuExt as _;
@@ -70,7 +70,9 @@ impl FilesPane {
                     )
                     .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
                     .on_click(cx.listener(move |pane, event: &ClickEvent, window, cx| {
-                        if pane.session != row_session || pane.source != row_source { return; }
+                        if pane.session != row_session || pane.source != row_source {
+                            return;
+                        }
                         window.focus(&pane.focus, cx);
                         pane.clicked(path.clone(), folder, cx);
                         if let (false, Some(session)) = (folder, pane.session.clone()) {

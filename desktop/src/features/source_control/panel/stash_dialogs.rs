@@ -1,8 +1,8 @@
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::git_action::GitAction;
 use super::git_labels::age_of_millis;
 use super::git_target::GitTarget;
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -148,7 +148,8 @@ impl StashList {
         let call = socket.read(cx).call::<Vec<Stash>>(
             "git",
             "stashes",
-            self.target.read_args(json!({"session":self.target.session})),
+            self.target
+                .read_args(json!({"session":self.target.session})),
             None,
         );
         self.read = Some(cx.spawn(async move |view, cx| {
@@ -214,16 +215,18 @@ impl Render for StashList {
                                             .flex_1()
                                             .min_w_0()
                                             .child(div().truncate().child(stash.message))
-                                            .child(div().text_role(TextRole::Body, cx).child(format!(
-                                                "{} · {}{}",
-                                                stash.branch.unwrap_or_default(),
-                                                age,
-                                                if stash.made_by_assembly {
-                                                    " · Assembly"
-                                                } else {
-                                                    ""
-                                                }
-                                            ))),
+                                            .child(div().text_role(TextRole::Body, cx).child(
+                                                format!(
+                                                    "{} · {}{}",
+                                                    stash.branch.unwrap_or_default(),
+                                                    age,
+                                                    if stash.made_by_assembly {
+                                                        " · Assembly"
+                                                    } else {
+                                                        ""
+                                                    }
+                                                ),
+                                            )),
                                     )
                                     .child(
                                         Button::new(SharedString::from(format!(
@@ -238,9 +241,10 @@ impl Render for StashList {
                                             cx.listener(move |view, _, _, cx| {
                                                 let target = view.target.clone();
                                                 view.action.update(cx, |action, cx| {
-                                                    let args = json!({"session":target.session,"sha":applied});
-                                                    action.run(&target, "applyStash", args, cx);
-                                                });
+                                                let args =
+                                                    json!({"session":target.session,"sha":applied});
+                                                action.run(&target, "applyStash", args, cx);
+                                            });
                                             }),
                                         ),
                                     )

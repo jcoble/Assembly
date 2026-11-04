@@ -60,7 +60,8 @@ fn main() {
             features::changes::changes_pane::ChangesPane::register(cx);
             features::board::board_pane::BoardPane::register(cx);
             features::terminal::terminal_pane::TerminalPane::register(cx);
-            features::workspaces::init(cx).expect("one workspace registry after concrete pane registration");
+            features::workspaces::init(cx)
+                .expect("one workspace registry after concrete pane registration");
             let (read_layout, write_layout) = start_backend(cx);
             PaletteView::init(cx);
             core::intents::open_url::register(cx);

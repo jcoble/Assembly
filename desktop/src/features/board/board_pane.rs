@@ -5,18 +5,14 @@
 //! going), so dismissing it drops them all; the backend keeps mirroring. The top bar's existing popover owns its
 //! lifetime, and the palette's "Build Board" opens that same dropdown.
 
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::collections::{HashMap, HashSet};
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{DockAreaState, DockState, PanelInfo, PanelState};
 use gpui_kit::component::input::InputState;
-use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
 use super::OpenBoard;
-use super::board_card::{self, STATES};
+use super::board_card;
 use super::board_payload::{
     BoardAnswerResult, BoardAnswerValue, BoardPageResult, BoardQuestion, BoardTaskArgs,
     BoardTaskResult,
@@ -269,8 +265,12 @@ impl BoardPane {
         let mut listed: HashSet<SharedString> = (self.state.items.iter())
             .map(|item| board_card::card_key(&item.task.machine_id, &item.task.task_key))
             .collect();
-        listed.extend((self.state.selected.as_ref()).map(|card| board_card::card_key(&card.0, &card.1)));
-        self.drops.update(cx, |drops, cx| drops.retain_keys(|key| listed.contains(key), cx));
+        listed.extend(
+            (self.state.selected.as_ref()).map(|card| board_card::card_key(&card.0, &card.1)),
+        );
+        self.drops.update(cx, |drops, cx| {
+            drops.retain_keys(|key| listed.contains(key), cx)
+        });
     }
 
     /// Holds the backend clock while a shown card is still going, and lets it go otherwise.
@@ -320,7 +320,13 @@ impl BoardPane {
 
     /// Expands the card, or folds it when it's the one expanded. The card on its way shut keeps its detail until the
     /// next card is picked, so it doesn't change as it closes.
-    pub(super) fn select(&mut self, machine: &str, task: &str, session: &str, cx: &mut Context<Self>) {
+    pub(super) fn select(
+        &mut self,
+        machine: &str,
+        task: &str,
+        session: &str,
+        cx: &mut Context<Self>,
+    ) {
         (self._detail, self.detail_failed) = (None, None);
         let was = self.state.selected.clone();
         let had = self.state.detail.take();
@@ -332,8 +338,12 @@ impl BoardPane {
             return self.redraw(cx);
         }
         let pane = cx.weak_entity();
-        let (key, machine, task, session) =
-            (board_card::card_key(machine, task), machine.to_string(), task.to_string(), session.to_string());
+        let (key, machine, task, session) = (
+            board_card::card_key(machine, task),
+            machine.to_string(),
+            task.to_string(),
+            session.to_string(),
+        );
         self.drops.update(cx, |drops, cx| {
             drops.toggle(
                 key,
@@ -352,7 +362,9 @@ impl BoardPane {
     /// The detail of the card on its way shut.
     pub(super) fn closing_detail(&self, machine: &str, task: &str) -> Option<BoardTaskResult> {
         let (card, detail) = self.closing.as_ref()?;
-        (card.0 == machine && card.1 == task).then(|| detail.clone()).flatten()
+        (card.0 == machine && card.1 == task)
+            .then(|| detail.clone())
+            .flatten()
     }
 
     pub(super) fn earlier_events(&mut self, cx: &mut Context<Self>) {
@@ -366,22 +378,44 @@ impl BoardPane {
     }
 
     pub(super) fn open_session(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(task)=self.state.items.iter().map(|item|&item.task).find(|task|task.creator_session_id==id && self.state.selected.as_ref()==Some(&(task.machine_id.clone(),task.task_key.clone()))) else {
-            self.detail_failed=Some("The session's current Board source is unavailable.".into());self.redraw(cx);return;
+        let Some(task) = self.state.items.iter().map(|item| &item.task).find(|task| {
+            task.creator_session_id == id
+                && self.state.selected.as_ref()
+                    == Some(&(task.machine_id.clone(), task.task_key.clone()))
+        }) else {
+            self.detail_failed = Some("The session's current Board source is unavailable.".into());
+            self.redraw(cx);
+            return;
         };
         // Board's persisted machine_id contract uses `local` only for the owning backend route.
-        let route_machine=(task.machine_id!="local").then(||task.machine_id.clone());
-        let request_id=uuid::Uuid::new_v4().to_string();
-        let expected=request_id.clone();
-        self.opening=Some(cx.subscribe(&SelectedSession::global(cx),move|pane,_,event:&crate::core::intents::session_open::SessionOpenResult,cx| {
-            if event.request_id!=expected {return;}
-            pane.opening=None;
-            match &event.result {
-                Ok(())=>cx.emit(DismissEvent),
-                Err(error)=>{pane.detail_failed=Some(error.message.clone().into());pane.redraw(cx);},
-            }
-        }));
-        window.dispatch_action(Box::new(OpenSession{id:id.into(),route_machine,request_id,historical:false}),cx);
+        let route_machine = (task.machine_id != "local").then(|| task.machine_id.clone());
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let expected = request_id.clone();
+        self.opening = Some(cx.subscribe(
+            &SelectedSession::global(cx),
+            move |pane, _, event: &crate::core::intents::session_open::SessionOpenResult, cx| {
+                if event.request_id != expected {
+                    return;
+                }
+                pane.opening = None;
+                match &event.result {
+                    Ok(()) => cx.emit(DismissEvent),
+                    Err(error) => {
+                        pane.detail_failed = Some(error.message.clone().into());
+                        pane.redraw(cx);
+                    }
+                }
+            },
+        ));
+        window.dispatch_action(
+            Box::new(OpenSession {
+                id: id.into(),
+                route_machine,
+                request_id,
+                historical: false,
+            }),
+            cx,
+        );
     }
 
     pub(super) fn filter(&mut self, filter: Option<&str>, cx: &mut Context<Self>) {
@@ -468,101 +502,8 @@ impl Focusable for BoardPane {
 
 impl EventEmitter<DismissEvent> for BoardPane {}
 
-impl Render for BoardPane {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (muted, danger) = (theme.muted_foreground, theme.danger);
-        let counts = self.state.counts.clone();
-        let headline = match counts.as_ref().map_or(0, |counts| counts.needs_you) {
-            0 => "Nothing needs you".to_string(),
-            1 => "1 thing needs you".to_string(),
-            n => format!("{n} things need you"),
-        };
-        let selected = self
-            .state
-            .filter
-            .as_deref()
-            .and_then(|filter| STATES.iter().position(|(state, _)| *state == filter))
-            .map_or(0, |ix| ix + 1);
-        let filters = [("All", None)]
-            .into_iter()
-            .chain(STATES.iter().map(|(state, label)| (*label, Some(*state))))
-            .map(|(label, state)| {
-                Tab::new()
-                    .label(label)
-                    .debug_selector(move || format!("board-filter-{label}"))
-                    .on_click(cx.listener(move |pane, _, _, cx| pane.filter(state, cx)))
-            });
-        let header = v_flex()
-            .px_4()
-            .pt_3()
-            .pb_2()
-            .gap_0p5()
-            .child(div().text_role(TextRole::Meta, cx).text_color(muted).child("BUILD BOARD"))
-            .child(
-                div()
-                    .text_role(TextRole::Heading, cx)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(headline),
-            )
-            .children(counts.as_ref().map(|c| {
-                let line = format!(
-                    "{} running · {} finished · {} in all",
-                    c.running, c.terminal, c.total
-                );
-                div().text_role(TextRole::Body, cx).text_color(muted).child(line)
-            }))
-            .child(
-                div().pt_1().min_w_0().child(
-                    TabBar::new("board-filters")
-                        .underline()
-                        .small()
-                        .selected_index(selected)
-                        .children(filters),
-                ),
-            );
-        let note = |text: String| div().px_4().py_2().text_role(TextRole::Body, cx).text_color(muted).child(text);
-        let body = match &self.failed {
-            Some(message) => note(message.clone()).text_color(danger).into_any_element(),
-            None if counts.is_none() => note("Reading the Board…".into()).into_any_element(),
-            None if self.state.items.is_empty() => note(match self.state.filter {
-                None => "No agent has reported a task yet.".into(),
-                Some(_) => "No tasks in this state.".into(),
-            })
-            .into_any_element(),
-            None => list(self.list.clone(), cx.processor(board_card::card))
-                .flex_1()
-                .min_h_0()
-                .px_3()
-                .into_any_element(),
-        };
-        let more = (self.state.next_cursor.is_some()).then(|| {
-            let shown = self.state.items.len();
-            let total = counts.as_ref().map_or(0, |counts| counts.total);
-            h_flex()
-                .px_4()
-                .py_2()
-                .gap_2()
-                .text_role(TextRole::Body, cx)
-                .text_color(muted)
-                .child(format!("Showing {shown} of {total}"))
-                .child(
-                    Button::new("board-more")
-                        .ghost()
-                        .small()
-                        .label("Load more")
-                        .on_click(cx.listener(|pane, _, _, cx| pane.more(cx))),
-                )
-        });
-        v_flex()
-            .track_focus(&self.focus)
-            .size_full()
-            .min_h_0()
-            .child(header)
-            .child(body)
-            .children(more)
-    }
-}
+#[path = "board_pane_render.rs"]
+mod render;
 
 #[cfg(test)]
 #[path = "board_pane_tests.rs"]

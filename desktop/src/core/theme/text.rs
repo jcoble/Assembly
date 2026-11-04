@@ -27,7 +27,10 @@ struct NamedFaces {
 impl Global for NamedFaces {}
 
 fn in_force(on_theme: &SharedString, asked: &SharedString, named: &Option<NamedFace>) -> bool {
-    on_theme == asked || named.as_ref().is_some_and(|named| named.0 == *asked && named.1 == *on_theme)
+    on_theme == asked
+        || named
+            .as_ref()
+            .is_some_and(|named| named.0 == *asked && named.1 == *on_theme)
 }
 
 /// The interface size text was last drawn at.
@@ -51,7 +54,9 @@ fn redraw_for_a_new_size(cx: &mut App) {
 
 pub fn apply_text(cx: &mut App) {
     redraw_for_a_new_size(cx);
-    let (ui, code) = Preferences::read(cx, |appearance| (appearance.ui_font(), appearance.code_font()));
+    let (ui, code) = Preferences::read(cx, |appearance| {
+        (appearance.ui_font(), appearance.code_font())
+    });
     let theme = Theme::global(cx);
     let named = cx.try_global::<NamedFaces>();
     let (named_ui, named_code) = named.map_or((&None, &None), |named| (&named.ui, &named.code));

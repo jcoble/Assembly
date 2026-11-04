@@ -212,19 +212,35 @@ impl EngineStore {
     }
 
     fn need_sessions(&self, key: &EngineKey) -> Vec<SessionKey> {
-        if key.kind != "needs_me" { return Vec::new(); }
-        let Some(row) = self.items.get(key) else { return Vec::new(); };
+        if key.kind != "needs_me" {
+            return Vec::new();
+        }
+        let Some(row) = self.items.get(key) else {
+            return Vec::new();
+        };
         let mut sessions = Vec::new();
         if let Some(id) = row.value["sessionId"].as_str().filter(|id| !id.is_empty()) {
-            sessions.push(SessionKey { machine: key.machine.clone(), id: id.into() });
+            sessions.push(SessionKey {
+                machine: key.machine.clone(),
+                id: id.into(),
+            });
         }
         // The need owner need not own the addressee. A scalar ID grants no relation.
         if let (Some(machine), Some(id)) = (
-            row.value["addresseeMachine"].as_str().filter(|v| !v.is_empty()),
-            row.value["addresseeSessionId"].as_str().filter(|v| !v.is_empty()),
+            row.value["addresseeMachine"]
+                .as_str()
+                .filter(|v| !v.is_empty()),
+            row.value["addresseeSessionId"]
+                .as_str()
+                .filter(|v| !v.is_empty()),
         ) {
-            let session = SessionKey { machine: machine.into(), id: id.into() };
-            if !sessions.contains(&session) { sessions.push(session); }
+            let session = SessionKey {
+                machine: machine.into(),
+                id: id.into(),
+            };
+            if !sessions.contains(&session) {
+                sessions.push(session);
+            }
         }
         sessions
     }

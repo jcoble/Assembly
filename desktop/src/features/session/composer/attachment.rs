@@ -16,7 +16,10 @@ pub struct Attachment {
 
 pub enum AttachmentState {
     /// Selected local bytes with no session upload or remote path authority.
-    Staged { image:std::sync::Arc<Image>, mime:&'static str },
+    Staged {
+        image: std::sync::Arc<Image>,
+        mime: &'static str,
+    },
     Uploading,
     /// Saved where the session's agent runs, at this path.
     Saved {
