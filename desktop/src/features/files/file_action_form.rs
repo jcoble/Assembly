@@ -30,18 +30,27 @@ pub(super) struct FileActionForm {
     task: Option<Task<()>>,
 }
 impl EventEmitter<Finished> for FileActionForm {}
+/// What the pane held when it asked, so an action on something that has since moved is refused.
+pub struct ActionExpected {
+    pub owner: Option<DocumentKey>,
+    pub source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    pub checkout: Option<FileOwnership>,
+}
 impl FileActionForm {
     pub fn new(
         session: String,
         kind: &'static str,
         source: String,
         destination: Option<String>,
-        expected_owner: Option<DocumentKey>,
-        expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
-        expected_checkout: Option<FileOwnership>,
+        expected: ActionExpected,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let ActionExpected {
+            owner: expected_owner,
+            source: expected_source,
+            checkout: expected_checkout,
+        } = expected;
         let name = matches!(kind, "rename" | "createFile" | "createFolder").then(|| {
             cx.new(|cx| {
                 let mut input = InputState::new(window, cx).placeholder("Name");

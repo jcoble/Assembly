@@ -60,8 +60,7 @@ impl Render for WindowRoot {
                 FileView::open_at(
                     action.session_id.clone(),
                     action.path.clone(),
-                    action.line,
-                    action.column,
+                    (action.line, action.column),
                     action.pinned,
                     action.expected_source.clone(),
                     window,

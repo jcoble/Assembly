@@ -393,8 +393,7 @@ impl FilesPane {
                         FileView::open_at(
                             session.clone(),
                             path,
-                            None,
-                            None,
+                            (None, None),
                             true,
                             self.source.clone(),
                             window,

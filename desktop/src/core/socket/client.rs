@@ -17,7 +17,7 @@ use gpui_kit::*;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::client_thread::ClientThread;
+use super::client_thread::{ClientShared, ClientThread};
 use super::connection_state::ConnectionState;
 use super::endpoint::Endpoint;
 use super::event::Event;
@@ -107,9 +107,11 @@ impl SocketClient {
             receiver,
             events.clone(),
             states,
-            next_id.clone(),
-            engine_machine.clone(),
-            connection_generation.clone(),
+            ClientShared {
+                ids: next_id.clone(),
+                engine_machine: engine_machine.clone(),
+                connection_generation: connection_generation.clone(),
+            },
         );
         cx.new(|cx| {
             let states = cx.spawn(async move |this, cx| {

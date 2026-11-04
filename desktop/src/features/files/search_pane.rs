@@ -232,8 +232,7 @@ impl SearchPane {
                     FileView::open_at(
                         session.clone(),
                         path.clone(),
-                        Some(line),
-                        Some(column),
+                        (Some(line), Some(column)),
                         true,
                         row_source.clone(),
                         window,
@@ -315,8 +314,7 @@ impl SearchPane {
                         FileView::open_at(
                             session,
                             path.clone(),
-                            None,
-                            None,
+                            (None, None),
                             true,
                             row_source.clone(),
                             window,

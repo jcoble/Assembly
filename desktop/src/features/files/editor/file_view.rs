@@ -268,8 +268,7 @@ impl FileView {
     pub fn open_at(
         session: String,
         path: String,
-        line: Option<u32>,
-        column: Option<u32>,
+        (line, column): (Option<u32>, Option<u32>),
         pinned: bool,
         source: Option<crate::core::socket::row_source::ExpectedRowSource>,
         window: &mut Window,
