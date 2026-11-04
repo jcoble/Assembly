@@ -83,10 +83,10 @@ impl PrPane {
         if !info.is_object() {
             return Err(invalid());
         }
-        if let Some(value) = info.get("session").filter(|value| !value.is_null()) {
-            if value.as_str() != Some(session) {
-                return Err(invalid());
-            }
+        if let Some(value) = info.get("session").filter(|value| !value.is_null())
+            && value.as_str() != Some(session)
+        {
+            return Err(invalid());
         }
         Ok(KEY.into())
     }

@@ -259,12 +259,12 @@ impl EngineStore {
         })
     }
     fn unindex(&mut self, key: &EngineKey) {
-        if let Some(parent) = self.session_parent(key) {
-            if let Some(keys) = self.children_by_parent.get_mut(&parent) {
-                keys.remove(key);
-                if keys.is_empty() {
-                    self.children_by_parent.remove(&parent);
-                }
+        if let Some(parent) = self.session_parent(key)
+            && let Some(keys) = self.children_by_parent.get_mut(&parent)
+        {
+            keys.remove(key);
+            if keys.is_empty() {
+                self.children_by_parent.remove(&parent);
             }
         }
         for session in self.need_sessions(key) {

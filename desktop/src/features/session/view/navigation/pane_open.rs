@@ -338,14 +338,13 @@ impl SessionPane {
             self._loads.clear();
             self.status = error.message.clone().into();
         }
-        if let Some((generation, _)) = pending.workspace.take() {
-            if let Some(coordinator) =
+        if let Some((generation, _)) = pending.workspace.take()
+            && let Some(coordinator) =
                 crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::try_global(
                     cx,
                 )
-            {
-                coordinator.update(cx, |coordinator, cx| coordinator.cancel(generation, cx));
-            }
+        {
+            coordinator.update(cx, |coordinator, cx| coordinator.cancel(generation, cx));
         }
         if let Some(request) = pending.request {
             self.open_result(request, Err(error), cx);

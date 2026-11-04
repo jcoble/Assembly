@@ -65,25 +65,22 @@ impl HistoryPane {
         if !info.is_object() || info["session"].as_str() != Some(session) {
             return Err(invalid());
         }
-        if let Some(value) = info.get("path").filter(|value| !value.is_null()) {
-            if value
+        if let Some(value) = info.get("path").filter(|value| !value.is_null())
+            && value
                 .as_str()
                 .is_none_or(|path| path.is_empty() || path.contains('\0'))
-            {
-                return Err(invalid());
-            }
+        {
+            return Err(invalid());
         }
         if let Some(source) = info
             .get("expectedSource")
             .filter(|source| !source.is_null())
-        {
-            if serde_json::from_value::<crate::core::socket::row_source::ExpectedRowSource>(
+            && serde_json::from_value::<crate::core::socket::row_source::ExpectedRowSource>(
                 source.clone(),
             )
             .is_err()
-            {
-                return Err(invalid());
-            }
+        {
+            return Err(invalid());
         }
         Ok(key(session))
     }
@@ -100,26 +97,25 @@ impl HistoryPane {
             let selected = selected.read(cx);
             let session = selected.session_id().map(String::from);
             let expected_source = selected.source().cloned();
-            if let Some(session_id) = session {
-                if let Some(window) = cx
+            if let Some(session_id) = session
+                && let Some(window) = cx
                     .active_window()
                     .or_else(|| cx.windows().into_iter().next())
-                {
-                    cx.defer(move |cx| {
-                        _ = window.update(cx, |_, window, cx| {
-                            Self::open(
-                                OpenGitHistory {
-                                    session_id,
-                                    expected_source,
-                                    path: None,
-                                    checkout: None,
-                                },
-                                window,
-                                cx,
-                            )
-                        });
+            {
+                cx.defer(move |cx| {
+                    _ = window.update(cx, |_, window, cx| {
+                        Self::open(
+                            OpenGitHistory {
+                                session_id,
+                                expected_source,
+                                path: None,
+                                checkout: None,
+                            },
+                            window,
+                            cx,
+                        )
                     });
-                }
+                });
             }
         });
 

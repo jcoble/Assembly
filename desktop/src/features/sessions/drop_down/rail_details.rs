@@ -80,8 +80,8 @@ impl RailDetails {
         self.held.retain(|key, _| keys.contains(key));
         self.needs.clear();
         for need in facts {
-            if !self.held.contains_key(&need.key) {
-                if let Ok(row) = NeedRow::create_for(
+            if !self.held.contains_key(&need.key)
+                && let Ok(row) = NeedRow::create_for(
                     self.parent.clone(),
                     need.key.clone(),
                     EngineScope {
@@ -92,9 +92,9 @@ impl RailDetails {
                     self.feed.clone(),
                     window,
                     cx,
-                ) {
-                    self.held.insert(need.key.clone(), row);
-                }
+                )
+            {
+                self.held.insert(need.key.clone(), row);
             }
             if let Some(row) = self.held.get(&need.key) {
                 self.needs.push(row.clone());
@@ -185,15 +185,15 @@ impl crate::features::sessions::sessions_pane::SessionsPane {
         let dropdowns = cx.subscribe(
             &drops,
             |pane, _, event: &crate::core::ui::row_drop_down::RowDropDownEvent, cx| {
-                if let crate::core::ui::row_drop_down::RowDropDownEvent::Moved(key) = event {
-                    if let Some(at) = pane.entries.iter().position(|entry| match entry {
+                if let crate::core::ui::row_drop_down::RowDropDownEvent::Moved(key) = event
+                    && let Some(at) = pane.entries.iter().position(|entry| match entry {
                         crate::features::sessions::list_entry::ListEntry::Session(row) => {
                             super::rail_details_key(row) == *key
                         }
                         _ => false,
-                    }) {
-                        pane.lines.remeasure_items(at..at + 1);
-                    }
+                    })
+                {
+                    pane.lines.remeasure_items(at..at + 1);
                 }
                 cx.notify();
             },
