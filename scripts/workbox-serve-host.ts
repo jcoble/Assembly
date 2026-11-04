@@ -1,9 +1,9 @@
 // Workbox Test only. flock owns the whole invocation; SSH stdin EOF cancels this owner and its build children.
 import { promises as fs } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { prepareBackend } from './dev-remote-build.ts';
+import { installedRelease, prepareBackend, pruneReleases } from './dev-remote-build.ts';
 import { sameBackendFiles } from './remote-backend-package.ts';
 import { backendIdentity, lane, type Lane } from './dev-remote-identity.ts';
 import { command, lifetime } from './dev-remote-process.ts';
@@ -76,7 +76,8 @@ try {
     const prepared = await prepareBackend(root, request, before.missing ? undefined : before.dll, owner.signal);
     const destination = prepared.directory;
     const candidateManifest = JSON.parse(await fs.readFile(join(destination, 'manifest.json'), 'utf8'));
-    const previousManifest = before.missing ? undefined : JSON.parse(await fs.readFile(join(dirname(dirname(before.dll)), 'manifest.json'), 'utf8'));
+    const previous = before.missing ? undefined : await installedRelease(before.dll);
+    const previousManifest = previous?.manifest;
     if (previousManifest && sameBackendFiles(previousManifest.files, candidateManifest.files)) {
       console.log('Workbox Test compiled backend files are unchanged; no restart');
     } else {
@@ -122,6 +123,9 @@ TimeoutStopSec=30
       const after = await probe();
       if (after.commit !== prepared.commit || (!before.missing && after.engine !== before.engine) || after.dll !== dll) throw Error('new host identity could not be verified; inspect lane host before retrying');
       answerTime();
+      // Disk only: a failed cleanup never fails a host that is already verified.
+      await pruneReleases(root, [destination, ...(previous ? [previous.directory] : [])])
+        .catch(error => console.warn(`Workbox Test old release cleanup failed: ${error instanceof Error ? error.message : String(error)}`));
       console.log(`Workbox Test ${target.unit} deployed backend ${identity}; authenticated host commit ${after.commit}; PID ${after.pid}; engine preserved ${after.engine}`);
     }
   }

@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {backendIdentity} from './dev-remote-identity.ts';
+import {installedRelease,pruneReleases} from './dev-remote-build.ts';
 const exec=promisify(execFile);
 
 test('a completed backend is hash-verified and reused without another build; corruption refuses reuse',async t=>{
@@ -59,4 +60,28 @@ for(const [file,content] of Object.entries({'Assembly.Remote.dll':'fake committe
   await fs.writeFile(dirtyHelper,(await fs.readFile(helper,'utf8')).replace(JSON.stringify(lane),JSON.stringify(secondLane)));
   await assert.rejects(exec(process.execPath,[dirtyHelper],{cwd:source,env:{...env,DIRTY_SOURCE:'1'}}),error=>/build modified tracked backend source/.test(String(error)));
   await assert.rejects(fs.stat(join(secondLane,'prepared-backend.json')),{code:'ENOENT'});
+});
+
+test('a verified deploy keeps the running and replaced releases and leaves anything else in bin alone',async t=>{
+  const root=await fs.mkdtemp(join(tmpdir(),'assembly-releases-'));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const release=(digit:string)=>digit.repeat(40)+'-'+digit.repeat(64);
+  const names=[release('a'),release('b'),release('c'),'e94965a5','current'];
+  for(const name of names)await fs.mkdir(join(root,'bin',name),{recursive:true});
+  await pruneReleases(root,[join(root,'bin',release('b')),join(root,'bin',release('c'))]);
+  assert.deepEqual((await fs.readdir(join(root,'bin'))).sort(),[release('b'),release('c'),'current','e94965a5'].sort());
+});
+
+test('a host from before the release layout has nothing to reuse, and a damaged manifest still refuses',async t=>{
+  const root=await fs.mkdtemp(join(tmpdir(),'assembly-releases-'));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const current=join(root,'bin','release','backend');
+  await fs.mkdir(current,{recursive:true});
+  const old=join(root,'bin','current','Assembly.Remote.dll');
+  assert.equal(await installedRelease(old),undefined);
+  const dll=join(current,'Assembly.Remote.dll');
+  await fs.writeFile(join(root,'bin','release','manifest.json'),JSON.stringify({files:[]}));
+  assert.deepEqual((await installedRelease(dll))?.manifest,{files:[]});
+  await fs.writeFile(join(root,'bin','release','manifest.json'),'not json');
+  await assert.rejects(installedRelease(dll));
 });

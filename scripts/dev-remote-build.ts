@@ -15,6 +15,21 @@ async function hashFile(file: string) {
 }
 export type PreparedBackend = { identity: string; commit: string; directory: string; manifestSha256: string };
 
+// A release is bin/<commit>-<manifest>/backend/Assembly.Remote.dll. A host published before that layout has no
+// manifest, so it has nothing to compare against or reuse files from.
+export async function installedRelease(dll: string) {
+  const directory = dirname(dirname(dll));
+  try { return { directory, manifest: JSON.parse(await fs.readFile(join(directory, 'manifest.json'), 'utf8')) as RemoteBackendManifest }; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
+}
+// Keeps what is running and what it replaced. Only directories this path wrote are candidates.
+export async function pruneReleases(root: string, keep: string[]) {
+  const bin = join(root, 'bin');
+  for (const entry of await fs.readdir(bin))
+    if (/^[a-f0-9]{40}-[a-f0-9]{64}$/.test(entry) && !keep.includes(join(bin, entry)))
+      await fs.rm(join(bin, entry), { recursive: true, force: true });
+}
+
 // A prepared release is only a build cache. Verify its complete closure and source identity before reusing it;
 // authenticated post-start welcome remains the authority for the actual running host.
 export async function readPreparedBackend(root: string, identity: string, source: string, signal?: AbortSignal): Promise<PreparedBackend | undefined> {
@@ -79,7 +94,7 @@ export async function prepareBackend(root: string, request: { identity: string; 
     }
     built({ cacheHit: false });
     const packaged = stage('package');
-    const previous = currentDll ? dirname(dirname(currentDll)) : undefined;
+    const previous = currentDll ? (await installedRelease(currentDll))?.directory : undefined;
     const result = await writeRemoteBackendDirectory({ publishDir: publish, sourceDir: process.cwd(), commit: request.commit, outputDir: join(temporary, 'package') }, previous);
     const directory = join(root, 'bin', request.commit + '-' + result.manifestSha256);
     await fs.mkdir(join(root, 'bin'), { recursive: true });
