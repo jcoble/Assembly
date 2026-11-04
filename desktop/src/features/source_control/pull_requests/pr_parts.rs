@@ -1,6 +1,7 @@
 //! The small pieces the Pull requests tab draws in many places.
 use super::pr_activity::{PrTone, age_of, pr_state};
 use super::pull_request::{PullRequestDetail, PullRequestSummary};
+use crate::core::socket::picture_client::picture_url;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::avatar::Avatar;
 use gpui_kit::component::spinner::Spinner;
@@ -25,9 +26,25 @@ pub fn state_icon(state: &str, is_draft: bool) -> IconName {
         _ => IconName::GitPullRequest,
     }
 }
-/// A person's initials; the old tab's GitHub pictures need an HTTP client the desktop doesn't have.
+/// A person's GitHub picture, with their initials while it loads or if it can't be read.
 pub fn avatar(login: &str) -> Option<impl IntoElement + use<>> {
-    (!login.is_empty()).then(|| Avatar::new().name(login.to_string()).with_size(px(20.)))
+    let picture = picture_url(login)?;
+    let name = login.to_owned();
+    let initials = move || {
+        Avatar::new()
+            .name(name.clone())
+            .with_size(px(20.))
+            .into_any_element()
+    };
+    Some(
+        img(picture)
+            .id(SharedString::from(format!("avatar:{login}")))
+            .flex_none()
+            .size(px(20.))
+            .rounded_full()
+            .with_loading(initials.clone())
+            .with_fallback(initials),
+    )
 }
 /// What a pull request is, top of its page: from the row until its read arrives, so opening one shows it at once.
 pub struct PrHeading<'a> {
