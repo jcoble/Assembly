@@ -39,12 +39,12 @@ if (args.at(-1).startsWith('flock ')) {
   child.on('close',code=>process.exit(code));
  } else console.log('deployed backend; authenticated host commit ${current}');
 } else if(state.missing) console.log(JSON.stringify({missing:true}));
-else console.log(JSON.stringify({commit:'${previous}',backendIdentity:'${previousIdentity}',engine:'test-engine',dll:'/lane/bin/old/backend/Assembly.Remote.dll',pid:'123',unitSha:'f'.repeat(64),adapterOK:true,launcherSha:'${launcher}'}));
+else console.log(JSON.stringify({commit:'${previous}',backendIdentity:'${previousIdentity}',engine:'test-engine',dll:'/lane/bin/old/backend/Assembly.Remote.dll',pid:'123',unitSha:'f'.repeat(64),adapterOK:true,launcherSha:'${launcher}',toolsKey:state.toolsKey,seedCohort:state.seedCohort}));
 `;
 function fixture(state: object = {}) {
   const root = mkdtempSync(join(tmpdir(), 'assembly-devsync-'));
   for (const dir of ['scripts', 'bin']) mkdirSync(join(root, dir));
-  for (const file of ['workbox-serve.ts', 'dev-remote-process.ts', 'dev-remote-identity.ts', 'dev-remote-probe.ts', 'dev-remote-timing.ts'])
+  for (const file of ['workbox-serve.ts', 'dev-remote-process.ts', 'dev-remote-identity.ts', 'dev-remote-probe.ts', 'dev-remote-timing.ts', 'dev-toolchain.ts'])
     copyFileSync(new URL(file, import.meta.url), join(root, 'scripts', file));
   const paths = { state: join(root, 'state'), calls: join(root, 'calls'), marker: join(root, 'started'), release: join(root, 'release') };
   writeFileSync(paths.state, JSON.stringify(state));
@@ -240,5 +240,31 @@ for (const changed of [false, true]) test(`read-only lane preflight ${changed ? 
     assert.match(result.stdout + result.stderr, new RegExp(`remote ${previous}; desktop ${current}`));
     assert.ok(f.calls().every(call => call[0] !== 'git' || call[1] !== 'push'));
     assert.ok(f.calls().every(call => call[0] !== 'ssh' || !call.at(-1)?.startsWith('flock ')));
+  } finally { f.close(); }
+});
+
+for (const adopted of [false, true]) test(`managed ${adopted ? 'adopted' : 'creator'} lane with current backend, tools and seed skips transfer/build/deploy`, async () => {
+  const { toolKey, packages } = await import('./dev-toolchain.ts');
+  const versions = Object.fromEntries(packages.map(name => [name, '1.2.3']));
+  const cohort = 'd'.repeat(64), key = toolKey(versions as any, launcher, 'linux-x64');
+  const f = fixture({ toolsKey: key, seedCohort: cohort });
+  try {
+    f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, versions, cohort, adopted });
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /already runs backend.*no deploy/);
+    assert.equal(f.calls().filter(call => call[0] === 'git' && call[1] === 'push').length, 0);
+    assert.equal(f.calls().filter(call => call[0] === 'ssh' && call.at(-1)?.startsWith('flock ')).length, 0);
+  } finally { f.close(); }
+});
+test('a copied managed identity refuses before SSH and an adopted outdated lane cannot deploy to its shared remote', () => {
+  const f = fixture();
+  try {
+    f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'another', number: 9 } });
+    let result = f.run(); assert.equal(result.status, 1); assert.match(result.stderr, /lane identity differ/);
+    assert.equal(f.calls().filter(call => call[0] === 'ssh').length, 0);
+    f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, versions: {}, cohort: 'needs-seed', adopted: true });
+    result = f.run(); assert.equal(result.status, 1); assert.match(result.stderr, /creator to update/);
+    assert.equal(f.calls().filter(call => call[0] === 'git' && call[1] === 'push').length, 0);
   } finally { f.close(); }
 });

@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "originId": "assembly-tracked-acp-fixtures",
+  "kind": "real-recorded",
+  "sources": [
+    {
+      "format": "acp",
+      "path": "../dotnet/Assembly.Tests/Fixtures/acp/cancel.jsonl",
+      "sha256": "633856de1a37b9844fdb781dde2790d02fe77ab114f441564dceb7442632ddd0",
+      "sessionKey": "cancel",
+      "provider": "unknown",
+      "providerConfidence": "uncertain",
+      "provenance": [
+        "Recorded ACP fixture tracked at dotnet/Assembly.Tests/Fixtures/acp/cancel.jsonl"
+      ]
+    },
+    {
+      "format": "acp",
+      "path": "../dotnet/Assembly.Tests/Fixtures/acp/codex-background.jsonl",
+      "sha256": "6367ff8514dd94f27e2e3d880e04b4bde336a8261c4d19568905df372fb5e6c6",
+      "sessionKey": "codex-background",
+      "provider": "unknown",
+      "providerConfidence": "uncertain",
+      "provenance": [
+        "Recorded ACP fixture tracked at dotnet/Assembly.Tests/Fixtures/acp/codex-background.jsonl"
+      ]
+    },
+    {
+      "format": "acp",
+      "path": "../dotnet/Assembly.Tests/Fixtures/acp/codex-slash-status.jsonl",
+      "sha256": "8894b270261abe745248946e2d92564b25cfcca2b0337dd0748a907c70f26953",
+      "sessionKey": "codex-slash-status",
+      "provider": "unknown",
+      "providerConfidence": "uncertain",
+      "provenance": [
+        "Recorded ACP fixture tracked at dotnet/Assembly.Tests/Fixtures/acp/codex-slash-status.jsonl"
+      ]
+    },
+    {
+      "format": "acp",
+      "path": "../dotnet/Assembly.Tests/Fixtures/acp/codex-tools.jsonl",
+      "sha256": "644c0151b7ab5e1884b423904e516768001dd55482366f21d127f69551cef6f6",
+      "sessionKey": "codex-tools",
+      "provider": "unknown",
+      "providerConfidence": "uncertain",
+      "provenance": [
+        "Recorded ACP fixture tracked at dotnet/Assembly.Tests/Fixtures/acp/codex-tools.jsonl"
+      ]
+    },
+    {
+      "format": "acp",
+      "path": "../dotnet/Assembly.Tests/Fixtures/acp/error.jsonl",
+      "sha256": "6c9feb1c0f40e8a63d51efc1c9e04f780fb39f43d24a74b5a45d8a902293db11",
+      "sessionKey": "error",
+      "provider": "unknown",
+      "providerConfidence": "uncertain",
+      "provenance": [
+        "Recorded ACP fixture tracked at dotnet/Assembly.Tests/Fixtures/acp/error.jsonl"
+      ]
+    },
+    {
+      "format": "acp",
+      "path": "../dotnet/Assembly.Tests/Fixtures/acp/lost.jsonl",
+      "sha256": "bac13879b344d2d62647741a1c44ff2ed5af1d05f2d7ee523d89956cf2cb18ec",
+      "sessionKey": "lost",
+      "provider": "unknown",
+      "providerConfidence": "uncertain",
+      "provenance": [
+        "Recorded ACP fixture tracked at dotnet/Assembly.Tests/Fixtures/acp/lost.jsonl"
+      ]
+    },
+    {
+      "format": "acp",
+      "path": "../dotnet/Assembly.Tests/Fixtures/acp/slash-context.jsonl",
+      "sha256": "9c06cb5c45f77aac2718a476dad8ce66e3a17c62c7c4d9d9e664f527a9b90d76",
+      "sessionKey": "slash-context",
+      "provider": "unknown",
+      "providerConfidence": "uncertain",
+      "provenance": [
+        "Recorded ACP fixture tracked at dotnet/Assembly.Tests/Fixtures/acp/slash-context.jsonl"
+      ]
+    },
+    {
+      "format": "acp",
+      "path": "../dotnet/Assembly.Tests/Fixtures/acp/steer-background.jsonl",
+      "sha256": "1c41724f07e308980c7c14e67eed663928d1ab8bc48d23ee9ee24d9f00711f28",
+      "sessionKey": "steer-background",
+      "provider": "unknown",
+      "providerConfidence": "uncertain",
+      "provenance": [
+        "Recorded ACP fixture tracked at dotnet/Assembly.Tests/Fixtures/acp/steer-background.jsonl"
+      ]
+    },
+    {
+      "format": "acp",
+      "path": "../dotnet/Assembly.Tests/Fixtures/acp/subagent.jsonl",
+      "sha256": "6aa5a9e1d6bd3dce5006a36337cc190105070f88876bad1fc4585218d37b238f",
+      "sessionKey": "subagent",
+      "provider": "unknown",
+      "providerConfidence": "uncertain",
+      "provenance": [
+        "Recorded ACP fixture tracked at dotnet/Assembly.Tests/Fixtures/acp/subagent.jsonl"
+      ]
+    },
+    {
+      "format": "acp",
+      "path": "../dotnet/Assembly.Tests/Fixtures/acp/text.jsonl",
+      "sha256": "86c4132a36d737f6894140c8775273f9a2b9e92c7bf160a6da48a18d01ead8c1",
+      "sessionKey": "text",
+      "provider": "unknown",
+      "providerConfidence": "uncertain",
+      "provenance": [
+        "Recorded ACP fixture tracked at dotnet/Assembly.Tests/Fixtures/acp/text.jsonl"
+      ]
+    },
+    {
+      "format": "acp",
+      "path": "../dotnet/Assembly.Tests/Fixtures/acp/tool-fails.jsonl",
+      "sha256": "d7551a2e22fd0b99cb4fdf0167e19e884b3158e7ebc29516a959df485014596c",
+      "sessionKey": "tool-fails",
+      "provider": "unknown",
+      "providerConfidence": "uncertain",
+      "provenance": [
+        "Recorded ACP fixture tracked at dotnet/Assembly.Tests/Fixtures/acp/tool-fails.jsonl"
+      ]
+    },
+    {
+      "format": "acp",
+      "path": "../dotnet/Assembly.Tests/Fixtures/acp/tools.jsonl",
+      "sha256": "eedb2b3e9072e242065bfeb5f7638b8bb5ef67e7694ff24d02cd1405f89c0eea",
+      "sessionKey": "tools",
+      "provider": "unknown",
+      "providerConfidence": "uncertain",
+      "provenance": [
+        "Recorded ACP fixture tracked at dotnet/Assembly.Tests/Fixtures/acp/tools.jsonl"
+      ]
+    }
+  ]
+}

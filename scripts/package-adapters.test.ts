@@ -13,6 +13,18 @@ function fixture(run: (root: string) => unknown) {
   const root = mkdtempSync(join(tmpdir(), "assembly-adapter-test-"));
   return Promise.resolve().then(() => run(root)).finally(() => rmSync(root, { recursive: true, force: true }));
 }
+// GitHub's public releases list, the only read provider selection needs.
+function fakeReleaseApi(root: string) {
+  writeFileSync(join(root, "curl"), "#!" + process.execPath + "\n" + String.raw`
+const fs = require("node:fs");
+const url = process.argv.at(-1), download = url.match(/^https:\/\/github\.com\/jcoble\/Assembly\/releases\/download\/[^/]+\/([^/]+)$/);
+if (download) { fs.copyFileSync(process.env.RELEASE_DIR + "/" + download[1], process.argv[process.argv.indexOf("-o") + 1]); process.exit(0); }
+if (!url.startsWith("https://api.github.com/repos/jcoble/Assembly/releases?")) throw Error("unexpected curl request");
+console.log(JSON.stringify(JSON.parse(fs.readFileSync(process.env.RELEASES, "utf8")).map(release => ({ tag_name: release.tagName, draft: release.isDraft,
+  prerelease: release.isPrerelease, published_at: release.publishedAt, assets: release.assets.map(name => ({ name })) }))));
+`, { mode: 0o755 });
+}
+
 test("only exact stable versions of both supported adapters are accepted", () => {
   assert.deepEqual(validateVersions(versions), versions);
   for (const value of ["latest", "^2.5.0", "2.5.0-preview.1", "2.5", "2.5.0\n"]) {
@@ -31,20 +43,38 @@ test("provider selection ignores the designated app latest and chooses the newes
     { tagName: "assembly-providers-105-1", isLatest: false, isDraft: false, isPrerelease: true, publishedAt: "2026-11-07T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"] },
   ];
   writeFileSync(join(root, "releases.json"), JSON.stringify(releases));
-  writeFileSync(join(root, "gh"), "#!" + process.execPath + "\n" + String.raw`
-const fs = require("node:fs");
-const [group, action, tag] = process.argv.slice(2);
-const releases = JSON.parse(fs.readFileSync(process.env.RELEASES, "utf8"));
-if (group !== "release") throw Error("unexpected gh operation");
-if (action === "list") console.log(JSON.stringify(releases.map(({tagName,isDraft,isPrerelease,publishedAt}) => ({tagName,isDraft,isPrerelease,publishedAt}))));
-else if (action === "view") console.log(JSON.stringify({assets: releases.find(r => r.tagName === tag)?.assets.map(name => ({name})) ?? []}));
-else throw Error("unexpected gh release operation " + action);
-`, { mode: 0o755 });
+  writeFileSync(join(root, "gh"), "#!/bin/sh\necho 'gh: command not found' >&2\nexit 127\n", { mode: 0o755 });
+  fakeReleaseApi(root);
   const run = spawnSync(process.execPath, [fileURLToPath(new URL("./package-adapters.ts", import.meta.url)), "provider-tag", "linux-x64"], {
     encoding: "utf8", env: { PATH: root + ":" + process.env.PATH, HOME: root, RELEASES: join(root, "releases.json") },
   });
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.stdout.trim(), "assembly-providers-102-1");
+}));
+test("provider-tag reports the request's first error alone, with no Node stack dump", () => fixture(root => {
+  writeFileSync(join(root, "curl"), "#!/bin/sh\necho 'curl: (6) Could not resolve host: api.github.com' >&2\nexit 6\n", { mode: 0o755 });
+  const run = spawnSync(process.execPath, [fileURLToPath(new URL("./package-adapters.ts", import.meta.url)), "provider-tag", "linux-x64"], {
+    encoding: "utf8", env: { PATH: root + ":" + process.env.PATH, HOME: root },
+  });
+  assert.equal(run.status, 1);
+  assert.equal(run.stderr.split("\n")[0], "curl: (6) Could not resolve host: api.github.com");
+  assert.doesNotMatch(run.stderr, /\n\s+at |^}$/m);
+}));
+test("provider-tag sends a configured token on stdin, never on the command line", () => fixture(root => {
+  writeFileSync(join(root, "curl"), "#!" + process.execPath + "\n" + String.raw`
+const fs = require("node:fs");
+fs.writeFileSync(process.env.SEEN, JSON.stringify({ args: process.argv.slice(2), stdin: fs.readFileSync(0, "utf8") }));
+console.log(JSON.stringify([{ tag_name: "assembly-providers-1-1", draft: false, prerelease: false, published_at: "2026-11-01T00:00:00Z",
+  assets: [{ name: "assembly-adapters-linux-x64.tar.gz" }, { name: "assembly-adapters-linux-x64.json" }] }]));
+`, { mode: 0o755 });
+  const seen = join(root, "seen.json");
+  const run = spawnSync(process.execPath, [fileURLToPath(new URL("./package-adapters.ts", import.meta.url)), "provider-tag", "linux-x64"], {
+    encoding: "utf8", env: { PATH: root + ":" + process.env.PATH, HOME: root, SEEN: seen, GH_TOKEN: "fixture-secret" },
+  });
+  assert.equal(run.status, 0, run.stderr);
+  const call = JSON.parse(readFileSync(seen, "utf8"));
+  assert.match(call.stdin, /Authorization: Bearer fixture-secret/);
+  assert.ok(!call.args.join(" ").includes("fixture-secret"));
 }));
 test("stock Claude comparison logs the current upstream diff and the first-publication case", () => fixture(root => {
   const prior = join(root, "prior-index.js"), current = join(root, "current-index.js"), messages: string[] = [];
@@ -100,17 +130,7 @@ test("daily comparison uses raw Claude vendor entrypoint from a v2 baseline, not
   writeFileSync(join(releaseDir, "assembly-adapters-linux-x64.json"), JSON.stringify(manifest));
   const releases = [{ tagName: "assembly-providers-300-1", isDraft: false, isPrerelease: false, publishedAt: "2026-11-01T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"] }];
   writeFileSync(join(root, "releases.json"), JSON.stringify(releases));
-  writeFileSync(join(root, "gh"), "#!" + process.execPath + "\n" + String.raw`
-const fs = require("node:fs");
-const args = process.argv.slice(2);
-if (args[0] !== "release") throw Error("unexpected gh command");
-if (args[1] === "list") console.log(JSON.stringify(JSON.parse(fs.readFileSync(process.env.RELEASES, "utf8"))));
-else if (args[1] === "view") console.log(JSON.stringify({assets: JSON.parse(fs.readFileSync(process.env.RELEASES, "utf8"))[0].assets.map(name => ({name}))}));
-else if (args[1] === "download") {
-  const dir = args[args.indexOf("--dir") + 1];
-  for (const name of ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"]) fs.copyFileSync(process.env.RELEASE_DIR + "/" + name, dir + "/" + name);
-} else throw Error("unexpected gh release action " + args[1]);
-`, { mode: 0o755 });
+  fakeReleaseApi(root);
   const oldPath = process.env.PATH, oldReleases = process.env.RELEASES, oldReleaseDir = process.env.RELEASE_DIR;
   process.env.PATH = root + ":" + (oldPath ?? "");
   process.env.RELEASES = join(root, "releases.json");

@@ -1,3 +1,4 @@
+import { toolsCurrent } from './dev-toolchain.ts';
 // This source runs on Workbox Test, including before the checkout has been transferred. It never emits a token.
 export const probeSource = String.raw`
 import fs from 'node:fs';
@@ -52,7 +53,14 @@ const cmdline = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\0')
 if (cmdline[1] !== dll || !cmdline.includes('serve')) throw Error('running process differs from unit');
 const token = fs.readFileSync(flag('--token-file'), 'utf8').split('\n').find(x=>x.startsWith('ASSEMBLY_TOKEN='))?.slice(15);
 if (!token) throw Error('lane token is unavailable');
-const {adapterOK,launcherSha} = adapters();
+let adapterOK=false,launcherSha='';try{({adapterOK,launcherSha}=adapters())}catch{}
+let toolsKey, seedCohort;
+try {
+ const state=JSON.parse(fs.readFileSync(root+'/adapters/dev-tools.json','utf8'));
+ const valid=await (async()=>{const fs=await import('node:fs/promises');const {join}=await import('node:path');return await (${toolsCurrent.toString()})(root+'/adapters',root+'/serve/agents.json',state.key)})();
+ if(valid) toolsKey=state.key;
+} catch {}
+try {if(fs.existsSync(root+'/serve/assembly.db')) seedCohort=JSON.parse(fs.readFileSync(root+'/serve/dev-seed-cohort.json','utf8')).cohort;} catch {}
 const socket = new WebSocket('ws://127.0.0.1:' + lane.port + '/socket');
 // A deadline for one handshake, never a retry or a poll.
 const deadline = setTimeout(()=>{console.error('host welcome timed out');process.exit(1)},8000);
@@ -64,7 +72,7 @@ socket.onmessage=e=>{
   console.error('host did not provide a compatible authenticated identity');process.exit(1);
  }
  clearTimeout(deadline);socket.close();process.stdin.pause();
- console.log(JSON.stringify({commit:frame.commit,backendIdentity:frame.backendIdentity,engine:frame.engine,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,launcherSha}));
+ console.log(JSON.stringify({commit:frame.commit,backendIdentity:frame.backendIdentity,engine:frame.engine,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,launcherSha,toolsKey,seedCohort}));
 };
 `;
-export type Probe = { missing?: boolean; commit: string; backendIdentity?: string; engine: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean; launcherSha: string };
+export type Probe = { missing?: boolean; commit: string; backendIdentity?: string; toolsKey?: string; seedCohort?: string; engine: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean; launcherSha: string };

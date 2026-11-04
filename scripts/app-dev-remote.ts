@@ -3,7 +3,7 @@ import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, writeFile
 import { join } from 'node:path';
 
 // Owned by app-dev until its cargo process exits. Process group is joined on shutdown; no recurring check.
-export function startRemoteSync(root: string, home: string) {
+export function startRemoteSync(root: string, home: string, request?: object) {
   const directory = join(home, 'logs', 'remote-sync');
   mkdirSync(directory, { recursive: true });
   const log = join(directory, `${Date.now()}-${process.pid}.log`);
@@ -15,7 +15,7 @@ export function startRemoteSync(root: string, home: string) {
   };
   publish(null);
   const output = openSync(log, 'wx', 0o600);
-  const worker = spawn('bash', ['dotnet/scripts/workbox.sh', 'serve'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], detached: true, env: { ...process.env, ASSEMBLY_DEV_REMOTE_SYNC: '1' } });
+  const worker = spawn('bash', ['dotnet/scripts/workbox.sh', 'serve'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], detached: true, env: { ...process.env, ASSEMBLY_DEV_REMOTE_SYNC: '1', ...(request ? { ASSEMBLY_DEV_SYNC_REQUEST: JSON.stringify(request) } : {}) } });
   let lastReason: string | null = null;
   const consume = () => {
     let buffered = '';

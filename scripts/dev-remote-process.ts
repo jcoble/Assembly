@@ -3,10 +3,10 @@ import { spawn } from 'node:child_process';
 
 export const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 export const sshOptions = ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=8'];
-export function command(command: string, args: string[], options: { cwd?: string; signal?: AbortSignal; live?: boolean; raw?: boolean } = {}): Promise<string> {
+export function command(command: string, args: string[], options: { cwd?: string; signal?: AbortSignal; live?: boolean; raw?: boolean; env?: NodeJS.ProcessEnv } = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd: options.cwd, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, MSBUILDDISABLENODEREUSE: '1', DOTNET_NOLOGO: '1', DOTNET_CLI_TELEMETRY_OPTOUT: '1' } });
+      env: { ...process.env, ...options.env, MSBUILDDISABLENODEREUSE: '1', DOTNET_NOLOGO: '1', DOTNET_CLI_TELEMETRY_OPTOUT: '1' } });
     let out = '', error = '';
     const stop = () => { if (child.pid) { try { process.kill(-child.pid, 'SIGTERM'); } catch {} } };
     options.signal?.addEventListener('abort', stop, { once: true });

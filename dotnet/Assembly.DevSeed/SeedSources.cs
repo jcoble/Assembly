@@ -12,6 +12,9 @@ public static class SeedSources
     {
         manifestPath = SeedFiles.Input(manifestPath);
         var manifest = SeedJson.Parse<SeedManifest>(File.ReadAllText(manifestPath));
+        // A tracked manifest names its sources relative to itself, so every host's checkout reads the same bytes.
+        var manifestDirectory = Path.GetDirectoryName(manifestPath)!;
+        manifest = manifest with { Sources = manifest.Sources.Select(source => source with { Path = Path.GetFullPath(source.Path, manifestDirectory) }).ToArray() };
         if (manifest.Version != 1 || string.IsNullOrWhiteSpace(manifest.OriginId) || manifest.Kind is not ("real-recorded" or "synthetic") || manifest.Sources.Count == 0)
             throw new InvalidDataException("Invalid version-1 seed manifest.");
         var inputs = new Dictionary<string, SeedInput>(StringComparer.Ordinal);

@@ -30,18 +30,7 @@ case "$mode" in
     exit ;;
   remove)
     [ -n "$LANE_NAME" ] || { echo "remove is for a lane's host; main's stays" >&2; exit 1; }
-    ssh workbox-test bash -s -- "$BOX_UNIT" "$BOX_DATA" "$BOX_TOKEN_FILE" "$branch" <<'BOX'
-set -euo pipefail
-unit=$1 data=$2 token=$3 branch=$4
-systemctl --user stop "$unit" 2>/dev/null || true
-rm -f ~/.config/systemd/user/"$unit".service
-systemctl --user daemon-reload
-rm -rf ~/"$data" ~/"$(dirname "$token")"
-if [ -d ~/assembly/"$branch" ]; then git -C ~/assembly.git worktree remove --force ~/assembly/"$branch"; fi
-git -C ~/assembly.git worktree prune
-git -C ~/assembly.git branch -D "$branch" >/dev/null 2>&1 || true
-echo "removed $unit, ~/$data and ~/assembly/$branch"
-BOX
+    exec node scripts/dev-lane-clean.ts clean "$PWD"
     exit ;;
   kill-adapter)
     [ -n "$LANE_NAME" ] || { echo "kill-adapter is for a lane's host; main's host keeps its adapter" >&2; exit 1; }

@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startRemoteSync } from './app-dev-remote.ts';
@@ -13,6 +13,7 @@ const env: NodeJS.ProcessEnv = {
   DOTNET_NOLOGO: '1',
   MSBUILDDISABLENODEREUSE: '1',
   ASSEMBLY_BACKEND_DIR: backend,
+  CARGO_PROFILE_DEV_DEBUG: '0', CARGO_INCREMENTAL: '0',
 };
 
 const launch = new AbortController();
@@ -70,18 +71,37 @@ source scripts/lane-env.sh || exit
 printf '%s\\0' "$DESKTOP_PORT" "$DATA/mac" "$TOKEN_FILE" "$BOX_PORT" "$BOX_TOKEN_FILE" "$DATA/adapters" "$LANE_NAME"
 `], { cwd: root, env, encoding: 'utf8' });
 if (lane.error) throw lane.error;
-const [port, home, tokenFile, remotePort, remoteTokenFile, adapters, laneName] = lane.status === 0 ? lane.stdout.split('\0') : ownSettings();
+let [port, configuredHome, tokenFile, remotePort, remoteTokenFile, adapters, laneName] = lane.status === 0 ? lane.stdout.split('\0') : ownSettings();
+
+let home = configuredHome;
+const isManaged = existsSync(join(root, '.lane')) && await (await import('./app-dev-managed.ts')).isManagedLane(root);
+if (existsSync(join(root, '.lane')) && !isManaged) console.warn('app:dev: this checkout does not own its lane (made by hand or a copied .lane), so dependency checks, seed and cleanup are off');
+let managed: Awaited<ReturnType<typeof import('./app-dev-managed.ts').prepareManagedLane>> | undefined;
 
 if (lane.status === 0 && laneName) env.ASSEMBLY_DEV_REMOTE_SYNC_STATUS = join(home, 'remote-sync-state.json');
 
 let stopSync = async () => {};
-try { if (lane.status === 0 && laneName && !launch.signal.aborted) stopSync = startRemoteSync(root, home); }
+try { if (!isManaged && lane.status === 0 && laneName && !launch.signal.aborted) stopSync = startRemoteSync(root, home); }
 catch (error) { console.warn(`app:dev: Workbox Test sync could not start: ${error instanceof Error ? error.message : String(error)}`); }
 try {
-  await run('dotnet', [
+  if (isManaged) {
+    managed = await (await import('./app-dev-managed.ts')).prepareManagedLane(root, launch.signal);
+    home = managed.home;
+    port = String(18797 + managed.target.number * 10);
+    remotePort = String(managed.target.port);
+    tokenFile = join(process.env.HOME!, '.config', managed.target.data, 'env');
+    remoteTokenFile = `.config/${managed.target.data}/env`;
+    env.ASSEMBLY_REMOTE = 'workbox-test';
+    env.ASSEMBLY_DEV_REMOTE_SYNC_STATUS = join(home, 'remote-sync-state.json');
+  }
+  const cache = existsSync(join(root, '.git')) ? await import('./dev-build-cache.ts') : undefined;
+  const publish = async () => run('dotnet', [
     'publish', join(root, 'dotnet/Assembly.Desktop'), '--configuration', 'Debug',
     '--no-self-contained', '-p:UseAppHost=true', '--output', backend,
   ]);
+  if (cache) await cache.ensureBuild(root, 'backend', [join(backend, 'Assembly.Desktop.dll'), join(backend, 'Assembly.Infrastructure.dll')], publish);
+  else await publish();
+  if (managed) await managed.seed();
   mkdirSync(backend, { recursive: true });
   const laneFile = join(backend, 'lane.json');
   const temporaryLane = `${laneFile}.${process.pid}`;
@@ -90,6 +110,7 @@ try {
   }, null, 2) + '\n');
   renameSync(temporaryLane, laneFile);
   mkdirSync(home, { recursive: true });
+  if (!managed) {
   const installer = ['dotnet/scripts/agents-file.sh', process.env.ADAPTERS ?? adapters, join(home, 'agents.json')];
   const installed = await attempt('bash', installer);
   // The backend starts with an empty list when there's no agents file, so failing here doesn't stop the app.
@@ -98,12 +119,20 @@ try {
     const retried = built ? await attempt('bash', [...installer, built]) : undefined;
     if (retried?.status !== 0) console.warn('app:dev: agents could not be updated; opening with the ones already installed, if any');
   }
-  await run('cargo', ['run', '--locked', '--', ...process.argv.slice(2)], join(root, 'desktop'));
+  }
+  if (cache) {
+    const executable = join(root, 'desktop/target/debug/assembly-desktop');
+    await cache.ensureBuild(root, 'desktop', [executable], () => run('cargo', ['build', '--locked'], join(root, 'desktop')));
+    if (managed) stopSync = startRemoteSync(root, home, { versions: managed.versions, cohort: managed.cohort, seedManifest: managed.remoteManifest, owner: managed.owner.remoteOwner ?? managed.owner, adopted: managed.adopted, offline: managed.offline });
+    console.warn('app:dev: lane dependencies checked; desktop and backend are current');
+    await run(executable, process.argv.slice(2));
+  } else await run('cargo', ['run', '--locked', '--', ...process.argv.slice(2)], join(root, 'desktop'));
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = (error as { exitCode?: number }).exitCode ?? 1;
 } finally {
   await stopSync();
+  managed?.release();
   process.removeListener('SIGINT', interrupt);
   process.removeListener('SIGTERM', interrupt);
 }

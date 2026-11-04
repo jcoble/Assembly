@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # dotnet/scripts/agents-file.sh ADAPTERS OUT [LOCAL_ASSETS]
 # Installs the latest published platform ACP bundle under ADAPTERS and writes OUT atomically.
+# Releases are public and read with curl: Workbox Test runs this with no gh and no GitHub login.
 # An explicit local packager output uses the same validation with archive-hash provenance, never a release tag.
 set -euo pipefail
 adapters=$1 out=$2
@@ -97,6 +98,8 @@ PY
 active_tag= active_bundle=
 if [[ -n "$cache_state" ]]; then IFS=$'\t' read -r active_tag active_bundle <<<"$cache_state"; fi
 
+# Node and curl lead with the cause; the end of a Node stack dump is only punctuation.
+first_error() { grep -m1 -E 'Error:|^curl:' "$1" || grep -m1 . "$1" || echo "no error output"; }
 cached_fallback() {
   local reason=$1
   if [[ -n "$active_bundle" ]]; then
@@ -107,7 +110,9 @@ cached_fallback() {
   exit 1
 }
 
-if [[ -n "$local_assets" ]]; then
+if [[ "${ASSEMBLY_KEEP_CURRENT_ADAPTERS:-}" == 1 && -n "$active_bundle" ]]; then
+  tag=$active_tag
+elif [[ -n "$local_assets" ]]; then
   if ! local_assets=$(cd "$local_assets" && pwd); then cached_fallback "local assets directory unavailable"; fi
   if ! tag=$(python3 -I - "$local_assets/$asset" <<'PY' 2>"$work/provider-selection.err"
 import hashlib, sys
@@ -116,9 +121,9 @@ with open(sys.argv[1], "rb") as archive:
 PY
   ); then cached_fallback "$(tail -1 "$work/provider-selection.err")"; fi
 elif ! tag=$(node "$repo/scripts/package-adapters.ts" provider-tag "$target" 2>"$work/provider-selection.err"); then
-  cached_fallback "$(tail -1 "$work/provider-selection.err")"
+  cached_fallback "$(first_error "$work/provider-selection.err")"
 fi
-if [[ "$tag" == "$active_tag" && -z "$local_assets" ]]; then
+if [[ "$tag" == "$active_tag" ]]; then
   bundle=$active_bundle
 else
   download="$work/download"
@@ -128,8 +133,12 @@ else
     if ! cp "$local_assets/$asset" "$local_assets/$manifest_file" "$download/" 2>"$work/provider-download.err"; then
       cached_fallback "$(tail -1 "$work/provider-download.err")"
     fi
-  elif ! gh release download "$tag" --repo jcoble/Assembly --pattern "$asset" --pattern "$manifest_file" --dir "$download" 2>"$work/provider-download.err"; then
-    cached_fallback "$(tail -1 "$work/provider-download.err")"
+  else
+    release_url="https://github.com/jcoble/Assembly/releases/download/$tag"
+    if ! curl -fsSL --connect-timeout 10 -o "$download/$asset" "$release_url/$asset" 2>"$work/provider-download.err" ||
+      ! curl -fsSL --connect-timeout 10 -o "$download/$manifest_file" "$release_url/$manifest_file" 2>"$work/provider-download.err"; then
+      cached_fallback "$(first_error "$work/provider-download.err")"
+    fi
   fi
   if ! python3 -I - "$download/$manifest_file" "$download/$asset" "$target" "$tag" <<'PY' 2>"$work/manifest.err"
 import hashlib, json, re, sys
@@ -265,6 +274,11 @@ try:
         if not isinstance(old_env, dict): raise ValueError("invalid configured provider environment")
         agent["env"] = {**{key: value for key, value in old_env.items() if key not in installer_env[agent["id"]]}, **agent["env"]}
         agent.update({key: value for key, value in old.items() if key not in installer_fields})
+    if os.environ.get("ASSEMBLY_MANAGED_CLIS") == "1":
+        for agent in generated:
+            cli = os.environ[f"ASSEMBLY_{agent['id'].upper()}"]
+            if not cli: raise ValueError("managed provider CLI is unavailable")
+            agent["cli"] = cli
     generated_by_id = {a["id"]: a for a in generated}
     agents = [generated_by_id.get(a["id"], a) for a in current]
     agents.extend(a for a in generated if a["id"] not in prior)
