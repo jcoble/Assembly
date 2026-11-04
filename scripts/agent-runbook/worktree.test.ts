@@ -40,6 +40,42 @@ test('allow_add_under_root', t => {
 test('allow_unrelated_commands_containing_worktree', t => {
   const f = setup(t); for (const command of ['git worktree list', "rg 'git worktree add /tmp/x'", 'echo worktree']) assert.deepEqual(f.guard(command), {});
 });
+test('guard_denies_function_wrapper', t => {
+  const f = setup(t); assert.ok(f.guard('g(){ command git worktree add -b alias-probe "$HOME/outside-worktree"; }; g').deny);
+});
+test('guard_denies_subshell_and_substitution', t => {
+  const f = setup(t);
+  for (const command of ['(git worktree add /tmp/x)', 'echo $(git worktree add /tmp/x)', 'echo `git worktree add /tmp/x`']) assert.ok(f.guard(command).deny, command);
+});
+test('guard_denies_shell_c_and_eval', t => {
+  const f = setup(t);
+  for (const shell of ['bash', 'sh', 'zsh', 'dash']) for (const flag of ['-c', '-lc']) assert.ok(f.guard(`${shell} ${flag} 'git worktree add /tmp/x'`).deny);
+  for (const command of ["eval 'git worktree add /tmp/x'", 'eval git worktree add /tmp/x', "bash -c 'eval git worktree add /tmp/x'"]) assert.ok(f.guard(command).deny, command);
+});
+test('guard_denies_keyword_prefix', t => {
+  const f = setup(t);
+  for (const prefix of ['{', '}', '!', 'if', 'then', 'elif', 'else', 'do', 'while', 'until', 'time', 'nohup', 'exec', 'builtin', 'xargs', 'env -i', 'env -C /tmp', 'env --unknown']) assert.ok(f.guard(`${prefix} git worktree add /tmp/x`).deny, prefix);
+  assert.ok(f.guard('if true; then git worktree add /tmp/x; fi').deny);
+  assert.ok(f.guard('xargs git worktree add').deny);
+});
+test('guard_denies_find_exec', t => {
+  const f = setup(t); assert.ok(f.guard('find . -exec git worktree add /x \\;').deny);
+});
+test('guard_denies_inline_alias', t => {
+  const f = setup(t);
+  for (const command of ["git -c 'alias.w=worktree add /tmp/x' w", "git -calias.w='!git worktree add /tmp/x' w"]) assert.ok(f.guard(command).deny, command);
+});
+test('guard_allows_wrappers_inside_root', t => {
+  const f = setup(t), root = join(f.home, 'dev/work/worktrees/Assembly'); mkdirSync(join(root, 'lane'), { recursive: true });
+  for (const command of [`g(){ command git worktree add '${root}/x'; }; g`, `(git worktree add '${root}/x')`, `bash -c 'git worktree add "${root}/x"'`, `eval 'git worktree add "${root}/x"'`, `env -i git worktree add '${root}/x'`, `env -C '${root}/lane' git worktree add ../x`, `cd '${root}/lane' && git worktree add ../x`, `git -C '${root}/lane' worktree add ../x`, `cd '${root}' && git -C lane worktree add ../x`]) assert.deepEqual(f.guard(command), {}, command);
+});
+test('guard_allows_quoted_mentions', t => {
+  const f = setup(t);
+  for (const command of ['git commit -m "git worktree add /tmp/x"', 'grep -r "worktree add" .', 'cat notes | grep worktree', 'echo "git" "worktree" "add"']) assert.deepEqual(f.guard(command), {}, command);
+});
+test('guard_allows_braced_home_inside_root', t => {
+  const f = setup(t); assert.deepEqual(f.guard('git worktree add ${HOME}/dev/work/worktrees/repo/x'), {});
+});
 test('worktreecreate_uses_root_and_prints_only_path', t => {
   const f = setup(t), path = f.create(); assert.equal(path, join(f.home, 'dev/work/worktrees/Assembly/tsk-1666-fixture')); assert.ok(existsSync(join(path, '.git')));
 });

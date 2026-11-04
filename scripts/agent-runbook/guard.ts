@@ -11,21 +11,22 @@ export function inside(path: string, root = worktreeRoot()) {
   const part = relative(canonical(root), canonical(path));
   return part !== '' && part !== '..' && !part.startsWith('../') && !isAbsolute(part);
 }
-// Tokenize shell words without executing expansion, substitution, or quoted commands.
+// Split shell command boundaries while keeping quoted text and ${HOME} intact.
 function tokens(command: string) {
-  const result: string[][] = [[]];
-  let word = '', quote = '', started = false;
-  const push = () => { if (started) result.at(-1)!.push(word); word = ''; started = false; };
+  const result: { words: string[]; bare: string[] }[] = [{ words: [], bare: [] }];
+  let word = '', quote = '', started = false, quoted = false;
+  const push = () => { if (started) { result.at(-1)!.words.push(word); if (!quoted) result.at(-1)!.bare.push(word); } word = ''; started = quoted = false; };
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
     if (c === '\\' && quote !== "'") { word += command[++i] || ''; started = true; continue; }
     if (quote) { if (c === quote) quote = ''; else word += c; started = true; continue; }
-    if (c === '"' || c === "'") { quote = c; started = true; continue; }
-    if (';&|\n'.includes(c)) { push(); if (result.at(-1)!.length) result.push([]); continue; }
+    if (c === '"' || c === "'") { quote = c; started = quoted = true; continue; }
+    if (c === '$' && command[i + 1] === '(') { i++; push(); result.push({ words: [], bare: [] }); continue; }
+    if (';&|\n()`'.includes(c)) { push(); if (result.at(-1)!.words.length) result.push({ words: [], bare: [] }); continue; }
     if (/\s/.test(c)) { push(); continue; }
     word += c; started = true;
   }
-  push(); return { commands: result.filter(words => words.length), malformed: !!quote };
+  push(); return { commands: result.filter(part => part.words.length), malformed: !!quote };
 }
 function expand(path: string) {
   return path.replace(/^~(?=\/|$)/, homedir()).replace(/^\$\{HOME\}(?=\/|$)|^\$HOME(?=\/|$)/, homedir());
@@ -35,18 +36,41 @@ export function checkWorktreeCommand(command: string, cwd: string): { deny?: str
   let directory = cwd;
   const deny = () => ({ deny: 'Create or move worktrees only under ' + worktreeRoot() + '/<repo>/<name>; use agent-worktree create.' });
   for (const original of parsed.commands) {
-    const words = [...original];
-    while (['command', 'env', 'sudo'].includes(words[0]) || /^[A-Za-z_][A-Za-z_0-9]*=/.test(words[0] || '')) words.shift();
+    const words = [...original.words];
+    while (['command', 'env', 'sudo', '{', '}', '!', 'if', 'then', 'elif', 'else', 'do', 'while', 'until', 'time', 'nohup', 'exec', 'builtin', 'xargs'].includes(words[0]) || /^[A-Za-z_][A-Za-z_0-9]*=/.test(words[0] || '')) {
+      if (words.shift() !== 'env') continue;
+      while (words[0]?.startsWith('-')) {
+        const option = words.shift();
+        if (option === '--') break;
+        if (option === '-i' || option === '--ignore-environment') continue;
+        if (option === '-C' || option === '--chdir') { if (!words[0]) return deny(); directory = resolve(directory, expand(words.shift()!)); }
+        else if (option === '-u' || option === '--unset') { if (!words.shift()) return deny(); }
+        else return deny();
+      }
+    }
+    if (words[0] === 'eval' || /(^|\/)(bash|sh|zsh|dash)$/.test(words[0] || '')) {
+      const evalText = words.shift() === 'eval', flag = evalText ? -1 : words.findIndex(word => /^-[^-]*c/.test(word));
+      if (evalText || flag >= 0) {
+        const text = evalText ? words.join(' ') : words[flag + 1];
+        if (!text || parsed.malformed || checkWorktreeCommand(text, directory).deny) return deny();
+        continue;
+      }
+    }
+    const git = /(^|\/)git$/.test(words[0] || '');
+    if (!git && original.bare.some((word, i, bare) => /git$/.test(word) && bare.slice(i + 1).some((next, j, rest) => next === 'worktree' && rest.slice(j + 1).some(op => op === 'add' || op === 'move')))) return deny();
     if (words[0] === 'cd') { directory = resolve(directory, expand(words[1] || homedir())); continue; }
-    if (!/(^|\/)git$/.test(words.shift() || '')) continue;
+    if (!git) continue;
+    words.shift();
     let at = directory;
     let repositoryOverride = false;
     while (words[0]?.startsWith('-')) {
       const option = words.shift();
+      if (/^-c(?:alias\.)/.test(option || '') && option!.includes('worktree')) return deny();
       if (option === '-C') at = resolve(at, expand(words.shift() || ''));
       else if (option === '-c' || option === '--git-dir' || option === '--work-tree') {
         if (option !== '-c') repositoryOverride = true;
-        words.shift();
+        const value = words.shift();
+        if (option === '-c' && /^alias\./.test(value || '') && value!.includes('worktree')) return deny();
       } else if (option?.startsWith('--git-dir=') || option?.startsWith('--work-tree=')) repositoryOverride = true;
       else if (option?.startsWith('-C')) at = resolve(at, expand(option.slice(2)));
     }
