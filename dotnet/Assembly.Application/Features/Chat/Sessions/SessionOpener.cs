@@ -30,6 +30,8 @@ internal sealed record OpenSession(SharedAdapter Pool, RunningAdapter Adapter, s
 public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher launcher, Func<string, SharedAdapter> adapters,
     SessionMcp? mcp = null)
 {
+    internal Native.NativeResume Native { get; } = new(sessionStore, launcher, adapters);
+
     /// <summary>The longest title a first message gives a new session.</summary>
     public const int TitleLength = 60;
     internal IAgentLauncher Launcher => launcher;
@@ -68,7 +70,8 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         try
         {
             return await OpenOnAsync(adapter, running, session, folder, firstText, stages, cancellationToken, observation, authAttempt,
-                config, location, configWarm, pendingInitial, pick, Validate, id => acceptedNativeId = id);
+                config, location, configWarm, pendingInitial, pick, Validate, id => acceptedNativeId = id,
+                id => NativeLaunchContext.Capture(captured.Descriptor, captured.Environment, captured.TargetId, id, folder));
         }
         catch (Exception error)
         {
@@ -113,7 +116,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         SharedAdapter adapter, RunningAdapter running, SessionInfo session, string folder, string firstText, StageTimes stages,
         CancellationToken cancellationToken, SessionObservation? observation, AuthOpenAttempt? authAttempt,
         SessionConfig config, SessionLocation location, bool configWarm, bool pendingInitial,
-        KeyValuePair<string, string>? pick, Action validate, Action<string> nativeAccepted)
+        KeyValuePair<string, string>? pick, Action validate, Action<string> nativeAccepted, Func<string, NativeSessionLaunch?> nativeLaunch)
     {
         var sessionId = session.SessionId;
         var detached = configWarm || pendingInitial;
@@ -129,7 +132,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
                 resumed = await AnsweredAsync(adapter, running, sessionId, resuming, _ => previous, cancellationToken, authAttempt, detached, previous, nativeAccepted);
                 stages.Mark("session resume");
                 var model = await ApplyChoicesAsync(running, session, config, location, previous, resumed.ConfigOptions,
-                    resumed.AvailableCommands, stages, cancellationToken, pendingInitial, pick, validate, saveAgentOptions: false);
+                    resumed.AvailableCommands, stages, cancellationToken, pendingInitial, pick, validate, saveAgentOptions: false, nativeLaunch(previous));
                 if (!configWarm) mcp?.ValidateOpen(sessionId, observation);
                 return new OpenSession(adapter, running, previous, Resumed: true, session.SessionCost, model);
             }
@@ -171,7 +174,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         {
             stages.Mark("session new");
             var chosen = await ApplyChoicesAsync(running, session, config, location, acp.SessionId, acp.ConfigOptions,
-                acp.AvailableCommands, stages, cancellationToken, pendingInitial, pick, validate, saveAgentOptions: !configWarm);
+                acp.AvailableCommands, stages, cancellationToken, pendingInitial, pick, validate, saveAgentOptions: !configWarm, nativeLaunch(acp.SessionId));
             var title = !configWarm && session.Title is null ? Title(firstText) : null;
             if (title is not null)
                 sessionStore.SetTitle(sessionId, title, "prompt");
@@ -243,14 +246,14 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
     /// <summary>Sets each chosen value the session doesn't have yet, saves the options as they end up, and returns their model's name.</summary>
     private async Task<string?> ApplyChoicesAsync(RunningAdapter running, SessionInfo session, SessionConfig config,
         SessionLocation location, string nativeId, JsonElement options, JsonElement commands, StageTimes stages,
-        CancellationToken ct, bool pendingInitial, KeyValuePair<string, string>? pick, Action validate, bool saveAgentOptions)
+        CancellationToken ct, bool pendingInitial, KeyValuePair<string, string>? pick, Action validate, bool saveAgentOptions, NativeSessionLaunch? nativeLaunch)
     {
         var initial = ConfigObservation.Read(running.Updates, nativeId, options,
             commands.ValueKind == JsonValueKind.Array ? commands.GetRawText() : null);
         var collected = await ConfigChoiceCollector.CollectAsync(running, nativeId, initial, config, pendingInitial, pick, stages, ct);
         sessionStore.ObserveConfig(session, config, location, nativeId, collected.Observation.RawOptions,
             collected.Observation.Commands, collected.Choices, collected.ConfirmedModel, validate, ct,
-            agentOptions: saveAgentOptions ? initial.RawOptions : null);
+            agentOptions: saveAgentOptions ? initial.RawOptions : null, nativeLaunch: nativeLaunch);
         return ConfigOptions.ModelName(collected.Observation.Options);
     }
 

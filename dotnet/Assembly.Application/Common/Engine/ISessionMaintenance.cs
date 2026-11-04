@@ -8,5 +8,6 @@ public interface ISessionMaintenance
 public sealed record SessionMaintenanceAttempt(ISessionMaintenanceLease? Lease, string? Reason);
 public interface ISessionMaintenanceLease : IAsyncDisposable
 {
+    NativeResumeEvidence? ResumeEvidence => null;
     Task<bool> ProbeResumeAsync(string providerSessionId, string folder, CancellationToken ct);
 }

@@ -47,6 +47,44 @@ public sealed class CodexSessionFile : IProviderSessionFile
         return selected;
     }
 
+    public string? SqliteHome(string providerHome) => providerHome;
+
+    /// <summary>The indexed rollout, or for legacy rollouts with no index row the one matching file. Never follows links or picks among several.</summary>
+    public NativeFile Select(NativeSessionLaunch launch)
+    {
+        var relative = IndexedRollout(launch) ?? LegacyRollout(launch);
+        var name = Path.GetFileNameWithoutExtension(relative);
+        return new(relative, launch.AcpSessionId, name.Contains('_') ? name[(name.IndexOf('_') + 1)..] : null);
+    }
+
+    private static string? IndexedRollout(NativeSessionLaunch launch)
+    {
+        var state = NativeSessionFileInputs.ResolveProviderPath(launch.ProviderHome, "state_5.sqlite");
+        if (!File.Exists(state)) return null;
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        { DataSource = state, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT rollout_path,archived_at FROM threads WHERE id=$id LIMIT 2";
+        command.Parameters.AddWithValue("$id", launch.AcpSessionId);
+        using var rows = command.ExecuteReader();
+        if (!rows.Read()) return null;
+        if (rows.IsDBNull(0) || !rows.IsDBNull(1)) throw new HandoffRefused("missing");
+        var path = rows.GetString(0);
+        if (rows.Read() || !Path.IsPathFullyQualified(path)) throw new HandoffRefused("native_witness_mismatch");
+        return Path.GetRelativePath(launch.ProviderHome, path).Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    private static string LegacyRollout(NativeSessionLaunch launch)
+    {
+        var root = NativeSessionFileInputs.ResolveProviderPath(launch.ProviderHome, "sessions");
+        if (!Directory.Exists(root)) throw new HandoffRefused("missing");
+        var matches = Directory.EnumerateFiles(root, "rollout-*" + launch.AcpSessionId + "*.jsonl",
+            new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint }).Take(2).ToArray();
+        if (matches.Length != 1) throw new HandoffRefused(matches.Length == 0 ? "missing" : "ambiguous_native_session");
+        return Path.GetRelativePath(launch.ProviderHome, matches[0]).Replace(Path.DirectorySeparatorChar, '/');
+    }
+
     public string TargetPath(ProviderFileContext target, string newFolder, NativeSessionCapture source, NativeFile file)
     {
         ValidateBinding(source.Storage, source.Current);

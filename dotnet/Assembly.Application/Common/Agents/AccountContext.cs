@@ -23,6 +23,9 @@ public static class AccountContext
         _ => null
     };
 
+    /// <summary>The folder under the user's home each provider uses when no config home is set.</summary>
+    public static string DefaultHomeFolder(string? vendorFamily) => "." + vendorFamily;
+
     public static string Of(AgentDescriptor agent, Func<string, string?> inheritedEnvironment)
     {
         var variable = ConfigHomeVariable(agent.VendorFamily);

@@ -1,5 +1,21 @@
 namespace Assembly.Application.Common.Engine;
 
+/// <summary>Non-secret facts frozen from the environment used for an accepted adapter open.</summary>
+public sealed record NativeSessionLaunch(string ProviderId, string VendorFamily, string AccountContext,
+    string LaunchBindingId, string ProviderHome, string AcpSessionId, string Folder);
+
+public interface INativeSessionResolver
+{
+    /// <summary><paramref name="movingTo"/> names a folder an interrupted move may already have mapped the file to.</summary>
+    NativeSessionCapture Resolve(NativeSessionLaunch launch, string session, string? movingTo = null);
+    /// <summary>Makes the transcript readable from the folder. True when <see cref="UndoFolderAsync"/> must reverse it if resume fails.</summary>
+    Task<bool> PrepareFolderAsync(NativeSessionCapture capture, string folder, CancellationToken ct);
+    Task UndoFolderAsync(NativeSessionCapture capture, string folder, CancellationToken ct);
+}
+
+/// <summary>Actual resume response plus positive disposal of its exact adapter borrower.</summary>
+public sealed record NativeResumeEvidence(string OperationId, NativeSessionCapture Capture, string Folder);
+
 public sealed record ProviderFileContext(string MachineId, string ProviderId,
     string VendorFamily, string AccountContext, string LaunchBindingId,
     string ProviderHome, string? CodexSqliteHome);
@@ -17,6 +33,9 @@ public sealed record NativeFile(string RelativePath, string NativeId, string? Ro
 public interface IProviderSessionFile
 {
     string Provider { get; }
+    /// <summary>Where this provider keeps the launch's conversation, from its own layout.</summary>
+    NativeFile Select(NativeSessionLaunch launch);
+    string? SqliteHome(string providerHome);
     NativeFile? Locate(ProviderFileContext storage, NativeSessionWitness current);
     string TargetPath(ProviderFileContext target, string newFolder,
         NativeSessionCapture source, NativeFile file);

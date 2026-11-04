@@ -114,6 +114,9 @@ public sealed partial class SessionStore
                 scope.Execute("ALTER TABLE session_info ADD COLUMN working_folder TEXT NULL;");
             if (Missing("SELECT COUNT(*) FROM pragma_table_info('session_config') WHERE name='config_target'"))
                 scope.Execute("ALTER TABLE session_config ADD COLUMN config_target TEXT NULL;");
+            foreach (var column in new[] { "native_launch_json", "native_witness_json" })
+                if (Missing($"SELECT COUNT(*) FROM pragma_table_info('session_config') WHERE name='{column}'"))
+                    scope.Execute($"ALTER TABLE session_config ADD COLUMN {column} TEXT NULL;");
             foreach (var column in new[] { "pinned_at", "orchestrator_at", "position" })
                 if (Missing($"SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name='{column}'"))
                     scope.Execute($"ALTER TABLE session_info ADD COLUMN {column} INTEGER NULL;");

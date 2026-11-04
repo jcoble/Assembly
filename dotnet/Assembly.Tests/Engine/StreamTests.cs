@@ -13,13 +13,15 @@ public sealed class StreamTests
     [Theory]
     [InlineData("resumed")]
     [InlineData("failed")]
-    public void Keyed_runs_subscription_sees_handoff_events(string outcome)
+    public async Task Keyed_runs_subscription_sees_handoff_events(string outcome)
     {
         using var f = new EngineFixture();
         f.SeedSession(); f.SeedRun();
         f.SeedSession("other-session"); f.SeedRun("other", "other-session");
         using var owner = new EngineFixture();
-        f.Db.Writer.Write("test.native", scope => scope.Execute("UPDATE engine_session SET provider_session_id='native' WHERE id='s'"));
+        await using var provider = new Assembly.Tests.Engine.Handoffs.NativeProvider(owner);
+        f.Db.Writer.Write("test.native", scope => scope.Execute("UPDATE engine_session SET provider_session_id=$native WHERE id='s'",
+            new SqlArg("$native", Assembly.Tests.Engine.Handoffs.NativeProvider.NativeId)));
         Assert.True(f.Apply(new RequestHandoff("s", owner.Machine), "h").Applied);
         var reader = new EngineReader(f.Db, f.Machine);
         var requested = Assert.Single(reader.Since("runs", "r", 0, default).Events, e => e.EntityKind == "handoff");
@@ -29,9 +31,11 @@ public sealed class StreamTests
         Assert.False(EngineReader.Matches(requested, "runs", "other"));
         var identity = new HandoffIdentity("h", f.Machine, "s", owner.Machine, 0, 1);
         HandoffTests.CompleteRelease(f, identity);
-        Assert.True(HandoffTests.Phase(f, identity, HandoffPhase.Accept).Receipt!.Applied);
+        var accepted = HandoffTests.Phase(f, identity, HandoffPhase.Accept);
+        Assert.True(accepted.Receipt!.Applied);
+        var evidence = outcome == "failed" ? HandoffTests.Seal(owner, identity) : await provider.ResumeAsync(identity, accepted.Fingerprint!);
         Assert.True(HandoffTests.Phase(f, identity, outcome == "failed" ? HandoffPhase.Failed : HandoffPhase.Resumed,
-            outcome == "failed" ? "refused" : null, outcome == "failed" ? HandoffTests.Seal(owner, identity) : null).Receipt?.Applied == true);
+            outcome == "failed" ? "refused" : null, evidence).Receipt?.Applied == true);
         f.Reopen();
         reader = new EngineReader(f.Db, f.Machine);
         var handoffs = reader.Since("runs", "r", 0, default).Events.Where(e => e.EntityKind == "handoff").ToArray();

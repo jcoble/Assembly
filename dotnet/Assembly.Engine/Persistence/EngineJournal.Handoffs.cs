@@ -99,7 +99,7 @@ public static partial class EngineJournal
             return Ack(identity, HandoffGate.Refused, "bad_args");
         var prior = ReadTargetAck(scope, identity);
         if (HasReceipt(scope, HandoffAdmissionKeys.TargetAdmission(machine, identity.HandoffId)))
-            return prior; // Adopt-first owns reconciliation. Missing operation/disposal facts cannot manufacture closure.
+            return CloseFailedTarget(scope, args, prior, nowMs); // Missing operation/disposal facts cannot manufacture closure.
         if (prior.Gate == HandoffGate.Unknown || scope.QueryFirst("SELECT EXISTS(SELECT 1 FROM engine_outbox WHERE session_id=$id)",
             row => row.Long(0), new SqlArg("$id", identity.HandoffId)) != 0)
             return Ack(identity, HandoffGate.Unknown, "target_ownership_unknown");
@@ -162,9 +162,8 @@ public static partial class EngineJournal
                 return new(identity, HandoffGate.Recorded, receipt.Result.Error, key, receipt.Fingerprint, receipt.Result, null, null,
                     new(identity, HandoffTargetState.NotAdopted, receipt.Fingerprint, null, 0, identity.NextEpoch, null, null, null));
             var fence = ReadTargetHandoffFence(scope, identity.TargetMachine, identity.HandoffId);
-            if (fence.State == HandoffFenceState.Adopted && fence.Binding?.Identity == identity)
-                return new(identity, HandoffGate.Recorded, "operation_evidence_required", key, receipt.Fingerprint,
-                    receipt.Result, null, null, null);
+            if (fence.State is HandoffFenceState.Adopted or HandoffFenceState.Closed && fence.Binding?.Identity == identity)
+                return ReadAdoptedTarget(scope, identity, key, receipt, fence);
             return Ack(identity, HandoffGate.Unknown, "adopted_operation_evidence_required");
         }
         catch (JsonException) { return Ack(identity, HandoffGate.Unknown, "receipt_invalid"); }

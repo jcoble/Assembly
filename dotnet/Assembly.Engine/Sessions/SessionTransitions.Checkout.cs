@@ -131,8 +131,9 @@ public static partial class SessionTransitions
         var result = receipt.Data.Deserialize(EngineJson.Default.CheckoutEffectData);
         return intent is not null && intent.Request is not null && result is not null && effect.Id == "checkout/" + intent.OperationId &&
             result.ProviderSessionId == intent.ProviderSessionId && !string.IsNullOrWhiteSpace(result.Folder) &&
-            (!result.Confirmed || (result.Folder == intent.Folder || intent.InitialStart is not null) &&
-                (intent.Request.CheckoutKind == "current" || intent.Request.CheckoutKind == "worktree" &&
+            (!result.Confirmed || (result.Folder == intent.Folder || intent.InitialStart is not null ||
+                ValidNativeRelocation(scope, effect.SessionId!, intent, result)) &&
+                (intent.Request.CheckoutKind is "current" or "folder" || intent.Request.CheckoutKind == "worktree" && intent.InitialStart is not null &&
                     result.Branch == "assembly-" + Guid.ParseExact(intent.OperationId, "D").ToString("N") || result.Branch == intent.Request.Branch)) &&
             (result.Confirmed || result.Folder == intent.Folder && result.Branch == intent.Branch && !string.IsNullOrWhiteSpace(result.Reason)) &&
             scope.QueryFirst("""
@@ -141,6 +142,23 @@ public static partial class SessionTransitions
                   AND holder='local' AND machine=(SELECT machine_id FROM engine_meta WHERE singleton=1))
                 """, row => row.Long(0) != 0, new SqlArg("$id", effect.SessionId), new("$operation", intent.OperationId),
                 new("$intent", effect.Payload.GetRawText()), new("$epoch", intent.Epoch));
+    }
+
+    private static bool ValidNativeRelocation(IReadScope scope, string session, CheckoutOperation intent, CheckoutEffectData result)
+    {
+        if (intent.Request.CheckoutKind == "folder" && Path.TrimEndingDirectorySeparator(Path.GetFullPath(intent.Request.Folder!)) != result.Folder) return false;
+        if (intent.Request.CheckoutKind is not ("folder" or "branch" or "worktree")) return false;
+        if (intent.ProviderSessionId is null) return result.NativeResume is null;
+        if (result.NativeResume is not { Capture: { Current: { } witness, Storage: { } storage } } evidence ||
+            !Guid.TryParseExact(evidence.OperationId, "D", out _) || evidence.Folder != result.Folder ||
+            witness.SessionId != session || witness.Epoch != intent.Epoch || witness.AcpSessionId != intent.ProviderSessionId ||
+            witness.Folder != intent.Folder || storage.MachineId != witness.MachineId || storage.ProviderId != witness.ProviderId ||
+            storage.AccountContext != witness.AccountContext || storage.LaunchBindingId != witness.LaunchBindingId) return false;
+        return scope.QueryFirst("""
+            SELECT EXISTS(SELECT 1 FROM engine_session WHERE id=$id AND machine=$machine AND provider=$provider
+                AND account_context=$account AND provider_session_id=$native AND epoch=$epoch AND holder='local')
+            """, r => r.Long(0) != 0, new SqlArg("$id", session), new("$machine", witness.MachineId),
+            new("$provider", witness.ProviderId), new("$account", witness.AccountContext), new("$native", intent.ProviderSessionId), new("$epoch", intent.Epoch));
     }
 
     internal static void CompleteCheckout(IWriteScope scope, CommandContext context, Effect effect, EffectReceipt receipt,

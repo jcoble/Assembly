@@ -27,6 +27,13 @@ public sealed partial class SessionRegistry : IAsyncDisposable, Assembly.Applica
     private readonly SessionTitler? _titler;
     private readonly ISessionFeed? _feed;
     private readonly SessionMcp _mcp;
+    public Assembly.Application.Common.Engine.INativeSessionResolver? NativeSessions { get; private set; }
+    public void BindNativeSessions(Assembly.Application.Common.Engine.INativeSessionResolver resolver)
+    {
+        if (NativeSessions is not null) throw new InvalidOperationException("Native sessions are already bound.");
+        NativeSessions = resolver;
+        _opener.Native.Resolver = resolver;
+    }
     private sealed record HelperProjection(Func<string, bool> Working, Action<string> TurnEnded);
     private HelperProjection? _helperProjection;
 

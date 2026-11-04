@@ -11,6 +11,11 @@ public sealed class ClaudeSessionFile : IProviderSessionFile
 {
     public string Provider => "claude";
 
+    public string? SqliteHome(string providerHome) => null;
+
+    public NativeFile Select(NativeSessionLaunch launch) =>
+        new($"projects/{ProjectKey(launch.Folder)}/{launch.AcpSessionId}.jsonl", launch.AcpSessionId, null);
+
     public NativeFile? Locate(ProviderFileContext storage, NativeSessionWitness current)
     {
         Validate(storage, current);

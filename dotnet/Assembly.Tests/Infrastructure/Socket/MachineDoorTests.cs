@@ -69,7 +69,8 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
         _needHub = new(RowStore.Open(_f.Db)); _needWork = new(_f.Time, TextWriter.Null);
         _needHosts = new(_needHub, _store, _launcher, _f.Time, TextWriter.Null, _needWork);
         _needs = new(new(_runtime, _f.Limits, _f.Time), _runtime, _needHosts, _f.Time);
-        _machineCalls = new MachineCalls(_runtime, _f.Time, _launcher, _root, _needs);
+        _machineCalls = new MachineCalls(_runtime, _f.Time, _launcher, _root, _needs,
+            new Assembly.Infrastructure.Engine.Handoff.NativeHandoffProducer(_launcher, _store));
         _machineCalls.Register(new PeerGate(dispatcher, this));
         dispatcher.Closed(_ => _bulkClosed.TrySetResult());
         new EngineCalls(_runtime, _f.Time, _needs).Register(dispatcher);
@@ -109,6 +110,38 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
             Assert.Equal("error", (await Machine(socket, new RegisterForeignSession("source", "custom", "T"), Guid.NewGuid().ToString())).GetProperty("t").GetString());
         }
         Assert.Equal(0, _f.Count("engine_session")); Assert.Equal(0, _f.Count("engine_outbox")); Assert.Empty(_f.Events());
+    }
+
+    [Fact]
+    public async Task Handoff_adopt_door_admits_only_the_transcript_it_can_verify_on_this_machine()
+    {
+        const string native = Assembly.Tests.Engine.Handoffs.NativeProvider.NativeId;
+        var home = Path.Combine(_root, "home"); var folder = Path.Combine(_root, "target");
+        _launcher.Native = new("claude", "Claude", "unused", [], new Dictionary<string, string> { ["CLAUDE_CONFIG_DIR"] = home }, VendorFamily: "claude");
+        Directory.CreateDirectory(folder);
+        var transcript = Path.Combine(home, "projects", Assembly.Infrastructure.Engine.Handoff.ClaudeSessionFile.ProjectKey(folder), native + ".jsonl");
+        Directory.CreateDirectory(Path.GetDirectoryName(transcript)!);
+        await File.WriteAllTextAsync(transcript, Assembly.Tests.Engine.Handoffs.NativeProvider.Line("claude", folder, "remember kiwi") + "\n");
+        var identity = new Assembly.Engine.Handoffs.HandoffIdentity("h", "source", "s", _runtime.Machine, 7, 8);
+        var command = new AdoptSession("claude", "model", folder, "Adopted", native, "source", "s", 8);
+        using var socket = await Open();
+        async Task<Assembly.Engine.Handoffs.HandoffAck> Adopt(string capture)
+        {
+            var args = JsonSerializer.Serialize(new Assembly.Engine.Handoffs.HandoffAdoptArgs(identity, command, new string('a', 64), capture), EngineSocketJson.Default.HandoffAdoptArgs);
+            await Send(socket, "{\"t\":\"call\",\"id\":7,\"feature\":\"engine\",\"method\":\"handoff_adopt\",\"args\":" + args + "}");
+            var frame = await Read(socket); Assert.Equal("result", frame.GetProperty("t").GetString());
+            return frame.GetProperty("result").Deserialize(EngineSocketJson.Default.HandoffAck)!;
+        }
+        var unverified = await Adopt(new string('b', 64));
+        Assert.Equal(("native_witness_required", (CommandResult?)null), (unverified.Reason, unverified.Receipt));
+        Assert.Equal(0, _f.Count("engine_session"));
+        var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(transcript)));
+        var admitted = await Adopt(hash);
+        Assert.True(admitted.Receipt?.Applied == true, admitted.Reason);
+        Assert.Equal(native, _f.Text("SELECT provider_session_id FROM engine_session WHERE id='h'"));
+        Assert.Equal(folder, _store.NativeLaunch("h")!.Folder);
+        Assert.Equal(1, _f.Number("SELECT COUNT(*) FROM engine_outbox WHERE id='start/h/1' AND kind='start'"));
+        Assert.Equal(admitted.Receipt, (await Adopt(hash)).Receipt);
     }
 
     [Fact]
@@ -308,8 +341,8 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
     }
     private sealed class Launcher : IAgentLauncher
     {
-        public bool Available = true; public int ProviderCalls;
-        public IReadOnlyList<AgentDescriptor> Agents => Available ? [new("custom", "Target", "unused", [], null)] : [];
+        public bool Available = true; public int ProviderCalls; public AgentDescriptor? Native;
+        public IReadOnlyList<AgentDescriptor> Agents => !Available ? [] : Native is { } native ? [new("custom", "Target", "unused", [], null), native] : [new("custom", "Target", "unused", [], null)];
         public void ValidateFolder(string folder) => new AdapterLauncher([], "", new UnclaimedPermissions()).ValidateFolder(folder);
         public bool CanRunTerminalAuthentication => false;
         public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
