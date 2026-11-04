@@ -420,18 +420,20 @@ fn answer_elsewhere(state: &Arc<Mutex<Answered>>, origin: Value) {
     need["answerComplete"] = json!(true);
     need["answeredOrigin"] = origin;
 }
+/// Waits for the row to hear that its need is no longer open, woken by each change to it.
 async fn settled(row: &gpui_kit::Entity<NeedRow>, visual: &mut gpui_kit::VisualTestContext) {
-    for _ in 0..200 {
-        visual
-            .executor()
-            .advance_clock(std::time::Duration::from_millis(5));
+    let (changed, mut changes) = unbounded();
+    let notify = changed.clone();
+    let _heard = visual.update(|_, cx| {
+        cx.observe(row, move |_, _| {
+            let _ = notify.unbounded_send(());
+        })
+    });
+    until("the row hears the answer", &mut changes, &changed, || {
         visual.run_until_parked();
-        if row.read_with(visual, |row, _| row.need.state != "open") {
-            return;
-        }
-        std::thread::yield_now();
-    }
-    panic!("the row never heard the answer");
+        row.read_with(visual, |row, _| row.need.state != "open")
+    })
+    .await;
 }
 #[gpui::test]
 async fn offline_machine_refuses_and_keeps_draft(cx: &mut TestAppContext) {
