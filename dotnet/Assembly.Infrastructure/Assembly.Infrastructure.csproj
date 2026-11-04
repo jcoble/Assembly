@@ -23,6 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" />
   </ItemGroup>

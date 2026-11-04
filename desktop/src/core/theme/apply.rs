@@ -14,7 +14,7 @@ use gpui_kit::{App, Window, WindowBackgroundAppearance};
 use super::fade;
 use super::theme_id::ThemeId;
 
-/// The theme files, read in place from the source tree. A packaged app's location comes with packaging.
+/// The theme files, read in place from the source tree. A packaged app has its own in `Contents/Resources/themes`.
 pub const THEMES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/themes");
 
 /// The design system's slowest motion, which the kit's slow step and move spring are brought down to.

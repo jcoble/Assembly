@@ -19,6 +19,7 @@
     <None Include="Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Engine/Workflows/Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Engine/Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Infrastructure/Remote/Install/Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

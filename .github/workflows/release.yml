@@ -1,0 +1,69 @@
+name: Release Assembly
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'assembly-v*'
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    runs-on: macos-15
+    environment: release
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.x
+
+      # Installs the toolchain and components desktop/rust-toolchain.toml names.
+      - name: Install the desktop's Rust toolchain
+        working-directory: desktop
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: desktop
+
+      - name: Build the window and its backend
+        run: |
+          cargo build --locked --release --manifest-path desktop/Cargo.toml --bin assembly-desktop
+          dotnet publish dotnet/Assembly.Desktop -c Release -r osx-arm64 --self-contained \
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:NuGetLockFilePath=obj/release.packages.lock.json \
+            "-p:SourceRevisionId=$GITHUB_SHA" -o "$RUNNER_TEMP/desktop-publish"
+
+      - name: Package the app
+        id: package
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: |
+          echo "version=$(node scripts/desktop-release.ts version)" >> "$GITHUB_OUTPUT"
+          ARCHIVE=$(node scripts/desktop-release.ts package desktop/target/release/assembly-desktop "$RUNNER_TEMP/desktop-publish/Assembly.Desktop" desktop-release)
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - name: Publish signed release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VERSION: ${{ steps.package.outputs.version }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+          NOTES: Download the signed Assembly update for macOS.
+        run: |
+          TAG="assembly-v$VERSION"
+          npm exec --yes --package=@tauri-apps/cli@2.11.2 -- tauri signer sign "$ARCHIVE"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --target "$GITHUB_SHA" --latest --title "Assembly v$VERSION" --notes "$NOTES"
+          gh release upload "$TAG" --clobber "$ARCHIVE" "$ARCHIVE.sig"
+          URL=$(gh release view "$TAG" --json assets -q ".assets[] | select(.name == \"$(basename "$ARCHIVE")\") | .apiUrl")
+          test -n "$URL"
+          node scripts/desktop-release.ts latest-json "$VERSION" "$NOTES" "$ARCHIVE.sig" "$URL" desktop-release/latest.json
+          gh release upload "$TAG" --clobber desktop-release/latest.json
