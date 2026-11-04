@@ -145,8 +145,10 @@ async fn the_backend_takes_each_checkout_command_the_pane_sends(cx: &mut TestApp
     let cases = [
         (branch_wire("other", false, &head), "ready", "other"),
         (branch_wire("made-here", true, &head), "ready", "made-here"),
-        // The stub can't resume, so the backend reads this one and then refuses it on its merits.
-        (folder_wire(&linked), "refused", "made-here"),
+        // This session has no provider conversation yet, so nothing has to resume for it to move.
+        (folder_wire(&linked), "ready", "made-here"),
+        // The backend reads this one and then refuses it on its merits.
+        (folder_wire(&format!("{repo}-gone")), "refused", "made-here"),
     ];
     for (wire, outcome, branch) in cases {
         let operation = uuid::Uuid::new_v4().to_string();
@@ -175,5 +177,6 @@ async fn the_backend_takes_each_checkout_command_the_pane_sends(cx: &mut TestApp
         .await;
         assert_eq!(git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"]), branch);
     }
-    assert_eq!(row(cx)["checkoutReason"], "unsupported_resume");
+    assert_eq!(row(cx)["checkoutReason"], "folder_unavailable");
+    assert_eq!(row(cx)["folder"], linked.as_str());
 }

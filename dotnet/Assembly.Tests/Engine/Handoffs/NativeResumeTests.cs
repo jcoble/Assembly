@@ -299,6 +299,37 @@ public sealed class NativeResumeTests
         target.Reopen();
     }
 
+    [Theory]
+    [InlineData(true, "resumed", "moved", 8L)]
+    [InlineData(false, "failed", "idle", 7L)]
+    public async Task Coordinator_carries_the_owner_evidence_to_the_source_outcome(bool agentAccepts, string outcome, string session, long epoch)
+    {
+        using var f = new EngineFixture(); f.SeedSession(epoch: 7);
+        using var target = new EngineFixture();
+        await using var provider = new NativeProvider(target);
+        f.Db.Writer.Write("test.native", scope => scope.Execute("UPDATE engine_session SET provider_session_id=$native WHERE id='s'", new SqlArg("$native", Native)));
+        var identity = new HandoffIdentity("h", f.Machine, "s", target.Machine, 7, 8);
+        Assert.True(f.Apply(new RequestHandoff("s", target.Machine), "h", epoch: 7).Applied);
+        HandoffTests.CompleteRelease(f, identity);
+        var accepted = HandoffTests.Phase(f, identity, HandoffPhase.Accept);
+        var (start, _) = await provider.AdoptAsync(identity, accepted.Fingerprint!);
+        var running = provider.Effects().ExecuteAsync(start, default);
+        if (agentAccepts) await provider.AnswerResumeAsync(); else await provider.RefuseResumeAsync(-32000);
+        Assert.True(provider.Complete(start, await running, 8).Applied);
+        HandoffAck Read(EngineFixture owner) { using var scope = owner.Db.OpenSnapshot(default); return new EngineCommands(owner.Machine, owner.Limits).ReadHandoffAck(scope, identity); }
+        // A failed target must seal its fixed fence first; the coordinator does that from the owner's own reason.
+        Assert.Equal(agentAccepts, HandoffCoordinator.TerminalPhase(Read(f), Read(target)) is not null);
+        if (!agentAccepts)
+            target.Db.Writer.Write("test.seal", scope => new EngineCommands(target.Machine, target.Limits).SealHandoffTarget(scope, new(identity, "denied"), 1000));
+        var phase = HandoffCoordinator.TerminalPhase(Read(f), Read(target))!;
+        var applied = f.Db.Writer.Write("test.terminal", scope => new EngineCommands(f.Machine, f.Limits).ApplyHandoffPhase(scope, phase, 1000));
+        Assert.True(applied.Receipt?.Applied == true, applied.Reason);
+        Assert.Equal(outcome, f.State("engine_handoff", "h"));
+        Assert.Equal(session, f.State("engine_session", "s"));
+        Assert.Equal(epoch, f.Number("SELECT epoch FROM engine_session WHERE id='s'"));
+        Assert.Equal(agentAccepts ? null : "denied", f.Text("SELECT reason FROM engine_handoff WHERE id='h'"));
+    }
+
     [Fact]
     public async Task A_start_receipt_without_the_adapter_capture_is_refused_and_proves_nothing()
     {
