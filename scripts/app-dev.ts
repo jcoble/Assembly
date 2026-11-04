@@ -1,7 +1,8 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { startRemoteSync } from './app-dev-remote.ts';
 import { profileFor } from './seed-dev.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -14,10 +15,17 @@ const env = {
   ASSEMBLY_BACKEND_DIR: backend,
 };
 
-function run(command: string, args: string[], cwd = root): void {
-  const result = spawnSync(command, args, { cwd, env, stdio: 'inherit' });
-  if (result.error) throw result.error;
-  if (result.status !== 0) process.exit(result.status ?? 1);
+async function run(command: string, args: string[], cwd = root): Promise<void> {
+  const child = spawn(command, args, { cwd, env, stdio: 'inherit', detached: true });
+  const stop = () => { if (child.pid) { try { process.kill(-child.pid, 'SIGTERM'); } catch {} } };
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', code => code === 0 ? resolve() : reject(Object.assign(new Error(`${command} exited ${code}`), { exitCode: code ?? 1 })));
+    });
+  } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
 }
 
 // A new profile on a checkout ahead of the published adapters has nothing to install: the newest release can lack what
@@ -45,27 +53,35 @@ function ownSettings(): [port: string, home: string, tokenFile: string, remotePo
 }
 const lane = spawnSync('bash', ['-c', `
 source scripts/lane-env.sh || exit
-printf '%s\\0' "$DESKTOP_PORT" "$DATA/mac" "$TOKEN_FILE" "$BOX_PORT" "$BOX_TOKEN_FILE" "$DATA/adapters"
+printf '%s\\0' "$DESKTOP_PORT" "$DATA/mac" "$TOKEN_FILE" "$BOX_PORT" "$BOX_TOKEN_FILE" "$DATA/adapters" "$LANE_NAME"
 `], { cwd: root, env, encoding: 'utf8' });
 if (lane.error) throw lane.error;
-const [port, home, tokenFile, remotePort, remoteTokenFile, adapters] = lane.status === 0 ? lane.stdout.split('\0') : ownSettings();
+const [port, home, tokenFile, remotePort, remoteTokenFile, adapters, laneName] = lane.status === 0 ? lane.stdout.split('\0') : ownSettings();
 
-run('dotnet', [
-  'publish', join(root, 'dotnet/Assembly.Desktop'), '--configuration', 'Debug',
-  '--no-self-contained', '-p:UseAppHost=true', '--output', backend,
-]);
-mkdirSync(backend, { recursive: true });
-writeFileSync(join(backend, 'lane.json'), JSON.stringify({
-  port: Number(port), home, tokenFile, remotePort: Number(remotePort), remoteTokenFile,
-}, null, 2) + '\n');
-mkdirSync(home, { recursive: true });
-const installer = ['dotnet/scripts/agents-file.sh', process.env.ADAPTERS ?? adapters, join(home, 'agents.json')];
-const installed = spawnSync('bash', installer, { cwd: root, env, stdio: 'inherit' });
-if (installed.error) throw installed.error;
-// The backend starts with an empty list when there's no agents file, so failing here doesn't stop the app.
-if (installed.status !== 0) {
-  const built = buildAgents();
-  const retried = built ? spawnSync('bash', [...installer, built], { cwd: root, env, stdio: 'inherit' }) : undefined;
-  if (retried?.status !== 0) console.warn('app:dev: agents could not be updated; opening with the ones already installed, if any');
-}
-run('cargo', ['run', '--locked', '--', ...process.argv.slice(2)], join(root, 'desktop'));
+let stopSync = async () => {};
+try { if (lane.status === 0 && laneName) stopSync = startRemoteSync(root, home); }
+catch (error) { console.warn(`app:dev: Workbox Test sync could not start: ${error instanceof Error ? error.message : String(error)}`); }
+try {
+  await run('dotnet', [
+    'publish', join(root, 'dotnet/Assembly.Desktop'), '--configuration', 'Debug',
+    '--no-self-contained', '-p:UseAppHost=true', '--output', backend,
+  ]);
+  mkdirSync(backend, { recursive: true });
+  writeFileSync(join(backend, 'lane.json'), JSON.stringify({
+    port: Number(port), home, tokenFile, remotePort: Number(remotePort), remoteTokenFile,
+  }, null, 2) + '\n');
+  mkdirSync(home, { recursive: true });
+  const installer = ['dotnet/scripts/agents-file.sh', process.env.ADAPTERS ?? adapters, join(home, 'agents.json')];
+  const installed = spawnSync('bash', installer, { cwd: root, env, stdio: 'inherit' });
+  if (installed.error) throw installed.error;
+  // The backend starts with an empty list when there's no agents file, so failing here doesn't stop the app.
+  if (installed.status !== 0) {
+    const built = buildAgents();
+    const retried = built ? spawnSync('bash', [...installer, built], { cwd: root, env, stdio: 'inherit' }) : undefined;
+    if (retried?.status !== 0) console.warn('app:dev: agents could not be updated; opening with the ones already installed, if any');
+  }
+  await run('cargo', ['run', '--locked', '--', ...process.argv.slice(2)], join(root, 'desktop'));
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = (error as { exitCode?: number }).exitCode ?? 1;
+} finally { await stopSync(); }

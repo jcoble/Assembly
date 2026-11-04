@@ -14,8 +14,7 @@
 #                                               a session's rows by seq and by page, checked (row-log.ts)
 # Pushes the branch to the box's bare repo ~/assembly.git (never GitHub, same as scripts/deploy.sh),
 # checks it out at ~/assembly/<branch>, installs the .NET 10 SDK under ~/.dotnet if it's missing, uses the
-# adapters the TanStack AI spike installed under ~/spike-dotnet/adapters (no download; Assembly gets its own copy
-# later), and runs with the box's
+# spike adapters only for record; serve packages the checkout and preserves its lane-owned ACP 2 configuration. Uses the box's
 # own Claude and Codex logins. It touches nothing the tanstack-agent-server and tanstack-relay services use.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -103,6 +102,12 @@ if [ "$mode" = serve ] && { [ "$BOX_UNIT" = assembly-dotnet ] || [ "$BOX_PORT" =
   fi
 fi
 
+if [ "$mode" = serve ]; then
+  main_guard=""
+  [ -n "$LANE_NAME" ] || main_guard=clean-origin-main
+  exec node scripts/workbox-serve.ts "$LANE_NAME" "$LANE_NUMBER" "$branch" "$main_guard"
+fi
+
 ssh workbox-test 'test -d ~/assembly.git || git init -q --bare ~/assembly.git'
 git push -q --force ssh://workbox-test/~/assembly.git "$commit:refs/heads/$branch"
 
@@ -128,33 +133,6 @@ adapters=~/spike-dotnet/adapters
 entry=$adapters/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
 # The box has pnpm but no npm.
 
-if [ "$mode" = serve ]; then
-  # Only the server reads agents.json; record starts the adapter itself.
-  mkdir -p ~/"$data"/serve
-  "$dir/dotnet/scripts/agents-file.sh" "$adapters" ~/"$data"/serve/agents.json
-  # Published apart from the checkout, so a later recorder build never swaps files under the running server.
-  bin=~/$data/bin/$commit
-  dotnet publish -v q --nologo -c Release -o "$bin" "$dir/dotnet/Assembly.Remote" >&2
-  ln -sfn "$bin" ~/"$data"/bin/current
-  mkdir -p ~/.config/systemd/user
-  cat > ~/.config/systemd/user/"$unit".service <<UNIT
-[Unit]
-Description=.NET remote host for Assembly (dotnet/Assembly.Remote)
-
-[Service]
-Environment=PATH=%h/.dotnet:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
-ExecStart=%h/.dotnet/dotnet %h/$data/bin/current/Assembly.Remote.dll serve --port $port --home %h/$data/serve --token-file %h/$token
-UNIT
-  systemctl --user daemon-reload
-  systemctl --user restart "$unit"
-  sleep 3
-  systemctl --user is-active "$unit" >&2
-  journalctl --user -u "$unit" -n 5 --no-pager -o cat >&2
-  echo "serve 0"
-  exit
-fi
-
 dotnet build -v q --nologo "$dir/dotnet/Assembly.Remote" >&2
 backend="$dir/dotnet/Assembly.Remote/bin/Debug/net10.0/Assembly.Remote.dll"
 stamp=$(date -u +%Y%m%d-%H%M%S)
@@ -170,12 +148,8 @@ echo "$out $code"
 BOX
 )
 read -r remote_out code <<<"$result"
-if [ "$mode" = serve ]; then
-  echo "$BOX_UNIT runs $commit on Workbox Test at 127.0.0.1:$BOX_PORT; its token is in ~/$BOX_TOKEN_FILE there"
-else
-  fixtures=dotnet/Assembly.Tests/Fixtures/acp
-  mkdir -p "$fixtures"
-  scp -q "workbox-test:$remote_out/*.jsonl" "$fixtures/"
-  echo "fixtures: $fixtures"
-fi
+fixtures=dotnet/Assembly.Tests/Fixtures/acp
+mkdir -p "$fixtures"
+scp -q "workbox-test:$remote_out/*.jsonl" "$fixtures/"
+echo "fixtures: $fixtures"
 exit "$code"
