@@ -73,12 +73,14 @@ public sealed class SessionCreateSourceTests
     {
         await using var setup = new Setup(); await setup.Start();
         await setup.Hosts.StartMirror();
-        var old = Source(setup.Hosts);
+        var old = await ReadySource();
         await setup.Hosts.DisconnectMirror();
+        await setup.Hosts.ReplaceAtSameEndpoint(new TwoHosts.Host(windowCalls: true));
         await setup.Hosts.ReconnectSaved();
         await setup.Hosts.Reached(setup.Hosts.Remote.Through);
-        var current = Source(setup.Hosts);
-        Assert.Equal(old.Machine, current.Machine); Assert.True(current.Generation > old.Generation);
+        var current = await ReadySource();
+        Assert.NotEqual(old.Machine, current.Machine);
+        Assert.Equal(old.RouteMachine, current.RouteMachine);
         using var socket = await Open(setup.Hosts.Mac);
         var count = setup.Hosts.Mac.Fixture.Count("engine_session");
         var effects = setup.Hosts.Mac.Fixture.Count("engine_outbox");
@@ -92,6 +94,35 @@ public sealed class SessionCreateSourceTests
         Assert.Empty(setup.RemoteMachine.Asked);
         Assert.Equal(0, setup.Folders.Inspections);
         Assert.Equal(0, setup.Launcher.Launches);
+
+        async Task<ExpectedSource> ReadySource()
+        {
+            var owned = Assert.Single(setup.Hosts.Connections.CaptureMirrorOwners());
+            var mirror = owned.Mirror;
+            var caughtUp = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Ready() => caughtUp.TrySetResult();
+            mirror.CaughtUp += Ready;
+            try
+            {
+                var live = await mirror.CaptureLiveBindingAsync(default);
+                if (live is null)
+                {
+                    await caughtUp.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                    live = await mirror.CaptureLiveBindingAsync(default);
+                }
+                Assert.NotNull(live);
+                var source = Source(setup.Hosts);
+                Assert.Equal(live.Machine, source.Machine);
+                Assert.Equal(live.Generation, source.Generation);
+                var captured = await setup.Hosts.Connections.CaptureSessionOpenSourceAsync(setup.Hosts.Mac.Fixture.Db, source, default);
+                Assert.Same(owned.Machine, captured.Machine);
+                Assert.Equal(source.Machine, live.OwnerBinding.Machine);
+                Assert.Same(live, captured.Live);
+                captured.EnsureCurrent();
+                return source;
+            }
+            finally { mirror.CaughtUp -= Ready; }
+        }
     }
 
     [Fact]

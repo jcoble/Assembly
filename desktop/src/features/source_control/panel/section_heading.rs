@@ -5,6 +5,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::*;
+use std::time::Duration;
 
 /// The name and count, for a heading that doesn't fold as well as one that does.
 pub fn heading_label(title: &'static str, count: Option<String>, cx: &App) -> Div {
@@ -25,12 +26,20 @@ pub fn section_heading(
     actions: Vec<AnyElement>,
     cx: &App,
 ) -> Div {
+    let id: SharedString = id.into();
+    // A quarter turn over 120 ms, starting again each time it folds or opens, and then still.
+    let (from, to) = if open { (0_f32, 90_f32) } else { (90_f32, 0_f32) };
+    let chevron = Icon::new(IconName::ChevronRight).size(px(14.)).with_animation(
+        ElementId::Name(format!("{id}-chevron-{open}").into()),
+        Animation::new(Duration::from_millis(120)),
+        move |icon, delta| icon.rotate(radians((from + (to - from) * delta).to_radians())),
+    );
     h_flex()
         .w_full()
         .min_h(px(24.))
         .gap_1()
         .child(
-            Button::new(ElementId::Name(id.into()))
+            Button::new(ElementId::Name(id))
                 .ghost()
                 .compact()
                 .on_click(on_toggle)
@@ -38,14 +47,7 @@ pub fn section_heading(
                     h_flex()
                         .gap_1()
                         .text_color(cx.theme().muted_foreground)
-                        .child(
-                            Icon::new(if open {
-                                IconName::ChevronDown
-                            } else {
-                                IconName::ChevronRight
-                            })
-                            .size(px(14.)),
-                        )
+                        .child(chevron)
                         .child(heading_label(title, count, cx)),
                 ),
         )

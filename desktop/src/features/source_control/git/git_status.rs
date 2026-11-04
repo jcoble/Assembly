@@ -87,6 +87,19 @@ impl ChangedFile {
     }
 }
 
+/// 1201 as a person writes it, 1,201.
+fn grouped(count: usize) -> String {
+    let digits = count.to_string();
+    let mut out = String::new();
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
 impl GitStatus {
     /// The section's files with their letters, sorted by path.
     pub fn section(&self, section: Section) -> Vec<(char, &ChangedFile)> {
@@ -119,8 +132,8 @@ impl GitStatus {
         (self.total_files > self.files.len()).then(|| {
             format!(
                 "Showing {} of {} changed files. Commit, stash or ignore files to see the rest.",
-                self.files.len(),
-                self.total_files
+                grouped(self.files.len()),
+                grouped(self.total_files)
             )
         })
     }

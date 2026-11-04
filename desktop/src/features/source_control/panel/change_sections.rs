@@ -66,7 +66,7 @@ pub(super) fn file_reasons(file: &ChangedFile, has_root: bool, busy: bool) -> Fi
         stage: write((file.worktree == ".").then_some(ALL_STAGED)),
         unstage: write((file.index == "." || file.index == "?").then_some(NOTHING_STAGED)),
         discard: write(None),
-        open: deleted.then_some(DELETED),
+        open: if has_root { deleted.then_some(DELETED) } else { Some(NO_ROOT) },
         copy_path: (!has_root).then_some(NO_ROOT),
     }
 }
@@ -278,7 +278,7 @@ impl SourceControlPane {
         let word = (!hovered).then(|| change_word(file)).flatten();
         let row = h_flex()
             .w_full()
-            .gap_1()
+            .gap_2()
             .child(
                 div()
                     .w(px(12.))
@@ -300,13 +300,12 @@ impl SourceControlPane {
                     .flex_1()
                     .min_w_0()
                     .gap_1()
-                    .text_sm()
                     .child(div().truncate().child(name.to_string()))
                     .when(!folder.is_empty(), |line| {
-                        line.child(div().truncate().text_color(muted).child(folder.to_string()))
+                        line.child(div().truncate().text_sm().text_color(muted).child(folder.to_string()))
                     }),
             )
-            .children(word.map(|word| div().flex_none().text_xs().text_color(muted).child(word)))
+            .children(word.map(|word| div().flex_none().text_sm().text_color(muted).child(word)))
             .children(cluster);
         let open = OpenDiff {
             session_id: target.session.clone(),
@@ -466,11 +465,10 @@ impl SourceControlPane {
             let absolute = root
                 .as_ref()
                 .map(|root| format!("{}/{}", root.trim_end_matches('/'), file.path));
-            menu.min_w(px(220.))
-                .item(reasoned_item("View changes", None, move |window, cx| {
+            menu.w(px(220.))
+                .item(reasoned_item("View changes", reason(reasons.open), move |window, cx| {
                     window.dispatch_action(Box::new(view.clone()), cx)
                 }))
-                .separator()
                 .item(reasoned_item(
                     "Stage this file",
                     reason(reasons.stage),
@@ -500,7 +498,6 @@ impl SourceControlPane {
                         },
                     ))
                 })
-                .separator()
                 .item(reasoned_item(
                     "Copy path",
                     reason(reasons.copy_path),
@@ -513,13 +510,12 @@ impl SourceControlPane {
                 .item(reasoned_item("Copy relative path", None, move |_, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(relative.clone()));
                 }))
-                .separator()
                 .item(reasoned_item(
                     "Open in editor",
                     reason(reasons.open),
                     move |window, cx| window.dispatch_action(Box::new(open.clone()), cx),
                 ))
-                .item(reasoned_item("Reveal in Files", None, move |window, cx| {
+                .item(reasoned_item("Reveal in Files", reason(reasons.open), move |window, cx| {
                     window.dispatch_action(Box::new(reveal.clone()), cx)
                 }))
         }

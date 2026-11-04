@@ -1,5 +1,6 @@
 //! The commit list as Source control draws it: under the sections in the panel's own scroller, a row per commit with its
 //! ref pills, opening onto its files, and more only on Load more. The history tab keeps the graph.
+use super::super::git_history::GitCommit;
 use super::super::git_labels::{RefKind, commit_age, ref_pills, split_path};
 use super::super::section_heading::heading_label;
 use super::{CommitFiles, CommitTimeline};
@@ -7,13 +8,75 @@ use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_file::OpenFile
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::list::ListItem;
-use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+const MERGE_HAS_NO_CHANGES: &str =
+    "This is a merge, and a merge brings no changes of its own. Open the commits it brought in to see the work.";
+/// What an open commit says instead of a file list; every case ends in words.
+pub(super) fn files_sentence(files: Option<&CommitFiles>, merge: bool) -> Option<String> {
+    match files {
+        Some(CommitFiles::Reading) | None => Some("Reading what this commit changed…".into()),
+        Some(CommitFiles::Failed(error)) => Some(error.clone()),
+        Some(CommitFiles::Read(files)) if files.is_empty() => Some(if merge {
+            MERGE_HAS_NO_CHANGES.into()
+        } else {
+            "This commit changed no files.".into()
+        }),
+        Some(CommitFiles::Read(_)) => None,
+    }
+}
+/// The hover's one fact per line.
+pub(super) fn commit_tip(commit: &GitCommit) -> String {
+    let age = commit_age(&commit.committed_at);
+    let byline = if age.is_empty() {
+        commit.author.clone()
+    } else {
+        format!("{} · {age}", commit.author)
+    };
+    let refs = commit.refs.join(", ");
+    let id = if refs.is_empty() {
+        format!("Commit {}", commit.short_sha)
+    } else {
+        format!("Commit {} · {refs}", commit.short_sha)
+    };
+    format!("{}\n{byline}\n{id}", commit.subject)
+}
+pub(super) fn letter_tone(letter: char, cx: &App) -> Hsla {
+    let theme = cx.theme();
+    match letter {
+        'A' => theme.success,
+        'D' => theme.danger,
+        'R' | 'C' => theme.primary,
+        _ => theme.warning,
+    }
+}
+/// A commit file's menu. A name git couldn't print can't be opened, only copied.
+pub(super) fn commit_file_menu(
+    menu: PopupMenu,
+    open: OpenCommitDiff,
+    current: OpenFile,
+    path: String,
+    readable: bool,
+) -> PopupMenu {
+    menu.item(
+        PopupMenuItem::new("Open diff")
+            .disabled(!readable)
+            .on_click(move |_, window, cx| window.dispatch_action(Box::new(open.clone()), cx)),
+    )
+    .item(
+        PopupMenuItem::new("Open current file in editor")
+            .disabled(!readable)
+            .on_click(move |_, window, cx| window.dispatch_action(Box::new(current.clone()), cx)),
+    )
+    .item(PopupMenuItem::new("Copy path").on_click(move |_, _, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(path.clone()))
+    }))
+}
 /// "N files", or "No files" for a commit that touched none.
 pub(super) fn files_summary(count: usize) -> String {
     match count {
@@ -124,16 +187,7 @@ impl CommitTimeline {
         } else {
             format!("{} · {age}", commit.author)
         };
-        let refs = commit.refs.join(", ");
-        let tip = format!(
-            "{}\n{byline}\n{}",
-            commit.subject,
-            if refs.is_empty() {
-                format!("Commit {}", commit.short_sha)
-            } else {
-                format!("Commit {} · {refs}", commit.short_sha)
-            }
-        );
+        let tip = commit_tip(&commit);
         let toggled = commit.sha.clone();
         let menu_toggle = commit.sha.clone();
         let menu_copy = commit.sha.clone();
@@ -157,47 +211,44 @@ impl CommitTimeline {
                         .size(px(14.))
                         .text_color(muted),
                     )
-                    .children(ref_pills(&commit.refs).into_iter().map(|pill| {
+                    .children(ref_pills(&commit.refs).into_iter().filter(|pill| pill.kind != RefKind::Remote).map(|pill| {
                         let tag = match pill.kind {
                             RefKind::Head => Tag::success(),
-                            RefKind::Branch => Tag::secondary(),
                             RefKind::Tag => Tag::warning(),
+                            RefKind::Branch | RefKind::Remote => Tag::secondary(),
                         };
-                        tag.xsmall().rounded_full().child(pill.label)
+                        tag.xsmall().rounded_full().max_w(relative(0.4)).truncate().child(pill.label)
                     }))
-                    .child(div().flex_1().min_w_0().truncate().text_sm().child(commit.subject.clone()))
+                    .child(div().flex_1().min_w_0().truncate().child(commit.subject.clone()))
                     .child(div().flex_none().text_sm().text_color(muted).child(byline)),
             )
             .context_menu(move |menu, _, _| {
                 let (toggle, copy, view) = (menu_toggle.clone(), menu_copy.clone(), view.clone());
-                menu.item(PopupMenuItem::new(if expanded { "Hide files" } else { "Show files" }).on_click(
+                menu.item(PopupMenuItem::new(if expanded { "Hide changed files" } else { "View changed files" }).on_click(
                     move |_, _, cx| {
                         _ = view.update(cx, |timeline, cx| timeline.toggle_commit(toggle.clone(), cx));
                     },
                 ))
-                .item(PopupMenuItem::new("Copy hash").on_click(move |_, _, cx| {
+                .item(PopupMenuItem::new("Copy commit hash").on_click(move |_, _, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
                 }))
             });
         let mut block = v_flex().min_w_0().child(row);
         if expanded {
-            block = block.child(self.inline_files(&commit.sha, &commit.short_sha, &commit.subject, cx));
+            block = block.child(self.inline_files(&commit, cx));
         }
         block.into_any_element()
     }
-    fn inline_files(&self, sha: &str, short_sha: &str, subject: &str, cx: &mut Context<Self>) -> AnyElement {
+    fn inline_files(&self, commit: &GitCommit, cx: &mut Context<Self>) -> AnyElement {
+        let sha = commit.sha.as_str();
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
         let line = |text: String, color: Hsla| div().px_2().py_1().text_sm().text_color(color).child(text);
-        let content = match self.files.get(sha) {
-            Some(CommitFiles::Reading) | None => {
-                line("Reading what this commit changed…".into(), muted).into_any_element()
-            }
-            Some(CommitFiles::Failed(error)) => line(error.clone(), danger).into_any_element(),
-            Some(CommitFiles::Read(files)) if files.is_empty() => {
-                line("This commit changed no files.".into(), muted).into_any_element()
-            }
-            Some(CommitFiles::Read(files)) => v_flex()
+        let files = self.files.get(sha);
+        let content = match (files_sentence(files, commit.parents.len() > 1), files) {
+            (Some(sentence), Some(CommitFiles::Failed(_))) => line(sentence, danger).into_any_element(),
+            (Some(sentence), _) => line(sentence, muted).into_any_element(),
+            (None, Some(CommitFiles::Read(files))) => v_flex()
                 .child(line(files_summary(files.len()), muted))
                 .children(files.iter().map(|file| {
                     let (name, folder) = split_path(&file.path);
@@ -206,7 +257,7 @@ impl CommitTimeline {
                         expected_source: self.expected_source.clone(),
                         sha: sha.to_string(),
                         path: file.path.clone(),
-                        title: format!("{short_sha} {subject}"),
+                        title: format!("{} {}", commit.short_sha, commit.subject),
                     };
                     let menu_open = open.clone();
                     let current = OpenFile {
@@ -219,9 +270,17 @@ impl CommitTimeline {
                     };
                     let copied = file.path.clone();
                     let full_path = file.path.clone();
+                    let readable = !super::table::unreadable_path(&file.path);
+                    let chosen = self.chosen.as_ref().is_some_and(|(at, path)| at == sha && path == &file.path);
+                    let (picked_sha, picked_path) = (sha.to_string(), file.path.clone());
                     ListItem::new(SharedString::from(format!("commit-file:{sha}:{}", file.path)))
+                        .selected(chosen)
                         .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
-                        .on_click(move |_, window, cx| window.dispatch_action(Box::new(open.clone()), cx))
+                        .on_click(cx.listener(move |timeline, _, window, cx| {
+                            timeline.chosen = Some((picked_sha.clone(), picked_path.clone()));
+                            window.dispatch_action(Box::new(open.clone()), cx);
+                            cx.notify();
+                        }))
                         .child(
                             h_flex()
                                 .w_full()
@@ -242,25 +301,17 @@ impl CommitTimeline {
                                         .flex_1()
                                         .min_w_0()
                                         .gap_1()
-                                        .child(div().min_w_0().truncate().text_sm().child(name.to_string()))
+                                        .child(div().min_w_0().truncate().child(name.to_string()))
                                         .child(div().min_w_0().truncate().text_sm().text_color(muted).child(folder.to_string())),
                                 ),
                         )
                         .context_menu(move |menu, _, _| {
-                            let (open, current, copied) = (menu_open.clone(), current.clone(), copied.clone());
-                            menu.item(PopupMenuItem::new("Open diff").on_click(move |_, window, cx| {
-                                window.dispatch_action(Box::new(open.clone()), cx)
-                            }))
-                            .item(PopupMenuItem::new("Open current file").on_click(move |_, window, cx| {
-                                window.dispatch_action(Box::new(current.clone()), cx)
-                            }))
-                            .item(PopupMenuItem::new("Copy path").on_click(move |_, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))
-                            }))
+                            commit_file_menu(menu, menu_open.clone(), current.clone(), copied.clone(), readable)
                         })
                         .into_any_element()
                 }))
                 .into_any_element(),
+            (None, _) => Empty.into_any_element(),
         };
         div().pb_1().pl_5().child(content).into_any_element()
     }

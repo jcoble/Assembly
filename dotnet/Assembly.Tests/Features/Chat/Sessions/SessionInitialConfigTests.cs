@@ -48,7 +48,8 @@ public sealed class SessionInitialConfigTests : IDisposable
         Assert.Equal(choices, reopened.Config(created.SessionId).Choices);
         Assert.Null(reopened.Config(created.SessionId).PendingModel);
         Assert.Null(created.AcpSessionId);
-        Assert.Equal(0L, Count("pragma_table_info('session_config') WHERE name='pending_model'"));
+        Assert.Equal(1L, Count("pragma_table_info('session_config') WHERE name='pending_model'"));
+        Assert.Equal(0L, Count("session_config WHERE pending_model IS NOT NULL"));
         Assert.Equal(1L, Count("pragma_table_info('session_config') WHERE name='config_target'"));
         Assert.Equal(1L, Count("pragma_table_info('session_info') WHERE name='working_folder'"));
     }

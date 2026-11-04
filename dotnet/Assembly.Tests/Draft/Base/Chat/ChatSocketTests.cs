@@ -161,7 +161,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
     {
         var folder = _home.CreateSubdirectory(name).FullName;
         return _db.Writer.Write("test.project", scope => _projects.AddOrRestore(scope,
-            _engine.Machine, folder, name, null).Project);
+            "local", folder, name, null).Project);
     }
 
     private SessionInfo ReadyParent() => _db.Writer.Write("test.import-parent", scope =>

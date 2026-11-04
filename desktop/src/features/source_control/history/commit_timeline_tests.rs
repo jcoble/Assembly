@@ -7,7 +7,7 @@ use crate::core::socket::{
 };
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
-use gpui_kit::AppContext as _;
+use gpui_kit::{AppContext as _, ScrollDelta, ScrollEvent, VisualTestContext, point, px, size};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -93,4 +93,85 @@ async fn hidden_history_does_not_read_and_load_more_appends_once(cx: &mut TestAp
     for request in seen.lock().unwrap().iter() {
         assert_eq!(request["args"]["expectedSource"], serde_json::to_value(&origin).unwrap());
     }
+}
+fn drawn(visual: &mut VisualTestContext) {
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+}
+// Pins: g9#15
+#[gpui::test]
+async fn scrolling_to_the_end_loads_once(cx: &mut TestAppContext) {
+    let cursors = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let observed = cursors.clone();
+    let (changed, mut changes) = unbounded();
+    let backend = FakeBackend::start(move |frame| {
+        if let Some(reply) = hello(frame) {
+            return reply;
+        }
+        if frame["t"] != "call" {
+            return vec![];
+        }
+        let cursor = frame["args"]["cursor"].clone();
+        let second = cursor == "30";
+        observed.lock().unwrap().push(cursor);
+        let page = if second { "b" } else { "a" };
+        let commits: Vec<Value> = (0..30)
+            .map(|at| json!({"shortSha":format!("{page}{at:06}"),"sha":format!("{page}{at:039}"),"subject":"Commit","body":"","author":"Jesse","committedAt":"2026-11-03T12:00:00Z","refs":[],"parents":[]}))
+            .collect();
+        let next = if second { Value::Null } else { json!("30") };
+        vec![Reply::Frame(
+            json!({"t":"result","id":frame["id"],"result":{"commits":commits,"nextCursor":next}}),
+        )]
+    });
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        SocketClient::start(
+            Endpoint {
+                port: backend.port,
+                token: "secret".into(),
+            },
+            cx,
+        );
+    });
+    let (timeline, visual) =
+        cx.add_window_view(|_, cx| CommitTimeline::new("s1".into(), None, None, true, cx));
+    visual.simulate_resize(size(px(1000.), px(400.)));
+    visual.update(|window, _| window.activate_window());
+    let tell = changed.clone();
+    let _heard = visual.update(|_, cx| {
+        cx.observe(&timeline, move |_, _| {
+            let _ = tell.unbounded_send(());
+        })
+    });
+    until("first page", &mut changes, &changed, || {
+        drawn(visual);
+        visual.update(|_, cx| timeline.read(cx).history.commits.len() == 30)
+    })
+    .await;
+    assert_eq!(cursors.lock().unwrap().len(), 1, "the first page alone asks nothing more");
+    let wheel = ScrollEvent {
+        position: point(px(500.), px(200.)),
+        delta: ScrollDelta::Pixels(point(px(0.), px(-600.))),
+        ..ScrollEvent::default()
+    };
+    // Rows are measured as they come into view, so the end takes several turns of the wheel.
+    for _ in 0..60 {
+        if cursors.lock().unwrap().len() > 1 {
+            break;
+        }
+        visual.simulate_event(wheel.clone());
+        drawn(visual);
+    }
+    visual.simulate_event(wheel.clone());
+    until("second page", &mut changes, &changed, || {
+        drawn(visual);
+        visual.update(|_, cx| timeline.read(cx).history.commits.len() == 60)
+    })
+    .await;
+    for _ in 0..4 {
+        visual.simulate_event(wheel.clone());
+        drawn(visual);
+    }
+    assert_eq!(*cursors.lock().unwrap(), vec![Value::Null, json!("30")]);
 }

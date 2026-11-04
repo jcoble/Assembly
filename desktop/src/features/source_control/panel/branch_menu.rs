@@ -161,7 +161,7 @@ impl BranchMenu {
     fn heading(title: &'static str, cx: &App) -> Div {
         div()
             .px_2()
-            .text_xs()
+            .text_sm()
             .font_weight(FontWeight::MEDIUM)
             .text_color(cx.theme().muted_foreground)
             .child(title)
@@ -212,10 +212,10 @@ impl BranchMenu {
                                 v_flex()
                                     .flex_1()
                                     .min_w_0()
-                                    .child(div().text_sm().truncate().child(branch.name.clone()))
+                                    .child(div().truncate().child(branch.name.clone()))
                                     .child(
                                         div()
-                                            .text_xs()
+                                            .text_sm()
                                             .truncate()
                                             .text_color(muted)
                                             .child(branch_detail(&branch)),
@@ -261,6 +261,7 @@ impl Render for BranchMenu {
                     .small()
                     .w_full()
                     .label("Create and switch")
+                    .tooltip("Create this branch and switch to it")
                     .disabled(!can_create)
                     .on_click(cx.listener(|menu, _, _, cx| menu.create(cx))),
             )
@@ -270,7 +271,7 @@ impl Render for BranchMenu {
                 ListItem::new("branch-stash")
                     .disabled(busy || !has_changes)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(BranchPicked::Stash)))
-                    .child(div().text_sm().child(if has_changes {
+                    .child(div().child(if has_changes {
                         "Stash all changes, including new files"
                     } else {
                         "Nothing to stash"
@@ -280,7 +281,7 @@ impl Render for BranchMenu {
                 ListItem::new("branch-stashes")
                     .disabled(busy)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(BranchPicked::OpenStashes)))
-                    .child(div().text_sm().child("Stashes…")),
+                    .child(div().child("Stashes…")),
             )
     }
 }

@@ -308,7 +308,7 @@ impl Render for CreatePrForm {
         let can_create = !disabled && self.input(cx).args().is_ok();
         let field = |label: &'static str| {
             div()
-                .text_xs()
+                .text_sm()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
                 .child(label)

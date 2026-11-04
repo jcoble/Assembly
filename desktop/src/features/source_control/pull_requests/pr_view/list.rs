@@ -172,7 +172,7 @@ impl PrPane {
                                 h_flex()
                                     .gap_1()
                                     .min_w_0()
-                                    .text_xs()
+                                    .text_sm()
                                     .text_color(muted)
                                     .child(format!("{} #{} ·", pr.repository, pr.number))
                                     .child(div().truncate().child(pr.head_branch.clone()))
@@ -184,7 +184,7 @@ impl PrPane {
                         h_flex()
                             .flex_none()
                             .gap_2()
-                            .text_xs()
+                            .text_sm()
                             .text_color(muted)
                             .children(avatar(&pr.author))
                             .children(age_label(

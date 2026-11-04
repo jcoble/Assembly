@@ -1,12 +1,17 @@
-use super::{commit_timeline::CommitTimeline, history_filter::HistoryFilter};
+use super::commit_timeline::{CommitTimeline, uncommitted_of};
+use super::git_status::GitStatus;
+use super::history_filter::{HistoryFilter, author_options, branch_options};
+use crate::core::socket::{client::SocketClient, outcome::Outcome};
 use crate::core::{intents::open_git_history::OpenGitHistory, ui::center_panes::CenterPanes};
+use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, panel_handle, register_panel,
 };
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use serde_json::json;
 use std::collections::HashMap;
@@ -22,6 +27,9 @@ pub struct HistoryPane {
     timeline: Entity<CommitTimeline>,
     search: Entity<InputState>,
     filter: HistoryFilter,
+    /// The working copy behind the toolbar's folder label and the uncommitted row; re-read when shown or refreshed.
+    status: Option<GitStatus>,
+    status_read: Option<Task<()>>,
     _heard: Vec<Subscription>,
 }
 fn key(session: &str) -> String {
@@ -151,7 +159,7 @@ impl HistoryPane {
         cx: &mut Context<Self>,
     ) -> Self {
         let timeline = cx.new(|cx| CommitTimeline::new(session.clone(), path.clone(), expected_source.clone(), true, cx));
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Subject or SHA prefix"));
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search message, hash or author"));
         let heard = vec![
             cx.observe(&timeline, |_, _, cx| cx.notify()),
             cx.subscribe(&search, |pane, _, event: &InputEvent, cx| {
@@ -161,7 +169,7 @@ impl HistoryPane {
                 }
             }),
         ];
-        Self {
+        let mut pane = Self {
             focus: cx.focus_handle(),
             session,
             path,
@@ -169,7 +177,50 @@ impl HistoryPane {
             timeline,
             search,
             filter: HistoryFilter::default(),
+            status: None,
+            status_read: None,
             _heard: heard,
+        };
+        pane.read_status(cx);
+        pane
+    }
+    fn read_status(&mut self, cx: &mut Context<Self>) {
+        let Some(socket) = SocketClient::try_global(cx) else {
+            return;
+        };
+        let call = socket.read(cx).call::<GitStatus>(
+            "git",
+            "status",
+            json!({"session":self.session,"expectedSource":self.expected_source}),
+            Some(&format!("git/status/{}", cx.entity_id())),
+        );
+        self.status_read = Some(cx.spawn(async move |pane, cx| {
+            let outcome = call.await;
+            _ = pane.update(cx, |pane, cx| {
+                pane.status_read = None;
+                pane.status = match outcome {
+                    Outcome::Ok(status) => Some(status),
+                    _ => None,
+                };
+                let uncommitted = pane.status.as_ref().and_then(uncommitted_of);
+                pane.timeline.update(cx, |timeline, cx| timeline.set_uncommitted(uncommitted, cx));
+                cx.notify();
+            });
+        }));
+    }
+    /// What the folder picker's trigger reads: this session's own folder, the only one its history can be read for.
+    fn folder_label(&self) -> String {
+        let Some(status) = &self.status else {
+            return "No repository".into();
+        };
+        let folder = status
+            .checkout_root
+            .as_deref()
+            .map(|root| root.trim_end_matches('/').rsplit('/').next().unwrap_or(root))
+            .unwrap_or("This folder");
+        match &status.branch {
+            Some(branch) => format!("{folder} ({branch})"),
+            None => folder.to_string(),
         }
     }
     fn set_path(&mut self, path: Option<String>, cx: &mut Context<Self>) {
@@ -198,8 +249,14 @@ impl BasePanel for HistoryPane {
     fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
         self.timeline
             .update(cx, |timeline, cx| timeline.set_active(active, cx));
+        if active {
+            self.read_status(cx);
+        } else {
+            self.status_read = None;
+        }
     }
     fn on_removed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.status_read = None;
         self.timeline
             .update(cx, |timeline, cx| timeline.set_active(false, cx));
     }
@@ -216,118 +273,150 @@ impl Panel for HistoryPane {
         HISTORY
     }
 }
+/// One of the toolbar's pickers: its value on the trigger, "All…" and each choice in its menu.
+fn picker(
+    id: &'static str,
+    label: String,
+    all: &'static str,
+    options: Vec<String>,
+    current: Option<String>,
+    pane: WeakEntity<HistoryPane>,
+    pick: fn(&mut HistoryFilter, Option<String>),
+) -> Button {
+    Button::new(id)
+        .outline()
+        .small()
+        .dropdown_caret(true)
+        .label(label)
+        .dropdown_menu(move |menu, _, _| {
+            std::iter::once(None)
+                .chain(options.iter().cloned().map(Some))
+                .fold(menu, |menu, value| {
+                    let pane = pane.clone();
+                    let checked = current == value;
+                    menu.item(
+                        PopupMenuItem::new(value.clone().unwrap_or_else(|| all.into()))
+                            .checked(checked)
+                            .on_click(move |_, _, cx| {
+                                _ = pane.update(cx, |pane, cx| {
+                                    pick(&mut pane.filter, value.clone());
+                                    pane.apply_filter(cx);
+                                });
+                            }),
+                    )
+                })
+        })
+}
 impl Render for HistoryPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let history = &self.timeline.read(cx).history;
-        let mut branches: Vec<String> = history
-            .commits
-            .iter()
-            .flat_map(|commit| {
-                commit.refs.iter().map(|reference| {
-                    reference
-                        .strip_prefix("HEAD -> ")
-                        .unwrap_or(reference)
-                        .to_string()
-                })
-            })
-            .collect();
-        branches.sort();
-        branches.dedup();
-        let mut authors: Vec<String> = history
-            .commits
-            .iter()
-            .map(|commit| commit.author.clone())
-            .collect();
-        authors.sort();
-        authors.dedup();
+        let timeline = self.timeline.read(cx);
+        let (loaded, shown, reading) =
+            (timeline.history.commits.len(), timeline.shown_count(), timeline.is_reading());
+        let branches = branch_options(&timeline.history.commits);
+        let authors = author_options(&timeline.history.commits);
+        let count = if self.filter.active() {
+            format!("{shown} of {loaded}")
+        } else if loaded > 0 {
+            format!("{loaded} commits")
+        } else {
+            String::new()
+        };
+        let theme = cx.theme();
+        let (muted, border, surface) = (theme.muted_foreground, theme.border, theme.secondary);
         let weak = cx.entity().downgrade();
-        let branch_target = weak.clone();
-        let author_target = weak;
-        let branch = self.filter.branch.clone();
-        let author = self.filter.author.clone();
-        let header = h_flex()
-            .px_2()
-            .py_2()
+        let branch_label = format!(
+            "History: {}",
+            self.filter.branch.as_deref().unwrap_or("all branches")
+        );
+        let toolbar = h_flex()
+            .flex_none()
             .gap_2()
-            .child(div().flex_1().child(Input::new(&self.search).small()))
+            .px(px(10.))
+            .py(px(6.))
+            .bg(surface)
+            .border_b_1()
+            .border_color(border)
             .child(
-                Button::new("history-branch")
-                    .ghost()
-                    .compact()
-                    .label(branch.clone().unwrap_or_else(|| "All branches".into()))
-                    .dropdown_menu(move |menu, _, _| {
-                        std::iter::once(None)
-                            .chain(branches.iter().cloned().map(Some))
-                            .fold(menu, |menu, value| {
-                                let target = branch_target.clone();
-                                let selected = branch == value;
-                                menu.item(
-                                    PopupMenuItem::new(
-                                        value.clone().unwrap_or_else(|| "All branches".into()),
-                                    )
-                                    .checked(selected)
-                                    .on_click(
-                                        move |_, _, cx| {
-                                            _ = target.update(cx, |pane, cx| {
-                                                pane.filter.branch = value.clone();
-                                                pane.apply_filter(cx);
-                                            });
-                                        },
-                                    ),
-                                )
-                            })
-                    }),
+                Button::new("history-folder")
+                    .outline()
+                    .small()
+                    .label(self.folder_label())
+                    .disabled(true),
             )
+            .children(self.path.clone().map(|path| {
+                let tip = path.clone();
+                h_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .id("history-path")
+                            .max_w(px(260.))
+                            .truncate()
+                            .px(px(7.))
+                            .py(px(3.))
+                            .border_1()
+                            .border_color(border)
+                            .rounded(px(5.))
+                            .text_sm()
+                            .text_color(muted)
+                            .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                            .child(path),
+                    )
+                    .child(
+                        div().debug_selector(|| "history-path-clear".into()).child(
+                            Button::new("history-path-clear")
+                                .ghost()
+                                .compact()
+                                .icon(Icon::new(IconName::X).size(px(14.)))
+                                .tooltip("Show all repository history")
+                                .on_click(cx.listener(|pane, _, _, cx| pane.set_path(None, cx))),
+                        ),
+                    )
+            }))
             .child(
-                Button::new("history-author")
-                    .ghost()
-                    .compact()
-                    .label(author.clone().unwrap_or_else(|| "All authors".into()))
-                    .dropdown_menu(move |menu, _, _| {
-                        std::iter::once(None)
-                            .chain(authors.iter().cloned().map(Some))
-                            .fold(menu, |menu, value| {
-                                let target = author_target.clone();
-                                let selected = author == value;
-                                menu.item(
-                                    PopupMenuItem::new(
-                                        value.clone().unwrap_or_else(|| "All authors".into()),
-                                    )
-                                    .checked(selected)
-                                    .on_click(
-                                        move |_, _, cx| {
-                                            _ = target.update(cx, |pane, cx| {
-                                                pane.filter.author = value.clone();
-                                                pane.apply_filter(cx);
-                                            });
-                                        },
-                                    ),
-                                )
-                            })
-                    }),
+                picker(
+                    "history-branch",
+                    branch_label,
+                    "All branches",
+                    branches,
+                    self.filter.branch.clone(),
+                    weak.clone(),
+                    |filter, value| filter.branch = value,
+                )
+                .tooltip("Filters the history shown here. It does not switch the working directory."),
             )
+            .child(picker(
+                "history-author",
+                self.filter.author.clone().unwrap_or_else(|| "All authors".into()),
+                "All authors",
+                authors,
+                self.filter.author.clone(),
+                weak,
+                |filter, value| filter.author = value,
+            ))
+            .child(div().flex_1().min_w_0().max_w(px(320.)).child(Input::new(&self.search).small()))
+            .child(div().flex_none().text_sm().text_color(muted).child(count))
+            .child(div().flex_1())
             .child(
                 Button::new("history-refresh")
                     .ghost()
                     .compact()
-                    .label("Refresh")
+                    .icon(Icon::new(IconName::RefreshCw).size(px(14.)))
+                    .tooltip("Read the commit history again")
+                    .disabled(reading)
                     .on_click(cx.listener(|pane, _, _, cx| {
-                        pane.timeline
-                            .update(cx, |timeline, cx| timeline.refresh(cx))
+                        pane.read_status(cx);
+                        pane.timeline.update(cx, |timeline, cx| timeline.refresh(cx))
                     })),
             );
         v_flex()
             .track_focus(&self.focus)
             .size_full()
             .min_h_0()
-            .child(header)
-            .children(self.path.clone().map(|path| {
-                Button::new("history-path")
-                    .ghost()
-                    .compact()
-                    .label(format!("File: {path} ×"))
-                    .on_click(cx.listener(|pane, _, _, cx| pane.set_path(None, cx)))
-            }))
+            .child(toolbar)
             .child(self.timeline.clone())
     }
 }
+#[cfg(test)]
+#[path = "history_pane_tests.rs"]
+mod tests;

@@ -53,12 +53,24 @@ pub fn age_of_millis(millis: i64) -> String {
 pub enum RefKind {
     Head,
     Branch,
+    Remote,
     Tag,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct RefPill {
     pub label: String,
     pub kind: RefKind,
+}
+/// `origin/main`'s shape; a local name holding a slash reads the same, as it did in the old app.
+pub fn is_remote_ref(name: &str) -> bool {
+    !name.starts_with("refs/")
+        && !name.starts_with("HEAD")
+        && !name.starts_with("tag: ")
+        && name.split_once('/').is_some_and(|(remote, rest)| {
+            !rest.is_empty()
+                && !remote.is_empty()
+                && remote.chars().all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
+        })
 }
 /// The names pointing at a commit. `HEAD -> name` is drawn as just the name, and that branch isn't repeated beside it.
 pub fn ref_pills(refs: &[String]) -> Vec<RefPill> {
@@ -87,7 +99,11 @@ pub fn ref_pills(refs: &[String]) -> Vec<RefPill> {
             } else {
                 RefPill {
                     label: decoration.clone(),
-                    kind: RefKind::Branch,
+                    kind: if is_remote_ref(decoration) {
+                        RefKind::Remote
+                    } else {
+                        RefKind::Branch
+                    },
                 }
             }
         })

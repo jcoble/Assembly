@@ -215,6 +215,10 @@ public sealed partial class ChatSocketTests
     public async Task Sessions_create_with_a_parent_makes_a_helper_with_its_title_or_Helper()
     {
         var parent = ReadyParent();
+        var parentLocation = _sessions.Location(parent);
+        Assert.NotNull(parentLocation);
+        var parentFolder = parentLocation.Folder;
+        Assert.Equal(_home.FullName, parentFolder);
         using var socket = await OpenAsync();
 
         await CallAsync(socket, 1, "sessions", "create", JsonSerializer.Serialize(
@@ -229,7 +233,7 @@ public sealed partial class ChatSocketTests
         Assert.Equal((parent.SessionId, true, "Look"), (titled.ParentSessionId, titled.Helper, titled.Title));
         Assert.Equal((parent.SessionId, true, "Session"), (untitled.ParentSessionId, untitled.Helper, untitled.Title));
         Assert.Equal(["agents", "agents"], _here.Asked);
-        Assert.Equal(parent.WorkingFolder, titled.WorkingFolder);
-        Assert.Equal(parent.WorkingFolder, untitled.WorkingFolder);
+        Assert.Equal(parentFolder, titled.WorkingFolder);
+        Assert.Equal(parentFolder, untitled.WorkingFolder);
     }
 }

@@ -21,8 +21,9 @@ struct RemoteDialog {
 }
 pub fn add(target: GitTarget, action: Entity<GitAction>, window: &mut Window, cx: &mut App) {
     let form = cx.new(|cx| {
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Remote name"));
-        let url = cx.new(|cx| InputState::new(window, cx).placeholder("Repository URL"));
+        let name = cx.new(|cx| InputState::new(window, cx));
+        name.update(cx, |name, cx| name.set_value("origin", window, cx));
+        let url = cx.new(|cx| InputState::new(window, cx).placeholder("git@github.com:owner/repo.git or a path"));
         let heard = vec![
             cx.subscribe(&name, |_: &mut RemoteDialog, _, _: &InputEvent, cx| {
                 cx.notify()
@@ -30,7 +31,15 @@ pub fn add(target: GitTarget, action: Entity<GitAction>, window: &mut Window, cx
             cx.subscribe(&url, |_: &mut RemoteDialog, _, _: &InputEvent, cx| {
                 cx.notify()
             }),
-            cx.observe(&action, |_, _, cx| cx.notify()),
+            // A remote that was added is done with the dialog; a refused one stays to be fixed and tried again.
+            cx.observe_in(&action, window, |view: &mut RemoteDialog, action, window, cx| {
+                let action = action.read(cx);
+                if view.submitted && action.pending.is_none() && action.failure_sentence().is_none() {
+                    view.submitted = false;
+                    window.close_dialog(cx);
+                }
+                cx.notify();
+            }),
         ];
         RemoteDialog {
             target,
@@ -42,7 +51,7 @@ pub fn add(target: GitTarget, action: Entity<GitAction>, window: &mut Window, cx
         }
     });
     window.open_dialog(cx, move |dialog, _, _| {
-        dialog.title("Add remote").footer(Empty).child(form.clone())
+        dialog.title("Add remote").width(px(440.)).footer(Empty).child(form.clone())
     });
 }
 impl Render for RemoteDialog {
@@ -51,38 +60,40 @@ impl Render for RemoteDialog {
         let name = self.name.read(cx).value().to_string();
         let url = self.url.read(cx).value().to_string();
         let danger = cx.theme().danger;
+        let field = |label: &'static str, input: &Entity<InputState>| {
+            v_flex()
+                .gap_1()
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(label))
+                .child(Input::new(input).disabled(busy))
+        };
         v_flex()
-            .gap_2()
-            .child(Input::new(&self.name).disabled(busy))
-            .child(Input::new(&self.url).disabled(busy))
+            .gap_3()
+            .child(field("Name", &self.name))
+            .child(field("URL", &self.url))
             .children(
                 self.action
                     .read(cx)
                     .failure_sentence()
                     .filter(|_| self.submitted)
-                    .map(|error| div().text_sm().text_color(danger).child(error)),
-            )
-            .children(
-                self.action
-                    .read(cx)
-                    .message
-                    .clone()
-                    .filter(|_| self.submitted)
-                    .map(|message| div().text_sm().child(message)),
+                    .map(|error| div().text_color(danger).child(error)),
             )
             .child(
                 h_flex()
+                    .justify_end()
                     .gap_2()
                     .child(
-                        Button::new("remote-close")
+                        Button::new("remote-cancel")
                             .ghost()
-                            .label("Close")
+                            .small()
+                            .label("Cancel")
+                            .disabled(busy)
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .child(
                         Button::new("remote-add")
                             .primary()
-                            .label("Add remote")
+                            .small()
+                            .label(if busy { "Adding…" } else { "Add" })
                             .disabled(busy || remote_args(&self.target.session, &name, &url).is_err())
                             .on_click(cx.listener(|view, _, _, cx| {
                                 let name = view.name.read(cx).value().to_string();
