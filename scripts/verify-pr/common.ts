@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
@@ -58,7 +58,7 @@ export function context(c: Config, directory: string): Context {
   const ctx: Context = JSON.parse(readFileSync(join(directory, 'context.json'), 'utf8'));
   if (!Number.isSafeInteger(ctx.pr) || ctx.pr < 1 || !/^[a-f0-9]{40}$/.test(ctx.sha) ||
       !/^[a-f0-9]{40}$/.test(ctx.base)) throw Error('Invalid saved context');
-  const expected = join(c.worktrees, `verify-pr-${ctx.pr}-${ctx.sha}`);
+  const expected = join(c.worktrees, `verify-pr-${ctx.pr}-${ctx.sha}-${basename(directory)}`);
   if (ctx.worktree !== expected || !resolve(ctx.output).startsWith(resolve(c.workerHome) + '/'))
     throw Error('Invalid saved lane paths');
   return ctx;

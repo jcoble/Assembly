@@ -1,5 +1,5 @@
 import { mkdtempSync, readdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { config, command, gh, status, atomic, main, privateDirectory, ci, recordedUnits, stopUnit } from './common.ts';
 import { post } from './post.ts';
 
@@ -51,7 +51,7 @@ export function dispatch(input: string, locked=false) {
   const sha = pull.head.sha;
   const output = join(c.workerHome, 'results', directory.split('/').at(-1)!);
   const ctx = { pr, sha, base: pull.base.sha, started: new Date().toISOString(), output,
-    worktree: join(c.worktrees, `verify-pr-${pr}-${sha}`),
+    worktree: join(c.worktrees, `verify-pr-${pr}-${sha}-${basename(directory)}`),
     task: /TSK-[0-9]+/.exec(`${pull.title}\n${pull.body}`)?.[0] || '',
     title: String(pull.title || ''), body: String(pull.body || ''),
     ci: ci(c,sha),

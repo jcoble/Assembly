@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const source = import.meta.dirname;
 const sha = 'a'.repeat(40);
-function fixture(t: any) {
+function fixture(t: any, head = sha, base = 'b'.repeat(40)) {
   const root = mkdtempSync(join(tmpdir(), 'verify-pr-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bin = join(root, 'bin'); mkdirSync(bin);
@@ -22,10 +22,10 @@ function fixture(t: any) {
   const responses = join(root, 'responses.json');
   let replies: Record<string, any> = {
     'repos/jcoble/Assembly/pulls/12': { number: 12, state: 'open', draft: false,
-      user: { login: 'jcoble' }, head: { sha, repo: { full_name: 'jcoble/Assembly' } },
-      base: { sha: 'b'.repeat(40) }, title: 'TSK-1667', body: 'Task https://app.notion.com/p/40e394b0689d81e7ad28d008bf580fe6' },
+      user: { login: 'jcoble' }, head: { sha: head, repo: { full_name: 'jcoble/Assembly' } },
+      base: { sha: base }, title: 'TSK-1667', body: 'Task https://app.notion.com/p/40e394b0689d81e7ad28d008bf580fe6' },
     'repos/jcoble/Assembly/issues/12/comments?per_page=100&page=1': [],
-    ['repos/jcoble/Assembly/commits/' + sha + '/check-runs']: { check_runs: [] },
+    ['repos/jcoble/Assembly/commits/' + head + '/check-runs']: { check_runs: [] },
     ['repos/jcoble/Assembly/commits/' + sha + '/statuses?per_page=100&page=1']: [],
     'repos/jcoble/Assembly/issues/comments/99': {user:{login:'jcoble'},issue_url:'https://api.github.com/repos/jcoble/Assembly/issues/12',body:'@verify'},
   };
@@ -38,9 +38,12 @@ if(name==='gh') { const endpoint=args.find(x=>x.startsWith('repos/')); const r=r
  if(process.env.FAIL_POST==='1' && args.includes('POST')) process.exit(1);
  process.stdout.write(JSON.stringify(r??{})); }
 if(name==='git') { if(args.includes('--format=%B')) console.log(process.env.TRAILERS||'Committed-by: Codex SOL 6.1');
- if(args.includes('rev-parse')&&args.includes('HEAD')) console.log('${sha}');
- if(args.includes('worktree')&&args.includes('add')) fs.mkdirSync(path.join(args.at(-2),'app'),{recursive:true});
- if(args.includes('--name-only')) console.log(process.env.DIFF_FILES||'src/code.ts');
+ if(args.includes('rev-parse')&&args.includes('HEAD')) console.log('${head}');
+ if(args.includes('worktree')&&args.includes('add')) { fs.mkdirSync(args.at(-2)); fs.mkdirSync(path.join(args.at(-2),'app')); }
+ if(args.includes('worktree')&&args.includes('remove')) fs.rmSync(args.at(-1),{recursive:true});
+ if(args.includes('--name-only')) {
+  if(process.env.DIFF_REPO) { const r=require('node:child_process').spawnSync(process.env.REAL_GIT,['-C',process.env.DIFF_REPO,...args.slice(2)],{encoding:'utf8'});process.stdout.write(r.stdout||'');process.exit(r.status??1); }
+  console.log(process.env.DIFF_FILES||'src/code.ts'); }
  if(args.includes('status')) { const dirty=(process.env.DIRTY||'').split('\\n').filter(x=>!args.includes(':!evidence')||!/^.. evidence\\//.test(x)); process.stdout.write(dirty.join('\\n')); } }
 if(name==='ps') console.log(process.env.BUILDS||'');
 if(name==='id') console.log(args.includes('-nG')?'verify':'1002');
@@ -53,7 +56,7 @@ if(name==='sudo') { const child=require('node:child_process'); const index=args.
  if(args.includes('/bin/sh')&&args.includes('verify-read-audit')) {console.log(process.env.AUDIT_READABLE==='1'?'READABLE':'DENIED');process.exit(0);}
  if(args.includes('-C')&&(args.includes('iptables')||args.includes('ip6tables'))&&process.env.FAIL_FIREWALL==='1') process.exit(1);
  if(index>=0) { const rest=args.slice(index+2); const env={}; while(rest[0]?.includes('=')){const x=rest.shift();const p=x.indexOf('=');env[x.slice(0,p)]=x.slice(p+1);}
- for(const key of ['CALLS','REPLIES','TRAILERS','DIRTY','AGENT_RESULT','DIFF_FILES']) if(process.env[key]) env[key]=process.env[key];
+ for(const key of ['CALLS','REPLIES','TRAILERS','DIRTY','AGENT_RESULT','DIFF_FILES','DIFF_REPO','REAL_GIT']) if(process.env[key]) env[key]=process.env[key];
  const r=child.spawnSync(rest.shift(),rest,{env,encoding:'utf8'}); process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??1); } }
 if(name==='codex'||name==='claude') { fs.appendFileSync(process.env.CALLS,JSON.stringify({name:'agent-environment',env:process.env,stdin:fs.readFileSync(0,'utf8')})+'\n');
  fs.writeFileSync(process.env.VERIFY_RESULT,process.env.AGENT_RESULT||'{}'); }
@@ -72,8 +75,8 @@ if(name==='codex'||name==='claude') { fs.appendFileSync(process.env.CALLS,JSON.s
   function result(value: any) {
     const dir = join(config.state, 'run-12-test'); mkdirSync(dir);
     const output = join(config.workerHome, 'result'); mkdirSync(output);
-    writeFileSync(join(dir,'context.json'), JSON.stringify({pr:12, sha, base:'b'.repeat(40), started:'2026-11-04T00:00:00Z', output,
-      worktree:join(config.worktrees,'verify-pr-12-'+sha), task:'TSK-1667', title:'Test', body:'', ci:{check_runs:[]}}));
+    writeFileSync(join(dir,'context.json'), JSON.stringify({pr:12, sha:head, base, started:'2026-11-04T00:00:00Z', output,
+      worktree:join(config.worktrees,'verify-pr-12-'+head+'-run-12-test'), task:'TSK-1667', title:'Test', body:'', ci:{check_runs:[]}}));
     if(value !== undefined) writeFileSync(join(output,'result.json'), typeof value==='string'? value:JSON.stringify(value));
     return dir;
   }
@@ -219,7 +222,7 @@ test('run creates a detached exact-SHA lane, isolates credentials and starts Cod
   assert.equal(r.status,0,r.stderr);
   const calls=f.calls();
   assert.ok(calls.some(x=>x.name==='git'&&x.args.includes('--detach')&&x.args.includes(sha)));
-  const lane=join(f.config.worktrees,'verify-pr-12-'+sha,'.lane');
+  const lane=join(f.config.worktrees,'verify-pr-12-'+sha+'-run-12-test','.lane');
   assert.equal(readFileSync(lane,'utf8'),'LANE_NAME=verify-pr\nLANE_NUMBER=3\n');
   const packages=calls.findIndex(x=>x.name==='pnpm');
   assert.deepEqual(calls[packages].args,['install','--silent','--prefer-offline']);
@@ -232,6 +235,8 @@ test('run creates a detached exact-SHA lane, isolates credentials and starts Cod
   assert.equal(child.stdin,''); assert.equal(child.env.SECRET_SENTINEL,undefined);
   assert.equal(child.env.HOME,f.config.workerHome);
   assert.ok(!r.stdout.includes('do-not-inherit'));
+  const fetch=calls.find(x=>x.name==='git'&&x.args.includes('fetch'));
+  assert.deepEqual(fetch.args.slice(fetch.args.indexOf('fetch')),['fetch','--no-tags','origin','b'.repeat(40),sha]);
 });
 test('run takes one blocking flock before launching and gives Claude no messaging hooks',t=>{
   const f=fixture(t),dir=f.result(undefined);
@@ -354,4 +359,50 @@ test('evidence exclusion still detects other mutations',t=>{
   const r=f.run('post.ts',[dir],{DIRTY:'?? evidence/summary.json\n M source.ts'});
   assert.equal(r.status,0,r.stderr);
   assert.equal(JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8')).label,'REDO');
+});
+
+test('a second attempt at the same SHA prepares a new lane while preserving dirty evidence',t=>{
+  const f=fixture(t), attempts: {directory:string;ctx:any}[]=[];
+  for(let attempt=0;attempt<2;attempt++) {
+    const dispatched=f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12'});
+    assert.equal(dispatched.status,0,dispatched.stderr);
+    const entry=readdirSync(f.config.state).find(x=>x.startsWith('run-')&&!attempts.some(a=>a.directory===join(f.config.state,x)))!;
+    const directory=join(f.config.state,entry),ctx=JSON.parse(readFileSync(join(directory,'context.json'),'utf8'));
+    const ran=f.run('run.ts',[directory,'--locked']);
+    assert.equal(ran.status,0,ran.stderr);
+    assert.equal(readFileSync(join(ctx.worktree,'.lane'),'utf8'),'LANE_NAME=verify-pr\nLANE_NUMBER=3\n');
+    attempts.push({directory,ctx});
+    const posted=f.run('post.ts',[directory],attempt===0?{DIRTY:'?? evidence/summary.md'}:{});
+    assert.equal(posted.status,0,posted.stderr);
+    if(attempt===0) assert.ok(existsSync(ctx.worktree));
+  }
+  assert.notEqual(attempts[0].ctx.worktree,attempts[1].ctx.worktree);
+  assert.ok(existsSync(attempts[0].ctx.worktree),'dirty first lane remains');
+  assert.ok(!existsSync(attempts[1].ctx.worktree),'clean second lane is removed');
+  assert.equal(f.calls().filter(x=>x.name==='codex').length,2);
+});
+
+test('README-only head stays NOT AFFECTED when the base independently adds code',t=>{
+  const repo=mkdtempSync(join(tmpdir(),'verify-pr-history-'));
+  t.after(()=>rmSync(repo,{recursive:true,force:true}));
+  const realGit=spawnSync('which',['git'],{encoding:'utf8'}).stdout.trim();
+  function git(...args:string[]) {
+    const r=spawnSync(realGit,['-C',repo,...args],{encoding:'utf8',env:{...process.env,
+      GIT_AUTHOR_NAME:'Test',GIT_AUTHOR_EMAIL:'test@example.com',GIT_COMMITTER_NAME:'Test',GIT_COMMITTER_EMAIL:'test@example.com'}});
+    assert.equal(r.status,0,r.stderr); return r.stdout.trim();
+  }
+  git('init'); writeFileSync(join(repo,'README.md'),'initial'); git('add','.'); git('commit','-m','initial');
+  const ancestor=git('rev-parse','HEAD');
+  writeFileSync(join(repo,'README.md'),'documentation update'); git('commit','-am','docs');
+  const head=git('rev-parse','HEAD');
+  git('checkout','--detach',ancestor); writeFileSync(join(repo,'code.ts'),'export const value=1;');
+  git('add','.'); git('commit','-m','base code'); const base=git('rev-parse','HEAD');
+  assert.match(git('diff','--name-only',base,head),/code.ts/);
+  assert.equal(git('diff','--name-only',`${base}...${head}`),'README.md');
+  const f=fixture(t,head,base),directory=f.result({sha:head,summary:'Docs',
+    behaviors:[{name:'docs',state:'NOT AFFECTED',details:'README only',proof:[]}],tests:[],proof:[]});
+  const r=f.run('post.ts',[directory],{DIFF_REPO:repo,REAL_GIT:realGit});
+  assert.equal(r.status,0,r.stderr);
+  const receipt=JSON.parse(readFileSync(join(directory,'receipt.json'),'utf8'));
+  assert.equal(receipt.label,'NOT AFFECTED'); assert.equal(receipt.state,'success');
 });

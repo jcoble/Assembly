@@ -34,6 +34,7 @@ export function run(directory: string, locked = false) {
   auditAccount(c); auditFirewall(c); // Reboot or permission drift cannot silently remove the install boundary.
   worker(c,'mkdir',['-p',ctx.output,c.worktrees]);
   // Public clone and fetch run as verify: no owner GitHub token, credential helper, or home is inherited.
+  // Keep full history so posting can compare the PR against its merge base.
   worker(c,'git',['-C',c.clone,'-c','credential.helper=','fetch','--no-tags','origin',ctx.base,ctx.sha]);
   const trailers=worker(c,'git',['-C',c.clone,'log','--format=%B',`${ctx.base}..${ctx.sha}`]);
   const model=selectModel(trailers,ctx.output);

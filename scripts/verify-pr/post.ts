@@ -39,7 +39,7 @@ function makeReceipt(c: Config, ctx: Context, directory: string) {
     const tested=worker(c,'git',['-C',ctx.worktree,'rev-parse','HEAD']).trim();
     if(changed || tested!==ctx.sha) result.behaviors.push({name:'Verification-only boundary',state:'FAIL',
       details:'Verifier changed the lane or its HEAD; the declared PR commit was not verified cleanly.',proof:[]});
-    const changedFiles=worker(c,'git',['-C',ctx.worktree,'diff','--name-only',ctx.base,ctx.sha]).trim().split('\n').filter(Boolean);
+    const changedFiles=worker(c,'git',['-C',ctx.worktree,'diff','--name-only',`${ctx.base}...${ctx.sha}`]).trim().split('\n').filter(Boolean);
     const codeChanged=changedFiles.some(file=>!(/\.(md|rst)$/i.test(file) || /^(docs\/.*\.txt|(?:README|LICENSE|NOTICE)(?:\.[^/]*)?)$/i.test(file)));
     let receiptsValid=true;
     const receipts: {file:string;description:string}[]=[];
