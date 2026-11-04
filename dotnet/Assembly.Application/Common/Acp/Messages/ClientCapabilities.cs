@@ -7,7 +7,7 @@ namespace Assembly.Application.Common.Acp.Messages;
 /// </summary>
 public sealed record ClientCapabilities(ElicitationCapabilities Elicitation, AuthCapabilities Auth)
 {
-    public static ClientCapabilities Assembly { get; } = new(new(new(), new()), new(null));
+    public static ClientCapabilities Assembly { get; } = new(new(new(), new()), new(new()));
 
     public static ClientCapabilities WithTerminalAuthentication(bool enabled) =>
         new(Assembly.Elicitation, new(enabled ? new TerminalAuth() : null));

@@ -19,9 +19,11 @@ public sealed class AcpV2MessagesTests
         Assert.False(capabilities.TryGetProperty("_meta", out _));
         Assert.False(capabilities.TryGetProperty("fs", out _));
         Assert.False(capabilities.TryGetProperty("terminal", out _));
-        Assert.False(capabilities.GetProperty("auth").TryGetProperty("terminal", out _));
+        Assert.Equal("{}", capabilities.GetProperty("auth").GetProperty("terminal").GetRawText());
         var terminal = JsonSerializer.SerializeToElement(ClientCapabilities.WithTerminalAuthentication(true), AcpJsonContext.Default.ClientCapabilities);
         Assert.Equal("{}", terminal.GetProperty("auth").GetProperty("terminal").GetRawText());
+        var unavailable = JsonSerializer.SerializeToElement(ClientCapabilities.WithTerminalAuthentication(false), AcpJsonContext.Default.ClientCapabilities);
+        Assert.False(unavailable.GetProperty("auth").TryGetProperty("terminal", out _));
         Assert.Equal("{}", capabilities.GetProperty("elicitation").GetProperty("url").GetRawText());
     }
 

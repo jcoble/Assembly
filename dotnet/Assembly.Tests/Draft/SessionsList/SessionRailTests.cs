@@ -196,9 +196,8 @@ public sealed partial class SessionRailTests : IDisposable
         Running(Helper(mixed, "codex"));
 
         Assert.Equal((3, 0), (Sessions(Read(providers: ["codex"])).Count, Read(providers: ["codex"]).Totals.Needs));
-        // The actual source row and the unbound legacy facade remain separately qualified.
-        Assert.Equal((5, 1), (Sessions(Read(providers: ["claude"])).Count, Read(providers: ["claude"]).Totals.Needs));
-        Assert.Equal((3, 1), (Sessions(Read(locations: ["remote"])).Count, Read(locations: ["remote"]).Totals.Needs));
+        Assert.Equal((4, 1), (Sessions(Read(providers: ["claude"])).Count, Read(providers: ["claude"]).Totals.Needs));
+        Assert.Equal((2, 1), (Sessions(Read(locations: ["remote"])).Count, Read(locations: ["remote"]).Totals.Needs));
         Assert.Equal(5, Sessions(Read(providers: ["claude", "codex"], locations: ["local"])).Count);
         var none = Read(providers: ["nobody"]);
         Assert.Equal(new RailTotals(0), none.Totals);
