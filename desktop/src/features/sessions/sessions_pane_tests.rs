@@ -200,10 +200,13 @@ fn selected(cx: &mut VisualTestContext) -> Option<String> {
     })
 }
 
-/// The pane takes `answer` as its read's.
+/// The pane takes `answer` as its read's: the one already out if the rail topic started one, or a new one.
 fn answer(pane: &Entity<SessionsPane>, answer: RailPage, cx: &mut VisualTestContext) {
     pane.update(cx, |pane, cx| {
-        let (id, _) = pane.rail.changed().unwrap();
+        let id = pane
+            .rail
+            .reading_id()
+            .unwrap_or_else(|| pane.rail.changed().unwrap().0);
         pane.answer(id, Outcome::Ok(answer), cx);
     });
     draw(cx);

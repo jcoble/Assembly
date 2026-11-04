@@ -133,6 +133,12 @@ pub struct Rail {
 }
 
 impl Rail {
+    /// The read that's out, for a test to answer.
+    #[cfg(test)]
+    pub fn reading_id(&self) -> Option<u64> {
+        self.reading.map(|(id, _)| id)
+    }
+
     /// A change came: read now, or once the read that's out answers.
     pub fn changed(&mut self) -> Option<Request> {
         if self.reading.is_some() {
