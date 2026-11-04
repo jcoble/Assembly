@@ -142,7 +142,7 @@ private_descriptor=$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)
 if run_agents CODEX_HOME= 2>"$tmp/empty-codex-home.err"; then
   echo "FAIL explicitly empty CODEX_HOME was accepted"; exit 1
 fi
-rg -q 'CODEX_HOME must not be empty when configured' "$tmp/empty-codex-home.err"
+grep -Fq 'CODEX_HOME must not be empty when configured' "$tmp/empty-codex-home.err"
 [[ "$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)" == "$private_descriptor" ]]
 echo "ok   explicitly empty CODEX_HOME refuses config lookup and preserves the descriptor"
 expect_config "selects newest complete provider release, not app latest or incomplete/draft releases" entries
@@ -176,7 +176,7 @@ before_tree=$(cd "$active_bundle" && find . -type f -print0 | sort -z | xargs -0
 if ! run_agents FAKE_FAIL_LIST=1 2>"$tmp/offline.err"; then echo "FAIL cached offline startup: $(cat "$tmp/offline.err")"; exit 1; fi
 [[ "$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)" == "$before_descriptor" ]]
 [[ "$(cd "$active_bundle" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)" == "$before_tree" ]]
-rg -q 'retaining validated cached bundle assembly-providers-202-1' "$tmp/offline.err"
+grep -Fq 'retaining validated cached bundle assembly-providers-202-1' "$tmp/offline.err"
 echo "ok   cached bundle starts offline and update failure preserves saved state"
 
 # A successful lookup followed by an asset download failure also keeps the validated cache.
@@ -187,7 +187,7 @@ PY
 if ! run_agents FAKE_FAIL_DOWNLOAD=1 2>"$tmp/download.err"; then echo "FAIL download fallback: $(cat "$tmp/download.err")"; exit 1; fi
 [[ "$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)" == "$before_descriptor" ]]
 [[ "$(cd "$active_bundle" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)" == "$before_tree" ]]
-rg -q 'retaining validated cached bundle assembly-providers-202-1' "$tmp/download.err"
+grep -Fq 'retaining validated cached bundle assembly-providers-202-1' "$tmp/download.err"
 echo "ok   failed provider download retains the validated cache"
 
 # No cache plus a failed provider lookup gives a clear error and writes no descriptor or staged contents.
@@ -195,7 +195,7 @@ if env HOME="$tmp/home" PATH="$tmp/bin:/usr/bin:/bin" FAKE_RELEASES_FILE="$tmp/r
   bash "$here/../dotnet/scripts/agents-file.sh" "$tmp/fresh-adapters" "$tmp/fresh-agents.json" 2>"$tmp/fresh.err"; then
   echo "FAIL fresh offline startup unexpectedly succeeded"; exit 1
 fi
-rg -q 'no valid cached bundle exists' "$tmp/fresh.err"
+grep -Fq 'no valid cached bundle exists' "$tmp/fresh.err"
 [[ ! -e "$tmp/fresh-agents.json" ]]
 [[ -z "$(find "$tmp/fresh-adapters/bundles" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)" ]]
 echo "ok   fresh offline startup fails clearly without writing saved state"
@@ -204,7 +204,7 @@ if env HOME="$tmp/home" PATH="$tmp/bin:/usr/bin:/bin" FAKE_RELEASES_FILE="$tmp/r
   bash "$here/../dotnet/scripts/agents-file.sh" "$tmp/fresh-download-adapters" "$tmp/fresh-download-agents.json" 2>"$tmp/fresh-download.err"; then
   echo "FAIL fresh download failure unexpectedly succeeded"; exit 1
 fi
-rg -q 'no valid cached bundle exists' "$tmp/fresh-download.err"
+grep -Fq 'no valid cached bundle exists' "$tmp/fresh-download.err"
 [[ ! -e "$tmp/fresh-download-agents.json" ]]
 [[ -z "$(find "$tmp/fresh-download-adapters/bundles" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)" ]]
 echo "ok   fresh failed download leaves no descriptor or staged bundle"
@@ -217,7 +217,7 @@ PY
 if ! run_agents 2>"$tmp/truncated.err"; then echo "FAIL truncated archive fallback: $(cat "$tmp/truncated.err")"; exit 1; fi
 [[ "$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)" == "$before_descriptor" ]]
 [[ "$(cat "$active_bundle/claude-launcher.ts")" == "export const launcher = 'selected';" ]]
-rg -q 'retaining validated cached bundle assembly-providers-202-1' "$tmp/truncated.err"
+grep -Fq 'retaining validated cached bundle assembly-providers-202-1' "$tmp/truncated.err"
 [[ -z "$(find "$tmp/adapters/bundles" -maxdepth 1 -type d -name '.install.*' -print -quit)" ]]
 [[ -z "$(find "$tmp/adapters/bundles" -maxdepth 1 -type d -name 'assembly-providers-206-1-*' -print -quit)" ]]
 echo "ok   truncated archive leaves active bundle and descriptor intact"
@@ -231,7 +231,7 @@ printf '[mcp_servers.alpha\n' >"$tmp/home/.codex/config.toml"
 if run_agents 2>"$tmp/toml.err"; then echo "FAIL malformed TOML unexpectedly succeeded"; exit 1; fi
 [[ "$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)" == "$before_descriptor" ]]
 [[ "$(cat "$active_bundle/claude-launcher.ts")" == "export const launcher = 'selected';" ]]
-rg -q 'TOMLDecodeError' "$tmp/toml.err"
+grep -Fq 'TOMLDecodeError' "$tmp/toml.err"
 [[ -z "$(find "$tmp/adapters/bundles" -maxdepth 1 -type d -name '.install.*' -print -quit)" ]]
 [[ -z "$(find "$tmp/adapters/bundles" -maxdepth 1 -type d -name 'assembly-providers-207-1-*' -print -quit)" ]]
 echo "ok   malformed TOML preserves prior bundle and descriptor byte-for-byte"
@@ -349,6 +349,6 @@ with open(path, "w") as output: json.dump(agents, output)
 PY
 empty_owner_descriptor=$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)
 if run_agents 2>"$tmp/empty-owner-home.err"; then echo "FAIL empty owner home unexpectedly succeeded"; exit 1; fi
-rg -q 'CODEX_HOME must not be empty when configured' "$tmp/empty-owner-home.err"
+grep -Fq 'CODEX_HOME must not be empty when configured' "$tmp/empty-owner-home.err"
 [[ "$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)" == "$empty_owner_descriptor" ]]
 echo "ok   explicit empty owner CODEX_HOME refuses without default lookup or output replacement"
