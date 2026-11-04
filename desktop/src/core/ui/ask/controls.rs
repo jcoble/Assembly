@@ -1,5 +1,6 @@
 //! One shared provider form renderer. The owning surface supplies option presentation and submits actual answers.
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::inline_field::field_row;
 use std::rc::Rc;
 use gpui_kit::*;
 use gpui_kit::component::{ActiveTheme as _,h_flex,v_flex};
@@ -68,7 +69,7 @@ pub fn render(key:&str,ask:&AskPayload,form:Option<&AskForm>,choices:&[(String,S
                     .flex_1()
                     .text_color(theme.muted_foreground)
                     .child(choices);
-                column = column.child(inline_field(label, hint, value, cx));
+                column = column.child(field_row(label, hint.map(Into::into), None, value, cx));
             }
             return column;
         }
@@ -142,7 +143,7 @@ pub fn render(key:&str,ask:&AskPayload,form:Option<&AskForm>,choices:&[(String,S
                     row
                 }
             };
-            column = column.child(inline_field(label, field.description.clone(), value, cx));
+            column = column.child(field_row(label, field.description.clone().map(Into::into), None, value, cx));
         }
         column.child(
             h_flex()
@@ -174,27 +175,3 @@ pub fn render(key:&str,ask:&AskPayload,form:Option<&AskForm>,choices:&[(String,S
         )
     }
 
-/// An inline field's editing row: its label in a 64 px column, beside the input or choices, and its hint under them.
-fn inline_field(label: String, hint: Option<String>, value: Div, cx: &App) -> Div {
-    let muted = cx.theme().muted_foreground;
-    v_flex()
-        .gap_1()
-        .child(
-            h_flex()
-                .min_h(px(28.))
-                .gap_2()
-                .child(
-                    div()
-                        .w(px(64.))
-                        .flex_none()
-                        .text_role(TextRole::Meta, cx)
-                        .text_color(muted)
-                        .truncate()
-                        .child(label),
-                )
-                .child(value),
-        )
-        .when_some(hint, |column, hint| {
-            column.child(div().pl(px(72.)).text_role(TextRole::Meta, cx).text_color(muted).child(hint))
-        })
-}

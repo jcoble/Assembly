@@ -1,6 +1,9 @@
 #[path = "ui_preview/support.rs"]
 mod core;
-// The preview exercises a subset of the reusable field API.
+// The preview exercises a subset of the reusable pieces.
+#[allow(dead_code)]
+#[path = "../src/components/activity/mod.rs"]
+mod activity;
 #[allow(dead_code)]
 #[path = "../src/components/inline_field/mod.rs"]
 mod inline_field;

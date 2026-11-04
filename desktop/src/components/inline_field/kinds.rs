@@ -1,6 +1,6 @@
 //! The field kinds beyond plain text, dates, times and choices, as RentalCommand's forms have them: each is an
 //! ordinary `InlineField` with its own mask, display and default rule.
-use super::editor::Editor;
+use super::editor::{ChoiceOption, Editor};
 use super::field::{FieldValue, InlineField};
 use chrono::NaiveDateTime;
 use gpui_kit::component::input::MaskPattern;
@@ -97,6 +97,17 @@ fn digits_rule(value: &FieldValue, lengths: &[usize], message: &str) -> Result<(
 }
 
 impl InlineField {
+    /// A status shown as its chip. One click opens the menu and one pick saves. In a form, the pick changes the draft.
+    pub fn chip(
+        title: impl Into<SharedString>,
+        options: Vec<ChoiceOption>,
+        value: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::with_editor(title.into(), FieldValue::Choice(value), Editor::Chip { options }, window, cx)
+    }
+
     /// Enter saves and Shift-Enter adds a line, as in the answer box.
     pub fn multiline(
         title: impl Into<SharedString>,

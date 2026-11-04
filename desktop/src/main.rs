@@ -4,6 +4,9 @@
 mod core;
 mod features;
 #[allow(dead_code)]
+#[path = "components/activity/mod.rs"]
+mod activity;
+#[allow(dead_code)]
 #[path = "components/inline_field/mod.rs"]
 mod inline_field;
 

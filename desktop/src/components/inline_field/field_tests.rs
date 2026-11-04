@@ -474,3 +474,65 @@ fn number_saves_the_unmasked_value(cx: &mut TestAppContext) {
     field.press("enter");
     assert_eq!(field.saved(), [text("1234567.89")]);
 }
+
+fn chip_field(cx: &mut TestAppContext, in_form: bool) -> Open<'_> {
+    open(cx, move |window, cx| {
+        let field = InlineField::chip(
+            "Status",
+            vec![ChoiceOption::new("a", "A"), ChoiceOption::new("b", "B"), ChoiceOption::new("c", "C")],
+            Some("a".into()),
+            window,
+            cx,
+        );
+        if in_form { field.in_form() } else { field }
+    })
+}
+
+impl Open<'_> {
+    fn pick_chip(&mut self, value: &str) {
+        let field = self.field.clone();
+        let value = value.to_owned();
+        self.cx.update(|window, cx| field.update(cx, |field, cx| field.pick_chip(value, window, cx)));
+        self.draw();
+    }
+}
+
+#[gpui::test]
+fn chip_saves_on_pick_with_one_click(cx: &mut TestAppContext) {
+    let mut chip = chip_field(cx, false);
+    assert!(!chip.editing(), "there's nothing to open first");
+    chip.pick_chip("b");
+    assert_eq!(chip.saved(), [choice("b")]);
+    assert!(chip.complete(Ok(choice("b"))));
+    assert_eq!(chip.read(|field| field.committed().clone()), choice("b"));
+    assert!(!chip.editing());
+}
+
+#[gpui::test]
+fn second_chip_pick_while_saving_is_refused(cx: &mut TestAppContext) {
+    let mut chip = chip_field(cx, false);
+    chip.pick_chip("b");
+    chip.pick_chip("c");
+    assert_eq!(chip.saved(), [choice("b")]);
+    assert_eq!(chip.read(|field| field.draft().clone()), choice("b"));
+}
+
+#[gpui::test]
+fn a_refused_chip_keeps_its_pick_and_can_be_picked_again(cx: &mut TestAppContext) {
+    let mut chip = chip_field(cx, false);
+    chip.pick_chip("b");
+    chip.complete(Err(SaveFailure::Refused("No".into())));
+    assert_eq!(chip.read(|field| field.state.error().map(str::to_owned)), Some("No".to_owned()));
+    chip.pick_chip("c");
+    assert_eq!(chip.saved(), [choice("b"), choice("c")]);
+}
+
+#[gpui::test]
+fn a_chip_in_a_form_changes_the_draft_and_sends_nothing(cx: &mut TestAppContext) {
+    let mut chip = chip_field(cx, true);
+    let field = chip.field.clone();
+    chip.cx.update(|window, cx| field.update(cx, |field, cx| field.begin_edit(window, cx)));
+    chip.pick_chip("b");
+    assert!(chip.saved().is_empty());
+    assert_eq!(chip.read(|field| field.draft().clone()), choice("b"));
+}

@@ -1,12 +1,13 @@
 use super::editor::{ChoiceOption, Editor};
+use super::layout::field_row;
 use super::state::{EditState, SaveFailure, SaveRequest};
+use crate::activity::StatusChip;
 use crate::core::theme::text::{TextRole, TextRoleExt as _, role_size};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use gpui_kit::base::actions::Confirm;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::date_picker::DatePickerEvent;
 use gpui_kit::component::dialog::Cancel;
-use gpui_kit::component::form::{Field, Form};
 use gpui_kit::component::input::{Escape, InputEvent};
 use gpui_kit::component::label::Label;
 use gpui_kit::component::select::SelectEvent;
@@ -166,12 +167,13 @@ impl InlineField {
             mode: SaveMode::Single,
             read_only: false,
             saving: false,
-            _heard: vec![left, Self::hear(&editor, window, cx)],
+            _heard: std::iter::once(left).chain(Self::hear(&editor, window, cx)).collect(),
             editor,
         }
     }
-    fn hear(editor: &Editor, window: &mut Window, cx: &mut Context<Self>) -> Subscription {
-        match editor {
+    fn hear(editor: &Editor, window: &mut Window, cx: &mut Context<Self>) -> Option<Subscription> {
+        Some(match editor {
+            Editor::Chip { .. } => return None,
             Editor::Text { state, shape } => {
                 let shape = *shape;
                 cx.subscribe_in(state, window, move |field, input, event, window, cx| {
@@ -222,7 +224,18 @@ impl InlineField {
                     field.save_if_single(window, cx);
                 })
             }
+        })
+    }
+    /// One pick saves, with no edit mode to open first. In a form it changes the draft.
+    pub(super) fn pick_chip(&mut self, value: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only || self.saving {
+            return;
         }
+        if self.mode == SaveMode::Single {
+            self.state.edit();
+        }
+        self.changed(FieldValue::Choice(Some(value)), window, cx);
+        self.save_if_single(window, cx);
     }
     pub fn committed(&self) -> &FieldValue {
         self.state.committed()
@@ -409,6 +422,13 @@ impl InlineField {
             cx.stop_propagation();
         }
     }
+    fn display_element(&self, cx: &App) -> AnyElement {
+        if let (Editor::Chip { options }, FieldValue::Choice(value)) = (&self.editor, self.state.committed()) {
+            let (label, tone) = ChoiceOption::shown(options, value.as_deref());
+            return StatusChip::new(label, tone).into_any_element();
+        }
+        self.display_label(cx).into_any_element()
+    }
     fn display_label(&self, cx: &App) -> Label {
         match self.editor.display(self.state.committed()) {
             Some(text) => Label::new(text),
@@ -422,13 +442,20 @@ impl InlineField {
 }
 impl Render for InlineField {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = if self.state.editing() {
+        // A chip that saves itself is its own control, with nothing to open first.
+        let live_chip = matches!(self.editor, Editor::Chip { .. })
+            && !self.read_only
+            && self.mode == SaveMode::Single;
+        let content = if self.state.editing() || live_chip {
             let disabled = self.state.pending() || self.state.uncertain() || self.saving;
-            self.editor
-                .render(disabled, role_size(TextRole::Body, cx))
-                .into_any_element()
+            self.editor.render(
+                self.state.draft(),
+                disabled,
+                role_size(TextRole::Body, cx),
+                cx.entity().downgrade(),
+            )
         } else if self.read_only || self.mode == SaveMode::Form {
-            self.display_label(cx).into_any_element()
+            self.display_element(cx)
         } else {
             Button::new("inline-display")
                 .small()
@@ -443,26 +470,9 @@ impl Render for InlineField {
                 .on_click(cx.listener(|f, _, w, cx| f.edit(w, cx)))
                 .into_any_element()
         };
-        let value = v_flex()
-            .w_full()
-            .max_w(px(288.))
-            .min_w_0()
-            .gap_1()
-            .child(content)
-            .when(self.state.pending(), |field| {
-                field.child(
-                    Label::new("Saving…")
-                        .text_role(TextRole::Meta, cx)
-                        .text_color(cx.theme().muted_foreground),
-                )
-            })
-            .when_some(self.state.error(), |field, error| {
-                field.child(
-                    Label::new(error.to_owned())
-                        .text_role(TextRole::Meta, cx)
-                        .text_color(cx.theme().danger),
-                )
-            });
+        let value = div().w_full().max_w(px(288.)).min_w_0().child(content);
+        let hint = self.state.pending().then(|| SharedString::from("Saving…"));
+        let error = self.state.error().map(|error| SharedString::from(error.to_owned()));
         v_flex()
             .w_full()
             .key_context("InlineField")
@@ -474,12 +484,7 @@ impl Render for InlineField {
             .on_action(cx.listener(|f, _: &CancelEdit, w, cx| f.cancel_action(w, cx)))
             .on_action(cx.listener(|f, _: &Escape, w, cx| f.cancel_action(w, cx)))
             .on_action(cx.listener(|f, _: &Cancel, w, cx| f.cancel_action(w, cx)))
-            .child(
-                Form::vertical()
-                    .w_full()
-                    .small()
-                    .child(Field::new().label(self.title.clone()).child(value)),
-            )
+            .child(field_row(self.title.clone(), hint, error, value, cx))
     }
 }
 #[cfg(test)]
