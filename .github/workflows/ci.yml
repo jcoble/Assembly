@@ -87,19 +87,23 @@ jobs:
         run: node --test scripts/hooks/*.test.ts
       - name: Agent runbook behavior
         run: node --test scripts/agent-runbook/runbook.test.ts
-      # remote-cli.test.sh checks the built CLI's arguments.
-      - name: Build the remote CLI
-        run: dotnet build dotnet/Assembly.Remote/Assembly.Remote.csproj
       - name: Every scripts/*.test.sh passes
         run: |
           failed=0
-          # shutdown-timing.test.sh runs in the desktop job with its Rust toolchain and native dependencies.
+          # shutdown-timing.test.sh runs in the desktop job with its Rust toolchain and native dependencies, and
+          # remote-cli.test.sh below, since its build can rewrite a lock file and lint-checks.test.sh needs a clean tree.
           for t in scripts/*.test.sh; do
             [ "$t" = scripts/shutdown-timing.test.sh ] && continue
+            [ "$t" = scripts/remote-cli.test.sh ] && continue
             echo "== $t"
             bash "$t" || failed=1
           done
           exit $failed
+      - name: The remote CLI's arguments
+        if: ${{ !cancelled() }}
+        run: |
+          dotnet build dotnet/Assembly.Remote/Assembly.Remote.csproj
+          bash scripts/remote-cli.test.sh
   lint:
     # scripts/lint.sh runs the retained script checks and native desktop guard; its .NET checks need dotnet.
     runs-on: ubuntu-latest
