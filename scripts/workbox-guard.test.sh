@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for the guard in dotnet/scripts/workbox.sh: `serve` for main's host (anything that resolves to its unit, port or data) runs only a clean checkout
+# Tests for the guard behind dotnet/scripts/workbox.sh: `serve` for main's host (anything that resolves to its unit, port or data) runs only a clean checkout
 # of a freshly fetched origin/main, and it prints the lane values it resolved before anything else. Runs it in a throwaway clone whose origin is a local bare repo, with a fake ssh
 # on PATH that only notes it was called, and checks the guard stops before any ssh, or lets it through.
 # Run: bash scripts/workbox-guard.test.sh
@@ -12,12 +12,16 @@ cat >"$tmp/bin/ssh" <<'SSH'
 #!/usr/bin/env bash
 echo called >>"$SSH_LOG"
 echo "ssh called" >&2
-cat >/dev/null
 exit 1
 SSH
 chmod +x "$tmp/bin/ssh"
 cp "$here/scripts/lane-env.sh" "$tmp/src/scripts/"
 cp "$here/dotnet/scripts/workbox.sh" "$tmp/src/dotnet/scripts/"
+# serve runs the guard in workbox-serve.ts; without it every serve case would stop only because node failed.
+cp "$here"/scripts/workbox-serve.ts "$here"/scripts/dev-remote-*.ts "$tmp/src/scripts/"
+mkdir -p "$tmp/src/scripts/adapters" "$tmp/src/dotnet/Assembly.Remote"
+cp "$here/scripts/adapters/claude-launcher.ts" "$tmp/src/scripts/adapters/"
+echo "<Project/>" >"$tmp/src/dotnet/Assembly.Remote/Assembly.Remote.csproj"
 git -C "$tmp/src" init -q -b main
 git -C "$tmp/src" add -A
 git -C "$tmp/src" -c user.name=t -c user.email=t@t commit -q -m base

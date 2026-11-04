@@ -8,9 +8,13 @@ namespace Assembly.Engine.Reading;
 /// <summary>Only these columns may leave current-state tables through display reads.</summary>
 internal static class DisplayQueries
 {
+    internal static string Source(string kind) => kind == "workflow_settings"
+        ? "(SELECT 'workflow-settings' id,version,(SELECT machine_id FROM engine_meta WHERE singleton=1) machine,0 created_ms,0 updated_ms,NULL task_url,muted_until FROM engine_workflow_settings WHERE singleton=1)"
+        : "engine_" + kind;
     private const string Common = "id,version,machine,created_ms,updated_ms,task_url";
     private static string Columns(string kind) => Common + "," + (kind switch
     {
+        "workflow_settings" => "muted_until",
         "session" => "provider,model,folder,title,state,activity_state,parent_id,run_id,holder,epoch,cancel_requested,lost_ms,project_id,branch,checkout_state,checkout_operation_id",
         "run" => "owner_session_id,worktree,branch,pr_id,state,owner_loss_limit_ms,owner_lost_ms," + Workflows.Reading.WorkflowReadModels.RunColumns,
         "step" => "run_id,name,session_id,state,attempt,max_attempts,required,rule_skippable,started_ms,ended_ms,outcome_reason," + Workflows.Reading.WorkflowReadModels.StepColumns,
@@ -28,6 +32,7 @@ internal static class DisplayQueries
 
     internal static string Json(string kind)
     {
+        if (kind == "workflow_settings") return "json_object('entityKind','workflow_settings','id',t.id,'version',t.version,'mutedUntil',t.muted_until)";
         // Step 5 Task 1b permits structured permission/form answers only with their recorded presentation.
         // An arbitrary historical object has no display contract; never publish it as an answered body.
         if (kind == "needs_me") return """
@@ -60,6 +65,7 @@ internal static class DisplayQueries
         if (kind == "session") fields = fields.Select(field => field == "'title',t.title" ? "'title',NULL" : field);
         if (kind == "needs_me") fields = fields.Select(field => field == "'text',t.text" ? "'text',NULL" : field);
         if (kind == "session") return $"json_object('entityKind','{kind}',{string.Join(",", fields)}," +
+            $"'isBare',json(CASE WHEN {Assembly.Application.Common.Engine.BareSessionFolder.Predicate("t.project_id", "t.folder")} THEN 'true' ELSE 'false' END)," +
             "'canSteer',json(CASE WHEN t.can_steer=1 THEN 'true' ELSE 'false' END)," +
             "'parentMachine',(SELECT parent.machine FROM engine_session parent WHERE parent.id=t.parent_id)," +
             "'checkoutReason',(SELECT CASE WHEN json_type(o.receipt_json,'$.data.reason')='text' AND " +
@@ -180,7 +186,7 @@ internal static class DisplayQueries
     internal static string[] Kinds(string topic) => topic switch
     {
         "mirror" => ["session", "run", "step", "needs_me", "message", "handoff", "pr", "pr_observation", "provider", "sign_in"],
-        "runs" => ["run", "step", "handoff"],
+        "runs" => ["run", "step", "handoff", "workflow_settings"],
         "sessions" => ["session", "handoff"],
         "needs_me" => ["needs_me"],
         "messages" => ["message"],

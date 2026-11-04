@@ -97,7 +97,7 @@ internal static class Schema
     /// its preview: its newest assistant message as plain text, its first 160 characters (each block's text parts run
     /// together, blocks joined by a space).
     /// </summary>
-    public const string Rail = $"""
+    public static readonly string Rail = $"""
         WITH local_source AS (
           SELECT machine_id FROM engine_meta WHERE singleton=1),
         source_candidates AS (
@@ -125,7 +125,8 @@ internal static class Schema
           SELECT DISTINCT session_id, source_machine, source_generation, source_route FROM source_candidates),
         canonical_sessions AS (
           SELECT e.id AS session_id, e.machine AS source_machine, 0 AS source_generation, NULL AS source_route,
-            e.provider AS agent, e.folder, e.title, e.updated_ms AS updated_at, e.parent_id
+            e.provider AS agent, e.folder, e.title, e.updated_ms AS updated_at, e.parent_id,
+            {Assembly.Application.Common.Engine.BareSessionFolder.Predicate("e.project_id", "e.folder")} AS is_bare
           FROM engine_session e JOIN local_source local ON local.machine_id=e.machine
           WHERE e.holder='local' AND e.state<>'foreign'
           UNION ALL
@@ -133,7 +134,8 @@ internal static class Schema
             json_extract(e.row_json,'$.provider'), json_extract(e.row_json,'$.folder'),
             CASE WHEN json_type(e.row_json,'$.title')='text' THEN json_extract(e.row_json,'$.title') END,
             json_extract(e.row_json,'$.updatedMs'),
-            CASE WHEN json_type(e.row_json,'$.parentId')='text' THEN json_extract(e.row_json,'$.parentId') END
+            CASE WHEN json_type(e.row_json,'$.parentId')='text' THEN json_extract(e.row_json,'$.parentId') END,
+            json_extract(e.row_json,'$.isBare')=1 AND json_extract(e.row_json,'$.projectId') IS NULL
           FROM engine_mirror_row e JOIN engine_mirror m ON m.machine=e.machine AND m.generation=e.generation AND m.state='live'
           WHERE e.entity_kind='session' AND m.generation>0 AND length(m.machine)>0 AND length(m.name)>0
             AND json_type(e.row_json,'$.id')='text' AND json_extract(e.row_json,'$.id')=e.entity_id
@@ -146,7 +148,7 @@ internal static class Schema
             CASE WHEN c.source_route IS NULL THEN COALESCE(s.repo_url,c.folder) ELSE c.folder END AS repo_url,
             COALESCE(s.title,c.title) AS title, c.source_route AS machine, COALESCE(s.updated_at,c.updated_at) AS updated_at, s.completed_at, s.settled_at, COALESCE(s.read_seq,0) AS read_seq,
             c.source_machine, c.source_generation, c.source_route,
-            s.pinned_at, s.orchestrator_at, s.position, s.session_id AS facade_id
+            s.pinned_at, s.orchestrator_at, s.position, s.session_id AS facade_id, COALESCE(c.is_bare,0) AS is_bare
           FROM canonical_sessions c LEFT JOIN session_info s ON s.session_id=c.session_id AND s.machine IS c.source_route
             AND s.agent=c.agent AND s.parent_session_id IS c.parent_id
             AND (c.source_route IS NULL OR EXISTS (SELECT 1 FROM engine_session known
@@ -156,7 +158,7 @@ internal static class Schema
           WHERE c.parent_id IS NULL OR s.helper=1
           UNION ALL
           SELECT s.session_id, s.agent, s.repo_url, s.title, s.machine, s.updated_at, s.completed_at, s.settled_at, s.read_seq,
-            source.source_machine, source.source_generation, source.source_route, s.pinned_at, s.orchestrator_at, s.position, s.session_id
+            source.source_machine, source.source_generation, source.source_route, s.pinned_at, s.orchestrator_at, s.position, s.session_id, s.is_bare AND s.project_id IS NULL
           FROM session_info s LEFT JOIN rail_sources source ON source.session_id=s.session_id AND source.source_route IS s.machine
           WHERE (s.parent_session_id IS NULL OR s.helper=1)
             AND NOT EXISTS (SELECT 1 FROM canonical_sessions c WHERE c.session_id=s.session_id
@@ -172,8 +174,10 @@ internal static class Schema
             AND json_type(n.row_json,'$.sessionId')='text' AND json_extract(n.row_json,'$.id')=n.entity_id
             AND json_extract(n.row_json,'$.machine')=n.machine AND json_extract(n.row_json,'$.state')='open'),
         sessions AS (
-          SELECT s.session_id, s.agent, s.repo_url,
-            CASE WHEN s.repo_url LIKE 'https://github.com/%' THEN rtrim(substr(s.repo_url, 20), '/')
+          SELECT s.session_id, s.agent,
+            CASE WHEN s.is_bare THEN 'bare:' || COALESCE(s.machine,'local') ELSE s.repo_url END AS repo_url,
+            CASE WHEN s.is_bare THEN 'No project'
+                 WHEN s.repo_url LIKE 'https://github.com/%' THEN rtrim(substr(s.repo_url, 20), '/')
                  ELSE substr(rtrim(s.repo_url, '/'), length(rtrim(rtrim(s.repo_url, '/'), replace(rtrim(s.repo_url, '/'), '/', ''))) + 1) END AS label,
             CASE WHEN s.settled_at IS NOT NULL THEN 'settled' WHEN s.completed_at IS NOT NULL THEN 'done' ELSE 'working' END AS section,
             CASE WHEN s.settled_at IS NOT NULL THEN 2 WHEN s.completed_at IS NOT NULL THEN 1 ELSE 0 END AS section_index,
@@ -184,7 +188,7 @@ internal static class Schema
             AND ($locations IS NULL OR iif(s.machine IS NULL, 'local', 'remote') IN (SELECT value FROM json_each($locations)))
             AND ($statuses IS NULL OR (CASE WHEN s.settled_at IS NOT NULL THEN 'settled' WHEN s.completed_at IS NOT NULL THEN 'done' ELSE 'working' END)
                    IN (SELECT value FROM json_each($statuses)))
-            AND ($filter IS NULL OR instr(lower(COALESCE(s.title, '') || char(10) || s.repo_url), lower($filter)) > 0)),
+            AND ($filter IS NULL OR instr(lower(COALESCE(s.title, '') || char(10) || CASE WHEN s.is_bare THEN 'No project' ELSE s.repo_url END), lower($filter)) > 0)),
         totals AS (
           SELECT COUNT(*) AS needs FROM sessions p JOIN engine_needs n ON n.session_id=p.session_id
             AND n.machine=p.source_machine AND n.generation=p.source_generation),

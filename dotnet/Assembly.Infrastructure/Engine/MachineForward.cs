@@ -1,3 +1,5 @@
+using Assembly.Engine.Workflows;
+using Assembly.Engine.Workflows.Runs;
 using Assembly.Application.Features.Agents;
 using Assembly.Infrastructure.Engine.Workflows;
 using Assembly.Infrastructure.Chat.SourceControl;
@@ -28,6 +30,9 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
 
     public async Task<CommandResult> CommandAsync(string machine, WindowCommand command, CancellationToken ct)
     {
+        if (command.Command is WorkflowCommand and not (PauseWorkflow or ResumeWorkflow or RetryWorkflowStep or DecideWorkflowStep or
+            RerunWorkflow or KeepWorkflowSucceeded or UndoWorkflowKeep or GrantWorkflowScope or SetWorkflowMute))
+            return new(false, false, "forbidden", command.ExpectedVersion, 0, command.Epoch);
         var auth = command.Command is CheckProvider or StartSignIn or CancelSignIn;
         var args = JsonSerializer.SerializeToElement(command with { Machine = auth ? machine : null }, EngineSocketJson.Default.WindowCommand);
         var result = await CallAsync(machine, "engine", "command", args, false, ct);

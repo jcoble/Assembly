@@ -14,7 +14,6 @@ internal sealed record CommandRetryBody(CommandContext Context, string EffectId,
 public sealed class PreparedWorkflowCommandRetry
 {
     internal CommandRetryBody Body { get; }
-    internal string CanonicalJournal { get; }
     public CommandContext Context { get; }
     internal PreparedWorkflowCommandRetry(CommandRetryBody body)
     {
@@ -23,8 +22,6 @@ public sealed class PreparedWorkflowCommandRetry
         Context = body.Context with { CommandId = new Guid(Convert.FromHexString(CommandStepTransitions.Digest("workflow-command-retry/v1\n" + identity))[..16]) };
         var json = JsonSerializer.Serialize(body with { Context = Context with { NowMs = 0 } }, CommandRetryJson.Default.CommandRetryBody);
         Body = JsonSerializer.Deserialize(json, CommandRetryJson.Default.CommandRetryBody)!;
-        CanonicalJournal = JsonSerializer.Serialize(new WorkflowPreparedEnvelope("workflow_command_retry", 1,
-            CommandStepTransitions.Digest(json), System.Text.Encoding.UTF8.GetByteCount(json)), EngineJson.Default.WorkflowPreparedEnvelope);
     }
 }
 
@@ -81,7 +78,8 @@ public static class CommandRetryTransitions
             UPDATE engine_needs_me SET state='answered',version=version+1,updated_ms=$now,answer_json='"retry"',answered_by=$actor,answered_ms=$now WHERE id=$need;
             UPDATE engine_outbox SET state='failed',version=version+1,updated_ms=$now,next_ms=NULL,last_error='explicit_repeat_recovery' WHERE id=$effect;
             UPDATE engine_step_attempt SET state='failed',ended_ms=$now,reason='interrupted',gate_state='settled' WHERE step_id=$step AND attempt=$attempt;
-            UPDATE engine_step SET state='pending',dispatch_state='pending',outcome_reason=NULL,ended_ms=NULL,version=version+1,updated_ms=$now WHERE id=$step;
+            UPDATE engine_step SET state='pending',dispatch_state='pending',outcome_reason=NULL,ended_ms=NULL,deadline_ms=NULL,
+              generation=generation+1,attempt_in_generation=0,scope_granted=0,version=version+1,updated_ms=$now WHERE id=$step;
             """, new("$now", c.NowMs), new("$actor", c.Actor.Id), new("$need", c.EntityId), new("$effect", b.EffectId), new("$step", i.StepId), new("$attempt", i.Attempt));
         CommandStepTransitions.History(s, c, i, "command_retry_authorized", "{}");
         List<EventDraft> events = [new("needs_me.answered", "need", c.EntityId, row.NeedVersion + 1, false, new(row.Owner, i.RunId, i.StepId, row.Owner, "answered", c.Epoch)),

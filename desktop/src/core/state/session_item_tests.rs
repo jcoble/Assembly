@@ -46,3 +46,16 @@ fn session_checkout_paths_keep_the_owning_machine_values() {
     assert_eq!(local.root, None);
     assert_eq!(local.checkout_root, None);
 }
+
+#[test]
+fn untitled_bare_sessions_never_show_the_owning_folder() {
+    for machine in [None, Some("Workbox Test")] {
+        let mut item = session(None, "/other-machine/home/assembly-bare", machine);
+        item.is_bare = true;
+        assert_eq!(item.title(), "Untitled session");
+        item.title = Some("  ".into());
+        assert_eq!(item.title(), "Untitled session");
+        item.title = Some("Clean storage".into());
+        assert_eq!(item.title(), "Clean storage");
+    }
+}

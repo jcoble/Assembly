@@ -9,6 +9,7 @@ using Assembly.Infrastructure.Remote;
 
 namespace Assembly.Infrastructure.Engine.Workflows;
 
+public sealed record WorkflowSettingsArgs(string? Machine = null);
 public sealed record WorkflowRunsArgs(string? Project = null, string? State = null, string? After = null, int Limit = 50, string? Machine = null);
 public sealed record WorkflowRunArgs(string RunId, string? After = null, string? Machine = null);
 public sealed record WorkflowHistoryArgs(string RunId, string? After = null, int Limit = 50, string? Machine = null);
@@ -22,6 +23,10 @@ internal sealed partial class WorkflowCalls(EngineRuntime runtime, MachineForwar
     public void Register(ICallRegistry calls)
     {
         RegisterDefinitions(calls);
+        calls.Read("workflow", "settings", WorkflowReadCallsJson.Default.WorkflowSettingsArgs, WorkflowReadCallsJson.Default.JsonElement,
+            (args, call) => ReadAsync(call, args.Machine, "settings",
+                JsonSerializer.SerializeToElement(new WorkflowSettingsArgs(), WorkflowReadCallsJson.Default.WorkflowSettingsArgs),
+                () => runtime.Reader.WorkflowSettings(call.Cancellation)));
         calls.Read("workflow", "runs", WorkflowReadCallsJson.Default.WorkflowRunsArgs, WorkflowReadCallsJson.Default.JsonElement,
             (args, call) => ReadAsync(call, args.Machine, "runs",
                 JsonSerializer.SerializeToElement(args with { Machine = null }, WorkflowReadCallsJson.Default.WorkflowRunsArgs),
@@ -53,12 +58,12 @@ internal sealed partial class WorkflowCalls(EngineRuntime runtime, MachineForwar
 
     private async Task<JsonElement> ReadAsync(CallContext call, string? machine, string method, JsonElement args, Func<JsonElement> local)
     {
-        if (call.Peer is not OwnerPeer) throw new CallFailed("forbidden");
+        if (call.Peer is not OwnerPeer && !(method == "settings" && call.Peer is PhonePeer && machine is null)) throw new CallFailed("forbidden");
         call.Cancellation.ThrowIfCancellationRequested();
         if (machine is not null && string.IsNullOrWhiteSpace(machine)) throw new CallBadArguments("bad_args");
         if (machine is not null && machine != runtime.Machine)
             return await (forward ?? throw new KeyNotFoundException("Unknown remote engine machine"))
-                .CallAsync(machine, "workflow", method, args, true, call.Cancellation).ConfigureAwait(false);
+                .CallAsync(machine, "workflow", method, args, method != "settings", call.Cancellation).ConfigureAwait(false);
         try { return local(); }
         catch (ArgumentException error) { throw new CallBadArguments(error.Message); }
         catch (WorkflowFieldException error) { throw new CallBadArguments(error.Message); }
@@ -72,6 +77,7 @@ internal sealed partial class WorkflowCalls(EngineRuntime runtime, MachineForwar
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     RespectRequiredConstructorParameters = true)]
+[JsonSerializable(typeof(WorkflowSettingsArgs))]
 [JsonSerializable(typeof(WorkflowRunsArgs))]
 [JsonSerializable(typeof(WorkflowRunArgs))]
 [JsonSerializable(typeof(WorkflowHistoryArgs))]

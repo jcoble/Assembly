@@ -30,9 +30,11 @@ pub fn project(repo_url: &str) -> &str {
 
 /// What the header calls the session's project.
 fn project_name(item: &SessionItem) -> &str {
-    item.project_id
-        .as_ref()
-        .map_or(NO_PROJECT, |_| project(&item.repo_url))
+    if item.is_bare {
+        NO_PROJECT
+    } else {
+        project(&item.repo_url)
+    }
 }
 
 #[derive(Default)]
