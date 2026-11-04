@@ -2,21 +2,26 @@
 //! tab's choice moves nothing in the session or the panel. Its hint is saved with the layout, or arrives from the panel
 //! that opened this tab, and becomes a read only once a fresh answer still offers it.
 use super::HistoryPane;
-use crate::core::socket::{checkout_selector::CheckoutSelector, client::SocketClient, outcome::Outcome};
+use crate::core::socket::{
+    checkout_selector::CheckoutSelector, client::SocketClient, outcome::Outcome,
+};
 use crate::core::ui::center_panes::CenterPanes;
 use crate::features::source_control::git_checkouts::{CheckoutChoice, CheckoutHint, GitCheckouts};
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::Button;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Disableable as _, Sizable as _};
 use gpui_kit::*;
 use serde_json::json;
 
-pub(super) const CHECKOUT_GONE: &str = "That checkout can't be read any more, so this went back to the session folder.";
+pub(super) const CHECKOUT_GONE: &str =
+    "That checkout can't be read any more, so this went back to the session folder.";
 
 impl HistoryPane {
     /// A selector needs the source in its own arguments, so a session with none is asked for nothing.
     pub(super) fn read_checkouts(&mut self, cx: &mut Context<Self>) {
-        let (Some(source), Some(socket)) = (self.expected_source.clone(), SocketClient::try_global(cx)) else {
+        let (Some(source), Some(socket)) =
+            (self.expected_source.clone(), SocketClient::try_global(cx))
+        else {
             return;
         };
         let call = socket.read(cx).call::<GitCheckouts>(
@@ -37,7 +42,10 @@ impl HistoryPane {
                 };
                 pane.settle_hint(cx);
                 if let Some(checkout) = pane.checkout.clone()
-                    && !pane.checkouts.as_ref().is_some_and(|checkouts| checkouts.offers(&checkout))
+                    && !pane
+                        .checkouts
+                        .as_ref()
+                        .is_some_and(|checkouts| checkouts.offers(&checkout))
                 {
                     pane.leave_checkout(cx);
                 }
@@ -67,7 +75,8 @@ impl HistoryPane {
         }
     }
     fn settle_hint(&mut self, cx: &mut Context<Self>) {
-        let (Some(hint), Some(source)) = (self.checkout_hint.clone(), self.expected_source.clone()) else {
+        let (Some(hint), Some(source)) = (self.checkout_hint.clone(), self.expected_source.clone())
+        else {
             return;
         };
         if self.checkout.as_ref() == Some(&hint.selector()) {
@@ -82,7 +91,11 @@ impl HistoryPane {
     pub(super) fn pick_checkout(&mut self, path: Option<String>, cx: &mut Context<Self>) {
         let checkout = match path {
             None => None,
-            Some(path) => match self.checkouts.as_ref().and_then(|checkouts| checkouts.selector(&path)) {
+            Some(path) => match self
+                .checkouts
+                .as_ref()
+                .and_then(|checkouts| checkouts.selector(&path))
+            {
                 Some(checkout) => Some(checkout),
                 None => return,
             },
@@ -110,7 +123,8 @@ impl HistoryPane {
     fn set_checkout(&mut self, checkout: Option<CheckoutSelector>, cx: &mut Context<Self>) {
         self.checkout = checkout.clone();
         self.status = None;
-        self.timeline.update(cx, |timeline, cx| timeline.set_checkout(checkout, cx));
+        self.timeline
+            .update(cx, |timeline, cx| timeline.set_checkout(checkout, cx));
         self.read_status(cx);
         cx.notify();
     }
@@ -136,13 +150,20 @@ pub(super) fn repository_picker(
                 .label(label)
                 .tooltip("Which repository's history to show")
                 .dropdown_menu(move |menu, _, _| {
-                    choices.iter().cloned().fold(menu, |menu, CheckoutChoice { path, label }| {
-                        let pane = pane.clone();
-                        let checked = current == path;
-                        menu.item(PopupMenuItem::new(label).checked(checked).on_click(move |_, _, cx| {
-                            _ = pane.update(cx, |pane, cx| pane.pick_checkout(path.clone(), cx));
-                        }))
-                    })
+                    choices
+                        .iter()
+                        .cloned()
+                        .fold(menu, |menu, CheckoutChoice { path, label }| {
+                            let pane = pane.clone();
+                            let checked = current == path;
+                            menu.item(PopupMenuItem::new(label).checked(checked).on_click(
+                                move |_, _, cx| {
+                                    _ = pane.update(cx, |pane, cx| {
+                                        pane.pick_checkout(path.clone(), cx)
+                                    });
+                                },
+                            ))
+                        })
                 }),
         )
         .into_any_element()

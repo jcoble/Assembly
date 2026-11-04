@@ -53,6 +53,7 @@ impl SourceControlPane {
         }
         self.publish_inspected(cx);
         self.sync_checkouts(cx);
+        self.settle_place(cx);
         if matches!(self.result, Some(PaneResult::Done(_))) && answers != self.result_answers {
             self.result = None;
         }
@@ -83,17 +84,16 @@ impl SourceControlPane {
         }
     }
     pub(super) fn session_changed(&mut self, session: Option<String>, cx: &mut Context<Self>) {
-        if let Some(left) = self.last_session.take() {
-            let open = std::mem::take(&mut self.open_sections);
-            self.session_views
-                .insert(left, (open, self.scroll.offset()));
-        }
-        let (open, place) = session
+        // A restored workspace has already put its own view in place for the session it's bound to.
+        let bound = self
+            .workspace
             .as_ref()
-            .and_then(|session| self.session_views.remove(session))
-            .unwrap_or_default();
-        self.open_sections = open;
-        self.scroll.set_offset(place);
+            .map(|workspace| workspace.session_id.as_str());
+        if bound != session.as_deref() {
+            self.open_sections.clear();
+            self.scroll.set_offset(Point::default());
+            self.pending_place = None;
+        }
         self.last_session = session;
         self.result = None;
         self.branches = None;

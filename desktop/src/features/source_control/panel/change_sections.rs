@@ -11,6 +11,7 @@ use crate::features::source_control::git_labels::split_path;
 use crate::features::source_control::git_status::{ChangedFile, GitStatus, Section};
 use crate::features::source_control::git_target::GitTarget;
 use crate::features::source_control::section_heading::section_heading;
+use crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::list::ListItem;
@@ -163,6 +164,7 @@ impl SourceControlPane {
             if !pane.open_sections.remove(&section) {
                 pane.open_sections.insert(section);
             }
+            WorkspaceCoordinator::changed(cx);
             cx.notify();
         });
         let heading = section_heading(

@@ -16,19 +16,22 @@ use super::git_target::GitTarget;
 use super::pull_requests::pr_section::PrSection;
 use super::result_line::PaneResult;
 use crate::core::state::session_read::{SessionRead, Shown};
+use crate::core::state::workspace_panes::WorkspaceKey;
 use crate::core::ui::center_panes::CenterPanes;
 use gpui_kit::component::dock::{
-    BasePanel, DockPlacement, PaneRef, Panel, PanelEvent, PanelHandle, PanelInfo, PanelState,
+    BasePanel, DockPlacement, PaneRef, Panel, PanelEvent, PanelHandle, PanelId, PanelState,
     panel_handle, register_panel,
 };
 use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 #[path = "source_control_actions.rs"]
 mod actions;
 #[path = "branch_checkout.rs"]
 mod checkout;
+#[path = "source_control_codec.rs"]
+mod codec;
 #[path = "header.rs"]
 mod header;
 #[path = "source_control_outcomes.rs"]
@@ -77,8 +80,12 @@ pub struct SourceControlPane {
     checkout: Option<checkout::PendingCheckout>,
     checkout_task: Option<Task<()>>,
     open_sections: HashSet<Section>,
-    /// Each session's open sections and place in the scroller, for coming back to it.
-    session_views: HashMap<String, (HashSet<Section>, Point<Pixels>)>,
+    /// The workspace this view is saved under; another one's restore replaces it whole.
+    workspace: Option<WorkspaceKey>,
+    /// Counts restores, so a list asked for under one isn't taken under the next.
+    workspace_epoch: u64,
+    /// The saved place, until a new answer proves it's this workspace's.
+    pending_place: Option<codec::PendingPlace>,
     hovered_section: Option<Section>,
     hovered_file: Option<(Section, String)>,
     selected_file: Option<(Section, String)>,
@@ -94,7 +101,7 @@ pub struct SourceControlPane {
     reveal_read: Option<Task<()>>,
     /// The status answer the list was last read beside; it's read again with each one.
     checkouts_answers: u64,
-    /// The checkout last picked here, saved with the layout. It stays through a visit to another session, and becomes a
+    /// The checkout last picked here, saved with the workspace. It stays through a visit to another session, and becomes a
     /// read again only when a fresh list still offers it.
     checkout_hint: Option<CheckoutHint>,
     scope_open: bool,
@@ -108,13 +115,8 @@ impl SourceControlPane {
     /// Registers the pane under the drawer's Source control name, after the placeholders, since the last registration
     /// wins.
     pub fn register(cx: &mut App) {
-        register_panel(cx, SOURCE_CONTROL, |build, window, cx| {
-            let hint = CheckoutHint::saved(&build.state().info);
-            panel_handle(cx.new(|cx| {
-                let mut pane = SourceControlPane::new(window, cx);
-                pane.checkout_hint = hint;
-                pane
-            }))
+        register_panel(cx, SOURCE_CONTROL, |_, window, cx| {
+            panel_handle(cx.new(|cx| SourceControlPane::new(window, cx)))
         });
         cx.on_action(|_: &ShowSourceControl, cx| {
             let Some(window) = cx
@@ -128,11 +130,10 @@ impl SourceControlPane {
             });
         });
     }
-    /// Brings the tab forward in the drawer, opening the drawer if it's shut.
-    fn show(window: &mut Window, cx: &mut App) {
-        let Some(dock) = CenterPanes::dock(cx) else {
-            return;
-        };
+    /// Where the tab is, if the dock has it.
+    fn located(cx: &App) -> Option<(PanelId, DockPlacement, Entity<Self>)> {
+        let dock = CenterPanes::dock(cx)?;
+        let dock = dock.read(cx);
         let mut found = None;
         for placement in [
             DockPlacement::Left,
@@ -140,29 +141,35 @@ impl SourceControlPane {
             DockPlacement::Right,
             DockPlacement::Bottom,
         ] {
-            if let Some(tree) = dock.read(cx).layout(placement) {
+            if let Some(tree) = dock.layout(placement) {
                 tree.root().walk(&mut |node| {
                     if let PaneRef::Tabs { panels, .. } = node.kind() {
                         for id in panels {
-                            if let Some(panel) = dock.read(cx).panel(*id)
+                            if let Some(panel) = dock.panel(*id)
                                 && let Some(handle) = PanelHandle::of(panel)
-                                && handle.view().downcast::<Self>().is_ok()
+                                && let Ok(pane) = handle.view().downcast::<Self>()
                             {
-                                found = Some((*id, placement));
+                                found = Some((*id, placement, pane));
                             }
                         }
                     }
                 });
             }
         }
-        if let Some((id, placement)) = found {
-            dock.update(cx, |dock, cx| {
-                dock.select_panel(id, window, cx);
-                if placement != DockPlacement::Center && !dock.is_dock_open(placement) {
-                    dock.toggle_dock(placement, window, cx);
-                }
-            });
-        }
+        found
+    }
+    /// Brings the tab forward in the drawer, opening the drawer if it's shut.
+    fn show(window: &mut Window, cx: &mut App) {
+        let (Some(dock), Some((id, placement, _))) = (CenterPanes::dock(cx), Self::located(cx))
+        else {
+            return;
+        };
+        dock.update(cx, |dock, cx| {
+            dock.select_panel(id, window, cx);
+            if placement != DockPlacement::Center && !dock.is_dock_open(placement) {
+                dock.toggle_dock(placement, window, cx);
+            }
+        });
     }
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -251,7 +258,9 @@ impl SourceControlPane {
             checkout: None,
             checkout_task: None,
             open_sections: HashSet::new(),
-            session_views: HashMap::new(),
+            workspace: None,
+            workspace_epoch: 0,
+            pending_place: None,
             hovered_section: None,
             hovered_file: None,
             selected_file: None,
@@ -381,11 +390,7 @@ impl BasePanel for SourceControlPane {
     }
 
     fn dump(&self, _: &App) -> PanelState {
-        let mut state = PanelState::new(SOURCE_CONTROL);
-        if let Some(hint) = &self.checkout_hint {
-            state.info = PanelInfo::panel(serde_json::json!({"checkoutHint":hint}));
-        }
-        state
+        PanelState::new(SOURCE_CONTROL)
     }
 }
 

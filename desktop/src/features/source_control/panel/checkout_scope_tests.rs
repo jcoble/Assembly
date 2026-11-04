@@ -11,6 +11,7 @@ use crate::core::socket::{
 };
 use crate::core::state::{
     inspected_checkout::InspectedCheckout, selected_session::SelectedSession, sessions::Sessions,
+    workspace_panes::WorkspaceKey,
 };
 use crate::core::intents::open_git_history::OpenGitHistory;
 use crate::features::source_control::actions_menu::{MenuAction, READ_ONLY_SCOPE};
@@ -359,11 +360,15 @@ async fn the_saved_layout_keeps_only_the_checkout_still_chosen(cx: &mut TestAppC
     let empty = gpui_kit::component::dock::PanelState::new(super::SOURCE_CONTROL);
     assert_eq!(bare, serde_json::to_value(empty).unwrap(), "nothing new in a layout with no choice");
     open.showing_linked().await;
-    let kept = open.cx.update(|_, cx| CheckoutHint::saved(&pane.read(cx).dump(cx).info));
-    assert_eq!(kept, Some(saved(0)));
+    let key = WorkspaceKey { machine: "owner".into(), session_id: "s1".into(), checkout_root: OWN.into() };
+    pane.update(open.cx, |pane, _| pane.workspace = Some(key.clone()));
+    let kept = open.cx.update(|_, cx| pane.read(cx).saved_view(&key));
+    assert_eq!(kept["checkoutHint"], serde_json::to_value(saved(0)).unwrap());
+    let bare_again = open.cx.update(|_, cx| serde_json::to_value(pane.read(cx).dump(cx)).unwrap());
+    assert_eq!(bare_again, bare, "the choice is saved with the workspace, not the device's layout");
     open.pick(None);
-    let kept = open.cx.update(|_, cx| CheckoutHint::saved(&pane.read(cx).dump(cx).info));
-    assert_eq!(kept, None);
+    let kept = open.cx.update(|_, cx| pane.read(cx).saved_view(&key));
+    assert_eq!(kept["checkoutHint"], Value::Null);
 }
 #[gpui::test]
 async fn open_history_carries_the_checkout_being_read(cx: &mut TestAppContext) {
