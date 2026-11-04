@@ -22,7 +22,7 @@ public static partial class CommandStepTransitions
             LEFT JOIN engine_step_attempt a ON a.step_id=st.id AND a.attempt=st.attempt
             WHERE st.id=$step AND st.run_id=$run AND st.kind='command' AND st.dispatch_state IS NOT 'redo_pending' AND r.machine=$machine AND st.authority_machine=$machine
               AND (st.state='pending' OR st.deadline_ms IS NULL OR st.deadline_ms>$now)
-              AND w.path=$cwd AND r.setup_state='ready' AND r.paused=0 AND r.state NOT IN ('succeeded','failed','cancelled','cancelling')
+              AND w.path=$cwd AND r.setup_state='ready' AND (r.paused=0 OR st.state='running') AND r.state NOT IN ('succeeded','failed','cancelled','cancelling')
               AND se.holder='local' AND se.reserved_epoch IS NULL AND se.state NOT IN ('foreign','ended','handing_off','lost')
               AND NOT EXISTS(SELECT 1 FROM engine_step_dependency d JOIN engine_step dep ON dep.id=d.dependency_id
                 WHERE d.step_id=st.id AND dep.state NOT IN ('succeeded','skipped'))

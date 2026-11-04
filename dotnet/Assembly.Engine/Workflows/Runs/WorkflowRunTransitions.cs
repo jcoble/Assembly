@@ -24,6 +24,20 @@ internal static class WorkflowRunTransitions
             return existing.Fingerprint == body.RequestFingerprint
                 ? JsonSerializer.Deserialize(existing.Result, EngineJson.Default.CommandResult)!
                 : Refuse(context, "request_key_conflict");
+        if (body.Rerun is { } rerun)
+        {
+            var source = scope.QueryFirst("SELECT version,state,machine,owner_session_id FROM engine_run WHERE id=$id",
+                r => new { Version = r.Long(0), State = r.Text(1), Machine = r.Text(2), Owner = r.Text(3) }, new SqlArg("$id", rerun.RunId));
+            if (source is null || source.Owner != request.OwnerSessionId) return Refuse(context, "bad_args");
+            if (source.Machine != context.Machine) return Refuse(context, "wrong_machine");
+            if (!RunTransitions.IsTerminal(source.State) || rerun.FailedOnly && source.State == "succeeded") return Refuse(context, "invalid_transition");
+            if (source.Version != rerun.Version) return Refuse(context, "version_conflict");
+            if (scope.QueryFirst("SELECT COUNT(*) FROM engine_outbox WHERE run_id=$id AND state NOT IN ('done','failed','dead')", r => r.Long(0), new SqlArg("$id", rerun.RunId)) != 0)
+                return Refuse(context, "executor_quiescence_required");
+            if (!Execution.CommandStepTransitions.ExecutionsDrained(scope, rerun.RunId) || scope.QueryFirst(
+                "SELECT COUNT(*) FROM engine_step st JOIN engine_session worker ON worker.id=st.session_id WHERE st.run_id=$id AND worker.state<>'ended'",
+                r => r.Long(0), new SqlArg("$id", rerun.RunId)) > 0) return Refuse(context, "executor_quiescence_required");
+        }
         var owner = scope.QueryFirst("""
             SELECT parent_id,state,machine,holder,reserved_epoch,project_id FROM engine_session WHERE id=$owner
             """, r => new { Parent = r.IsNull(0) ? null : r.Text(0), State = r.Text(1), Machine = r.Text(2), Holder = r.Text(3), Reserved = !r.IsNull(4), Project = r.IsNull(5) ? null : r.Text(5) },
@@ -63,6 +77,8 @@ internal static class WorkflowRunTransitions
                   dispatch_state='pending' WHERE id=$id
                 """, new("$key", spec.Id), new("$kind", spec.Kind), new("$result", spec.Result),
                 new("$machine", context.Machine), new("$id", body.StepIds[spec.Id]));
+        if (body.Rerun is { } linked)
+            scope.Execute("UPDATE engine_run SET rerun_of=$source WHERE id=$id", new("$source", linked.RunId), new("$id", context.EntityId));
         return created;
     }
 

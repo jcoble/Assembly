@@ -214,6 +214,7 @@ impl HistoryPane {
                 pane
             });
         }
+        crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
     }
     fn new(
         session: String,

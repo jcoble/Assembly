@@ -74,13 +74,12 @@ impl NewSessionForm {
                     }
                     Ok(receipt) => {
                         form.attempt.as_mut().expect("same retry").retry_operation = None;
-                        form.start_error(
-                            receipt
-                                .error
-                                .as_deref()
-                                .unwrap_or("The checkout retry was refused."),
-                            cx,
-                        );
+                        let reason = match receipt.error.as_deref() {
+                            Some("version_conflict") => "The session just changed. Try again.",
+                            Some(reason) => reason,
+                            None => "The checkout retry was refused.",
+                        };
+                        form.start_error(reason, cx);
                     }
                     Err(error) => form.start_error(&error.message, cx),
                 }

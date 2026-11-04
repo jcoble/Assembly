@@ -20,6 +20,7 @@ mod connection;
 pub mod connection_state;
 pub mod endpoint;
 #[cfg(test)]
+#[path = "tests/engine_scope_tests.rs"]
 mod engine_scope_tests;
 #[cfg(test)]
 mod engine_tests;

@@ -1,4 +1,4 @@
-use super::helper_stop::command;
+use super::helper_stop::{command, refusal_text};
 use crate::core::engine::{EngineKey, SessionKey, engine_items::SessionItem};
 fn child(machine: &str) -> SessionItem {
     SessionItem {
@@ -56,4 +56,13 @@ fn missing_foreign_parent_provenance_or_ambiguous_child_identity_refuses() {
     assert!(command(&parent, &[missing], "child").is_err());
     assert!(command(&parent, &[child("a"), child("b")], "child").is_err());
     assert!(command(&parent, &[child("a")], "different").is_err());
+}
+#[test]
+fn a_helper_still_moving_says_so_in_words() {
+    assert_eq!(
+        refusal_text(Some("version_conflict".into())),
+        "The helper just changed. Try Stop again."
+    );
+    assert_eq!(refusal_text(Some("busy".into())), "busy");
+    assert_eq!(refusal_text(None), "The helper Stop was refused.");
 }

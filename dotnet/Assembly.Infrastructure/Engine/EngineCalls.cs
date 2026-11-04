@@ -1,3 +1,6 @@
+using Assembly.Infrastructure.Engine.Workflows;
+using Assembly.Engine.Workflows;
+using Assembly.Engine.Workflows.Runs;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
@@ -25,12 +28,12 @@ public sealed record EngineEntityArgs(string EntityKind, string EntityId, string
 public sealed record EngineEntitiesArgs(IReadOnlyList<EngineEntityRef> Refs, string? After = null, string? Machine = null);
 
 /// <summary>The authenticated window's checked owner commands; identity and time are host-owned.</summary>
-public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs, IEngineDoor? door = null) : IFeature
+public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs, IEngineDoor? door = null, WorkflowCommandRecovery? workflowRecovery = null) : IFeature
 {
     private readonly MachineForward? _forward;
     private readonly MachineStarts? _starts;
-    internal EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs, MachineForward forward, IEngineDoor? door = null) : this(runtime, time, needs, door) => _forward = forward;
-    internal EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs, MachineForward forward, MachineStarts starts, IEngineDoor? door = null) : this(runtime, time, needs, forward, door) => _starts = starts;
+    internal EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs, MachineForward forward, IEngineDoor? door = null, WorkflowCommandRecovery? workflowRecovery = null) : this(runtime, time, needs, door, workflowRecovery) => _forward = forward;
+    internal EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs, MachineForward forward, MachineStarts starts, IEngineDoor? door = null, WorkflowCommandRecovery? workflowRecovery = null) : this(runtime, time, needs, forward, door, workflowRecovery) => _starts = starts;
     private static CallFailed SourceUnavailable() => new("Source-bound pending reads are unavailable.", "source_changed");
     private MachineForward Forward => _forward ?? throw new KeyNotFoundException("Unknown remote engine machine");
     private bool IsRemote(string? machine) => machine is not null && machine != runtime.Machine;
@@ -57,7 +60,10 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAn
                 };
                 if (origin is null) return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
                 if (args.Command is not (StartSession or StopSession or ChangeCheckout or StartRun or CancelRun or
+                    PauseWorkflow or ResumeWorkflow or RetryWorkflowStep or DecideWorkflowStep or KeepWorkflowSucceeded or UndoWorkflowKeep or GrantWorkflowScope or SetWorkflowMute or RerunWorkflow or
                     ResolveNeed { State: "answered" or "dismissed" } or SendMessage or RequestHandoff or CheckProvider or StartSignIn or CancelSignIn))
+                    return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
+                if (call.Peer is PhonePeer && args.Command is GrantWorkflowScope or DecideWorkflowStep)
                     return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
                 if (args.Command is CheckProvider or StartSignIn or CancelSignIn && string.IsNullOrWhiteSpace(args.Machine))
                     return _ => new(false, false, "wrong_machine", args.ExpectedVersion, 0, args.Epoch);
@@ -79,6 +85,23 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAn
                 }
                 if (args.Command is ResolveNeed { State: "answered" })
                     return await needs.PrepareOwnerAsync(args, call.Cancellation, origin);
+                if (args.Command is RerunWorkflow rerun)
+                {
+                    PreparedWorkflowCommand prepared;
+                    try
+                    {
+                        prepared = ((Assembly.Engine.Hosting.IEngineRuntime)runtime).Read(scope => WorkflowStarts.PrepareRerun(scope,
+                            new(args.CommandId, runtime.Machine, new(ActorKind.Window, "owner"), args.EntityId, args.ExpectedVersion, args.Epoch, 0, origin), rerun, call.Cancellation), call.Cancellation);
+                    }
+                    catch (ArgumentException error) { return _ => new(false, false, error.Message, args.ExpectedVersion, 0, args.Epoch); }
+                    return scope => runtime.Commands.ApplyPreparedWorkflow(scope,
+                        new(args.CommandId, runtime.Machine, new(ActorKind.Window, "owner"), args.EntityId, args.ExpectedVersion, args.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds(), origin), prepared);
+                }
+                if (args.Command is RetryWorkflowStep or DecideWorkflowStep { Decision: "retry" })
+                {
+                    var retry = await WorkflowControlRetryPreparation.PrepareAsync(runtime, time, workflowRecovery, args, origin, call.Cancellation);
+                    if (retry is not null) return retry;
+                }
                 var title = args.Command is StartSession start ? EngineCommands.PrepareSessionTitle(start) : null;
                 return scope =>
                 {
@@ -120,7 +143,7 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAn
             async (args, call) =>
             {
                 if (args.EntityKind == "pr_observation" && call.Peer is not OwnerPeer) throw new CallFailed("forbidden");
-                return IsRemote(args.Machine) && args.EntityKind is "tool_call" or "usage" or "pr_observation"
+                return IsRemote(args.Machine) && args.EntityKind is "tool_call" or "usage" or "pr_observation" or "workflow_settings"
                 ? (await Forward.CallAsync(args.Machine!, "engine", "entity",
                     JsonSerializer.SerializeToElement(args with { Machine = null }, EngineSocketJson.Default.EngineEntityArgs), true, call.Cancellation))
                     .Deserialize(EngineSocketJson.Default.NullableJsonElement)
@@ -132,7 +155,7 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAn
                 if (call.Peer is not OwnerPeer) throw new CallFailed("forbidden");
                 if (call.ReplyId is not { } replyId) throw new CallFailed("reply metadata unavailable");
                 if (args.Refs is null) throw new CallFailed("bad_args");
-                if (IsRemote(args.Machine) && args.Refs.Any(item => item?.Kind is "tool_call" or "usage"))
+                if (IsRemote(args.Machine) && args.Refs.Any(item => item?.Kind is "tool_call" or "usage" or "workflow_settings"))
                 {
                     // A mixed owner-only batch is read once on its actual owner, never split across snapshots.
                     var result = await Forward.CallAsync(args.Machine!, "engine", "entities",

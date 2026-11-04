@@ -49,7 +49,7 @@ public sealed partial class EngineCommands
     {
         if (command is CompleteEffect { Receipt.WorkflowReceiptConfirmation: not null } completion)
             return ApplyPreparedReceiptCompletion(scope, context, completion);
-        if (command is SendOwnerPrompt or RecordProviderCheck or WorkflowCommand)
+        if (command is SendOwnerPrompt or RecordProviderCheck || command is WorkflowCommand and not (Workflows.Runs.PauseWorkflow or Workflows.Runs.ResumeWorkflow or Workflows.Runs.RetryWorkflowStep or Workflows.Runs.DecideWorkflowStep or Workflows.Runs.KeepWorkflowSucceeded or Workflows.Runs.UndoWorkflowKeep or Workflows.Runs.GrantWorkflowScope or Workflows.Runs.SetWorkflowMute))
             return new(false, false, "forbidden", context.ExpectedVersion, 0, context.Epoch);
         // Raw boundary arguments are transient: even the journal fingerprint and size check use structural previews.
         var canonical = RecordingTransitions.JournalJson(command);
@@ -75,6 +75,7 @@ public sealed partial class EngineCommands
                 RecordAuthRetryStarted retry => AuthRetryStart.Apply(scope, context, retry, _isConfiguredProvider),
                 MessageCommand message => MessageTransitions.Apply(scope, context, message, _messageLimit(), _expiryPolicy),
                 NeedCommand need => NeedTransitions.Apply(scope, context, need, _expiryPolicy, _isConfiguredProvider),
+                WorkflowCommand workflow => Workflows.Runs.WorkflowControlTransitions.Apply(scope, context, workflow),
                 RunCommand run => RunTransitions.Apply(scope, context, run),
                 StepCommand step => StepTransitions.Apply(scope, context, step),
                 SessionCommand session => ApplySession(scope, context, session),

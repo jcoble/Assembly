@@ -1,3 +1,4 @@
+using Assembly.Engine.Workflows.Runs;
 using Assembly.Engine.Effects;
 using Assembly.Engine.Providers;
 using Assembly.Engine.Recording;
@@ -59,4 +60,14 @@ namespace Assembly.Engine.Contracts;
 [JsonDerivedType(typeof(OpenNeed), "open_need")]
 [JsonDerivedType(typeof(ResolveNeed), "resolve_need")]
 [JsonDerivedType(typeof(EscalateNeed), "escalate_need")]
+[JsonDerivedType(typeof(PauseWorkflow), "pause_workflow")]
+[JsonDerivedType(typeof(ResumeWorkflow), "resume_workflow")]
+[JsonDerivedType(typeof(RetryWorkflowStep), "retry_workflow_step")]
+[JsonDerivedType(typeof(DecideWorkflowStep), "decide_workflow_step")]
+[JsonDerivedType(typeof(KeepWorkflowSucceeded), "keep_succeeded")]
+[JsonDerivedType(typeof(UndoWorkflowKeep), "undo_keep_succeeded")]
+[JsonDerivedType(typeof(GrantWorkflowScope), "grant_scope")]
+[JsonDerivedType(typeof(SetWorkflowMute), "set_mute")]
+[JsonDerivedType(typeof(RerunWorkflow), "rerun_workflow")]
+[JsonDerivedType(typeof(RetryFailedWorkflow), "retry_failed")]
 public abstract record EngineCommand;

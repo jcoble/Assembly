@@ -23,7 +23,7 @@ public sealed class SessionUpgradeTests
     {
         using var file = new TempDatabase(); using var db = TestDatabase.Open(file.Path);
         var machine = EngineSchema.Open(db, 1000);
-        Assert.Equal(14, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(15, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
         db.Writer.Write("test.null-model", scope => scope.Execute("""
             INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
                 activity_state,holder,epoch,cancel_requested,account_context)
@@ -49,7 +49,7 @@ public sealed class SessionUpgradeTests
         var before = f.History(columns); var indexes = f.Indices(); var keys = f.ForeignKeys();
         var machine = f.Text("SELECT machine_id FROM engine_meta");
         Assert.Equal(machine, EngineSchema.Open(f.Db, 10000));
-        Assert.Equal(14, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(15, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(before, f.History(columns)); Assert.Equal(indexes, f.Indices()); Assert.Equal(keys, f.ForeignKeys());
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM pragma_foreign_key_list('engine_needs_me') WHERE [from]='addressee_session_id' AND [table]='engine_session' AND [to]='id'"));
         Assert.Equal(0, f.Number("SELECT \"notnull\" FROM pragma_table_info('engine_session') WHERE name='model'"));
@@ -85,7 +85,7 @@ public sealed class SessionUpgradeTests
         Assert.Equal(before, f.Snapshot()); Assert.Equal(4, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(0, f.Number("SELECT COUNT(*) FROM pragma_table_info('engine_message') WHERE name='framed'"));
         Assert.Equal(f.Text("SELECT machine_id FROM engine_meta"), EngineSchema.Open(f.Db, 10000));
-        Assert.Equal(14, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(15, f.Number("SELECT schema_version FROM engine_meta"));
     }
 
     [Theory]
@@ -134,7 +134,7 @@ public sealed class SessionUpgradeTests
             cutover.Initialize(scope, new(schema.Machine, new(() => 1, () => 5)), schema.Machine, 11000, schema.PreviousVersion is 1 or 2 or 3);
             return schema;
         });
-        Assert.Equal(14, next.PreviousVersion); Assert.Equal(first.Machine, next.Machine);
+        Assert.Equal(15, next.PreviousVersion); Assert.Equal(first.Machine, next.Machine);
         Assert.Equal(0, f.Number("SELECT managed_checkout FROM engine_session WHERE id='pending'"));
     }
 

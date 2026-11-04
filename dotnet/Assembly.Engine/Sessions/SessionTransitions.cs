@@ -2,6 +2,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Engine;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Messages;
@@ -261,6 +262,7 @@ public static partial class SessionTransitions
             events.AddRange(MessageTransitions.ReleaseHeld(scope, context, context.EntityId, command.State == "ended", effects));
         if (command.State == "ended")
         {
+            events.AddRange(NeedTransitions.CancelForEndedSession(scope, context));
             events.AddRange(MessageTransitions.ChildEnded(scope, context, context.EntityId, effects, expiryPolicy));
         }
         if (command.State is "idle" or "running" or "ended")
@@ -333,7 +335,9 @@ public static partial class SessionTransitions
         var runs = scope.Query("""
             SELECT id FROM engine_run WHERE owner_session_id=$session
             UNION SELECT run_id FROM engine_step WHERE session_id=$session
-            """, r => r.Text(0), new SqlArg("$session", context.EntityId));
+            UNION SELECT run_id FROM engine_needs_me WHERE session_id=$session AND run_id IS NOT NULL
+              AND state='cancelled' AND updated_ms=$now
+            """, r => r.Text(0), new SqlArg("$session", context.EntityId), new("$now", context.NowMs));
         foreach (var run in runs) events.AddRange(RunTransitions.Recompute(scope, context, run));
         return EngineJournal.Commit(scope, context, session.Version, session.Epoch, events, effects);
     }

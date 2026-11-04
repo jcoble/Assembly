@@ -20,6 +20,8 @@ public static class EngineSchema
                 machine_id TEXT NOT NULL, next_seq INTEGER NOT NULL, retained_after INTEGER NOT NULL,
                 snapshot_seq INTEGER NOT NULL);
             """);
+        if (scope.QueryFirst("SELECT COUNT(*) FROM pragma_table_info('engine_meta') WHERE name='bare_folder'", r => r.Long(0)) == 0)
+            scope.Execute("ALTER TABLE engine_meta ADD COLUMN bare_folder TEXT NULL");
         var meta = scope.QueryFirst("SELECT schema_version,machine_id FROM engine_meta WHERE singleton=1",
             r => (Version: r.Long(0), Machine: r.Text(1)));
         if (meta.Machine is null)
@@ -38,11 +40,12 @@ public static class EngineSchema
             PrSchemaUpgrade.Apply(scope);
             CheckoutIndex(scope);
             Messages.Reading.MessageReadSchemaUpgrade.Apply(scope);
+            WorkflowControlSchema.Upgrade(scope);
             return new(machine, null);
         }
-        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13 or 14))
+        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13 or 14 or 15))
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
-        if (meta.Version is 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13 or 14)
+        if (meta.Version is 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13 or 14 or 15)
         {
             projectionSchema?.Invoke(scope);
             if (meta.Version == 6) NeedsMe.RoutedNeedSchemaUpgrade.Apply(scope);
@@ -55,6 +58,7 @@ public static class EngineSchema
             if (meta.Version < 13) PrSchemaUpgrade.Apply(scope);
             CheckoutIndex(scope);
             if (meta.Version < 14) Messages.Reading.MessageReadSchemaUpgrade.Apply(scope);
+            if (meta.Version < 15) WorkflowControlSchema.Upgrade(scope);
             return new(meta.Machine, meta.Version);
         }
         if (meta.Version == 1)
@@ -80,6 +84,7 @@ public static class EngineSchema
         PrSchemaUpgrade.Apply(scope);
         CheckoutIndex(scope);
         Messages.Reading.MessageReadSchemaUpgrade.Apply(scope);
+        WorkflowControlSchema.Upgrade(scope);
         return new(meta.Machine, meta.Version);
     }
 

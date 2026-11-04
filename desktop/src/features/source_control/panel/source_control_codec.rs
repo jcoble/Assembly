@@ -213,5 +213,5 @@ impl SourceControlPane {
 }
 
 #[cfg(test)]
-#[path = "source_control_codec_tests.rs"]
+#[path = "codec_tests/source_control_codec_tests.rs"]
 mod tests;

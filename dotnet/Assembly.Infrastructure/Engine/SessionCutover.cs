@@ -25,7 +25,14 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
 
     internal ISessionProjectProjection ProjectProjection => sessions;
 
-    public void EnsureSchema(IWriteScope scope) => SessionStore.EnsureEngineProjectionSchema(scope);
+    public void EnsureSchema(IWriteScope scope)
+    {
+        SessionStore.EnsureEngineProjectionSchema(scope);
+        SetBareFolder(scope);
+    }
+
+    private void SetBareFolder(IWriteScope scope) => scope.Execute(
+        "UPDATE engine_meta SET bare_folder=$folder WHERE singleton=1", new SqlArg("$folder", BareSessionFolder.ForHome(owningHome)));
 
     public string AccountContext(string configuredAgentId) =>
         launcher.Agents.FirstOrDefault(agent => agent.Id == configuredAgentId) is { } descriptor
@@ -58,6 +65,7 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
 
     public void Initialize(IWriteScope scope, EngineCommands commands, string machine, long nowMs, bool legacyV4Upgrade = false)
     {
+        SetBareFolder(scope);
         var legacy = sessions.LocalOwning(scope);
         if (legacyV4Upgrade)
             foreach (var session in legacy)
@@ -116,7 +124,11 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
 
     private void Project(IWriteScope scope, string id, string? sourceRepo = null)
     {
-        if (sessions.Get(scope, id) is not null) return;
+        if (sessions.Get(scope, id) is not null)
+        {
+            sessions.ProjectBare(scope, id);
+            return;
+        }
         var row = scope.QueryFirst("""
             SELECT provider,folder,CAST(title AS BLOB),parent_id,provider_session_id,updated_ms,model FROM engine_session WHERE id=$id
             """, r => new
@@ -137,6 +149,7 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
             ?? throw new InvalidOperationException("The parent requires its trusted repository projection.") : row.Folder);
         sessions.ProjectEngineSession(scope, new(id, row.Provider, repo, row.Title == "" && row.Parent is null ? null : row.Title, row.Acp, row.Updated,
             ParentSessionId: row.Parent, Helper: row.Parent is not null), row.Model, row.Folder);
+        sessions.ProjectBare(scope, id);
     }
 
     public void Attach(EngineCommands commands, string machine)

@@ -35,6 +35,15 @@ public sealed class SessionStoreRemoteAtomicTests : IDisposable
     }
 
     [Fact]
+    public void Remote_bare_classification_survives_projection_and_explicit_project_clears_it()
+    {
+        Assert.True(_store.ApplyRemote(Incoming() with { IsBare = true }, Copy));
+        Assert.True(_store.Item(_store.Get("copied")!).IsBare);
+        Assert.True(_store.ApplyRemote(Incoming() with { IsBare = true, ProjectId = "explicit" }, Copy));
+        Assert.False(_store.Item(_store.Get("copied")!).IsBare);
+    }
+
+    [Fact]
     public void Guarded_wrong_or_missing_copy_has_no_metadata_summary_or_publication_side_effect()
     {
         var original = _store.Get("copied");

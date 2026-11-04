@@ -7,7 +7,7 @@ use crate::features::sessions::list_entries::project_label;
 
 #[derive(Clone, Debug)]
 pub struct ProjectGroup {
-    /// Empty for the sessions in no project, which share one group whatever folders they run in.
+    /// Empty for bare sessions, which share one group on each machine.
     pub folder: String,
     pub machine: Option<String>,
     /// Newest first.
@@ -20,10 +20,10 @@ impl ProjectGroup {
         let mut groups: Vec<ProjectGroup> = Vec::new();
         for item in items {
             let machine = item.machine.clone().filter(|machine| !machine.is_empty());
-            let folder = if item.project_id.is_some() {
-                item.repo_url.as_str()
-            } else {
+            let folder = if item.is_bare {
                 ""
+            } else {
+                item.repo_url.as_str()
             };
             match groups
                 .iter_mut()

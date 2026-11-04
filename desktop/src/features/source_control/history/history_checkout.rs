@@ -7,6 +7,7 @@ use crate::core::socket::{
 };
 use crate::core::ui::center_panes::CenterPanes;
 use crate::features::source_control::git_checkouts::{CheckoutChoice, CheckoutHint, GitCheckouts};
+use crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Disableable as _, Sizable as _};
@@ -70,6 +71,7 @@ impl HistoryPane {
             Some(source) => {
                 self.checkout_hint = Some(CheckoutHint::new(&self.session, &source, &selector));
                 CenterPanes::save_layout(cx);
+                WorkspaceCoordinator::changed(cx);
             }
             None => self.leave_checkout(cx),
         }
@@ -106,6 +108,7 @@ impl HistoryPane {
             .zip(self.expected_source.as_ref())
             .map(|(checkout, source)| CheckoutHint::new(&self.session, source, checkout));
         CenterPanes::save_layout(cx);
+        WorkspaceCoordinator::changed(cx);
         if checkout != self.checkout {
             self.set_checkout(checkout, cx);
         }

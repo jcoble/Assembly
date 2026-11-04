@@ -151,6 +151,7 @@ impl PrPane {
                 pane
             });
         }
+        crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
     }
     fn new(session: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let selected = SelectedSession::try_global(cx);

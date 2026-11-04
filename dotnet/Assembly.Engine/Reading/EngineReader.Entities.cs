@@ -88,7 +88,7 @@ public sealed partial class EngineReader
                 AND r.entity_id IN (SELECT value FROM json_each($ids))
             """ : $"""
             WITH bounded AS (SELECT t.id,{DisplayQueries.Json(kind)} AS item,{DisplayQueries.PrefixColumns(kind)}
-                FROM engine_{kind} t WHERE t.machine=$machine AND t.id IN (SELECT value FROM json_each($ids)))
+                FROM {DisplayQueries.Source(kind)} t WHERE t.machine=$machine AND t.id IN (SELECT value FROM json_each($ids)))
             SELECT id,length(CAST(item AS BLOB)),COALESCE(length(prefix),0),COALESCE(length(label_prefix),0) FROM bounded
             """;
         return read.Query(sql, row => (row.Text(0), new EntitySize(row.Long(1), row.Long(2), row.Long(3))),
@@ -105,7 +105,7 @@ public sealed partial class EngineReader
                 AND r.entity_id IN (SELECT value FROM json_each($ids))
             """ : $"""
             WITH bounded AS (SELECT t.id,{DisplayQueries.Json(kind)} AS item,{DisplayQueries.PrefixColumns(kind)}
-                FROM engine_{kind} t WHERE t.machine=$machine AND t.id IN (SELECT value FROM json_each($ids)))
+                FROM {DisplayQueries.Source(kind)} t WHERE t.machine=$machine AND t.id IN (SELECT value FROM json_each($ids)))
             SELECT id,CASE WHEN length(CAST(item AS BLOB))<=32768 THEN item END,prefix,total,label_prefix,label_total FROM bounded
             """;
         return read.Query(sql, row =>

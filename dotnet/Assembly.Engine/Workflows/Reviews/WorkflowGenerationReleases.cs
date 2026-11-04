@@ -30,7 +30,10 @@ internal static class WorkflowGenerationReleases
         var providers = facts.Where(row => row.Kind is "agent" or "review").Select(row => row.Fence).ToArray();
         var released = WorkflowExecutionReleases.Released(scope, providers).ToHashSet();
         foreach (var command in facts.Where(row => row.Kind == "command" && row.Drained)) released.Add(command.Fence);
-        // Started gates require their Task10 checked decision fact; a null session is not release evidence.
+        foreach (var gate in facts.Where(row => row.Kind == "gate"))
+            if (scope.QueryFirst("SELECT COUNT(*) FROM engine_workflow_history WHERE step_id=$step AND attempt=$attempt AND generation=$generation AND kind='workflow_decision' AND json_extract(safe_body_json,'$.decision') IN ('approve','deny','revise')",
+                r => r.Long(0), new SqlArg("$step", gate.Fence.StepId), new("$attempt", gate.Fence.Attempt), new("$generation", gate.Fence.Generation)) > 0)
+                released.Add(gate.Fence);
         return released;
     }
 }

@@ -121,6 +121,27 @@ async fn the_backend_takes_each_checkout_command_the_pane_sends(cx: &mut TestApp
         &repo,
         &["worktree", "add", "--quiet", &linked, "-b", "linked"],
     );
+    // A command held against an older version: the refusal names the version it's at now, and doesn't use up anything.
+    let (version, epoch) = cx.read(|cx| {
+        let session = feed.read(cx).session(&key).expect("the session");
+        (session.version, session.epoch)
+    });
+    let stale = WindowCommand {
+        command_id: uuid::Uuid::new_v4().to_string(),
+        entity_id: id.clone(),
+        expected_version: version - 1,
+        epoch,
+        machine: Some(machine.clone()),
+        surface: None,
+        command: branch_wire("other", false, &head),
+    };
+    let refused = cx
+        .update(|cx| feed.update(cx, |feed, cx| feed.submit(stale, cx)))
+        .await
+        .unwrap_or_else(|error| panic!("{}: {}", error.code, error.message));
+    assert!(!refused.applied);
+    assert_eq!(refused.error.as_deref(), Some("version_conflict"));
+    assert_eq!(refused.version, version);
     let cases = [
         (branch_wire("other", false, &head), "ready", "other"),
         (branch_wire("made-here", true, &head), "ready", "made-here"),
