@@ -86,6 +86,7 @@ async function fixture(t: any, mode = 'pass', machine = 'workbox-test') {
   const local = await server((peer, frame) => {
     if (frame.t === 'call') {
       if (frame.feature === 'check4') { peer.send({ t: 'error', id: frame.id, code: 'not_found' }); return; }
+      if (frame.feature === 'projects') { peer.send({ t: 'result', id: frame.id, result: { project: { id: 'fixture-project' } } }); return; }
       if (frame.method === 'create') { peer.send({ t: 'result', id: frame.id, result: { sessionId: 'session-1' } }); return; }
       if (frame.method === 'after') {
         const seq = frame.args.after + 1;
@@ -143,7 +144,10 @@ test('remote case uses exact calls, subscribes before send and preserves split/p
   assert.equal(result.features[0]!.pass, true);
   const sent = f.local.frames.map(entry => entry.frame);
   const create = sent.find(frame => frame.method === 'create');
-  assert.deepEqual(create.args, { agent: 'codex', repoUrl: '/safe/fixture', machine: 'workbox-test' });
+  assert.deepEqual(sent.find(frame => frame.feature === 'projects').args, { machine: 'workbox-test', path: '/safe/fixture' });
+  const { clientId, ...asked } = create.args;
+  assert.match(clientId, /^[a-f0-9-]{36}$/);
+  assert.deepEqual(asked, { agent: 'codex', projectId: 'fixture-project', machine: 'workbox-test' });
   const sending = sent.find(frame => frame.method === 'send');
   assert.match(sending.args.clientId, /^[a-f0-9-]{36}$/);
   assert(sent.findIndex(frame => frame.topic === 'rows') < sent.indexOf(sending));

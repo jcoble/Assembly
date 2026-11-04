@@ -1,5 +1,6 @@
 // Terminal lifecycle on the case's host; remote routing through the desktop. Tokens stay in hello.
 import assert from 'node:assert/strict';
+import { newSession } from './new-session.ts';
 import { connectSocket } from './socket.ts';
 
 const env = process.env;
@@ -122,11 +123,9 @@ try {
 
   const desktop = await connect(env.CHECK4_API!, env.CHECK4_TOKEN!);
   connections.push(desktop);
-  // Create a known remote owner without starting a turn or checking out a folder.
+  // Create a known remote owner without starting a turn.
   control = await connectSocket(env.CHECK4_API!, env.CHECK4_TOKEN!, { signal: cancellation.signal });
-  const remote = await control.call('sessions', 'create', {
-    agent: env.CHECK4_AGENT, repoUrl: env.CHECK4_REPO, machine: 'workbox-test'
-  }) as { sessionId: string };
+  const remote = await newSession(control, env.CHECK4_AGENT!, env.CHECK4_REPO!, 'workbox-test');
   await control.close();
   control = undefined;
   const before = (await desktop.call('list')).map((item: any) => item.id).sort();

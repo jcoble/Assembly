@@ -1,5 +1,6 @@
 // Board proof uses only host-authenticated owner calls and the real provider's configured MCP reporting tool.
 import { randomUUID } from 'node:crypto';
+import { newSession } from './new-session.ts';
 
 type OwnerPromptAccepted = { sessionId: string; messageId: string; clientId: string; state: 'queued'; messageVersion: number; seq: number; epoch: number; runId: null };
 type Row = { sessionId: string; runId: string | null; kind: string; payload: { clientId?: string } };
@@ -80,8 +81,7 @@ async function main() {
     return;
   }
   const machineId = env.CHECK4_MACHINE === 'local' ? 'local' : env.CHECK4_MACHINE!;
-  const created = await desktop.call('sessions', 'create', { agent: env.CHECK4_AGENT, repoUrl: env.CHECK4_REPO,
-    machine: machineId === 'local' ? null : machineId, parentSessionId: null, title: null });
+  const created = await newSession(desktop, env.CHECK4_AGENT!, env.CHECK4_REPO!, machineId === 'local' ? null : machineId);
   const session = created.sessionId as string;
   const sessionSub = await desktop.sub('sessions', session);
   requireValue(sessionSub.state.items?.some(x => x.item.sessionId === session), 'Desktop must know recovery session');
