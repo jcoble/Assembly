@@ -31,6 +31,9 @@ use super::tasks_state::*;
 mod list;
 #[path = "tasks_pane_open.rs"]
 mod open;
+#[cfg(test)]
+#[path = "tasks_pane_tests.rs"]
+mod tests;
 
 /// The open pane, so a link from anywhere reaches it.
 struct OpenPane(WeakEntity<TasksPane>);
@@ -193,7 +196,7 @@ impl TasksPane {
             focus: cx.focus_handle(),
             client: NotionClient,
             state: TasksState::default(),
-            list: ListState::new(0, ListAlignment::Top, px(OVERSCAN as f32 * 64.)),
+            list: ListState::new(0, ListAlignment::Top, px(OVERSCAN as f32 * ROW_HEIGHT)),
             search,
             pills,
             setup,
@@ -267,10 +270,9 @@ impl TasksPane {
             }
         });
         let on_tasks = cx.spawn(async move |pane, cx| {
-            while let Ok(update) = tasks.updates.recv().await {
-                if matches!(update, Update::Change { .. })
-                    && pane.update(cx, |pane, cx| pane.tasks_pushed(cx)).is_err()
-                {
+            // A first state means a return to the tab or a reconnect, when anything may have changed meanwhile.
+            while tasks.updates.recv().await.is_ok() {
+                if pane.update(cx, |pane, cx| pane.tasks_pushed(cx)).is_err() {
                     return;
                 }
             }
@@ -315,6 +317,8 @@ pub fn handle_external(route: ExternalRoute, cx: &mut App) {
     }
 }
 
+/// About a row's height, for what to draw ahead and how many rows fill the tab.
+const ROW_HEIGHT: f32 = 64.;
 const NO_TAB: &str = "The Tasks tab isn't open in this window.";
 const NOT_CONNECTED: &str = "Connect Notion to open tasks.";
 const NOT_OPENABLE: &str = "Assembly can't open that link.";
@@ -337,9 +341,17 @@ impl BasePanel for TasksPane {
         false
     }
 
-    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
+    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         if active {
+            let returning = !self.started;
             self.start(cx);
+            // The read of an open page stopped with the tab.
+            if returning
+                && self.detail.is_some()
+                && let Some((token, source)) = self.state.reread()
+            {
+                self.read_detail(token, source, window, cx);
+            }
         } else {
             self.stop();
         }

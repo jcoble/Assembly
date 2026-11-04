@@ -16,7 +16,7 @@ use crate::features::tasks::task_export::*;
 use crate::features::tasks::tasks_state::*;
 use crate::features::tasks::tasks_view::{OnViewChange, ViewChange, task_row, view_menu};
 
-use super::TasksPane;
+use super::{ROW_HEIGHT, TasksPane};
 
 impl TasksPane {
     pub(super) fn settings_pushed(&mut self, view: NotionSettingsView, cx: &mut Context<Self>) {
@@ -325,6 +325,11 @@ impl TasksPane {
                         .child("Showing the newest 500 tasks. Notion has more."),
                 )
             });
+        // Rows too few to scroll never send a scroll event, so the drawn height asks for the next page.
+        let filled = self.state.rows.len() as f32 * ROW_HEIGHT;
+        if self.list.viewport_bounds().size.height > px(filled) {
+            self.maybe_more(self.state.rows.len(), cx);
+        }
         let header = self.header(cx);
         v_flex()
             .size_full()
