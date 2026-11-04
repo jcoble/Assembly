@@ -7,12 +7,12 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
 // Full launcher lifecycle using owned fake build/install processes. No remote service, registry or provider conversation.
-test('a second managed dev launch checks its remote but runs no build, install or seed process', { timeout: 25000 }, () => {
+test('a second managed dev launch runs no build, install or seed process, and neither launch touches the remote', { timeout: 25000 }, () => {
   const top = mkdtempSync(join(realpathSync(tmpdir()), 'managed-launch-'));
   const home = join(top, 'user'), root = join(home, 'dev/work/worktrees/Assembly/example'), log = join(top, 'calls'), marker = join(top, 'remote-checked');
   const write = (file: string, text: string, mode = 0o600) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text, { mode }); };
   try {
-    for (const file of ['app-dev.ts', 'app-dev-managed.ts', 'app-dev-remote.ts', 'seed-dev.ts', 'dev-seed-cohort.ts', 'dev-build-cache.ts', 'dev-toolchain.ts', 'dev-lane-clean.ts', 'dev-remote-identity.ts', 'dev-remote-process.ts']) {
+    for (const file of ['app-dev.ts', 'app-dev-managed.ts', 'seed-dev.ts', 'dev-seed-cohort.ts', 'dev-build-cache.ts', 'dev-toolchain.ts', 'dev-lane-clean.ts', 'dev-remote-identity.ts', 'dev-remote-process.ts']) {
       mkdirSync(join(root, 'scripts'), { recursive: true }); copyFileSync(new URL(file, import.meta.url), join(root, 'scripts', file));
     }
     const owner = { version: 1, name: 'example', number: 2, owner: randomUUID(), host: hostname(), worktree: root };
@@ -52,7 +52,7 @@ write(path.join(bundle,'claude-launcher.ts'),'launcher');write(path.join(bundle,
 for(const name of ['claude-agent-acp','codex-acp'])write(path.join(bundle,'node_modules/@agentclientprotocol',name,'package.json'),JSON.stringify({version:'1.2.3'}));
 write(descriptor,JSON.stringify([{id:'claude',cli:path.join(bin,'claude'),args:[path.join(bundle,'claude-launcher.ts')]},{id:'codex',cli:path.join(bin,'codex'),args:[path.join(bundle,'node_modules/@agentclientprotocol/codex-acp/dist/index.js')]}]));
 `);
-    const native = `#!${process.execPath}\nconst fs=require('node:fs'),path=require('node:path'),marker=process.env.MANAGED_TEST_MARKER;fs.appendFileSync(process.env.MANAGED_TEST_LOG,'native launch\\n');const finish=()=>{if(fs.existsSync(marker)){watcher.close()}};const watcher=fs.watch(path.dirname(marker),finish);finish();\n`;
+    const native = `#!${process.execPath}\nconst fs=require('node:fs'),path=require('node:path'),marker=process.env.MANAGED_TEST_MARKER;fs.appendFileSync(process.env.MANAGED_TEST_LOG,'native launch\\n');\n`;
     write(join(top, 'native-template'), native, 0o755);
     write(join(root, 'bin/cargo'), `#!/bin/sh\necho 'cargo build' >> "$MANAGED_TEST_LOG"\nmkdir -p target/debug\ncp "$MANAGED_TEST_NATIVE" target/debug/assembly-desktop\nchmod +x target/debug/assembly-desktop\n`, 0o755);
     execFileSync('git', ['init', '-q'], { cwd: root }); execFileSync('git', ['add', '.'], { cwd: root });
@@ -64,14 +64,14 @@ write(descriptor,JSON.stringify([{id:'claude',cli:path.join(bin,'claude'),args:[
       assert.equal(result.status, 0, result.stderr + result.error);
       return performance.now() - started;
     };
-    const first = run(); assert.match(readFileSync(log, 'utf8'), /dotnet publish/); assert.match(readFileSync(log, 'utf8'), /cargo build/);
-    write(log, ''); rmSync(marker);
+    const first = run(); assert.match(readFileSync(log, 'utf8'), /dotnet publish/); assert.match(readFileSync(log, 'utf8'), /cargo build/); assert.doesNotMatch(readFileSync(log, 'utf8'), /remote-check/);
+    write(log, '');
     const second = run(), calls = readFileSync(log, 'utf8');
     assert.doesNotMatch(calls, /dotnet|cargo|npm|adapter build/);
-    assert.match(calls, /remote-check/); assert.match(calls, /native launch/);
+    assert.doesNotMatch(calls, /remote-check/); assert.match(calls, /native launch/);
     // A hand-made or copied .lane still opens, with no dependency check, seed or request to the shared remote.
     write(join(root, '.lane'), 'LANE_NAME=example\nLANE_NUMBER=2\n');
-    write(log, ''); rmSync(marker);
+    write(log, '');
     run();
     const copied = readFileSync(log, 'utf8');
     assert.doesNotMatch(copied, /npm|dotnet build/);

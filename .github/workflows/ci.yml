@@ -1,18 +1,43 @@
-# On every pull request and every push to main (a lane branch's push runs once, as its pull request): the backend
-# builds with no warnings and its tests pass, the window (desktop/) builds, tests and passes clippy, every
+# On a pull request marked ready, every push to main and a manual dispatch (a draft runs only the commit check): the
+# backend builds with no warnings and its tests pass, the window (desktop/) builds, tests and passes clippy, every
 # retained scripts/*.test.sh passes, lint passes, and (on a pull request) each of its own commits passes
-# scripts/check-commit-msg.sh.
+# scripts/check-commit-msg.sh. A change with nothing for the backend skips its job (scripts/ci-changes.ts); these are
+# job conditions, not path filters, so a skipped job still reports success to a required check.
 name: ci
 on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
 # A new push to a pull request cancels its run still going; each main commit gets its own run, never cancelled.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.jobs.outputs.full }}
+      backend: ${{ steps.jobs.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - id: jobs
+        env:
+          EVENT: ${{ github.event_name }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/ci-changes.ts
   dotnet:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.backend == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -28,6 +53,8 @@ jobs:
   desktop:
     # The GPUI window (desktop/README.md): is formatted, builds, tests and passes clippy with warnings denied. Its guard
     # runs in lint.
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -76,6 +103,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo fmt --check
   scripts:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -109,6 +138,8 @@ jobs:
           bash scripts/remote-cli.test.sh
   lint:
     # scripts/lint.sh runs the retained script checks and native desktop guard; its .NET checks need dotnet.
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

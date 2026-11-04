@@ -18,12 +18,15 @@ internal static class BackendBuild
     /// <summary>The real release version, which moves only on a release and sign.</summary>
     internal static string? Version { get; } = Metadata("ReleaseVersion");
 
+    /// <summary>The adapters, launcher and their scripts this build was made with (scripts/dev-remote-identity.ts).</summary>
+    internal static string? AdapterSources { get; } = Metadata("AdapterSources");
+
     private static string? Metadata(string key) => typeof(BackendBuild).Assembly
         .GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == key)?.Value;
 
     /// <summary>What a machine's welcome says it runs, against this build. Information only: nothing is refused on it.</summary>
-    internal static RemoteBackend Compare(string? identity, string? commit, string? version) =>
-        new(commit, Commit, identity != Identity, version, Version);
+    internal static RemoteBackend Compare(string? identity, string? contract, string? commit, string? version) =>
+        new(commit, Commit, identity != Identity, contract != RemoteContract, version, Version);
 
     internal static string? ReadCommit(string? informationalVersion) =>
         informationalVersion?.Split('+') is [_, { Length: > 0 } commit] ? commit : null;

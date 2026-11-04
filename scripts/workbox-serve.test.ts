@@ -62,7 +62,7 @@ function fixture(state: object = {}) {
     calls: () => readFileSync(paths.calls, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as string[]),
     close: () => rmSync(root, { recursive: true, force: true }) };
 }
-const launch = { ASSEMBLY_DEV_REMOTE_SYNC: '1' };
+const update = { ASSEMBLY_DEV_REMOTE_SYNC: '1' };
 const deploys = (f: ReturnType<typeof fixture>) => f.calls().filter(call => call[0] === 'ssh' && call.at(-1)?.startsWith('flock ')).length;
 for (const [name, state, expected] of [
   ['a desktop-only commit', {}, 0],
@@ -71,10 +71,10 @@ for (const [name, state, expected] of [
   ['a release version bump', { version: '0.2.0' }, 1],
   ['an adapter packaging script change', { adapterChange: 'scripts/package-adapters.ts' }, 1],
   ['an adapter install script change', { adapterChange: 'dotnet/scripts/agents-file.sh' }, 1],
-] as const) test(`dev launch: ${name} ${expected ? 'deploys' : 'builds nothing'}`, () => {
+] as const) test(`deploy remote: ${name} ${expected ? 'deploys' : 'builds nothing'}`, () => {
   const f = fixture(state);
   try {
-    Object.assign(f.env, launch);
+    Object.assign(f.env, update);
     const result = f.run();
     assert.equal(result.status, 0, result.stderr);
     assert.equal(deploys(f), expected);
@@ -83,10 +83,10 @@ for (const [name, state, expected] of [
     assert.ok(f.calls().filter(call=>call[0]==='ssh').every(call=>call.includes('workbox-test')));
   } finally { f.close(); }
 });
-test('dev launch: a change on the list deploys once, and the next launch builds nothing', () => {
+test('deploy remote: a change on the list deploys once, and the next run builds nothing', () => {
   const f = fixture({ changed: true });
   try {
-    Object.assign(f.env, launch);
+    Object.assign(f.env, update);
     assert.equal(f.run().status, 0);
     assert.equal(deploys(f), 1);
     const deployed = digestContract(['100644 blob ' + '2'.repeat(40) + '\tdotnet/Assembly.Remote/Assembly.Remote.csproj'], 'none');
@@ -97,10 +97,10 @@ test('dev launch: a change on the list deploys once, and the next launch builds 
     assert.match(next.stdout, /no deploy/);
   } finally { f.close(); }
 });
-test('dev launch: uncommitted unrelated backend edits do not stop it; edits on the list say the remote stays behind', () => {
+test('deploy remote: uncommitted unrelated backend edits do not stop it; edits on the list say the remote stays behind', () => {
   const f = fixture({ dirty: 'dotnet/Assembly.Desktop/Serve/DesktopBackend.cs' });
   try {
-    Object.assign(f.env, launch);
+    Object.assign(f.env, update);
     let result = f.run();
     assert.equal(result.status, 0, result.stderr);
     writeFileSync(f.paths.state, JSON.stringify({ dirty: 'dotnet/Assembly.Engine/EngineCommands.cs' }));
@@ -121,7 +121,7 @@ test('the dev serve command matches them exactly: an unrelated backend commit de
 test('an old host that reports no list identity gets one deploy', () => {
   const f = fixture({ hostContract: null });
   try {
-    Object.assign(f.env, launch);
+    Object.assign(f.env, update);
     assert.equal(f.run().status, 0);
     assert.equal(deploys(f), 1);
   } finally { f.close(); }
@@ -174,35 +174,6 @@ test('second launch during deployment cannot start another deploy', { timeout: 1
     assert.equal(await finished,0);
   } finally { first.kill('SIGTERM'); await finished; f.close(); }
 });
-
-for (const [state, reason] of [[{unreachable:true}, /Network is unreachable/], [{changed:true,deployFail:true}, /test compiler error/], [{changed:true,startFail:true}, /failed to start/]] as const) {
-  test('app opens during remote sync and reports ' + Object.keys(state).at(-1), { timeout: 10_000 }, async () => {
-    const f=fixture(state);
-    for(const directory of ['desktop','dotnet/scripts']) mkdirSync(join(f.root,directory),{recursive:true});
-    for(const file of ['app-dev.ts','app-dev-remote.ts','seed-dev.ts']) copyFileSync(new URL(file,import.meta.url),join(f.root,'scripts',file));
-    writeFileSync(join(f.root,'scripts/lane-env.sh'), 'LANE_NAME=test-lane\nDATA="$PWD/profile"\nDESKTOP_PORT=18887\nTOKEN_FILE=test\nBOX_PORT=9887\nBOX_TOKEN_FILE=test\n');
-    writeFileSync(join(f.root,'dotnet/scripts/workbox.sh'), `exec node scripts/workbox-serve.ts test-lane 9\n`);
-    writeFileSync(join(f.root,'dotnet/scripts/agents-file.sh'), 'printf "[]" > "$2"\n');
-    writeFileSync(join(f.root,'bin/dotnet'),'#!/bin/sh\nexit 0\n',{mode:0o755});
-    writeFileSync(join(f.root,'bin/cargo'),`#!/usr/bin/env node\nimport fs from 'node:fs';\nconst watcher=fs.watch(${JSON.stringify(f.root)},()=>{if(fs.existsSync(${JSON.stringify(f.paths.release)}))watcher.close()});fs.writeFileSync(${JSON.stringify(f.paths.marker)},'app open');`,{mode:0o755});
-    const opened=untilFile(f.paths.marker);
-    const app=spawn(process.execPath,[join(f.root,'scripts/app-dev.ts')],{cwd:f.root,env:f.env,stdio:['pipe','pipe','pipe']});
-    let stderr='';
-    const reported=new Promise<void>(resolve=>app.stderr.on('data',bytes=>{stderr+=bytes;if(reason.test(stderr))resolve()}));
-    const exited=new Promise<number|null>(resolve=>app.on('close',resolve));
-    try {
-      await opened;
-      assert.equal(app.exitCode,null,'app must stay open independently of sync');
-      await reported;
-      assert.match(stderr,/log: .*\.log/);
-      const state = JSON.parse(readFileSync(join(f.root, 'profile/mac/remote-sync-state.json'), 'utf8'));
-      assert.match(state.reason, reason, 'the desktop must receive the actual sync refusal');
-      if ('startFail' in state) assert.match(state.reason, /Host may be down; no automatic rollback/);
-      writeFileSync(f.paths.release,'close app');
-      assert.equal(await exited,0,stderr);
-    } finally { app.kill('SIGTERM'); await exited; f.close(); }
-  });
-}
 
 test('backend identity follows real committed build inputs and ignores Rust-only commits', async () => {
   const {backendIdentity,requireCleanBackend}=await import('./dev-remote-identity.ts');
@@ -264,27 +235,6 @@ test('SSH stdin EOF cancels the remote owner and its build child', {timeout:10_0
     assert.match(out,/cancelled with its launcher/);
     assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
   }finally {remote.kill('SIGTERM');await ended;rmSync(root,{recursive:true,force:true})}
-});
-
-test('closing app-dev during adapter setup ends the installer and its remote sync', {timeout:10_000}, async()=>{
-  const f=fixture({changed:true,hold:true});
-  for(const directory of ['desktop','dotnet/scripts']) mkdirSync(join(f.root,directory),{recursive:true});
-  for(const file of ['app-dev.ts','app-dev-remote.ts','seed-dev.ts']) copyFileSync(new URL(file,import.meta.url),join(f.root,'scripts',file));
-  writeFileSync(join(f.root,'scripts/lane-env.sh'),'LANE_NAME=test-lane\nDATA="$PWD/profile"\nDESKTOP_PORT=18887\nTOKEN_FILE=test\nBOX_PORT=9887\nBOX_TOKEN_FILE=test\n');
-  writeFileSync(join(f.root,'dotnet/scripts/workbox.sh'),'exec node scripts/workbox-serve.ts test-lane 9\n');
-  const installerPid=join(f.root,'installer-pid'), holder=join(f.root,'installer.ts');
-  writeFileSync(holder,`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(installerPid)},String(process.pid));process.stdin.resume()`);
-  writeFileSync(join(f.root,'dotnet/scripts/agents-file.sh'),'exec node "$INSTALL_HOLDER"\n');
-  writeFileSync(join(f.root,'bin/dotnet'),'#!/bin/sh\nexit 0\n',{mode:0o755});
-  const remoteStarted=untilFile(f.paths.marker), installStarted=untilFile(installerPid);
-  const app=spawn(process.execPath,[join(f.root,'scripts/app-dev.ts')],{cwd:f.root,env:{...f.env,INSTALL_HOLDER:holder},stdio:['pipe','pipe','pipe']});
-  const ended=new Promise<number|null>(resolve=>app.on('close',resolve));
-  try {
-    await Promise.all([remoteStarted,installStarted]);
-    const pids=[Number(readFileSync(f.paths.marker,'utf8')),Number(readFileSync(installerPid,'utf8'))];
-    app.kill('SIGTERM');assert.equal(await ended,1);
-    for(const pid of pids) assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
-  }finally{app.kill('SIGTERM');await ended;f.close()}
 });
 
 for (const [name, state, matches] of [

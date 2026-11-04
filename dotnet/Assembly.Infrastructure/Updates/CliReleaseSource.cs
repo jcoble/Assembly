@@ -19,12 +19,23 @@ internal sealed class CliReleaseSource(HttpClient http, TimeProvider time)
         ["codex"] = new("@openai/codex", "https://registry.npmjs.org/@openai%2Fcodex/latest")
     };
 
+    internal static IEnumerable<string> Families => Packages.Keys;
+    internal static string PackageOf(string family) => Packages[family].Name;
+
     public async Task<CliCandidate> LatestAsync(string provider, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         if (provider is null || !Packages.TryGetValue(provider, out var package))
             throw new CallFailed("CLI release check unsupported provider");
+        return new(provider, await ReadAsync(package, ct), package.Source, time.GetUtcNow().ToUnixTimeMilliseconds());
+    }
 
+    /// <summary>The newest stable version of any npm package.</summary>
+    internal Task<string> PackageAsync(string name, CancellationToken ct) =>
+        ReadAsync(new(name, "https://registry.npmjs.org/" + Uri.EscapeDataString(name) + "/latest"), ct);
+
+    private async Task<string> ReadAsync(Package package, CancellationToken ct)
+    {
         using var timeout = new CancellationTokenSource(Deadline, time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
         using var request = new HttpRequestMessage(HttpMethod.Get, package.Source);
@@ -43,7 +54,7 @@ internal sealed class CliReleaseSource(HttpClient http, TimeProvider time)
             using var json = JsonDocument.Parse(Utf8.GetString(bytes, 0, count));
             var version = ReadVersion(json.RootElement, package.Name);
             linked.Token.ThrowIfCancellationRequested();
-            return new(provider, version, package.Source, time.GetUtcNow().ToUnixTimeMilliseconds());
+            return version;
         }
         catch (OperationCanceledException)
         {

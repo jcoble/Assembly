@@ -37,6 +37,7 @@ public sealed partial class MachinesSocketTests
         public Uri? SocketBackend { get; set; }
         public Func<JsonElement, string?>? SocketFailure { get; set; }
         public string? BackendIdentity { get; set; } = BackendBuild.Identity;
+        public string? RemoteContract { get; set; } = BackendBuild.RemoteContract;
         public string? Version { get; set; } = BackendBuild.Version;
         public string? Commit { get; set; } = BackendBuild.Commit;
         public int Format { get; set; } = RowStore.FormatVersion;
@@ -189,7 +190,7 @@ public sealed partial class MachinesSocketTests
                                     finally { Interlocked.Increment(ref VersionAborted); VersionCancelled.TrySetResult(); }
                                     return;
                                 }
-                                await Send($$"""{"t":"welcome","protocol":1,"machine":"box","format":{{Format}},"commit":{{JsonSerializer.Serialize(Commit)}},"backendIdentity":{{JsonSerializer.Serialize(BackendIdentity)}},"version":{{JsonSerializer.Serialize(Version)}},"engine":{{JsonSerializer.Serialize(EngineMachine)}}}""");
+                                await Send($$"""{"t":"welcome","protocol":1,"machine":"box","format":{{Format}},"commit":{{JsonSerializer.Serialize(Commit)}},"backendIdentity":{{JsonSerializer.Serialize(BackendIdentity)}},"remoteContract":{{JsonSerializer.Serialize(RemoteContract)}},"version":{{JsonSerializer.Serialize(Version)}},"engine":{{JsonSerializer.Serialize(EngineMachine)}}}""");
                                 break;
                             case "sub":
                                 if (json.TryGetProperty("stream", out var stream) && stream.GetString() == "engine")

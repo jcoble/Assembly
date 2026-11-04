@@ -13,11 +13,10 @@ export function backendInput(file: string) {
     || adapterInput(file)
     || ['scripts/dev-remote-build-profile.ts', 'scripts/dev-remote-identity.ts', 'scripts/dev-remote-process.ts'].includes(file);
 }
-// What the published adapter bundle is built from: the daily job compares these with its latest release.
-export const packagingInputs = ['scripts/adapters/claude-launcher.ts', 'scripts/package-adapters.ts'];
-// Adapters, launchers and their scripts live on local and on every remote. A change here updates them on both, the same
-// way (dev-toolchain.ts, ensureTools); it needs no backend build, so it isn't what makes the backend differ on a launch.
-export const adapterSources = [...packagingInputs, 'dotnet/scripts/agents-file.sh', 'scripts/dev-toolchain.ts'];
+// Adapters, launchers and their scripts live on local and on every remote. Their digest goes in each bundle's manifest,
+// where the one update check, the daily job and ensureTools all read it. A change here updates adapters on both machines,
+// the same way; it needs no backend build, so it isn't what makes the backend differ.
+export const adapterSources = ['scripts/adapters/claude-launcher.ts', 'scripts/package-adapters.ts', 'dotnet/scripts/agents-file.sh', 'scripts/dev-toolchain.ts'];
 export function adapterInput(file: string) {
   return adapterSources.includes(file);
 }
@@ -32,7 +31,7 @@ export async function sourcesDigest(files: string[], read: (file: string) => Pro
 // have their own check. The release version counts as well.
 const offTheList = new RegExp([
   String.raw`^dotnet/Assembly\.Infrastructure/(Remote|Notion|Clock)/`,
-  String.raw`^dotnet/Assembly\.Infrastructure/Updates/(?!RemoteCli)`,
+  String.raw`^dotnet/Assembly\.Infrastructure/Updates/(UpdateCalls|UpdateCheck|UpdateSource|MachineUpdates)`,
   String.raw`^dotnet/Assembly\.Infrastructure/Workflows/RemoteWorkflowMirror\.cs$`,
   String.raw`^dotnet/Assembly\.Application/Features/(Notion|Workspaces)/`,
   String.raw`\.md$`,
@@ -119,6 +118,7 @@ export function lane(name: string, number: number): Lane {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const root = process.argv[2];
   const commit = await command('git', ['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: root });
-  // Stamped into the binary (dotnet/Directory.Build.targets): exact identity, list identity, release version.
-  console.log(`${await workingBackendIdentity(root, commit)} ${await workingRemoteContract(root, commit)} ${await workingVersion(root)}`);
+  // Stamped into the binary (dotnet/Directory.Build.targets): exact identity, list identity, release version, adapter sources.
+  const sources = await sourcesDigest(adapterSources, file => readFile(join(root, file)).catch(() => undefined));
+  console.log(`${await workingBackendIdentity(root, commit)} ${await workingRemoteContract(root, commit)} ${await workingVersion(root)} ${sources}`);
 }

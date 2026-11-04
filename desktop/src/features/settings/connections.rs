@@ -99,7 +99,7 @@ impl SettingsPage {
                             .flex_1()
                             .min_w_0()
                             .whitespace_normal()
-                            .child(format!("{reached} · {status}")),
+                            .child(row_status(&machine, reached, &status)),
                     ),
             );
         let failure = machine
@@ -408,3 +408,23 @@ fn field(label: &'static str, state: &Entity<InputState>, locked: bool, cx: &App
 #[cfg(test)]
 #[path = "connections_tests.rs"]
 mod tests;
+
+/// Where the machine is, how it answered, then its backend and what's behind, all as information.
+pub(crate) fn row_status(machine: &Machine, reached: &str, status: &str) -> String {
+    let mut parts = vec![reached.to_string(), status.to_string()];
+    parts.extend(machine.backend_note());
+    let behind = machine.behind().count();
+    if machine.updating {
+        parts.push(
+            machine
+                .update_note
+                .clone()
+                .unwrap_or("Updating…".to_string()),
+        );
+    } else if let Some(note) = &machine.update_note {
+        parts.push(note.clone());
+    } else if behind > 0 {
+        parts.push(format!("{behind} behind"));
+    }
+    parts.join(" · ")
+}

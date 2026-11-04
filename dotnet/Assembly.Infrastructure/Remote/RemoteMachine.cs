@@ -386,6 +386,11 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         return ReadConfig(await ConfiguredCallAsync("config", "warm", JsonSerializer.SerializeToElement(args, SessionsJson.Default.WarmArgs), ct));
     }
 
+    /// <summary>What this remote has installed, read by its own host.</summary>
+    internal async Task<Updates.InstalledTools?> InstalledToolsAsync(CancellationToken ct) =>
+        (await ConfiguredCallAsync("updates", "installed", JsonSerializer.SerializeToElement(new Updates.InstalledArgs(), Updates.UpdatesJson.Default.InstalledArgs), ct))
+        .Deserialize(Updates.UpdatesJson.Default.InstalledTools);
+
     private async Task<JsonElement> ConfiguredCallAsync(string feature, string method, JsonElement args, CancellationToken ct)
     {
         var owner = await CaptureOwnerReadAsync(null, ct);

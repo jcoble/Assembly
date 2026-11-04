@@ -55,6 +55,8 @@ pub struct DeployForm {
     _cancel: Option<Task<()>>,
     _watch: Option<Task<()>>,
     generation: Option<u64>,
+    pub(super) update_error: Option<SharedString>,
+    _update: Option<Task<()>>,
     _socket: Option<Subscription>,
     _machines: Option<Subscription>,
     _path: Subscription,
@@ -105,6 +107,8 @@ impl DeployForm {
             _cancel: None,
             _watch: None,
             generation,
+            update_error: None,
+            _update: None,
             _socket: socket_heard,
             _machines: machines,
             _path: path_heard,
@@ -293,6 +297,32 @@ impl DeployForm {
                     Outcome::Aborted => {
                         form.cancel_error =
                             Some("The cancel may not have reached the backend.".into())
+                    }
+                }
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
+    /// The one button: everything behind, on every machine. Its progress comes back on the machines topic.
+    pub(super) fn update_everything(&mut self, cx: &mut Context<Self>) {
+        let Some(socket) = SocketClient::try_global(cx) else {
+            return;
+        };
+        let call = socket
+            .read(cx)
+            .call::<Value>("updates", "start", json!({}), None);
+        self.update_error = None;
+        self._update = Some(cx.spawn(async move |form, cx| {
+            let answer = call.await;
+            _ = form.update(cx, |form, cx| {
+                match answer {
+                    Outcome::Ok(_) => {}
+                    Outcome::Failed(error) => form.update_error = Some(said(&error).into()),
+                    Outcome::Aborted => {
+                        form.update_error =
+                            Some("The update may not have reached the backend.".into())
                     }
                 }
                 cx.notify();

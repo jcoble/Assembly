@@ -52,7 +52,7 @@ public sealed class RemoteBackendIdentityTests
         var item = Assert.Single(status.Items, item => item.Name == "box");
         Assert.True(item.Reachable);
         Assert.Null(item.Reason);
-        Assert.Equal(new RemoteBackend(remote.Commit, BackendBuild.Commit, true, BackendBuild.Version, BackendBuild.Version), item.Backend);
+        Assert.Equal(new RemoteBackend(remote.Commit, BackendBuild.Commit, true, false, BackendBuild.Version, BackendBuild.Version), item.Backend);
     }
 
     [Fact]
@@ -94,7 +94,7 @@ public sealed class RemoteBackendIdentityTests
     }
 
     [Fact]
-    public async Task A_host_that_is_down_publishes_failure_without_hanging_or_losing_startup_detail()
+    public async Task A_host_that_is_down_publishes_failure_without_hanging()
     {
         using var file = new TempDatabase();
         var topics = new Topics();
@@ -102,7 +102,6 @@ public sealed class RemoteBackendIdentityTests
         using var hub = new LiveHub(RowStore.Open(db));
         var sessions = SessionStore.Open(db, TimeProvider.System, file.Folder);
         var status = new MachineStatus(topics, ["box"]);
-        status.Deployment("box", "Remote backend failed to start.");
         var remote = new MachinesSocketTests.StubRemote();
         await remote.StartAsync();
         var address = remote.Address;
@@ -113,23 +112,7 @@ public sealed class RemoteBackendIdentityTests
         var item = Assert.Single(status.Items, item => item.Name == "box");
         Assert.True(item.Checked);
         Assert.False(item.Reachable);
-        Assert.Contains("failed to start", item.Reason);
         Assert.True(status.Items[0].Reachable);
         Assert.Null(status.Items[0].Reason);
-    }
-
-    [Fact]
-    public void Successful_reads_do_not_clear_deploy_warnings_and_offline_keeps_failed_start_reason()
-    {
-        var status = new MachineStatus(new Topics(), ["box"]);
-        status.Deployment("box", "Failed to start.");
-        status.Reachable("box");
-        Assert.Contains("Failed to start", status.Items[1].Reason);
-        status.Unreachable("box", "didn't answer");
-        Assert.False(status.Items[1].Reachable);
-        Assert.Contains("Failed to start", status.Items[1].Reason);
-        status.Deployment("box", null);
-        status.Reachable("box");
-        Assert.Null(status.Items[1].Reason);
     }
 }

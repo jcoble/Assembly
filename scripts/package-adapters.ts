@@ -4,7 +4,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readF
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { packagingInputs, sourcesDigest } from "./dev-remote-identity.ts";
+import { adapterSources, sourcesDigest } from "./dev-remote-identity.ts";
 
 const names = ["claude-agent-acp", "codex-acp"] as const;
 type Versions = Record<(typeof names)[number], string>;
@@ -198,7 +198,7 @@ function publishBundles(assetPath: string, versions: Versions, tag: string, comm
 
 // What this checkout packages from, recorded in each manifest so a later run can tell whether it would build the same.
 export function packagingDigest(root = fileURLToPath(new URL("../", import.meta.url))) {
-  return sourcesDigest(packagingInputs, async file => existsSync(join(root, file)) ? readFileSync(join(root, file)) : undefined);
+  return sourcesDigest(adapterSources, async file => existsSync(join(root, file)) ? readFileSync(join(root, file)) : undefined);
 }
 
 // True unless every target's latest release already has these upstream versions and these packaging inputs.
