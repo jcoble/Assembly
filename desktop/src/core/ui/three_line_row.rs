@@ -67,7 +67,7 @@ pub fn selected_fill(cx: &App) -> Hsla {
 }
 
 /// Figures of equal width, so a running time doesn't shift as it counts.
-fn tabular() -> FontFeatures {
+pub fn tabular() -> FontFeatures {
     FontFeatures(Arc::new(vec![("tnum".into(), 1)]))
 }
 

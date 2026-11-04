@@ -21,6 +21,12 @@ pub mod ui {
         #[path = "../../src/core/ui/ask/presentation.rs"]
         pub mod presentation;
     }
+    #[path = "../../src/core/ui/row_drop_down.rs"]
+    pub mod row_drop_down;
+    #[path = "../../src/core/ui/spinner.rs"]
+    pub mod spinner;
+    #[path = "../../src/core/ui/three_line_row.rs"]
+    pub mod three_line_row;
 }
 #[path = "theme.rs"]
 pub mod theme;

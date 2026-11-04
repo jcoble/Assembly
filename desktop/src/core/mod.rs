@@ -16,6 +16,7 @@ pub mod commands;
 pub mod engine;
 pub mod intents;
 pub mod native_views;
+pub mod navigation;
 #[expect(
     dead_code,
     reason = "nothing in the window uses these until the panes read the state"

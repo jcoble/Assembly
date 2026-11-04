@@ -4,6 +4,7 @@ use super::{
     payload::{AskInput, AskPayload, AskSchema},
 };
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::inline_field::field_row;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::Input;
@@ -90,7 +91,7 @@ pub fn render(
                 .flex_1()
                 .text_color(theme.muted_foreground)
                 .child(choices);
-            column = column.child(inline_field(label, hint, value, cx));
+            column = column.child(field_row(label, hint.map(Into::into), None, value, cx));
         }
         return column;
     }
@@ -176,7 +177,13 @@ pub fn render(
                 row
             }
         };
-        column = column.child(inline_field(label, field.description.clone(), value, cx));
+        column = column.child(field_row(
+            label,
+            field.description.clone().map(Into::into),
+            None,
+            value,
+            cx,
+        ));
     }
     column.child(
         h_flex()
@@ -199,35 +206,4 @@ pub fn render(
                 .ghost(),
             ),
     )
-}
-
-/// An inline field's editing row: its label in a 64 px column, beside the input or choices, and its hint under them.
-fn inline_field(label: String, hint: Option<String>, value: Div, cx: &App) -> Div {
-    let muted = cx.theme().muted_foreground;
-    v_flex()
-        .gap_1()
-        .child(
-            h_flex()
-                .min_h(px(28.))
-                .gap_2()
-                .child(
-                    div()
-                        .w(px(64.))
-                        .flex_none()
-                        .text_role(TextRole::Meta, cx)
-                        .text_color(muted)
-                        .truncate()
-                        .child(label),
-                )
-                .child(value),
-        )
-        .when_some(hint, |column, hint| {
-            column.child(
-                div()
-                    .pl(px(72.))
-                    .text_role(TextRole::Meta, cx)
-                    .text_color(muted)
-                    .child(hint),
-            )
-        })
 }

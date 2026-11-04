@@ -1,4 +1,7 @@
 //! Lazy workflow display: one shared runs lease and one cancellable coalesced paged read.
+use crate::activity::{CardBody, RunRow, StatusChip, Tone, step_list};
+use crate::core::ui::activity::step_row::step_view;
+use crate::core::ui::row_drop_down::RowDropDowns;
 use crate::core::{
     engine::{
         EngineChanged, EngineFeed, EngineScope, EngineWatch, SessionKey, workflow_items::RunView,
@@ -8,6 +11,7 @@ use crate::core::{
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
+use std::rc::Rc;
 pub struct RunActivity {
     parent: SessionKey,
     feed: Entity<EngineFeed>,
@@ -18,9 +22,14 @@ pub struct RunActivity {
     dirty: bool,
     serial: u64,
     read: Option<Task<()>>,
+    /// The run's row and its steps each open on their own.
+    runs: Entity<RowDropDowns>,
+    steps: Entity<RowDropDowns>,
+    opened: Option<String>,
     connections: Vec<(Entity<SocketClient>, u64)>,
     _connections: Vec<Subscription>,
     _changed: Subscription,
+    _drops: [Subscription; 2],
 }
 impl RunActivity {
     pub fn new(parent: SessionKey, cx: &mut Context<Self>) -> Self {
@@ -36,6 +45,14 @@ impl RunActivity {
                 cx.notify();
             }
         });
+        let (runs, steps) = (
+            cx.new(|_| RowDropDowns::default()),
+            cx.new(|_| RowDropDowns::default()),
+        );
+        let drops = [
+            cx.observe(&runs, |_, _, cx| cx.notify()),
+            cx.observe(&steps, |_, _, cx| cx.notify()),
+        ];
         let mut view = Self {
             parent,
             feed,
@@ -46,9 +63,13 @@ impl RunActivity {
             dirty: true,
             serial: 0,
             read: None,
+            runs,
+            steps,
+            opened: None,
             connections: Vec::new(),
             _connections: Vec::new(),
             _changed: changed,
+            _drops: drops,
         };
         for socket in [SocketClient::try_global(cx), SocketClient::try_bulk(cx)]
             .into_iter()
@@ -146,7 +167,10 @@ impl RunActivity {
                     view.error = Some("The workflow source is no longer coherent.".into());
                 } else {
                     match result {
-                        Ok(page) => view.view = Some(page),
+                        Ok(page) => {
+                            view.view = Some(page);
+                            view.open_first_time(cx);
+                        }
                         Err(error) => view.error = Some(error.message),
                     }
                 }
@@ -154,6 +178,43 @@ impl RunActivity {
                 cx.notify();
             });
         }));
+    }
+    /// A run shows its steps when it first arrives, since it's already inside what the user opened.
+    fn open_first_time(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.view.as_ref().map(|page| page.run.id.clone()) else {
+            return;
+        };
+        if self.opened.as_ref() == Some(&id) {
+            return;
+        }
+        self.opened = Some(id.clone());
+        RunRow::open(
+            id.into(),
+            &self.runs,
+            Self::steps_body(cx.entity().downgrade()),
+            cx,
+        );
+    }
+    /// Reads the run as it is now on every frame, so an open list follows the steps.
+    fn steps_body(this: WeakEntity<Self>) -> CardBody {
+        Rc::new(move |_, cx| {
+            let Some((key, steps, drops)) = this.upgrade().and_then(|this| {
+                let this = this.read(cx);
+                let page = this.view.as_ref()?;
+                let now = now_ms();
+                Some((
+                    page.run.id.clone(),
+                    page.steps
+                        .iter()
+                        .map(|step| step_view(step, now))
+                        .collect::<Vec<_>>(),
+                    this.steps.clone(),
+                ))
+            }) else {
+                return Empty.into_any_element();
+            };
+            step_list(key, steps, &drops, cx)
+        })
     }
 }
 impl Render for RunActivity {
@@ -179,27 +240,40 @@ impl Render for RunActivity {
             }
         }
         if let Some(page) = &self.view {
-            body = body
-                .child(
-                    div().font_weight(FontWeight::MEDIUM).child(
-                        page.run
-                            .title
-                            .clone()
-                            .unwrap_or_else(|| page.run.id.clone()),
-                    ),
-                )
-                .child(div().text_color(muted).child(page.run.state.clone()));
-            if let Some(reason) = &page.run.display_prerequisite {
-                body = body.child(reason.clone());
-            }
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .map(|time| time.as_millis().min(i64::MAX as u128) as i64)
-                .unwrap_or(0);
-            for step in &page.steps {
-                body = body.child(crate::core::ui::activity::step_row::render(step, now, cx));
-            }
+            let tone = run_tone(&page.run.state);
+            let done = page
+                .steps
+                .iter()
+                .filter(|step| step.state == "succeeded")
+                .count();
+            let current = page
+                .steps
+                .iter()
+                .find(|step| step.state == "running")
+                .map(|step| step.label_present.clone());
+            let step_line = page
+                .run
+                .display_prerequisite
+                .clone()
+                .or(current)
+                .unwrap_or_else(|| page.run.state.clone());
+            body = body.child(RunRow {
+                key: page.run.id.clone().into(),
+                title: page
+                    .run
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| page.run.id.clone())
+                    .into(),
+                task_key: None,
+                step_line: step_line.into(),
+                done,
+                total: page.steps.len(),
+                tone,
+                pill: Some(StatusChip::new(page.run.state.clone(), tone).into_any_element()),
+                body: Self::steps_body(cx.entity().downgrade()),
+                drops: self.runs.clone(),
+            });
         } else if self.read.is_some() {
             body = body.child("Loading workflow…");
         } else if self.error.is_none() {
@@ -207,4 +281,20 @@ impl Render for RunActivity {
         }
         body
     }
+}
+fn run_tone(state: &str) -> Tone {
+    match state {
+        "running" => Tone::Info,
+        "succeeded" => Tone::Success,
+        "failed" => Tone::Danger,
+        "waiting" => Tone::Warning,
+        _ => Tone::Neutral,
+    }
+}
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|time| time.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
 }

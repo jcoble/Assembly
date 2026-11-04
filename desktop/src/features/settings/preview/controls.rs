@@ -2,7 +2,7 @@
 //! These values never cross the preview boundary into application preferences.
 use super::{fonts, row};
 use crate::core::theme::theme_id::ThemeId;
-use crate::inline_field::{ChoiceOption, FieldValue, InlineField, SaveRequested};
+use crate::inline_field::{ChoiceOption, FieldValue, InlineField, SaveFailure, SaveRequested};
 use gpui_kit::component::label::Label;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::v_flex;
@@ -99,7 +99,7 @@ impl Control {
                         FieldValue::Choice(Some(value)) if allowed.contains(value) => {
                             Ok(save.value.clone())
                         }
-                        _ => Err("Choose a value from the list.".into()),
+                        _ => Err(SaveFailure::Refused("Choose a value from the list.".into())),
                     };
                     field.complete_save(save.request, result, window, cx);
                 },
@@ -128,7 +128,8 @@ impl Control {
                 &cx.entity(),
                 window,
                 move |field, _, save: &SaveRequested, window, cx| {
-                    field.complete_save(save.request, range.validate(&save.value), window, cx);
+                    let result = range.validate(&save.value).map_err(SaveFailure::Refused);
+                    field.complete_save(save.request, result, window, cx);
                 },
             )
         });

@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Images;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Assembly.Application.Common.Machines;
@@ -282,8 +283,8 @@ public sealed partial class ChatSocketTests
         Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
     }
 
-    private static readonly Assembly.Application.Features.Chat.Attachments.ImageType AttachmentImage =
-        Assembly.Application.Features.Chat.Attachments.ImageType.ForExtension("png")!;
+    private static readonly Assembly.Application.Common.Images.ImageType AttachmentImage =
+        Assembly.Application.Common.Images.ImageType.ForExtension("png")!;
 
     // A PNG's first bytes, then filler.
     private static byte[] Png(int size)
