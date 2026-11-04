@@ -41,17 +41,21 @@ pub(super) struct StartDraft {
     pub(super) ready: bool,
     pub(super) busy: bool,
 }
+type ProviderSlot = std::rc::Rc<dyn Fn(&App) -> Option<SharedString>>;
+type ElementSlot = std::rc::Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
+type SettingsSlot = std::rc::Rc<dyn Fn(bool, &mut Window, &mut App) -> AnyElement>;
+
 /// A new session's own controls in the shared box. The form owns what they do; the composer only places them.
 #[derive(Clone)]
 pub struct StartSlots {
     /// Who the message goes to, for the draft's hint.
-    pub provider: std::rc::Rc<dyn Fn(&App) -> Option<SharedString>>,
+    pub provider: ProviderSlot,
     /// Ahead of the settings: the agent picker.
-    pub footer: std::rc::Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+    pub footer: ElementSlot,
     /// The settings pills; the argument says the composer is narrow enough to fold them.
-    pub settings: std::rc::Rc<dyn Fn(bool, &mut Window, &mut App) -> AnyElement>,
+    pub settings: SettingsSlot,
     /// Directly below the box: the machine and checkout.
-    pub sub_bar: std::rc::Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+    pub sub_bar: ElementSlot,
 }
 impl Composer {
     pub fn new_start_draft(

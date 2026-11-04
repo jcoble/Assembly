@@ -14,9 +14,11 @@ fn picture() -> Hop {
 fn redirect(to: &str) -> Hop {
     Hop::Redirect(to.to_owned())
 }
+type Loaded = (Result<Vec<u8>, NoPicture>, Vec<(String, Duration)>);
+
 /// Runs a load over the given answers, each taking `each` on a fake clock: what came back, and each address asked with
 /// the time it was given.
-fn run(each: Duration, answers: Vec<Hop>) -> (Result<Vec<u8>, NoPicture>, Vec<(String, Duration)>) {
+fn run(each: Duration, answers: Vec<Hop>) -> Loaded {
     let start = Instant::now();
     let elapsed = Cell::new(Duration::ZERO);
     let asked = RefCell::new(Vec::new());

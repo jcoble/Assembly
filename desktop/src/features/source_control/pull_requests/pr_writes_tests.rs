@@ -33,16 +33,14 @@ fn merge() -> MergeRequest {
     }
 }
 /// A backend that ends every started write in this state, with this result.
-fn start_backend(
-    state: &'static str,
-    outcome: Value,
-    cx: &mut TestAppContext,
-) -> (
+type StartedBackend = (
     FakeBackend,
     Arc<Mutex<Vec<Value>>>,
     futures_channel::mpsc::UnboundedSender<()>,
     futures_channel::mpsc::UnboundedReceiver<()>,
-) {
+);
+
+fn start_backend(state: &'static str, outcome: Value, cx: &mut TestAppContext) -> StartedBackend {
     let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
     let observed = seen.clone();
     let (changed, changes) = unbounded();
