@@ -128,10 +128,15 @@ pub(super) fn validate_scope(key: &EngineKey, scope: &EngineScope) -> Result<(),
         })
     }
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NeedRowEvent {
+    Settled,
+}
 pub struct NeedRow {
     key: EngineKey,
     scope: EngineScope,
     feed: Entity<EngineFeed>,
+    surface: &'static str,
     viewed: Option<SessionKey>,
     need: NeedItem,
     state: NeedRowState,
@@ -141,15 +146,34 @@ pub struct NeedRow {
     serial: u64,
     accepted_here: bool,
     reconciled: bool,
+    settled: bool,
+    unsent: Option<String>,
+    offline: Option<SharedString>,
     _changed: Subscription,
     _send: Option<Task<()>>,
     _read: Option<Task<()>>,
 }
+impl EventEmitter<NeedRowEvent> for NeedRow {}
 impl NeedRow {
+    pub fn need(&self) -> &NeedItem {
+        &self.need
+    }
+    /// What was being typed when someone else answered. It's shown to copy, and never sent.
+    pub fn unsent_draft(&self) -> Option<&str> {
+        self.unsent.as_deref()
+    }
+    /// Why this need's machine can't be answered on right now. Its draft stays, and nothing is sent until it's back.
+    pub fn set_offline(&mut self, reason: Option<SharedString>, cx: &mut Context<Self>) {
+        if self.offline != reason {
+            self.offline = reason;
+            cx.notify();
+        }
+    }
     pub fn create(
         key: EngineKey,
         scope: EngineScope,
         feed: Entity<EngineFeed>,
+        surface: &'static str,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<Entity<Self>, EngineRefusal> {
@@ -164,17 +188,18 @@ impl NeedRow {
             code: "need_unavailable".into(),
             message: "The current question is unavailable.".into(),
         })?;
-        Ok(cx.new(|cx| Self::build(key, scope, feed, need, window, cx)))
+        Ok(cx.new(|cx| Self::build(key, scope, feed, surface, need, window, cx)))
     }
-    pub(super) fn create_for(
+    pub fn create_for(
         viewed: SessionKey,
         key: EngineKey,
         scope: EngineScope,
         feed: Entity<EngineFeed>,
+        surface: &'static str,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<Entity<Self>, EngineRefusal> {
-        let row = Self::create(key, scope, feed, window, cx)?;
+        let row = Self::create(key, scope, feed, surface, window, cx)?;
         row.update(cx, |row, _| row.viewed = Some(viewed));
         Ok(row)
     }
@@ -182,6 +207,7 @@ impl NeedRow {
         key: EngineKey,
         scope: EngineScope,
         feed: Entity<EngineFeed>,
+        surface: &'static str,
         need: NeedItem,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -198,17 +224,19 @@ impl NeedRow {
             TextareaState::new(window, cx)
                 .auto_grow(1, 6)
                 .submit_on_enter(true)
-                .placeholder("Your answer")
+                .placeholder("Type your answer")
         });
-        let state = if need.state == "open" {
-            NeedRowState::Idle
-        } else {
+        let settled = need.state != "open";
+        let state = if settled {
             settled_state(&need, false)
+        } else {
+            NeedRowState::Idle
         };
         Self {
             key,
             scope,
             feed,
+            surface,
             viewed: None,
             need,
             state,
@@ -218,6 +246,9 @@ impl NeedRow {
             serial: 0,
             accepted_here: false,
             reconciled: true,
+            settled,
+            unsent: None,
+            offline: None,
             _changed: changed,
             _send: None,
             _read: None,
@@ -230,11 +261,26 @@ impl NeedRow {
             self.need = need;
             if self.need.state != "open" {
                 self.state = settled_state(&self.need, self.accepted_here);
+                self.note_settled(cx);
             }
         }
         cx.notify();
     }
-    fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Once, when the need stops being open. An answer of ours still on its way isn't known yet, so it waits for the reread.
+    fn note_settled(&mut self, cx: &mut Context<Self>) {
+        if self.settled || !self.reconciled || self.need.state == "open" {
+            return;
+        }
+        self.settled = true;
+        if !self.accepted_here {
+            let draft = self.text.read(cx).value().to_string();
+            if !draft.trim().is_empty() {
+                self.unsent = Some(draft);
+            }
+        }
+        cx.emit(NeedRowEvent::Settled);
+    }
+    pub fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.refresh(cx);
         if !self.available || self.need.state != "open" {
             return;
@@ -297,7 +343,8 @@ impl NeedRow {
     }
     fn answer(&mut self, answer: NeedAnswer, cx: &mut Context<Self>) {
         self.refresh(cx);
-        if !self.available
+        if self.offline.is_some()
+            || !self.available
             || !self.reconciled
             || self.need.state != "open"
             || matches!(self.state, NeedRowState::Sending)
@@ -321,7 +368,7 @@ impl NeedRow {
         self.reconciled = false;
         self.state = NeedRowState::Sending;
         let call = self.feed.update(cx, |feed, cx| {
-            feed.resolve_need(self.key.clone(), answer, Some("rail"), cx)
+            feed.resolve_need(self.key.clone(), answer, Some(self.surface), cx)
         });
         self._send = Some(cx.spawn(async move |row, cx| {
             let result = call.await;
@@ -377,7 +424,7 @@ impl NeedRow {
                 match result {
                     Ok(Some(item))=>if let Some(need)=NeedItem::of(&item) {
                         row.need=need;row.available=row.feed.read(cx).loaded(&row.scope);row.reconciled=true;
-                        if row.need.state!="open"{row.state=settled_state(&row.need,row.accepted_here);}
+                        if row.need.state!="open"{row.state=settled_state(&row.need,row.accepted_here);row.note_settled(cx);}
                         else if matches!(row.state,NeedRowState::Sending){row.state=NeedRowState::Open;}
                     }else{row.available=false;},
                     Ok(None)=>row.available=false,

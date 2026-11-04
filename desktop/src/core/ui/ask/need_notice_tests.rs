@@ -135,7 +135,15 @@ async fn row_for(need: Value, cx: &mut TestAppContext) -> (Fixture, &mut VisualT
     };
     let (row, visual) = cx.add_window_view(|window, cx| {
         let need = feed.read(cx).need(&key).unwrap();
-        NeedRow::build(key.clone(), scope.clone(), feed.clone(), need, window, cx)
+        NeedRow::build(
+            key.clone(),
+            scope.clone(),
+            feed.clone(),
+            "rail",
+            need,
+            window,
+            cx,
+        )
     });
     (
         Fixture {

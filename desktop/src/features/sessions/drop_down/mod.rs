@@ -1,10 +1,6 @@
 //! Rail drop-down consumers of the shared source-qualified Engine feed.
 pub mod started_sessions;
 
-pub mod need_row;
-#[cfg(test)]
-mod need_row_tests;
-
 pub(super) mod rail_details;
 
 /// Display ownership uses the recorded candidate tuple only; all operations still validate their actual source.
@@ -22,4 +18,4 @@ pub(super) mod rail_sources;
 #[cfg(test)]
 mod rail_sources_tests;
 
-pub(super) mod native_details;
+pub mod native_details;

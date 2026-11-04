@@ -1,13 +1,16 @@
 //! `NeedRow`'s render: the need's title, detail, answer controls and its working, failed or settled state.
 use super::*;
 
-fn dismiss(cx: &mut Context<NeedRow>) -> impl IntoElement {
-    div().debug_selector(|| "need-dismiss".into()).child(
-        Button::new("dismiss-need")
-            .ghost()
-            .label("Dismiss")
-            .on_click(cx.listener(|row, _, _, cx| row.answer(NeedAnswer::Dismiss, cx))),
-    )
+/// A gate is decided, not dismissed (the engine refuses it), so it gets no Dismiss.
+fn dismiss(allowed: bool, cx: &mut Context<NeedRow>) -> Option<impl IntoElement> {
+    allowed.then(|| {
+        div().debug_selector(|| "need-dismiss".into()).child(
+            Button::new("dismiss-need")
+                .ghost()
+                .label("Dismiss")
+                .on_click(cx.listener(|row, _, _, cx| row.answer(NeedAnswer::Dismiss, cx))),
+        )
+    })
 }
 
 impl Render for NeedRow {
@@ -93,10 +96,31 @@ impl Render for NeedRow {
                     .to_string()
                 }));
             }
+            if let Some(unsent) = self.unsent.clone() {
+                column = column.child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_color(theme.muted_foreground)
+                                .child(format!("Your unsent answer: {unsent}")),
+                        )
+                        .child(Button::new("copy-unsent").ghost().label("Copy").on_click(
+                            move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(unsent.clone()))
+                            },
+                        )),
+                );
+            }
             return column;
         }
         if matches!(self.state, NeedRowState::Sending) {
             return column;
+        }
+        if let Some(reason) = self.offline.clone() {
+            return column.child(div().text_color(theme.muted_foreground).child(reason));
         }
         if !self.reconciled && self._read.as_ref().is_some_and(|read| !read.is_ready()) {
             return column.child("Checking the current question…");
@@ -113,7 +137,7 @@ impl Render for NeedRow {
                         .text_color(theme.muted_foreground)
                         .child(notice),
                 )
-                .child(dismiss(cx));
+                .children(dismiss(self.need().kind != "workflow_gate", cx));
         }
         if !matches!(self.state, NeedRowState::Open) {
             let label = if matches!(self.state, NeedRowState::Idle) {
@@ -209,10 +233,17 @@ impl Render for NeedRow {
                     ));
             } else if presentation.input_mode == "choice" {
                 let mut choices = h_flex().gap_2().flex_wrap();
+                let gate = self.need().kind == "workflow_gate";
                 for (index, option) in presentation.options.iter().enumerate() {
                     let id = option.id.clone();
+                    // A gate's options arrive as bare words, "approve" and "deny".
+                    let label = if gate {
+                        sentence_case(&option.label)
+                    } else {
+                        option.label.clone()
+                    };
                     let button = Button::new(SharedString::from(format!("need-choice:{id}")))
-                        .label(option.label.clone())
+                        .label(label)
                         .on_click(cx.listener(move |row, _, _, cx| {
                             row.answer(NeedAnswer::Answer(json!(id)), cx)
                         }));
@@ -225,6 +256,15 @@ impl Render for NeedRow {
                 answers = answers.child(choices);
             }
         }
-        column.child(answers).child(dismiss(cx))
+        column
+            .child(answers)
+            .children(dismiss(self.need().kind != "workflow_gate", cx))
     }
+}
+
+fn sentence_case(word: &str) -> String {
+    let mut letters = word.chars();
+    letters.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(letters).collect()
+    })
 }

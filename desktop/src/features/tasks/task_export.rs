@@ -5,6 +5,13 @@ pub use crate::core::intents::open_task::NotionTaskRef;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "The task export and image upload calls have no pane yet; only their tests call them."
+    )
+)]
 pub struct NotionSource {
     pub provider: String,
     pub data_source_id: String,
@@ -12,6 +19,13 @@ pub struct NotionSource {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "The task export and image upload calls have no pane yet; only their tests call them."
+    )
+)]
 pub struct TaskSnapshot {
     pub key: String,
     pub title: String,
@@ -20,6 +34,13 @@ pub struct TaskSnapshot {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "The task export and image upload calls have no pane yet; only their tests call them."
+    )
+)]
 pub struct NotionTaskExport {
     pub source: NotionSource,
     pub revision: String,
@@ -141,6 +162,10 @@ pub struct NotionRefreshReceipt {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[expect(
+    dead_code,
+    reason = "No pane uploads task images yet, and no test calls these."
+)]
 pub struct NotionImageLease {
     pub upload_id: String,
     pub chunk_bytes: i32,

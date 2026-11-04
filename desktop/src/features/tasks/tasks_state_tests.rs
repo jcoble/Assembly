@@ -181,7 +181,7 @@ fn a_filter_the_snapshot_no_longer_has_stops_filtering() {
         PageOutcome::FiltersDropped
     );
     assert_eq!(state.query.statuses, vec!["Done".to_string()]);
-    assert!(state.loading == false);
+    assert!(!state.loading);
 }
 
 #[test]

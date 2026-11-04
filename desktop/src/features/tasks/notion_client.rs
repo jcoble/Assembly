@@ -50,6 +50,13 @@ impl NotionClient {
             }
         })
     }
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "The task export and image upload calls have no pane yet; only their tests call them."
+        )
+    )]
     pub fn export_task(
         &self,
         source: NotionTaskRef,
@@ -57,6 +64,13 @@ impl NotionClient {
     ) -> Task<Result<NotionTaskExport, NotionError>> {
         self.call("export", json!(source), true, cx)
     }
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "The task export and image upload calls have no pane yet; only their tests call them."
+        )
+    )]
     pub fn settings(&self, cx: &mut App) -> Task<Result<NotionSettingsView, NotionError>> {
         self.call("settings", json!({}), false, cx)
     }
@@ -174,6 +188,10 @@ impl NotionClient {
             cx,
         )
     }
+    #[expect(
+        dead_code,
+        reason = "No pane uploads task images yet, and no test calls these."
+    )]
     pub fn image_begin(
         &self,
         source: NotionTaskRef,
@@ -188,6 +206,10 @@ impl NotionClient {
             cx,
         )
     }
+    #[expect(
+        dead_code,
+        reason = "No pane uploads task images yet, and no test calls these."
+    )]
     pub fn image_chunk(
         &self,
         upload_id: String,
@@ -202,6 +224,10 @@ impl NotionClient {
             cx,
         )
     }
+    #[expect(
+        dead_code,
+        reason = "No pane uploads task images yet, and no test calls these."
+    )]
     pub fn image_commit(
         &self,
         upload_id: String,
@@ -209,6 +235,10 @@ impl NotionClient {
     ) -> Task<Result<NotionEditReceipt, NotionError>> {
         self.call("imageCommit", json!({"uploadId":upload_id}), true, cx)
     }
+    #[expect(
+        dead_code,
+        reason = "No pane uploads task images yet, and no test calls these."
+    )]
     pub fn image_drop(
         &self,
         upload_id: String,

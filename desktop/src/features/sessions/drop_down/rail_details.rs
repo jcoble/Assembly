@@ -1,9 +1,9 @@
 //! Lazy row-local controls over held shared facts; dropping the body drops its input drafts and observer.
-use super::need_row::NeedRow;
 use crate::core::engine::{
     EngineChanged, EngineFeed, EngineKey, EngineScope, SessionKey, engine_items::SessionItem,
 };
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::ask::need_row::NeedRow;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, Size, v_flex};
 use gpui_kit::*;
@@ -90,6 +90,7 @@ impl RailDetails {
                         key: None,
                     },
                     self.feed.clone(),
+                    "rail",
                     window,
                     cx,
                 )

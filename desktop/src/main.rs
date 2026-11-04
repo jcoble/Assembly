@@ -66,7 +66,10 @@ fn main() {
         features::projects::new_project_dialog::register(cx);
         features::worktrees::worktrees_pane::WorktreesPane::register(cx);
         features::changes::changes_pane::ChangesPane::register(cx);
-        features::board::board_pane::BoardPane::register(cx);
+        features::board::board_panel::BoardPanel::register(cx);
+        cx.set_app_identity("dev.jcoble.assembly", "Assembly");
+        let engine = core::engine::EngineFeed::global(cx);
+        features::board::owner_notify::OwnerNotify::start(engine, cx);
         features::terminal::terminal_pane::TerminalPane::register(cx);
         features::tasks::tasks_pane::TasksPane::register(cx);
         features::workspaces::init(cx)

@@ -149,10 +149,12 @@ impl ExternalUrls {
                 }
             }
         });
-        cx.set_global(Listening(listening));
+        cx.set_global(Listening { _task: listening });
     }
 }
 
 /// The app owns the listener for as long as it runs.
-struct Listening(Task<()>);
+struct Listening {
+    _task: Task<()>,
+}
 impl Global for Listening {}

@@ -1,7 +1,7 @@
 //! The pane drawn whole, in each of the states a person meets. There's no backend here, so a test hands it what the
 //! backend would have pushed.
 use gpui::TestAppContext;
-use gpui_kit::{AppContext as _, Entity, VisualTestContext};
+use gpui_kit::{Entity, VisualTestContext};
 
 use super::TasksPane;
 use crate::features::tasks::task_export::*;

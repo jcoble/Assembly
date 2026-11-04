@@ -8,7 +8,7 @@ mod kinds;
 mod layout;
 mod state;
 pub use editor::ChoiceOption;
-pub use field::{FieldRule, FieldValue, InlineField, SaveMode, SaveRequested, init};
+pub use field::{FieldRule, FieldValue, InlineField, SaveRequested, init};
 pub use form::{FormSaveRequested, InlineForm};
 pub use form_state::{FormFailure, FormRule, FormValues};
 pub use kinds::NumberFormat;

@@ -10,7 +10,7 @@ mod git_operation;
 #[allow(dead_code)]
 #[path = "../src/features/source_control/git/git_target.rs"]
 mod git_target;
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/components/inline_field/mod.rs"]
 mod inline_field;
 #[allow(dead_code)]

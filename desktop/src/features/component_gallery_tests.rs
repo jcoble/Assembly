@@ -2,7 +2,7 @@
 use std::time::Duration;
 
 use gpui::TestAppContext;
-use gpui_kit::{AnyElement, AppContext as _, Entity, IntoElement as _, VisualTestContext, div};
+use gpui_kit::{AnyElement, Entity, IntoElement as _, VisualTestContext, div};
 
 use super::{ComponentGallery, NEED_KEYS};
 use crate::activity::NeedsCard;

@@ -289,10 +289,12 @@ impl TasksState {
         self.detail_read += 1;
     }
 
+    #[cfg(test)]
     pub fn selected(&self) -> Option<&NotionTaskRef> {
         self.selected.as_ref()
     }
 
+    #[cfg(test)]
     pub fn detail(&self) -> Option<&TaskDetail> {
         self.detail.as_ref()
     }

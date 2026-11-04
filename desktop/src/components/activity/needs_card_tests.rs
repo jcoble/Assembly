@@ -165,7 +165,7 @@ fn answering_shuts_it_and_keeps_the_summary_line(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn settling_leaves_another_open_card_alone(cx: &mut TestAppContext) {
-    let mut card = open(cx, small_body);
+    let card = open(cx, small_body);
     let drops = card.drops.clone();
     card.cx.update(|_, cx| {
         drops.update(cx, |drops, cx| {
