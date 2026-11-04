@@ -113,6 +113,7 @@ impl PrDetail {
     pub fn on_changes(&self) -> bool {
         self.page == Page::Changes
     }
+    #[cfg(test)]
     pub fn row(&self) -> Option<&PullRequestSummary> {
         self.row.as_ref()
     }

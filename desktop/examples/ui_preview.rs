@@ -1,18 +1,22 @@
 #[path = "ui_preview/support.rs"]
 mod core;
 // The preview exercises a subset of the reusable field API.
+#[allow(dead_code)]
 #[path = "../src/features/source_control/git/git_operation.rs"]
 mod git_operation;
+#[allow(dead_code)]
 #[path = "../src/features/source_control/git/git_target.rs"]
 mod git_target;
 #[allow(dead_code)]
 #[path = "../src/components/inline_field/mod.rs"]
 mod inline_field;
+#[allow(dead_code)]
 #[path = "../src/features/projects/mod.rs"]
 mod projects;
 #[path = "../src/features/settings/preview/mod.rs"]
 mod settings_preview;
 
+#[allow(dead_code)]
 #[path = "../src/features/preview_screen.rs"]
 mod preview_screen;
 mod features {

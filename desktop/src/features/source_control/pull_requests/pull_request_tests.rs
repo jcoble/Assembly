@@ -42,17 +42,6 @@ fn pages_retain_total_and_cursor_and_deduplicate_by_repository_and_number() {
 }
 
 #[test]
-fn binary_or_omitted_patch_is_distinct_from_no_changes() {
-    let binary:super::PullRequestFile=serde_json::from_value(serde_json::json!({"path":"image.png","previousPath":null,"status":"modified","additions":0,"deletions":0,"patch":null,"patchOmitted":false})).unwrap();
-    assert_eq!(binary.patch_status(), "No patch available");
-    let empty = super::PullRequestFile {
-        patch: Some(String::new()),
-        ..binary
-    };
-    assert_eq!(empty.patch_status(), "No changes");
-}
-
-#[test]
 fn an_empty_queue_does_not_remove_the_structural_target_needed_for_backend_checkout_validation() {
     let target = PrTarget::parse_url("https://github.com/actual/checkout/pull/7").unwrap();
     assert_eq!(target.repository, "actual/checkout");

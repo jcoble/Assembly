@@ -157,16 +157,6 @@ impl Composer {
             items.retain(|item| item.client_id() != client_id);
         }
     }
-    #[cfg(test)]
-    pub fn set_machine(&mut self, machine: Option<String>, cx: &mut Context<Self>) {
-        if self.machine != machine {
-            self.machine = machine;
-            if let Some(key) = self.session_key.as_mut() {
-                key.machine = self.machine.clone().unwrap_or_else(|| "owner".into());
-            }
-            self.read_pending(cx);
-        }
-    }
 
     /// Each selected owner's pending message owns one keyed subscription, released on switch/delivery.
     pub(super) fn watch_pending(&mut self, cx: &mut Context<Self>) {

@@ -30,6 +30,10 @@ impl WorkspaceTarget {
     }
 }
 #[derive(Clone, Debug)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Only tests look at which save this was, so far.")
+)]
 pub struct WorkspaceSaved {
     pub key: WorkspaceKey,
     pub revision: u64,

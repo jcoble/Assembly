@@ -74,7 +74,6 @@ impl PullRequestPage {
 pub struct PullRequestCreated {
     pub number: u64,
     pub url: String,
-    pub head: String,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct PrTarget {
@@ -140,7 +139,6 @@ pub struct PullRequestDetail {
     pub state: String,
     pub is_draft: bool,
     pub mergeable: String,
-    pub review_decision: String,
     pub created_at: String,
     pub merged_at: String,
     pub merged_by: String,
@@ -152,7 +150,6 @@ pub struct PullRequestDetail {
     pub checks: Vec<PullRequestCheck>,
     pub files: Vec<PullRequestFile>,
     pub more_files: bool,
-    pub timeline: Vec<PullRequestTimeline>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -164,7 +161,6 @@ pub struct PullRequestComment {
     pub created_at: String,
     pub path: Option<String>,
     pub line: Option<usize>,
-    pub side: Option<String>,
     pub reply_to_id: Option<u64>,
 }
 impl PullRequestComment {
@@ -211,25 +207,6 @@ pub struct PullRequestFile {
     pub deletions: usize,
     pub patch: Option<String>,
     pub patch_omitted: bool,
-}
-impl PullRequestFile {
-    pub fn patch_status(&self) -> &'static str {
-        match self.patch.as_deref() {
-            None => "No patch available",
-            Some("") => "No changes",
-            Some(_) => "Changes",
-        }
-    }
-}
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PullRequestTimeline {
-    pub kind: String,
-    pub author: String,
-    pub body: String,
-    pub created_at: String,
-    pub sha: Option<String>,
-    pub comment_id: Option<String>,
 }
 #[cfg(test)]
 #[path = "pull_request_tests.rs"]

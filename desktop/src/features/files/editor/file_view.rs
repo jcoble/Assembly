@@ -121,11 +121,6 @@ impl FileView {
         });
     }
 
-    /// Opens the session's file at `path` in the center, or brings its tab forward.
-    pub fn open(session: String, path: String, window: &mut Window, cx: &mut App) {
-        Self::open_at(session, path, None, None, false, None, window, cx);
-    }
-
     pub fn new(session: String, path: String, cx: &mut Context<Self>) -> Self {
         FileView {
             focus: cx.focus_handle(),

@@ -26,10 +26,16 @@ pub struct NeedItem {
     pub key: EngineKey,
     pub version: i64,
     pub session: SessionKey,
+    // The Engine's read model; nothing shows a need's run yet.
+    #[allow(dead_code)]
     pub run_id: Option<String>,
+    // The Engine's read model; nothing shows a need's step yet.
+    #[allow(dead_code)]
     pub step_id: Option<String>,
     pub addressee_session_id: Option<String>,
     pub addressee_machine: Option<String>,
+    // The Engine's read model; nothing links a need to its chat row yet.
+    #[allow(dead_code)]
     pub chat_row_id: Option<String>,
     pub kind: String,
     pub text: Option<String>,
@@ -41,6 +47,8 @@ pub struct NeedItem {
     pub answer_complete: Option<bool>,
     pub answer_utf8_bytes: Option<u64>,
     pub answered_by: Option<String>,
+    // Build Board (tsk-1656) reads this, so an expect would fail once it merges.
+    #[allow(dead_code)]
     pub answered_ms: Option<i64>,
     pub answered_origin: Option<CommandOrigin>,
 }
@@ -117,6 +125,7 @@ impl NeedItem {
             answered_origin: row.answered_origin,
         })
     }
+    #[cfg_attr(not(test), expect(dead_code, reason = "No row shows this notice yet."))]
     pub fn presentation_notice(&self) -> Option<&'static str> {
         self.presentation
             .as_ref()
@@ -167,6 +176,8 @@ pub struct SessionItem {
     pub run_id: Option<String>,
     pub title: Option<String>,
     pub provider: String,
+    // Build Board (tsk-1656) reads this, so an expect would fail once it merges.
+    #[allow(dead_code)]
     pub model: Option<String>,
     /// Recorded owner working directory; this is display data, never a filesystem root grant.
     pub folder: String,

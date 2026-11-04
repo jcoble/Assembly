@@ -274,11 +274,6 @@ impl Composer {
         self.answer = answer;
     }
 
-    #[cfg(test)]
-    pub fn answer(&self) -> Option<&AnswerPanel> {
-        self.answer.as_ref()
-    }
-
     pub fn set_locked(&mut self, lock: Option<Lock>, cx: &mut Context<Self>) {
         if self.locked != lock {
             self.locked = lock;

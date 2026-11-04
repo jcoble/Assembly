@@ -67,6 +67,7 @@ impl PostRequest {
             action,
         })
     }
+    #[cfg(test)]
     pub fn body(&self) -> &str {
         &self.body
     }

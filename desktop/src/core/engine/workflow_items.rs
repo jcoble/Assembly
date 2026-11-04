@@ -4,6 +4,8 @@ use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+// The Engine's read model; Build Board (tsk-1656) reads these, so an expect would fail once it merges.
+#[allow(dead_code)]
 pub struct RunItem {
     entity_kind: String,
     pub id: String,
@@ -34,12 +36,14 @@ pub struct RunItem {
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct Dependency {
     pub id: String,
     pub optional: bool,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct StepItem {
     entity_kind: String,
     pub id: String,
@@ -141,6 +145,7 @@ impl RunItem {
     }
 }
 impl StepItem {
+    #[cfg(test)]
     pub fn key(&self) -> EngineKey {
         EngineKey {
             machine: self.machine.clone(),

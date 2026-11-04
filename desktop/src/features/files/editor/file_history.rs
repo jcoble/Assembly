@@ -45,6 +45,7 @@ impl FileHistoryState {
             error: None,
         }
     }
+    #[cfg(test)]
     fn select(&mut self, session: String, path: String) {
         if self.session == session && self.path == path {
             return;
@@ -133,12 +134,6 @@ impl FileHistory {
             self.loading = None;
             self.state.hide();
         }
-        cx.notify();
-    }
-    pub fn select(&mut self, session: String, path: String, cx: &mut Context<Self>) {
-        self.loading = None;
-        self.state.select(session, path);
-        self.load(false, cx);
         cx.notify();
     }
     fn load(&mut self, more: bool, cx: &mut Context<Self>) {

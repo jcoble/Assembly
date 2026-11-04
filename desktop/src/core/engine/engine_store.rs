@@ -52,6 +52,7 @@ impl EngineStore {
             .filter_map(|key| self.items.get(key))
             .collect()
     }
+    #[cfg(test)]
     pub fn parent_of(&self, child: &SessionKey) -> Option<SessionKey> {
         let child_key = EngineKey {
             machine: child.machine.clone(),
