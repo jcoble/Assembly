@@ -22,7 +22,10 @@ public sealed partial class RemoteMachineTests
             accepted = await CallAcceptedAsync(socket, 1, sessionId, "hi", "c1");
         var agent = await _desktopLauncher.NextAsync();
         await agent.StartAsync();
-        await agent.FinishAsync(await agent.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
+        var firstPrompt = await agent.ReadAsync("session/prompt");
+        await agent.InsertAsync(firstPrompt, "restart-client-provider");
+        await ProviderInsertionAsync(_desktop!, DesktopToken, sessionId, "c1", "restart-client-provider");
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
         var runId = ApiTests.RunOfPrompt(await ApiTests.ReadUntilTurnEndsAsync(rows), sessionId, "c1");
         rows.Dispose();
         await agent.CloseAsync();

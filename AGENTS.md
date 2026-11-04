@@ -22,6 +22,9 @@ Mobile is a first-class client. Include affected phone flows when changing share
 - Node tooling and one-off scripts use TypeScript. Pin added dependency versions and keep lockfiles current. Use shared theme tokens for colors, spacing and sizes.
 - Maintain daily packaging of upstream ACP adapter releases.
 
+## Duplicate/Cloned Sessions
+Never run clones or duplicate sessions of yourself. Before starting a session, check what's running and resume the existing one; each feature has one owner until it's fully done
+
 ## Pull requests
 
 Default to one complete feature per PR, with substeps and fixes kept as commits in that PR. Run focused checks while building, then one feature-level independent acceptance verification and code review. Recheck failed or affected behavior after fixes. Split only for independently shippable parts or a concrete size/risk that makes one PR unsafe to review; record the reason in the task's plan. Technical layers and implementation substeps alone do not justify separate PRs. Follow the global PR-autonomy and merge-permission rules.
@@ -35,6 +38,16 @@ Default to one complete feature per PR, with substeps and fixes kept as commits 
 
 Use isolated app data and realistic seed data from a safe database backup. Never test against the owner's live data/services. Remote tests connect only to Workbox Test (`workbox-test`), never the owner's saved machines. Workbox `/tmp` is disk-backed; do not reconfigure mounts.
 
-Cover four provider/host cases: Claude Code local, Codex local, Claude Code on Workbox Test, and Codex on Workbox Test. Use `scripts/check4.sh` for baseline checks on the completed feature build; report each result with evidence or its exact blocker.
+When your PR is sent, there will be PR reviews that you should look for and a PR verifier who will verify your work. They may ask you to fix/change something. If you have a parent, they should let you know about these, but if you think of it, check back to see if there are things to fix.
 
-The script does not drive the native UI. In the same acceptance verification, exercise the changed feature in the real native app with realistic data, covering affected provider/host and phone flows. Chat checks alone do not prove another feature; a browser preview is not native-app proof. Follow the global verification and Drive upload rules.
+
+## Lanes
+Keep your open work on your task list. When something is done or waiting on someone else, including a PR, take the next item; when the list is empty, tell your parent you're done. Don't wait on commits or pushes: commit and push often, and only PRs wait.
+
+
+## Models
+Use only Claude Code models: Opus 5.5 medium for harder implementation and groundwork, Sonnet 5.5 high for more straightforward work, and Sonnet 5.5 or several Haiku 5.5s for recon. This replaces the global model table for this project.
+
+## Shared UI components
+
+Before building UI, use the components in `desktop/src/components/`; see the [component catalog](<link>). Build a missing one there, on GPUI Kit, rather than inside a feature. Rows and cards expand with `core/ui/row_drop_down.rs`; don't write another grower.

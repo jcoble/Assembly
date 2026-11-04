@@ -105,7 +105,7 @@ internal sealed class RemoteFollower(
             } while (!_stopping.IsCancellationRequested && Again(sessionId));
         }
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested) { }
-        catch (Exception error) when (error is MachineUnreachable or CallFailed or IOException or System.Net.WebSockets.WebSocketException)
+        catch (Exception error) when (error is MachineUnreachable or CallFailed or IOException or System.Net.WebSockets.WebSocketException or ObjectDisposedException)
         {
             log.WriteLine($"remote session {sessionId}: {error.Message}");
             gaveUp = true;
@@ -149,7 +149,8 @@ internal sealed class RemoteFollower(
                     do
                     {
                         try { rows = await read(sessionId, hub.LastSeq(sessionId), done.Token); }
-                        catch (Exception error) when (error is IOException or System.Net.WebSockets.WebSocketException)
+                        catch (Exception error) when (error is IOException or System.Net.WebSockets.WebSocketException or ObjectDisposedException ||
+                            error is OperationCanceledException && !done.IsCancellationRequested)
                         {
                             // The machine reconnects and sends a state from the last copied seq.
                             interrupted = true;
