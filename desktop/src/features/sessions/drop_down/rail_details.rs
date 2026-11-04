@@ -1,16 +1,19 @@
 //! Lazy row-local controls over held shared facts; dropping the body drops its input drafts and observer.
 use std::collections::HashMap;
 use gpui_kit::*;
-use gpui_kit::component::{ActiveTheme as _,h_flex,v_flex};
-use gpui_kit::component::button::{Button,ButtonVariants as _};
+use gpui_kit::component::{ActiveTheme as _,Sizable as _,Size,v_flex};
+use gpui_kit::component::tab::{Tab,TabBar};
+use crate::core::theme::text::{TextRole,TextRoleExt as _};
 use crate::core::engine::{EngineFeed,EngineChanged,EngineKey,EngineScope,SessionKey,engine_items::SessionItem};
 use super::need_row::NeedRow;
 
 pub struct RailDetails {
-    workflow:Option<Entity<crate::core::ui::activity::run_view::RunActivity>>,
+    /// Which tab shows. Both stay alive while the row is open, since the body is as tall as the taller of them.
+    selected:usize,
+    workflow:Entity<crate::core::ui::activity::run_view::RunActivity>,
     parent:SessionKey,feed:Entity<EngineFeed>,dirty:bool,
     needs:Vec<Entity<NeedRow>>,held:HashMap<EngineKey,Entity<NeedRow>>,children:std::rc::Rc<Vec<SessionItem>>,
-    route:Option<String>,native:Option<Entity<super::native_details::NativeDetails>>,
+    native:Entity<super::native_details::NativeDetails>,
     _changed:Subscription,
 }
 impl RailDetails {
@@ -19,8 +22,9 @@ impl RailDetails {
         let changed=cx.subscribe(&feed,|row,_,event:&EngineChanged,cx|{
             if event.keys.iter().any(|key|matches!(key.kind.as_str(),"session"|"needs_me"))||event.scopes.iter().any(|scope|matches!(scope.topic.as_str(),"sessions"|"needs_me")){row.dirty=true;cx.notify();}
         });
-        let native=cx.new(|cx|super::native_details::NativeDetails::new(parent.clone(),route.clone(),cx));
-        Self{workflow:None,route,native:Some(native),parent,feed,dirty:true,needs:Vec::new(),held:HashMap::new(),children:std::rc::Rc::default(),_changed:changed}
+        let native=cx.new(|cx|super::native_details::NativeDetails::new(parent.clone(),route,cx));
+        let workflow=cx.new(|cx|crate::core::ui::activity::run_view::RunActivity::new(parent.clone(),cx));
+        Self{selected:0,workflow,native,parent,feed,dirty:true,needs:Vec::new(),held:HashMap::new(),children:std::rc::Rc::default(),_changed:changed}
     }
     fn refresh(&mut self,window:&mut Window,cx:&mut Context<Self>) {
         if !self.dirty{return;}self.dirty=false;
@@ -42,16 +46,17 @@ impl RailDetails {
 }
 impl Render for RailDetails {
     fn render(&mut self,window:&mut Window,cx:&mut Context<Self>)->impl IntoElement {
-        let tabs=h_flex().gap_2()
-            .child(Button::new("rail-needs").ghost().label("Activity").on_click(cx.listener(|row,_,_,cx|{row.workflow=None;if row.native.is_none(){let parent=row.parent.clone();let route=row.route.clone();row.native=Some(cx.new(|cx|super::native_details::NativeDetails::new(parent,route,cx)));}cx.notify();})))
-            .child(Button::new("rail-workflow").ghost().label("Workflow").on_click(cx.listener(|row,_,_,cx|{if row.workflow.is_none(){row.native=None;let parent=row.parent.clone();row.workflow=Some(cx.new(|cx|crate::core::ui::activity::run_view::RunActivity::new(parent,cx)));}cx.notify();})));
-        if let Some(workflow)=&self.workflow {return v_flex().gap_2().child(tabs).child(workflow.clone());}
+        let tabs=TabBar::new("rail-details-tabs").underline().with_size(Size::Small).selected_index(self.selected)
+            .child(Tab::new().label("Activity").on_click(cx.listener(|row,_,_,cx|{row.selected=0;cx.notify();})))
+            .child(Tab::new().label("Workflow").on_click(cx.listener(|row,_,_,cx|{row.selected=1;cx.notify();})));
         self.refresh(window,cx);
-        let mut column=v_flex().gap_2().children(self.needs.iter().cloned()).children(self.native.iter().cloned());
+        let mut column=v_flex().gap_2().children(self.needs.iter().cloned()).child(self.native.clone());
         let on_open=std::rc::Rc::new(|key:SessionKey,window:&mut Window,cx:&mut App|window.dispatch_action(Box::new(crate::core::intents::session_open::SessionOpenRequest{key,request_id:uuid::Uuid::new_v4().to_string(),target:crate::core::intents::session_open::SessionOpenTarget::Engine}),cx));
         column=column.child(super::started_sessions::StartedSessions{children:self.children.clone(),on_open});
         if self.needs.is_empty()&&self.children.is_empty(){column=column.child(div().text_color(cx.theme().muted_foreground).child(if self.feed.read(cx).loaded(&EngineScope{machine:self.parent.machine.clone(),topic:"needs_me".into(),key:None}) {"No current questions or started sessions."}else{"The current owning facts are unavailable."}));}
-        v_flex().gap_2().child(tabs).child(column)
+        // Everything in the body reads at the size of the row's own detail lines.
+        let bodies=crate::core::ui::tab_stack::tab_stack(self.selected,[column.into_any_element(),self.workflow.clone().into_any_element()]);
+        v_flex().px_3().pb_2().gap_2().text_role(TextRole::Meta,cx).child(tabs).child(bodies)
     }
 }
 
@@ -59,7 +64,7 @@ impl crate::features::sessions::sessions_pane::SessionsPane {
     pub(in crate::features::sessions) fn dropdowns(cx:&mut Context<Self>)->(Entity<crate::core::ui::row_drop_down::RowDropDowns>,Subscription) {
         let drops=cx.new(|_|crate::core::ui::row_drop_down::RowDropDowns::default());
         let dropdowns=cx.subscribe(&drops,|pane,_,event:&crate::core::ui::row_drop_down::RowDropDownEvent,cx| {
-            if let crate::core::ui::row_drop_down::RowDropDownEvent::Height(key,_)=event {
+            if let crate::core::ui::row_drop_down::RowDropDownEvent::Moved(key)=event {
                 if let Some(at)=pane.entries.iter().position(|entry|match entry {crate::features::sessions::list_entry::ListEntry::Session(row)=>super::rail_details_key(row)==*key,_=>false}) {
                     pane.lines.remeasure_items(at..at+1);
                 }

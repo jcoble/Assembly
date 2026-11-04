@@ -1,5 +1,6 @@
 //! What the pane's last action came to: a muted line that goes on the next read, or a plain sentence with git's text
 //! under Details and the next step where one is known (g9#10).
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::git_failure::{GitFailure, Recovery};
 use super::source_control_pane::SourceControlPane;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -28,7 +29,7 @@ pub fn result_line(
     let muted = cx.theme().muted_foreground;
     match result {
         PaneResult::Done(text) => div()
-            .text_sm()
+            .text_role(TextRole::Body, cx)
             .text_color(muted)
             .child(text.clone())
             .into_any_element(),
@@ -39,7 +40,7 @@ pub fn result_line(
                 .gap_1()
                 .child(
                     div()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(cx.theme().danger)
                         .child(failure.sentence.clone()),
                 )
@@ -74,7 +75,7 @@ pub fn result_line(
                 .when_some(details, |line, details| {
                     line.child(
                         Collapsible::new().open(details_open).content(
-                            div().text_sm().text_color(muted).child(details),
+                            div().text_role(TextRole::Body, cx).text_color(muted).child(details),
                         ),
                     )
                 })

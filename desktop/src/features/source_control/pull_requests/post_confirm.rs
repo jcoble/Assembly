@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{
     pr_detail::PrDetail,
     review_draft::{LineComment, ReviewDraft, ReviewIdentity},
@@ -190,7 +191,7 @@ impl Render for PostConfirm {
             .children(self.request.comments().iter().map(|comment| {
                 h_flex()
                     .gap_2()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .child(
                         div()
                             .flex_none()
@@ -199,7 +200,7 @@ impl Render for PostConfirm {
                     )
                     .child(comment.body.clone())
             }))
-            .child(div().text_sm().text_color(muted).child(if is_comment {
+            .child(div().text_role(TextRole::Body, cx).text_color(muted).child(if is_comment {
                 "GitHub will notify participants."
             } else {
                 "GitHub will notify participants. Assembly will check the PR head again before posting."
@@ -211,7 +212,7 @@ impl Render for PostConfirm {
             )
             .children(current.is_none().then(|| {
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .child("Refresh the pull request before posting. Your draft is kept.")
             }))
             .child(

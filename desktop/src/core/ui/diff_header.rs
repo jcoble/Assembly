@@ -1,5 +1,6 @@
 //! The header above each file in a stacked diff, shared by Changes and a pull request: its icon, folder and name, its
 //! counts and whatever actions the view gives it. Replaces MultiFileDiff.svelte's section header.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::file_icon::file_icon;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -55,7 +56,7 @@ pub fn file_heading(
         .w_full()
         .min_w_0()
         .gap_2()
-        .text_sm()
+        .text_role(TextRole::Body, cx)
         .child(file_icon(format!("heading-icon:{path}"), &path, cx))
         .child(
             h_flex()
@@ -78,7 +79,7 @@ pub fn file_heading(
                 h_flex()
                     .flex_none()
                     .gap_1()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .child(
                         div()
                             .text_color(added)
@@ -101,7 +102,7 @@ fn part_tag(tag: &'static str, cx: &App) -> Div {
     div()
         .flex_none()
         .ml_2()
-        .text_xs()
+        .text_role(TextRole::Meta, cx)
         .text_color(cx.theme().muted_foreground)
         .child(tag)
 }

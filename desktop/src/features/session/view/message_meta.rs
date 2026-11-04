@@ -2,6 +2,7 @@
 //! 12:02 PM" this week, "Oct 17, 12:02 PM" before), or for a final reply its turn's line. It keeps its place but
 //! shows only while the pointer is over its row. Replaces chat/MessageMeta.svelte and fold.ts's messageTime.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex};
@@ -43,7 +44,7 @@ impl RenderOnce for MessageMeta {
             .gap(px(6.))
             .pt(top)
             .pb(under)
-            .text_size(px(12.))
+            .text_role(TextRole::Meta, cx)
             .child(
                 Button::new(SharedString::from(format!("{}:copy", self.key)))
                     .outline()

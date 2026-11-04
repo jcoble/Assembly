@@ -3,7 +3,8 @@
 //! "Working for" line. When the turn ends its work folds under "Worked for…" like any finished turn. It takes its
 //! steps drawn, so a workflow run's steps can fill it too. The reui agent-activity look.
 
-use gpui_kit::component::spinner::Spinner;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::spinner::Spinner;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
@@ -23,7 +24,7 @@ impl RenderOnce for ActivityCard {
             .py(px(2.))
             .rounded(theme.radius_full())
             .bg(theme.secondary)
-            .text_xs()
+            .text_role(TextRole::Meta, cx)
             .text_color(theme.foreground)
             .child(Spinner::new().xsmall().color(theme.muted_foreground))
             .child("Working");
@@ -38,7 +39,7 @@ impl RenderOnce for ActivityCard {
             .children(self.steps)
             .child(
                 div()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(theme.muted_foreground)
                     .child(self.footer),
             )

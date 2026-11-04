@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::projects_screen::ProjectsSampleScreen;
 use super::sample::{Machine, SAMPLE_FOLDER_LIMITATION, StartWith, normalize_path, parent_path};
 use gpui_kit::assets::IconName;
@@ -283,14 +284,14 @@ impl ProjectDialog {
                 );
                 browser = browser.child(
                     div()
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(cx.theme().muted_foreground)
                         .child(format!("Sample folders on {}", self.machine.label())),
                 );
                 if children.is_empty() {
                     browser = browser.child(
                         div()
-                            .text_xs()
+                            .text_role(TextRole::Meta, cx)
                             .child("This sample folder is empty. You can select it."),
                     );
                 }
@@ -402,7 +403,7 @@ impl Render for ProjectDialog {
             }
         };
         v_flex().gap_3()
-            .child(div().text_xs().text_color(cx.theme().muted_foreground)
+            .child(div().text_role(TextRole::Meta, cx).text_color(cx.theme().muted_foreground)
                 .child("Sample preview · Changes stay in memory. No real folders or repositories are created."))
             .when(matches!(self.mode, DialogMode::Create | DialogMode::Add), |form| {
                 form.child(label("Machine", cx)).child(self.machine_menu(cx))
@@ -416,7 +417,7 @@ impl Render for ProjectDialog {
                     .child(self.return_to_sample_folders(cx))
             })
             .when(!self.error.is_empty() && self.error != SAMPLE_FOLDER_LIMITATION, |form| {
-                form.child(div().text_xs().text_color(cx.theme().danger).child(self.error.clone()))
+                form.child(div().text_role(TextRole::Meta, cx).text_color(cx.theme().danger).child(self.error.clone()))
             })
             .child(h_flex().justify_end().gap_2()
                 .when(self.browsing && self.mode == DialogMode::Create, |row| {
@@ -432,7 +433,7 @@ impl Render for ProjectDialog {
 
 fn label(text: &'static str, cx: &App) -> Div {
     div()
-        .text_xs()
+        .text_role(TextRole::Meta, cx)
         .text_color(cx.theme().muted_foreground)
         .child(text)
 }

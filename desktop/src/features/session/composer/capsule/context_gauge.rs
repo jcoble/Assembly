@@ -3,6 +3,7 @@
 //! full disc. It warms at a quarter left and goes hot at a tenth, and never animates: a moving arc reads as a spinner.
 //! The exact numbers are one hover away.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::f32::consts::TAU;
 
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
@@ -70,7 +71,7 @@ fn popover(
     let muted = cx.theme().muted_foreground;
     v_flex()
         .gap(px(4.))
-        .text_size(px(12.))
+        .text_role(TextRole::Meta, cx)
         .child(div().font_weight(FontWeight::MEDIUM).child(headline))
         .children(rows.into_iter().map(|(label, value)| {
             h_flex()

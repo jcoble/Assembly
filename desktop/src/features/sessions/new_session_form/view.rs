@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{DraftEvent, NewSessionForm};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -26,10 +27,10 @@ impl NewSessionForm {
     /// Why the agent can't be used, that its settings are loading, the last error, and a start left to reconcile.
     fn notices(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
-        let line = |color: Hsla, words: SharedString| div().text_xs().text_color(color).child(words).into_any_element();
+        let line = |color: Hsla, words: SharedString| div().text_role(TextRole::Meta, cx).text_color(color).child(words).into_any_element();
         let mut notices = Vec::new();
         if !self.auth_error.is_empty() {
-            notices.push(div().text_sm().text_color(danger).child(self.auth_error.clone()).into_any_element());
+            notices.push(div().text_role(TextRole::Body, cx).text_color(danger).child(self.auth_error.clone()).into_any_element());
         }
         if self.discovering {
             notices.push(line(muted, "Loading agent settings…".into()));
@@ -64,7 +65,7 @@ impl NewSessionForm {
             .child(
                 h_flex()
                     .gap(px(4.))
-                    .text_size(px(16.))
+                    .text_role(TextRole::Title, cx)
                     .font_weight(FontWeight::BOLD)
                     .child(name)
                     .child(Icon::new(IconName::ChevronDown).size(px(14.)).opacity(0.7)),
@@ -74,12 +75,12 @@ impl NewSessionForm {
 
     fn centered_view(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
-        let heading = |words: &'static str, trigger, end: &'static str| {
+        let heading = |words: &'static str, trigger, end: &'static str, cx: &App| {
             h_flex()
                 .flex_wrap()
                 .justify_center()
                 .gap(px(4.))
-                .text_size(px(16.))
+                .text_role(TextRole::Title, cx)
                 .font_weight(FontWeight::BOLD)
                 .child(words)
                 .child(trigger)
@@ -87,8 +88,8 @@ impl NewSessionForm {
         };
         let trigger = self.project_trigger(cx);
         let title = match self.selected_project {
-            Some(_) => heading("What should we build in", trigger, "?"),
-            None => heading("What should we build?", trigger, ""),
+            Some(_) => heading("What should we build in", trigger, "?", cx),
+            None => heading("What should we build?", trigger, "", cx),
         };
         let notices = self.notices(cx);
         v_flex()
@@ -101,7 +102,7 @@ impl NewSessionForm {
                     .pr(px(10.))
                     .pb(px(6.))
                     .pl(px(14.))
-                    .text_size(px(12.))
+                    .text_role(TextRole::Meta, cx)
                     .text_color(muted)
                     .child("Your conversation starts when you send.")
                     .child(

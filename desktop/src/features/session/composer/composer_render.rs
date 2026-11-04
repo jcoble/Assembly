@@ -4,6 +4,7 @@
 //! (capsule/shape.rs). Under the box sit the new session's sub-bar or the branch, and the hint line. Why something failed
 //! sits above the box, and the "/" list floats just above it.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Textarea;
@@ -110,7 +111,7 @@ impl Render for Composer {
                     .disabled(self.start_busy() || locked)
                     .appearance(false)
                     .xsmall()
-                    .text_size(px(13.))
+                    .text_role(TextRole::Meta, cx)
                     .on_paste(move |item, _, cx| {
                         composer
                             .update(cx, |composer, cx| composer.pasted(item, cx))
@@ -126,7 +127,7 @@ impl Render for Composer {
                 h_flex()
                     .min_w_0()
                     .gap(px(6.))
-                    .text_size(px(12.))
+                    .text_role(TextRole::Meta, cx)
                     .text_color(muted)
                     .child(Icon::new(Glyph::GitBranch).size(px(13.)))
                     .child(div().min_w_0().truncate().child(branch))
@@ -186,7 +187,7 @@ impl Render for Composer {
                 .when(self.dragging, |inside| {
                     inside.child(
                         div()
-                            .text_size(px(13.))
+                            .text_role(TextRole::Meta, cx)
                             .text_color(theme.drag_border)
                             .child("Drop images to attach them"),
                     )
@@ -217,7 +218,7 @@ impl Render for Composer {
             .gap_2()
             .pt(px(6.))
             .px_1()
-            .text_size(px(12.))
+            .text_role(TextRole::Meta, cx)
             .text_color(theme.muted_foreground.opacity(0.78))
             .child("Paste or drop images · type / for commands")
             .when_some(self.meter.as_ref(), |line, meter| {
@@ -239,7 +240,7 @@ impl Render for Composer {
                         .px_1()
                         .pb_1()
                         .gap_2()
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(cx.theme().muted_foreground)
                         .child(line)
                         .child(
@@ -261,7 +262,7 @@ impl Render for Composer {
                     div()
                         .px_1()
                         .pb_1()
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(cx.theme().danger)
                         .child(error),
                 )

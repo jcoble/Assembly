@@ -6,6 +6,7 @@
 //! session between Working and Done or settles it (`sessions/mark`). It registers under the sessions pane's name,
 //! after the placeholders.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
@@ -30,7 +31,6 @@ use crate::core::socket::update::Update;
 use crate::core::state::machines::GlobalMachines;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::preferences::Preferences;
-use crate::core::theme::text::TextRole;
 use crate::core::state::sessions::GlobalSessions;
 use crate::core::ui::filter_pills::{FilterGroup, FilterOption, FilterPills, FilterPillsChanged};
 
@@ -50,8 +50,10 @@ pub struct SessionsPane {
     /// The marks on their way, each until its answer, by `next_mark`.
     pub(super) marking: HashMap<u64, Task<()>>,
     pub(super) next_mark: u64,
-    /// Why the last mark failed, until the next one starts.
-    pub(super) mark_error: Option<SharedString>,
+    /// Why the last mark or open failed, until the next one starts.
+    pub(super) row_error: Option<SharedString>,
+    /// Waits for the answer to the last row opened, so a refusal says why instead of looking like a dead click.
+    opening: Option<Subscription>,
     /// What the column asks for and holds.
     pub(super) rail: Rail,
     /// The read that's out; replacing it drops the older one.
@@ -179,7 +181,8 @@ impl SessionsPane {
             creating: None,
             marking: HashMap::new(),
             next_mark: 0,
-            mark_error: None,
+            row_error: None,
+            opening: None,
             rail: Rail::default(),
             reading: None,
             filter,
@@ -316,7 +319,21 @@ impl SessionsPane {
 
     /// Opens a row's session, and clears the filter, as picking a result did in the old rail.
     pub(super) fn open(&mut self, session_id: String, route_machine: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        window.dispatch_action(Box::new(crate::core::intents::open_session::OpenSession{id:session_id,route_machine,request_id:uuid::Uuid::new_v4().to_string(),historical:false}),cx);
+        let request_id=uuid::Uuid::new_v4().to_string();
+        let expected=request_id.clone();
+        let route=route_machine.clone();
+        let session=session_id.clone();
+        self.row_error=None;
+        self.opening=Some(cx.subscribe(&crate::core::state::selected_session::SelectedSession::global(cx),move|pane,_,event:&crate::core::intents::session_open::SessionOpenResult,cx| {
+            if event.request_id!=expected {return;}
+            pane.opening=None;
+            if let Err(error)=&event.result {
+                eprintln!("sessions: {session} on {route:?} didn't open: {}: {}",error.code,error.message);
+                pane.row_error=Some(refusal_words(route.as_deref(),error).into());
+                cx.notify();
+            }
+        }));
+        window.dispatch_action(Box::new(crate::core::intents::open_session::OpenSession{id:session_id,route_machine,request_id,historical:false}),cx);
         self.clear_filter(window, cx);
     }
 
@@ -484,7 +501,7 @@ impl Render for SessionsPane {
                                     .gap(px(4.))
                                     .rounded_full()
                                     .bg(warning.opacity(0.12))
-                                    .text_size(px(10.5))
+                                    .text_role(TextRole::Meta, cx)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(warning)
                                     .child(div().size(px(6.)).rounded_full().bg(warning))
@@ -492,19 +509,20 @@ impl Render for SessionsPane {
                             )
                     })),
             )
-            .map(|pane| match self.entries.is_empty() {
-                false => pane.child(list),
-                true => pane.child(div().px_3().py_2().text_sm().text_color(muted).child(empty)),
-            })
-            .when_some(self.mark_error.clone(), |pane, error| {
+            // Above the list, which takes all the height there is and would push this out of the window.
+            .when_some(self.row_error.clone(), |pane, error| {
                 pane.child(
                     div()
                         .px_3()
                         .py_1()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(danger)
                         .child(error),
                 )
+            })
+            .map(|pane| match self.entries.is_empty() {
+                false => pane.child(list),
+                true => pane.child(div().px_3().py_2().text_role(TextRole::Body, cx).text_color(muted).child(empty)),
             })
             .when_some(self.rail.error.clone(), |pane, error| {
                 pane.child(
@@ -512,7 +530,7 @@ impl Render for SessionsPane {
                         .px_3()
                         .py_1()
                         .gap_2()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(danger)
                         .child(error)
                         .child(
@@ -539,9 +557,23 @@ fn needs_words(needs: usize) -> Option<String> {
     }
 }
 
+/// Says why a row didn't open. A row on another machine is refused as `source_changed` when that machine can't be
+/// reached, which reads as nonsense to someone who only clicked a row, so it names the machine instead.
+fn refusal_words(route: Option<&str>, error: &crate::core::engine::EngineRefusal) -> String {
+    match route {
+        Some(machine) if error.code == "source_changed" => {
+            format!("That session is on {machine}, which this app isn't connected to.")
+        }
+        _ => format!("That session didn't open: {}", error.message),
+    }
+}
+
 #[cfg(test)]
 #[path = "sessions_pane_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "sessions_pane_refusal_tests.rs"]
+mod refusal_tests;
 
 #[path="drop_down/rail_engine.rs"]
 pub(super) mod engine_rows;

@@ -1,4 +1,4 @@
-use super::{details, status_words};
+use super::{details, short_details, state_icon, status_words};
 use crate::features::sessions::presence::Presence;
 use crate::features::sessions::rail_page::{RailEntry, test_entry};
 
@@ -87,4 +87,78 @@ fn a_finished_row_that_isnt_marked_still_names_its_state() {
         ..finished
     };
     assert_eq!(status_words(Presence::of(&unread,false), false), ["Idle"]);
+}
+
+#[test]
+fn the_short_form_drops_this_mac_and_keeps_the_rest() {
+    let remote = RailEntry {
+        machine: Some("Workbox Test".into()),
+        branch: Some("lane/rail".into()),
+        ..entry()
+    };
+    assert_eq!(short_details(&remote), "Workbox Test · lane/rail");
+    let local = RailEntry { branch: Some("lane/rail".into()), ..entry() };
+    assert_eq!(short_details(&local), "lane/rail");
+    assert_eq!(short_details(&entry()), "");
+}
+
+struct OneRow {
+    entry: RailEntry,
+    context: super::RowContext,
+}
+
+impl gpui_kit::Render for OneRow {
+    fn render(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) -> impl gpui_kit::IntoElement {
+        use gpui_kit::{ParentElement as _, Styled as _};
+        gpui_kit::div()
+            .w(gpui_kit::px(300.))
+            .child(super::SessionRow::new(self.entry.clone(), self.context.clone()))
+    }
+}
+
+/// Clicks land where a person's would: on each of the row's three lines.
+#[gpui::test]
+fn clicking_any_line_of_a_row_opens_it_without_touching_its_arrow(cx: &mut gpui::TestAppContext) {
+    use gpui_kit::{AppContext as _, Modifiers, point, px};
+    use std::cell::Cell;
+    use std::rc::Rc;
+    cx.update(gpui_kit::init);
+    let (opened, toggled) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
+    let (seen, flipped) = (opened.clone(), toggled.clone());
+    let row = OneRow {
+        entry: RailEntry { branch: Some("lane/rail".into()), ..entry() },
+        context: super::RowContext {
+            selected: false,
+            needs_you: true,
+            offline: false,
+            now: None,
+            arrow: Some(crate::core::ui::three_line_row::RowArrow {
+                open: false,
+                on_toggle: Rc::new(move |_| flipped.set(flipped.get() + 1)),
+            }),
+            on_open: Rc::new(move |_, _, _, _| seen.set(seen.get() + 1)),
+            on_mark: Rc::new(|_, _, _| {}),
+        },
+    };
+    let (_, cx) = cx.add_window_view(|_, _| row);
+    cx.run_until_parked();
+    let bounds = cx.debug_bounds("session-s1").expect("the row is drawn");
+    assert!(bounds.size.height > px(0.));
+    let left = bounds.origin.x + px(40.);
+    cx.simulate_click(point(left, bounds.origin.y + px(12.)), Modifiers::default());
+    assert_eq!(opened.get(), 1, "title line");
+    cx.simulate_click(point(left, bounds.origin.y + bounds.size.height * 0.5), Modifiers::default());
+    assert_eq!(opened.get(), 2, "second line, which has its own tooltip");
+    cx.simulate_click(point(left, bounds.origin.y + bounds.size.height - px(10.)), Modifiers::default());
+    assert_eq!(opened.get(), 3, "third line");
+    assert_eq!(toggled.get(), 0);
+}
+
+#[test]
+fn only_states_you_act_on_or_finished_have_an_icon() {
+    assert!(state_icon(Presence::NeedsYou).is_some());
+    assert!(state_icon(Presence::Failed).is_some());
+    assert!(state_icon(Presence::Done).is_some());
+    assert!(state_icon(Presence::Working).is_none());
+    assert!(state_icon(Presence::Idle).is_none());
 }

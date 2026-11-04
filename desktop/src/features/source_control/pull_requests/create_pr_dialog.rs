@@ -1,5 +1,6 @@
 //! Create a pull request: branch into base, title and description drafted once when it opens, and it pushes before it
 //! creates. A draft lands only on the fields it was asked for. Replaces PullRequestPanel.svelte.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::git_action::GitWrites;
 use super::super::git_branches::GitBranchList;
 use super::super::git_operation::OperationStatus;
@@ -308,7 +309,7 @@ impl Render for CreatePrForm {
         let can_create = !disabled && self.input(cx).args().is_ok();
         let field = |label: &'static str| {
             div()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
                 .child(label)
@@ -345,7 +346,7 @@ impl Render for CreatePrForm {
             .child(
                 h_flex()
                     .gap_2()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .child(div().truncate().child(self.branch.clone()))
                     .child(div().text_color(muted).child("→"))
                     .child(base_menu),
@@ -366,14 +367,14 @@ impl Render for CreatePrForm {
             )
             .children(drafting.then(|| {
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(muted)
                     .child("Generating title & description...")
             }))
             .children(
                 self.error
                     .clone()
-                    .map(|error| div().text_sm().text_color(danger).child(error)),
+                    .map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)),
             )
             .children(self.unconfirmed.then(|| {
                 Button::new("create-pr-refresh")

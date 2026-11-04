@@ -1,4 +1,5 @@
 //! One pull request: its read, its review draft and the page bar over Summary and Changes.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::git_operation::GitOperation;
 use super::{
     merge_dialog::MergeRequest,
@@ -453,7 +454,7 @@ impl PrDetail {
                     div()
                         .px_3()
                         .py_1()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(muted)
                         .child("Showing the first 100 files. Open GitHub to see the rest."),
                 )
@@ -464,7 +465,7 @@ impl PrDetail {
                         .px_3()
                         .py_1()
                         .gap_1()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(muted)
                         .child(if lines == 1 {
                             "1 line comment in your review.".to_string()
@@ -514,7 +515,7 @@ impl Render for PrDetail {
                 div()
                     .px_3()
                     .py_1()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(danger)
                     .child(error)
             }))

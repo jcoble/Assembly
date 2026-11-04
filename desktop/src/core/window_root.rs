@@ -7,6 +7,7 @@ use super::intents::open_file::OpenFile;
 use super::intents::reveal_file_folder::RevealFileFolder;
 use crate::features::files::file_view::FileView;
 use crate::features::files::files_pane::FilesPane;
+use gpui_kit::component::Theme;
 use gpui_kit::*;
 
 use super::native_views::views::NativeViews;
@@ -18,6 +19,9 @@ pub struct WindowRoot {
     /// The theme in force; the window opens in the default.
     theme: ThemeId,
     _preferences: Option<Subscription>,
+    /// A theme file sets its own sizes, and the kit's folder watch re-applies one when it changes, so what Settings
+    /// saved goes back on after any change to the theme. `apply_text` writes only a difference, so this settles.
+    _theme: Subscription,
 }
 
 impl WindowRoot {
@@ -27,10 +31,12 @@ impl WindowRoot {
                 root.follow_preferences(window, cx)
             })
         });
+        let _theme = cx.observe_global_in::<Theme>(window, |_, _, cx| theme::apply_text(cx));
         let mut root = Self {
             content: content.into(),
             theme: ThemeId::DEFAULT,
             _preferences,
+            _theme,
         };
         // What arrived before the window was made.
         root.follow_preferences(window, cx);

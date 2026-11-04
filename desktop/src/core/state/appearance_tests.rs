@@ -20,7 +20,7 @@ fn nothing_saved_gives_the_defaults() {
     assert_eq!(appearance.code_font(), DEFAULT_CODE_FONT);
     assert_eq!(appearance.editor_font(), DEFAULT_CODE_FONT);
     assert_eq!(appearance.terminal_font(), DEFAULT_CODE_FONT);
-    assert_eq!(appearance.number(&UI_FONT_SIZE), 13.);
+    assert_eq!(appearance.number(&UI_FONT_SIZE), 16.);
     assert_eq!(appearance.number(&EDITOR_FONT_SIZE), 13.);
     assert_eq!(appearance.number(&EDITOR_LINE_HEIGHT), 20.);
     assert_eq!(appearance.number(&TERMINAL_FONT_SIZE), 15.);
@@ -77,7 +77,7 @@ fn a_reset_or_a_value_that_doesnt_read_gives_the_default() {
     assert_eq!(appearance.theme(), ThemeId::Assembly);
     assert_eq!(appearance.code_font(), DEFAULT_CODE_FONT);
     assert_eq!(appearance.editor_font(), DEFAULT_CODE_FONT);
-    assert_eq!(appearance.number(&UI_FONT_SIZE), 13.);
+    assert_eq!(appearance.number(&UI_FONT_SIZE), 16.);
     assert_eq!(appearance.number(&EDITOR_FONT_SIZE), 13.);
 }
 
@@ -133,14 +133,15 @@ fn text_roles_scale_with_the_interface_size() {
         (UI_LINE_HEIGHT.key, json!(1.5)),
     ]);
     for (role, base) in [
-        (TextRole::Title, 13.),
-        (TextRole::Second, 11.5),
-        (TextRole::Preview, 12.),
-        (TextRole::Heading, 11.5),
-        (TextRole::Chat, 13.5),
+        (TextRole::Meta, 13.),
+        (TextRole::Body, 14.),
+        (TextRole::Title, 15.),
+        (TextRole::Chat, 16.),
+        (TextRole::Heading, 18.),
+        (TextRole::Display, 20.),
     ] {
         let (size, height) = appearance.ui_text(role);
-        let expected = 16. * base / 13.;
+        let expected = 16. * base / 16.;
         assert!((size - px(expected)).abs() < px(0.001));
         let line_height = if role == TextRole::Chat { 1.6 } else { 1.5 };
         assert!((height - px(expected * line_height)).abs() < px(0.001));
@@ -157,8 +158,8 @@ fn chat_line_height_keeps_its_reading_ratio() {
         roomy.ui_text(TextRole::Chat)
     );
     assert_ne!(
-        compact.ui_text(TextRole::Preview),
-        roomy.ui_text(TextRole::Preview)
+        compact.ui_text(TextRole::Meta),
+        roomy.ui_text(TextRole::Meta)
     );
 }
 

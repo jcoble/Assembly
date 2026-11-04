@@ -1,6 +1,7 @@
 //! `TaskCard` draws background work: its name, state and a Stop button while it runs and can stop (`send/stopTask`).
 //! Its state shows as a still mark; nothing animates. Replaces chat/Task.svelte.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -26,7 +27,7 @@ pub fn card(cx: &App) -> Div {
         .rounded(theme.radius)
         .border_1()
         .border_color(theme.border)
-        .text_sm()
+        .text_role(TextRole::Body, cx)
 }
 
 /// A Stop button that sends `send/stopTask` with `task`.
@@ -67,7 +68,7 @@ impl RenderOnce for TaskCard {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(cx.theme().muted_foreground)
                         .child(self.task.state.clone()),
                 )

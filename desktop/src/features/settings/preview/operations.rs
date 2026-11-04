@@ -1,4 +1,5 @@
 //! Operational sections show their real integration boundary; no fabricated version, sign-in or update result.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::Button;
 use gpui_kit::component::label::Label;
 use gpui_kit::component::setting::{SettingGroup, SettingItem};
@@ -57,7 +58,7 @@ fn message(group: &'static str, title: &'static str, description: &'static str) 
             SettingItem::render(move |_, _, cx| {
                 v_flex().gap_2().child(Label::new(title)).child(
                     Label::new(description)
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(cx.theme().muted_foreground),
                 )
             })
@@ -81,7 +82,7 @@ fn operation(
                     .child(Label::new(title))
                     .child(
                         Label::new(description)
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .text_color(cx.theme().muted_foreground),
                     )
                     .child(
@@ -98,7 +99,7 @@ fn operation(
                     )
                     .child(
                         Label::new("Requires a backend connection · unavailable in this preview")
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .text_color(cx.theme().muted_foreground),
                     )
             })

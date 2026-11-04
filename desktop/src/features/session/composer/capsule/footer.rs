@@ -1,6 +1,7 @@
 //! The controls under the draft: the add button on the left; on the right the new session's agent picker, the context
 //! gauge, the settings pills, the mic that isn't available yet and one Send or Stop.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName as Glyph;
@@ -47,7 +48,7 @@ impl Composer {
                                 let muted = cx.theme().muted_foreground;
                                 v_flex().gap(px(2.)).child("Attach images").child(
                                     div()
-                                        .text_size(px(13.))
+                                        .text_role(TextRole::Meta, cx)
                                         .text_color(muted)
                                         .child("Or paste and drop them in"),
                                 )
@@ -94,7 +95,7 @@ impl Composer {
             return settled.then(|| {
                 div()
                     .flex_none()
-                    .text_size(px(13.))
+                    .text_role(TextRole::Meta, cx)
                     .text_color(cx.theme().muted_foreground)
                     .child("Agent settings unavailable")
                     .into_any_element()

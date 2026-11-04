@@ -1,6 +1,7 @@
 //! How the deploy dialog draws: what this is and what it does to the machine, the bundle, the machine, and how the install
 //! is going. Everything stays in one column, and the Deploy button says which backend it restarts.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -17,7 +18,7 @@ use super::job::{BundleFacts, Ending, Job, JobState, size_words, state_words};
 fn fact(label: &str, value: impl Into<SharedString>, cx: &App) -> Div {
     h_flex()
         .gap_3()
-        .text_sm()
+        .text_role(TextRole::Body, cx)
         .child(
             div()
                 .w(px(80.))
@@ -53,7 +54,7 @@ impl DeployForm {
             .gap_2()
             .child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .font_weight(FontWeight::MEDIUM)
                     .child("Bundle on this computer"),
             )
@@ -88,13 +89,13 @@ impl DeployForm {
                     ),
             )
             .when_some(self.inspect_error.clone(), |section, error| {
-                section.child(div().text_sm().text_color(theme.danger).child(error))
+                section.child(div().text_role(TextRole::Body, cx).text_color(theme.danger).child(error))
             })
             .when_some(self.facts.as_ref(), |section, (facts, _, _)| {
                 section
                     .child(bundle_facts(facts, cx))
                     .when_some(facts.refusal(), |section, why| {
-                        section.child(div().text_sm().text_color(theme.danger).child(why))
+                        section.child(div().text_role(TextRole::Body, cx).text_color(theme.danger).child(why))
                     })
             })
     }
@@ -118,7 +119,7 @@ impl DeployForm {
             .gap_2()
             .child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .font_weight(FontWeight::MEDIUM)
                     .child("Test machine"),
             )
@@ -156,7 +157,7 @@ impl DeployForm {
                     )
                     .child(
                         div()
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .text_color(theme.muted_foreground)
                             .child(words),
                     ),
@@ -165,7 +166,7 @@ impl DeployForm {
                 section.child(
                     h_flex()
                         .gap_2()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(theme.danger)
                         .child(error)
                         .child(
@@ -212,11 +213,11 @@ impl DeployForm {
                 .gap_2()
                 .child(
                     div()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .font_weight(FontWeight::MEDIUM)
                         .child("Install"),
                 )
-                .child(div().text_sm().text_color(color).child(headline))
+                .child(div().text_role(TextRole::Body, cx).text_color(color).child(headline))
                 .when_some(
                     job.filter(|_| live).and_then(Job::percent),
                     |section, percent| {
@@ -226,7 +227,7 @@ impl DeployForm {
                 .when_some(
                     job.filter(|job| live && job.total_bytes > 0),
                     |section, job| {
-                        section.child(div().text_xs().text_color(muted).child(format!(
+                        section.child(div().text_role(TextRole::Meta, cx).text_color(muted).child(format!(
                             "{} of {}. Closing this dialog doesn't stop it.",
                             size_words(job.bytes_done),
                             size_words(job.total_bytes)
@@ -238,17 +239,17 @@ impl DeployForm {
                     |section, code| {
                         section.child(
                             div()
-                                .text_xs()
+                                .text_role(TextRole::Meta, cx)
                                 .text_color(muted)
                                 .child(format!("Code: {code}")),
                         )
                     },
                 )
                 .when_some(self.unknown.clone(), |section, why| {
-                    section.child(div().text_sm().text_color(danger).child(why))
+                    section.child(div().text_role(TextRole::Body, cx).text_color(danger).child(why))
                 })
                 .when_some(self.cancel_error.clone(), |section, why| {
-                    section.child(div().text_sm().text_color(danger).child(why))
+                    section.child(div().text_role(TextRole::Body, cx).text_color(danger).child(why))
                 }),
         )
     }
@@ -325,7 +326,7 @@ impl Render for DeployForm {
             .child(self.machine_section(cx))
             .children(self.job_section(cx))
             .when_some(start_error, |form, error| {
-                form.child(div().text_sm().text_color(danger).child(error))
+                form.child(div().text_role(TextRole::Body, cx).text_color(danger).child(error))
             })
             .child(self.actions(cx))
     }

@@ -1,4 +1,5 @@
 //! How the Changes page looks: the stacked diff with its file header buttons, comment cards and the file tree.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::*;
 use crate::core::ui::changed_tree::{TREE_WIDTH, TreeHandler};
 use crate::core::ui::diff_header::{file_heading, viewed_button};
@@ -282,12 +283,12 @@ impl Render for PrFiles {
             .h_full()
             .min_h_0()
             .children((!current).then(|| {
-                div().px_3().py_1().text_sm().child(
+                div().px_3().py_1().text_role(TextRole::Body, cx).child(
                     "This review draft is for an earlier head. Its comments are kept; refresh before posting.",
                 )
             }))
             .children(self.failure.clone().map(|error| {
-                div().px_3().py_1().text_sm().text_color(danger).child(error)
+                div().px_3().py_1().text_role(TextRole::Body, cx).text_color(danger).child(error)
             }))
             .children(notes.into_iter().map(|(path, note, can_read)| {
                 let is_reading = reading.as_deref() == Some(path.as_str());
@@ -296,7 +297,7 @@ impl Render for PrFiles {
                     .px_3()
                     .py_1()
                     .gap_2()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(muted)
                     .child(div().truncate().child(format!("{path} · {note}")))
                     .children(can_read.then(|| {

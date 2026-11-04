@@ -581,7 +581,7 @@ fn the_draft_says_when_it_has_no_chat_pane_and_a_second_press_keeps_the_same_one
     pane.update_in(cx, |pane, window, cx| pane.show_draft(window, cx));
     let first = pane.read_with(cx, |pane, _| pane.creating.as_ref().map(|(form, _)| form.clone()));
     assert!(first.is_some());
-    pane.read_with(cx, |pane, _| assert!(pane.mark_error.is_some()));
+    pane.read_with(cx, |pane, _| assert!(pane.row_error.is_some()));
     pane.update_in(cx, |pane, window, cx| pane.show_draft(window, cx));
     let second = pane.read_with(cx, |pane, _| pane.creating.as_ref().map(|(form, _)| form.clone()));
     assert_eq!(first, second);

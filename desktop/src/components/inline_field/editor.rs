@@ -111,7 +111,7 @@ impl Editor {
             // compose the same compact actions immediately at the trailing edge.
             Self::Date(state) => h_flex()
                 .w_full()
-                .max_w(rems(12.))
+                .max_w(px(192.))
                 .gap_1()
                 .child(
                     DatePicker::new(state)
@@ -125,7 +125,7 @@ impl Editor {
                 .into_any_element(),
             Self::Time(state) => h_flex()
                 .w_full()
-                .max_w(rems(12.))
+                .max_w(px(192.))
                 .gap_1()
                 .child(
                     TimeField::new(state)
@@ -138,7 +138,7 @@ impl Editor {
                 .into_any_element(),
             Self::Combo { state, .. } => h_flex()
                 .w_full()
-                .max_w(rems(18.))
+                .max_w(px(288.))
                 .gap_1()
                 .child(
                     Select::new(state)
