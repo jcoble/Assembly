@@ -32,6 +32,7 @@ const lock='dotnet/Assembly.Engine/obj/dev-remote.packages.lock.json';
 if(fs.readFileSync(lock,'utf8')!==fs.readFileSync('dotnet/Assembly.Engine/packages.lock.json','utf8'))throw Error('committed lock was not seeded');
 if(!process.argv.includes('-p:NuGetLockFilePath=obj/dev-remote.packages.lock.json'))throw Error('generated lock path not selected');
 fs.writeFileSync(lock,'SDK-specific restore metadata');
+if(process.env.DIRTY_SOURCE)fs.appendFileSync('dotnet/Assembly.Remote/Assembly.Remote.csproj','unexpected source edit');
 fs.appendFileSync(process.env.BUILD_CALLS,'build\\n');fs.mkdirSync(out,{recursive:true});
 for(const [file,content] of Object.entries({'Assembly.Remote.dll':'fake committed backend','Assembly.Remote.deps.json':'{}','Assembly.Remote.runtimeconfig.json':JSON.stringify({runtimeOptions:{frameworks:[{name:'Microsoft.NETCore.App',version:'10.0.0'}]}})}))fs.writeFileSync(path.join(out,file),content);
 `,{mode:0o755});
@@ -53,4 +54,9 @@ for(const [file,content] of Object.entries({'Assembly.Remote.dll':'fake committe
   await fs.writeFile(dll,original);
   await fs.writeFile(join(prepared.directory,'unlisted.dll'),'unlisted');
   await assert.rejects(exec(process.execPath,[helper],{cwd:source,env}),error=>/cache closure changed/.test(String(error)));
+  const secondLane=join(root,'second-lane');await fs.mkdir(secondLane);
+  const dirtyHelper=join(root,'dirty.ts');
+  await fs.writeFile(dirtyHelper,(await fs.readFile(helper,'utf8')).replace(JSON.stringify(lane),JSON.stringify(secondLane)));
+  await assert.rejects(exec(process.execPath,[dirtyHelper],{cwd:source,env:{...env,DIRTY_SOURCE:'1'}}),error=>/build modified tracked backend source/.test(String(error)));
+  await assert.rejects(fs.stat(join(secondLane,'prepared-backend.json')),{code:'ENOENT'});
 });

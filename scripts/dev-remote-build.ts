@@ -51,15 +51,15 @@ export async function readPreparedBackend(root: string, identity: string, source
 }
 
 export async function prepareBackend(root: string, request: { identity: string; commit: string }, currentDll: string | undefined, signal: AbortSignal) {
+  const built = stage('build');
   const cached = await readPreparedBackend(root, request.identity, process.cwd(), signal);
   if (cached) {
-    const done = stage('build'); done({ cacheHit: true, built: false });
+    built({ cacheHit: true, built: false });
     return cached;
   }
   const temporary = await fs.mkdtemp(join(root, '.dev-sync-'));
   try {
     const publish = join(temporary, 'publish');
-    const built = stage('build');
     // Seed target-specific restore state from committed locks. The SDK may update its analyzer/RID entries,
     // while committed runtime dependency selections remain the starting point and tracked source stays clean.
     const locks = await command('git', ['ls-files', '--', 'dotnet/**/packages.lock.json'], { signal });
@@ -72,7 +72,11 @@ export async function prepareBackend(root: string, request: { identity: string; 
     }
     await command('dotnet', ['publish', 'dotnet/Assembly.Remote', ...remotePublishArguments,
       `-p:SourceRevisionId=${request.commit}`, '-o', publish], { signal, live: true });
-    await command('git', ['diff', '--quiet', 'HEAD'], { signal });
+    try { await command('git', ['diff', '--quiet', 'HEAD'], { signal }); }
+    catch {
+      signal.throwIfAborted();
+      throw Error('the build modified tracked backend source; host kept unchanged; inspect the lane build checkout git diff');
+    }
     built({ cacheHit: false });
     const packaged = stage('package');
     const previous = currentDll ? dirname(dirname(currentDll)) : undefined;
