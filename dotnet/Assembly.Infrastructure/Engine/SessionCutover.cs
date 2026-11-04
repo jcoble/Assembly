@@ -157,7 +157,7 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
                 if (parentLocation is null || !parentLocation.Ready)
                     throw new CallFailed("The parent's checkout is not ready.", "checkout_not_ready");
             }
-            var folder = parentLocation?.Folder ?? preparation?.CanonicalRoot ?? owningHome;
+            var folder = parentLocation?.Folder ?? preparation?.CanonicalRoot ?? BareSessionFolder.ForHome(owningHome);
             if (preparation is not null)
                 ValidatePreparation(scope, session.SessionId, projectId, session.ParentSessionId, session.WorkingFolder, preparation);
             if (projectId is not null && preparation is null)
@@ -173,6 +173,8 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
             var captured = config.ConfigTarget is null ? null
                 : ((AgentDescriptor Descriptor, IReadOnlyDictionary<string, string> Environment, string TargetId)?)
                     ConfigTargetIdentity.Capture(launcher, session.Agent, config.ConfigTarget);
+            if (projectId is null && parentLocation is null && preparation is null)
+                Directory.CreateDirectory(folder);
             launcher.ValidateFolder(folder);
             if (captured is { } target)
                 ConfigTargetIdentity.Validate(launcher, target.Descriptor, target.Environment);

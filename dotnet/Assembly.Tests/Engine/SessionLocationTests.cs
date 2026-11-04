@@ -16,6 +16,27 @@ namespace Assembly.Tests.Engine;
 public sealed class SessionLocationTests
 {
     [Theory]
+    [InlineData("claude")]
+    [InlineData("codex")]
+    public async Task Existing_projectless_home_session_keeps_home_on_restart_and_provider_resume(string provider)
+    {
+        await using var h = new Host(managed: false, git: false, originalHome: true, provider: provider);
+        await h.Restart();
+        Assert.Null(h.Store.Get("root")!.ProjectId);
+        AssertLocation(h, "root", h.Home, false);
+        var opening = h.Opener.OpenAsync("root", "First", new(h.F.Time), CancellationToken.None);
+        var agent = await h.Launcher.Fake.NextAsync();
+        Assert.Equal(h.Home, (await agent.StartAsync()).GetProperty("params").GetProperty("cwd").GetString());
+        await h.Close(await opening, agent);
+        var resuming = h.Opener.OpenAsync("root", "Again", new(h.F.Time), CancellationToken.None);
+        var resume = await agent.OpenAsync();
+        Assert.Equal("session/resume", resume.GetProperty("method").GetString());
+        Assert.Equal(h.Home, resume.GetProperty("params").GetProperty("cwd").GetString());
+        await h.Close(await resuming, agent);
+        Assert.False(Directory.Exists(Path.Combine(h.Home, "assembly-bare")));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Direct_Git_and_nonGit_managed_shaped_folders_survive_restart_and_reach_new_resume_files_and_terminal(bool git)
@@ -104,24 +125,26 @@ public sealed class SessionLocationTests
         public SharedAdapter Adapter { get; }
         public SessionOpener Opener { get; private set; }
         public string Checkouts => Path.Combine(Home, "checkouts");
-        public string Folder => Path.Combine(Checkouts, "root");
-        public Host(bool managed, bool git)
+        private readonly bool _originalHome;
+        public string Folder => _originalHome ? Home : Path.Combine(Checkouts, "root");
+        public Host(bool managed, bool git, bool originalHome = false, string provider = "claude")
         {
+            _originalHome = originalHome;
             Directory.CreateDirectory(Folder); File.WriteAllText(Path.Combine(Folder, "notes.md"), "draft");
             if (git) Git(Folder, "init", "--quiet");
             F = new(topics: _topics); Launcher = new(Checkouts);
-            Assert.True(F.Apply(new StartSession("claude", null, Folder, "Root", null, null, null, ManagedCheckout: managed), "root", actor: new(ActorKind.Window, "owner")).Applied);
+            Assert.True(F.Apply(new StartSession(provider, null, Folder, "Root", null, null, null, ManagedCheckout: managed), "root", actor: new(ActorKind.Window, "owner")).Applied);
             Assert.True(F.Apply(new SetSessionState("idle", null, null), "root", version: 1,
                 actor: new(ActorKind.System, "start-confirmed")).Applied);
             Store = SessionStore.Open(F.Db, F.Time, Checkouts);
-            Runtime = EngineRuntime.Start(F.Db, _topics, F.Time, F.Limits, cutover: new(F.Db, Store, Launcher, Checkouts, F.Time));
-            Adapter = new(Launcher, "claude", F.Time, TextWriter.Null); Opener = new(Store, Launcher, _ => Adapter);
+            Runtime = EngineRuntime.Start(F.Db, _topics, F.Time, F.Limits, cutover: new(F.Db, Store, Launcher, Checkouts, F.Time, owningHome: Home));
+            Adapter = new(Launcher, provider, F.Time, TextWriter.Null); Opener = new(Store, Launcher, _ => Adapter);
             Assert.Equal(Folder, Store.Get("root")!.RepoUrl);
         }
         public async Task Restart()
         {
             await Runtime.DisposeAsync(); Store = SessionStore.Open(F.Db, F.Time, Checkouts);
-            Runtime = EngineRuntime.Start(F.Db, _topics, F.Time, F.Limits, cutover: new(F.Db, Store, Launcher, Checkouts, F.Time));
+            Runtime = EngineRuntime.Start(F.Db, _topics, F.Time, F.Limits, cutover: new(F.Db, Store, Launcher, Checkouts, F.Time, owningHome: Home));
             Opener = new(Store, Launcher, _ => Adapter);
         }
         public async Task Close(OpenSession session, FakeLink agent)

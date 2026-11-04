@@ -264,10 +264,10 @@ internal sealed class TwoHosts : IAsyncDisposable
     private readonly Dictionary<string, Host> _additionalHosts = new(StringComparer.Ordinal);
     public TwoHosts(bool windowCalls = false, bool forwardCommands = false, IEngineEffects? effects = null,
         IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? macLimits = null, SessionLimits? remoteLimits = null, IEngineEffects? macEffects = null, TextWriter? remoteLog = null,
-        Func<string, string, bool>? isConfiguredProvider = null, string? owningHome = null)
+        Func<string, string, bool>? isConfiguredProvider = null, string? owningHome = null, string? remoteOwningHome = null)
     {
         _forwardCommands = forwardCommands; _remoteLog = remoteLog;
-        Remote = new(forwardCommands, effects, machineLauncher, checkouts is null ? null : Path.Combine(checkouts, "remote"), remoteLimits, isConfiguredProvider, owningHome);
+        Remote = new(forwardCommands, effects, machineLauncher, checkouts is null ? null : Path.Combine(checkouts, "remote"), remoteLimits, isConfiguredProvider, remoteOwningHome ?? owningHome);
         Mac = new(windowCalls, effects: macEffects, machineLauncher: machineLauncher, checkouts: checkouts is null ? null : Path.Combine(checkouts, "mac"), limits: macLimits,
             isConfiguredProvider: isConfiguredProvider, owningHome: owningHome);
         if (forwardCommands) Mac.Forwarder = new(machine => _connections!.ByEngineMachine(Mac.Fixture.Db, machine));

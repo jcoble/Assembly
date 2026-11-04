@@ -48,12 +48,14 @@ public sealed class FirstSendCheckoutTests : IDisposable
     }
 
     [Fact]
-    public void No_project_uses_owning_home_and_same_client_reconciles_without_another_start()
+    public void No_project_creates_shared_bare_folder_and_same_client_reconciles_without_another_start()
     {
+        Assert.False(Directory.Exists(Path.Combine(_home.FullName, "assembly-bare")));
         var first = Create("stable_1", null, null);
+        Assert.True(Directory.Exists(Path.Combine(_home.FullName, "assembly-bare")));
         var again = Create("stable_1", null, null);
         Assert.Equal(first.SessionId, again.SessionId);
-        Assert.Equal(_home.FullName, _engine.Text("SELECT folder FROM engine_session WHERE id=$id", new SqlArg("$id", first.SessionId)));
+        Assert.Equal(Path.Combine(_home.FullName, "assembly-bare"), _engine.Text("SELECT folder FROM engine_session WHERE id=$id", new SqlArg("$id", first.SessionId)));
         Assert.Null(_sessions.Get(first.SessionId)!.ProjectId);
         Assert.Equal(1, _engine.Count("engine_session"));
         Assert.Equal(1, _engine.Count("engine_outbox"));
@@ -73,7 +75,7 @@ public sealed class FirstSendCheckoutTests : IDisposable
         owner.Fixture.Db.Writer.Write("test.schema", scope => { cutover.EnsureSchema(scope); return 0; });
         cutover.Attach(owner.Runtime.Commands, owner.Runtime.Machine);
         var accepted = owner.Fixture.Db.Writer.Write("test.accepted", scope => owner.Sessions.Create(scope,
-            "profile", "accepted_replay", _home.FullName, null, null));
+            "profile", "accepted_replay", Path.Combine(_home.FullName, "assembly-bare"), null, null));
         var starts = owner.Fixture.Count("engine_outbox");
         using var socket = await ApiTests.OpenOwnerSocketAsync(owner.Address, "isolated-token");
         // This provider is intentionally absent from the registered machine's catalogue.
@@ -83,7 +85,7 @@ public sealed class FirstSendCheckoutTests : IDisposable
         var facts = replay.GetProperty("facts");
         Assert.Equal(owner.Runtime.Machine, facts.GetProperty("machine").GetString());
         Assert.Equal("profile", facts.GetProperty("agent").GetString());
-        Assert.Equal(_home.FullName, facts.GetProperty("folder").GetString());
+        Assert.Equal(Path.Combine(_home.FullName, "assembly-bare"), facts.GetProperty("folder").GetString());
         Assert.Equal(JsonValueKind.Null, facts.GetProperty("parentSessionId").ValueKind);
         Assert.Equal(1, owner.Fixture.Count("engine_session"));
         Assert.Equal(starts, owner.Fixture.Count("engine_outbox"));
@@ -203,6 +205,7 @@ public sealed class FirstSendCheckoutTests : IDisposable
         var location = _sessions.Location(created);
         Assert.NotNull(location);
         Assert.Equal(_home.FullName, location.Folder);
+        Assert.False(Directory.Exists(Path.Combine(_home.FullName, "assembly-bare")));
         Assert.False(location.Ready);
         var opener = new SessionOpener(_sessions, _launcher, _ => throw new InvalidOperationException("No adapter before checkout."));
         var notReady = await Assert.ThrowsAsync<CallFailed>(() => opener.OpenAsync(created.SessionId, "First prompt",
@@ -320,7 +323,7 @@ public sealed class FirstSendCheckoutTests : IDisposable
     }
 
     private SessionInfo Create(string client, string? project, CheckoutIntent? checkout) =>
-        _engine.Db.Writer.Write("test.create", s => _sessions.Create(s, "profile", client, _home.FullName, project, checkout));
+        _engine.Db.Writer.Write("test.create", s => _sessions.Create(s, "profile", client, project is null ? Path.Combine(_home.FullName, "assembly-bare") : _home.FullName, project, checkout));
 
     public void Dispose() { _engine.Dispose(); _home.Delete(true); }
 
