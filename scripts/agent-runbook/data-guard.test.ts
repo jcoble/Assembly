@@ -36,6 +36,15 @@ test('cd_inside_a_subshell_does_not_move_later_commands', () => {
   denied(`(cd /tmp); (cd ${D}; rm x)`);
   assert.deepEqual(checkDataCommand('(cd /tmp); rm x', '/tmp'), {});
 });
+test('failed_cd_from_inside_the_folder_stays_inside', () => {
+  const inside = join(home, 'assembly-dotnet');
+  for (const command of ['cd /tmp/nonexistent || rm x', 'cd /tmp/nonexistent; rm x', 'cd /tmp && rm x']) assert.deepEqual(checkDataCommand(command, inside), { deny: DATA_DENY }, command);
+  assert.deepEqual(checkDataCommand('cd /tmp && cat x', inside), {});
+});
+test('tar_incremental_snapshot_is_denied', () => {
+  denied(`tar -cf /tmp/copy.tar --listed-incremental=${D}/snapshot -C ${D} .`, `tar -cf /tmp/copy.tar --listed-incremental ${D}/snapshot -C ${D} .`, `tar -cf /tmp/copy.tar -g ${D}/snapshot -C ${D} .`, `tar -g${D}/snapshot -cf /tmp/copy.tar -C ${D} .`);
+  allowed(`tar -cf /tmp/copy.tar -C ${D} .`);
+});
 test('allows_ls_cat_du_find_grep', () => {
   allowed(`ls -la ${D}`, `cat ${D}/x`, `head -n 3 ${D}/x`, `tail ${D}/x`, `stat ${D}/x`, `du -sh ${D}`, `file ${D}/x`, `wc -l ${D}/x`,
     `find ${D} -name '*.db' -print`, `grep -rn needle ${D}/sub`, `rg needle ${D}`, `shasum ${D}/x`, `sha256sum ${D}/x`, `md5 ${D}/x`, `md5sum ${D}/x`);
@@ -93,7 +102,8 @@ test('denies_cd_then_relative_redirect', () => {
   denied(`cd ${D} && echo hi > x`, `cd ${D} && cat x > y`, `cd ${D}/sub && echo hi >> ../log`, `cd ${D} && cat ${out}/a > ./b`);
 });
 test('allows_cd_then_reads_and_outside_writes', () => {
-  allowed(`cd ${D} && ls`, `cd ${D} && cat x | head`, `cd ${D} && cat x > ${out}/x`, `cd ${D} && cp x ${out}/x`, `cd ${D} && cd /tmp && touch z`);
+  allowed(`cd ${D} && ls`, `cd ${D} && cat x | head`, `cd ${D} && cat x > ${out}/x`, `cd ${D} && cp x ${out}/x`);
+  denied(`cd ${D} && cd /tmp && touch z`); // The guard can't see that the second cd succeeded, so it stays cautious.
 });
 test('denies_when_the_session_cwd_is_inside_the_folder', () => {
   const cwd = join(home, 'assembly-dotnet/sub');

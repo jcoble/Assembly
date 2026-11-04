@@ -314,7 +314,7 @@ function checkTar(args: Word[], state: State) {
 }
 function tarJudge(flags: string[], archive: Word | undefined, directories: Word[], state: State) {
   const create = anyIn(flags, ['-c', '--create']);
-  if (!create || anyIn(flags, ['-x', '-r', '-u', '-A', '-d', '-I', '-F', '-t', '--extract', '--get', '--append', '--update', '--catenate', '--concatenate', '--diff', '--compare', '--delete', '--remove-files', '--use-compress-program', '--to-command', '--checkpoint-action', '--info-script', '--new-volume-script', '--rsh-command'])) return true;
+  if (!create || anyIn(flags, ['-x', '-r', '-u', '-A', '-d', '-I', '-F', '-t', '-g', '--listed-incremental', '--extract', '--get', '--append', '--update', '--catenate', '--concatenate', '--diff', '--compare', '--delete', '--remove-files', '--use-compress-program', '--to-command', '--checkpoint-action', '--info-script', '--new-volume-script', '--rsh-command'])) return true;
   if (!archive) return true;
   if (archive.text === '-') return false;
   if (!outside(archive, state)) return true;
@@ -401,8 +401,8 @@ function evaluate(command: string, cwd: string, strict: boolean): { result: { de
     const [first, ...args] = rest;
     const name = basename(first.text);
     if (['cd', 'pushd'].includes(first.text)) {
-      // A subshell's cd ends with the subshell, and the parser doesn't track that scope.
-      if (strict && parsed.subshell) { state.unknown = true; continue; }
+      // A subshell's cd ends with the subshell, and a failed cd stays put, so neither proves the directory moved.
+      if (strict && (parsed.subshell || insideFolder(state.dir))) { state.unknown = true; continue; }
       const target = args.find(a => !['-L', '-P', '-e', '-@', '--'].includes(a.text));
       if (!target) { state.dir = homedir(); state.unknown = false; }
       else if (target.dynamic || target.text === '-') state.unknown = true;
