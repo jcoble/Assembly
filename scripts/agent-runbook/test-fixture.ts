@@ -1,10 +1,10 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 export function fixture(t: any) {
-  const home = mkdtempSync(join(tmpdir(), 'workflow-test-'));
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'workflow-test-')));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const cwd = join(home, 'Assembly');
   const bin = join(home, 'bin');

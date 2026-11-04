@@ -102,7 +102,12 @@ export function flushPending(provider: string, id: string) {
     const text = readRunbook(binding);
     if (binding.notionPageId) writeRunbookBody(binding.notionPageId, text);
     else {
-      const meta = collectMeta(binding.cwd || process.cwd(), provider, id, binding.parentPageId);
+      if (binding.parent) {
+        const colon = binding.parent.indexOf(':');
+        binding.parentPageId = getBinding(binding.parent.slice(0, colon), binding.parent.slice(colon + 1))?.notionPageId || binding.parentPageId;
+      }
+      const meta = collectMeta(binding.cwd || process.cwd(), provider, id, binding.parentPageId, binding.task);
+      if (binding.parent) meta.kind = 'Subagent';
       binding.notionPageId = createRunbookPage(meta, text).id;
     }
     binding.syncPending = false; delete binding.syncError;
@@ -111,6 +116,19 @@ export function flushPending(provider: string, id: string) {
     console.error(binding.syncError);
   }
   saveBinding(provider, id, binding);
+}
+export function recordWorktreeOutcome(provider: string, id: string, result: { status: string; reason?: string }) {
+  const binding = getBinding(provider, id);
+  if (!binding || binding.readOnly) return;
+  ownerCheck(provider, id, binding);
+  const old = readRunbook(binding);
+  if (!old.includes(STATE) || !old.includes(OBSERVED)) throw Error('Unrecognized runbook format; worktree result not written.');
+  const state = old.split(STATE)[1].split(OBSERVED)[0].replace(/^## Live state\n/, '');
+  const observed = 'Worktree backup: ' + result.status + (result.reason ? '; ' + result.reason.split('\n')[0] : '') + '. Retained until explicit done or safe merged sweep.\n' + new Date().toISOString();
+  atomicWrite(binding.path, render(binding, state, observed));
+  if (binding.notionPageId) binding.syncPending = true;
+  saveBinding(provider, id, binding);
+  flushPending(provider, id);
 }
 function transcriptExcerpt(path?: string) {
   if (!path) return 'Transcript unavailable; semantic state was not inferred.';

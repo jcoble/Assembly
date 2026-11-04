@@ -61,3 +61,16 @@ test('task_key_from_branch_sets_relation', t => {
   const create = f.db().calls.find((c: any) => c.path === '/v1/pages');
   assert.deepEqual(create.body.properties.Task, { relation: [{ id: 'task-page' }] });
 });
+test('explicit_task_sets_relation_without_a_task_branch', t => {
+  const f = fixture(t);
+  assert.equal(f.run(['init', 'codex', 'parent', '--task', 'TSK-1666']).status, 0);
+  f.run(['update', 'codex', 'parent'], 'Explicit task');
+  assert.deepEqual(f.db().calls.find((c: any) => c.path === '/v1/pages').body.properties.Task, { relation: [{ id: 'task-page' }] });
+});
+test('body_updates_leave_database_properties_alone', t => {
+  const f = fixture(t); f.hook({ hook_event_name: 'SessionStart' });
+  f.run(['update', 'codex', 'parent'], 'First'); f.run(['update', 'codex', 'parent'], 'Replacement');
+  const writes = f.db().calls.filter((c: any) => c.method === 'PATCH');
+  assert.equal(writes.length, 1); assert.equal(writes[0].body.properties, undefined);
+  assert.match(f.db().pages[f.binding().notionPageId], /Replacement/); assert.doesNotMatch(f.db().pages[f.binding().notionPageId], /\nFirst\n/);
+});

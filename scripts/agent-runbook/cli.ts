@@ -1,9 +1,13 @@
 import { readFileSync, statSync } from 'node:fs';
-import { init, getBinding, saveBinding, readRunbook, update, checkpoint, recover, identity, projectFor, flushPending, atomicWrite } from './runbook.ts';
+import { init, getBinding, saveBinding, readRunbook, update, checkpoint, recover, identity, projectFor, flushPending, atomicWrite, recordWorktreeOutcome } from './runbook.ts';
 import { rules } from './rules.ts';
 import { harnessFor } from './harnesses.ts';
 import { stopDecision, shouldNudge, contextPercent, toolCallsSince } from './stale.ts';
 import { setHookBudget } from './notion.ts';
+import { checkWorktreeCommand } from './guard.ts';
+import { createWorktree, backupWorktree, lease } from './worktree.ts';
+import { registry, tryGit } from './worktree-state.ts';
+import { spawn } from 'node:child_process';
 
 let eventName = '';
 let manualMissing = false;
@@ -13,35 +17,69 @@ try {
   if (command === 'hook') {
     const event = JSON.parse(readFileSync(0, 'utf8'));
     eventName = event.hook_event_name;
-    setHookBudget(['PreToolUse', 'PostToolUse'].includes(eventName) ? 3500 : 10000);
+    setHookBudget(['SessionEnd', 'SubagentStop'].includes(eventName) ? 55000 : ['PreToolUse', 'PostToolUse'].includes(eventName) ? 3500 : 10000);
     if (process.env.RUNBOOK_FAST_STAMP && process.env.RUNBOOK_FAST_BYTES) atomicWrite(process.env.RUNBOOK_FAST_STAMP, process.env.RUNBOOK_FAST_BYTES + '\n');
     const parentSession = String(event.session_id || '');
     const session = eventName === 'SubagentStart' ? parentSession : String(event.agent_id || parentSession);
     identity(provider, session);
-    flushPending(provider, session);
-    if (event.hook_event_name === 'SubagentStart') {
+    if (eventName === 'WorktreeCreate') {
+      const path = createWorktree(event.name, event.cwd);
+      lease(path, provider + ':' + session);
+      console.log(path);
+    } else if (eventName === 'PreToolUse') {
+      const result = checkWorktreeCommand(String(event.tool_input?.command || ''), event.cwd);
+      flushPending(provider, session);
+      console.log(JSON.stringify(result.deny ? { hookSpecificOutput: { hookEventName: eventName, permissionDecision: 'deny', permissionDecisionReason: result.deny } } : {}));
+    } else if (['SessionEnd', 'WorktreeRemove'].includes(eventName)) {
+      const path = event.worktree_path || tryGit(event.cwd, 'rev-parse', '--show-toplevel');
+      if (path && registry()[path]) {
+        const binding = getBinding(provider, session);
+        if (!binding?.readOnly) {
+          lease(path, provider + ':' + session, true);
+          const result = backupWorktree(path, provider + ':' + session);
+          recordWorktreeOutcome(provider, session, result);
+          if (result.reason) console.error(result.reason);
+        }
+      }
+      flushPending(provider, session);
+      console.log('{}');
+    } else if (event.hook_event_name === 'SubagentStart') {
+      flushPending(provider, session);
       const parent = getBinding(provider, session) || init(provider, session, event.cwd);
       const child = String(event.agent_id || '');
       identity(provider, child);
       const binding = init(provider, child, event.cwd);
       binding.parent = provider + ':' + session;
       binding.parentPageId = parent.notionPageId;
+      const path = tryGit(event.cwd, 'rev-parse', '--show-toplevel');
+      if (registry()[path]) lease(path, provider + ':' + child);
       saveBinding(provider, child, binding);
       const own = recover(provider, child, binding, 'SubagentStart');
       own.hookSpecificOutput.additionalContext += '\nRead-only parent context; check with your spawning parent before resuming:\n' + readRunbook(parent);
       console.log(JSON.stringify(own));
     } else if (event.hook_event_name === 'SessionStart') {
-      const binding = getBinding(provider, session) || init(provider, session, event.cwd);
+      let binding = getBinding(provider, session) || init(provider, session, event.cwd);
+      flushPending(provider, session);
+      binding = getBinding(provider, session)!;
+      const path = tryGit(event.cwd, 'rev-parse', '--show-toplevel');
+      if (registry()[path] && !binding.readOnly) lease(path, provider + ':' + session);
+      // Detached one-shot sweep owns its own lock/stamp. No timer or persistent daemon.
+      if (Object.keys(registry()).length) {
+        const child = spawn(process.execPath, [new URL('./agent-worktree.ts', import.meta.url).pathname, 'sweep', '--hourly'], { cwd: process.env.HOME, env: process.env, detached: true, stdio: 'ignore' });
+        child.on('error', error => console.error('Sweep could not start: ' + error.message)); child.unref();
+      }
       if (event.transcript_path) { binding.transcriptPath = event.transcript_path; saveBinding(provider, session, binding); }
       const result = recover(provider, session, binding);
       if (event.source === 'compact') result.hookSpecificOutput.additionalContext += '\nRefresh your own runbook first before continuing work.';
       console.log(JSON.stringify(result));
     } else if (event.hook_event_name === 'PreCompact') {
+      flushPending(provider, session);
       // Never initialize a replacement during compaction: a missing binding must be visible.
       manualMissing = event.trigger === 'manual' && !getBinding(provider, session);
       checkpoint(provider, session, event);
       console.log('{}');
     } else if (['Stop', 'SubagentStop', 'PostToolUse'].includes(eventName)) {
+      flushPending(provider, session);
       const binding = getBinding(provider, session);
       let result: any = {};
       if (binding && !binding.readOnly) {
@@ -61,6 +99,15 @@ try {
           if (decision.block) { binding.stopContinued = true; result = { decision: 'block', reason: decision.reason }; }
         }
         saveBinding(provider, session, binding);
+        if (eventName === 'SubagentStop' && !result.decision && !event.stop_hook_active) {
+          const worktree = tryGit(event.cwd, 'rev-parse', '--show-toplevel');
+          if (registry()[worktree]) {
+            lease(worktree, provider + ':' + session, true);
+            const backup = backupWorktree(worktree, provider + ':' + session);
+            recordWorktreeOutcome(provider, session, backup);
+            if (backup.reason) console.error(backup.reason);
+          }
+        }
       }
       console.log(JSON.stringify(result));
     }
@@ -87,15 +134,17 @@ try {
   if (command === 'hook') {
     // Prevent compaction from silently losing the checkpoint when supported by the provider.
     console.error(message);
-    if (eventName === 'PreCompact' && manualMissing) {
+    if (eventName === 'WorktreeCreate') {
+      process.exitCode = 1;
+    } else if (eventName === 'PreCompact' && manualMissing) {
       const harness = harnessFor(provider);
       console.log(JSON.stringify(harness.compactFailure(message)));
       process.exitCode = harness.compactExit;
     } else if (eventName === 'PreCompact') {
       console.log('{}');
-    } else {
+    } else if (['SessionStart', 'SubagentStart'].includes(eventName)) {
       console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: eventName || 'SessionStart', additionalContext: rules() + '\nRECOVERY BLOCKED: ' + message + '\nAsk the spawning parent / runbook owner before affected work.' } }));
       process.exitCode = 0;
-    }
+    } else console.log('{}');
   } else { console.error(message); process.exitCode = 1; }
 }
