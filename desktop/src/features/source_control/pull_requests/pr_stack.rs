@@ -1,8 +1,7 @@
-//! The Changes page's single scrolling diff and its file tree, as plain data. GitHub lists each file's hunks without a
-//! header, so each gets the header the diff parser needs; a file with nothing to compare becomes a note instead.
+//! The Changes page's single scrolling diff, as plain data. GitHub lists each file's hunks without a header, so each
+//! gets the header the diff parser needs; a file with nothing to compare becomes a note instead.
 use super::pull_request::PullRequestFile;
 use gpui_kit::component::diff::DiffSide;
-use std::collections::BTreeMap;
 
 /// The whole patch for one file, or nothing when GitHub sent no lines for it.
 pub fn file_patch(file: &PullRequestFile) -> Option<String> {
@@ -72,64 +71,6 @@ pub fn no_lines_note(file: &PullRequestFile) -> &'static str {
         "Binary file, so there is no line-by-line comparison."
     } else {
         "No line changes to show."
-    }
-}
-pub fn matches_filter(path: &str, filter: &str) -> bool {
-    let filter = filter.trim().to_lowercase();
-    filter.is_empty() || path.to_lowercase().contains(&filter)
-}
-#[derive(Debug, PartialEq)]
-pub struct TreeRow {
-    pub depth: usize,
-    pub label: String,
-    /// The file this row opens; a folder has none.
-    pub path: Option<String>,
-}
-#[derive(Default)]
-struct Folder<'a> {
-    folders: BTreeMap<&'a str, Folder<'a>>,
-    files: BTreeMap<&'a str, &'a str>,
-}
-/// Folders first, then files, each sorted; a folder holding only one folder shares its row, as `a/b`.
-pub fn changed_tree<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<TreeRow> {
-    let mut root = Folder::default();
-    for path in paths {
-        let mut folder = &mut root;
-        let mut parts = path.split('/').peekable();
-        while let Some(part) = parts.next() {
-            if parts.peek().is_some() {
-                folder = folder.folders.entry(part).or_default();
-            } else {
-                folder.files.insert(part, path);
-            }
-        }
-    }
-    let mut rows = Vec::new();
-    push_rows(&root, 0, &mut rows);
-    rows
-}
-fn push_rows(folder: &Folder, depth: usize, rows: &mut Vec<TreeRow>) {
-    for (name, child) in &folder.folders {
-        let mut label = (*name).to_string();
-        let mut child = child;
-        while child.files.is_empty() && child.folders.len() == 1 {
-            let (name, only) = child.folders.iter().next().expect("one folder");
-            label = format!("{label}/{name}");
-            child = only;
-        }
-        rows.push(TreeRow {
-            depth,
-            label,
-            path: None,
-        });
-        push_rows(child, depth + 1, rows);
-    }
-    for (name, path) in &folder.files {
-        rows.push(TreeRow {
-            depth,
-            label: (*name).to_string(),
-            path: Some((*path).to_string()),
-        });
     }
 }
 

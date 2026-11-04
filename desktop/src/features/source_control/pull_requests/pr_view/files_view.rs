@@ -1,17 +1,43 @@
 //! How the Changes page looks: the stacked diff with its file header buttons, comment cards and the file tree.
-use super::super::pr_stack::changed_tree;
 use super::*;
+use crate::core::ui::changed_tree::{TREE_WIDTH, TreeHandler};
+use crate::core::ui::diff_header::{file_heading, viewed_button};
 use crate::core::{intents::open_file::OpenFile, state::selected_session::SelectedSession};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::diff::Diff;
 use gpui_kit::component::input::{Input, Textarea};
-use gpui_kit::component::list::ListItem;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
+use std::rc::Rc;
 
 impl PrFiles {
+    fn open_in_editor(
+        session: Option<String>,
+        path: String,
+        line: Option<u32>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(session) = session else {
+            return;
+        };
+        let selected = SelectedSession::global(cx).read(cx);
+        let expected_source = (selected.session_id() == Some(session.as_str()))
+            .then(|| selected.source().cloned())
+            .flatten();
+        window.dispatch_action(
+            Box::new(OpenFile {
+                session_id: session,
+                path,
+                expected_source,
+                line,
+                column: None,
+                pinned: false,
+            }),
+            cx,
+        );
+    }
     fn diff(&self, cx: &mut Context<Self>) -> Diff {
         let (annotations, contents) = self.annotations(cx);
         let target = cx.entity().downgrade();
@@ -19,87 +45,36 @@ impl PrFiles {
         let header = target.clone();
         let viewed = self.viewed.clone();
         let session = self.owner.session_id().map(String::from);
+        let line_session = session.clone();
         let mut diff = Diff::new(&self.state)
             .annotations(annotations)
-            .render_header_suffix(move |file, _, _| {
+            .render_header(move |file, _, cx| {
                 let path = file.path().to_string();
-                let is_viewed = viewed.contains(&path);
                 let toggle = header.clone();
                 let toggled = path.clone();
-                let opened = path.clone();
-                let copied = path.clone();
-                let session = session.clone();
-                h_flex()
+                let actions = h_flex()
                     .gap_1()
-                    .child(
-                        Button::new(SharedString::from(format!("viewed:{path}")))
-                            .ghost()
-                            .small()
-                            .icon(if is_viewed {
-                                IconName::EyeOff
-                            } else {
-                                IconName::Eye
-                            })
-                            .tooltip(if is_viewed {
-                                "Mark as not viewed"
-                            } else {
-                                "Mark as viewed"
-                            })
-                            .on_click(move |_, _, cx| {
-                                _ = toggle.update(cx, |viewer, cx| {
-                                    viewer.toggle_viewed(toggled.clone(), cx)
-                                });
-                            }),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("file-menu:{path}")))
-                            .ghost()
-                            .small()
-                            .icon(IconName::Ellipsis)
-                            .tooltip("More for this file")
-                            .dropdown_menu(move |menu, _, _| {
-                                let session = session.clone();
-                                let openable = session.is_some();
-                                let opened = opened.clone();
-                                let copied = copied.clone();
-                                menu.item(PopupMenuItem::new(if openable {
-                                    "Open in editor"
-                                } else {
-                                    "Open in editor (needs a session)"
-                                })
-                                .disabled(!openable)
-                                .on_click(
-                                    move |_, window, cx| {
-                                        let Some(session) = session.clone() else {
-                                            return;
-                                        };
-                                        let selected = SelectedSession::global(cx).read(cx);
-                                        let expected_source = (selected.session_id()
-                                            == Some(session.as_str()))
-                                        .then(|| selected.source().cloned())
-                                        .flatten();
-                                        window.dispatch_action(
-                                            Box::new(OpenFile {
-                                                session_id: session,
-                                                path: opened.clone(),
-                                                expected_source,
-                                                line: None,
-                                                column: None,
-                                                pinned: false,
-                                            }),
-                                            cx,
-                                        );
-                                    },
-                                ))
-                                .item(
-                                    PopupMenuItem::new("Copy path").on_click(move |_, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            copied.clone(),
-                                        ));
-                                    }),
-                                )
-                            }),
-                    )
+                    .child(viewed_button(
+                        &path,
+                        viewed.contains(&path),
+                        move |_, cx| {
+                            _ = toggle
+                                .update(cx, |viewer, cx| viewer.toggle_viewed(toggled.clone(), cx));
+                        },
+                    ))
+                    .child(file_menu(&path, session.clone()));
+                file_heading(file, None, actions, cx)
+            })
+            .on_line_click(move |position, click, window, cx| {
+                if click.click_count() == 2 {
+                    Self::open_in_editor(
+                        line_session.clone(),
+                        position.path().to_string(),
+                        u32::try_from(position.line()).ok(),
+                        window,
+                        cx,
+                    );
+                }
             })
             .render_annotation(move |annotation, _, cx| {
                 let content = contents
@@ -119,18 +94,28 @@ impl PrFiles {
     }
     fn aside(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (border, muted) = (theme.border, theme.muted_foreground);
-        let paths: Vec<String> = self
-            .parsed
-            .iter()
-            .map(|file| file.path().to_string())
-            .chain(self.notes.iter().map(|note| note.path.clone()))
-            .filter(|path| matches_filter(path, &self.filter))
-            .collect();
-        let rows = changed_tree(paths.iter().map(String::as_str));
-        let state = self.state.clone();
+        let border = theme.border;
+        let (state, picked, folded) = (
+            self.state.clone(),
+            cx.entity().downgrade(),
+            cx.entity().downgrade(),
+        );
+        let on_pick: TreeHandler = Rc::new(move |path, _, cx| {
+            let path = path.to_string();
+            _ = picked.update(cx, |viewer, cx| {
+                viewer.active_file = Some(path.clone());
+                cx.notify();
+            });
+            state.update(cx, |state, cx| state.scroll_to_file(&path, cx));
+        });
+        let on_fold: TreeHandler = Rc::new(move |folder, _, cx| {
+            _ = folded.update(cx, |viewer, cx| {
+                viewer.tree.toggle_folder(folder);
+                cx.notify();
+            });
+        });
         v_flex()
-            .w(px(260.))
+            .w(TREE_WIDTH)
             .flex_none()
             .h_full()
             .min_h_0()
@@ -141,38 +126,43 @@ impl PrFiles {
                     .as_ref()
                     .map(|(input, _)| div().p_2().child(Input::new(input).small())),
             )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scrollbar()
-                    .text_sm()
-                    .children(rows.into_iter().enumerate().map(|(index, row)| {
-                        let indent = px(8. + row.depth as f32 * 12.);
-                        let icon = if row.path.is_some() {
-                            IconName::File
-                        } else {
-                            IconName::FolderOpen
-                        };
-                        let mut item = ListItem::new(SharedString::from(format!("tree:{index}")))
-                            .pl(indent)
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .min_w_0()
-                                    .child(Icon::new(icon).size(px(14.)).text_color(muted))
-                                    .child(div().truncate().child(row.label)),
-                            );
-                        if let Some(path) = row.path {
-                            let state = state.clone();
-                            item = item.on_click(move |_, _, cx| {
-                                state.update(cx, |state, cx| state.scroll_to_file(&path, cx));
-                            });
-                        }
-                        item
-                    })),
-            )
+            .child(div().flex_1().min_h_0().child(self.tree.list(
+                "pr-files-tree",
+                Rc::new(self.viewed.clone()),
+                self.active_file.clone(),
+                on_pick,
+                on_fold,
+            )))
     }
+}
+/// "Open in editor" and "Copy path", behind the file's ellipsis.
+fn file_menu(path: &str, session: Option<String>) -> impl IntoElement + use<> {
+    let (opened, copied) = (path.to_string(), path.to_string());
+    Button::new(SharedString::from(format!("file-menu:{path}")))
+        .ghost()
+        .small()
+        .icon(IconName::Ellipsis)
+        .tooltip("More file actions")
+        .dropdown_menu(move |menu, _, _| {
+            let session = session.clone();
+            let openable = session.is_some();
+            let opened = opened.clone();
+            let copied = copied.clone();
+            menu.item(
+                PopupMenuItem::new(if openable {
+                    "Open in editor"
+                } else {
+                    "Open in editor (needs a session)"
+                })
+                .disabled(!openable)
+                .on_click(move |_, window, cx| {
+                    PrFiles::open_in_editor(session.clone(), opened.clone(), None, window, cx);
+                }),
+            )
+            .item(PopupMenuItem::new("Copy path").on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()));
+            }))
+        })
 }
 fn annotation_card(
     content: Option<AnnotationContent>,

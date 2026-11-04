@@ -7,6 +7,7 @@ use crate::core::intents::{
     open_diff::OpenDiff, open_file::OpenFile, reveal_file_folder::RevealFileFolder,
 };
 use crate::core::socket::checkout_selector::CheckoutSelector;
+use crate::core::ui::file_icon::file_icon;
 use crate::features::source_control::actions_menu::{READ_ONLY_SCOPE, STILL_RUNNING};
 use crate::features::source_control::git_labels::split_path;
 use crate::features::source_control::git_status::{ChangedFile, GitStatus, Section};
@@ -304,12 +305,7 @@ impl SourceControlPane {
                     .text_color(letter_tone(letter, cx))
                     .child(letter.to_string()),
             )
-            .child(
-                Icon::new(IconName::File)
-                    .size(px(14.))
-                    .text_color(muted)
-                    .flex_none(),
-            )
+            .child(file_icon(format!("icon:{id}"), &file.path, cx))
             .child(
                 h_flex()
                     .flex_1()

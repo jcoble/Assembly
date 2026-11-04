@@ -50,7 +50,24 @@ gpui_kit::assets::icon_assets!(
         GitPullRequestDraft,
         GitMerge,
         GitCommitHorizontal,
-        MessageSquare
+        MessageSquare,
+        Code,
+        CodeXml,
+        Flame,
+        Cog,
+        Hash,
+        Palette,
+        Braces,
+        FileText,
+        Database,
+        SquareTerminal,
+        Lock,
+        Bird,
+        Gem,
+        Coffee,
+        Container,
+        Table,
+        Binary
     ]
 );
 

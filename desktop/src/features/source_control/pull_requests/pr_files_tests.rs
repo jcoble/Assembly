@@ -130,6 +130,45 @@ async fn every_file_shows_at_once_and_a_left_out_file_reads_at_the_exact_revisio
     assert_eq!(seen[0]["args"]["headSha"], detail.head_sha);
 }
 #[gpui::test]
+fn the_diffs_stack_in_the_order_the_tree_lists_them_and_the_tree_counts_each_file(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    let patch = |added: &str| format!("@@ -1 +1,2 @@\n-old\n+new\n+{added}");
+    let file = |path: &str, patch: Option<String>| json!({"path":path,"previousPath":null,"status":"modified","additions":2,"deletions":1,"patch":patch,"patchOmitted":false});
+    let mut detail = two_line_detail_json();
+    detail["files"] = json!([
+        file("z.rs", Some(patch("z"))),
+        file("src/b.rs", Some(patch("b"))),
+    ]);
+    let detail: PullRequestDetail = serde_json::from_value(detail).unwrap();
+    let draft = cx.new(|_| {
+        ReviewDraft::new(ReviewIdentity {
+            repository: "o/r".into(),
+            number: 7,
+            head: detail.head_sha.clone(),
+            base: detail.base_sha.clone(),
+        })
+    });
+    let files = cx.new(|cx| PrFiles::new(session(), &detail, draft, cx));
+    cx.update(|cx| {
+        let files = files.read(cx);
+        let stacked: Vec<String> = files
+            .parsed
+            .iter()
+            .map(|file| file.path().to_string())
+            .collect();
+        assert_eq!(stacked, ["src/b.rs", "z.rs"]);
+        let rows: Vec<&str> = files
+            .tree
+            .rows()
+            .iter()
+            .filter_map(|row| row.path.as_deref())
+            .collect();
+        assert_eq!(rows, ["src/b.rs", "z.rs"]);
+    });
+}
+#[gpui::test]
 fn a_closed_pull_request_takes_no_new_line_comments(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let detail: PullRequestDetail = serde_json::from_value(json!({"repository":"o/r","localRoot":"/fixture","number":7,"title":"PR","body":"","bodyBlocks":[],"url":"https://github.com/o/r/pull/7","author":"author","headBranch":"feature","baseBranch":"main","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseSha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"MERGED","isDraft":false,"mergeable":"","reviewDecision":"","createdAt":"","mergedAt":"","mergedBy":"","closedAt":"","commits":[],"comments":[],"reviews":[],"reviewers":[],"checks":[],"files":[],"moreFiles":false,"timeline":[]})).unwrap();
@@ -212,7 +251,10 @@ async fn a_project_file_reads_by_project_with_its_source(cx: &mut TestAppContext
 }
 
 fn two_line_detail() -> PullRequestDetail {
-    serde_json::from_value(json!({"repository":"o/r","localRoot":"/fixture","number":7,"title":"PR","body":"","bodyBlocks":[],"url":"https://github.com/o/r/pull/7","author":"author","headBranch":"feature","baseBranch":"main","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseSha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","reviewDecision":"","createdAt":"","mergedAt":"","mergedBy":"","closedAt":"","commits":[],"comments":[],"reviews":[],"reviewers":[],"checks":[],"files":[{"path":"a.rs","previousPath":null,"status":"modified","additions":1,"deletions":1,"patch":"@@ -1,3 +1,3 @@\n keep\n-old\n+new\n tail","patchOmitted":false}],"moreFiles":false,"timeline":[]})).unwrap()
+    serde_json::from_value(two_line_detail_json()).unwrap()
+}
+fn two_line_detail_json() -> Value {
+    json!({"repository":"o/r","localRoot":"/fixture","number":7,"title":"PR","body":"","bodyBlocks":[],"url":"https://github.com/o/r/pull/7","author":"author","headBranch":"feature","baseBranch":"main","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseSha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","reviewDecision":"","createdAt":"","mergedAt":"","mergedBy":"","closedAt":"","commits":[],"comments":[],"reviews":[],"reviewers":[],"checks":[],"files":[{"path":"a.rs","previousPath":null,"status":"modified","additions":1,"deletions":1,"patch":"@@ -1,3 +1,3 @@\n keep\n-old\n+new\n tail","patchOmitted":false}],"moreFiles":false,"timeline":[]})
 }
 #[gpui::test]
 fn comments_sit_under_their_files_last_line_and_keep_the_line_they_are_about(
@@ -232,7 +274,9 @@ fn comments_sit_under_their_files_last_line_and_keep_the_line_they_are_about(
     files.update(cx, |files, cx| {
         files.comment(&DiffLinePosition::new("a.rs", DiffSide::Modified, 2), cx);
         let first = files.draft.read(cx).comments[0].id.clone();
-        files.draft.update(cx, |draft, _| draft.update_comment(&first, "  added  ".into()));
+        files.draft.update(cx, |draft, _| {
+            draft.update_comment(&first, "  added  ".into())
+        });
         files.add_comment(&first, cx);
         files.comment(&DiffLinePosition::new("a.rs", DiffSide::Original, 2), cx);
     });
@@ -247,7 +291,10 @@ fn comments_sit_under_their_files_last_line_and_keep_the_line_they_are_about(
         let anchored: Vec<_> = (annotations.iter())
             .map(|annotation| annotation.position().map(|at| (at.side(), at.line())))
             .collect();
-        assert_eq!(anchored, [Some((DiffSide::Modified, 3)), Some((DiffSide::Modified, 3))]);
+        assert_eq!(
+            anchored,
+            [Some((DiffSide::Modified, 3)), Some((DiffSide::Modified, 3))]
+        );
         assert_eq!(contents.len(), 2);
         assert!(!files.adding.contains(&draft.comments[0].id));
         assert!(files.adding.contains(&draft.comments[1].id));
@@ -313,11 +360,6 @@ fn posted_comments_stay_out_of_the_diff_and_a_file_without_lines_keeps_its_draft
                 (at.path().to_string(), at.side(), at.line())
             })
             .collect();
-        assert_eq!(
-            anchored,
-            [
-                ("logo.png".to_string(), DiffSide::Original, 4),
-            ]
-        );
+        assert_eq!(anchored, [("logo.png".to_string(), DiffSide::Original, 4),]);
     });
 }

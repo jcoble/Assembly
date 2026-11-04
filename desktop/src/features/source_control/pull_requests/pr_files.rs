@@ -2,13 +2,16 @@
 //! the review draft, and a comment started here waits for "Add to review" before the Summary page counts on it.
 use super::{
     pr_owner::PrOwner,
-    pr_stack::{file_patch, matches_filter, no_lines_note, patch_end},
+    pr_stack::{file_patch, no_lines_note, patch_end},
     pull_request::{PullRequestDetail, PullRequestFile},
     review_draft::{DraftComment, ReviewDraft, ReviewIdentity},
 };
 use crate::core::{
     socket::{client::SocketClient, outcome::Outcome},
-    ui::diff::parse_patch,
+    ui::{
+        changed_tree::{ChangedTree, TreeFile, matches_filter, tree_order},
+        diff::parse_patch,
+    },
 };
 use gpui_kit::component::diff::{
     DiffAnnotation, DiffFile, DiffLinePosition, DiffMode, DiffSide, DiffState,
@@ -60,6 +63,9 @@ pub struct PrFiles {
     notes: Vec<FileNote>,
     full: HashMap<String, FullFile>,
     viewed: HashSet<String>,
+    tree: ChangedTree,
+    /// The file last picked in the tree.
+    active_file: Option<String>,
     filter: String,
     filter_input: Option<(Entity<InputState>, Subscription)>,
     reading: Option<String>,
@@ -102,6 +108,8 @@ impl PrFiles {
             notes: Vec::new(),
             full: HashMap::new(),
             viewed: HashSet::new(),
+            tree: ChangedTree::new(),
+            active_file: None,
             filter: String::new(),
             filter_input: None,
             reading: None,
@@ -200,9 +208,39 @@ impl PrFiles {
                 }),
             }
         }
+        self.sort_parsed();
+        self.tree.set_files(
+            self.parsed
+                .iter()
+                .map(|file| TreeFile {
+                    path: file.path().to_string(),
+                    additions: file.additions(),
+                    deletions: file.deletions(),
+                })
+                .chain(self.notes.iter().map(|note| TreeFile {
+                    path: note.path.clone(),
+                    ..TreeFile::default()
+                })),
+        );
         self.show_filtered(cx);
     }
+    /// The diffs stack in the order the tree lists them.
+    fn sort_parsed(&mut self) {
+        let paths: Vec<String> = self
+            .parsed
+            .iter()
+            .map(|file| file.path().to_string())
+            .collect();
+        let rank: HashMap<String, usize> = tree_order(paths.iter().map(String::as_str))
+            .into_iter()
+            .enumerate()
+            .map(|(rank, path)| (path, rank))
+            .collect();
+        self.parsed
+            .sort_by_key(|file| rank.get(file.path().as_ref()).copied());
+    }
     fn show_filtered(&mut self, cx: &mut Context<Self>) {
+        self.tree.set_filter(&self.filter);
         let shown: Vec<DiffFile> = self
             .parsed
             .iter()

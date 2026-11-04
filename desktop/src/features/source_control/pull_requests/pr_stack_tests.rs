@@ -59,43 +59,6 @@ fn a_file_with_no_lines_says_why() {
     moved.patch_omitted = true;
     assert!(no_lines_note(&moved).contains("left this file's changes out"));
 }
-#[test]
-fn the_filter_ignores_case_and_an_empty_one_keeps_everything() {
-    assert!(matches_filter("src/Main.rs", " main "));
-    assert!(matches_filter("src/Main.rs", ""));
-    assert!(!matches_filter("src/Main.rs", "lib"));
-}
-#[test]
-fn the_tree_lists_folders_first_and_merges_single_folder_chains() {
-    let rows = changed_tree([
-        "z.rs",
-        "a/b/c.rs",
-        "a/b/d/e.rs",
-        "lib/m.rs",
-        "lib/n/o.rs",
-        "b.rs",
-    ]);
-    let shape: Vec<(usize, &str, bool)> = rows
-        .iter()
-        .map(|row| (row.depth, row.label.as_str(), row.path.is_some()))
-        .collect();
-    assert_eq!(
-        shape,
-        vec![
-            (0, "a/b", false),
-            (1, "d", false),
-            (2, "e.rs", true),
-            (1, "c.rs", true),
-            (0, "lib", false),
-            (1, "n", false),
-            (2, "o.rs", true),
-            (1, "m.rs", true),
-            (0, "b.rs", true),
-            (0, "z.rs", true),
-        ]
-    );
-    assert_eq!(rows[2].path.as_deref(), Some("a/b/d/e.rs"));
-}
 
 // Pins: a file's comments gather under the last line the patch shows, on whichever side that line is.
 #[test]
