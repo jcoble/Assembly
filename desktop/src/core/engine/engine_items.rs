@@ -21,6 +21,9 @@ pub enum NeedAnswerDisplay {
     Unavailable,
 }
 
+/// What a need says when its input mode has no controls here, or it has no presentation at all.
+pub const NO_ANSWER_CONTROLS: &str = "Answer controls are unavailable for this item.";
+
 #[derive(Clone, Debug)]
 pub struct NeedItem {
     pub key: EngineKey,
@@ -125,7 +128,6 @@ impl NeedItem {
             answered_origin: row.answered_origin,
         })
     }
-    #[cfg_attr(not(test), expect(dead_code, reason = "No row shows this notice yet."))]
     pub fn presentation_notice(&self) -> Option<&'static str> {
         self.presentation
             .as_ref()
@@ -136,7 +138,7 @@ impl NeedItem {
                 )
             })
             .is_none()
-            .then_some("Answer controls are unavailable for this item.")
+            .then_some(NO_ANSWER_CONTROLS)
     }
     pub fn answer_display(&self) -> NeedAnswerDisplay {
         match (
