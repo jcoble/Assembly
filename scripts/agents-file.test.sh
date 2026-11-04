@@ -361,3 +361,25 @@ if run_agents 2>"$tmp/empty-owner-home.err"; then echo "FAIL empty owner home un
 grep -Fq 'CODEX_HOME must not be empty when configured' "$tmp/empty-owner-home.err"
 [[ "$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)" == "$empty_owner_descriptor" ]]
 echo "ok   explicit empty owner CODEX_HOME refuses without default lookup or output replacement"
+
+# Managed dev updates select lane-owned CLIs without copying/rebuilding an already current ACP bundle.
+node --input-type=module - "$tmp/agents.json" "$tmp/current-bundle" <<'JS'
+import fs from 'node:fs';
+const agents=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+agents.find(a=>a.id==='codex').env.CODEX_HOME=undefined;
+fs.writeFileSync(process.argv[3],agents.find(a=>a.id==='claude').args[0]);
+fs.writeFileSync(process.argv[2],JSON.stringify(agents));
+JS
+mkdir -p "$tmp/managed-bin"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/managed-bin/claude"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/managed-bin/codex"
+chmod +x "$tmp/managed-bin/claude" "$tmp/managed-bin/codex"
+run_agents ASSEMBLY_MANAGED_CLIS=1 ASSEMBLY_KEEP_CURRENT_ADAPTERS=1 FAKE_FAIL_LIST=1 PATH="$tmp/managed-bin:$tmp/bin:/usr/bin:/bin"
+node --input-type=module - "$tmp/agents.json" "$tmp/current-bundle" "$tmp/managed-bin" <<'JS'
+import fs from 'node:fs';import assert from 'node:assert/strict';
+const agents=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+assert.equal(agents.find(a=>a.id==='claude').args[0],fs.readFileSync(process.argv[3],'utf8'));
+for(const id of ['claude','codex'])assert.equal(agents.find(a=>a.id===id).cli,process.argv[4]+'/'+id);
+assert.ok(agents.some(a=>a.id==='unrelated'));
+JS
+echo 'ok   managed CLI update reuses validated ACP bundle without querying or downloading a release'

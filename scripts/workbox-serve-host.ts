@@ -8,6 +8,7 @@ import { sameBackendFiles } from './remote-backend-package.ts';
 import { backendIdentity, lane, type Lane } from './dev-remote-identity.ts';
 import { command, lifetime } from './dev-remote-process.ts';
 import { probeSource, type Probe } from './dev-remote-probe.ts';
+import { ensureTools, latestTools } from './dev-toolchain.ts';
 import { waitForIdle } from './dev-remote-idle.ts';
 import { stage } from './dev-remote-timing.ts';
 
@@ -70,7 +71,8 @@ try {
     // Never regenerate or downgrade a working descriptor. A changed adapter contract needs explicit compatible assets.
     if (before.missing) {
       await fs.mkdir(join(root, 'serve'), { recursive: true });
-      await run('bash', ['dotnet/scripts/agents-file.sh', join(root, 'adapters'), join(root, 'serve/agents.json')], true);
+      // Built from this checkout's launcher: a published release can only match the launcher it was packaged with.
+      await ensureTools(process.cwd(), join(root, 'adapters'), join(root, 'serve/agents.json'), await latestTools(owner.signal), owner.signal);
     }
     const adapterState = before.missing ? await probe(true) : before;
     if (!adapterState.adapterOK || adapterState.launcherSha !== request.launcher)

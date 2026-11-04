@@ -110,7 +110,9 @@ cached_fallback() {
   exit 1
 }
 
-if [[ -n "$local_assets" ]]; then
+if [[ "${ASSEMBLY_KEEP_CURRENT_ADAPTERS:-}" == 1 && -n "$active_bundle" ]]; then
+  tag=$active_tag
+elif [[ -n "$local_assets" ]]; then
   if ! local_assets=$(cd "$local_assets" && pwd); then cached_fallback "local assets directory unavailable"; fi
   if ! tag=$(python3 -I - "$local_assets/$asset" <<'PY' 2>"$work/provider-selection.err"
 import hashlib, sys
@@ -121,7 +123,7 @@ PY
 elif ! tag=$(node "$repo/scripts/package-adapters.ts" provider-tag "$target" 2>"$work/provider-selection.err"); then
   cached_fallback "$(first_error "$work/provider-selection.err")"
 fi
-if [[ "$tag" == "$active_tag" && -z "$local_assets" ]]; then
+if [[ "$tag" == "$active_tag" ]]; then
   bundle=$active_bundle
 else
   download="$work/download"
@@ -272,6 +274,11 @@ try:
         if not isinstance(old_env, dict): raise ValueError("invalid configured provider environment")
         agent["env"] = {**{key: value for key, value in old_env.items() if key not in installer_env[agent["id"]]}, **agent["env"]}
         agent.update({key: value for key, value in old.items() if key not in installer_fields})
+    if os.environ.get("ASSEMBLY_MANAGED_CLIS") == "1":
+        for agent in generated:
+            cli = os.environ[f"ASSEMBLY_{agent['id'].upper()}"]
+            if not cli: raise ValueError("managed provider CLI is unavailable")
+            agent["cli"] = cli
     generated_by_id = {a["id"]: a for a in generated}
     agents = [generated_by_id.get(a["id"], a) for a in current]
     agents.extend(a for a in generated if a["id"] not in prior)
