@@ -3,6 +3,7 @@
 use crate::core::socket::checkout_selector::{CheckoutSelector, folder_name};
 use crate::core::socket::error_code::ErrorCode;
 use crate::core::socket::row_source::ExpectedRowSource;
+use crate::core::state::workspace_panes::WorkspaceKey;
 use gpui_kit::component::dock::PanelInfo;
 use serde::{Deserialize, Serialize};
 
@@ -19,11 +20,13 @@ pub struct GitCheckout {
     /// `None` when its head is detached.
     pub branch: Option<String>,
 }
+/// The longest checkout path the owner accepts.
+const MAX_CHECKOUT_PATH: usize = 4096;
 /// A checkout a panel was reading when its layout was saved, or that another panel sent it to. It names what to look
 /// for and reads nothing: only a fresh answer that still offers that folder, for the same session and owner, makes it a
 /// selector.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CheckoutHint {
     pub session: String,
     pub source: ExpectedRowSource,
@@ -45,6 +48,16 @@ impl CheckoutHint {
             return None;
         };
         serde_json::from_value(info.get("checkoutHint")?.clone()).ok()
+    }
+    /// Whether a saved hint could have come from this workspace's tab. This admits the metadata and reads nothing.
+    pub fn belongs_to(&self, key: &WorkspaceKey, pane_source: &ExpectedRowSource) -> bool {
+        self.session == key.session_id
+            && self.source.machine == key.machine
+            && self.source == *pane_source
+            && self.expected_root == key.checkout_root
+            && !self.path.is_empty()
+            && !self.path.contains('\0')
+            && self.path.chars().count() <= MAX_CHECKOUT_PATH
     }
     pub fn selector(&self) -> CheckoutSelector {
         CheckoutSelector {

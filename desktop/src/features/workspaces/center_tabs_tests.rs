@@ -88,3 +88,70 @@ fn captured_git_source_assertions_roundtrip_but_malformed_or_operational_fields_
         assert!(parse(&value,&key(),&json!({"files":[]})).is_err());
     }
 }
+
+fn hinted() -> Value {
+    let mut pane = history();
+    let source = json!({"machine":"source","generation":7,"routeMachine":"route"});
+    pane["state"]["info"]["panel"]["expectedSource"] = source.clone();
+    pane["state"]["info"]["panel"]["checkoutHint"] =
+        json!({"session":"session","source":source,"path":"/linked","expectedRoot":"/checkout"});
+    pane
+}
+fn tabs(pane: Value) -> Value {
+    let key = pane["key"].clone();
+    json!({"order":[key],"activeKey":key,"panes":[pane]})
+}
+#[test]
+fn a_history_tab_keeps_the_checkout_hint_it_wrote_and_an_absent_hint_is_no_hint() {
+    let value = tabs(hinted());
+    let decoded = parse(&value, &key(), &json!({"files":[]})).unwrap().unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+    let mut none = hinted();
+    none["state"]["info"]["panel"]["checkoutHint"] = Value::Null;
+    assert!(parse(&tabs(none), &key(), &json!({"files":[]})).is_ok());
+}
+#[test]
+fn a_checkout_hint_outside_its_workspace_or_with_other_fields_is_refused() {
+    let change = |field: &str, value: Value| {
+        let mut pane = hinted();
+        pane["state"]["info"]["panel"]["checkoutHint"][field] = value;
+        pane
+    };
+    let other_owner = json!({"machine":"other","generation":7,"routeMachine":"route"});
+    let replaced = json!({"machine":"source","generation":8,"routeMachine":"route"});
+    let mut no_field = hinted();
+    no_field["state"]["info"]["panel"]["checkoutHint"].as_object_mut().unwrap().remove("path");
+    let mut text = hinted();
+    text["state"]["info"]["panel"]["checkoutHint"] = json!("/linked");
+    let mut no_pane_source = hinted();
+    no_pane_source["state"]["info"]["panel"]["expectedSource"] = Value::Null;
+    let mut both_elsewhere = change("source", other_owner.clone());
+    both_elsewhere["state"]["info"]["panel"]["expectedSource"] = other_owner.clone();
+    for pane in [
+        change("permissions", json!("allow")),
+        change("session", json!("other")),
+        change("source", other_owner),
+        both_elsewhere,
+        change("source", replaced),
+        change("expectedRoot", json!("/moved")),
+        change("path", json!("")),
+        change("path", json!("/linked\0")),
+        change("path", json!("/".repeat(4097))),
+        no_field,
+        text,
+        no_pane_source,
+    ] {
+        assert!(parse(&tabs(pane), &key(), &json!({"files":[]})).is_err());
+    }
+}
+#[test]
+fn only_a_history_tab_can_carry_a_checkout_hint() {
+    let hint = hinted()["state"]["info"]["panel"]["checkoutHint"].clone();
+    for (name, pane_key, info) in [
+        ("Changes", "Changes", json!({"session":"session","checkoutHint":hint})),
+        ("Pull requests", "pull-requests", json!({"session":"session","checkoutHint":hint})),
+    ] {
+        let pane = json!({"key":pane_key,"state":{"panel_name":name,"children":[],"info":{"panel":info}}});
+        assert!(parse(&tabs(pane), &key(), &json!({"files":[]})).is_err());
+    }
+}
