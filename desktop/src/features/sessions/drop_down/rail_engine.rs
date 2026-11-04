@@ -12,6 +12,15 @@ pub(crate) fn needs_you(entry:&RailEntry,cx:&mut App)->bool {
     let feed=EngineFeed::global(cx);let feed=feed.read(cx);
     feed.loaded(&scope(&source.machine,"needs_me"))&&feed.needs_for(&SessionKey{machine:source.machine.clone(),id:entry.session_id.clone()}).iter().any(|need|need.state=="open")
 }
+/// Whether the row has anything to open: a question for you, a workflow, or sessions it started.
+pub(crate) fn has_details(entry:&RailEntry,cx:&mut App)->bool {
+    let Some(source)=&entry.source else{return false;};
+    let session=SessionKey{machine:source.machine.clone(),id:entry.session_id.clone()};
+    let feed=EngineFeed::global(cx);let feed=feed.read(cx);
+    !feed.needs_for(&session).is_empty()
+        ||!feed.children_of(&session).is_empty()
+        ||feed.session(&session).is_some_and(|session|session.run_id.is_some())
+}
 impl SessionsPane {
     pub(in crate::features::sessions) fn set_view(&mut self, view: View, cx: &mut Context<Self>) {
         self.lines.scroll_to(ListOffset::default());

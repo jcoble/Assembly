@@ -3,7 +3,8 @@
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex};
+use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::*;
 
 /// A project's header line: room for its + button.
@@ -132,22 +133,20 @@ impl RenderOnce for ProjectHeader {
                     .truncate()
                     .child(self.label.to_uppercase()),
             )
-            // The mock's machine chips: 18 px round, on the pill fill.
+            // Which machines it's on, as icons that say so on hover.
             .children(self.machines.into_iter().map(|machine| {
-                h_flex()
+                let local = machine == "local";
+                let name: SharedString =
+                    if local { "This Mac".into() } else { machine.into() };
+                div()
+                    .id(name.clone())
                     .flex_none()
-                    .h(px(18.))
-                    .px(px(7.))
-                    .rounded_full()
-                    .bg(theme.secondary)
-                    .text_role(TextRole::Meta, cx)
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(muted)
-                    .child(if machine == "local" {
-                        "This Mac".to_owned()
-                    } else {
-                        machine
-                    })
+                    .tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
+                    .child(
+                        Icon::new(if local { IconName::Laptop } else { IconName::Server })
+                            .xsmall()
+                            .text_color(muted),
+                    )
             }))
             .child(count(self.count, faint, cx))
             .child(

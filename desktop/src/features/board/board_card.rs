@@ -11,9 +11,12 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::board_pane::BoardPane;
+use super::board_payload::BoardTaskResult;
 use super::{board_feed, board_question};
 use crate::core::intents::open_url::OpenUrl;
 use crate::core::state::machines::Machines;
+use crate::core::ui::row_drop_down::GrowingBody;
+use crate::core::ui::three_line_row::row_height;
 
 /// Each task state and its plain label, in the order the filters show them.
 pub const STATES: [(&str, &str); 7] = [
@@ -65,6 +68,8 @@ pub fn card(
     let (questions, files) = (item.question_count, item.metrics.files);
     let key = (task.machine_id.clone(), task.task_key.clone());
     let open = pane.state.selected.as_ref() == Some(&key);
+    let (body_key, session) = (card_key(&key.0, &key.1), task.creator_session_id.clone());
+    let selector = format!("board-card-{}", task.task_key);
     let theme = cx.theme();
     let (muted, border, fill) = (theme.muted_foreground, theme.border, theme.secondary);
     let color = match task.state.as_str() {
@@ -88,7 +93,7 @@ pub fn card(
         .id("head")
         .gap_0p5()
         .cursor_pointer()
-        .on_click(cx.listener(move |pane, _, _, cx| pane.select(&key.0, &key.1, cx)))
+        .on_click(cx.listener(move |pane, _, _, cx| pane.select(&key.0, &key.1, &session, cx)))
         .child(
             h_flex()
                 .gap_1p5()
@@ -141,7 +146,8 @@ pub fn card(
         .children(facts.into_iter().flatten())
         .children(link("pr", "PR", task.pr_url.clone()))
         .children(link("task", "Task", task.task_url.clone()));
-    let body = open.then(|| detail(pane, &task.creator_session_id, window, cx));
+    // No cap: a card with its questions, answers and feed scrolls with the list rather than inside itself.
+    let body = GrowingBody::new(body_key, pane.drops.clone(), row_height(cx)).max_rows(None);
     v_flex()
         .id(ElementId::Integer(ix as u64))
         .w_full()
@@ -149,7 +155,7 @@ pub fn card(
         .pb_2()
         .child(
             v_flex()
-                .gap_1()
+                .debug_selector(move || selector.clone())
                 .px_3()
                 .py_2()
                 .rounded(px(10.))
@@ -157,17 +163,39 @@ pub fn card(
                 .border_color(border.opacity(0.6))
                 .bg(fill.opacity(if open { 0.75 } else { 0.45 }))
                 .when(needs_you, |card| card.border_l_2().border_color(warning))
-                .child(head)
-                .when(has_facts, |card| card.child(facts))
-                .children(body),
+                .child(v_flex().gap_1().child(head).when(has_facts, |card| card.child(facts)))
+                .child(body),
         )
         .into_any_element()
 }
 
-/// The expanded card's questions, feed and session link, each with its next page when there's more.
-fn detail(
+/// Which card a grown body belongs to.
+pub(super) fn card_key(machine: &str, task: &str) -> SharedString {
+    format!("board-card:{machine}:{task}").into()
+}
+
+/// The expanded card's questions, feed and session link, each with its next page when there's more. A card on its
+/// way shut shows the detail it had, since the Board's current detail is the next card's by then.
+pub(super) fn detail(
+    pane: &mut BoardPane,
+    machine: &str,
+    task: &str,
+    session: &str,
+    window: &mut Window,
+    cx: &mut Context<BoardPane>,
+) -> AnyElement {
+    let open = (pane.state.selected.as_ref())
+        .is_some_and(|(open_machine, open_task)| open_machine == machine && open_task == task);
+    let shown = if open { pane.state.detail.clone() } else { pane.closing_detail(machine, task) };
+    let failed = open.then(|| pane.detail_failed.clone()).flatten();
+    detail_lines(pane, session, shown, failed, window, cx).into_any_element()
+}
+
+fn detail_lines(
     pane: &mut BoardPane,
     session: &str,
+    shown: Option<BoardTaskResult>,
+    failed: Option<String>,
     window: &mut Window,
     cx: &mut Context<BoardPane>,
 ) -> Div {
@@ -181,11 +209,11 @@ fn detail(
     let body = v_flex().gap_2().pt_1();
     // The session link shows whether or not the detail could be read: it's the way back when it can't.
     let link = h_flex().child(open_session);
-    if let Some(message) = pane.detail_failed.clone() {
+    if let Some(message) = failed {
         let error = div().text_role(TextRole::Body, cx).text_color(cx.theme().danger).child(message);
         return body.child(error).child(link);
     }
-    let Some(detail) = pane.state.detail.as_ref() else {
+    let Some(detail) = shown else {
         return body
             .child(div().text_role(TextRole::Body, cx).text_color(muted).child("Reading…"))
             .child(link);

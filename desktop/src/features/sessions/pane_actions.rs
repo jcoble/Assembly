@@ -77,7 +77,7 @@ impl SessionsPane {
         let call = socket
             .read(cx)
             .call::<Value>("sessions", "mark", args, None);
-        self.mark_error = None;
+        self.row_error = None;
         self.next_mark += 1;
         let id = self.next_mark;
         let task = cx.spawn(async move |pane, cx| {
@@ -85,7 +85,7 @@ impl SessionsPane {
             pane.update(cx, |pane, cx| {
                 pane.marking.remove(&id);
                 if let Outcome::Failed(failure) = outcome {
-                    pane.mark_error =
+                    pane.row_error =
                         Some(format!("Couldn't move the session: {}", failure.message).into());
                 }
                 cx.notify();

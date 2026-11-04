@@ -574,3 +574,21 @@ fn status_then_location_picks_keep_their_query_meaning(cx: &mut TestAppContext) 
         assert_eq!(pane.rail.locations, ["local", "remote"]);
     });
 }
+
+#[test]
+fn a_refused_open_names_the_machine_it_could_not_reach_and_otherwise_gives_the_reason() {
+    use crate::core::engine::EngineRefusal;
+    let refused = |code: &str| EngineRefusal { code: code.into(), message: "The reason.".into() };
+    assert_eq!(
+        super::refusal_words(Some("Workbox"), &refused("source_changed")),
+        "That session is on Workbox, which this app isn't connected to."
+    );
+    assert_eq!(
+        super::refusal_words(Some("Workbox"), &refused("nonresumable")),
+        "That session didn't open: The reason."
+    );
+    assert_eq!(
+        super::refusal_words(None, &refused("source_changed")),
+        "That session didn't open: The reason."
+    );
+}
