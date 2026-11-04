@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName as Glyph;
-use gpui_kit::component::spinner::Spinner;
+use crate::core::ui::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;

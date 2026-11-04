@@ -4,7 +4,7 @@
 //! steps drawn, so a workflow run's steps can fill it too. The reui agent-activity look.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use gpui_kit::component::spinner::Spinner;
+use crate::core::ui::spinner::Spinner;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 

@@ -14,6 +14,7 @@ pub mod ask;
 pub mod row_drop_down;
 #[cfg(test)]
 mod row_drop_down_tests;
+pub mod spinner;
 pub mod tab_stack;
 pub mod three_line_row;
 
