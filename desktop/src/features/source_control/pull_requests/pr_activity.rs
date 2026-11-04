@@ -186,6 +186,19 @@ pub fn change_totals(files: &[PullRequestFile]) -> (usize, usize) {
 pub fn words_of(state: &str) -> String {
     state.replace('_', " ").to_lowercase()
 }
+/// Each word's first letter raised, as the side column shows a state.
+pub fn capitalized(words: &str) -> String {
+    words
+        .split(' ')
+        .map(|word| {
+            let mut letters = word.chars();
+            letters.next().map_or(String::new(), |first| {
+                first.to_uppercase().chain(letters).collect()
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 pub fn repo_name(repository: &str) -> &str {
     repository.rsplit('/').next().unwrap_or(repository)
 }

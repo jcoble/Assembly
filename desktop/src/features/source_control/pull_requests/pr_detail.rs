@@ -31,8 +31,12 @@ use std::time::Duration;
 mod composer;
 #[path = "pr_view/merge_card.rs"]
 mod merge_card;
+#[path = "pr_view/side_column.rs"]
+mod side_column;
 #[path = "pr_view/summary.rs"]
 mod summary;
+#[path = "pr_view/threads.rs"]
+mod threads;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
@@ -85,10 +89,14 @@ pub struct PrDetail {
     page: Page,
     mode: DiffMode,
     width: Pixels,
+    main_scroll: ScrollHandle,
+    side_scroll: ScrollHandle,
+    threads: Entity<threads::PrThreads>,
     read: Option<Task<()>>,
     _review: Option<Subscription>,
     _drafter: Subscription,
     _writes: [Subscription; 2],
+    _threads: Subscription,
 }
 impl EventEmitter<PrBack> for PrDetail {}
 impl EventEmitter<PrMerged> for PrDetail {}
@@ -126,6 +134,8 @@ impl PrDetail {
                 view.write_done(done, cx)
             }),
         ];
+        let threads = cx.new(|cx| threads::PrThreads::new(&owner, repository.clone(), number, cx));
+        let threads_heard = cx.observe(&threads, |_, _, cx| cx.notify());
         let mut detail = Self {
             owner,
             repository,
@@ -155,13 +165,18 @@ impl PrDetail {
             page: Page::Summary,
             mode: DiffMode::Unified,
             width: px(0.),
+            main_scroll: ScrollHandle::new(),
+            side_scroll: ScrollHandle::new(),
+            threads,
             read: None,
             _review: None,
             _drafter: drafter_heard,
             _writes: writes_heard,
+            _threads: threads_heard,
         };
         if active {
             detail.refresh(cx);
+            detail.threads.update(cx, |threads, cx| threads.set_active(true, cx));
         }
         detail
     }
@@ -170,6 +185,7 @@ impl PrDetail {
             return;
         }
         self.active = active;
+        self.threads.update(cx, |threads, cx| threads.set_active(active, cx));
         if !active {
             self.needs_refresh |= self.loading;
             self.loading = false;
@@ -221,6 +237,7 @@ impl PrDetail {
                             view.failure=Some("GitHub did not confirm this pull request's revisions. Refresh before trying again.".into());
                         }else {
                             view.repository=Some(detail.repository.clone());view.needs_refresh=false;
+                            view.threads.update(cx,|threads,cx|threads.set_repository(detail.repository.clone(),cx));
                             view.writes.update(cx,|writes,_|writes.show_read(detail.repository.clone(),detail.local_root.clone()));
                             if view.review.is_none(){
                                 let review=cx.new(|_|ReviewDraft::new(ReviewIdentity{repository:detail.repository.clone(),number:detail.number,head:detail.head_sha.clone(),base:detail.base_sha.clone()}));

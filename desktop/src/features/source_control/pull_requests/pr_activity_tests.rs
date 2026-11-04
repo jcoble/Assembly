@@ -125,3 +125,8 @@ fn every_posted_comment_stays_in_the_activity_and_only_a_numbered_root_on_a_file
         .map(|(id, reply)| (id.to_string(), reply));
     assert_eq!(listed, expected);
 }
+#[test]
+fn the_side_column_raises_each_words_first_letter() {
+    assert_eq!(capitalized(&words_of("CHANGES_REQUESTED")), "Changes Requested");
+    assert_eq!(capitalized(""), "");
+}
