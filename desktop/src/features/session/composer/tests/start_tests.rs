@@ -1,7 +1,7 @@
 //! Pre-session input owns local bytes only. No create/upload/config/provider work is performed here.
 use super::{AttachmentState, Composer, ComposerEvent};
 use crate::features::session::client::fake_client::FakeClient;
-use gpui::{AppContext as _, TestAppContext};
+use gpui::TestAppContext;
 use gpui_kit::{ClipboardItem, Image, ImageFormat};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 fn image() -> Image {

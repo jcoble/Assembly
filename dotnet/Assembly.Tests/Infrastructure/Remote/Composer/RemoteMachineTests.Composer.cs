@@ -52,10 +52,13 @@ public sealed partial class RemoteMachineTests
         Assert.Equal("b", saved.GetProperty("choices").GetProperty("model").GetString());
         Assert.Equal(_boxHome, (await SessionAsync(_box, BoxToken, id)).GetProperty("root").GetString());
         await SendTextAsync(socket, $$$$$"""{"t":"call","id":2,"feature":"config","method":"warm","args":{"session":"{{{{{id}}}}}","targetId":"{{{{{target}}}}}"}}""");
-        var warming = await _boxLauncher.NextAsync();
+        var warmingTask = _boxLauncher.NextAsync();
+        var warmReply = ReadTextAsync(socket);
+        if (await Task.WhenAny(warmingTask, warmReply) == warmReply) Assert.Fail(await warmReply);
+        var warming = await warmingTask;
         var open = await warming.StartAsync(acpSessionId: "owner-native", configOptions: SessionWarmConfigTests.Options);
         Assert.Equal("session/new", open.GetProperty("method").GetString());
-        var warmed = JsonDocument.Parse(await ReadTextAsync(socket)).RootElement;
+        var warmed = JsonDocument.Parse(await warmReply).RootElement;
         Assert.Equal("result", warmed.GetProperty("t").GetString());
         Assert.True(warming.Disposed);
         Assert.Equal("owner-native", (await SessionAsync(_box, BoxToken, id)).GetProperty("acpSessionId").GetString());

@@ -96,9 +96,6 @@ impl EngineFeed {
             .filter_map(super::engine_items::SessionItem::of)
             .collect()
     }
-    pub fn parent_of(&self, child: &SessionKey) -> Option<SessionKey> {
-        self.store.parent_of(child)
-    }
     pub fn loaded(&self, scope: &EngineScope) -> bool {
         self.store.cursor(scope).is_some()
             && self

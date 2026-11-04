@@ -28,6 +28,8 @@ pub struct EngineScope {
 #[derive(Clone, Debug)]
 pub struct EngineCursor {
     pub through: i64,
+    // What the cursor stopped at; nothing compares it yet.
+    #[allow(dead_code)]
     pub at: Option<EventFingerprint>,
 }
 #[derive(Clone, Debug)]

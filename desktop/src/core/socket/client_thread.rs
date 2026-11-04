@@ -86,6 +86,13 @@ struct Rows {
     updates: UnboundedSender<RowUpdate>,
 }
 
+/// What the thread shares with the client that started it.
+pub struct ClientShared {
+    pub ids: Arc<AtomicU64>,
+    pub engine_machine: Arc<Mutex<Option<String>>>,
+    pub connection_generation: Arc<Mutex<Option<u64>>>,
+}
+
 impl ClientThread {
     /// Starts the thread, which opens the socket at once and runs until `Event::Stop`.
     pub fn spawn(
@@ -94,10 +101,13 @@ impl ClientThread {
         events: Receiver<Event>,
         sender: Sender<Event>,
         states: UnboundedSender<ConnectionState>,
-        ids: Arc<AtomicU64>,
-        engine_machine: Arc<Mutex<Option<String>>>,
-        connection_generation: Arc<Mutex<Option<u64>>>,
+        shared: ClientShared,
     ) -> JoinHandle<()> {
+        let ClientShared {
+            ids,
+            engine_machine,
+            connection_generation,
+        } = shared;
         let mut client = Self {
             endpoint,
             path,
@@ -242,11 +252,13 @@ impl ClientThread {
             } => {
                 self.add_engine(
                     id,
-                    "messages".into(),
-                    Some(message),
-                    machine,
-                    expected_source,
-                    false,
+                    engine::EngineRequest {
+                        topic: "messages".into(),
+                        key: Some(message),
+                        machine,
+                        expected_source,
+                        scoped: false,
+                    },
                     updates,
                 );
             }
@@ -257,7 +269,17 @@ impl ClientThread {
                 machine,
                 updates,
             } => {
-                self.add_engine(id, topic, key, machine, None, true, updates);
+                self.add_engine(
+                    id,
+                    engine::EngineRequest {
+                        topic,
+                        key,
+                        machine,
+                        expected_source: None,
+                        scoped: true,
+                    },
+                    updates,
+                );
             }
             Event::ResnapshotEngine { handle } => {
                 if let Some(wire) = self.engines.iter().find_map(|(wire, feed)| {

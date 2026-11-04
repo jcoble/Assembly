@@ -73,12 +73,13 @@ public sealed partial class ChatSocketTests
         bulk.Abort();
         bulk.Dispose();
         await _here.Cancelled.Task.WaitAsync(Wait);
+        await _box.Cancelled.Task.WaitAsync(Wait);
         _box.Release();
         await _socketClosed.Task.WaitAsync(Wait);
 
         Assert.Empty(Directory.GetFiles(Staging));
         Assert.Equal([$"save png {first.Length}"], _box.Asked);
-        Assert.Equal(first, _box.Saved);
+        Assert.Null(_box.Saved);
     }
 
     [Fact]

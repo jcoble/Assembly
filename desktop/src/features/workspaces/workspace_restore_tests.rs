@@ -12,7 +12,7 @@ use crate::core::{
 };
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
-use gpui_kit::{App, AppContext as _, Window};
+use gpui_kit::{App, Window};
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,

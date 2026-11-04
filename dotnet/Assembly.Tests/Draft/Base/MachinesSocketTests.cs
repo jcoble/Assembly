@@ -148,7 +148,13 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         await CallAsync(socket, 4, "machines", "agents", """{"machine":"box"}""");
         Assert.Equal(Change(1, Box(false, "machine socket closed")), await ReadAsync(socket));
         Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
+        _stub.DropVersion = true; // The next attempt is also down, before a new successful welcome.
         await CallAsync(socket, 5, "machines", "agents", """{"machine":"box"}""");
+        var handshakeFailure = System.Text.Json.JsonDocument.Parse(await ReadAsync(socket)).RootElement;
+        Assert.Equal("change", handshakeFailure.GetProperty("t").GetString());
+        Assert.False(handshakeFailure.GetProperty("item").GetProperty("reachable").GetBoolean());
+        Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
+        await CallAsync(socket, 6, "machines", "agents", """{"machine":"box"}""");
         Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
     }
 

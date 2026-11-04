@@ -85,7 +85,7 @@ pub fn render(
         });
     // Settled, it shows what it asked (each field and its choices) with nothing to answer.
     if ask.state != "open" {
-        for (label, hint, choices) in asked(&ask) {
+        for (label, hint, choices) in asked(ask) {
             let value = div()
                 .flex_1()
                 .text_color(theme.muted_foreground)

@@ -114,40 +114,37 @@ impl ChangesPane {
             return Err(invalid());
         }
         for field in ["path", "originalPath"] {
-            if let Some(value) = info.get(field).filter(|value| !value.is_null()) {
-                if value
+            if let Some(value) = info.get(field).filter(|value| !value.is_null())
+                && value
                     .as_str()
                     .is_none_or(|path| path.is_empty() || path.contains('\0'))
-                {
-                    return Err(invalid());
-                }
-            }
-        }
-        if let Some(split) = info.get("split") {
-            if !split.is_boolean() {
-                return Err(invalid());
-            }
-        }
-        if let Some(scope) = info.get("scope") {
-            if scope.as_str().and_then(Scope::from_saved).is_none() {
-                return Err(invalid());
-            }
-        }
-        if let Some(sha) = info.get("sha") {
-            if sha.as_str().is_none_or(|sha| {
-                sha.len() != 40 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit())
-            }) || info["path"].as_str().is_none()
             {
                 return Err(invalid());
             }
         }
+        if let Some(split) = info.get("split")
+            && !split.is_boolean()
+        {
+            return Err(invalid());
+        }
+        if let Some(scope) = info.get("scope")
+            && scope.as_str().and_then(Scope::from_saved).is_none()
+        {
+            return Err(invalid());
+        }
+        if let Some(sha) = info.get("sha")
+            && (sha.as_str().is_none_or(|sha| {
+                sha.len() != 40 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+            }) || info["path"].as_str().is_none())
+        {
+            return Err(invalid());
+        }
         if let Some(source) = info
             .get("expectedSource")
             .filter(|source| !source.is_null())
+            && serde_json::from_value::<ExpectedRowSource>(source.clone()).is_err()
         {
-            if serde_json::from_value::<ExpectedRowSource>(source.clone()).is_err() {
-                return Err(invalid());
-            }
+            return Err(invalid());
         }
         Ok(CHANGES.into())
     }

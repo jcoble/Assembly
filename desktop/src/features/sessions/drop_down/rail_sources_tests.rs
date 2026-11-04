@@ -55,7 +55,6 @@ async fn remote_child_outside_the_sql_rail_page_uses_the_one_discovered_source_s
     };
     use crate::features::sessions::sessions_pane::SessionsPane;
     use futures_channel::mpsc::unbounded;
-    use gpui_kit::AppContext as _;
     let backend = FakeBackend::start(|frame| {
         let id = frame["id"].clone();
         let result = |value| vec![Reply::Frame(json!({"t":"result","id":id,"result":value}))];
@@ -161,7 +160,7 @@ mod session_notices {
     };
     use crate::features::sessions::sessions_pane::SessionsPane;
     use futures_channel::mpsc::unbounded;
-    use gpui_kit::{AppContext as _, Entity, VisualTestContext};
+    use gpui_kit::{Entity, VisualTestContext};
     use serde_json::{Value, json};
     use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
     const ROW: &str = "new-remote";

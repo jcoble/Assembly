@@ -210,10 +210,11 @@ impl CommitTimeline {
         cx.notify();
     }
     pub fn load_more(&mut self, cx: &mut Context<Self>) {
-        if self.active && !self.reading {
-            if let Some(cursor) = self.history.next_cursor.clone() {
-                self.request(Some(cursor), cx);
-            }
+        if self.active
+            && !self.reading
+            && let Some(cursor) = self.history.next_cursor.clone()
+        {
+            self.request(Some(cursor), cx);
         }
     }
     fn request(&mut self, cursor: Option<String>, cx: &mut Context<Self>) {
@@ -262,42 +263,40 @@ impl CommitTimeline {
             cx.notify();
             return;
         }
-        if !self.files.contains_key(&sha) {
-            if let Some(socket) = SocketClient::try_global(cx) {
-                let key = format!("git/commitFiles/{}/{sha}", cx.entity_id());
-                let args = CheckoutSelector::applied(
-                    self.checkout.as_ref(),
-                    json!({"session":self.session,"sha":sha,"expectedSource":self.expected_source}),
-                );
-                let call = socket.read(cx).call::<Vec<GitCommitFile>>(
-                    "git",
-                    "commitFiles",
-                    args,
-                    Some(&key),
-                );
-                self.files.insert(sha.clone(), CommitFiles::Reading);
-                let target = sha.clone();
-                let measured = sha.clone();
-                let task = cx.spawn(async move |timeline, cx| {
-                    let outcome = call.await;
-                    _ = timeline.update(cx, |timeline, cx| {
-                        timeline.file_reads.remove(&target);
-                        timeline.files.insert(
-                            target,
-                            match outcome {
-                                Outcome::Ok(files) => CommitFiles::Read(files),
-                                Outcome::Failed(failure) => CommitFiles::Failed(failure.message),
-                                Outcome::Aborted => {
-                                    CommitFiles::Failed("The connection dropped.".into())
-                                }
-                            },
-                        );
-                        timeline.remeasure(&measured);
-                        cx.notify();
-                    });
+        if !self.files.contains_key(&sha)
+            && let Some(socket) = SocketClient::try_global(cx)
+        {
+            let key = format!("git/commitFiles/{}/{sha}", cx.entity_id());
+            let args = CheckoutSelector::applied(
+                self.checkout.as_ref(),
+                json!({"session":self.session,"sha":sha,"expectedSource":self.expected_source}),
+            );
+            let call =
+                socket
+                    .read(cx)
+                    .call::<Vec<GitCommitFile>>("git", "commitFiles", args, Some(&key));
+            self.files.insert(sha.clone(), CommitFiles::Reading);
+            let target = sha.clone();
+            let measured = sha.clone();
+            let task = cx.spawn(async move |timeline, cx| {
+                let outcome = call.await;
+                _ = timeline.update(cx, |timeline, cx| {
+                    timeline.file_reads.remove(&target);
+                    timeline.files.insert(
+                        target,
+                        match outcome {
+                            Outcome::Ok(files) => CommitFiles::Read(files),
+                            Outcome::Failed(failure) => CommitFiles::Failed(failure.message),
+                            Outcome::Aborted => {
+                                CommitFiles::Failed("The connection dropped.".into())
+                            }
+                        },
+                    );
+                    timeline.remeasure(&measured);
+                    cx.notify();
                 });
-                self.file_reads.insert(sha, task);
-            }
+            });
+            self.file_reads.insert(sha, task);
         }
         self.remeasure(&opened);
         cx.notify();

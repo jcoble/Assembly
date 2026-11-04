@@ -7,8 +7,6 @@ use crate::core::state::workspace_panes::{PaneCodec, WorkspaceKey, WorkspacePane
 use gpui_kit::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-#[cfg(test)]
-use serde_json::json;
 use std::collections::HashSet;
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

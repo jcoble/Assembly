@@ -114,7 +114,7 @@ public sealed class FileSaveUploads
             var draft = new byte[checked((int)upload.Args.Size)];
             await stream.ReadExactlyAsync(draft, ct);
             var diff = await new GitTextPatch(new GitCli()).ReadAsync(upload.Args.Path, null,
-                disk is null ? null : new ReadOnlyMemory<byte>(disk), new ReadOnlyMemory<byte>(draft), ct);
+                disk is null ? (ReadOnlyMemory<byte>?)null : new ReadOnlyMemory<byte>(disk), new ReadOnlyMemory<byte>(draft), ct);
             ct.ThrowIfCancellationRequested();
             validateOwner?.Invoke(upload.Args.Session, upload.Root);
             return new FileComparison(revision, diff);

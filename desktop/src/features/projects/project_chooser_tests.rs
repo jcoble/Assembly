@@ -69,12 +69,12 @@ async fn search_uses_sql_filter_and_an_old_answer_cannot_replace_the_current_cho
         let mut answer = vec![Reply::Frame(
             json!({"t":"result","id":frame["id"],"result":{"projects":[project],"next":null}}),
         )];
-        if filter == "ab" {
-            if let Some(id) = old.take() {
-                answer.push(Reply::Frame(
-                    json!({"t":"result","id":id,"result":{"projects":[],"next":null}}),
-                ));
-            }
+        if filter == "ab"
+            && let Some(id) = old.take()
+        {
+            answer.push(Reply::Frame(
+                json!({"t":"result","id":id,"result":{"projects":[],"next":null}}),
+            ));
         }
         answer
     });

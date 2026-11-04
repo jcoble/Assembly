@@ -40,6 +40,17 @@ public sealed class SessionCreateCompositionTests
             Assert.NotNull(desktopEngine);
             Assert.NotEqual(desktopEngine.Machine, remote.Runtime.Machine);
             using var socket = await ApiTests.OpenOwnerSocketAsync(desktop.Address, token);
+            await desktop.Connections.ReadyAsync(route);
+            var mirrored = Assert.Single(desktop.Connections.CaptureMirrorOwners()).Mirror;
+            var caughtUp = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Ready() => caughtUp.TrySetResult();
+            mirrored.CaughtUp += Ready;
+            try
+            {
+                if (await mirrored.CaptureLiveBindingAsync(default) is null)
+                    await caughtUp.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            }
+            finally { mirrored.CaughtUp -= Ready; }
             var source = await Call(socket, 1, "sessions", "resolve_source", new { routeMachine = route });
             Assert.Equal(remote.Runtime.Machine, source.GetProperty("machine").GetString());
             Assert.Equal(route, source.GetProperty("routeMachine").GetString());

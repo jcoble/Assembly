@@ -79,8 +79,7 @@ impl FilesPane {
                             FileView::open_at(
                                 session,
                                 path.clone(),
-                                None,
-                                None,
+                                (None, None),
                                 event.click_count() > 1,
                                 row_source.clone(),
                                 window,

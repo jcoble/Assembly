@@ -79,15 +79,13 @@ impl NewSessionForm {
         let text = attempt.text.clone();
         let images = attempt.images.clone();
         let accepted = cx.subscribe(&composer, |form, _, event: &ComposerEvent, cx| {
-            if let ComposerEvent::Accepted { key, receipt } = event {
-                if form.start_key().as_ref() == Some(key)
-                    && form.attempt.as_ref().is_some_and(|attempt| {
-                        receipt.session_id == key.id
-                            && receipt.client_id == attempt.request.client_id()
-                    })
-                {
-                    cx.emit(Created);
-                }
+            if let ComposerEvent::Accepted { key, receipt } = event
+                && form.start_key().as_ref() == Some(key)
+                && form.attempt.as_ref().is_some_and(|attempt| {
+                    receipt.session_id == key.id && receipt.client_id == attempt.request.client_id()
+                })
+            {
+                cx.emit(Created);
             }
         });
         self.attempt.as_mut().expect("same first prompt").prompt = Some(accepted);

@@ -112,6 +112,9 @@ public sealed partial class RemoteRowsSocketTests
     public async Task A_remote_with_another_row_format_is_refused_at_welcome()
     {
         _welcomeFormat = RowStore.FormatVersion + 1;
+        await _machine.DisposeAsync();
+        _machine = new("box", _address, "token", _localHub, _localSessions, TextWriter.Null,
+            _status = new(new Assembly.Infrastructure.Topics.Topics(), ["box"]), acceptanceEngine: _localEngine);
         var error = await Assert.ThrowsAsync<MachineUnreachable>(() => _machine.ProbeAsync(CancellationToken.None));
         Assert.Contains("box", error.Message);
         Assert.Contains($"format {_welcomeFormat}", error.Message);

@@ -67,6 +67,7 @@ impl FileText {
         self.revision.as_deref()
     }
 
+    #[cfg(test)]
     pub fn is_loading(&self) -> bool {
         self.loading.is_some()
     }

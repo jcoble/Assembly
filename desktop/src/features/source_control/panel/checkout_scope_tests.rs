@@ -179,7 +179,7 @@ async fn open(cx: &mut TestAppContext, offered: Option<Value>) -> Open<'_> {
             )
         });
     });
-    let (pane, visual) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    let (pane, visual) = cx.add_window_view(SourceControlPane::new);
     visual.simulate_resize(size(px(500.), px(900.)));
     let tell = changed.clone();
     let heard = visual.update(|_, cx| {

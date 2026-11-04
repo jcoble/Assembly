@@ -7,7 +7,7 @@ use std::rc::Rc;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::{TestAppContext, VisualTestContext};
 use gpui_kit::component::dock::DockPlacement;
-use gpui_kit::{AppContext as _, Entity, Subscription, Task};
+use gpui_kit::{Entity, Subscription, Task};
 use serde_json::{Value, json};
 
 use super::{ChangesPane, DiffMode, Open, Picked};

@@ -6,7 +6,6 @@ use crate::core::socket::{
 };
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
-use gpui_kit::AppContext as _;
 use serde_json::json;
 use std::{
     cell::RefCell,

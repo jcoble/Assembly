@@ -55,8 +55,9 @@ repo_with() {
   echo "$repo"
 }
 # Archive .NET source from the recorded prospective tree, including its root helper and Assembly.slnx.
-# The retained desktop/src marker lets the architecture tests locate this scratch root. Building Infrastructure stamps
-# its backend identity from HEAD with the two identity scripts, so the scratch repo needs both and a first commit.
+# The retained desktop/src marker lets the architecture tests locate this scratch root. The build stamps the backend
+# identity from the committed tree with scripts/dev-remote-identity.ts (and its process helper), so those ship too
+# and the scratch repo has a HEAD.
 dotnet_repo_with() {
   local repo
   repo=$(repo_with "$1")

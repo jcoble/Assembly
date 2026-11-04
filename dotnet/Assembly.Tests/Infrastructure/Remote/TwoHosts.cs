@@ -310,7 +310,11 @@ internal sealed class TwoHosts : IAsyncDisposable
                 Mirror = new(_machine!, mirrorWriter ?? Mac.Fixture.Db.Writer, mirrorTime ?? TimeProvider.System, MirrorLog);
                 await _machine!.ProbeAsync(default);
             }
-            await applied.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            try { await applied.Task.WaitAsync(TimeSpan.FromSeconds(30)); }
+            catch (TimeoutException error)
+            {
+                throw new TimeoutException($"Mirror did not reach {Remote.Through}: {MirrorLog}", error);
+            }
         }
         finally { Mac.Topics.Unsubscribe(sub); }
     }

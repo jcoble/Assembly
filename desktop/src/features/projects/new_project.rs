@@ -58,16 +58,11 @@ pub use super::projects::ProjectRecord;
 #[serde(rename_all = "camelCase")]
 pub struct FolderInspection {
     pub root_path: String,
-    pub title: String,
-    pub repo_key: Option<String>,
     pub is_git: bool,
-    pub common_dir: Option<String>,
-    pub unborn: bool,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewProjectResult {
     pub project: ProjectRecord,
     pub inspection: FolderInspection,
-    pub already_existed: bool,
 }

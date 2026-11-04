@@ -14,7 +14,7 @@ use crate::features::source_control::result_line::PaneResult;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::{TestAppContext, VisualTestContext};
 use gpui_kit::component::dock::BasePanel as _;
-use gpui_kit::{AppContext as _, Entity, Focusable as _, Subscription};
+use gpui_kit::{Entity, Focusable as _, Subscription};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -135,7 +135,7 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
             )
         });
     });
-    let (pane, visual) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    let (pane, visual) = cx.add_window_view(SourceControlPane::new);
     let tell = changed.clone();
     let heard = visual.update(|_, cx| {
         cx.observe(&pane, move |_, _| {

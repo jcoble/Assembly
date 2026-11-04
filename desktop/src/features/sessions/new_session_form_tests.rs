@@ -231,7 +231,7 @@ fn auth_entry_uses_the_actual_engine_identity_without_needing_a_folder_or_sessio
         .send(Ok(json!({"machine":"stable-engine","through":0})))
         .unwrap();
     cx.run_until_parked();
-    form.read_with(cx, |form, cx| {
+    form.read_with(cx, |form, _| {
         let target = form.sign_in_target().unwrap();
         assert_eq!(target.machine, "stable-engine");
         assert_eq!(target.provider_target_id, "codex/");

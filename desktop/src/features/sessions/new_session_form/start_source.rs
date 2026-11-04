@@ -71,9 +71,10 @@ impl StartSource {
         }
     }
 }
-fn capture(
-    cx: &App,
-) -> Result<(Entity<SocketClient>, Entity<SocketClient>, u64, u64, String), String> {
+/// Main and bulk connections, each one's generation, and the machine.
+type Captured = (Entity<SocketClient>, Entity<SocketClient>, u64, u64, String);
+
+fn capture(cx: &App) -> Result<Captured, String> {
     let main = SocketClient::try_global(cx).ok_or("The backend is not connected.")?;
     let bulk = SocketClient::try_bulk(cx).ok_or("The bulk connection is unavailable.")?;
     let main_generation = main

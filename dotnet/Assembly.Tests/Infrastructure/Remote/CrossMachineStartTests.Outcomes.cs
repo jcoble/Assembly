@@ -32,7 +32,8 @@ public sealed partial class CrossMachineStartTests
             await release.Task;
             if (!disconnect) throw new CallFailed("injected source-close failure");
         }
-        h.Remote.MachineReading = (_, _) => handler = Observe();
+        h.Remote.MachineReading = (method, _) => method == "foreign_title_source_close"
+            ? handler = Observe() : Task.CompletedTask;
         var starting = StartMcp(f);
         StoredStart before;
         try
@@ -66,8 +67,9 @@ public sealed partial class CrossMachineStartTests
             BEGIN UPDATE engine_session SET title='changed after preparation' WHERE id='{f.Parent}'; END;
             """));
         var closeCalls = 0;
-        h.Remote.MachineReading = (_, _) =>
+        h.Remote.MachineReading = (method, _) =>
         {
+            if (method != "foreign_title_source_close") return Task.CompletedTask;
             Interlocked.Increment(ref closeCalls);
             return Task.FromException(new CallFailed("injected source-close failure"));
         };
@@ -257,8 +259,9 @@ public sealed partial class CrossMachineStartTests
             if (what == "engine/machine_command") h.Remote.Fixture.Db.Writer.Write("test.child_changed", scope => scope.Execute(
                 $"UPDATE engine_session SET {change} WHERE parent_id=$id AND state<>'foreign'", new SqlArg("$id", f.Parent)));
         };
-        var error = await Assert.ThrowsAsync<CallFailed>(() => StartMcp(f));
-        Assert.Equal("unknown", error.Reason);
+        var error = await Assert.ThrowsAsync<McpRefused>(() => StartMcp(f));
+        Assert.Equal("remote_start_failed", error.Refusal.Code);
+        Assert.Equal("Start acknowledgement or current child ownership is unknown", error.Refusal.Values!["message"]);
         Assert.Equal(0, h.Mac.Fixture.Count("engine_message"));
         Assert.Equal(1, h.Remote.Fixture.Number("SELECT COUNT(*) FROM engine_session WHERE parent_id=$id", new SqlArg("$id", f.Parent)));
         Assert.Equal(0, f.Launcher.ProviderCalls);
@@ -383,8 +386,9 @@ public sealed partial class CrossMachineStartTests
         {
             await prepared.Task.WaitAsync(TimeSpan.FromSeconds(10));
             h.Remote.Endpoint.DropAll();
-            var error = await Assert.ThrowsAsync<CallFailed>(() => starting.WaitAsync(TimeSpan.FromSeconds(10)));
-            Assert.Equal("unknown", error.Reason); Assert.Equal(1, prepares);
+            var error = await Assert.ThrowsAsync<McpRefused>(() => starting.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal("remote_start_failed", error.Refusal.Code); Assert.Equal(1, prepares);
+            Assert.Equal("Start acknowledgement or current child ownership is unknown", error.Refusal.Values!["message"]);
             Assert.Equal(0, h.Mac.Fixture.Count("engine_message"));
             Assert.Equal(0, h.Remote.Fixture.Number("SELECT COUNT(*) FROM engine_session WHERE parent_id=$id", new SqlArg("$id", f.Parent)));
         }
@@ -407,8 +411,9 @@ public sealed partial class CrossMachineStartTests
                 h.Remote.Fixture.Db.Writer.Write("test.child_ended_after_ack", scope => scope.Execute(
                     "UPDATE engine_session SET state='ended' WHERE parent_id=$id AND state<>'foreign'", new SqlArg("$id", f.Parent)));
         };
-        var error = await Assert.ThrowsAsync<CallFailed>(() => StartMcp(f));
-        Assert.Equal("unknown", error.Reason); Assert.Equal(2, acknowledgements);
+        var error = await Assert.ThrowsAsync<McpRefused>(() => StartMcp(f));
+        Assert.Equal("remote_start_failed", error.Refusal.Code); Assert.Equal(2, acknowledgements);
+        Assert.Equal("Start acknowledgement or current child ownership is unknown", error.Refusal.Values!["message"]);
         Assert.Equal(0, h.Mac.Fixture.Count("engine_message"));
         Assert.Equal(1, h.Remote.Fixture.Number("SELECT COUNT(*) FROM engine_session WHERE parent_id=$id", new SqlArg("$id", f.Parent)));
     }
@@ -443,7 +448,7 @@ public sealed partial class CrossMachineStartTests
         var receipt = db.QueryFirst("""
             SELECT command_id,fingerprint,CAST(result_json AS BLOB) FROM engine_command_receipt
             WHERE json_extract(result_json,'$.applied')=1 AND json_extract(result_json,'$.seq')=(
-                SELECT seq FROM engine_event WHERE entity_kind='message' AND entity_id=$id AND entity_version=1)
+                SELECT MAX(seq) FROM engine_event WHERE entity_kind='message' AND entity_id=$id)
             """, row => (Id: row.Text(0), Fingerprint: row.Text(1), Result: Encoding.UTF8.GetString(row.Blob(2))), default, new SqlArg("$id", message.Id));
         Assert.Matches("^[0-9a-f]{32}$", receipt.Id); Assert.Matches("^[0-9a-f]{64}$", receipt.Fingerprint);
         return new(message.Id, message.Child, message.Body, message.Label, receipt.Id, receipt.Fingerprint, receipt.Result);

@@ -20,9 +20,6 @@ pub mod view_options;
 mod text_size_tests;
 
 pub mod drop_down;
-pub mod row_words;
-#[cfg(test)]
-mod row_words_tests;
 
 pub mod search_keys;
 #[cfg(test)]

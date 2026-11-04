@@ -1,4 +1,4 @@
-use super::{NewSessionForm, TestAppContext, json, opened};
+use super::{TestAppContext, json, opened};
 use crate::features::projects::{project_chooser::ProjectChoice, projects::ProjectRecord};
 fn project(id: &str, machine: &str, root: &str) -> ProjectRecord {
     serde_json::from_value(

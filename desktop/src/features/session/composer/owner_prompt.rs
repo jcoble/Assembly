@@ -157,16 +157,6 @@ impl Composer {
             items.retain(|item| item.client_id() != client_id);
         }
     }
-    #[cfg(test)]
-    pub fn set_machine(&mut self, machine: Option<String>, cx: &mut Context<Self>) {
-        if self.machine != machine {
-            self.machine = machine;
-            if let Some(key) = self.session_key.as_mut() {
-                key.machine = self.machine.clone().unwrap_or_else(|| "owner".into());
-            }
-            self.read_pending(cx);
-        }
-    }
 
     /// Each selected owner's pending message owns one keyed subscription, released on switch/delivery.
     pub(super) fn watch_pending(&mut self, cx: &mut Context<Self>) {
@@ -268,32 +258,26 @@ impl Composer {
                     if page.engine_machine!=expected_machine{return Err(invalid());}
                     machine = Some(page.engine_machine);
                     for manifest in page.items {
+                        let parts = PromptParts {
+                            session: &session,
+                            manifest: &manifest,
+                            machine: machine.as_deref(),
+                            source: &source,
+                        };
                         let text = if manifest.text_complete {
                             manifest.text_preview.clone()
                         } else {
                             String::from_utf8(
-                                read_part(
-                                    &client,
-                                    &session,
-                                    &manifest,
-                                    "text",
-                                    manifest.text_utf8_bytes,
-                                    machine.as_deref(),
-                                    &source,
-                                    cx,
-                                )
+                                read_part(&client, &parts, "text", manifest.text_utf8_bytes, cx)
                                 .await?,
                             )
                             .map_err(|_| invalid())?
                         };
                         let attachments = read_part(
                             &client,
-                            &session,
-                            &manifest,
+                            &parts,
                             "attachments",
                             manifest.attachment_json_utf8_bytes,
-                            machine.as_deref(),
-                            &source,
                             cx,
                         )
                         .await?;
@@ -365,16 +349,27 @@ impl Composer {
     }
 }
 
+/// Which prompt a part belongs to, and where it's read from.
+struct PromptParts<'a> {
+    session: &'a str,
+    manifest: &'a Manifest,
+    machine: Option<&'a str>,
+    source: &'a crate::core::socket::row_source::ExpectedRowSource,
+}
+
 async fn read_part(
     client: &Rc<dyn SessionClient>,
-    session: &str,
-    manifest: &Manifest,
+    parts: &PromptParts<'_>,
     part: &str,
     total: u64,
-    machine: Option<&str>,
-    source: &crate::core::socket::row_source::ExpectedRowSource,
     cx: &mut AsyncApp,
 ) -> Result<Vec<u8>, CallError> {
+    let PromptParts {
+        session,
+        manifest,
+        machine,
+        source,
+    } = *parts;
     let mut bytes = Vec::new();
     let mut offset = 0;
     loop {

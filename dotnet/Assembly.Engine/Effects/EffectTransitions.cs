@@ -186,8 +186,9 @@ public static class EffectTransitions
         if (effect.Kind is "start" or "stop")
         {
             var data = receipt.Data.Deserialize(EngineJson.Default.SessionEffectData)!;
-            // Two independently queued stop intents can observe the same already-acknowledged stop.
-            if (effect.Kind != "stop" || session.State != data.State || session.CancelRequested)
+            // Provider facts can settle a start/stop before its ordered effect confirms. The matching
+            // state is already applied; a handoff fence still differs and must never be overwritten.
+            if (session.State != data.State || session.CancelRequested)
                 result = SessionTransitions.Apply(s, target, new SetSessionState(data.State, data.ProviderSessionId, data.Reason), 0, 0, expiryPolicy: expiryPolicy);
             if (effect.Kind == "stop" && result is not { Applied: false }) CancelStoppedSteps(s, target);
         }

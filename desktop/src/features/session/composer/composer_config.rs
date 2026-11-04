@@ -36,10 +36,8 @@ impl Composer {
                     let current = composer.target_generation == generation
                         && composer.session == Some(session)
                         && composer.picks == picks;
-                    if current {
-                        if let Err(error) = &answer {
-                            composer.source_refused(error, cx);
-                        }
+                    if current && let Err(error) = &answer {
+                        composer.source_refused(error, cx);
                     }
                     if let (true, Ok(config)) = (current, parse(answer)) {
                         composer.config = Some(config);

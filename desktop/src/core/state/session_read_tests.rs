@@ -323,7 +323,7 @@ impl Open<'_> {
 async fn a_running_selected_turn_ending_refreshes_once_only_while_shown(cx: &mut TestAppContext) {
     let mut open = open(cx);
     open.cx
-        .update(|cx| crate::core::state::sessions::Sessions::start(cx));
+        .update(crate::core::state::sessions::Sessions::start);
     open.read
         .update(open.cx, |read, cx| read.refresh_on_settle(cx));
     open.select(Some("s1"));

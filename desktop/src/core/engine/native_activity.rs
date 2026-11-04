@@ -162,7 +162,7 @@ impl EngineFeed {
         let watch = cx.spawn(async move |feed, cx| {
             while let Ok(update) = rows.updates.recv().await {
                 let weak = weak.clone();
-                if feed
+                if !feed
                     .update(cx, |feed, cx| {
                         let Some(scope) = weak.upgrade().filter(|scope| scope.active.get()) else {
                             return false;
@@ -171,7 +171,6 @@ impl EngineFeed {
                         scope.active.get()
                     })
                     .unwrap_or(false)
-                    == false
                 {
                     return;
                 }

@@ -137,8 +137,6 @@ internal static class DisplayQueries
             {
                 item["text"] = Scalars(text, 256); item["textComplete"] = false; item["textUtf8Bytes"] = total;
             }
-            if (Encoding.UTF8.GetByteCount(item.ToJsonString(EngineJson.Default.Options)) > 32 * 1024)
-                foreach (var field in new[] { "title", "recommendation", "inputMode", "schema", "options", "freeText", "optionsJson" }) item[field] = null;
         }
         else
         {

@@ -25,7 +25,7 @@ public sealed partial class RemoteMachineTests
         var result = await FeatureResultAsync(_desktop!, DesktopToken, "rows", "tool", new { session, item = "C" }, bulk: true);
         Assert.Equal(1048576, System.Text.Encoding.UTF8.GetByteCount(result.GetProperty("output").GetString()!));
         Assert.Equal(1114112, result.GetProperty("outputBytes").GetInt64());
-        Assert.True(result.GetProperty("outputTruncated").GetBoolean());
+        Assert.True(result.GetProperty("truncated").GetBoolean());
         var terminal = Assert.Single(result.GetProperty("terminals").EnumerateArray());
         Assert.Equal(FakeLink.AcpSessionId, terminal.GetProperty("acpSessionId").GetString());
         Assert.Equal("T", terminal.GetProperty("terminalId").GetString());

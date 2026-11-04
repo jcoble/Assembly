@@ -41,13 +41,11 @@ impl SessionPane {
                     // The write stays owned until its reply, but cannot report an old owner's refusal on a new view.
                     if pane.session.as_deref() == Some(session.as_str())
                         && pane.row_source == source
+                        && let Err(error) = answer
                     {
-                        if let Err(error) = answer {
-                            pane.status =
-                                format!("Could not mark this journal read: {}", error.reason())
-                                    .into();
-                            cx.notify();
-                        }
+                        pane.status =
+                            format!("Could not mark this journal read: {}", error.reason()).into();
+                        cx.notify();
                     }
                 })
                 .ok();

@@ -162,7 +162,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
                 JsonDocument.Parse("""{"text":"answer","clientId":"rail-C"}""").RootElement.Clone(), 1));
             batch.Rows.Add(new NewRow("run-1", null, RowKind.Turn,
                 JsonDocument.Parse("""{"state":"started"}""").RootElement.Clone(), 1));
-            _remoteHub.Publish("s", batch);
+            if (_remoteStore.LastSeq("s") == 0) _remoteHub.Publish("s", batch);
             await SendAsync(socket, $$$"""{"t":"result","id":{{{call.RootElement.GetProperty("id")}}},"result":{"rows":[]}}""");
         };
         try
@@ -194,6 +194,41 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         Assert.Equal(new long[] { 6, 7, 8, 9 }, await ReadSeqsAsync(viewer, 4));
         Assert.False(viewer.Rows.TryRead(out _));
         Assert.Equal(0, _liveHits);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_bulk_socket_abort_without_caller_cancellation_keeps_following_the_reconnected_state(bool disposed)
+    {
+        Publish(1, 1);
+        using var viewer = _localHub.Subscribe("s", 0);
+        var frames = System.Threading.Channels.Channel.CreateUnbounded<JsonElement>();
+        var interrupted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = 0;
+        async IAsyncEnumerable<JsonElement> Subscribe(string session, long after,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await foreach (var frame in frames.Reader.ReadAllAsync(cancellationToken)) yield return frame;
+        }
+        await using var follower = new RemoteFollower(_localHub, Subscribe, (session, after, cancellationToken) =>
+        {
+            Assert.False(cancellationToken.IsCancellationRequested);
+            if (Interlocked.Increment(ref attempts) == 1)
+            {
+                interrupted.TrySetResult();
+                Exception aborted = disposed ? new ObjectDisposedException("bulk socket") : new OperationCanceledException("bulk socket aborted");
+                return Task.FromException<IReadOnlyList<StoredRow>>(aborted);
+            }
+            return Task.FromResult<IReadOnlyList<StoredRow>>(_remoteStore.RowsAfter(session, after));
+        }, _ => Task.CompletedTask, _ => Task.CompletedTask, (_, _) => { }, TextWriter.Null);
+        follower.Watch("s");
+        frames.Writer.TryWrite(JsonSerializer.SerializeToElement(new { t = "state", seq = 1 }));
+        await interrupted.Task.WaitAsync(Wait);
+        frames.Writer.TryWrite(JsonSerializer.SerializeToElement(new { t = "state", seq = 1 }));
+        Assert.Equal(new long[] { 1 }, await ReadSeqsAsync(viewer, 1));
+        Assert.False(viewer.Rows.TryRead(out _));
+        Assert.True(Volatile.Read(ref attempts) >= 2);
     }
 
     // Pins: remote#8

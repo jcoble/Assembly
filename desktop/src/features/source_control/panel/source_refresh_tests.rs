@@ -11,8 +11,8 @@ use crate::core::state::{selected_session::SelectedSession, sessions::Sessions};
 use crate::features::source_control::git_status::Section;
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
+use gpui_kit::EmptyView;
 use gpui_kit::component::dock::BasePanel as _;
-use gpui_kit::{AppContext as _, EmptyView};
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -70,7 +70,7 @@ async fn regaining_focus_refreshes_once_and_a_hidden_pane_reads_nothing(cx: &mut
         EmptyView
     });
     let other = other.unwrap();
-    let (pane, cx) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    let (pane, cx) = cx.add_window_view(SourceControlPane::new);
     let tell = changed.clone();
     let _heard = cx.update(|_, cx| {
         cx.observe(&pane, move |_, _| {
@@ -113,7 +113,7 @@ fn a_session_comes_back_with_its_own_open_sections_and_place(cx: &mut TestAppCon
         gpui_kit::init(cx);
         SelectedSession::init(cx);
     });
-    let (pane, visual) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    let (pane, visual) = cx.add_window_view(SourceControlPane::new);
     let at = |y: f32| gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(y));
     let key = |session: &str| WorkspaceKey {
         machine: "owner".into(),
@@ -152,7 +152,7 @@ fn a_session_with_no_workspace_starts_folded(cx: &mut TestAppContext) {
         gpui_kit::init(cx);
         SelectedSession::init(cx);
     });
-    let (pane, visual) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    let (pane, visual) = cx.add_window_view(SourceControlPane::new);
     pane.update(visual, |pane, cx| {
         pane.open_sections.insert(Section::Staged);
         pane.scroll
@@ -203,7 +203,7 @@ async fn a_plain_folder_offers_initialize(cx: &mut TestAppContext) {
         SelectedSession::global(cx)
             .update(cx, |selected, cx| selected.select(Some("s1".into()), cx));
     });
-    let (pane, visual) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    let (pane, visual) = cx.add_window_view(SourceControlPane::new);
     let tell = changed.clone();
     let _heard = visual.update(|_, cx| {
         cx.observe(&pane, move |_, _| {

@@ -12,8 +12,12 @@ pub struct ProjectRecord {
     pub root_path: String,
     pub title: String,
     pub repo_key: Option<String>,
+    // The backend's record; nothing orders or shows by this yet.
+    #[allow(dead_code)]
     pub pinned_at: Option<i64>,
     pub removed_at: Option<i64>,
+    // The backend's record; nothing orders or shows by this yet.
+    #[allow(dead_code)]
     pub created_at: i64,
     pub last_used_at: Option<i64>,
 }

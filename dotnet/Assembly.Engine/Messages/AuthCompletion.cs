@@ -19,6 +19,23 @@ internal static partial class AuthTransitions
         if (effect.Kind != "send" || receipt.Disposition != EffectDisposition.Confirmed || delivery is null)
             throw new CallFailed("bad_receipt");
         var data = receipt.Data.Deserialize(EngineJson.Default.MessageEffectData);
+        if (outcome.CompletedTurn is { } completed)
+        {
+            var completedUser = scope.QueryFirst("""
+                SELECT run_id,payload FROM rows INDEXED BY rows_user_client WHERE session_id=$session
+                  AND json_extract(payload,'$.clientId')=$client AND kind='user' AND item_id IS NULL
+                ORDER BY seq DESC LIMIT 1
+                """, r => new { Run = r.IsNull(0) ? null : r.Text(0), User = JsonSerializer.Deserialize(r.Text(1), EngineJson.Default.UserPayload) },
+                new SqlArg("$session", delivery.Intent.ToSessionId), new("$client", delivery.Intent.ClientId));
+            if (data is not { State: "next_turn", ProviderTurnId: { Length: > 0 } inserted } ||
+                outcome != new MessageOutcome(data.State, inserted, data.Reason) { CompletedTurn = completed } ||
+                completedUser?.User is not { } payload || payload.Text != delivery.Intent.Text || payload.From != delivery.FromSessionId ||
+                payload.SenderLabel != delivery.Label || payload.Acknowledgment != new UserAcknowledgment("prompt_inserted", inserted) ||
+                completed.SessionId != delivery.Intent.ToSessionId || completed.ChatRunId != (payload.RetryExecution?.ChatRunId ?? completedUser.Run) ||
+                Assembly.Application.Features.Chat.Rows.RowStore.TerminalReply(scope, completed.SessionId, completed.ChatRunId) != completed)
+                throw new CallFailed("bad_receipt");
+            return;
+        }
         if (data is { State: "queued", Reason: "auth_required", ProviderTurnId: null, UserRow: not null })
         {
             if (outcome != RefusalOutcome(scope, context, effect, receipt, delivery)) throw new CallFailed("bad_receipt");

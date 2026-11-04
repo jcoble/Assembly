@@ -14,6 +14,8 @@ pub mod new_project_dialog;
 
 pub mod folder_browser;
 
+// Renaming it would only conflict with the open branches, for a lint about the look of a path.
+#[allow(clippy::module_inception)]
 pub mod projects;
 
 pub mod projects_view;

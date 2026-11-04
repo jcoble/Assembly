@@ -2,7 +2,8 @@
 use crate::core::{
     engine::{
         EngineChanged, EngineFeed, EngineKey, EngineRefusal, EngineScope, SessionKey,
-        commands::NeedAnswer, engine_items::NeedItem,
+        commands::NeedAnswer,
+        engine_items::{NO_ANSWER_CONTROLS, NeedItem},
     },
     ui::ask::{
         controls::{self, ControlAction},
@@ -77,10 +78,7 @@ pub(super) fn failure_state(error: &EngineRefusal) -> NeedRowState {
     }
 }
 pub(super) fn typed_answer(need: &NeedItem, answer: Value) -> Result<Value, String> {
-    let presentation = need
-        .presentation
-        .as_ref()
-        .ok_or("Answer controls are unavailable for this item.")?;
+    let presentation = need.presentation.as_ref().ok_or(NO_ANSWER_CONTROLS)?;
     match presentation.input_mode.as_str() {
         "permission"
             if answer.as_object().is_some_and(|object| object.len() == 1)
@@ -396,3 +394,7 @@ mod render;
 #[cfg(test)]
 #[path = "need_interaction_tests.rs"]
 mod interaction_tests;
+
+#[cfg(test)]
+#[path = "need_notice_tests.rs"]
+mod notice_tests;

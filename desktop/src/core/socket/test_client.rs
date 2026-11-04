@@ -13,7 +13,7 @@ use futures_channel::oneshot;
 use futures_executor::block_on;
 use serde_json::{Value, json};
 
-use super::client_thread::ClientThread;
+use super::client_thread::{ClientShared, ClientThread};
 use super::connection_state::ConnectionState;
 use super::endpoint::Endpoint;
 use super::event::Event;
@@ -52,9 +52,11 @@ impl TestClient {
             receiver,
             events.clone(),
             states_tx,
-            ids.clone(),
-            engine_machine.clone(),
-            connection_generation.clone(),
+            ClientShared {
+                ids: ids.clone(),
+                engine_machine: engine_machine.clone(),
+                connection_generation: connection_generation.clone(),
+            },
         );
         // The state channel is async; a thread hands each state on to one the test can wait on with a deadline.
         let (forward, states) = mpsc::channel();

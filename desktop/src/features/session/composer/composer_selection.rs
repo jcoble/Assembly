@@ -36,14 +36,15 @@ impl Composer {
             .as_ref()
             .and_then(|key| self.drafts.remove(key))
             .unwrap_or_default();
-        if let Some(failed) = key.as_ref().and_then(|key| self.failed_drafts.get(key)) {
-            if failed.0 == text && attachments.is_empty() {
-                attachments = self
-                    .failed_drafts
-                    .remove(key.as_ref().expect("failed key"))
-                    .expect("existing failed draft")
-                    .1;
-            }
+        if let Some(failed) = key.as_ref().and_then(|key| self.failed_drafts.get(key))
+            && failed.0 == text
+            && attachments.is_empty()
+        {
+            attachments = self
+                .failed_drafts
+                .remove(key.as_ref().expect("failed key"))
+                .expect("existing failed draft")
+                .1;
         }
         self.session = key.as_ref().map(|key| key.id.clone());
         self.machine = key.as_ref().map(|key| key.machine.clone());

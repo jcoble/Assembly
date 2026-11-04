@@ -15,30 +15,30 @@ struct DraftedReview {
 impl PrDetail {
     /// Makes the comment box once the draft exists, and applies text that was waiting for a window.
     pub(super) fn sync_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.review_input.is_none() {
-            if let Some(review) = self.review.clone() {
-                let body = review.read(cx).body.clone();
-                let input = cx.new(|cx| {
-                    TextareaState::new(window, cx)
-                        .default_value(body)
-                        .placeholder("Leave a comment")
-                        .auto_grow(2, 8)
-                });
-                let heard = cx.subscribe(
-                    &input,
-                    move |view: &mut Self, input, event: &InputEvent, cx| {
-                        if matches!(event, InputEvent::Change) {
-                            view.edits += 1;
-                            let body = input.read(cx).value().to_string();
-                            review.update(cx, |review, cx| {
-                                review.body = body;
-                                cx.notify();
-                            });
-                        }
-                    },
-                );
-                self.review_input = Some((input, heard));
-            }
+        if self.review_input.is_none()
+            && let Some(review) = self.review.clone()
+        {
+            let body = review.read(cx).body.clone();
+            let input = cx.new(|cx| {
+                TextareaState::new(window, cx)
+                    .default_value(body)
+                    .placeholder("Leave a comment")
+                    .auto_grow(2, 8)
+            });
+            let heard = cx.subscribe(
+                &input,
+                move |view: &mut Self, input, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        view.edits += 1;
+                        let body = input.read(cx).value().to_string();
+                        review.update(cx, |review, cx| {
+                            review.body = body;
+                            cx.notify();
+                        });
+                    }
+                },
+            );
+            self.review_input = Some((input, heard));
         }
         if let (Some(text), Some((input, _))) = (self.pending_body.take(), &self.review_input) {
             input.update(cx, |input, cx| input.set_value(text, window, cx));

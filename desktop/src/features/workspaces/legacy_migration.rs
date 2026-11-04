@@ -52,14 +52,13 @@ pub(super) fn prepare(
         if key.machine.is_empty() || key.session_id.is_empty() || key.checkout_root.is_empty() {
             return Err("The owning checkout is unavailable.".into());
         }
-        if let Some(document) = &captured.document {
-            if document.machine != key.machine
+        if let Some(document) = &captured.document
+            && (document.machine != key.machine
                 || document.checkout_root != key.checkout_root
                 || document.path != captured.path
-                || captured.version.is_none()
-            {
-                return Err("An old file's current document contradicts its resolved owning checkout or version.".into());
-            }
+                || captured.version.is_none())
+        {
+            return Err("An old file's current document contradicts its resolved owning checkout or version.".into());
         }
         if captured.entry["path"] != captured.path
             || !paths.insert((key.clone(), captured.path.clone()))

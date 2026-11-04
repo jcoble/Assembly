@@ -113,6 +113,7 @@ impl PrDetail {
     pub fn on_changes(&self) -> bool {
         self.page == Page::Changes
     }
+    #[cfg(test)]
     pub fn row(&self) -> Option<&PullRequestSummary> {
         self.row.as_ref()
     }
@@ -275,17 +276,17 @@ impl PrDetail {
         if self.page != Page::Changes {
             return;
         }
-        if self.files.is_none() {
-            if let (Some(detail), Some(review)) = (&self.detail, &self.review) {
-                let owner = self.owner.clone();
-                let review = review.clone();
-                let mode = self.mode;
-                self.files = Some(cx.new(|cx| {
-                    let mut files = PrFiles::new(owner, detail, review, cx);
-                    files.set_mode(mode, cx);
-                    files
-                }));
-            }
+        if self.files.is_none()
+            && let (Some(detail), Some(review)) = (&self.detail, &self.review)
+        {
+            let owner = self.owner.clone();
+            let review = review.clone();
+            let mode = self.mode;
+            self.files = Some(cx.new(|cx| {
+                let mut files = PrFiles::new(owner, detail, review, cx);
+                files.set_mode(mode, cx);
+                files
+            }));
         }
         if let Some(files) = &self.files {
             files.update(cx, |files, cx| files.set_active(self.active, cx));

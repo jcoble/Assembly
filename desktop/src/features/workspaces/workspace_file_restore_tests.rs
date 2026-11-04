@@ -209,8 +209,7 @@ async fn a_transcript_refuses_a_persons_file_but_the_next_checkout_restores_its_
         FileView::open_at(
             "history".into(),
             "other.rs".into(),
-            None,
-            None,
+            (None, None),
             true,
             None,
             window,
@@ -352,8 +351,7 @@ fn open_as_a_person(cx: &mut gpui::VisualTestContext) -> Entity<FileView> {
         FileView::open_at(
             "session".into(),
             "other.rs".into(),
-            None,
-            None,
+            (None, None),
             true,
             None,
             window,
@@ -457,8 +455,7 @@ async fn a_file_a_person_opened_is_refused_until_its_owner_answers_and_then_save
         FileView::open_at(
             "session".into(),
             "other.rs".into(),
-            None,
-            None,
+            (None, None),
             true,
             None,
             window,

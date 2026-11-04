@@ -63,16 +63,25 @@ internal static partial class ProcessGroup
         var processes = new List<(int, int, int)>();
         while (ps.StandardOutput.ReadLine() is { } line)
         {
-            var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (fields.Length == 3)
-                processes.Add((Parse(fields[0]), Parse(fields[1]), Parse(fields[2])));
+            if (ParseRow(line) is { } row)
+                processes.Add(row);
         }
 
         ps.WaitForExit();
         return processes;
     }
 
-    private static int Parse(string field) => int.Parse(field, CultureInfo.InvariantCulture);
+    /// <summary>One `ps` row. A row that isn't three ids that fit a pid is not a process this can signal, so it is skipped rather than failing the kill.</summary>
+    internal static (int Pid, int Parent, int Group)? ParseRow(string line)
+    {
+        var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length == 3
+            && int.TryParse(fields[0], NumberStyles.None, CultureInfo.InvariantCulture, out var pid)
+            && int.TryParse(fields[1], NumberStyles.None, CultureInfo.InvariantCulture, out var parent)
+            && int.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out var group))
+            return (pid, parent, group);
+        return null;
+    }
 
     [DllImport("libc", SetLastError = true)]
     private static extern int kill(int pid, int signal);

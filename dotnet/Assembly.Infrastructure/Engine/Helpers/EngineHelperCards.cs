@@ -115,7 +115,17 @@ public sealed partial class EngineHelperCards(IAppDatabase db, TimeProvider time
                 {
                     // This owns the ordinary card row write; never runs in a child writer or AfterCommit.
                     row.Show(card.Session, card.Payload.State, card.Payload.StopReason, card.Payload.Error);
-                    lock (_gate) _shown[card.Id] = card.Payload;
+                    lock (_gate)
+                    {
+                        _shown[card.Id] = card.Payload;
+                        // A newer observation may match the previously shown payload while this write
+                        // is in progress. Publish then needs no pending write until this older one lands.
+                        if (!_stopped && _current.TryGetValue(card.Id, out var current) && current.Payload != card.Payload)
+                        {
+                            _pending[card.Id] = (current, ++_order);
+                            _wake.Writer.TryWrite(true);
+                        }
+                    }
                 }
                 catch (Exception error) { log.WriteLine($"{time.GetUtcNow():O} helper card {card.Id}: {error.Message}"); }
             }
