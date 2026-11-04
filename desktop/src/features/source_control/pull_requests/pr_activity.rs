@@ -199,6 +199,11 @@ pub fn capitalized(words: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+/// Who merged it, in the old screen's words: GitHub doesn't always say.
+pub fn merged_words(author: &str) -> String {
+    let who = if author.is_empty() { "Someone" } else { author };
+    format!("{who} merged this pull request")
+}
 pub fn repo_name(repository: &str) -> &str {
     repository.rsplit('/').next().unwrap_or(repository)
 }

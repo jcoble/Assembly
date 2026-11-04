@@ -31,3 +31,14 @@ fn changed_head_refuses_confirmation_and_the_exact_review_targets_remain_in_the_
     assert!(request.args(&moved).is_err());
     assert_eq!(draft.comments[0].target.body, " Exact line ");
 }
+#[test]
+fn each_confirmation_names_only_what_it_is_tied_to() {
+    let mut draft = ReviewDraft::new(identity());
+    draft.body = "Review".into();
+    let review = PostRequest::review(&draft, &identity()).unwrap();
+    assert_eq!(review.fact().as_deref(), Some("head aaaaaaaaaa"));
+    let reply = PostRequest::reply(identity(), 41, "Reply".into()).unwrap();
+    assert_eq!(reply.fact().as_deref(), Some("comment 41"));
+    let comment = PostRequest::comment(identity(), "Comment".into()).unwrap();
+    assert_eq!(comment.fact(), None);
+}

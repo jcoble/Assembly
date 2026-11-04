@@ -321,11 +321,12 @@ impl PrDetail {
     }
     fn page_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().border;
-        let (success, danger) = (cx.theme().success, cx.theme().danger);
-        let (added, removed) = self
+        let (success, danger, well) = (cx.theme().success, cx.theme().danger, cx.theme().muted);
+        let pill = || h_flex().items_center().rounded_full().bg(well);
+        let totals = self
             .detail
             .as_ref()
-            .map_or((0, 0), |detail| change_totals(&detail.files));
+            .map(|detail| change_totals(&detail.files));
         let on_changes = self.page == Page::Changes;
         let url = (self.detail.as_ref().map(|detail| detail.url.clone()))
             .or_else(|| self.row.as_ref().map(|row| row.url.clone()))
@@ -346,36 +347,40 @@ impl PrDetail {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(PrBack))),
             )
             .child(
-                ButtonGroup::new("pr-page")
-                    .compact()
-                    .outline()
-                    .small()
+                pill()
+                    .gap(px(2.))
+                    .p(px(3.))
                     .child(
                         Button::new("pr-page-summary")
+                            .ghost()
+                            .small()
                             .rounded(ButtonRounded::Size(px(999.)))
                             .label("Summary")
-                            .selected(!on_changes),
+                            .selected(!on_changes)
+                            .on_click(
+                                cx.listener(|view, _, _, cx| view.select_page(Page::Summary, cx)),
+                            ),
                     )
                     .child(
                         Button::new("pr-page-changes")
+                            .ghost()
+                            .small()
                             .rounded(ButtonRounded::Size(px(999.)))
                             .selected(on_changes)
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child("Changes")
-                                    .child(div().text_color(success).child(format!("+{added}")))
-                                    .child(div().text_color(danger).child(format!("−{removed}"))),
-                            ),
-                    )
-                    .on_click(cx.listener(|view, picked: &Vec<usize>, _, cx| {
-                        let page = if picked.first() == Some(&1) {
-                            Page::Changes
-                        } else {
-                            Page::Summary
-                        };
-                        view.select_page(page, cx);
-                    })),
+                            .on_click(
+                                cx.listener(|view, _, _, cx| view.select_page(Page::Changes, cx)),
+                            )
+                            .child(h_flex().gap_1().child("Changes").children(totals.map(
+                                |(added, removed)| {
+                                    h_flex()
+                                        .gap_1()
+                                        .child(div().text_color(success).child(format!("+{added}")))
+                                        .child(
+                                            div().text_color(danger).child(format!("−{removed}")),
+                                        )
+                                },
+                            ))),
+                    ),
             )
             .child(div().flex_1())
             .when(on_changes, |bar| {
@@ -405,39 +410,50 @@ impl PrDetail {
                 )
             })
             .child(
-                Button::new("pr-copy-link")
-                    .ghost()
-                    .small()
-                    .icon(IconName::Link)
-                    .tooltip(if self.copied.is_some() {
-                        "Link copied"
-                    } else {
-                        "Copy link"
-                    })
-                    .disabled(url.is_none())
-                    .on_click(cx.listener(|view, _, _, cx| view.copy_link(cx))),
-            )
-            .child(
-                Button::new("pr-refresh")
-                    .ghost()
-                    .small()
-                    .icon(IconName::RefreshCw)
-                    .tooltip("Refresh this pull request")
-                    .disabled(self.loading || posting)
-                    .on_click(cx.listener(|view, _, _, cx| view.refresh(cx))),
-            )
-            .child(
-                Button::new("pr-open-web")
-                    .ghost()
-                    .small()
-                    .icon(IconName::ExternalLink)
-                    .tooltip("Open on GitHub")
-                    .disabled(url.is_none())
-                    .on_click(move |_, window, cx| {
-                        if let Some(url) = &url {
-                            window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx);
-                        }
-                    }),
+                pill()
+                    .gap(px(2.))
+                    .p(px(2.))
+                    .child(
+                        Button::new("pr-copy-link")
+                            .ghost()
+                            .small()
+                            .rounded(ButtonRounded::Size(px(999.)))
+                            .icon(IconName::Link)
+                            .tooltip(if self.copied.is_some() {
+                                "Link copied"
+                            } else {
+                                "Copy link"
+                            })
+                            .disabled(url.is_none())
+                            .on_click(cx.listener(|view, _, _, cx| view.copy_link(cx))),
+                    )
+                    .child(
+                        Button::new("pr-refresh")
+                            .ghost()
+                            .small()
+                            .rounded(ButtonRounded::Size(px(999.)))
+                            .icon(IconName::RefreshCw)
+                            .tooltip("Refresh this pull request")
+                            .disabled(self.loading || posting)
+                            .on_click(cx.listener(|view, _, _, cx| view.refresh(cx))),
+                    )
+                    .child(
+                        Button::new("pr-open-web")
+                            .ghost()
+                            .small()
+                            .rounded(ButtonRounded::Size(px(999.)))
+                            .icon(IconName::ExternalLink)
+                            .tooltip("Open on GitHub")
+                            .disabled(url.is_none())
+                            .on_click(move |_, window, cx| {
+                                if let Some(url) = &url {
+                                    window.dispatch_action(
+                                        Box::new(OpenUrl { url: url.clone() }),
+                                        cx,
+                                    );
+                                }
+                            }),
+                    ),
             )
     }
     fn changes_page(&self, detail: &PullRequestDetail, cx: &mut Context<Self>) -> AnyElement {
@@ -452,8 +468,8 @@ impl PrDetail {
             .when(detail.more_files, |page| {
                 page.child(
                     div()
-                        .px_3()
-                        .py_1()
+                        .px_4()
+                        .py_2()
                         .text_role(TextRole::Body, cx)
                         .text_color(muted)
                         .child("Showing the first 100 files. Open GitHub to see the rest."),
@@ -462,28 +478,28 @@ impl PrDetail {
             .when(lines > 0, |page| {
                 page.child(
                     h_flex()
-                        .px_3()
-                        .py_1()
+                        .px_4()
+                        .py_2()
                         .gap_1()
                         .text_role(TextRole::Body, cx)
                         .text_color(muted)
                         .child(if lines == 1 {
-                            "1 line comment in your review.".to_string()
+                            "1 line comment in your review. Post it from".to_string()
                         } else {
-                            format!("{lines} line comments in your review.")
+                            format!("{lines} line comments in your review. Post them from")
                         })
                         .child(
-                            Button::new("pr-post-from-summary")
-                                .link()
-                                .small()
-                                .label(if lines == 1 {
-                                    "Post it from Summary."
-                                } else {
-                                    "Post them from Summary."
-                                })
-                                .on_click(cx.listener(|view, _, _, cx| {
-                                    view.select_page(Page::Summary, cx)
-                                })),
+                            h_flex()
+                                .child(
+                                    Button::new("pr-post-from-summary")
+                                        .link()
+                                        .small()
+                                        .label("Summary")
+                                        .on_click(cx.listener(|view, _, _, cx| {
+                                            view.select_page(Page::Summary, cx)
+                                        })),
+                                )
+                                .child("."),
                         ),
                 )
             })
@@ -505,7 +521,7 @@ impl Render for PrDetail {
                 .p_3()
                 .when(self.loading, |page| page.child(loading_line(cx)))
                 .into_any_element(),
-            (detail, _) => self.summary_page(detail.as_ref(), cx),
+            (detail, _) => self.summary_page(detail.as_ref(), window, cx),
         };
         v_flex()
             .size_full()
