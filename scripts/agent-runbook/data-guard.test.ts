@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { checkDataCommand, DATA_DENY } from './data-guard.ts';
 import { fixture } from './test-fixture.ts';
@@ -107,6 +107,24 @@ test('denies_each_spelling_of_the_path', () => {
   }
 });
 
+test('denies_globs_that_can_reach_the_folder_without_naming_it', () => {
+  denied('rm ~/assembly-d*/x', 'rm ~/*', 'cd ~ && rm -rf as*', 'rm -rf $HOME/as*', 'rm -rf ${HOME}/*', `rm ${home}/assembly-d?tnet/x`, `rm -rf ${home}/*`, `cd ${home} && rm -rf as*`,
+    'rm ~/[a]ssembly-dotnet/x', `rm -rf ${dirname(home)}/*`, 'cp /tmp/a ~/as*', 'echo hi > ~/assembly-d*/x', 'cd ~ && mv as* /tmp/', 'find ~/as* -delete', 'cat ~/as* | xargs rm');
+});
+test('allows_reading_through_globs_and_unrelated_globs', () => {
+  allowed('ls ~/assembly-d*', 'ls ~/*', 'cat ~/as*/x', 'cd ~ && ls as*', 'cp ~/assembly-d*/x ' + out + '/', 'rm ~/other/*', 'rm ~/*.txt', 'rm /tmp/*', `cd ${out} && rm *.log`,
+    'ls *.ts $(pwd)', 'for f in *.md; do echo $f; done', 'cd "$X" && rm *.log');
+});
+test('treats_decoded_and_unquoted_words_as_the_protected_path', () => {
+  denied('rm ~/assembly-"dotnet"/x', "rm ~/'assembly-dotnet'/x", 'rm ~/assembly-d\\otnet/x', 'rm "$HOME"/assembly-"dotnet"/x', `rm ${home}/as""sembly-dotnet/x`.replace('as""sembly', 'assembly'));
+  allowed('cat ~/assembly-"dotnet"/x');
+});
+test('denies_rsync_that_runs_a_program_or_leaves_the_machine', () => {
+  denied(`rsync -e ssh ${D}/ ${out}/`, `rsync -ae ssh ${D}/ ${out}/`, `rsync -a --rsh=ssh ${D}/ ${out}/`, `rsync -a --rsh ssh ${D}/ ${out}/`, `rsync -a --rsync-path=/bin/x ${D}/ ${out}/`,
+    `rsync -a ${D}/ box:/tmp/copy/`, `rsync -a ${D}/ user@box:copy`, `rsync -a ${D}/ rsync://box/module/`, `rsync -a ${D}/ box::module`);
+  allowed(`rsync -a ${D}/ ${out}/copy/`, `rsync -a /tmp/a box:/tmp/b`);
+});
+
 const flow = (t: any) => {
   const f = fixture(t);
   const pre = (command: string, extra: any = {}) => {
@@ -141,4 +159,36 @@ test('fast_hook_prefilter_passes_payloads_naming_assembly_dotnet', t => {
   assert.equal(run('rm ~/assembly-dotnet/x'), 'invoked\n');
   assert.equal(run('rm ~/Assembly-Dotnet/x'), 'invoked\n');
   assert.equal(run('git worktree add /tmp/x'), 'invoked\n');
+});
+test('fast_hook_forwards_escaped_json_paths_to_node', t => {
+  const f = fixture(t);
+  const hook = new URL('./fast-hook.sh', import.meta.url).pathname, cli = new URL('./cli.ts', import.meta.url).pathname;
+  const run = (raw: string) => {
+    const r = spawnSync('/bin/sh', [hook, 'pre', process.execPath, cli, 'claude'], { input: raw, encoding: 'utf8', env: f.env });
+    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
+  };
+  const payload = (commandJson: string) => `{"hook_event_name":"PreToolUse","session_id":"s","cwd":"${f.home}","tool_input":{"command":"${commandJson}"}}`;
+  const deny = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: DATA_DENY } };
+  // Literal escaped JSON, exactly as a harness may send it.
+  assert.deepEqual(run(payload('rm ~\\/assembly-dotnet\\/x')), deny);
+  assert.deepEqual(run(payload('rm ~/assembly-\\"dotnet\\"/x')), deny);
+  assert.deepEqual(run(payload('rm ~/assembly-d\\u006ftnet/x')), deny);
+  assert.deepEqual(run(payload('rm ~/assembly-dotnet/x')), deny);
+  assert.deepEqual(run(payload('rm ~/*')), deny);
+  assert.deepEqual(run(payload('cd ~ && rm -rf as*')), deny);
+  assert.deepEqual(run(payload('ls ~/assembly-d*')), {});
+});
+test('fast_hook_keeps_plain_commands_on_the_fast_path', t => {
+  const f = fixture(t);
+  const probe = join(f.bin, 'probe'); writeFileSync(probe, '#!/bin/sh\nprintf "invoked\\n"\n', { mode: 0o755 });
+  const run = (raw: string) => spawnSync('/bin/sh', [new URL('./fast-hook.sh', import.meta.url).pathname, 'pre', probe, 'cli.ts', 'claude'], { input: raw, encoding: 'utf8', env: f.env }).stdout;
+  const payload = (command: string) => JSON.stringify({ tool_input: { command } });
+  assert.equal(run(payload('ls /tmp')), '{}\n');
+  assert.equal(run(payload('rm *.log')), '{}\n');
+  assert.equal(run(payload('ls /tmp/a?')), '{}\n');
+  assert.equal(run(payload('rm ~/*')), 'invoked\n');
+  assert.equal(run(payload('rm $HOME/as*')), 'invoked\n');
+  assert.equal(run(payload('rm /Users/me/as*')), 'invoked\n');
+  assert.equal(run(payload('rm /home/me/as?')), 'invoked\n');
+  assert.equal(run(payload('echo "a"')), 'invoked\n');
 });

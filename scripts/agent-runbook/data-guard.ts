@@ -10,7 +10,7 @@ const deny = () => ({ deny: DATA_DENY });
 type Word = { text: string; dynamic: boolean };
 type Redirect = { op: string; target?: Word; dup?: boolean };
 type Simple = { words: Word[]; redirects: Redirect[]; piped: boolean; stdin: string };
-type State = { dir: string; unknown: boolean };
+type State = { dir: string; unknown: boolean; strict: boolean };
 
 export function namesProtectedFolder(command: string) {
   return command.replace(/['"\\]/g, '').toLowerCase().includes(NAME);
@@ -153,26 +153,44 @@ function globMatches(segment: string, name: string) {
   }
   try { return new RegExp('^' + source + '$', 'i').test(name); } catch { return true; }
 }
-// Does this word name a path inside the protected folder (or one a glob could match)?
+// How a concrete path relates to a protected root: inside it, an ancestor of it, or neither.
+function relation(path: string, root: string) {
+  for (const form of [resolve(path).toLowerCase(), safeCanonical(path).toLowerCase()]) {
+    if (form === root || form.startsWith(root + '/')) return { kind: 'inside', form };
+    if (form === '/' || root.startsWith(form + '/')) return { kind: 'ancestor', form };
+  }
+  return { kind: 'none', form: '' };
+}
+// Could this glob path reach the protected folder, an ancestor of it, or something inside it?
+function globReaches(text: string, start: string, strict: boolean) {
+  return roots().some(root => {
+    let current = start, globbed = false;
+    for (const segment of text.split('/')) {
+      if (segment === '') continue;
+      if (/[*?[\]${`]/.test(segment)) {
+        if (!strict && !/[*?[]/.test(segment)) return false; // a bare variable only counts once the command names the folder
+        const { kind, form } = relation(current, root);
+        if (kind === 'inside') return true;
+        if (kind === 'none') return false;
+        const next = root.slice(form === '/' ? 1 : form.length + 1).split('/')[0];
+        if (!globMatches(segment, next)) return false;
+        current = join(form, next); globbed = true;
+      } else current = resolve(current, segment);
+    }
+    const { kind } = relation(current, root);
+    return kind === 'inside' || (kind === 'ancestor' && globbed);
+  });
+}
+// Does this word name a path inside the protected folder (or one a glob could reach)?
 function refers(word: Word, state: State) {
   const candidates = [word.text];
   const host = /^[A-Za-z0-9_.@-]+:(.+)$/.exec(word.text);
   if (host) candidates.push(host[1]);
   return candidates.some(text => {
     const absolute = isAbsolute(text);
-    if (!absolute && state.unknown) return true;
+    if (!absolute && state.unknown) return state.strict;
     if (!word.dynamic) return insideFolder(absolute ? text : resolve(state.dir, text));
-    let current = absolute ? '/' : state.dir;
-    for (const segment of text.split('/')) {
-      if (segment === '') continue;
-      if (/[*?[\]${`]/.test(segment)) {
-        if (insideFolder(current)) return true;
-        const here = current.toLowerCase(), real = safeCanonical(current).toLowerCase();
-        return roots().some(root => [here, real].includes(dirname(root))) && globMatches(segment, NAME);
-      }
-      current = resolve(current, segment);
-    }
-    return insideFolder(current);
+    return globReaches(text, absolute ? '/' : state.dir, state.strict);
   });
 }
 // The folder named inside a non-path word, such as an ssh command string or a quoted message.
@@ -252,10 +270,12 @@ function checkCopy(args: Word[], state: State) {
 const RSYNC_VALUE = new Set(['--rsh', '--rsync-path', '--exclude', '--include', '--exclude-from', '--include-from', '--files-from', '--filter', '--log-file', '--partial-dir', '--temp-dir', '--backup-dir', '--compare-dest', '--copy-dest', '--out-format', '--port', '--timeout', '--contimeout', '--address', '--sockopts', '--chmod', '--usermap', '--groupmap', '--chown', '--max-size', '--min-size', '--suffix', '--read-batch', '--write-batch', '--only-write-batch', '--password-file', '--iconv', '--checksum-choice', '--skip-compress', '--info', '--debug', '--block-size', '--bwlimit', '--modify-window', '--max-delete', '--compress-level', '--compress-choice']);
 function checkRsync(args: Word[], state: State) {
   const { flags, positionals, values } = options(args, 'efTBM@', RSYNC_VALUE);
-  if (anyIn(flags, [/^--(remove-source-files|remove-sent-files|delete.*|link-dest|daemon|server)$/])) return true;
+  if (anyIn(flags, ['-e', /^--(rsh|rsync-path|remove-source-files|remove-sent-files|delete.*|link-dest|daemon|server)$/])) return true;
+  if (positionals.some(p => p.text.startsWith('rsync://'))) return true;
   if (values.some(v => mentions(v, state))) return true;
   if (positionals.length < 2) return false;
-  return !outside(positionals[positionals.length - 1], state);
+  const destination = positionals[positionals.length - 1];
+  return /^[^/\s]+:/.test(destination.text) || !outside(destination, state);
 }
 const TAR_VALUE = 'fCTXINLbsF';
 function checkTar(args: Word[], state: State) {
@@ -352,20 +372,28 @@ function checkSqlite(cmd: Simple, args: Word[], state: State) {
 
 // ---- Entry point -------------------------------------------------------------------------------
 export function checkDataCommand(command: string, cwd: string): { deny?: string } {
-  const cwdInside = !!cwd && insideFolder(cwd);
-  if (!namesProtectedFolder(command) && !cwdInside) return {};
+  const named = namesProtectedFolder(command) || (!!cwd && insideFolder(cwd));
+  if (!named && !/[*?[]/.test(command)) return {};
+  if (named) return evaluate(command, cwd, true).result;
+  // A glob can reach the folder without naming it. Only a command it reaches gets the full strict check.
+  const probe = evaluate(command, cwd, false);
+  return probe.result.deny || !probe.touched ? probe.result : evaluate(command, cwd, true).result;
+}
+function evaluate(command: string, cwd: string, strict: boolean): { result: { deny?: string }; touched: boolean } {
+  const blocked = { result: deny(), touched: true };
   const parsed = parse(command);
-  if (parsed.malformed || parsed.substitution) return deny();
-  const state: State = { dir: cwd || process.cwd(), unknown: false };
+  if (strict && (parsed.malformed || parsed.substitution)) return blocked;
+  const state: State = { dir: cwd || process.cwd(), unknown: false, strict };
   const leads = parsed.commands.map(lead);
-  for (const { rest } of leads) {
-    if (rest.length && BLOCKED.test(basename(rest[0].text))) return deny();
+  if (strict) for (const { rest } of leads) {
+    if (rest.length && BLOCKED.test(basename(rest[0].text))) return blocked;
   }
+  let touched = false;
   for (const [index, cmd] of parsed.commands.entries()) {
     const { assigns, rest } = leads[index];
-    if (assigns.some(a => namesProtectedFolder(a.text))) return deny();
+    if (assigns.some(a => namesProtectedFolder(a.text))) return blocked;
     const writes = cmd.redirects.filter(r => r.target && !r.dup && !['<', '<&', '<<', '<<-', '<<<'].includes(r.op));
-    if (writes.some(r => refers(r.target!, state))) return deny();
+    if (writes.some(r => refers(r.target!, state))) return blocked;
     if (!rest.length) continue;
     const [first, ...args] = rest;
     const name = basename(first.text);
@@ -378,13 +406,14 @@ export function checkDataCommand(command: string, cwd: string): { deny?: string 
       continue;
     }
     if (first.text === 'popd') { state.unknown = true; continue; }
-    if (DECLARE.test(first.text) && args.some(a => ASSIGN.test(a.text) && namesProtectedFolder(a.text))) return deny();
+    if (DECLARE.test(first.text) && args.some(a => ASSIGN.test(a.text) && namesProtectedFolder(a.text))) return blocked;
     const redirectTargets = cmd.redirects.filter(r => r.target && !r.dup && !['<<', '<<-', '<<<'].includes(r.op)).map(r => r.target!);
-    const touches = state.unknown || insideFolder(state.dir) || rest.some(w => mentions(w, state)) || redirectTargets.some(w => mentions(w, state));
+    const touches = (strict && state.unknown) || insideFolder(state.dir) || rest.some(w => mentions(w, state)) || redirectTargets.some(w => mentions(w, state));
     if (!touches) continue;
-    if (first.dynamic || (first.text.includes('/') && refers(first, state))) return deny();
-    if (writes.some(r => r.target!.dynamic)) return deny();
-    if (['for', 'select'].includes(first.text)) return deny();
+    touched = true;
+    if (first.dynamic || (first.text.includes('/') && refers(first, state))) return blocked;
+    if (writes.some(r => r.target!.dynamic)) return blocked;
+    if (['for', 'select'].includes(first.text)) return blocked;
     let bad: boolean;
     if (READ_ONLY.test(name)) bad = checkReadOnly(name, args);
     else if (name === 'find') bad = checkFind(args);
@@ -393,7 +422,7 @@ export function checkDataCommand(command: string, cwd: string): { deny?: string 
     else if (name === 'tar') bad = checkTar(args, state);
     else if (name === 'sqlite3') bad = checkSqlite(cmd, args, state);
     else bad = true;
-    if (bad) return deny();
+    if (bad) return blocked;
   }
-  return {};
+  return { result: {}, touched };
 }
