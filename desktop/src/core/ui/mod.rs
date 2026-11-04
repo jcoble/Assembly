@@ -19,6 +19,7 @@ pub mod row_drop_down;
 #[cfg(test)]
 mod row_drop_down_tests;
 
+pub mod reasoned_item;
 pub mod markdown;
 
 pub mod activity;

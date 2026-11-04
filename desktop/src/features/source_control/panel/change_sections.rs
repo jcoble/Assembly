@@ -2,12 +2,10 @@
 //! paths. A row's buttons mount only while it's hovered, so a long list holds no idle controls. Replaces
 //! ChangedFileRow.svelte and sourceControlFileMenu.ts.
 use super::SourceControlPane;
-use super::header::reasoned_item;
-use crate::core::intents::{
-    open_diff::OpenDiff, open_file::OpenFile, reveal_file_folder::RevealFileFolder,
-};
+use crate::core::intents::{open_diff::OpenDiff, open_file::OpenFile};
 use crate::core::socket::checkout_selector::CheckoutSelector;
 use crate::core::ui::file_icon::file_icon;
+use crate::core::ui::reasoned_item::reasoned_item;
 use crate::features::source_control::actions_menu::{READ_ONLY_SCOPE, STILL_RUNNING};
 use crate::features::source_control::git_labels::split_path;
 use crate::features::source_control::git_status::{ChangedFile, GitStatus, Section};
@@ -80,7 +78,11 @@ pub(super) fn file_reasons(file: &ChangedFile, has_root: bool, busy: bool) -> Fi
         stage: write((file.worktree == ".").then_some(ALL_STAGED)),
         unstage: write((file.index == "." || file.index == "?").then_some(NOTHING_STAGED)),
         discard: write(None),
-        open: if has_root { deleted.then_some(DELETED) } else { Some(NO_ROOT) },
+        open: if has_root {
+            deleted.then_some(DELETED)
+        } else {
+            Some(NO_ROOT)
+        },
         copy_path: (!has_root).then_some(NO_ROOT),
     }
 }
@@ -287,7 +289,11 @@ impl SourceControlPane {
         let muted = cx.theme().muted_foreground;
         let checkout = self.selection(cx);
         let reasons = file_reasons(file, root.is_some(), busy);
-        let reasons = if checkout.is_some() { reasons.read_only() } else { reasons };
+        let reasons = if checkout.is_some() {
+            reasons.read_only()
+        } else {
+            reasons
+        };
         let id = format!("{}:{}", section.label(), file.path);
         let cluster =
             hovered.then(|| self.row_buttons(letter, file, target, &id, name, busy, &reasons, cx));
@@ -313,17 +319,20 @@ impl SourceControlPane {
                     .gap_1()
                     .child(div().truncate().child(name.to_string()))
                     .when(!folder.is_empty(), |line| {
-                        line.child(div().truncate().text_sm().text_color(muted).child(folder.to_string()))
+                        line.child(
+                            div()
+                                .truncate()
+                                .text_sm()
+                                .text_color(muted)
+                                .child(folder.to_string()),
+                        )
                     }),
             )
             .children(word.map(|word| div().flex_none().text_sm().text_color(muted).child(word)))
             .children(cluster);
         let open = OpenDiff {
             session_id: target.session.clone(),
-            expected_source: target.source.clone(),
             path: file.path.clone(),
-            original_path: file.original_path.clone(),
-            checkout: checkout.clone(),
         };
         let tip = SharedString::from(file.label());
         let hover_key = key.clone();
@@ -453,14 +462,15 @@ impl SourceControlPane {
         move |menu, _, _| {
             let reasons = file_reasons(&file, root.is_some(), busy);
             let view_reason = reasons.open;
-            let reasons = if checkout.is_some() { reasons.read_only() } else { reasons };
+            let reasons = if checkout.is_some() {
+                reasons.read_only()
+            } else {
+                reasons
+            };
             let reason = |reason: Option<&'static str>| reason.map(String::from);
             let view = OpenDiff {
                 session_id: target.session.clone(),
-                expected_source: target.source.clone(),
                 path: file.path.clone(),
-                original_path: file.original_path.clone(),
-                checkout: checkout.clone(),
             };
             let open = OpenFile {
                 session_id: target.session.clone(),
@@ -470,11 +480,7 @@ impl SourceControlPane {
                 column: None,
                 pinned: false,
             };
-            let reveal = RevealFileFolder {
-                session_id: target.session.clone(),
-                path: split_path(&file.path).1.to_string(),
-                expected_source: target.source.clone(),
-            };
+            let (reveal_pane, reveal_path) = (pane.clone(), file.path.clone());
             let (stage_pane, stage_path) = (pane.clone(), file.path.clone());
             let (unstage_pane, unstage_path) = (pane.clone(), file.path.clone());
             let (discard_pane, discard_file) = (pane.clone(), file.clone());
@@ -482,10 +488,13 @@ impl SourceControlPane {
             let absolute = root
                 .as_ref()
                 .map(|root| format!("{}/{}", root.trim_end_matches('/'), file.path));
-            menu.min_w(px(220.)).max_w(px(220.))
-                .item(reasoned_item("View changes", reason(view_reason), move |window, cx| {
-                    window.dispatch_action(Box::new(view.clone()), cx)
-                }))
+            menu.min_w(px(220.))
+                .max_w(px(220.))
+                .item(reasoned_item(
+                    "View changes",
+                    reason(view_reason),
+                    move |window, cx| window.dispatch_action(Box::new(view.clone()), cx),
+                ))
                 .item(reasoned_item(
                     "Stage this file",
                     reason(reasons.stage),
@@ -532,9 +541,14 @@ impl SourceControlPane {
                     reason(reasons.open),
                     move |window, cx| window.dispatch_action(Box::new(open.clone()), cx),
                 ))
-                .item(reasoned_item("Reveal in Files", reason(reasons.open), move |window, cx| {
-                    window.dispatch_action(Box::new(reveal.clone()), cx)
-                }))
+                .item(reasoned_item(
+                    "Reveal in Finder",
+                    reason(reasons.open),
+                    move |_, cx| {
+                        _ = reveal_pane
+                            .update(cx, |pane, cx| pane.reveal_file(reveal_path.clone(), cx));
+                    },
+                ))
         }
     }
 }

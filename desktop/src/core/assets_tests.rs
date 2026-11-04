@@ -31,6 +31,10 @@ fn the_window_has_every_icon_it_draws() {
         IconName::MessageCircle,
         IconName::LayoutDashboard,
         IconName::Settings,
+        IconName::RefreshCw,
+        IconName::Eye,
+        IconName::EyeOff,
+        IconName::Ellipsis,
     ] {
         let path = icon.path();
         let svg = AppAssets.load(&path).expect("loads").expect("is there");

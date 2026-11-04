@@ -8,8 +8,8 @@ use super::branch_menu::{BranchMenu, BranchPicked};
 use super::commit_box::PLACEHOLDER;
 use super::commit_timeline::CommitTimeline;
 use super::git_action::GitWrites;
-use super::git_checkouts::{CheckoutHint, GitCheckouts};
 use super::git_branches::GitBranchList;
+use super::git_checkouts::{CheckoutHint, GitCheckouts};
 use super::git_failure::{GitFailure, Recovery};
 use super::git_status::{GitStatus, Section};
 use super::git_target::GitTarget;
@@ -18,8 +18,8 @@ use super::result_line::PaneResult;
 use crate::core::state::session_read::{SessionRead, Shown};
 use crate::core::ui::center_panes::CenterPanes;
 use gpui_kit::component::dock::{
-    BasePanel, DockPlacement, PaneRef, Panel, PanelEvent, PanelHandle, PanelInfo, PanelState, panel_handle,
-    register_panel,
+    BasePanel, DockPlacement, PaneRef, Panel, PanelEvent, PanelHandle, PanelInfo, PanelState,
+    panel_handle, register_panel,
 };
 use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::*;
@@ -31,12 +31,12 @@ mod actions;
 mod checkout;
 #[path = "header.rs"]
 mod header;
-#[path = "checkout_scope.rs"]
-mod scope;
 #[path = "source_control_outcomes.rs"]
 mod outcomes;
 #[path = "render.rs"]
 mod rendering;
+#[path = "checkout_scope.rs"]
+mod scope;
 #[path = "change_sections.rs"]
 mod sections;
 
@@ -90,6 +90,8 @@ pub struct SourceControlPane {
     checkouts: Option<GitCheckouts>,
     checkouts_for: Option<(String, crate::core::socket::row_source::ExpectedRowSource)>,
     checkouts_read: Option<Task<()>>,
+    /// Asking where the session's folder is, to show a file in the file manager.
+    reveal_read: Option<Task<()>>,
     /// The status answer the list was last read beside; it's read again with each one.
     checkouts_answers: u64,
     /// The checkout last picked here, saved with the layout. It stays through a visit to another session, and becomes a
@@ -115,7 +117,10 @@ impl SourceControlPane {
             }))
         });
         cx.on_action(|_: &ShowSourceControl, cx| {
-            let Some(window) = cx.active_window().or_else(|| cx.windows().into_iter().next()) else {
+            let Some(window) = cx
+                .active_window()
+                .or_else(|| cx.windows().into_iter().next())
+            else {
                 return;
             };
             cx.defer(move |cx| {
@@ -184,15 +189,22 @@ impl SourceControlPane {
                 }
             }),
             cx.observe(&read, |pane: &mut Self, _, cx| pane.read_changed(cx)),
-            cx.observe(&writes.action, |pane: &mut Self, _, cx| pane.action_changed(cx)),
-            cx.observe(&writes.operation, |pane: &mut Self, _, cx| pane.operation_changed(cx)),
-            cx.subscribe(&message, move |pane: &mut Self, _, event: &InputEvent, cx| {
-                match event {
+            cx.observe(&writes.action, |pane: &mut Self, _, cx| {
+                pane.action_changed(cx)
+            }),
+            cx.observe(&writes.operation, |pane: &mut Self, _, cx| {
+                pane.operation_changed(cx)
+            }),
+            cx.subscribe(
+                &message,
+                move |pane: &mut Self, _, event: &InputEvent, cx| match event {
                     InputEvent::Change => {
                         pane.edit_revision += 1;
                         cx.notify();
                     }
-                    InputEvent::PressEnter { secondary: true, .. } => {
+                    InputEvent::PressEnter {
+                        secondary: true, ..
+                    } => {
                         let pane = cx.entity().downgrade();
                         cx.defer(move |cx| {
                             _ = handle.update(cx, |_, window, cx| {
@@ -201,11 +213,15 @@ impl SourceControlPane {
                         });
                     }
                     _ => {}
-                }
-            }),
-            cx.subscribe_in(&branch_menu, window, |pane, _, picked: &BranchPicked, window, cx| {
-                pane.branch_picked(picked.clone(), window, cx)
-            }),
+                },
+            ),
+            cx.subscribe_in(
+                &branch_menu,
+                window,
+                |pane, _, picked: &BranchPicked, window, cx| {
+                    pane.branch_picked(picked.clone(), window, cx)
+                },
+            ),
         ];
         Self {
             focus: cx.focus_handle(),
@@ -246,6 +262,7 @@ impl SourceControlPane {
             checkouts: None,
             checkouts_for: None,
             checkouts_read: None,
+            reveal_read: None,
             checkouts_answers: 0,
             checkout_hint: None,
             scope_open: false,
@@ -320,9 +337,10 @@ impl SourceControlPane {
         match recovery {
             Recovery::Refresh => self.read.update(cx, |read, cx| read.refresh(cx)),
             Recovery::Connect(machine) => self.connect(machine, cx),
-            Recovery::ReconcileOperation => {
-                self.writes.operation.update(cx, |operation, cx| operation.reconcile(cx))
-            }
+            Recovery::ReconcileOperation => self
+                .writes
+                .operation
+                .update(cx, |operation, cx| operation.reconcile(cx)),
         }
     }
     fn fail(&mut self, sentence: &str, cx: &mut Context<Self>) {
@@ -378,11 +396,11 @@ impl Panel for SourceControlPane {
 }
 
 #[cfg(test)]
-#[path = "checkout_scope_tests.rs"]
-mod scope_tests;
-#[cfg(test)]
 #[path = "source_refresh_tests.rs"]
 mod refresh_tests;
+#[cfg(test)]
+#[path = "checkout_scope_tests.rs"]
+mod scope_tests;
 #[cfg(test)]
 #[path = "source_stale_tests.rs"]
 mod stale_tests;

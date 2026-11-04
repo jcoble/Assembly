@@ -9,8 +9,7 @@ pub const UNCONFIRMED: &str = "Refresh the last action's outcome before starting
 pub const READ_ONLY_SCOPE: &str =
     "This folder is open for reading only — switch back to the session folder to change it.";
 const NO_REPOSITORY: &str = "This panel is not pointed at a repository folder yet.";
-const NO_UPSTREAM: &str =
-    "This branch has no upstream branch, so there is no matching remote branch to pull from or push to.";
+const NO_UPSTREAM: &str = "This branch has no upstream branch, so there is no matching remote branch to pull from or push to.";
 const READING_REMOTES: &str = "Reading this repository’s remotes…";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -21,7 +20,6 @@ pub enum MenuAction {
     Pull,
     Push,
     AddRemote,
-    BranchDiff,
     OpenHistory,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -102,13 +100,22 @@ pub fn rows(context: &MenuContext) -> Vec<MenuRow> {
             }),
             false,
         ),
-        row(MenuAction::DiscardAll, "Discard all…", write(no_changes), false),
-        row(MenuAction::Fetch, "Fetch", write(fetch_reason(context)), true),
+        row(
+            MenuAction::DiscardAll,
+            "Discard all…",
+            write(no_changes),
+            false,
+        ),
+        row(
+            MenuAction::Fetch,
+            "Fetch",
+            write(fetch_reason(context)),
+            true,
+        ),
         row(MenuAction::Pull, "Pull", write(upstream(())), false),
         row(MenuAction::Push, "Push", write(upstream(())), false),
         row(MenuAction::AddRemote, "Add remote…", write(None), true),
-        row(MenuAction::BranchDiff, "Branch diff", no_read.clone(), true),
-        row(MenuAction::OpenHistory, "Open history", no_read, false),
+        row(MenuAction::OpenHistory, "Open history", no_read, true),
     ]
 }
 pub fn publish_row(context: &MenuContext) -> PublishRow {

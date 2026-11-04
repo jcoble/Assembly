@@ -10,6 +10,7 @@ gpui_kit::assets::icon_assets!(
     Extra,
     [
         House,
+        RefreshCw,
         CircleQuestionMark,
         ShieldQuestionMark,
         Dot,

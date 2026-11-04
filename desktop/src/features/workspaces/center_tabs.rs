@@ -2,7 +2,9 @@
 use crate::core::state::workspace_panes::WorkspaceKey;
 use crate::features::{
     changes::changes_pane::ChangesPane,
-    source_control::{git_checkouts::CheckoutHint, history_pane::HistoryPane, pull_requests::pr_pane::PrPane},
+    source_control::{
+        git_checkouts::CheckoutHint, history_pane::HistoryPane, pull_requests::pr_pane::PrPane,
+    },
 };
 use gpui_kit::component::dock::{PanelInfo, PanelState};
 use serde::{Deserialize, Serialize};
@@ -31,7 +33,16 @@ pub(super) fn pane_key(state: &PanelState, key: &WorkspaceKey) -> Result<String,
         return Err("The saved pane is not leaf metadata.".into());
     };
     let fields: &[&str] = match state.panel_name.as_str() {
-        "Changes" => &["session", "path", "originalPath", "sha", "title", "split", "expectedSource"],
+        "Changes" => &[
+            "session",
+            "path",
+            "originalPath",
+            "sha",
+            "title",
+            "split",
+            "scope",
+            "expectedSource",
+        ],
         "Git history" => &["session", "path", "expectedSource", "checkoutHint"],
         "Pull requests" => &["session"],
         _ => return Err("Unknown saved center pane.".into()),
@@ -40,23 +51,30 @@ pub(super) fn pane_key(state: &PanelState, key: &WorkspaceKey) -> Result<String,
         if info.keys().any(|field| !fields.contains(&field.as_str())) {
             return Err("Operational or unknown fields cannot be saved as pane metadata.".into());
         }
-        if info
-            .iter()
-            .any(|(field, value)| {
-                !matches!(field.as_str(), "split" | "expectedSource" | "checkoutHint") && !value.is_null() && !value.is_string()
-            })
-        {
+        if info.iter().any(|(field, value)| {
+            !matches!(field.as_str(), "split" | "expectedSource" | "checkoutHint")
+                && !value.is_null()
+                && !value.is_string()
+        }) {
             return Err("Saved pane text metadata must be actual strings.".into());
         }
     }
     // This is the pane's retained source assertion, never refreshed or treated as filesystem authority.
-    if let Some(source) = info.get("expectedSource").filter(|source| !source.is_null()) {
-        serde_json::from_value::<crate::core::socket::row_source::ExpectedRowSource>(source.clone())
-            .map_err(|_| "Invalid saved pane source assertion.".to_string())?;
+    if let Some(source) = info
+        .get("expectedSource")
+        .filter(|source| !source.is_null())
+    {
+        serde_json::from_value::<crate::core::socket::row_source::ExpectedRowSource>(
+            source.clone(),
+        )
+        .map_err(|_| "Invalid saved pane source assertion.".to_string())?;
     }
     // Only names what to look for: nothing reads it until a fresh `git/checkouts` answer still offers that checkout.
     if let Some(hint) = info.get("checkoutHint").filter(|hint| !hint.is_null()) {
-        let source = info.get("expectedSource").cloned().and_then(|source| serde_json::from_value(source).ok());
+        let source = info
+            .get("expectedSource")
+            .cloned()
+            .and_then(|source| serde_json::from_value(source).ok());
         let admitted = serde_json::from_value::<CheckoutHint>(hint.clone())
             .is_ok_and(|hint| source.is_some_and(|source| hint.belongs_to(key, &source)));
         if !admitted {

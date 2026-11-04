@@ -1,5 +1,6 @@
 //! The one header row: the branch menu at the left, how many files changed, and the more-actions menu at the right.
 use super::SourceControlPane;
+use crate::core::ui::reasoned_item::reasoned_item;
 use crate::features::source_control::actions_menu::{MenuAction, PublishRow, READ_ONLY_SCOPE};
 use crate::features::source_control::git_status::GitStatus;
 use gpui_kit::assets::IconName;
@@ -10,26 +11,6 @@ use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
-/// A row that can't run stays visible and says why on a second line, because a disabled row shows no tooltip.
-pub(super) fn reasoned_item(
-    label: impl Into<SharedString>,
-    reason: Option<String>,
-    on_click: impl Fn(&mut Window, &mut App) + 'static,
-) -> PopupMenuItem {
-    let label = label.into();
-    match reason {
-        None => PopupMenuItem::new(label).on_click(move |_, window, cx| on_click(window, cx)),
-        Some(reason) => PopupMenuItem::element(move |_, cx| {
-            v_flex().child(label.clone()).child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(reason.clone()),
-            )
-        })
-        .disabled(true),
-    }
-}
 impl SourceControlPane {
     pub(super) fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let status = self.shown_status(cx);
@@ -98,16 +79,14 @@ impl SourceControlPane {
                                     .truncate()
                                     .child(status.branch_name()),
                             )
-                            .children((behind > 0).then(|| {
-                                div()
-                                    .text_color(warning)
-                                    .child(format!("↓{behind}"))
-                            }))
-                            .children((ahead > 0).then(|| {
-                                div()
-                                    .text_color(success)
-                                    .child(format!("↑{ahead}"))
-                            }))
+                            .children(
+                                (behind > 0)
+                                    .then(|| div().text_color(warning).child(format!("↓{behind}"))),
+                            )
+                            .children(
+                                (ahead > 0)
+                                    .then(|| div().text_color(success).child(format!("↑{ahead}"))),
+                            )
                             .child(
                                 Icon::new(IconName::ChevronDown)
                                     .size(px(12.))

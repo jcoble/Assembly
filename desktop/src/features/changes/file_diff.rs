@@ -24,9 +24,9 @@ impl FileDiff {
     pub fn notes(&self) -> Vec<&'static str> {
         let mut notes = Vec::new();
         if self.binary {
-            notes.push("Binary file, so there's no line-by-line comparison.");
+            notes.push("Binary file, so there is no line-by-line comparison.");
         } else if self.parts().is_empty() {
-            notes.push("No changes.");
+            notes.push("No line changes to show.");
         }
         if self.truncated {
             notes.push(CUT);
