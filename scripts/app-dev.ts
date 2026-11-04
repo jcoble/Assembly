@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startRemoteSync } from './app-dev-remote.ts';
@@ -15,30 +15,44 @@ const env = {
   ASSEMBLY_BACKEND_DIR: backend,
 };
 
-async function run(command: string, args: string[], cwd = root): Promise<void> {
-  const child = spawn(command, args, { cwd, env, stdio: 'inherit', detached: true });
+const launch = new AbortController();
+const interrupt = () => launch.abort();
+process.once('SIGINT', interrupt);
+process.once('SIGTERM', interrupt);
+
+async function attempt(command: string, args: string[], cwd = root, capture = false): Promise<{ status: number | null; stdout: string }> {
+  launch.signal.throwIfAborted();
+  const child = spawn(command, args, { cwd, env, stdio: ['inherit', capture ? 'pipe' : 'inherit', 'inherit'], detached: true });
+  let stdout = '';
+  child.stdout?.on('data', bytes => { stdout += bytes; });
   const stop = () => { if (child.pid) { try { process.kill(-child.pid, 'SIGTERM'); } catch {} } };
-  process.once('SIGINT', stop);
-  process.once('SIGTERM', stop);
+  launch.signal.addEventListener('abort', stop, { once: true });
+  if (launch.signal.aborted) stop();
   try {
-    await new Promise<void>((resolve, reject) => {
+    const status = await new Promise<number | null>((resolve, reject) => {
       child.once('error', reject);
-      child.once('close', code => code === 0 ? resolve() : reject(Object.assign(new Error(`${command} exited ${code}`), { exitCode: code ?? 1 })));
+      child.once('close', resolve);
     });
-  } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
+    launch.signal.throwIfAborted();
+    return { status, stdout };
+  } finally { launch.signal.removeEventListener('abort', stop); }
+}
+async function run(command: string, args: string[], cwd = root): Promise<void> {
+  const { status } = await attempt(command, args, cwd);
+  if (status !== 0) throw Object.assign(new Error(`${command} exited ${status}`), { exitCode: status ?? 1 });
 }
 
 // A new profile on a checkout ahead of the published adapters has nothing to install: the newest release can lack what
 // this checkout requires, and only the default branch publishes. Dev builds the same bundle here. Only app:dev does
 // this; the installer itself still fails clearly, so delivered packages and remote hosts never build on demand.
-function buildAgents(): string | undefined {
+async function buildAgents(): Promise<string | undefined> {
   const packager = join(root, 'scripts/package-adapters.ts');
   const output = join(root, 'desktop/target/local-adapters');
   console.warn('app:dev: no adapter release could be installed; building one locally');
-  const versions = spawnSync(process.execPath, [packager, 'resolve'], { cwd: root, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
-  if (versions.error || versions.status !== 0) return undefined;
-  const built = spawnSync(process.execPath, [packager, 'build', `${process.platform}-${process.arch}`, versions.stdout.trim(), output], { cwd: root, env, stdio: 'inherit' });
-  return built.error || built.status !== 0 ? undefined : output;
+  const versions = await attempt(process.execPath, [packager, 'resolve'], root, true);
+  if (versions.status !== 0) return undefined;
+  const built = await attempt(process.execPath, [packager, 'build', `${process.platform}-${process.arch}`, versions.stdout.trim(), output]);
+  return built.status !== 0 ? undefined : output;
 }
 
 // Main and a lane worktree keep the settings they already have. Every other checkout runs on its own, so building
@@ -59,7 +73,7 @@ if (lane.error) throw lane.error;
 const [port, home, tokenFile, remotePort, remoteTokenFile, adapters, laneName] = lane.status === 0 ? lane.stdout.split('\0') : ownSettings();
 
 let stopSync = async () => {};
-try { if (lane.status === 0 && laneName) stopSync = startRemoteSync(root, home); }
+try { if (lane.status === 0 && laneName && !launch.signal.aborted) stopSync = startRemoteSync(root, home); }
 catch (error) { console.warn(`app:dev: Workbox Test sync could not start: ${error instanceof Error ? error.message : String(error)}`); }
 try {
   await run('dotnet', [
@@ -67,21 +81,27 @@ try {
     '--no-self-contained', '-p:UseAppHost=true', '--output', backend,
   ]);
   mkdirSync(backend, { recursive: true });
-  writeFileSync(join(backend, 'lane.json'), JSON.stringify({
+  const laneFile = join(backend, 'lane.json');
+  const temporaryLane = `${laneFile}.${process.pid}`;
+  writeFileSync(temporaryLane, JSON.stringify({
     port: Number(port), home, tokenFile, remotePort: Number(remotePort), remoteTokenFile,
   }, null, 2) + '\n');
+  renameSync(temporaryLane, laneFile);
   mkdirSync(home, { recursive: true });
   const installer = ['dotnet/scripts/agents-file.sh', process.env.ADAPTERS ?? adapters, join(home, 'agents.json')];
-  const installed = spawnSync('bash', installer, { cwd: root, env, stdio: 'inherit' });
-  if (installed.error) throw installed.error;
+  const installed = await attempt('bash', installer);
   // The backend starts with an empty list when there's no agents file, so failing here doesn't stop the app.
   if (installed.status !== 0) {
-    const built = buildAgents();
-    const retried = built ? spawnSync('bash', [...installer, built], { cwd: root, env, stdio: 'inherit' }) : undefined;
+    const built = await buildAgents();
+    const retried = built ? await attempt('bash', [...installer, built]) : undefined;
     if (retried?.status !== 0) console.warn('app:dev: agents could not be updated; opening with the ones already installed, if any');
   }
   await run('cargo', ['run', '--locked', '--', ...process.argv.slice(2)], join(root, 'desktop'));
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = (error as { exitCode?: number }).exitCode ?? 1;
-} finally { await stopSync(); }
+} finally {
+  await stopSync();
+  process.removeListener('SIGINT', interrupt);
+  process.removeListener('SIGTERM', interrupt);
+}

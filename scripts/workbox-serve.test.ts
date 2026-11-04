@@ -190,3 +190,24 @@ test('SSH stdin EOF cancels the remote owner and its build child', {timeout:10_0
     assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
   }finally {remote.kill('SIGTERM');await ended;rmSync(root,{recursive:true,force:true})}
 });
+
+test('closing app-dev during adapter setup ends the installer and its remote sync', {timeout:10_000}, async()=>{
+  const f=fixture({changed:true,hold:true});
+  for(const directory of ['desktop','dotnet/scripts']) mkdirSync(join(f.root,directory),{recursive:true});
+  for(const file of ['app-dev.ts','app-dev-remote.ts','seed-dev.ts']) copyFileSync(new URL(file,import.meta.url),join(f.root,'scripts',file));
+  writeFileSync(join(f.root,'scripts/lane-env.sh'),'LANE_NAME=test-lane\nDATA="$PWD/profile"\nDESKTOP_PORT=18887\nTOKEN_FILE=test\nBOX_PORT=9887\nBOX_TOKEN_FILE=test\n');
+  writeFileSync(join(f.root,'dotnet/scripts/workbox.sh'),'exec node scripts/workbox-serve.ts test-lane 9\n');
+  const installerPid=join(f.root,'installer-pid'), holder=join(f.root,'installer.ts');
+  writeFileSync(holder,`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(installerPid)},String(process.pid));process.stdin.resume()`);
+  writeFileSync(join(f.root,'dotnet/scripts/agents-file.sh'),'exec node "$INSTALL_HOLDER"\n');
+  writeFileSync(join(f.root,'bin/dotnet'),'#!/bin/sh\nexit 0\n',{mode:0o755});
+  const remoteStarted=untilFile(f.paths.marker), installStarted=untilFile(installerPid);
+  const app=spawn(process.execPath,[join(f.root,'scripts/app-dev.ts')],{cwd:f.root,env:{...f.env,INSTALL_HOLDER:holder},stdio:['pipe','pipe','pipe']});
+  const ended=new Promise<number|null>(resolve=>app.on('close',resolve));
+  try {
+    await Promise.all([remoteStarted,installStarted]);
+    const pids=[Number(readFileSync(f.paths.marker,'utf8')),Number(readFileSync(installerPid,'utf8'))];
+    app.kill('SIGTERM');assert.equal(await ended,1);
+    for(const pid of pids) assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
+  }finally{app.kill('SIGTERM');await ended;f.close()}
+});
