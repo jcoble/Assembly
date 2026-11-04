@@ -34,8 +34,8 @@ public sealed class StatsTests
     }
 
     [Theory]
-    [InlineData("acp/tool-fails.jsonl", 25_962, 1_000_000)]
-    [InlineData("acp/codex-background.jsonl", 30_109, 237_500)]
+    [InlineData("acp/tool-fails.jsonl", 35_062, 1_000_000)]
+    [InlineData("acp/codex-background.jsonl", 22_975, 475_000)]
     public void The_context_window_is_read_from_both_agents_usage_reports(string fixture, long used, long size)
     {
         var last = Converted.Fixture(fixture).Last(RowKind.Context);

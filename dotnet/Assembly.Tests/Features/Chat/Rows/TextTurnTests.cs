@@ -12,7 +12,7 @@ namespace Assembly.Tests.Features.Chat.Rows;
 /// <summary>The recorded text turn: one streamed answer with markdown, and the turn's stats.</summary>
 public sealed class TextTurnTests
 {
-    private const string MessageId = "msg_011CgLZJZT1Cd5h4Vt1LfGZ3";
+    private const string MessageId = "msg_011CghqFzWEcFUT5eAjXykpb";
     private static readonly Converted Turn = Fixture("acp/text.jsonl");
 
     [Fact]
@@ -36,7 +36,7 @@ public sealed class TextTurnTests
     [Fact]
     public void Deltas_are_coalesced_to_one_per_100_ms_window()
     {
-        // The 95 chunks arrived in 37 windows of 100 ms, so there can be no more deltas than that.
+        // Bound the saved deltas for this capture and preserve the 100 ms spacing contract.
         var deltas = Turn.OfKind(RowKind.Delta);
         Assert.InRange(deltas.Count, 2, 37);
         Assert.All(deltas.Zip(deltas.Skip(1)), pair => Assert.True(pair.Second.CreatedAt - pair.First.CreatedAt >= RowConverter.CoalesceMs));
@@ -61,7 +61,7 @@ public sealed class TextTurnTests
     public void The_message_holds_the_blocks_of_the_whole_answer()
     {
         var answer = string.Concat(FixtureReplay.Events("acp/text.jsonl").OfType<Assembly.Domain.Events.TextChunk>().Select(chunk => chunk.Text));
-        Assert.Equal(1590, answer.Length);
+        Assert.Equal(1264, answer.Length);
         Assert.Equal(answer, Text(Turn.Last(RowKind.Message), "text"));
         AssertSameJson(SafeMarkdown.ToJson(SafeMarkdown.Parse(answer)), Get(Turn.Last(RowKind.Message), "blocks").GetRawText());
     }
@@ -111,18 +111,18 @@ public sealed class TextTurnTests
         Assert.Equal("finished", Text(Turn.Rows[^1], "state"));
 
         var stats = Turn.Last(RowKind.Stats).Payload;
-        var started = FixtureReplay.Ms("2026-10-24T06:04:46.5436256+00:00");
+        var started = FixtureReplay.Ms("2026-11-04T11:46:29.0467979+00:00");
         Assert.Equal("run-1", stats.GetProperty("runId").GetString());
         Assert.Equal("completed", stats.GetProperty("status").GetString());
         Assert.Equal(started, stats.GetProperty("startedAt").GetInt64());
-        Assert.Equal(FixtureReplay.Ms("2026-10-24T06:04:53.9479665+00:00") - started, stats.GetProperty("durationMs").GetInt64());
-        Assert.Equal(FixtureReplay.Ms("2026-10-24T06:04:49.2117303+00:00") - started, stats.GetProperty("firstTokenMs").GetInt64());
+        Assert.Equal(FixtureReplay.Ms("2026-11-04T11:46:36.9537741+00:00") - started, stats.GetProperty("durationMs").GetInt64());
+        Assert.Equal(FixtureReplay.Ms("2026-11-04T11:46:32.8187142+00:00") - started, stats.GetProperty("firstTokenMs").GetInt64());
         Assert.Equal("claude-opus-5-5", stats.GetProperty("model").GetString());
         Assert.Equal(2, stats.GetProperty("inputTokens").GetInt64());
-        Assert.Equal(641, stats.GetProperty("outputTokens").GetInt64());
-        // 10,836 cached reads of 2 + 10,836 + 9,977 input tokens.
-        Assert.Equal(52.1, stats.GetProperty("cacheHitPct").GetDouble());
-        Assert.Equal(0.0949418m, stats.GetProperty("costUsd").GetDecimal());
+        Assert.Equal(715, stats.GetProperty("outputTokens").GetInt64());
+        // 12,932 cached reads of 2 + 12,932 + 19,460 input tokens.
+        Assert.Equal(39.9, stats.GetProperty("cacheHitPct").GetDouble());
+        Assert.Equal(0.172705m, stats.GetProperty("costUsd").GetDecimal());
         Assert.Equal(0, stats.GetProperty("toolCalls").GetInt32());
         Assert.Equal(JsonValueKind.Null, stats.GetProperty("branch").ValueKind);
     }
