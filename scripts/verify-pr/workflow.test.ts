@@ -16,7 +16,7 @@ function fixture(t:any) {
     return spawnSync('bash',['-c',shell],{encoding:'utf8',env:{...process.env,
       PATH:root+':'+process.env.PATH,CALLS:calls,GITHUB_EVENT_PATH:event,GITHUB_EVENT_NAME:'pull_request_target',
       VERIFY_PR_SSH_KEY:'SECRET_SENTINEL',WORKBOX_HOST:'pinned.example',WORKBOX_SSH_USER:'service',
-      WORKBOX_PINNED_HOST_KEY:'pinned.example ssh-ed25519 AAAA',ALLOW_COMMENT_RERUNS:'false',...overrides}});
+      WORKBOX_PINNED_HOST_KEY:'pinned.example ssh-ed25519 AAAA',...overrides}});
   }
   return {run,calls};
 }
@@ -35,14 +35,14 @@ test('unset host-key pin fails before SSH',t=>{
   const f=fixture(t),r=f.run({pull_request:{number:12}}, {WORKBOX_PINNED_HOST_KEY:'FILL_AT_INSTALL_WORKBOX_KNOWN_HOSTS_LINE'});
   assert.notEqual(r.status,0); assert.ok(!existsSync(f.calls));
 });
-for(const author of ['someone-else','jcoble; $(touch /tmp/never-verify)','jcoble'])
-  test('disabled comment rerun skips safely for '+JSON.stringify(author),t=>{
+for(const author of ['someone-else','jcoble; $(touch /tmp/never-verify)'])
+  test('unauthorized comment skips safely for '+JSON.stringify(author),t=>{
     const f=fixture(t),r=f.run({issue:{number:12},comment:{id:99,user:{login:author},body:'@verify'}}, {GITHUB_EVENT_NAME:'issue_comment'});
     assert.equal(r.status,0,r.stderr); assert.ok(!existsSync(f.calls));
   });
-test('approved comment path passes PR and comment digits, not the comment body',t=>{
+test('owner comment path passes PR and comment digits, not the comment body',t=>{
   const f=fixture(t),r=f.run({issue:{number:12},comment:{id:99,user:{login:'jcoble'},body:'@verify $(echo unsafe)'}},
-    {GITHUB_EVENT_NAME:'issue_comment',ALLOW_COMMENT_RERUNS:'true'});
+    {GITHUB_EVENT_NAME:'issue_comment'});
   assert.equal(r.status,0,r.stderr); assert.equal(JSON.parse(readFileSync(f.calls,'utf8')).at(-1),'12 99');
 });
 test('untrusted PR number cannot become a shell command',t=>{

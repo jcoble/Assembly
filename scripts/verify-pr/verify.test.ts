@@ -14,7 +14,7 @@ function fixture(t: any) {
   const config = { repository: 'jcoble/Assembly', owner: 'jcoble', state: join(root, 'state'),
     ownerHome:root, workerPath:bin+':'+process.env.PATH,evidence:join(bin,'evidence'),
     clone: join(root, 'clone'), workerHome: join(root, 'worker'), worker: 'verify',
-    worktrees: join(root, 'worktrees'), skipDrafts: true, allowCommentReruns: false,
+    worktrees: join(root, 'worktrees'), laneNumber: 3,
     runtimeSeconds: 7200, minimumMemoryMB: 2048, livePorts: [5000] };
   for (const p of [config.state, config.clone, config.workerHome, config.worktrees]) mkdirSync(p);
   const configPath = join(root, 'config.json');
@@ -26,6 +26,8 @@ function fixture(t: any) {
       base: { sha: 'b'.repeat(40) }, title: 'TSK-1667', body: 'Task https://app.notion.com/p/40e394b0689d81e7ad28d008bf580fe6' },
     'repos/jcoble/Assembly/issues/12/comments?per_page=100&page=1': [],
     ['repos/jcoble/Assembly/commits/' + sha + '/check-runs']: { check_runs: [] },
+    ['repos/jcoble/Assembly/commits/' + sha + '/statuses?per_page=100&page=1']: [],
+    'repos/jcoble/Assembly/issues/comments/99': {user:{login:'jcoble'},issue_url:'https://api.github.com/repos/jcoble/Assembly/issues/12',body:'@verify'},
   };
   const fake = `#!${process.execPath}
 const fs=require('node:fs'),path=require('node:path');
@@ -37,15 +39,15 @@ if(name==='gh') { const endpoint=args.find(x=>x.startsWith('repos/')); const r=r
  process.stdout.write(JSON.stringify(r??{})); }
 if(name==='git') { if(args.includes('--format=%B')) console.log(process.env.TRAILERS||'Committed-by: Codex SOL 6.1');
  if(args.includes('rev-parse')&&args.includes('HEAD')) console.log('${sha}');
- if(args.includes('worktree')&&args.includes('add')) fs.mkdirSync(args.at(-2),{recursive:true});
+ if(args.includes('worktree')&&args.includes('add')) fs.mkdirSync(path.join(args.at(-2),'app'),{recursive:true});
  if(args.includes('--name-only')) console.log(process.env.DIFF_FILES||'src/code.ts');
- if(args.includes('status')) process.stdout.write(process.env.DIRTY||''); }
+ if(args.includes('status')) { const dirty=(process.env.DIRTY||'').split('\\n').filter(x=>!args.includes(':!evidence')||!/^.. evidence\\//.test(x)); process.stdout.write(dirty.join('\\n')); } }
 if(name==='ps') console.log(process.env.BUILDS||'');
 if(name==='id') console.log(args.includes('-nG')?'verify':'1002');
 if(name==='free') console.log('Mem: 16000 1000 15000 0 0 '+(process.env.MEMORY||'15000'));
 if(name==='systemctl'&&args.includes('show')) console.log(process.env.SERVICE_LOAD||'not-found');
 if(name==='systemd-run'&&process.env.FAIL_START==='1') process.exit(1);
-if(name==='flock') { const r=require('node:child_process').spawnSync(args[2],args.slice(3),{env:process.env,encoding:'utf8'});process.stderr.write(r.stderr||'');process.exit(r.status??1); }
+if(name==='flock') { const r=require('node:child_process').spawnSync(args[2],args.slice(3),{env:process.env,encoding:'utf8'});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??1); }
 if(name==='evidence') console.log('https://drive.google.com/file/d/test-proof/view');
 if(name==='sudo') { const child=require('node:child_process'); const index=args.indexOf('env');
  if(args.includes('/bin/sh')&&args.includes('verify-read-audit')) {console.log(process.env.AUDIT_READABLE==='1'?'READABLE':'DENIED');process.exit(0);}
@@ -58,7 +60,7 @@ if(name==='codex'||name==='claude') { fs.appendFileSync(process.env.CALLS,JSON.s
 `;
   // JSON.stringify ensures the generated JavaScript contains a newline escape, not a literal newline.
   const executable = fake.replaceAll("+'\n'", "+'\\n'");
-  for (const name of ['gh','git','systemd-run','systemctl','sudo','codex','claude','ps','free','evidence','flock','id'])
+  for (const name of ['gh','git','systemd-run','systemctl','sudo','codex','claude','ps','free','evidence','flock','id','pnpm'])
     writeFileSync(join(bin, name), executable, { mode: 0o755 });
   function save() { writeFileSync(configPath, JSON.stringify(config)); writeFileSync(responses, JSON.stringify(replies)); }
   function run(file: string, args: string[] = [], env: Record<string,string> = {}) {
@@ -93,13 +95,11 @@ for (const [name, change] of [
   assert.notEqual(f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12'}).status,0);
   assert.ok(f.calls().every(x=>['gh','flock'].includes(x.name)));
 });
-test('draft exclusion is one setting',t=>{
+for(const input of ['12','12 99']) test('draft is always skipped for '+input,t=>{
   const f=fixture(t); f.replies['repos/jcoble/Assembly/pulls/12'].draft=true;
-  assert.equal(f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12'}).status,0);
-  assert.ok(!f.calls().some(x=>x.name==='systemd-run'));
-  f.config.skipDrafts=false;
-  const r=f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12'}); assert.equal(r.status,0,r.stderr);
-  assert.ok(f.calls().some(x=>x.name==='systemd-run'));
+  const r=f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:input}); assert.equal(r.status,0,r.stderr);
+  assert.match(r.stdout,/Draft skipped/);
+  assert.ok(!f.calls().some(x=>['systemctl','systemd-run'].includes(x.name)||x.args.includes('POST')));
 });
 test('dispatch resolves SHA, stops only that PR unit, posts pending then starts detached unit',t=>{
   const f=fixture(t); writeFileSync(join(f.config.state,'units.json'),JSON.stringify(['verify-pr-12.service'])); const r=f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12'});
@@ -119,14 +119,35 @@ for (const [name, comment] of [
   ['other author',{user:{login:'other'},issue_url:'https://api.github.com/repos/jcoble/Assembly/issues/12',body:'@verify'}],
   ['other PR',{user:{login:'jcoble'},issue_url:'https://api.github.com/repos/jcoble/Assembly/issues/13',body:'@verify'}],
 ] as const) test('rerun rejects '+name,t=>{
-  const f=fixture(t); f.config.allowCommentReruns=true;
+  const f=fixture(t);
   f.replies['repos/jcoble/Assembly/issues/comments/99']=comment;
   assert.notEqual(f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12 99'}).status,0);
   assert.ok(!f.calls().some(x=>x.name==='systemd-run'));
 });
-test('rerun remains disabled until the owner decides',t=>{
-  const f=fixture(t); assert.notEqual(f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12 99'}).status,0);
-  assert.deepEqual(f.calls(),[]);
+for(const state of [undefined,'error','success','failure','pending']) test('comment checks latest acceptance status '+state,t=>{
+  const f=fixture(t);
+  writeFileSync(join(f.config.state,'units.json'),JSON.stringify(['verify-pr-12.service']));
+  f.replies['repos/jcoble/Assembly/commits/'+sha+'/statuses?per_page=100&page=1']=[
+    {context:'other',state:'success'},
+    ...(state?[{context:'verify/acceptance',state,description:'needs Mac'}]:[]),
+    {context:'other',state:'failure'},
+    ...(state?[{context:'verify/acceptance',state:'error'}]:[]),
+  ];
+  const r=f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12 99'}); assert.equal(r.status,0,r.stderr);
+  const starts=state===undefined||state==='error';
+  assert.equal(f.calls().some(x=>x.name==='systemd-run'),starts);
+  if(!starts) {
+    assert.match(r.stdout,/already verified or running/);
+    assert.ok(!f.calls().some(x=>x.name==='systemctl'||x.args.includes('POST')||x.args.includes('PATCH')));
+  }
+});
+test('comment finds an acceptance status beyond the first page',t=>{
+  const f=fixture(t),endpoint='repos/jcoble/Assembly/commits/'+sha+'/statuses?per_page=100&page=';
+  f.replies[endpoint+'1']=Array.from({length:100},()=>({context:'other',state:'error'}));
+  f.replies[endpoint+'2']=[{context:'verify/acceptance',state:'success'}];
+  const r=f.run('dispatch.ts',[],{SSH_ORIGINAL_COMMAND:'12 99'});assert.equal(r.status,0,r.stderr);
+  assert.match(r.stdout,/already verified or running/);
+  assert.ok(!f.calls().some(x=>x.name==='systemctl'||x.name==='systemd-run'||x.args.includes('POST')));
 });
 
 const pass = {sha, summary:'Verified', behaviors:[{name:'native edit',state:'PASS',details:'Saved correctly',proof:['after.png']}],
@@ -198,6 +219,12 @@ test('run creates a detached exact-SHA lane, isolates credentials and starts Cod
   assert.equal(r.status,0,r.stderr);
   const calls=f.calls();
   assert.ok(calls.some(x=>x.name==='git'&&x.args.includes('--detach')&&x.args.includes(sha)));
+  const lane=join(f.config.worktrees,'verify-pr-12-'+sha,'.lane');
+  assert.equal(readFileSync(lane,'utf8'),'LANE_NAME=verify-pr\nLANE_NUMBER=3\n');
+  const packages=calls.findIndex(x=>x.name==='pnpm');
+  assert.deepEqual(calls[packages].args,['install','--silent','--prefer-offline']);
+  assert.ok(packages<calls.findIndex(x=>x.name==='codex'));
+  assert.ok(calls.some(x=>x.name==='sudo'&&x.args.includes(lane)));
   const agent=calls.find(x=>x.name==='codex'); assert.ok(agent);
   assert.ok(agent.args.includes('workspace-write'));
   assert.ok(agent.args.includes('gpt-6-luna'));
@@ -310,4 +337,21 @@ for(const [file,state,details,label] of [
   const f=fixture(t),dir=f.result({sha,summary:'Review',behaviors:[{name:'change',state,details,proof:[]}],tests:[],proof:[]});
   assert.equal(f.run('post.ts',[dir],{DIFF_FILES:file}).status,0);
   assert.equal(JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8')).label,label);
+});
+
+test('generated evidence does not invalidate a PASS',t=>{
+  const f=fixture(t),dir=f.result(pass);
+  writeFileSync(join(f.config.workerHome,'result','tests.log'),'edit tests');
+  writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
+  const r=f.run('post.ts',[dir],{DIRTY:'?? evidence/'+sha+'/four-way/summary.json\n?? evidence/'+sha+'/four-way/summary.md'});
+  assert.equal(r.status,0,r.stderr);
+  assert.equal(JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8')).state,'success');
+});
+test('evidence exclusion still detects other mutations',t=>{
+  const f=fixture(t),dir=f.result(pass);
+  writeFileSync(join(f.config.workerHome,'result','tests.log'),'edit tests');
+  writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
+  const r=f.run('post.ts',[dir],{DIRTY:'?? evidence/summary.json\n M source.ts'});
+  assert.equal(r.status,0,r.stderr);
+  assert.equal(JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8')).label,'REDO');
 });

@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 
 export type Config = {
   repository: string; owner: string; state: string; clone: string; workerHome: string;
-  worker: string; worktrees: string; skipDrafts: boolean; allowCommentReruns: boolean;
+  worker: string; worktrees: string; laneNumber: number;
   ownerHome: string; workerPath: string;
   evidence: string;
   runtimeSeconds: number; minimumMemoryMB: number; livePorts: number[];

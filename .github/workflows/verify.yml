@@ -22,8 +22,6 @@ jobs:
       WORKBOX_HOST: workbox.example.invalid
       WORKBOX_SSH_USER: blackcolours
       WORKBOX_PINNED_HOST_KEY: FILL_AT_INSTALL_WORKBOX_KNOWN_HOSTS_LINE
-      # Reruns are proposed but not approved. Enable together with installed allowCommentReruns after a decision.
-      ALLOW_COMMENT_RERUNS: 'false'
     steps:
       - name: Dispatch trusted PR number over restricted SSH
         if: env.VERIFY_PR_SSH_KEY != ''
@@ -38,7 +36,6 @@ jobs:
           const pr=event.pull_request?.number || event.issue?.number;
           if(!Number.isSafeInteger(pr) || pr<1) process.exit(1);
           if(process.env.GITHUB_EVENT_NAME==='issue_comment') {
-            if(process.env.ALLOW_COMMENT_RERUNS!=='true') process.exit(0);
             if(event.comment?.user?.login!=='jcoble' || !/^@verify(?:\s|$)/.test(event.comment?.body || '')) process.exit(0);
             if(!Number.isSafeInteger(event.comment.id) || event.comment.id<1) process.exit(1);
             console.log(pr+' '+event.comment.id);

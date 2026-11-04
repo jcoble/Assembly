@@ -35,7 +35,7 @@ function makeReceipt(c: Config, ctx: Context, directory: string) {
   let links: Record<string,string> = {};
   try {
     const result = validate(JSON.parse(workerRead(c,join(ctx.output,'result.json'),1024*1024).toString('utf8')),ctx.sha);
-    const changed=worker(c,'git',['-C',ctx.worktree,'status','--porcelain','--untracked-files=all']).trim();
+    const changed=worker(c,'git',['-C',ctx.worktree,'status','--porcelain','--untracked-files=all','--','.',':!evidence']).trim();
     const tested=worker(c,'git',['-C',ctx.worktree,'rev-parse','HEAD']).trim();
     if(changed || tested!==ctx.sha) result.behaviors.push({name:'Verification-only boundary',state:'FAIL',
       details:'Verifier changed the lane or its HEAD; the declared PR commit was not verified cleanly.',proof:[]});

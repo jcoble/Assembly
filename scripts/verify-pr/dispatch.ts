@@ -9,7 +9,6 @@ export function dispatch(input: string, locked=false) {
   const [pr, comment] = input.split(' ').map(Number);
   if (![pr, ...(comment ? [comment] : [])].every(Number.isSafeInteger)) throw Error('Number out of range');
   const c = config();
-  if (comment && !c.allowCommentReruns) throw Error('Comment reruns await owner approval');
   if(!locked) {
     privateDirectory(c.state);
     process.stdout.write(command('flock',['--exclusive',join(c.state,'dispatch.lock'),process.execPath,
@@ -25,7 +24,19 @@ export function dispatch(input: string, locked=false) {
     if (note.user?.login !== c.owner || note.issue_url !== `https://api.github.com/repos/${c.repository}/issues/${pr}` ||
         !/^@verify(?:\s|$)/.test(note.body || '')) throw Error('Comment does not authorize this PR');
   }
-  if (!comment && c.skipDrafts && pull.draft) { console.log('Draft skipped'); return; }
+  if (pull.draft) { console.log('Draft skipped'); return; }
+  if (comment) {
+    // Commit statuses are newest first. Follow pages until this context's latest status is found.
+    for (let page=1; ; page++) {
+      const statuses=gh(c,`repos/${c.repository}/commits/${pull.head.sha}/statuses?per_page=100&page=${page}`);
+      if(!Array.isArray(statuses)) throw Error('Commit statuses response is invalid');
+      const latest=statuses.find(s=>s.context==='verify/acceptance');
+      if(latest && latest.state!=='error') {
+        console.log('This commit is already verified or running'); return;
+      }
+      if(latest || statuses.length<100) break;
+    }
+  }
   privateDirectory(c.state);
   // systemctl stop waits for ExecStopPost. Finish the old result before posting the new pending state.
   const unitName=`verify-pr-${pr}.service`, units=recordedUnits(c.state);

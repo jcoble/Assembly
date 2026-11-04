@@ -23,7 +23,7 @@ function authorized(home:string, line?:string) {
   const previous=existsSync(path)?readFileSync(path,'utf8'):'';
   replace(path,authorizedKeys(previous,line));
 }
-type InstallState = { config:Config; firewall:{tool:string;rule:string[]}[]; authorized:boolean; secret:boolean; completed:string[] };
+type InstallState = { config:Config; firewall:{tool:string;rule:string[]}[]; authorized:boolean; secret:boolean; completed:string[]; laneReservation?:number };
 function firewall(state:InstallState, save:()=>void) {
   for(const tool of ['iptables','ip6tables']) for(const rule of firewallRules(state.config)) {
     let present=true;
@@ -48,7 +48,7 @@ export function install(args:string[]) {
     }
     const state:InstallState=JSON.parse(readFileSync(journal,'utf8'));
     const save=()=>atomic(journal,state);
-    // Disable only credentials and firewall rules recorded by this installation.
+    // Undo only resources recorded by this installation.
     if(state.secret) {
       const secrets=JSON.parse(command('gh',['secret','list','--repo',repository,'--json','name']));
       if(!Array.isArray(secrets)) throw Error('Invalid repository secret list');
@@ -65,8 +65,12 @@ export function install(args:string[]) {
       if(present) command('sudo',['-n',tool,'-D',...rule]);
       state.firewall.pop(); save();
     }
+    if(state.laneReservation) {
+      command('ssh',['workbox-test',`if [ "$(cat ~/assembly-dotnet-verify-pr/lane-number 2>/dev/null)" = ${state.laneReservation} ]; then rm -f ~/assembly-dotnet-verify-pr/lane-number; fi`]);
+      delete state.laneReservation; save();
+    }
     rmSync(destination,{recursive:true,force:true});
-    console.log('Uninstalled trigger and firewall rules; verifier account, clone and receipts preserved'); return;
+    console.log('Uninstalled trigger, firewall rules and owned lane reservation; verifier account, clone and receipts preserved'); return;
   }
   const ports=args.find(x=>x.startsWith('--live-ports='))?.slice('--live-ports='.length).split(',').map(Number);
   if(!args.includes('--approve-account') || !ports?.length ||
@@ -84,21 +88,36 @@ export function install(args:string[]) {
   if(![home,destination,process.execPath].every(x=>/^[A-Za-z0-9_./-]+$/.test(x))) throw Error('Unsupported install path');
   // Fail before key generation if required programs are absent. Never install packages here.
   for(const executable of ['node','gh','git','sudo','systemd-run','systemctl','flock','free','ps',
-    'ssh-keygen','iptables','ip6tables','Xvfb','xdotool','ffmpeg','evidence','codex','claude'])
+    'ssh','pnpm','ssh-keygen','iptables','ip6tables','Xvfb','xdotool','ffmpeg','evidence','codex','claude'])
     command('which',[executable]);
+  const journal=join(destination,'install-state.json');
+  const previous:InstallState|undefined=existsSync(journal)?JSON.parse(readFileSync(journal,'utf8')):undefined;
   const c:Config={repository,owner,state:join(home,'.local/state/verify-pr'),clone:'/home/verify/dev/work/Assembly',
     ownerHome:home,workerPath:'/home/verify/.local/bin:/usr/local/bin:/usr/bin:/bin',
     evidence:command('which',['evidence']).trim(),
     workerHome:'/home/verify',worker:'verify',worktrees:'/home/verify/dev/work/worktrees/Assembly',
-    skipDrafts:true,allowCommentReruns:false,runtimeSeconds:7200,minimumMemoryMB:2048,livePorts:ports};
+    laneNumber:previous?.config.laneNumber || 0,runtimeSeconds:7200,minimumMemoryMB:2048,livePorts:ports};
   privateDirectory(destination);
-  const journal=join(destination,'install-state.json');
-  const state:InstallState=existsSync(journal) ? JSON.parse(readFileSync(journal,'utf8')) :
+  const state:InstallState=previous ||
     {config:c,firewall:[],authorized:false,secret:false,completed:[]};
   if(JSON.stringify(state.config)!==JSON.stringify(c)) throw Error('Uninstall existing configuration before changing install settings');
   const save=()=>atomic(journal,state);
   const completed=(step:string)=>{ if(!state.completed.includes(step)) state.completed.push(step); save(); };
   save(); // Durable before the first account, firewall, file or credential change.
+  const reserved=command('ssh',['workbox-test','cat ~/assembly-dotnet-verify-pr/lane-number 2>/dev/null || true']).trim();
+  if(reserved && !/^[1-9]$/.test(reserved)) throw Error('Invalid verify-pr lane reservation');
+  if(reserved) {
+    if(c.laneNumber && c.laneNumber!==Number(reserved)) throw Error('Verifier lane reservation changed');
+    c.laneNumber=Number(reserved);
+  } else {
+    const used=command('ssh',['workbox-test','cat ~/assembly-dotnet-*/lane-number 2>/dev/null || true']).trim().split(/\s+/);
+    const number=Array.from({length:9},(_,i)=>i+1).find(n=>!used.includes(String(n)));
+    if(!number) throw Error('all 9 lane numbers are taken on Workbox Test; remove a lane first');
+    if(c.laneNumber && c.laneNumber!==number) throw Error('Verifier lane reservation disappeared; uninstall before changing lanes');
+    c.laneNumber=number; state.config=c; state.laneReservation=number; save();
+    command('ssh',['workbox-test',`mkdir -p ~/assembly-dotnet-verify-pr && echo ${number} > ~/assembly-dotnet-verify-pr/lane-number.tmp && mv ~/assembly-dotnet-verify-pr/lane-number.tmp ~/assembly-dotnet-verify-pr/lane-number`]);
+  }
+  state.config=c; completed('lane');
   try { command('id',['verify']); }
   catch { command('sudo',['-n','useradd','--create-home','--home-dir','/home/verify','--shell','/bin/bash','verify']); }
   const actualHome=command('getent',['passwd','verify']).trim().split(':')[5];
@@ -106,7 +125,7 @@ export function install(args:string[]) {
   completed('account');
   auditAccount(c); completed('account audit');
   firewall(state,save); auditFirewall(c); completed('firewall');
-  for(const executable of ['node','git','codex','claude','Xvfb','xdotool','ffmpeg']) worker(c,'which',[executable]);
+  for(const executable of ['node','git','pnpm','codex','claude','Xvfb','xdotool','ffmpeg']) worker(c,'which',[executable]);
   completed('worker tools');
   worker(c,'mkdir',['-p',join(c.workerHome,'dev/work'),c.worktrees,join(c.workerHome,'results')]);
   completed('worker directories');
