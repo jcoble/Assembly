@@ -12,8 +12,8 @@ pub mod sessions;
 pub mod settings;
 pub mod shell;
 pub mod source_control;
-pub mod terminal;
 pub mod tasks;
+pub mod terminal;
 pub mod worktrees;
 
 pub mod component_gallery;

@@ -117,10 +117,7 @@ impl SettingsPreview {
             cx.new(|cx| InlineField::text("SSH destination", destination, window, cx).in_form());
         let form = cx.new(|cx| {
             InlineForm::new(
-                vec![
-                    ("name".into(), name),
-                    ("destination".into(), destination),
-                ],
+                vec![("name".into(), name), ("destination".into(), destination)],
                 cx,
             )
         });
@@ -165,7 +162,10 @@ impl SettingsPreview {
         let saved = &self.connections.machines[index];
         Ok(FormValues(vec![
             ("name".into(), FieldValue::Text(saved.name.clone())),
-            ("destination".into(), FieldValue::Text(saved.destination.clone())),
+            (
+                "destination".into(),
+                FieldValue::Text(saved.destination.clone()),
+            ),
         ]))
     }
 }

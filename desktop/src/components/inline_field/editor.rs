@@ -85,7 +85,8 @@ fn chip_menu(
         .child(StatusChip::new(label, tone))
         .dropdown_menu(move |menu, _, _| {
             options.iter().fold(menu, |menu, option| {
-                let (label, tone, picked) = (option.label.clone(), option.tone, option.value.clone());
+                let (label, tone, picked) =
+                    (option.label.clone(), option.tone, option.value.clone());
                 let checked = current.as_deref() == Some(picked.as_str());
                 let field = field.clone();
                 menu.item(
@@ -93,7 +94,8 @@ fn chip_menu(
                         .checked(checked)
                         .on_click(move |_, window, cx| {
                             let picked = picked.clone();
-                            let _ = field.update(cx, |field, cx| field.pick_chip(picked, window, cx));
+                            let _ =
+                                field.update(cx, |field, cx| field.pick_chip(picked, window, cx));
                         }),
                 )
             })
@@ -125,9 +127,11 @@ impl Editor {
         match value {
             FieldValue::Text(_) => Self::text(TextShape::Plain, window, cx),
             FieldValue::Date(_) => Self::Date(cx.new(|cx| DatePickerState::new(window, cx))),
-            FieldValue::DateTime(_) => Self::DateTime(cx.new(|cx| {
-                DatePickerState::new(window, cx).time_precision(TimePrecision::Minute)
-            })),
+            FieldValue::DateTime(_) => {
+                Self::DateTime(cx.new(|cx| {
+                    DatePickerState::new(window, cx).time_precision(TimePrecision::Minute)
+                }))
+            }
             FieldValue::Time(_) => Self::Time(
                 cx.new(|cx| TimeFieldState::new(window, cx).precision(TimePrecision::Second)),
             ),
@@ -148,7 +152,10 @@ impl Editor {
                 | (Self::Date(_), FieldValue::Date(_))
                 | (Self::DateTime(_), FieldValue::DateTime(_))
                 | (Self::Time(_), FieldValue::Time(_))
-                | (Self::Combo { .. } | Self::Chip { .. }, FieldValue::Choice(_))
+                | (
+                    Self::Combo { .. } | Self::Chip { .. },
+                    FieldValue::Choice(_)
+                )
         )
     }
     pub(super) fn sync(&self, value: &FieldValue, window: &mut Window, cx: &mut App) {
@@ -163,11 +170,10 @@ impl Editor {
             (Self::Date(state), FieldValue::Date(value)) => state.update(cx, |state, cx| {
                 state.set_date(Date::Single(*value), window, cx)
             }),
-            (Self::DateTime(state), FieldValue::DateTime(value)) => {
-                state.update(cx, |state, cx| {
+            (Self::DateTime(state), FieldValue::DateTime(value)) => state
+                .update(cx, |state, cx| {
                     state.set_date_time(DateTime::Single(*value), window, cx)
-                })
-            }
+                }),
             (Self::Time(state), FieldValue::Time(value)) => {
                 state.update(cx, |state, cx| state.set_time(*value, window, cx))
             }
@@ -195,7 +201,10 @@ impl Editor {
     /// Whether the kit's control opens a popup, so opening the field leaves focus on the field for Enter, until the
     /// user clicks or Tabs into the control.
     pub(super) fn has_popup(&self) -> bool {
-        matches!(self, Self::Date(_) | Self::DateTime(_) | Self::Combo { .. } | Self::Chip { .. })
+        matches!(
+            self,
+            Self::Date(_) | Self::DateTime(_) | Self::Combo { .. } | Self::Chip { .. }
+        )
     }
     pub(super) fn render(
         &self,

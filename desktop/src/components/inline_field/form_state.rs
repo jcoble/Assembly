@@ -10,7 +10,10 @@ pub struct FormValues(pub Vec<(SharedString, FieldValue)>);
 
 impl FormValues {
     pub fn get(&self, key: &str) -> Option<&FieldValue> {
-        self.0.iter().find(|(name, _)| name.as_ref() == key).map(|(_, value)| value)
+        self.0
+            .iter()
+            .find(|(name, _)| name.as_ref() == key)
+            .map(|(_, value)| value)
     }
 }
 
@@ -138,7 +141,9 @@ impl FormState {
             Err(FormFailure::Refused(message)) => Err(SaveFailure::Refused(message)),
             Err(FormFailure::Uncertain(message)) => Err(SaveFailure::Uncertain(message)),
             Err(FormFailure::Fields(errors)) => {
-                let applied = self.edit.complete(request, Err(SaveFailure::Refused(String::new())));
+                let applied = self
+                    .edit
+                    .complete(request, Err(SaveFailure::Refused(String::new())));
                 if applied {
                     self.errors = errors;
                 }

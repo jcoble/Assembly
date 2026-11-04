@@ -26,7 +26,13 @@ pub struct SessionRowValues {
 }
 
 fn joined(parts: [&Option<SharedString>; 2]) -> SharedString {
-    parts.into_iter().flatten().map(SharedString::as_ref).collect::<Vec<&str>>().join(" · ").into()
+    parts
+        .into_iter()
+        .flatten()
+        .map(SharedString::as_ref)
+        .collect::<Vec<&str>>()
+        .join(" · ")
+        .into()
 }
 
 pub fn session_row(values: SessionRowValues, drops: &Entity<RowDropDowns>, cx: &App) -> ListItem {
@@ -37,7 +43,17 @@ pub fn session_row(values: SessionRowValues, drops: &Entity<RowDropDowns>, cx: &
         Rc::new(move |cx| {
             let (key, body) = (key.clone(), body.clone());
             drops.update(cx, |drops, cx| {
-                drops.toggle(key, move |window, cx| div().px_3().pb_2().child(body(window, cx)).into_any_element(), cx)
+                drops.toggle(
+                    key,
+                    move |window, cx| {
+                        div()
+                            .px_3()
+                            .pb_2()
+                            .child(body(window, cx))
+                            .into_any_element()
+                    },
+                    cx,
+                )
             });
         })
     };
@@ -55,7 +71,10 @@ pub fn session_row(values: SessionRowValues, drops: &Entity<RowDropDowns>, cx: &
         title: values.title,
         title_color: cx.theme().foreground,
         time: values.time.map(|time| (time, muted)),
-        arrow: Some(RowArrow { open, on_toggle: toggle }),
+        arrow: Some(RowArrow {
+            open,
+            on_toggle: toggle,
+        }),
         icons: values.chips,
         spelled_out: second.clone(),
         second,

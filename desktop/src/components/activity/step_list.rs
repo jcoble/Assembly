@@ -66,10 +66,18 @@ pub fn format_elapsed(ms: i64) -> SharedString {
 
 fn mark(mark: StepMark, cx: &App) -> AnyElement {
     let theme = cx.theme();
-    let icon = |name: IconName, color: Hsla| Icon::new(name).xsmall().text_color(color).into_any_element();
+    let icon = |name: IconName, color: Hsla| {
+        Icon::new(name)
+            .xsmall()
+            .text_color(color)
+            .into_any_element()
+    };
     match mark {
         StepMark::Done => icon(IconName::CircleCheck, theme.success),
-        StepMark::Running => Spinner::new().xsmall().color(theme.muted_foreground).into_any_element(),
+        StepMark::Running => Spinner::new()
+            .xsmall()
+            .color(theme.muted_foreground)
+            .into_any_element(),
         StepMark::Upcoming => icon(IconName::Dot, theme.muted_foreground),
         StepMark::Failed => icon(IconName::CircleX, theme.danger),
         StepMark::Waiting => icon(IconName::Dot, theme.warning),
@@ -79,7 +87,10 @@ fn mark(mark: StepMark, cx: &App) -> AnyElement {
 fn right(key: &SharedString, right: StepRight, cx: &App) -> Option<AnyElement> {
     let muted = cx.theme().muted_foreground;
     let number = |text: SharedString, cx: &App| {
-        Label::new(text).text_role(TextRole::Meta, cx).font_features(tabular()).text_color(muted)
+        Label::new(text)
+            .text_role(TextRole::Meta, cx)
+            .font_features(tabular())
+            .text_color(muted)
     };
     match right {
         StepRight::None => None,
@@ -88,9 +99,10 @@ fn right(key: &SharedString, right: StepRight, cx: &App) -> Option<AnyElement> {
             h_flex()
                 .gap_1()
                 .child(
-                    div()
-                        .w_16()
-                        .child(Progress::new(SharedString::from(format!("progress:{key}"))).value(f32::from(percent))),
+                    div().w_16().child(
+                        Progress::new(SharedString::from(format!("progress:{key}")))
+                            .value(f32::from(percent)),
+                    ),
                 )
                 .child(number(format!("{percent}%").into(), cx))
                 .into_any_element(),
@@ -100,8 +112,12 @@ fn right(key: &SharedString, right: StepRight, cx: &App) -> Option<AnyElement> {
 
 /// The step's whole text, at full length.
 fn step_body(step: &StepView) -> impl Fn(&mut Window, &mut App) -> AnyElement + 'static {
-    let (detail, explanation, scope, closed) =
-        (step.detail.clone(), step.explanation.clone(), step.scope.clone(), step.closed);
+    let (detail, explanation, scope, closed) = (
+        step.detail.clone(),
+        step.explanation.clone(),
+        step.scope.clone(),
+        step.closed,
+    );
     move |_, cx| {
         let muted = cx.theme().muted_foreground;
         v_flex()
@@ -116,21 +132,36 @@ fn step_body(step: &StepView) -> impl Fn(&mut Window, &mut App) -> AnyElement + 
             })
             .when_some(scope.clone(), |body, (scope, granted)| {
                 let granted = if granted { "granted" } else { "not granted" };
-                body.child(div().text_color(muted).child(format!("Scope: {scope} ({granted})")))
+                body.child(
+                    div()
+                        .text_color(muted)
+                        .child(format!("Scope: {scope} ({granted})")),
+                )
             })
-            .when(closed, |body| body.child(div().text_color(muted).child("Closed")))
+            .when(closed, |body| {
+                body.child(div().text_color(muted).child("Closed"))
+            })
             .into_any_element()
     }
 }
 
-fn step_row(list: &SharedString, step: StepView, drops: &Entity<RowDropDowns>, cx: &mut App) -> AnyElement {
+fn step_row(
+    list: &SharedString,
+    step: StepView,
+    drops: &Entity<RowDropDowns>,
+    cx: &mut App,
+) -> AnyElement {
     let muted = cx.theme().muted_foreground;
     let radius = cx.theme().radius;
     let key = SharedString::from(format!("{list}:{}", step.key));
     let open = drops.read(cx).is_open(&key);
     let has_more = step.has_more();
     let line = |text: SharedString, cx: &App| {
-        Label::new(text).w_full().truncate().text_role(TextRole::Meta, cx).text_color(muted)
+        Label::new(text)
+            .w_full()
+            .truncate()
+            .text_role(TextRole::Meta, cx)
+            .text_color(muted)
     };
     let top = h_flex()
         .gap_2()
@@ -141,22 +172,45 @@ fn step_row(list: &SharedString, step: StepView, drops: &Entity<RowDropDowns>, c
                 .min_w_0()
                 .truncate()
                 .text_role(TextRole::Body, cx)
-                .when(step.closed || step.mark == StepMark::Upcoming, |label| label.text_color(muted)),
+                .when(step.closed || step.mark == StepMark::Upcoming, |label| {
+                    label.text_color(muted)
+                }),
         )
-        .children(step.tool.clone().map(|tool| div().flex_none().text_role(TextRole::Meta, cx).text_color(muted).child(tool)))
-        .children(step.pills.iter().map(|(label, tone)| StatusChip::new(label.clone(), *tone)))
+        .children(step.tool.clone().map(|tool| {
+            div()
+                .flex_none()
+                .text_role(TextRole::Meta, cx)
+                .text_color(muted)
+                .child(tool)
+        }))
+        .children(
+            step.pills
+                .iter()
+                .map(|(label, tone)| StatusChip::new(label.clone(), *tone)),
+        )
         .when_some(step.attempt, |row, (attempt, most)| {
-            row.child(div().flex_none().text_role(TextRole::Meta, cx).text_color(muted).child(format!("Attempt {attempt}/{most}")))
+            row.child(
+                div()
+                    .flex_none()
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(muted)
+                    .child(format!("Attempt {attempt}/{most}")),
+            )
         })
-        .when_some(step.scope.clone().filter(|(_, granted)| !granted), |row, _| {
-            row.child(StatusChip::new("Needs scope", Tone::Warning))
-        })
+        .when_some(
+            step.scope.clone().filter(|(_, granted)| !granted),
+            |row, _| row.child(StatusChip::new("Needs scope", Tone::Warning)),
+        )
         .children(right(&key, step.right.clone(), cx))
         .when(has_more, |row| {
             row.child(
-                Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight })
-                    .xsmall()
-                    .text_color(muted),
+                Icon::new(if open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .xsmall()
+                .text_color(muted),
             )
         });
     let item = ListItem::new(key.clone())
@@ -172,7 +226,9 @@ fn step_row(list: &SharedString, step: StepView, drops: &Entity<RowDropDowns>, c
                 .child(top)
                 .when(!open, |column| {
                     column
-                        .when_some(step.detail.clone(), |column, detail| column.child(line(detail, cx)))
+                        .when_some(step.detail.clone(), |column, detail| {
+                            column.child(line(detail, cx))
+                        })
                         .when_some(step.explanation.clone(), |column, explanation| {
                             column.child(line(explanation, cx))
                         })
@@ -205,7 +261,11 @@ pub fn step_list(
     let key = key.into();
     v_flex()
         .w_full()
-        .children(steps.into_iter().map(|step| step_row(&key, step, drops, cx)))
+        .children(
+            steps
+                .into_iter()
+                .map(|step| step_row(&key, step, drops, cx)),
+        )
         .into_any_element()
 }
 

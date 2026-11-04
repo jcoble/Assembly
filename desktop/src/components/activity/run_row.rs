@@ -35,7 +35,13 @@ fn percent(done: usize, total: usize) -> f32 {
 
 /// The body keeps the row's padding, so a caller's body is only its content.
 fn padded(body: CardBody) -> impl Fn(&mut Window, &mut App) -> AnyElement + 'static {
-    move |window, cx| div().px_3().pb_2().child(body(window, cx)).into_any_element()
+    move |window, cx| {
+        div()
+            .px_3()
+            .pb_2()
+            .child(body(window, cx))
+            .into_any_element()
+    }
 }
 
 impl RunRow {
@@ -69,11 +75,19 @@ impl RenderOnce for RunRow {
         let on_click = toggle.clone();
         let item = ThreeLineRow {
             key: self.key.clone(),
-            lead: div().size_2().flex_none().rounded_full().bg(color).into_any_element(),
+            lead: div()
+                .size_2()
+                .flex_none()
+                .rounded_full()
+                .bg(color)
+                .into_any_element(),
             title: self.title,
             title_color: cx.theme().foreground,
             time: None,
-            arrow: Some(RowArrow { open, on_toggle: toggle }),
+            arrow: Some(RowArrow {
+                open,
+                on_toggle: toggle,
+            }),
             icons,
             second: self.step_line.clone(),
             spelled_out: self.step_line,

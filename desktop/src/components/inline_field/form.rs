@@ -76,7 +76,11 @@ impl InlineForm {
             .fields
             .iter()
             .filter_map(|(key, field)| {
-                field.read(cx).validate().err().map(|message| (key.clone(), message))
+                field
+                    .read(cx)
+                    .validate()
+                    .err()
+                    .map(|message| (key.clone(), message))
             })
             .collect();
         match self.state.save(drafts, field_errors) {
@@ -122,7 +126,12 @@ impl InlineForm {
     }
 
     /// A new authoritative value. Open drafts stay, unless the owner was finding out whether this save landed and it did.
-    pub fn set_committed(&mut self, values: FormValues, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn set_committed(
+        &mut self,
+        values: FormValues,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.state.set_committed(values);
         if self.state.editing() {
             let committed = self.state.committed().clone();
@@ -233,13 +242,16 @@ impl Render for InlineForm {
             .on_action(cx.listener(|form, _: &Escape, window, cx| form.escape(window, cx)))
             .on_action(cx.listener(|form, _: &Cancel, window, cx| form.escape(window, cx)))
             .children(self.fields.iter().map(|(_, field)| field.clone()))
-            .when_some(self.state.error().filter(|error| !error.is_empty()), |form, error| {
-                form.child(
-                    Label::new(error.to_owned())
-                        .text_role(TextRole::Meta, cx)
-                        .text_color(cx.theme().danger),
-                )
-            })
+            .when_some(
+                self.state.error().filter(|error| !error.is_empty()),
+                |form, error| {
+                    form.child(
+                        Label::new(error.to_owned())
+                            .text_role(TextRole::Meta, cx)
+                            .text_color(cx.theme().danger),
+                    )
+                },
+            )
             .child(actions)
     }
 }

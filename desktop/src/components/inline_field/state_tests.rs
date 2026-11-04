@@ -21,7 +21,10 @@ fn failed_save_keeps_draft_and_error_then_retry_waits_for_confirmation() {
     assert_eq!(state.committed(), "original");
     assert!(!state.cancel());
     assert!(!state.change("discarded".into()));
-    assert!(state.complete(request, Err(SaveFailure::Refused("Refused by caller".into()))));
+    assert!(state.complete(
+        request,
+        Err(SaveFailure::Refused("Refused by caller".into()))
+    ));
     assert_eq!(state.draft(), "draft");
     assert_eq!(state.error(), Some("Refused by caller"));
     let (retry, _) = state.save().unwrap();

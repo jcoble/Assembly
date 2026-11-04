@@ -65,7 +65,10 @@ fn form_rule_can_fail_across_fields() {
 #[test]
 fn an_unchanged_form_just_closes() {
     let mut form = editing();
-    assert!(matches!(form.save(values("old", "box"), Vec::new()), FormSave::Closed));
+    assert!(matches!(
+        form.save(values("old", "box"), Vec::new()),
+        FormSave::Closed
+    ));
     assert!(!form.editing());
 }
 
@@ -75,7 +78,10 @@ fn one_request_carries_every_value() {
     let (request, sent_values) = sent(form.save(values("new", "elsewhere"), Vec::new()));
     assert_eq!(sent_values, values("new", "elsewhere"));
     assert!(form.pending());
-    assert!(matches!(form.save(values("newer", "x"), Vec::new()), FormSave::Ignored));
+    assert!(matches!(
+        form.save(values("newer", "x"), Vec::new()),
+        FormSave::Ignored
+    ));
     assert!(form.complete(request, Ok(values("new", "elsewhere"))));
     assert!(!form.editing());
     assert_eq!(form.committed(), &values("new", "elsewhere"));
@@ -101,7 +107,10 @@ fn field_errors_from_the_owner_land_on_their_fields() {
     let errors = vec![error("destination", "Can't reach it")];
     assert!(form.complete(request, Err(FormFailure::Fields(errors.clone()))));
     assert_eq!(form.errors(), errors);
-    assert_eq!(form.focus_target(), Some(&SharedString::from("destination")));
+    assert_eq!(
+        form.focus_target(),
+        Some(&SharedString::from("destination"))
+    );
     assert!(form.editing());
 }
 
@@ -111,7 +120,10 @@ fn an_uncertain_save_sends_nothing_more_until_a_value_arrives() {
     let (request, _) = sent(form.save(values("new", "box"), Vec::new()));
     assert!(form.complete(request, Err(FormFailure::Uncertain("Not confirmed".into()))));
     assert!(form.uncertain());
-    assert!(matches!(form.save(values("new", "box"), Vec::new()), FormSave::Ignored));
+    assert!(matches!(
+        form.save(values("new", "box"), Vec::new()),
+        FormSave::Ignored
+    ));
     form.set_committed(values("new", "box"));
     assert!(!form.uncertain());
     assert!(!form.editing());

@@ -18,7 +18,10 @@ fn email_rule_takes_an_address_or_nothing() {
 fn digits_rule_takes_the_lengths_given_or_nothing() {
     assert!(digits_rule(&text(""), &[5, 9], "no").is_ok());
     assert!(digits_rule(&text("12345"), &[5, 9], "no").is_ok());
-    assert_eq!(digits_rule(&text("1234"), &[5, 9], "no"), Err("no".to_owned()));
+    assert_eq!(
+        digits_rule(&text("1234"), &[5, 9], "no"),
+        Err("no".to_owned())
+    );
 }
 
 #[test]
@@ -34,6 +37,9 @@ fn numbers_show_in_their_format() {
 
 #[test]
 fn a_saved_number_never_ends_in_a_point() {
-    assert_eq!(TextShape::Number(NumberFormat::Currency).saved("100."), "100");
+    assert_eq!(
+        TextShape::Number(NumberFormat::Currency).saved("100."),
+        "100"
+    );
     assert_eq!(TextShape::Plain.saved("100."), "100.");
 }

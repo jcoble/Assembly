@@ -37,7 +37,11 @@ fn every_row_can_open_with_the_rest_of_the_page_drawn(cx: &mut TestAppContext) {
     let (gallery, cx) = open(cx);
     let (runs, steps, sessions) = cx.update(|_, cx| {
         let gallery = gallery.read(cx);
-        (gallery.runs.clone(), gallery.steps.clone(), gallery.sessions.clone())
+        (
+            gallery.runs.clone(),
+            gallery.steps.clone(),
+            gallery.sessions.clone(),
+        )
     });
     for (drops, key) in [
         (&runs, "gallery-run-live"),
@@ -60,12 +64,17 @@ fn answering_shrinks_the_card_and_a_failed_send_keeps_it_open(cx: &mut TestAppCo
     let needs = cx.update(|_, cx| gallery.read(cx).needs.clone());
     let first = NEED_KEYS[0].into();
     cx.update(|_, cx| {
-        needs.update(cx, |drops, cx| drops.toggle(NEED_KEYS[1].into(), plain_body, cx));
+        needs.update(cx, |drops, cx| {
+            drops.toggle(NEED_KEYS[1].into(), plain_body, cx)
+        });
         gallery.update(cx, |gallery, cx| gallery.send(true, cx));
     });
     settle(cx);
     cx.update(|_, cx| {
-        assert!(needs.read(cx).is_open(&NEED_KEYS[1].into()), "the failed card stays open");
+        assert!(
+            needs.read(cx).is_open(&NEED_KEYS[1].into()),
+            "the failed card stays open"
+        );
         assert!(gallery.read(cx).failed.is_some());
         assert!(!gallery.read(cx).answered);
     });

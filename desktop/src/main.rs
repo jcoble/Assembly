@@ -1,11 +1,11 @@
 //! Assembly's window in GPUI (GPUI Kit). It draws what the .NET backend computes, over one socket. For now it opens
 //! one empty window and quits when that window closes; the G0 lanes fill in `core` and `features`.
 
-mod core;
-mod features;
 #[allow(dead_code)]
 #[path = "components/activity/mod.rs"]
 mod activity;
+mod core;
+mod features;
 #[allow(dead_code)]
 #[path = "components/inline_field/mod.rs"]
 mod inline_field;
@@ -63,7 +63,8 @@ fn main() {
             features::changes::changes_pane::ChangesPane::register(cx);
             features::board::board_pane::BoardPane::register(cx);
             features::terminal::terminal_pane::TerminalPane::register(cx);
-            features::workspaces::init(cx).expect("one workspace registry after concrete pane registration");
+            features::workspaces::init(cx)
+                .expect("one workspace registry after concrete pane registration");
             let (read_layout, write_layout) = start_backend(cx);
             PaletteView::init(cx);
             core::intents::open_url::register(cx);

@@ -13,7 +13,10 @@ pub fn field_row(
 ) -> Div {
     let theme = cx.theme();
     let meta = |text: SharedString, color: Hsla| {
-        div().text_role(TextRole::Meta, cx).text_color(color).child(text)
+        div()
+            .text_role(TextRole::Meta, cx)
+            .text_color(color)
+            .child(text)
     };
     v_flex()
         .w_full()
@@ -21,6 +24,8 @@ pub fn field_row(
         .gap_1()
         .child(meta(label.into(), theme.muted_foreground))
         .child(value)
-        .when_some(hint, |row, hint| row.child(meta(hint, theme.muted_foreground)))
+        .when_some(hint, |row, hint| {
+            row.child(meta(hint, theme.muted_foreground))
+        })
         .when_some(error, |row, error| row.child(meta(error, theme.danger)))
 }

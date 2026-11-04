@@ -5,8 +5,8 @@ use std::time::Duration;
 use gpui::TestAppContext;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::{
-    AppContext as _, Context, Entity, IntoElement, Modifiers, ParentElement as _, Pixels, Render, SharedString,
-    Styled as _, Subscription, VisualTestContext, Window, div, px,
+    AppContext as _, Context, Entity, IntoElement, Modifiers, ParentElement as _, Pixels, Render,
+    SharedString, Styled as _, Subscription, VisualTestContext, Window, div, px,
 };
 
 use super::{CardBody, NeedsCard, NeedsState};
@@ -46,7 +46,10 @@ struct Open<'a> {
     cx: &'a mut VisualTestContext,
 }
 
-fn open(cx: &mut TestAppContext, body: impl FnOnce(&mut Window, &mut Context<Host>) -> CardBody + 'static) -> Open<'_> {
+fn open(
+    cx: &mut TestAppContext,
+    body: impl FnOnce(&mut Window, &mut Context<Host>) -> CardBody + 'static,
+) -> Open<'_> {
     cx.update(gpui_kit::init);
     let (host, cx) = cx.add_window_view(move |window, cx| {
         let drops = cx.new(|_| RowDropDowns::default());
@@ -83,8 +86,12 @@ impl Open<'_> {
     }
 
     fn open_from_a_link(&mut self) {
-        let (drops, body) = (self.drops.clone(), self.cx.update(|_, cx| self.host.read(cx).body.clone()));
-        self.cx.update(|_, cx| NeedsCard::open(key(), &drops, body, cx));
+        let (drops, body) = (
+            self.drops.clone(),
+            self.cx.update(|_, cx| self.host.read(cx).body.clone()),
+        );
+        self.cx
+            .update(|_, cx| NeedsCard::open(key(), &drops, body, cx));
         self.draw();
     }
 
@@ -99,7 +106,11 @@ impl Open<'_> {
     }
 
     fn body_height(&mut self) -> Pixels {
-        self.cx.debug_bounds("needs-body:need").expect("the card is drawn").size.height
+        self.cx
+            .debug_bounds("needs-body:need")
+            .expect("the card is drawn")
+            .size
+            .height
     }
 
     fn answer(&mut self) {
@@ -121,11 +132,16 @@ impl Open<'_> {
 #[gpui::test]
 fn opens_from_a_click_or_a_link(cx: &mut TestAppContext) {
     let mut card = open(cx, small_body);
-    let header = card.cx.debug_bounds("needs-header:need").expect("the card is drawn");
-    card.cx.simulate_click(header.center(), Modifiers::default());
+    let header = card
+        .cx
+        .debug_bounds("needs-header:need")
+        .expect("the card is drawn");
+    card.cx
+        .simulate_click(header.center(), Modifiers::default());
     card.draw();
     assert!(card.is_open(), "a click opens it");
-    card.cx.simulate_click(header.center(), Modifiers::default());
+    card.cx
+        .simulate_click(header.center(), Modifiers::default());
     card.draw();
     assert!(!card.is_open(), "a second click shuts it");
     card.open_from_a_link();
@@ -184,12 +200,17 @@ fn failed_answer_stays_open_and_keeps_its_text(cx: &mut TestAppContext) {
     card.settle_motion();
     assert!(card.is_open());
     assert!(card.body_height() > px(0.));
-    assert_eq!(card.cx.update(|_, cx| input.read(cx).value().to_string()), "main");
+    assert_eq!(
+        card.cx.update(|_, cx| input.read(cx).value().to_string()),
+        "main"
+    );
 }
 
 #[gpui::test]
 fn a_body_taller_than_three_rows_is_not_capped(cx: &mut TestAppContext) {
-    let mut card = open(cx, |_, _| Rc::new(|_, _| div().h(px(600.)).into_any_element()));
+    let mut card = open(cx, |_, _| {
+        Rc::new(|_, _| div().h(px(600.)).into_any_element())
+    });
     card.open_from_a_link();
     card.settle_motion();
     assert!(card.body_height() >= px(600.), "{:?}", card.body_height());
@@ -201,7 +222,8 @@ fn removed_item_releases_its_body_via_retain_keys(cx: &mut TestAppContext) {
     card.open_from_a_link();
     card.settle_motion();
     let drops = card.drops.clone();
-    card.cx.update(|_, cx| drops.update(cx, |drops, cx| drops.retain_keys(|_| false, cx)));
+    card.cx
+        .update(|_, cx| drops.update(cx, |drops, cx| drops.retain_keys(|_| false, cx)));
     card.draw();
     assert!(!card.is_open());
     assert!(!card.is_showing());
