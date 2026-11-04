@@ -1,6 +1,6 @@
 //! The existing file panel and editor presentation; FileView owns its document and operation state.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{CloseDocument, DocumentStore, FILE, FileView, Preferences, SaveDocument, SaveState};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, PanelInfo, PanelState};
 use gpui_kit::component::input::Editor;
@@ -199,9 +199,14 @@ impl Render for FileView {
                             .on_click(cx.listener(|view, _, _, cx| view.toggle_history(cx))),
                     ),
             )
-            .children(
-                status.map(|text| div().px_3().py_2().text_role(TextRole::Body, cx).text_color(muted).child(text)),
-            )
+            .children(status.map(|text| {
+                div()
+                    .px_3()
+                    .py_2()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(muted)
+                    .child(text)
+            }))
             .children(self.comparison.clone())
             .when_some(self.editor.as_ref(), |view, editor| {
                 view.child(

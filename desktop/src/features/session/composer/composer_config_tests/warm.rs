@@ -151,19 +151,40 @@ fn a_failed_warm_keeps_readable_cache_and_reconnect_allows_exactly_one_new_attem
         client.calls.borrow().is_empty(),
         "failure is not automatically retried"
     );
-    let (key,source)=composer.read_with(cx,|composer,_|(composer.session_key.clone(),composer.expected_source.clone()));
-    composer.update(cx,|composer,cx|composer.read_config(cx));
+    let (key, source) = composer.read_with(cx, |composer, _| {
+        (
+            composer.session_key.clone(),
+            composer.expected_source.clone(),
+        )
+    });
+    composer.update(cx, |composer, cx| composer.read_config(cx));
     let disconnected = client.take("get", "s1");
     composer.update(cx, |composer, cx| composer.connection_changed(false, cx));
     composer.update(cx, |composer, cx| composer.connection_changed(true, cx));
     cx.run_until_parked();
     assert!(disconnected.answer.send(Ok(config("opus"))).is_err());
-    assert!(client.calls.borrow().is_empty(),"reconnect cannot revive an invalidated source or retry provider setup");
+    assert!(
+        client.calls.borrow().is_empty(),
+        "reconnect cannot revive an invalidated source or retry provider setup"
+    );
     // Simulate the navigator's newly checked descriptor commit, never a reconnect readiness flag.
-    composer.update_in(cx,|composer,window,cx|composer.set_target(key,source,window,cx));
-    client.take("get","s1").answer.send(Ok(config("sonnet"))).unwrap();
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_target(key, source, window, cx)
+    });
+    client
+        .take("get", "s1")
+        .answer
+        .send(Ok(config("sonnet")))
+        .unwrap();
     cx.run_until_parked();
-    composer.update(cx,|composer,cx|composer.set_owner(Some("codex".into()),Some("Workbox Test".into()),"profile-v1".into(),cx));
+    composer.update(cx, |composer, cx| {
+        composer.set_owner(
+            Some("codex".into()),
+            Some("Workbox Test".into()),
+            "profile-v1".into(),
+            cx,
+        )
+    });
     client
         .take("get", "s1")
         .answer

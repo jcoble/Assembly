@@ -100,7 +100,7 @@ impl SearchPane {
             .read(cx)
             .session_id()
             .map(String::from);
-        let source=SelectedSession::global(cx).read(cx).source().cloned();
+        let source = SelectedSession::global(cx).read(cx).source().cloned();
         if session != self.session || source != self.source {
             self.session = session;
             self.source = source;
@@ -138,9 +138,16 @@ impl SearchPane {
             return;
         }
         let generation = self.generation;
-        let expected_owner=crate::core::state::workspace_panes::WorkspacePanes::key(cx)
-            .filter(|key|key.session_id==session&&FileView::workspace_source(key,cx).as_ref()==self.source.as_ref())
-            .map(|key|super::entry::FileOwnership {machine:key.machine.clone(),checkout_root:key.checkout_root.clone(),remote_session_id:key.session_id.clone()});
+        let expected_owner = crate::core::state::workspace_panes::WorkspacePanes::key(cx)
+            .filter(|key| {
+                key.session_id == session
+                    && FileView::workspace_source(key, cx).as_ref() == self.source.as_ref()
+            })
+            .map(|key| super::entry::FileOwnership {
+                machine: key.machine.clone(),
+                checkout_root: key.checkout_root.clone(),
+                remote_session_id: key.session_id.clone(),
+            });
         let args = json!({ "session": session, "query": self.query, "mode": self.mode, "searchId": cursor, "pageSize": PAGE, "expectedSource": self.source, "expectedOwner": expected_owner });
         self.searching = Some(cx.spawn(async move |pane, cx| {
             if !wait.is_zero() {
@@ -202,8 +209,8 @@ impl SearchPane {
 
     fn content_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let found = &self.content[ix];
-        let row_session=self.session.clone();
-        let row_source=self.source.clone();
+        let row_session = self.session.clone();
+        let row_source = self.source.clone();
         let (path, line, column) = (found.path.clone(), found.line, found.column);
         v_flex()
             .id(("content", ix))
@@ -218,7 +225,9 @@ impl SearchPane {
                     .child(found.excerpt.clone()),
             )
             .on_click(cx.listener(move |pane, _, window, cx| {
-                if pane.session != row_session || pane.source != row_source { return; }
+                if pane.session != row_session || pane.source != row_source {
+                    return;
+                }
                 if let Some(session) = &pane.session {
                     FileView::open_at(
                         session.clone(),
@@ -244,8 +253,8 @@ impl SearchPane {
 
     fn row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let found = &self.matches[ix];
-        let row_session=self.session.clone();
-        let row_source=self.source.clone();
+        let row_session = self.session.clone();
+        let row_source = self.source.clone();
         let theme = cx.theme();
         let (muted, accent, secondary) = (theme.muted_foreground, theme.accent, theme.secondary);
         let picked = self.selected.as_deref() == Some(found.path.as_str());
@@ -267,11 +276,16 @@ impl SearchPane {
             .overflow_hidden()
             .when(picked, |row| row.bg(secondary))
             .when(!picked, |row| row.hover(|row| row.bg(accent)))
-            .child(div().flex_none().text_role(TextRole::Title, cx).child(format!(
-                "{}{}",
-                found.name,
-                if found.is_directory { "/" } else { "" }
-            )))
+            .child(
+                div()
+                    .flex_none()
+                    .text_role(TextRole::Title, cx)
+                    .child(format!(
+                        "{}{}",
+                        found.name,
+                        if found.is_directory { "/" } else { "" }
+                    )),
+            )
             .child(
                 div()
                     .debug_selector(|| "search-folder".into())
@@ -283,7 +297,9 @@ impl SearchPane {
                     .child(folder.to_string()),
             )
             .on_click(cx.listener(move |pane, _, window, cx| {
-                if pane.session != row_session || pane.source != row_source { return; }
+                if pane.session != row_session || pane.source != row_source {
+                    return;
+                }
                 pane.selected = Some(path.clone());
                 if let Some(session) = pane.session.clone() {
                     if folder_hit {
@@ -296,7 +312,16 @@ impl SearchPane {
                             cx,
                         );
                     } else {
-                        FileView::open_at(session, path.clone(), None, None, true, row_source.clone(), window, cx);
+                        FileView::open_at(
+                            session,
+                            path.clone(),
+                            None,
+                            None,
+                            true,
+                            row_source.clone(),
+                            window,
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -347,7 +372,13 @@ impl Render for SearchPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
-        let line = |text: String| div().px_3().py_1().text_role(TextRole::Body, cx).child(text);
+        let line = |text: String| {
+            div()
+                .px_3()
+                .py_1()
+                .text_role(TextRole::Body, cx)
+                .child(text)
+        };
         let status = if self.session.is_none() {
             Some(line("Pick a session to search its files.".into()).text_color(muted))
         } else if let Some(error) = &self.error {

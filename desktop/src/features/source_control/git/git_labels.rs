@@ -69,7 +69,9 @@ pub fn is_remote_ref(name: &str) -> bool {
         && name.split_once('/').is_some_and(|(remote, rest)| {
             !rest.is_empty()
                 && !remote.is_empty()
-                && remote.chars().all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
+                && remote
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
         })
 }
 /// The names pointing at a commit. `HEAD -> name` is drawn as just the name, and that branch isn't repeated beside it.

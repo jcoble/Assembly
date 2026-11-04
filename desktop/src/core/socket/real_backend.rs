@@ -48,8 +48,11 @@ impl RealBackend {
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../dotnet/Assembly.Desktop/bin/Debug/net10.0/Assembly.Desktop")
         });
-        assert!(supplied.is_none() || binary.is_file(),
-            "ASSEMBLY_REAL_BACKEND_BINARY is not a built backend: {}", binary.display());
+        assert!(
+            supplied.is_none() || binary.is_file(),
+            "ASSEMBLY_REAL_BACKEND_BINARY is not a built backend: {}",
+            binary.display()
+        );
         if !binary.exists() {
             assert!(
                 env::var_os("ASSEMBLY_REAL_BACKEND").is_none(),

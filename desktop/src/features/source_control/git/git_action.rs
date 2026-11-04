@@ -36,7 +36,9 @@ impl GitAction {
         }
     }
     pub fn failure_sentence(&self) -> Option<String> {
-        self.failure.as_ref().map(|failure| failure.sentence.clone())
+        self.failure
+            .as_ref()
+            .map(|failure| failure.sentence.clone())
     }
     pub fn run(
         &mut self,
@@ -57,9 +59,10 @@ impl GitAction {
             cx.notify();
             return false;
         };
-        let call = socket
-            .read(cx)
-            .call::<GitWriteResult>("git", method, target.write_args(args), None);
+        let call =
+            socket
+                .read(cx)
+                .call::<GitWriteResult>("git", method, target.write_args(args), None);
         self.pending = Some(method);
         self.target = Some(target.clone());
         self.message = None;

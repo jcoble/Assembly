@@ -37,7 +37,17 @@ impl FilesPane {
             return;
         };
         let form = cx.new(|cx| {
-            FileActionForm::new(session, kind, path, destination, expected_owner, self.source.clone(), self.owner.clone(), window, cx)
+            FileActionForm::new(
+                session,
+                kind,
+                path,
+                destination,
+                expected_owner,
+                self.source.clone(),
+                self.owner.clone(),
+                window,
+                cx,
+            )
         });
         self.action_event = Some(cx.subscribe(&form, |pane, _, finished: &Finished, cx| {
             if finished.moved.as_ref().is_some_and(|key| {
@@ -133,7 +143,11 @@ impl FilesPane {
     ) -> PopupMenuItem {
         PopupMenuItem::new(label).on_click(move |_, window, cx| {
             let _ = pane.update(cx, |pane, cx| {
-                if pane.source != source { pane.action_error=Some("The file menu belongs to an earlier source.".into());cx.notify();return; }
+                if pane.source != source {
+                    pane.action_error = Some("The file menu belongs to an earlier source.".into());
+                    cx.notify();
+                    return;
+                }
                 pane.open_action(kind, path.clone(), None, None, window, cx)
             });
         })
@@ -147,7 +161,11 @@ impl FilesPane {
     ) -> PopupMenuItem {
         PopupMenuItem::new(label).on_click(move |_, _, cx| {
             let _ = pane.update(cx, |pane, cx| {
-                if pane.source != source { pane.action_error=Some("The file menu belongs to an earlier source.".into());cx.notify();return; }
+                if pane.source != source {
+                    pane.action_error = Some("The file menu belongs to an earlier source.".into());
+                    cx.notify();
+                    return;
+                }
                 pane.metadata_action(path.clone(), action, cx)
             });
         })
@@ -187,10 +205,15 @@ impl FilesPane {
                     copied.key.path.rsplit('/').next().unwrap_or_default()
                 );
                 let pane = pane.clone();
-                let paste_source=source.clone();
+                let paste_source = source.clone();
                 menu = menu.item(PopupMenuItem::new("Paste").on_click(move |_, window, cx| {
                     let _ = pane.update(cx, |pane, cx| {
-                        if pane.source != paste_source || copied.source != paste_source { pane.action_error=Some("The copied item or destination source changed.".into());cx.notify();return; }
+                        if pane.source != paste_source || copied.source != paste_source {
+                            pane.action_error =
+                                Some("The copied item or destination source changed.".into());
+                            cx.notify();
+                            return;
+                        }
                         pane.open_action(
                             if copied.cut { "move" } else { "copy" },
                             copied.key.path.clone(),
@@ -206,7 +229,7 @@ impl FilesPane {
         } else {
             let timeline_session = session.clone();
             let timeline_path = path.clone();
-            let timeline_source=source.clone();
+            let timeline_source = source.clone();
             menu = menu.item(
                 PopupMenuItem::new("Open timeline").on_click(move |_, window, cx| {
                     crate::features::files::file_view::FileView::open_history(
@@ -219,7 +242,7 @@ impl FilesPane {
                 }),
             );
             let history_path = path.clone();
-            let history_source=source.clone();
+            let history_source = source.clone();
             menu = menu
                 .item(PopupMenuItem::new("Git: View file history").on_click(
                     move |_, window, cx| {

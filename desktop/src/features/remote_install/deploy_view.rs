@@ -89,13 +89,23 @@ impl DeployForm {
                     ),
             )
             .when_some(self.inspect_error.clone(), |section, error| {
-                section.child(div().text_role(TextRole::Body, cx).text_color(theme.danger).child(error))
+                section.child(
+                    div()
+                        .text_role(TextRole::Body, cx)
+                        .text_color(theme.danger)
+                        .child(error),
+                )
             })
             .when_some(self.facts.as_ref(), |section, (facts, _, _)| {
                 section
                     .child(bundle_facts(facts, cx))
                     .when_some(facts.refusal(), |section, why| {
-                        section.child(div().text_role(TextRole::Body, cx).text_color(theme.danger).child(why))
+                        section.child(
+                            div()
+                                .text_role(TextRole::Body, cx)
+                                .text_color(theme.danger)
+                                .child(why),
+                        )
                     })
             })
     }
@@ -217,7 +227,12 @@ impl DeployForm {
                         .font_weight(FontWeight::MEDIUM)
                         .child("Install"),
                 )
-                .child(div().text_role(TextRole::Body, cx).text_color(color).child(headline))
+                .child(
+                    div()
+                        .text_role(TextRole::Body, cx)
+                        .text_color(color)
+                        .child(headline),
+                )
                 .when_some(
                     job.filter(|_| live).and_then(Job::percent),
                     |section, percent| {
@@ -227,11 +242,13 @@ impl DeployForm {
                 .when_some(
                     job.filter(|job| live && job.total_bytes > 0),
                     |section, job| {
-                        section.child(div().text_role(TextRole::Meta, cx).text_color(muted).child(format!(
-                            "{} of {}. Closing this dialog doesn't stop it.",
-                            size_words(job.bytes_done),
-                            size_words(job.total_bytes)
-                        )))
+                        section.child(div().text_role(TextRole::Meta, cx).text_color(muted).child(
+                            format!(
+                                "{} of {}. Closing this dialog doesn't stop it.",
+                                size_words(job.bytes_done),
+                                size_words(job.total_bytes)
+                            ),
+                        ))
                     },
                 )
                 .when_some(
@@ -246,10 +263,20 @@ impl DeployForm {
                     },
                 )
                 .when_some(self.unknown.clone(), |section, why| {
-                    section.child(div().text_role(TextRole::Body, cx).text_color(danger).child(why))
+                    section.child(
+                        div()
+                            .text_role(TextRole::Body, cx)
+                            .text_color(danger)
+                            .child(why),
+                    )
                 })
                 .when_some(self.cancel_error.clone(), |section, why| {
-                    section.child(div().text_role(TextRole::Body, cx).text_color(danger).child(why))
+                    section.child(
+                        div()
+                            .text_role(TextRole::Body, cx)
+                            .text_color(danger)
+                            .child(why),
+                    )
                 }),
         )
     }

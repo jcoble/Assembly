@@ -134,30 +134,47 @@ fn invalid() -> CallError {
 }
 
 impl Composer {
-    pub fn pending(&self,session:&str)->&[PendingPrompt] {
-        self.session_key.as_ref().filter(|key|key.id==session).and_then(|key|self.pending.get(key)).map(Vec::as_slice).unwrap_or_default()
+    pub fn pending(&self, session: &str) -> &[PendingPrompt] {
+        self.session_key
+            .as_ref()
+            .filter(|key| key.id == session)
+            .and_then(|key| self.pending.get(key))
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
     /// A row acknowledgment applies only to the currently source-qualified owner.
-    pub fn delivered(&mut self,session:&str,client_id:&str) {
-        let Some(key)=self.session_key.clone().filter(|key|key.id==session)else{return;};
-        self.message_subscriptions.remove(&format!("prompt/{session}/{client_id}"));
-        self.delivered.entry(key.clone()).or_default().insert(client_id.into());
-        if let Some(items)=self.pending.get_mut(&key){items.retain(|item|item.client_id()!=client_id);}
+    pub fn delivered(&mut self, session: &str, client_id: &str) {
+        let Some(key) = self.session_key.clone().filter(|key| key.id == session) else {
+            return;
+        };
+        self.message_subscriptions
+            .remove(&format!("prompt/{session}/{client_id}"));
+        self.delivered
+            .entry(key.clone())
+            .or_default()
+            .insert(client_id.into());
+        if let Some(items) = self.pending.get_mut(&key) {
+            items.retain(|item| item.client_id() != client_id);
+        }
     }
     #[cfg(test)]
-    pub fn set_machine(&mut self,machine:Option<String>,cx:&mut Context<Self>) {
-        if self.machine!=machine {
-            self.machine=machine;
-            if let Some(key)=self.session_key.as_mut(){key.machine=self.machine.clone().unwrap_or_else(||"owner".into());}
+    pub fn set_machine(&mut self, machine: Option<String>, cx: &mut Context<Self>) {
+        if self.machine != machine {
+            self.machine = machine;
+            if let Some(key) = self.session_key.as_mut() {
+                key.machine = self.machine.clone().unwrap_or_else(|| "owner".into());
+            }
             self.read_pending(cx);
         }
     }
 
     /// Each selected owner's pending message owns one keyed subscription, released on switch/delivery.
     pub(super) fn watch_pending(&mut self, cx: &mut Context<Self>) {
-        if !self.operational(){return;}
-        let key=self.session_key.clone().expect("operational owner");
-        let generation=self.source_serial;
+        if !self.operational() {
+            return;
+        }
+        let key = self.session_key.clone().expect("operational owner");
+        let generation = self.source_serial;
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -175,7 +192,7 @@ impl Composer {
             }
             let weak = cx.entity().downgrade();
             let (selected, owner, expected) = (session.clone(), machine.clone(), message.clone());
-            let key=key.clone();
+            let key = key.clone();
             let subscription = self.client.subscribe_message(
                 &message,
                 machine.as_deref(),
@@ -224,16 +241,18 @@ impl Composer {
         self._pending_read = None;
         self.message_subscriptions.clear();
         self.watch_pending(cx);
-        if !self.operational(){return;}
-        let generation=self.source_serial;
+        if !self.operational() {
+            return;
+        }
+        let generation = self.source_serial;
         let Some(session) = self.session.clone() else {
             return;
         };
         let client = self.client.clone();
         let mut machine = self.machine.clone();
         let key = self.session_key.clone().expect("operational owner");
-        let expected_machine=key.machine.clone();
-        let source=self.expected_source.clone().expect("operational source");
+        let expected_machine = key.machine.clone();
+        let source = self.expected_source.clone().expect("operational source");
         self._pending_read = Some(cx.spawn(async move |composer, cx| {
             let mut after_created = None;
             let mut after_client: Option<String> = None;
@@ -353,7 +372,7 @@ async fn read_part(
     part: &str,
     total: u64,
     machine: Option<&str>,
-    source:&crate::core::socket::row_source::ExpectedRowSource,
+    source: &crate::core::socket::row_source::ExpectedRowSource,
     cx: &mut AsyncApp,
 ) -> Result<Vec<u8>, CallError> {
     let mut bytes = Vec::new();

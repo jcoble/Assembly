@@ -7,10 +7,10 @@ pub mod diff_header;
 pub mod expand_row;
 #[cfg(test)]
 mod expand_row_tests;
+pub mod file_icon;
 pub mod filter_pills;
 #[cfg(test)]
 mod filter_pills_tests;
-pub mod file_icon;
 pub mod pane_names;
 
 pub mod ask;
@@ -21,7 +21,7 @@ pub mod spinner;
 pub mod tab_stack;
 pub mod three_line_row;
 
-pub mod reasoned_item;
 pub mod markdown;
+pub mod reasoned_item;
 
 pub mod activity;

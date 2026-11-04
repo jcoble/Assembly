@@ -1,15 +1,16 @@
 //! Create a pull request: branch into base, title and description drafted once when it opens, and it pushes before it
 //! creates. A draft lands only on the fields it was asked for. Replaces PullRequestPanel.svelte.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::git_action::GitWrites;
 use super::super::git_branches::GitBranchList;
 use super::super::git_operation::OperationStatus;
 use super::super::git_target::GitTarget;
 use super::pull_request::PullRequestCreated;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::{
     intents::{open_pull_requests::OpenPullRequests, open_url::OpenUrl},
     socket::{client::SocketClient, outcome::Outcome},
 };
+use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
@@ -84,7 +85,7 @@ pub fn open(
     let form = cx.new(|cx| CreatePrForm::new(target, writes, branch, window, cx));
     window.open_dialog(cx, move |dialog, _, _| {
         dialog
-            .title("Create pull request")
+            .title("New pull request")
             .footer(Empty)
             .child(form.clone())
     });
@@ -97,10 +98,10 @@ impl CreatePrForm {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let title = cx.new(|cx| InputState::new(window, cx).placeholder("Title"));
+        let title = cx.new(|cx| InputState::new(window, cx).placeholder("Pull request title"));
         let description = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .placeholder("Description")
+                .placeholder("What changed and how it was checked")
                 .auto_grow(4, 10)
         });
         let edited = |form: &mut Self, event: &InputEvent, cx: &mut Context<Self>| {
@@ -301,7 +302,11 @@ impl CreatePrForm {
 }
 impl Render for CreatePrForm {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (danger, muted) = (cx.theme().danger, cx.theme().muted_foreground);
+        let (danger, muted, mono) = (
+            cx.theme().danger,
+            cx.theme().muted_foreground,
+            cx.theme().mono_font_family.clone(),
+        );
         let busy = self.writes.busy(cx);
         let creating = self.pending == Some("createPr");
         let drafting = self.pending == Some("draftPr");
@@ -347,6 +352,7 @@ impl Render for CreatePrForm {
                 h_flex()
                     .gap_2()
                     .text_role(TextRole::Body, cx)
+                    .font_family(mono)
                     .child(div().truncate().child(self.branch.clone()))
                     .child(div().text_color(muted).child("→"))
                     .child(base_menu),
@@ -371,11 +377,12 @@ impl Render for CreatePrForm {
                     .text_color(muted)
                     .child("Generating title & description...")
             }))
-            .children(
-                self.error
-                    .clone()
-                    .map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)),
-            )
+            .children(self.error.clone().map(|error| {
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(danger)
+                    .child(error)
+            }))
             .children(self.unconfirmed.then(|| {
                 Button::new("create-pr-refresh")
                     .ghost()
@@ -403,7 +410,8 @@ impl Render for CreatePrForm {
                                 .ghost()
                                 .label("Open on GitHub")
                                 .on_click(move |_, window, cx| {
-                                    window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
+                                    window
+                                        .dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
                                 }),
                         ),
                     )
@@ -438,6 +446,7 @@ impl Render for CreatePrForm {
                     .child(
                         Button::new("create-pr-regenerate")
                             .ghost()
+                            .icon(IconName::Sparkles)
                             .label("Regenerate")
                             .disabled(disabled || self.base.is_empty())
                             .on_click(cx.listener(|form, _, _, cx| form.generate(cx))),

@@ -1,7 +1,7 @@
 //! Selected-file history uses step 9's exact query/model/diff intent and owns only its visible request.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::intents::open_commit_diff::OpenCommitDiff;
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::features::source_control::git_history::GitHistory;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
@@ -114,7 +114,11 @@ pub struct FileHistory {
 }
 
 impl FileHistory {
-    pub fn new(session: String, path: String, source: Option<crate::core::socket::row_source::ExpectedRowSource>) -> Self {
+    pub fn new(
+        session: String,
+        path: String,
+        source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    ) -> Self {
         Self {
             source,
             state: FileHistoryState::new(session, path),
@@ -188,12 +192,12 @@ impl Render for FileHistory {
                         })),
                 ),
             )
-            .children(
-                self.state
-                    .error
-                    .clone()
-                    .map(|error| div().text_role(TextRole::Body, cx).text_color(muted).child(error)),
-            )
+            .children(self.state.error.clone().map(|error| {
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(muted)
+                    .child(error)
+            }))
             .when(
                 self.state.loaded && self.state.page.commits.is_empty(),
                 |view| view.child("No commits for this file."),
@@ -219,10 +223,12 @@ impl Render for FileHistory {
                             .py_1()
                             .cursor_pointer()
                             .child(commit.subject.clone())
-                            .child(div().text_role(TextRole::Body, cx).text_color(muted).child(format!(
-                                "{} · {} · {}",
-                                commit.short_sha, commit.author, commit.committed_at
-                            )))
+                            .child(div().text_role(TextRole::Body, cx).text_color(muted).child(
+                                format!(
+                                    "{} · {} · {}",
+                                    commit.short_sha, commit.author, commit.committed_at
+                                ),
+                            ))
                             .on_click(move |_, window, cx| {
                                 window.dispatch_action(Box::new(intent.clone()), cx)
                             })

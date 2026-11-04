@@ -35,7 +35,9 @@ impl TopicSubscription<super::engine_update::EngineUpdate> {
     /// Requests a fresh snapshot through the same stable subscription handle.
     pub fn resnapshot_request(&self) -> Box<dyn Fn()> {
         let (events, handle) = (self.events.clone(), self.id);
-        Box::new(move || { let _ = events.send(Event::ResnapshotEngine { handle }); })
+        Box::new(move || {
+            let _ = events.send(Event::ResnapshotEngine { handle });
+        })
     }
 
     /// Called only after a complete scoped page has been applied by its consumer.

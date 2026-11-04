@@ -56,8 +56,13 @@ impl ClientThread {
                     {
                         self.reset_engine(id);
                     } else {
-                        if let Some(feed)=self.engines.remove(&id) {
-                            let _=feed.updates.unbounded_send(crate::core::socket::engine_update::EngineUpdate::Refused{code,message});
+                        if let Some(feed) = self.engines.remove(&id) {
+                            let _ = feed.updates.unbounded_send(
+                                crate::core::socket::engine_update::EngineUpdate::Refused {
+                                    code,
+                                    message,
+                                },
+                            );
                         }
                     }
                 } else if code == "cancelled" {

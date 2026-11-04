@@ -73,19 +73,27 @@ fn registered_text_fields_cannot_hide_operational_objects() {
 
 #[test]
 fn captured_git_source_assertions_roundtrip_but_malformed_or_operational_fields_refuse() {
-    for source in [Value::Null, json!({"machine":"source","generation":7,"routeMachine":"route"})] {
-        let mut pane=history();
-        pane["state"]["info"]["panel"]["expectedSource"]=source;
-        let value=json!({"order":["git-history:session"],"activeKey":"git-history:session","panes":[pane]});
-        let decoded=parse(&value,&key(),&json!({"files":[]})).unwrap().unwrap();
-        assert_eq!(serde_json::to_value(decoded).unwrap(),value);
+    for source in [
+        Value::Null,
+        json!({"machine":"source","generation":7,"routeMachine":"route"}),
+    ] {
+        let mut pane = history();
+        pane["state"]["info"]["panel"]["expectedSource"] = source;
+        let value = json!({"order":["git-history:session"],"activeKey":"git-history:session","panes":[pane]});
+        let decoded = parse(&value, &key(), &json!({"files":[]}))
+            .unwrap()
+            .unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), value);
     }
-    for source in [json!("route"),json!({"machine":"source","generation":"7","routeMachine":"route"}),
-        json!({"machine":"source","generation":7,"routeMachine":"route","permissions":"allow"})] {
-        let mut pane=history();
-        pane["state"]["info"]["panel"]["expectedSource"]=source;
-        let value=json!({"order":["git-history:session"],"activeKey":"git-history:session","panes":[pane]});
-        assert!(parse(&value,&key(),&json!({"files":[]})).is_err());
+    for source in [
+        json!("route"),
+        json!({"machine":"source","generation":"7","routeMachine":"route"}),
+        json!({"machine":"source","generation":7,"routeMachine":"route","permissions":"allow"}),
+    ] {
+        let mut pane = history();
+        pane["state"]["info"]["panel"]["expectedSource"] = source;
+        let value = json!({"order":["git-history:session"],"activeKey":"git-history:session","panes":[pane]});
+        assert!(parse(&value, &key(), &json!({"files":[]})).is_err());
     }
 }
 
@@ -104,7 +112,9 @@ fn tabs(pane: Value) -> Value {
 #[test]
 fn a_history_tab_keeps_the_checkout_hint_it_wrote_and_an_absent_hint_is_no_hint() {
     let value = tabs(hinted());
-    let decoded = parse(&value, &key(), &json!({"files":[]})).unwrap().unwrap();
+    let decoded = parse(&value, &key(), &json!({"files":[]}))
+        .unwrap()
+        .unwrap();
     assert_eq!(serde_json::to_value(decoded).unwrap(), value);
     let mut none = hinted();
     none["state"]["info"]["panel"]["checkoutHint"] = Value::Null;
@@ -120,7 +130,10 @@ fn a_checkout_hint_outside_its_workspace_or_with_other_fields_is_refused() {
     let other_owner = json!({"machine":"other","generation":7,"routeMachine":"route"});
     let replaced = json!({"machine":"source","generation":8,"routeMachine":"route"});
     let mut no_field = hinted();
-    no_field["state"]["info"]["panel"]["checkoutHint"].as_object_mut().unwrap().remove("path");
+    no_field["state"]["info"]["panel"]["checkoutHint"]
+        .as_object_mut()
+        .unwrap()
+        .remove("path");
     let mut text = hinted();
     text["state"]["info"]["panel"]["checkoutHint"] = json!("/linked");
     let mut no_pane_source = hinted();
@@ -148,10 +161,19 @@ fn a_checkout_hint_outside_its_workspace_or_with_other_fields_is_refused() {
 fn only_a_history_tab_can_carry_a_checkout_hint() {
     let hint = hinted()["state"]["info"]["panel"]["checkoutHint"].clone();
     for (name, pane_key, info) in [
-        ("Changes", "Changes", json!({"session":"session","checkoutHint":hint})),
-        ("Pull requests", "pull-requests", json!({"session":"session","checkoutHint":hint})),
+        (
+            "Changes",
+            "Changes",
+            json!({"session":"session","checkoutHint":hint}),
+        ),
+        (
+            "Pull requests",
+            "pull-requests",
+            json!({"session":"session","checkoutHint":hint}),
+        ),
     ] {
-        let pane = json!({"key":pane_key,"state":{"panel_name":name,"children":[],"info":{"panel":info}}});
+        let pane =
+            json!({"key":pane_key,"state":{"panel_name":name,"children":[],"info":{"panel":info}}});
         assert!(parse(&tabs(pane), &key(), &json!({"files":[]})).is_err());
     }
 }

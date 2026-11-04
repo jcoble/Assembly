@@ -1,7 +1,7 @@
 //! The header's branch menu: switch branch, new branch, and stash. It draws what the pane read and says what was picked;
 //! the pane owns the read and the write, so nothing here reaches the backend.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::git_branches::GitBranch;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -145,8 +145,10 @@ impl BranchMenu {
     /// A finished create leaves nothing to type over next time.
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.refused = None;
-        self.name.update(cx, |input, cx| input.set_value("", window, cx));
-        self.filter.update(cx, |input, cx| input.set_value("", window, cx));
+        self.name
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.filter
+            .update(cx, |input, cx| input.set_value("", window, cx));
         cx.notify();
     }
     fn create(&mut self, cx: &mut Context<Self>) {
@@ -170,7 +172,14 @@ impl BranchMenu {
     fn branch_rows(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
-        let line = |text: String, color: Hsla| div().px_2().py_1().text_role(TextRole::Body, cx).text_color(color).child(text);
+        let line = |text: String, color: Hsla| {
+            div()
+                .px_2()
+                .py_1()
+                .text_role(TextRole::Body, cx)
+                .text_color(color)
+                .child(text)
+        };
         if let Some(failure) = &self.failure {
             return line(failure.clone(), danger).into_any_element();
         }
@@ -206,9 +215,14 @@ impl BranchMenu {
                             .w_full()
                             .min_w_0()
                             .gap_2()
-                            .child(div().flex_none().size(px(14.)).when(branch.current, |mark| {
-                                mark.child(Icon::new(IconName::Check).size(px(14.)))
-                            }))
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .size(px(14.))
+                                    .when(branch.current, |mark| {
+                                        mark.child(Icon::new(IconName::Check).size(px(14.)))
+                                    }),
+                            )
                             .child(
                                 v_flex()
                                     .flex_1()
@@ -254,7 +268,13 @@ impl Render for BranchMenu {
             .child(Self::heading("NEW BRANCH", cx))
             .child(Input::new(&self.name).small().disabled(busy))
             .when_some(problem, |menu, problem| {
-                menu.child(div().px_2().text_role(TextRole::Body, cx).text_color(danger).child(problem))
+                menu.child(
+                    div()
+                        .px_2()
+                        .text_role(TextRole::Body, cx)
+                        .text_color(danger)
+                        .child(problem),
+                )
             })
             .child(
                 Button::new("branch-create")

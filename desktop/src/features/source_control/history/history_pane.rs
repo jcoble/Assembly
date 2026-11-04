@@ -1,4 +1,3 @@
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::commit_timeline::{CommitTimeline, uncommitted_of};
 use super::git_checkouts::{CheckoutHint, GitCheckouts, checkout_gone, repository_label};
 use super::git_status::GitStatus;
@@ -7,6 +6,7 @@ use crate::core::socket::{
     checkout_selector::CheckoutSelector, client::SocketClient, outcome::Outcome,
 };
 use crate::core::state::sessions::Sessions;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::{intents::open_git_history::OpenGitHistory, ui::center_panes::CenterPanes};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -73,8 +73,15 @@ impl HistoryPane {
                 return Err(invalid());
             }
         }
-        if let Some(source) = info.get("expectedSource").filter(|source| !source.is_null()) {
-            if serde_json::from_value::<crate::core::socket::row_source::ExpectedRowSource>(source.clone()).is_err() {
+        if let Some(source) = info
+            .get("expectedSource")
+            .filter(|source| !source.is_null())
+        {
+            if serde_json::from_value::<crate::core::socket::row_source::ExpectedRowSource>(
+                source.clone(),
+            )
+            .is_err()
+            {
                 return Err(invalid());
             }
         }
@@ -123,7 +130,10 @@ impl HistoryPane {
             };
             let session = saved["session"].as_str().unwrap_or_default().to_string();
             let path = saved["path"].as_str().map(String::from);
-            let source = saved.get("expectedSource").cloned().and_then(|value| serde_json::from_value(value).ok());
+            let source = saved
+                .get("expectedSource")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok());
             let hint = CheckoutHint::saved(&build.state().info);
             let pane = cx.new(|cx| {
                 let mut pane = Self::new(session.clone(), path, source, window, cx);
@@ -168,9 +178,12 @@ impl HistoryPane {
                     pane.checkout_hint = None;
                     pane.checkouts = None;
                     pane.own_branch = None;
-                    pane.timeline.update(cx, |timeline, cx| timeline.set_checkout(None, cx));
+                    pane.timeline
+                        .update(cx, |timeline, cx| timeline.set_checkout(None, cx));
                 }
-                pane.timeline.update(cx, |timeline, cx| timeline.set_target(intent.path, intent.expected_source, cx));
+                pane.timeline.update(cx, |timeline, cx| {
+                    timeline.set_target(intent.path, intent.expected_source, cx)
+                });
                 if moved {
                     pane.checkout = None;
                     pane.status = None;
@@ -187,7 +200,13 @@ impl HistoryPane {
             CenterPanes::open(key(&intent.session_id), window, cx, |window, cx| {
                 let session = intent.session_id;
                 let pane = cx.new(|cx| {
-                    let mut pane = Self::new(session.clone(), intent.path, intent.expected_source, window, cx);
+                    let mut pane = Self::new(
+                        session.clone(),
+                        intent.path,
+                        intent.expected_source,
+                        window,
+                        cx,
+                    );
                     pane.ask_for(intent.checkout, cx);
                     pane
                 });
@@ -203,8 +222,17 @@ impl HistoryPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let timeline = cx.new(|cx| CommitTimeline::new(session.clone(), path.clone(), expected_source.clone(), true, cx));
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search message, hash or author"));
+        let timeline = cx.new(|cx| {
+            CommitTimeline::new(
+                session.clone(),
+                path.clone(),
+                expected_source.clone(),
+                true,
+                cx,
+            )
+        });
+        let search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search message, hash or author"));
         let mut heard = vec![
             cx.observe(&timeline, |_, _, cx| cx.notify()),
             cx.subscribe(&search, |pane, _, event: &InputEvent, cx| {
@@ -244,7 +272,10 @@ impl HistoryPane {
     fn session_state(&self, cx: &App) -> Option<String> {
         let sessions = Sessions::try_global(cx)?;
         let sessions = sessions.read(cx);
-        let item = sessions.items().iter().find(|item| item.session_id == self.session)?;
+        let item = sessions
+            .items()
+            .iter()
+            .find(|item| item.session_id == self.session)?;
         Some(item.state.clone())
     }
     /// A turn that ends has usually changed the working copy, and the uncommitted row has to say so.
@@ -308,14 +339,21 @@ impl HistoryPane {
         let Some(status) = &self.status else {
             return match (&self.checkout, &self.checkouts) {
                 (Some(checkout), _) => checkout.folder().to_string(),
-                (None, Some(checkouts)) => repository_label(&checkouts.session_root, self.own_branch.as_deref()),
+                (None, Some(checkouts)) => {
+                    repository_label(&checkouts.session_root, self.own_branch.as_deref())
+                }
                 (None, None) => "No repository".into(),
             };
         };
         let folder = status
             .checkout_root
             .as_deref()
-            .map(|root| root.trim_end_matches('/').rsplit('/').next().unwrap_or(root))
+            .map(|root| {
+                root.trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(root)
+            })
             .unwrap_or("This folder");
         match &status.branch {
             Some(branch) => format!("{folder} ({branch})"),
@@ -363,7 +401,8 @@ impl BasePanel for HistoryPane {
             .update(cx, |timeline, cx| timeline.set_active(false, cx));
     }
     fn dump(&self, _: &App) -> PanelState {
-        let mut info = json!({"session":self.session,"path":self.path,"expectedSource":self.expected_source});
+        let mut info =
+            json!({"session":self.session,"path":self.path,"expectedSource":self.expected_source});
         if let Some(hint) = &self.checkout_hint {
             info["checkoutHint"] = json!(hint);
         }
@@ -379,159 +418,13 @@ impl Panel for HistoryPane {
         HISTORY
     }
 }
-/// One of the toolbar's pickers: its value on the trigger, "All…" and each choice in its menu.
-fn picker(
-    trigger: Button,
-    label: String,
-    all: &'static str,
-    options: Vec<String>,
-    current: Option<String>,
-    pane: WeakEntity<HistoryPane>,
-    pick: fn(&mut HistoryFilter, Option<String>),
-) -> impl IntoElement + use<> {
-    trigger
-        .outline()
-        .small()
-        .dropdown_caret(true)
-        .label(label)
-        .dropdown_menu(move |menu, _, _| {
-            std::iter::once(None)
-                .chain(options.iter().cloned().map(Some))
-                .fold(menu, |menu, value| {
-                    let pane = pane.clone();
-                    let checked = current == value;
-                    menu.item(
-                        PopupMenuItem::new(value.clone().unwrap_or_else(|| all.into()))
-                            .checked(checked)
-                            .on_click(move |_, _, cx| {
-                                _ = pane.update(cx, |pane, cx| {
-                                    pick(&mut pane.filter, value.clone());
-                                    pane.apply_filter(cx);
-                                });
-                            }),
-                    )
-                })
-        })
-}
-impl Render for HistoryPane {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let timeline = self.timeline.read(cx);
-        let (loaded, shown, reading) =
-            (timeline.history.commits.len(), timeline.shown_count(), timeline.is_reading());
-        let branches = branch_options(&timeline.history.commits);
-        let authors = author_options(&timeline.history.commits);
-        let count = if self.filter.active() {
-            format!("{shown} of {loaded}")
-        } else if loaded > 0 {
-            format!("{loaded} commits")
-        } else {
-            String::new()
-        };
-        let theme = cx.theme();
-        let (muted, border, surface) = (theme.muted_foreground, theme.border, theme.secondary);
-        let weak = cx.entity().downgrade();
-        let branch_label = format!(
-            "History: {}",
-            self.filter.branch.as_deref().unwrap_or("all branches")
-        );
-        let toolbar = h_flex()
-            .flex_none()
-            .gap_2()
-            .px(px(10.))
-            .py(px(6.))
-            .bg(surface)
-            .border_b_1()
-            .border_color(border)
-            .child(checkout::repository_picker(
-                self.folder_label(),
-                self.checkouts
-                    .as_ref()
-                    .filter(|checkouts| checkouts.has_others())
-                    .map(|checkouts| checkouts.repository_choices(self.own_branch.as_deref())),
-                self.checkout.as_ref().map(|checkout| checkout.path.clone()),
-                weak.clone(),
-            ))
-            .children(self.path.clone().map(|path| {
-                let tip = path.clone();
-                h_flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .id("history-path")
-                            .max_w(px(260.))
-                            .truncate()
-                            .px(px(7.))
-                            .py(px(3.))
-                            .border_1()
-                            .border_color(border)
-                            .rounded(px(5.))
-                            .text_role(TextRole::Body, cx)
-                            .text_color(muted)
-                            .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-                            .child(path),
-                    )
-                    .child(
-                        div().debug_selector(|| "history-path-clear".into()).child(
-                            Button::new("history-path-clear")
-                                .ghost()
-                                .compact()
-                                .icon(Icon::new(IconName::X).size(px(14.)))
-                                .tooltip("Show all repository history")
-                                .on_click(cx.listener(|pane, _, _, cx| pane.set_path(None, cx))),
-                        ),
-                    )
-            }))
-            .child(picker(
-                Button::new("history-branch")
-                    .tooltip("Filters the history shown here. It does not switch the working directory."),
-                branch_label,
-                "All branches",
-                branches,
-                self.filter.branch.clone(),
-                weak.clone(),
-                |filter, value| filter.branch = value,
-            ))
-            .child(picker(
-                Button::new("history-author"),
-                self.filter.author.clone().unwrap_or_else(|| "All authors".into()),
-                "All authors",
-                authors,
-                self.filter.author.clone(),
-                weak,
-                |filter, value| filter.author = value,
-            ))
-            .child(div().flex_1().min_w_0().max_w(px(320.)).child(Input::new(&self.search).small()))
-            .child(div().flex_none().text_role(TextRole::Body, cx).text_color(muted).child(count))
-            .child(div().flex_1())
-            .child(
-                Button::new("history-refresh")
-                    .ghost()
-                    .compact()
-                    .icon(Icon::new(IconName::RefreshCw).size(px(14.)))
-                    .tooltip("Read the commit history again")
-                    .disabled(reading)
-                    .on_click(cx.listener(|pane, _, _, cx| {
-                        pane.notice = None;
-                        pane.read_status(cx);
-                        pane.timeline.update(cx, |timeline, cx| timeline.refresh(cx))
-                    })),
-            );
-        v_flex()
-            .track_focus(&self.focus)
-            .size_full()
-            .min_h_0()
-            .child(toolbar)
-            .children(self.notice.clone().map(|notice| {
-                div().flex_none().px(px(10.)).py_1().text_role(TextRole::Body, cx).text_color(muted).child(notice)
-            }))
-            .child(self.timeline.clone())
-    }
-}
 #[path = "history_checkout.rs"]
 mod checkout;
 #[cfg(test)]
-#[path = "history_pane_tests.rs"]
-mod tests;
-#[cfg(test)]
 #[path = "history_checkout_tests.rs"]
 mod checkout_tests;
+#[path = "history_render.rs"]
+mod render;
+#[cfg(test)]
+#[path = "history_pane_tests.rs"]
+mod tests;

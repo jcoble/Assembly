@@ -1,6 +1,7 @@
-use super::{Read, SocketClient, Outcome, WorkspaceCoordinator, WorkspaceKey, WorkspacePanes, WorkspaceRefused, WorkspaceTarget};
-use gpui_kit::{App, AppContext as _, Context, IntoElement, Render, Window, div};
-use serde_json::{Value, json};
+use super::{
+    Outcome, Read, SocketClient, WorkspaceCoordinator, WorkspaceKey, WorkspacePanes,
+    WorkspaceRefused, WorkspaceTarget,
+};
 use crate::core::socket::{
     endpoint::Endpoint,
     fake_backend::{FakeBackend, Reply, hello},
@@ -9,6 +10,8 @@ use crate::core::socket::{
 use crate::core::state::workspace_panes::PaneCodec;
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
+use gpui_kit::{App, AppContext as _, Context, IntoElement, Render, Window, div};
+use serde_json::{Value, json};
 use std::{
     cell::RefCell,
     rc::Rc,
@@ -102,26 +105,30 @@ async fn a_late_initial_read_cannot_restore_the_previous_checkout(cx: &mut TestA
             heard.borrow_mut().push(event.clone())
         })
     });
-    let first = cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            WorkspaceTarget::Checkout(key("/a")),
-            Box::new(|_, _, _| Ok(())),
-            window,
-            cx,
-        )
-    }));
+    let first = cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::Checkout(key("/a")),
+                Box::new(|_, _, _| Ok(())),
+                window,
+                cx,
+            )
+        })
+    });
     a_seen
         .await
         .expect("the first exact read reached its owning socket");
-    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            WorkspaceTarget::Checkout(key("/b")),
-            Box::new(|_, _, _| Ok(())),
-            window,
-            cx,
-        );
-        view.cancel(first, cx);
-    }));
+    cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::Checkout(key("/b")),
+                Box::new(|_, _, _| Ok(())),
+                window,
+                cx,
+            );
+            view.cancel(first, cx);
+        })
+    });
     until("the latest checkout", &mut changes, &changed, || {
         coordinator.read_with(cx, |view, _| view.current_key() == Some(&key("/b")))
     })
@@ -184,31 +191,35 @@ async fn a_refused_workspace_save_keeps_a_and_never_invokes_the_prepared_b_commi
             let _ = tell.unbounded_send(());
         })
     });
-    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            WorkspaceTarget::Checkout(key("/a")),
-            Box::new(|_, _, _| Ok(())),
-            window,
-            cx,
-        );
-    }));
+    cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::Checkout(key("/a")),
+                Box::new(|_, _, _| Ok(())),
+                window,
+                cx,
+            );
+        })
+    });
     until("A restored", &mut changes, &changed, || {
         coordinator.read_with(cx, |view, _| view.current_key() == Some(&key("/a")))
     })
     .await;
     let committed = Rc::new(Cell::new(0));
     let callback = committed.clone();
-    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            WorkspaceTarget::Checkout(key("/b")),
-            Box::new(move |_, _, _| {
-                callback.set(callback.get() + 1);
-                Ok(())
-            }),
-            window,
-            cx,
-        );
-    }));
+    cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::Checkout(key("/b")),
+                Box::new(move |_, _, _| {
+                    callback.set(callback.get() + 1);
+                    Ok(())
+                }),
+                window,
+                cx,
+            );
+        })
+    });
     until("the actual refusal", &mut changes, &changed, || {
         coordinator.read_with(cx, |view, _| {
             view.status
@@ -265,17 +276,19 @@ async fn a_corrupt_target_never_commits_selection_or_overwrites_the_current_key(
     });
     let committed = Rc::new(Cell::new(false));
     let callback = committed.clone();
-    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            WorkspaceTarget::Checkout(key("/b")),
-            Box::new(move |_, _, _| {
-                callback.set(true);
-                Ok(())
-            }),
-            window,
-            cx,
-        );
-    }));
+    cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::Checkout(key("/b")),
+                Box::new(move |_, _, _| {
+                    callback.set(true);
+                    Ok(())
+                }),
+                window,
+                cx,
+            );
+        })
+    });
     until("corrupt target refused", &mut changes, &changed, || {
         coordinator.read_with(cx, |view, _| view.status.is_some())
     })
@@ -308,28 +321,32 @@ async fn immediate_refusals_are_delivered_after_registration_once_for_each_gener
             sent.unbounded_send(event.clone()).unwrap();
         })
     });
-    let first = cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        let generation = view.request(
-            WorkspaceTarget::Checkout(key("/a")),
-            Box::new(|_, _, _| panic!("missing connection cannot commit")),
-            window,
-            cx,
-        );
-        registered.set(generation);
-        generation
-    }));
-    let second = cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        let generation = view.request(
-            WorkspaceTarget::Checkout(key("/b")),
-            Box::new(|_, _, _| panic!("missing connection cannot commit")),
-            window,
-            cx,
-        );
-        registered.set(generation);
-        view.cancel(first, cx);
-        view.cancel(generation, cx);
-        generation
-    }));
+    let first = cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            let generation = view.request(
+                WorkspaceTarget::Checkout(key("/a")),
+                Box::new(|_, _, _| panic!("missing connection cannot commit")),
+                window,
+                cx,
+            );
+            registered.set(generation);
+            generation
+        })
+    });
+    let second = cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            let generation = view.request(
+                WorkspaceTarget::Checkout(key("/b")),
+                Box::new(|_, _, _| panic!("missing connection cannot commit")),
+                window,
+                cx,
+            );
+            registered.set(generation);
+            view.cancel(first, cx);
+            view.cancel(generation, cx);
+            generation
+        })
+    });
     let a = events.recv().await.unwrap();
     let b = events.recv().await.unwrap();
     assert_eq!(
@@ -392,22 +409,26 @@ async fn cancelling_a_held_read_emits_one_refusal_and_drops_the_prepared_commit(
     }
     let dropped = Rc::new(std::cell::Cell::new(false));
     let prepared = Prepared(dropped.clone());
-    let generation = cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            WorkspaceTarget::Checkout(key("/a")),
-            Box::new(move |_, _, _| {
-                let _prepared = prepared;
-                panic!("cancelled navigation must never commit")
-            }),
-            window,
-            cx,
-        )
-    }));
+    let generation = cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::Checkout(key("/a")),
+                Box::new(move |_, _, _| {
+                    let _prepared = prepared;
+                    panic!("cancelled navigation must never commit")
+                }),
+                window,
+                cx,
+            )
+        })
+    });
     requested.await.unwrap();
-    cx.update(|_, cx| coordinator.update(cx, |view, cx| {
-        view.cancel(generation, cx);
-        view.cancel(generation, cx);
-    }));
+    cx.update(|_, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.cancel(generation, cx);
+            view.cancel(generation, cx);
+        })
+    });
     let event = events.recv().await.unwrap();
     assert_eq!(event.generation, generation);
     assert_eq!(event.target, WorkspaceTarget::Checkout(key("/a")));
@@ -497,42 +518,48 @@ async fn a_to_b_to_a_checkouts_restore_each_roots_own_saved_view(cx: &mut TestAp
             let _ = tell.unbounded_send(());
         })
     });
-    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            WorkspaceTarget::Checkout(key("/a")),
-            Box::new(|_, _, _| Ok(())),
-            window,
-            cx,
-        );
-    }));
+    cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::Checkout(key("/a")),
+                Box::new(|_, _, _| Ok(())),
+                window,
+                cx,
+            );
+        })
+    });
     until("A initially restored", &mut changes, &changed, || {
         coordinator.read_with(cx, |view, _| view.current_key() == Some(&key("/a")))
     })
     .await;
     assert_eq!(live.borrow()["activePath"], "a-original");
     *live.borrow_mut() = json!({"files":[],"activePath":"a-edited"});
-    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            WorkspaceTarget::Checkout(key("/b")),
-            Box::new(|_, _, _| Ok(())),
-            window,
-            cx,
-        );
-    }));
+    cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::Checkout(key("/b")),
+                Box::new(|_, _, _| Ok(())),
+                window,
+                cx,
+            );
+        })
+    });
     until("B restored after A save", &mut changes, &changed, || {
         coordinator.read_with(cx, |view, _| view.current_key() == Some(&key("/b")))
     })
     .await;
     assert_eq!(live.borrow()["activePath"], "b-original");
     *live.borrow_mut() = json!({"files":[],"activePath":"b-edited"});
-    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            WorkspaceTarget::Checkout(key("/a")),
-            Box::new(|_, _, _| Ok(())),
-            window,
-            cx,
-        );
-    }));
+    cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::Checkout(key("/a")),
+                Box::new(|_, _, _| Ok(())),
+                window,
+                cx,
+            );
+        })
+    });
     until("A restored again", &mut changes, &changed, || {
         coordinator.read_with(cx, |view, _| view.current_key() == Some(&key("/a")))
     })
@@ -544,6 +571,5 @@ async fn a_to_b_to_a_checkouts_restore_each_roots_own_saved_view(cx: &mut TestAp
     assert_eq!(stored["/b"].0, 5);
     assert_eq!(stored["/b"].1["activePath"], "b-edited");
 }
-
 
 include!("workspace_coordinator_coalescing_tests.rs");

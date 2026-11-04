@@ -75,7 +75,12 @@ fn a_project_cannot_act_until_it_has_read_and_then_uses_the_root_that_read_showe
     assert_eq!(target.repository, "o/r");
     assert_eq!(target.checkout_root, "/shown");
     assert_eq!(scope.session(), None);
-    assert!(scope.read_args(json!({})).get("expectedRepository").is_none());
+    assert!(
+        scope
+            .read_args(json!({}))
+            .get("expectedRepository")
+            .is_none()
+    );
     let start = scope.write_args(json!({}));
     assert_eq!(start["expectedRepository"], "o/r");
     assert_eq!(start["expectedCheckoutRoot"], "/shown");
@@ -104,11 +109,18 @@ fn a_pull_request_opens_under_the_chosen_project_and_no_owner_is_guessed() {
         project("other", "local", "o/other"),
     ];
     let ids = |chosen, repository, listed_local| {
-        holders(&rows, chosen, repository, listed_local)
-            .map(|found| found.into_iter().map(|project| project.id).collect::<Vec<_>>())
+        holders(&rows, chosen, repository, listed_local).map(|found| {
+            found
+                .into_iter()
+                .map(|project| project.id)
+                .collect::<Vec<_>>()
+        })
     };
     let one = |id: &str| Ok(vec![id.to_string()]);
-    assert_eq!(ids(None, Some("o/r"), false), Ok(vec!["remote".to_string(), "here".to_string()]));
+    assert_eq!(
+        ids(None, Some("o/r"), false),
+        Ok(vec!["remote".to_string(), "here".to_string()])
+    );
     assert_eq!(ids(None, Some("o/r"), true), one("here"));
     assert_eq!(ids(Some("remote"), Some("o/r"), true), one("remote"));
     assert_eq!(ids(Some("other"), None, false), one("other"));
@@ -164,9 +176,15 @@ async fn resolving_asks_for_the_projects_route_and_refuses_another_engines_answe
         )
     });
     // Any answer means the welcome, which names this computer's Engine, has arrived.
-    let ready = cx.update(|cx| socket.read(cx).call::<Value>("test", "ready", json!({}), None));
+    let ready = cx.update(|cx| {
+        socket
+            .read(cx)
+            .call::<Value>("test", "ready", json!({}), None)
+    });
     assert!(matches!(ready.await, Outcome::Ok(_)));
-    let here = cx.update(|cx| resolve(&project("here", "local", "o/r"), cx)).await;
+    let here = cx
+        .update(|cx| resolve(&project("here", "local", "o/r"), cx))
+        .await;
     assert_eq!(
         here,
         Ok(PrOwner::Project {
@@ -178,7 +196,9 @@ async fn resolving_asks_for_the_projects_route_and_refuses_another_engines_answe
             },
         })
     );
-    let remote = cx.update(|cx| resolve(&project("away", "lane", "o/r"), cx)).await;
+    let remote = cx
+        .update(|cx| resolve(&project("away", "lane", "o/r"), cx))
+        .await;
     assert_eq!(
         remote,
         Ok(PrOwner::Project {

@@ -3,12 +3,12 @@
 //! live in desktop/themes/.
 
 pub mod apply;
+#[cfg(test)]
+pub mod copied_themes;
 pub mod fade;
 pub mod grow;
 #[cfg(test)]
 mod redraw_tests;
-#[cfg(test)]
-pub mod copied_themes;
 pub mod text;
 pub mod theme_id;
 

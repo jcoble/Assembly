@@ -5,8 +5,8 @@ use std::rc::Rc;
 use gpui::TestAppContext;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::{
-    App, Context, InteractiveElement as _, IntoElement, Modifiers, ParentElement as _, Render, Styled as _,
-    Window, div, point, px,
+    App, Context, InteractiveElement as _, IntoElement, Modifiers, ParentElement as _, Render,
+    Styled as _, Window, div, point, px,
 };
 
 use super::{RowArrow, ThreeLineRow};
@@ -59,8 +59,19 @@ fn the_arrow_and_the_row_each_do_their_own_click(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let bounds = cx.debug_bounds("the-row").expect("the row is drawn");
     let top = bounds.origin.y + px(15.);
-    cx.simulate_click(point(bounds.origin.x + bounds.size.width - px(22.), top), Modifiers::default());
-    assert_eq!((clicks.get(), toggles.get()), (0, 1), "the arrow doesn't open the row");
+    cx.simulate_click(
+        point(bounds.origin.x + bounds.size.width - px(22.), top),
+        Modifiers::default(),
+    );
+    assert_eq!(
+        (clicks.get(), toggles.get()),
+        (0, 1),
+        "the arrow doesn't open the row"
+    );
     cx.simulate_click(point(bounds.origin.x + px(60.), top), Modifiers::default());
-    assert_eq!((clicks.get(), toggles.get()), (1, 1), "the row doesn't press the arrow");
+    assert_eq!(
+        (clicks.get(), toggles.get()),
+        (1, 1),
+        "the row doesn't press the arrow"
+    );
 }

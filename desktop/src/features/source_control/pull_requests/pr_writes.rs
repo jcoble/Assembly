@@ -118,8 +118,10 @@ impl PrWrites {
         args: Value,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let shown = (self.shown.as_ref()).map(|(repository, root)| (repository.as_str(), root.as_str()));
-        let scope = (self.owner.scope(shown)).ok_or("Refresh this pull request before trying again.")?;
+        let shown =
+            (self.shown.as_ref()).map(|(repository, root)| (repository.as_str(), root.as_str()));
+        let scope =
+            (self.owner.scope(shown)).ok_or("Refresh this pull request before trying again.")?;
         self.kind = Some(kind);
         self.waiting = true;
         self.not_confirmed = false;

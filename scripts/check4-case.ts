@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { newSession } from './features/new-session.ts';
 import { connectSocket, type Frame } from './features/socket.ts';
 
 type Row = { sessionId: string; seq: number; prevSeq: number; runId: string; kind: string; payload: any };
@@ -59,10 +60,7 @@ export async function runCase(env: NodeJS.ProcessEnv): Promise<CaseReceipt> {
     connections.push(control);
     const bulk = await connectSocket(env.CHECK4_API!, env.CHECK4_TOKEN!, { signal: controller.signal, endpoint: '/socket/bulk', commit: env.CHECK4_COMMIT });
     connections.push(bulk);
-    const created = await control.call('sessions', 'create', {
-      agent: env.CHECK4_AGENT, repoUrl: env.CHECK4_REPO,
-      ...(env.CHECK4_MACHINE === 'local' ? {} : { machine: 'workbox-test' })
-    });
+    const created = await newSession(control, env.CHECK4_AGENT!, env.CHECK4_REPO!, env.CHECK4_MACHINE === 'local' ? null : 'workbox-test');
     if (typeof created?.sessionId !== 'string' || !created.sessionId) throw new Error('the session was not created');
     receipt.session = created.sessionId;
     // Remote session identity belongs to its host, rather than the desktop's cached session item.

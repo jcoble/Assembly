@@ -113,16 +113,33 @@ impl FilesPane {
         cx.notify();
     }
     pub(super) fn validate_workspace_owner(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.workspace_checked { return true; }
-        if self.observing.is_some() { return false; }
-        let (Some(socket),Some(session))=(SocketClient::try_global(cx),self.session.clone()) else {return false;};
-        let key=self.workspace_key.clone();
-        let source=self.source.clone();
-        let expected=self.owner.clone().or_else(||key.as_ref().map(|key|FileOwnership {
-            machine:key.machine.clone(),checkout_root:key.checkout_root.clone(),remote_session_id:key.session_id.clone()}));
-        let generation=self.generation;
-        let call=socket.read(cx).call::<FileOwnership>("files","owner",json!({"session":session,
-            "expectedSource":source,"expectedOwner":expected}),None);
+        if self.workspace_checked {
+            return true;
+        }
+        if self.observing.is_some() {
+            return false;
+        }
+        let (Some(socket), Some(session)) = (SocketClient::try_global(cx), self.session.clone())
+        else {
+            return false;
+        };
+        let key = self.workspace_key.clone();
+        let source = self.source.clone();
+        let expected = self.owner.clone().or_else(|| {
+            key.as_ref().map(|key| FileOwnership {
+                machine: key.machine.clone(),
+                checkout_root: key.checkout_root.clone(),
+                remote_session_id: key.session_id.clone(),
+            })
+        });
+        let generation = self.generation;
+        let call = socket.read(cx).call::<FileOwnership>(
+            "files",
+            "owner",
+            json!({"session":session,
+            "expectedSource":source,"expectedOwner":expected}),
+            None,
+        );
         self.observing=Some(cx.spawn(async move |pane,cx| {
             let answer=call.await;
             let _=pane.update(cx,|pane,cx| {

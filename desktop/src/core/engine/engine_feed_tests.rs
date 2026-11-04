@@ -78,7 +78,8 @@ async fn two_consumers_share_a_scope_and_the_last_drop_unsubscribes(cx: &mut Tes
     assert!(!cx.update(|cx| feed.read(cx).loaded(&scope)));
     until("replacement complete scope", &mut changes, &changed, || {
         cx.update(|cx| feed.read(cx).loaded(&scope))
-    }).await;
+    })
+    .await;
     assert_eq!(backend.next(), json!({"t":"unsub","id":sub["id"]}));
     let replacement = backend.next();
     assert_eq!(replacement["t"], "sub");
@@ -329,10 +330,16 @@ async fn a_replaced_bulk_connection_leaves_the_cut_unapplied_until_pushed_reconn
 }
 
 #[gpui::test]
-async fn refresh_cancels_a_held_old_entities_read_and_applies_the_new_cut_without_its_reply(cx: &mut TestAppContext) {
+async fn refresh_cancels_a_held_old_entities_read_and_applies_the_new_cut_without_its_reply(
+    cx: &mut TestAppContext,
+) {
     use std::sync::{Arc, Mutex};
     #[derive(Default)]
-    struct Held { id: Option<serde_json::Value>, cancelled: bool, subscriptions: usize }
+    struct Held {
+        id: Option<serde_json::Value>,
+        cancelled: bool,
+        subscriptions: usize,
+    }
     let held = Arc::new(Mutex::new(Held::default()));
     let seen = held.clone();
     let (changed, mut changes) = unbounded();
@@ -340,47 +347,119 @@ async fn refresh_cancels_a_held_old_entities_read_and_applies_the_new_cut_withou
     let backend = FakeBackend::start(move |frame| {
         let mut held = seen.lock().unwrap();
         let replies = match frame["t"].as_str() {
-            Some("hello") => vec![Reply::Frame(json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"owner"}))],
+            Some("hello") => vec![Reply::Frame(
+                json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"owner"}),
+            )],
             Some("sub") => {
                 held.subscriptions += 1;
                 let fresh = held.subscriptions > 1;
-                let items = if fresh { vec![json!({"entityKind":"session","id":"s","machine":"owner","version":3,"title":"Fresh cut"})] } else { vec![] };
-                vec![Reply::Frame(json!({"t":"engine_snapshot","id":frame["id"],"machine":"owner","through":if fresh {3} else {1},"items":items,"more":false}))]
+                let items = if fresh {
+                    vec![
+                        json!({"entityKind":"session","id":"s","machine":"owner","version":3,"title":"Fresh cut"}),
+                    ]
+                } else {
+                    vec![]
+                };
+                vec![Reply::Frame(
+                    json!({"t":"engine_snapshot","id":frame["id"],"machine":"owner","through":if fresh {3} else {1},"items":items,"more":false}),
+                )]
             }
-            Some("ack") if frame["after"] == 1 => vec![Reply::Frame(json!({"t":"engine_events","id":frame["id"],"machine":"owner","after":1,"through":2,
-                "events":[{"machine":"owner","seq":2,"entityKind":"session","entityId":"s","version":2}]}))],
-            Some("call") if frame["method"] == "entities" => { held.id = Some(frame["id"].clone()); vec![] }
-            Some("cancel") => { if held.id.as_ref() == Some(&frame["id"]) { held.cancelled = true; } vec![] }
+            Some("ack") if frame["after"] == 1 => vec![Reply::Frame(
+                json!({"t":"engine_events","id":frame["id"],"machine":"owner","after":1,"through":2,
+                "events":[{"machine":"owner","seq":2,"entityKind":"session","entityId":"s","version":2}]}),
+            )],
+            Some("call") if frame["method"] == "entities" => {
+                held.id = Some(frame["id"].clone());
+                vec![]
+            }
+            Some("cancel") => {
+                if held.id.as_ref() == Some(&frame["id"]) {
+                    held.cancelled = true;
+                }
+                vec![]
+            }
             _ => vec![],
         };
         let _ = notify.unbounded_send(());
         replies
     });
     cx.executor().allow_parking();
-    let endpoint = Endpoint { port: backend.port, token: "secret".into() };
-    let (main, bulk) = cx.update(|cx| (SocketClient::start(endpoint.clone(),cx),SocketClient::start_bulk(endpoint,cx)));
-    let a = changed.clone(); let b = changed.clone();
-    let (_main, _bulk) = cx.update(|cx| (
-        cx.observe(&main,move |_,_| { let _=a.unbounded_send(()); }),
-        cx.observe(&bulk,move |_,_| { let _=b.unbounded_send(()); })
-    ));
-    until("both sockets", &mut changes, &changed, || cx.update(|cx|
-        [&main,&bulk].iter().all(|socket|matches!(socket.read(cx).state(),ConnectionState::Connected{..})))).await;
+    let endpoint = Endpoint {
+        port: backend.port,
+        token: "secret".into(),
+    };
+    let (main, bulk) = cx.update(|cx| {
+        (
+            SocketClient::start(endpoint.clone(), cx),
+            SocketClient::start_bulk(endpoint, cx),
+        )
+    });
+    let a = changed.clone();
+    let b = changed.clone();
+    let (_main, _bulk) = cx.update(|cx| {
+        (
+            cx.observe(&main, move |_, _| {
+                let _ = a.unbounded_send(());
+            }),
+            cx.observe(&bulk, move |_, _| {
+                let _ = b.unbounded_send(());
+            }),
+        )
+    });
+    until("both sockets", &mut changes, &changed, || {
+        cx.update(|cx| {
+            [&main, &bulk]
+                .iter()
+                .all(|socket| matches!(socket.read(cx).state(), ConnectionState::Connected { .. }))
+        })
+    })
+    .await;
     let feed = cx.update(EngineFeed::global);
-    let scope = EngineScope { machine:"owner".into(), topic:"sessions".into(), key:None };
-    let watch = cx.update(|cx| feed.update(cx,|feed,cx|feed.watch(scope.clone(),cx).unwrap()));
-    let signal=changed.clone();
-    let _feed=cx.update(|cx|cx.observe(&feed,move|_,_|{let _=signal.unbounded_send(());}));
-    until("old entities call held",&mut changes,&changed,||held.lock().unwrap().id.is_some()).await;
+    let scope = EngineScope {
+        machine: "owner".into(),
+        topic: "sessions".into(),
+        key: None,
+    };
+    let watch = cx.update(|cx| feed.update(cx, |feed, cx| feed.watch(scope.clone(), cx).unwrap()));
+    let signal = changed.clone();
+    let _feed = cx.update(|cx| {
+        cx.observe(&feed, move |_, _| {
+            let _ = signal.unbounded_send(());
+        })
+    });
+    until("old entities call held", &mut changes, &changed, || {
+        held.lock().unwrap().id.is_some()
+    })
+    .await;
     watch.request_snapshot();
-    assert!(!cx.update(|cx|feed.read(cx).loaded(&scope)));
-    until("fresh cut and old read cancelled",&mut changes,&changed,|| {
-        held.lock().unwrap().cancelled && cx.update(|cx|feed.read(cx).loaded(&scope)
-            && feed.read(cx).item(&super::EngineKey{machine:"owner".into(),kind:"session".into(),id:"s".into()})
-                .is_some_and(|item|item.version==3 && item.value["title"]=="Fresh cut"))
-    }).await;
-    assert_eq!(held.lock().unwrap().subscriptions,2);
-    assert_eq!(cx.update(|cx|feed.read(cx).store.cursor(&scope).unwrap().through),3);
+    assert!(!cx.update(|cx| feed.read(cx).loaded(&scope)));
+    until(
+        "fresh cut and old read cancelled",
+        &mut changes,
+        &changed,
+        || {
+            held.lock().unwrap().cancelled
+                && cx.update(|cx| {
+                    feed.read(cx).loaded(&scope)
+                        && feed
+                            .read(cx)
+                            .item(&super::EngineKey {
+                                machine: "owner".into(),
+                                kind: "session".into(),
+                                id: "s".into(),
+                            })
+                            .is_some_and(|item| {
+                                item.version == 3 && item.value["title"] == "Fresh cut"
+                            })
+                })
+        },
+    )
+    .await;
+    assert_eq!(held.lock().unwrap().subscriptions, 2);
+    assert_eq!(
+        cx.update(|cx| feed.read(cx).store.cursor(&scope).unwrap().through),
+        3
+    );
     // The held entities call has deliberately never received a result frame.
     drop(watch);
 }

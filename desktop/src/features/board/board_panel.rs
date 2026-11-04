@@ -10,21 +10,27 @@ use gpui_kit::*;
 
 use super::board_prefs::{BoardPrefs, BoardTab};
 use super::board_queries::{BoardData, badge_count, open_owner_questions, summary_counts};
-use super::board_sections::{ANSWERED_FOLD, Entry, Section, entries, first_tab, heading, summary, tab_sections};
+use super::board_sections::{
+    ANSWERED_FOLD, Entry, Section, entries, first_tab, heading, summary, tab_sections,
+};
 use super::question_row::{QuestionRows, card_key};
 use super::run_card::{RunCard, RunCardEvent};
 use super::session_tabs::SessionTabs;
 use crate::activity::{CardBody, NeedsCard, RunRow};
 use crate::core::clock::backend_clock::BackendClock;
 use crate::core::clock::tick::Tick;
-use crate::core::engine::{EngineChanged, EngineFeed, EngineKey, EngineScope, EngineWatch, SessionKey};
-use crate::core::intents::session_open::{SessionOpenRequest, SessionOpenResult, SessionOpenTarget};
+use crate::core::commands::command_registry::CommandRegistry;
+use crate::core::engine::{
+    EngineChanged, EngineFeed, EngineKey, EngineScope, EngineWatch, SessionKey,
+};
+use crate::core::intents::session_open::{
+    SessionOpenRequest, SessionOpenResult, SessionOpenTarget,
+};
 use crate::core::socket::client::SocketClient;
 use crate::core::state::machines::Machines;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::row_drop_down::{RowDropDownEvent, RowDropDowns};
-use crate::core::commands::command_registry::CommandRegistry;
 use uuid::Uuid;
 
 use super::ToggleBoard;
@@ -42,13 +48,20 @@ pub struct BoardMemory {
 }
 
 fn tab_index(tab: BoardTab) -> usize {
-    BoardTab::ALL.iter().position(|held| *held == tab).unwrap_or(0)
+    BoardTab::ALL
+        .iter()
+        .position(|held| *held == tab)
+        .unwrap_or(0)
 }
 
 /// The start of today here, which is where "today" sections cut.
 pub fn local_midnight_ms() -> i64 {
     let now = Local::now();
-    let midnight = now.with_hour(0).and_then(|time| time.with_minute(0)).and_then(|time| time.with_second(0)).and_then(|time| time.with_nanosecond(0));
+    let midnight = now
+        .with_hour(0)
+        .and_then(|time| time.with_minute(0))
+        .and_then(|time| time.with_second(0))
+        .and_then(|time| time.with_nanosecond(0));
     midnight.map_or_else(|| now.timestamp_millis(), |time| time.timestamp_millis())
 }
 
@@ -107,7 +120,10 @@ impl BoardPanel {
         let tab = first_tab(&data, prefs.tab);
         let need_drops = cx.new(|_| RowDropDowns::default());
         let questions = cx.new(|_| QuestionRows::new(feed.clone(), need_drops.clone(), None));
-        let (run_drops, session_drops) = (cx.new(|_| RowDropDowns::default()), cx.new(|_| RowDropDowns::default()));
+        let (run_drops, session_drops) = (
+            cx.new(|_| RowDropDowns::default()),
+            cx.new(|_| RowDropDowns::default()),
+        );
         let mut watching = vec![
             cx.subscribe(&feed, |panel, _, _: &EngineChanged, cx| {
                 panel.dirty = true;
@@ -161,7 +177,9 @@ impl BoardPanel {
 
     pub fn memory(&self) -> BoardMemory {
         let mut memory = self.memory.clone();
-        memory.scroll.insert(tab_index(self.tab), self.list.logical_scroll_top());
+        memory
+            .scroll
+            .insert(tab_index(self.tab), self.list.logical_scroll_top());
         memory
     }
 
@@ -173,15 +191,27 @@ impl BoardPanel {
         self.prefs.session_tab(id)
     }
 
-    pub fn remember_session_tab(&mut self, id: String, tab: super::board_prefs::SessionTab, cx: &mut Context<Self>) {
+    pub fn remember_session_tab(
+        &mut self,
+        id: String,
+        tab: super::board_prefs::SessionTab,
+        cx: &mut Context<Self>,
+    ) {
         self.prefs.remember_session_tab(id, tab, cx);
     }
 
-    fn row_moved(&mut self, _: Entity<RowDropDowns>, event: &RowDropDownEvent, cx: &mut Context<Self>) {
+    fn row_moved(
+        &mut self,
+        _: Entity<RowDropDowns>,
+        event: &RowDropDownEvent,
+        cx: &mut Context<Self>,
+    ) {
         match event {
             RowDropDownEvent::Moved(key) => {
                 let at = self.entries.iter().position(|entry| match entry {
-                    Entry::Need(row) | Entry::Run(row) | Entry::Session(row) => card_key(row) == *key,
+                    Entry::Need(row) | Entry::Run(row) | Entry::Session(row) => {
+                        card_key(row) == *key
+                    }
                     _ => false,
                 });
                 if let Some(at) = at {
@@ -206,9 +236,20 @@ impl BoardPanel {
             self.data = Rc::new(BoardData::read(self.feed.read(cx)));
         }
         self.follow_machines(cx);
-        let local = SocketClient::try_global(cx).and_then(|socket| socket.read(cx).engine_machine());
-        let held = if self.hovering { std::mem::take(&mut self.shown_open) } else { Vec::new() };
-        let sections = tab_sections(&self.data, self.tab, local_midnight_ms(), local.as_deref(), &held);
+        let local =
+            SocketClient::try_global(cx).and_then(|socket| socket.read(cx).engine_machine());
+        let held = if self.hovering {
+            std::mem::take(&mut self.shown_open)
+        } else {
+            Vec::new()
+        };
+        let sections = tab_sections(
+            &self.data,
+            self.tab,
+            local_midnight_ms(),
+            local.as_deref(),
+            &held,
+        );
         if let Some(Section::Open(keys)) = sections.first() {
             self.shown_open = keys.clone();
         }
@@ -229,11 +270,18 @@ impl BoardPanel {
     fn follow_machines(&mut self, cx: &mut Context<Self>) {
         for machine in self.feed.read(cx).loaded_machines("sessions") {
             for topic in ["runs", "prs"] {
-                let scope = EngineScope { machine: machine.clone(), topic: topic.into(), key: None };
+                let scope = EngineScope {
+                    machine: machine.clone(),
+                    topic: topic.into(),
+                    key: None,
+                };
                 if self.watches.contains_key(&scope) {
                     continue;
                 }
-                if let Ok(watch) = self.feed.update(cx, |feed, cx| feed.watch(scope.clone(), cx)) {
+                if let Ok(watch) = self
+                    .feed
+                    .update(cx, |feed, cx| feed.watch(scope.clone(), cx))
+                {
                     self.watches.insert(scope, watch);
                 }
             }
@@ -241,91 +289,54 @@ impl BoardPanel {
     }
 
     fn release_gone_rows(&mut self, rows: &[Entry], cx: &mut Context<Self>) {
-        let listed = |wanted: fn(&Entry) -> Option<&EngineKey>| rows.iter().filter_map(wanted).map(card_key).collect::<std::collections::HashSet<_>>();
-        let needs = rows.iter().filter_map(|entry| if let Entry::Need(key) = entry { Some(key.clone()) } else { None }).collect::<Vec<_>>();
-        self.questions.update(cx, |rows, cx| rows.retain(&needs, cx));
+        let listed = |wanted: fn(&Entry) -> Option<&EngineKey>| {
+            rows.iter()
+                .filter_map(wanted)
+                .map(card_key)
+                .collect::<std::collections::HashSet<_>>()
+        };
+        let needs = rows
+            .iter()
+            .filter_map(|entry| {
+                if let Entry::Need(key) = entry {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        self.questions
+            .update(cx, |rows, cx| rows.retain(&needs, cx));
         // A tab that isn't showing keeps its open row, since selection outlives what's on screen.
         if self.tab == BoardTab::Workflows {
-            let runs = listed(|entry| if let Entry::Run(key) = entry { Some(key) } else { None });
-            self.run_drops.update(cx, |drops, cx| drops.retain_keys(|key| runs.contains(key), cx));
+            let runs = listed(|entry| {
+                if let Entry::Run(key) = entry {
+                    Some(key)
+                } else {
+                    None
+                }
+            });
+            self.run_drops.update(cx, |drops, cx| {
+                drops.retain_keys(|key| runs.contains(key), cx)
+            });
         }
         if self.tab == BoardTab::Sessions {
-            let sessions = listed(|entry| if let Entry::Session(key) = entry { Some(key) } else { None });
-            self.session_drops.update(cx, |drops, cx| drops.retain_keys(|key| sessions.contains(key), cx));
+            let sessions = listed(|entry| {
+                if let Entry::Session(key) = entry {
+                    Some(key)
+                } else {
+                    None
+                }
+            });
+            self.session_drops.update(cx, |drops, cx| {
+                drops.retain_keys(|key| sessions.contains(key), cx)
+            });
         }
         let (run_drops, session_drops) = (self.run_drops.read(cx), self.session_drops.read(cx));
-        self.run_cards.retain(|key, _| run_drops.is_showing(&card_key(key)));
-        self.session_tabs.retain(|key, _| session_drops.is_showing(&card_key(key)));
-    }
-
-    /// Rerun's new run, or a saved open row, as soon as it's listed.
-    fn open_pending(&mut self, cx: &mut Context<Self>) {
-        if let Some(key) = self.pending_run.clone()
-            && let Some(at) = self.entries.iter().position(|entry| *entry == Entry::Run(key.clone()))
-        {
-            self.pending_run = None;
-            self.open_run(&key, cx);
-            self.list.scroll_to_reveal_item(at);
-        }
-        if self.reopened || self.entries.is_empty() {
-            return;
-        }
-        self.reopened = true;
-        for entry in self.entries.clone().iter() {
-            match entry {
-                Entry::Run(key) if self.prefs.open.contains(&card_key(key)) && self.run_drops.read(cx).open_key().is_none() => self.open_run(key, cx),
-                Entry::Session(key) if self.prefs.open.contains(&card_key(key)) && self.session_drops.read(cx).open_key().is_none() => self.open_session_row(key, cx),
-                _ => {}
-            }
-        }
-    }
-
-    fn open_run(&mut self, key: &EngineKey, cx: &mut Context<Self>) {
-        RunRow::open(card_key(key), &self.run_drops, Self::run_body(cx.weak_entity(), key.clone()), cx);
-    }
-
-    fn open_session_row(&mut self, key: &EngineKey, cx: &mut Context<Self>) {
-        let body = Self::session_body(cx.weak_entity(), key.clone());
-        let drawn = card_key(key);
-        self.session_drops.update(cx, |drops, cx| {
-            if !drops.is_open(&drawn) {
-                drops.toggle(drawn.clone(), move |window, cx| div().px_3().pb_2().child(body(window, cx)).into_any_element(), cx);
-            }
-        });
-    }
-
-    /// A notification's question, open and in view. One that's been answered shows its answered row.
-    pub fn show_need(&mut self, key: &EngineKey, cx: &mut Context<Self>) {
-        self.show_tab(BoardTab::Needs, cx);
-        let Some(need) = self.data.needs.get(key).cloned() else { return };
-        if need.state != "open" && !self.prefs.unfolded.contains(ANSWERED_FOLD) {
-            self.toggle_fold(ANSWERED_FOLD, cx);
-        }
-        let Some(at) = self.entries.iter().position(|entry| *entry == Entry::Need(key.clone())) else { return };
-        self.list.scroll_to_reveal_item(at);
-        let drops = self.questions.read(cx).drops().clone();
-        NeedsCard::open(card_key(key), &drops, QuestionRows::body(self.questions.downgrade(), key.clone(), &need), cx);
-        cx.notify();
-    }
-
-    /// A new run: show it on Workflows, open, when its row arrives. The run it came from stays listed.
-    pub fn select_run(&mut self, key: EngineKey, cx: &mut Context<Self>) {
-        self.pending_run = Some(key);
-        self.show_tab(BoardTab::Workflows, cx);
-    }
-
-    fn show_tab(&mut self, tab: BoardTab, cx: &mut Context<Self>) {
-        if self.tab != tab {
-            self.memory.scroll.insert(tab_index(self.tab), self.list.logical_scroll_top());
-            self.tab = tab;
-            self.prefs.tab = tab;
-            self.prefs.save_tab(cx);
-            self.entries = Rc::new(Vec::new());
-            self.list.reset(0);
-            self.rebuild(cx);
-            self.restore_scroll();
-        }
-        cx.notify();
+        self.run_cards
+            .retain(|key, _| run_drops.is_showing(&card_key(key)));
+        self.session_tabs
+            .retain(|key, _| session_drops.is_showing(&card_key(key)));
     }
 
     fn restore_scroll(&mut self) {
@@ -347,8 +358,12 @@ impl BoardPanel {
 
     fn run_body(this: WeakEntity<Self>, key: EngineKey) -> CardBody {
         Rc::new(move |_, cx| {
-            let Some(this) = this.upgrade() else { return Empty.into_any_element() };
-            let (card, data) = this.update(cx, |panel, cx| (panel.run_card(&key, cx), panel.data.clone()));
+            let Some(this) = this.upgrade() else {
+                return Empty.into_any_element();
+            };
+            let (card, data) = this.update(cx, |panel, cx| {
+                (panel.run_card(&key, cx), panel.data.clone())
+            });
             card.update(cx, |card, cx| card.draw(&data, cx))
         })
     }
@@ -370,12 +385,20 @@ impl BoardPanel {
 
     fn session_body(this: WeakEntity<Self>, key: EngineKey) -> CardBody {
         Rc::new(move |_, cx| {
-            let Some(this) = this.upgrade() else { return Empty.into_any_element() };
+            let Some(this) = this.upgrade() else {
+                return Empty.into_any_element();
+            };
             this.update(cx, |panel, cx| {
-                let session = SessionKey { machine: key.machine.clone(), id: key.id.clone() };
+                let session = SessionKey {
+                    machine: key.machine.clone(),
+                    id: key.id.clone(),
+                };
                 let selected = panel.prefs.session_tab(&card_key(&key));
                 let host = cx.weak_entity();
-                let tabs = panel.session_tabs.entry(key.clone()).or_insert_with(|| cx.new(|cx| SessionTabs::new(session, host, selected, cx)));
+                let tabs = panel
+                    .session_tabs
+                    .entry(key.clone())
+                    .or_insert_with(|| cx.new(|cx| SessionTabs::new(session, host, selected, cx)));
                 tabs.clone().into_any_element()
             })
         })
@@ -385,20 +408,30 @@ impl BoardPanel {
     pub fn open_session(&mut self, key: SessionKey, window: &mut Window, cx: &mut Context<Self>) {
         let request_id = Uuid::new_v4().to_string();
         let expected = request_id.clone();
-        self.opening = Some(cx.subscribe(&SelectedSession::global(cx), move |panel, _, event: &SessionOpenResult, cx| {
-            if event.request_id != expected {
-                return;
-            }
-            panel.opening = None;
-            match &event.result {
-                Ok(()) => cx.emit(DismissEvent),
-                Err(error) => {
-                    panel.open_failed = Some(error.message.clone().into());
-                    cx.notify();
+        self.opening = Some(cx.subscribe(
+            &SelectedSession::global(cx),
+            move |panel, _, event: &SessionOpenResult, cx| {
+                if event.request_id != expected {
+                    return;
                 }
-            }
-        }));
-        window.dispatch_action(Box::new(SessionOpenRequest { key, request_id, target: SessionOpenTarget::Engine }), cx);
+                panel.opening = None;
+                match &event.result {
+                    Ok(()) => cx.emit(DismissEvent),
+                    Err(error) => {
+                        panel.open_failed = Some(error.message.clone().into());
+                        cx.notify();
+                    }
+                }
+            },
+        ));
+        window.dispatch_action(
+            Box::new(SessionOpenRequest {
+                key,
+                request_id,
+                target: SessionOpenTarget::Engine,
+            }),
+            cx,
+        );
     }
 
     /// Times count only while something counting is on screen.
@@ -472,77 +505,16 @@ impl BoardPanel {
     }
 }
 
-impl Render for BoardPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.release_clock_if_idle(cx);
-        if self.dirty {
-            self.rebuild(cx);
-        }
-        let muted = cx.theme().muted_foreground;
-        let open = open_owner_questions(&self.data).len();
-        let counts = summary_counts(&self.data, local_midnight_ms());
-        let header = v_flex()
-            .px_3()
-            .pt_3()
-            .child(div().text_role(TextRole::Title, cx).child(heading(open)))
-            .child(div().text_role(TextRole::Meta, cx).text_color(muted).child(summary(counts)));
-        let bar = TabBar::new("board-tabs")
-            .underline()
-            .with_size(Size::Small)
-            .selected_index(tab_index(self.tab))
-            .children(BoardTab::ALL.into_iter().map(|tab| {
-                let label = match tab {
-                    BoardTab::Needs if open > 0 => format!("Needs you · {open}"),
-                    BoardTab::Needs => "Needs you".to_owned(),
-                    BoardTab::Workflows => "Workflows".to_owned(),
-                    BoardTab::Sessions => "Sessions".to_owned(),
-                };
-                Tab::new().label(label).on_click(cx.listener(move |panel, _, _, cx| panel.show_tab(tab, cx)))
-            }));
-        let this = cx.weak_entity();
-        let rows = list(self.list.clone(), move |index, window, cx| {
-            this.update(cx, |panel, cx| panel.row(index, window, cx)).unwrap_or_else(|_| Empty.into_any_element())
-        })
-        .with_sizing_behavior(ListSizingBehavior::Infer)
-        .flex_shrink(1.)
-        .min_h_0();
-        let height = (window.viewport_size().height - WINDOW_CLEARANCE).max(px(0.));
-        v_flex()
-            .debug_selector(|| "board-panel".into())
-            .track_focus(&self.focus)
-            .w((window.viewport_size().width - px(16.)).min(WIDTH).max(px(0.)))
-            .max_h(height)
-            .overflow_hidden()
-            .child(header)
-            .child(div().px_3().child(bar))
-            .children(self.open_failed.clone().map(|line| div().px_3().text_role(TextRole::Meta, cx).text_color(cx.theme().danger).child(line)))
-            .child(
-                div()
-                    .id("board-list")
-                    .px_3()
-                    .pt_2()
-                    .flex()
-                    .flex_col()
-                    .flex_shrink(1.)
-                    .min_h_0()
-                    .on_hover(cx.listener(|panel, hovered, _, cx| {
-                        panel.hovering = *hovered;
-                        if !*hovered {
-                            panel.rebuild(cx);
-                            cx.notify();
-                        }
-                    }))
-                    .child(rows),
-            )
-    }
-}
-
 /// The dot's count on the top bar, from the same rows the panel lists.
 pub fn top_bar_badge(feed: &EngineFeed) -> Option<SharedString> {
     let count = badge_count(&BoardData::read(feed));
     super::board_queries::badge_label(count).map(Into::into)
 }
 
+#[path = "board_open.rs"]
+mod board_open;
+#[path = "board_panel_render.rs"]
+mod board_panel_render;
 #[path = "board_rows.rs"]
 mod board_rows;
 

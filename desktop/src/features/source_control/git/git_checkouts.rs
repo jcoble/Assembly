@@ -72,7 +72,8 @@ impl CheckoutHint {
         checkouts: Option<&GitCheckouts>,
     ) -> Option<CheckoutSelector> {
         let selector = self.selector();
-        (self.session == session && self.source == *source && checkouts?.offers(&selector)).then_some(selector)
+        (self.session == session && self.source == *source && checkouts?.offers(&selector))
+            .then_some(selector)
     }
 }
 /// One line of a picker. `path` is `None` for the session's own folder, which is always sent as no selector.
@@ -97,13 +98,21 @@ impl GitCheckouts {
     /// Whether this answer still offers what was picked from an earlier one.
     pub fn offers(&self, selector: &CheckoutSelector) -> bool {
         self.session_root == selector.expected_root
-            && self.worktrees.iter().any(|worktree| worktree.path == selector.path)
+            && self
+                .worktrees
+                .iter()
+                .any(|worktree| worktree.path == selector.path)
     }
     /// Source control's picker: `name (session)`, then `name — branch`.
     pub fn scope_choices(&self) -> Vec<CheckoutChoice> {
         let others = self.worktrees.iter().map(|worktree| CheckoutChoice {
             path: Some(worktree.path.clone()),
-            label: match worktree.branch.as_deref().map(str::trim).filter(|branch| !branch.is_empty()) {
+            label: match worktree
+                .branch
+                .as_deref()
+                .map(str::trim)
+                .filter(|branch| !branch.is_empty())
+            {
                 Some(branch) => format!("{} — {branch}", folder_name(&worktree.path)),
                 None => folder_name(&worktree.path).to_string(),
             },

@@ -36,7 +36,12 @@ fn a_rows_first_button_stages_what_is_left_and_unstages_only_a_fully_staged_file
 #[test]
 fn on_another_checkout_a_file_only_keeps_its_copy_path() {
     let reasons = file_reasons(&file("a", ".", "M"), true, false).read_only();
-    for reason in [reasons.stage, reasons.unstage, reasons.discard, reasons.open] {
+    for reason in [
+        reasons.stage,
+        reasons.unstage,
+        reasons.discard,
+        reasons.open,
+    ] {
         assert_eq!(reason, Some(READ_ONLY_SCOPE));
     }
     assert_eq!(reasons.copy_path, None);

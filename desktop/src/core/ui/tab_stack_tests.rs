@@ -29,8 +29,14 @@ impl Render for Tabs {
                 .into_any()
         };
         div().w(px(200.)).child(
-            tab_stack(self.selected, [tab(0, 30., self.clicks.clone()), tab(1, 100., self.clicks.clone())])
-                .debug_selector(|| "stack".to_string()),
+            tab_stack(
+                self.selected,
+                [
+                    tab(0, 30., self.clicks.clone()),
+                    tab(1, 100., self.clicks.clone()),
+                ],
+            )
+            .debug_selector(|| "stack".to_string()),
         )
     }
 }
@@ -40,19 +46,36 @@ fn both_tabs_take_the_tallest_height_and_only_the_selected_one_clicks(cx: &mut T
     cx.update(gpui_kit::init);
     let clicks = Rc::new(Cell::new([0, 0]));
     let seen = clicks.clone();
-    let (tabs, cx) = cx.add_window_view(move |_, _| Tabs { selected: 0, clicks: seen });
+    let (tabs, cx) = cx.add_window_view(move |_, _| Tabs {
+        selected: 0,
+        clicks: seen,
+    });
     cx.run_until_parked();
     let shown = cx.debug_bounds("stack").expect("the stack is drawn");
-    assert_eq!(shown.size.height, px(100.), "the short tab is selected, the stack keeps the tall one's height");
+    assert_eq!(
+        shown.size.height,
+        px(100.),
+        "the short tab is selected, the stack keeps the tall one's height"
+    );
     let inside = point(shown.origin.x + px(20.), shown.origin.y + px(10.));
     cx.simulate_click(inside, Modifiers::default());
-    assert_eq!(clicks.get(), [1, 0], "the hidden tab, on top of it, doesn't take the click");
+    assert_eq!(
+        clicks.get(),
+        [1, 0],
+        "the hidden tab, on top of it, doesn't take the click"
+    );
     tabs.update(cx, |tabs, cx| {
         tabs.selected = 1;
         cx.notify();
     });
     cx.run_until_parked();
-    assert_eq!(cx.debug_bounds("stack").expect("the stack is drawn").size.height, px(100.));
+    assert_eq!(
+        cx.debug_bounds("stack")
+            .expect("the stack is drawn")
+            .size
+            .height,
+        px(100.)
+    );
     cx.simulate_click(inside, Modifiers::default());
     assert_eq!(clicks.get(), [1, 1]);
 }

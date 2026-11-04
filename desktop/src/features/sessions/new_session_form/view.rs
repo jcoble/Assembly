@@ -1,5 +1,5 @@
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{DraftEvent, NewSessionForm};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
@@ -15,22 +15,36 @@ impl NewSessionForm {
     }
 
     pub fn focus_start(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.start_composer.update(cx, |composer, cx| composer.focus_input(window, cx));
+        self.start_composer
+            .update(cx, |composer, cx| composer.focus_input(window, cx));
     }
 
     fn open_chooser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.chooser_open = true;
-        self.project_chooser.update(cx, |chooser, cx| chooser.focus_search(window, cx));
+        self.project_chooser
+            .update(cx, |chooser, cx| chooser.focus_search(window, cx));
         cx.notify();
     }
 
     /// Why the agent can't be used, that its settings are loading, the last error, and a start left to reconcile.
     fn notices(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
-        let line = |color: Hsla, words: SharedString| div().text_role(TextRole::Meta, cx).text_color(color).child(words).into_any_element();
+        let line = |color: Hsla, words: SharedString| {
+            div()
+                .text_role(TextRole::Meta, cx)
+                .text_color(color)
+                .child(words)
+                .into_any_element()
+        };
         let mut notices = Vec::new();
         if !self.auth_error.is_empty() {
-            notices.push(div().text_role(TextRole::Body, cx).text_color(danger).child(self.auth_error.clone()).into_any_element());
+            notices.push(
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(danger)
+                    .child(self.auth_error.clone())
+                    .into_any_element(),
+            );
         }
         if self.discovering {
             notices.push(line(muted, "Loading agent settings…".into()));
@@ -52,7 +66,10 @@ impl NewSessionForm {
 
     /// The project, in the heading's words: its name on a tinted chip with a chevron.
     fn project_trigger(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let name = self.selected_project.as_ref().map_or_else(|| "No project".to_string(), |project| project.title.clone());
+        let name = self
+            .selected_project
+            .as_ref()
+            .map_or_else(|| "No project".to_string(), |project| project.title.clone());
         Button::new("new:project-choice")
             .ghost()
             .compact()
@@ -126,7 +143,12 @@ impl NewSessionForm {
                     .pb(px(16.))
                     .child(div().track_focus(&self.chooser_focus).child(title))
                     .when(self.chooser_open, |column| {
-                        column.child(div().w_full().max_w(px(360.)).child(self.project_chooser.clone()))
+                        column.child(
+                            div()
+                                .w_full()
+                                .max_w(px(360.))
+                                .child(self.project_chooser.clone()),
+                        )
                     })
                     .children(notices),
             )
@@ -140,7 +162,11 @@ impl NewSessionForm {
             .label(self.selected_project.as_ref().map_or_else(
                 || "No project".to_string(),
                 |project| {
-                    let machine = if project.machine == "local" { "This computer" } else { &project.machine };
+                    let machine = if project.machine == "local" {
+                        "This computer"
+                    } else {
+                        &project.machine
+                    };
                     format!("{} · {machine}", project.title)
                 },
             ))
@@ -153,7 +179,9 @@ impl NewSessionForm {
             .border_b_1()
             .border_color(cx.theme().border)
             .child(div().track_focus(&self.chooser_focus).child(chooser))
-            .when(self.chooser_open, |view| view.child(self.project_chooser.clone()))
+            .when(self.chooser_open, |view| {
+                view.child(self.project_chooser.clone())
+            })
             .children(notices)
             .child(self.start_composer.clone())
             .into_any_element()
@@ -162,6 +190,10 @@ impl NewSessionForm {
 
 impl Render for NewSessionForm {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.centered { self.centered_view(cx) } else { self.dialog_view(cx) }
+        if self.centered {
+            self.centered_view(cx)
+        } else {
+            self.dialog_view(cx)
+        }
     }
 }

@@ -6,9 +6,9 @@
 //! card; a workflow run's steps can be drawn with it too. Section 11's StepRow.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::spinner::Spinner;
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::shimmer::ShimmerText;
-use crate::core::ui::spinner::Spinner;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -99,7 +99,12 @@ impl RenderOnce for StepRow {
                     .children(self.tags),
             )
             .when_some(self.took_ms, |line, ms| {
-                line.child(div().flex_none().text_role(TextRole::Meta, cx).child(worked_for(ms)))
+                line.child(
+                    div()
+                        .flex_none()
+                        .text_role(TextRole::Meta, cx)
+                        .child(worked_for(ms)),
+                )
             })
     }
 }

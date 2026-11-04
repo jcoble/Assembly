@@ -57,9 +57,8 @@ fn a_created_pr_offers_to_open_it(cx: &mut TestAppContext) {
     let made = slot.clone();
     let (_, visual) = cx.add_window_view(move |window, cx| {
         let writes = GitWrites::new(cx);
-        let form = cx.new(|cx| {
-            CreatePrForm::new(GitTarget::new("s1"), writes, "lane".into(), window, cx)
-        });
+        let form =
+            cx.new(|cx| CreatePrForm::new(GitTarget::new("s1"), writes, "lane".into(), window, cx));
         made.replace(Some(form.clone()));
         gpui_kit::base::Root::new(form, window, cx)
     });
@@ -70,7 +69,9 @@ fn a_created_pr_offers_to_open_it(cx: &mut TestAppContext) {
     visual.update(|_, cx| {
         cx.on_action(move |intent: &OpenUrl, _| url_seen.borrow_mut().push(intent.url.clone()));
         cx.on_action(move |intent: &OpenPullRequests, _| {
-            tab_seen.borrow_mut().push((intent.session_id.clone(), intent.number))
+            tab_seen
+                .borrow_mut()
+                .push((intent.session_id.clone(), intent.number))
         });
     });
     let status: OperationStatus = serde_json::from_value(json!({
@@ -84,11 +85,18 @@ fn a_created_pr_offers_to_open_it(cx: &mut TestAppContext) {
         visual.update(|window, cx| window.draw(cx).clear(cx));
     };
     settle(visual);
-    let browser = visual.debug_bounds("created-pr-browser").expect("Open on GitHub");
+    let browser = visual
+        .debug_bounds("created-pr-browser")
+        .expect("Open on GitHub");
     visual.simulate_click(browser.center(), Modifiers::none());
     settle(visual);
-    assert_eq!(*urls.borrow(), vec!["https://github.com/o/r/pull/7".to_string()]);
-    let tab = visual.debug_bounds("created-pr-tab").expect("Open in Pull requests");
+    assert_eq!(
+        *urls.borrow(),
+        vec!["https://github.com/o/r/pull/7".to_string()]
+    );
+    let tab = visual
+        .debug_bounds("created-pr-tab")
+        .expect("Open in Pull requests");
     visual.simulate_click(tab.center(), Modifiers::none());
     settle(visual);
     assert_eq!(*tabs.borrow(), vec![(Some("s1".to_string()), Some(7))]);

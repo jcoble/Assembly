@@ -26,9 +26,17 @@ fn pressing_a_pane_while_the_drawer_is_open_only_shows_it() {
 fn the_capsule_keeps_the_last_picked_overflow_tool_until_the_next_pick() {
     assert_eq!(extra_after(None, Some(AGENTS)), None);
     assert_eq!(extra_after(None, Some(RUN)), Some(RUN));
-    assert_eq!(extra_after(Some(RUN), Some(TASKS)), Some(RUN), "a permanent tool leaves it there");
+    assert_eq!(
+        extra_after(Some(RUN), Some(TASKS)),
+        Some(RUN),
+        "a permanent tool leaves it there"
+    );
     assert_eq!(extra_after(Some(RUN), None), Some(RUN));
-    assert_eq!(extra_after(Some(RUN), Some(CONTEXT)), Some(CONTEXT), "the next pick replaces it");
+    assert_eq!(
+        extra_after(Some(RUN), Some(CONTEXT)),
+        Some(CONTEXT),
+        "the next pick replaces it"
+    );
 }
 
 // Pins: g0-shape#12
@@ -74,12 +82,15 @@ fn a_click_on_a_drawer_button_opens_the_drawer_on_that_pane(cx: &mut TestAppCont
 fn only_the_permanent_tools_and_the_last_pick_are_in_the_capsule(cx: &mut TestAppContext) {
     let (frame, _, cx) = open(None, cx);
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    let toggle = cx.debug_bounds("drawer-toggle").expect("the drawer has a chrome toggle");
+    let toggle = cx
+        .debug_bounds("drawer-toggle")
+        .expect("the drawer has a chrome toggle");
     cx.simulate_click(toggle.center(), Modifiers::none());
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
     let has = |cx: &mut gpui_kit::VisualTestContext, name: &str| {
-        cx.debug_bounds(format!("drawer-button-{name}").leak()).is_some()
+        cx.debug_bounds(format!("drawer-button-{name}").leak())
+            .is_some()
     };
     assert!(has(cx, SOURCE_CONTROL) && has(cx, AGENTS) && has(cx, TASKS));
     for name in [WORKTREES, RUN, CONTEXT] {
@@ -89,19 +100,27 @@ fn only_the_permanent_tools_and_the_last_pick_are_in_the_capsule(cx: &mut TestAp
         let id = cx.update(|_, cx| {
             let area = frame.read(cx).dock().read(cx);
             let mut found = None;
-            area.layout(DockPlacement::Right).expect("the drawer").root().walk(&mut |node| {
-                if let gpui_kit::component::dock::PaneRef::Tabs { panels, .. } = node.kind() {
-                    for id in panels.iter() {
-                        if area.panel(*id).is_some_and(|panel| panel.panel_name(cx) == name) {
-                            found = Some(*id);
+            area.layout(DockPlacement::Right)
+                .expect("the drawer")
+                .root()
+                .walk(&mut |node| {
+                    if let gpui_kit::component::dock::PaneRef::Tabs { panels, .. } = node.kind() {
+                        for id in panels.iter() {
+                            if area
+                                .panel(*id)
+                                .is_some_and(|panel| panel.panel_name(cx) == name)
+                            {
+                                found = Some(*id);
+                            }
                         }
                     }
-                }
-            });
+                });
             found.expect("the pane is in the drawer")
         });
         frame.update_in(cx, |frame, window, cx| {
-            frame.dock().update(cx, |dock, cx| dock.select_panel(id, window, cx))
+            frame
+                .dock()
+                .update(cx, |dock, cx| dock.select_panel(id, window, cx))
         });
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -111,5 +130,8 @@ fn only_the_permanent_tools_and_the_last_pick_are_in_the_capsule(cx: &mut TestAp
     pick(cx, TASKS);
     assert!(has(cx, RUN), "showing a permanent tool leaves it there");
     pick(cx, CONTEXT);
-    assert!(has(cx, CONTEXT) && !has(cx, RUN), "the next pick replaces it");
+    assert!(
+        has(cx, CONTEXT) && !has(cx, RUN),
+        "the next pick replaces it"
+    );
 }

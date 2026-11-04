@@ -1,7 +1,8 @@
 use super::tests::{Host, key};
-use super::{SocketClient, WorkspaceCoordinator, WorkspaceKey, WorkspacePanes, WorkspaceActivated, WorkspaceTarget};
-use gpui_kit::{App, AppContext as _, Window};
-use serde_json::{Value, json};
+use super::{
+    SocketClient, WorkspaceActivated, WorkspaceCoordinator, WorkspaceKey, WorkspacePanes,
+    WorkspaceTarget,
+};
 use crate::core::{
     socket::{
         endpoint::Endpoint,
@@ -11,6 +12,8 @@ use crate::core::{
 };
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
+use gpui_kit::{App, AppContext as _, Window};
+use serde_json::{Value, json};
 use std::{
     cell::RefCell,
     rc::Rc,
@@ -94,17 +97,19 @@ async fn postcommit_restore_failure_reports_the_actual_error_without_fake_rollba
     });
     let callback = visible.clone();
     let target = WorkspaceTarget::Checkout(key("/target"));
-    let generation = cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            target.clone(),
-            Box::new(move |target, _, _| {
-                *callback.borrow_mut() = Some(target.clone());
-                Ok(())
-            }),
-            window,
-            cx,
-        )
-    }));
+    let generation = cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                target.clone(),
+                Box::new(move |target, _, _| {
+                    *callback.borrow_mut() = Some(target.clone());
+                    Ok(())
+                }),
+                window,
+                cx,
+            )
+        })
+    });
     let event = events.recv().await.unwrap();
     assert_eq!(event.generation, generation);
     assert_eq!(event.target, target);
@@ -128,17 +133,19 @@ async fn postcommit_restore_failure_reports_the_actual_error_without_fake_rollba
         id: "history".into(),
     });
     let callback = visible.clone();
-    cx.update(|window, cx| coordinator.update(cx, |view, cx| {
-        view.request(
-            history.clone(),
-            Box::new(move |target, _, _| {
-                *callback.borrow_mut() = Some(target.clone());
-                Ok(())
-            }),
-            window,
-            cx,
-        );
-    }));
+    cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                history.clone(),
+                Box::new(move |target, _, _| {
+                    *callback.borrow_mut() = Some(target.clone());
+                    Ok(())
+                }),
+                window,
+                cx,
+            );
+        })
+    });
     let event = events.recv().await.unwrap();
     assert_eq!(event.target, history);
     assert!(!event.restored, "rootless success carries no hydration");

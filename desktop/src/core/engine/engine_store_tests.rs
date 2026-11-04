@@ -484,24 +484,40 @@ fn a_checked_entity_read_requires_the_exact_requested_source_and_identity() {
 
 #[test]
 fn foreign_need_addressee_never_joins_a_colliding_owner_or_unknown_machine() {
-    let mut store=EngineStore::default();
-    let child=super::SessionKey{machine:"child-owner".into(),id:"child".into()};
-    let actual=super::SessionKey{machine:"parent-owner".into(),id:"same".into()};
-    let collision=super::SessionKey{machine:"child-owner".into(),id:"same".into()};
-    let mut need=row("child-owner","needs_me","need",1);
-    need["sessionId"]=json!("child");need["addresseeSessionId"]=json!("same");
-    need["addresseeMachine"]=json!("parent-owner");
-    let needs=scope("child-owner","needs_me");
-    store.snapshot(needs.clone(),cursor(1),vec![need.clone()]).unwrap();
-    assert_eq!(store.needs_for(&actual).len(),1);
-    assert_eq!(store.needs_for(&child).len(),1);
+    let mut store = EngineStore::default();
+    let child = super::SessionKey {
+        machine: "child-owner".into(),
+        id: "child".into(),
+    };
+    let actual = super::SessionKey {
+        machine: "parent-owner".into(),
+        id: "same".into(),
+    };
+    let collision = super::SessionKey {
+        machine: "child-owner".into(),
+        id: "same".into(),
+    };
+    let mut need = row("child-owner", "needs_me", "need", 1);
+    need["sessionId"] = json!("child");
+    need["addresseeSessionId"] = json!("same");
+    need["addresseeMachine"] = json!("parent-owner");
+    let needs = scope("child-owner", "needs_me");
+    store
+        .snapshot(needs.clone(), cursor(1), vec![need.clone()])
+        .unwrap();
+    assert_eq!(store.needs_for(&actual).len(), 1);
+    assert_eq!(store.needs_for(&child).len(), 1);
     assert!(store.needs_for(&collision).is_empty());
-    need["version"]=json!(2);need["addresseeMachine"]=serde_json::Value::Null;
-    store.snapshot(needs.clone(),cursor(2),vec![need.clone()]).unwrap();
+    need["version"] = json!(2);
+    need["addresseeMachine"] = serde_json::Value::Null;
+    store
+        .snapshot(needs.clone(), cursor(2), vec![need.clone()])
+        .unwrap();
     assert!(store.needs_for(&actual).is_empty());
     assert!(store.needs_for(&collision).is_empty());
-    assert_eq!(store.needs_for(&child).len(),1);
-    need.as_object_mut().unwrap().remove("addresseeMachine");need["version"]=json!(3);
-    store.snapshot(needs,cursor(3),vec![need]).unwrap();
+    assert_eq!(store.needs_for(&child).len(), 1);
+    need.as_object_mut().unwrap().remove("addresseeMachine");
+    need["version"] = json!(3);
+    store.snapshot(needs, cursor(3), vec![need]).unwrap();
     assert!(store.needs_for(&collision).is_empty());
 }

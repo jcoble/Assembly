@@ -69,9 +69,18 @@ impl SessionView {
 
     pub fn apply(&mut self, row: &Row) -> Change {
         if row.kind == "subagent" {
-            let reference = RowReference { session_id: row.session_id.clone(), item_id: row.item_id.clone(), seq: row.seq };
-            let saved = self.row_refs.entry(key_of(row)).or_insert_with(|| reference.clone());
-            if saved.seq < reference.seq { *saved = reference; }
+            let reference = RowReference {
+                session_id: row.session_id.clone(),
+                item_id: row.item_id.clone(),
+                seq: row.seq,
+            };
+            let saved = self
+                .row_refs
+                .entry(key_of(row))
+                .or_insert_with(|| reference.clone());
+            if saved.seq < reference.seq {
+                *saved = reference;
+            }
         }
         if row.kind == "user"
             && row.payload["from"].is_null()
@@ -277,8 +286,13 @@ impl SessionView {
             page.apply(row);
         }
         for (key, reference) in page.row_refs {
-            let saved = self.row_refs.entry(key).or_insert_with(|| reference.clone());
-            if saved.seq < reference.seq { *saved = reference; }
+            let saved = self
+                .row_refs
+                .entry(key)
+                .or_insert_with(|| reference.clone());
+            if saved.seq < reference.seq {
+                *saved = reference;
+            }
         }
         self.user_clients.extend(page.user_clients.iter().cloned());
         for (client, key) in &page.user_items {
@@ -391,7 +405,7 @@ impl SessionView {
                 text: text.to_string(),
                 at,
                 from: None,
-                from_machine:None,
+                from_machine: None,
                 sender_label: None,
             },
         });

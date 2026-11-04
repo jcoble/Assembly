@@ -10,7 +10,9 @@ use crate::features::source_control::git_status::GitStatus;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::{TestAppContext, VisualTestContext};
 use gpui_kit::component::dock::BasePanel as _;
-use gpui_kit::{Entity, MouseButton, Modifiers, MouseDownEvent, MouseUpEvent, Subscription, px, size};
+use gpui_kit::{
+    Entity, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Subscription, px, size,
+};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -30,11 +32,25 @@ fn the_file_chip_clears_the_path_filter(cx: &mut TestAppContext) {
     visual.simulate_resize(size(px(1200.), px(400.)));
     visual.run_until_parked();
     visual.update(|window, cx| window.draw(cx).clear(cx));
-    let clear = visual.debug_bounds("history-path-clear").expect("the chip's clear button").center();
+    let clear = visual
+        .debug_bounds("history-path-clear")
+        .expect("the chip's clear button")
+        .center();
     let modifiers = Modifiers::default();
     visual.simulate_mouse_move(clear, None, modifiers);
-    visual.simulate_event(MouseDownEvent { position: clear, button: MouseButton::Left, modifiers, click_count: 1, first_mouse: false });
-    visual.simulate_event(MouseUpEvent { position: clear, button: MouseButton::Left, modifiers, click_count: 1 });
+    visual.simulate_event(MouseDownEvent {
+        position: clear,
+        button: MouseButton::Left,
+        modifiers,
+        click_count: 1,
+        first_mouse: false,
+    });
+    visual.simulate_event(MouseUpEvent {
+        position: clear,
+        button: MouseButton::Left,
+        modifiers,
+        click_count: 1,
+    });
     visual.run_until_parked();
     visual.update(|window, cx| {
         window.draw(cx).clear(cx);
@@ -45,7 +61,8 @@ fn the_file_chip_clears_the_path_filter(cx: &mut TestAppContext) {
 #[gpui::test]
 fn the_folder_label_names_the_checkout_it_read_and_nothing_else(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
-    let (pane, visual) = cx.add_window_view(|window, cx| HistoryPane::new("s1".into(), None, None, window, cx));
+    let (pane, visual) =
+        cx.add_window_view(|window, cx| HistoryPane::new("s1".into(), None, None, window, cx));
     visual.update(|_, cx| {
         pane.update(cx, |pane, _| {
             assert_eq!(pane.folder_label(), "No repository");
@@ -88,7 +105,11 @@ async fn turning(cx: &mut TestAppContext) -> Turning<'_> {
         }
         let id = frame["id"].clone();
         let mut seen = answered.lock().unwrap();
-        let replies = match (frame["t"].as_str(), frame["topic"].as_str(), frame["method"].as_str()) {
+        let replies = match (
+            frame["t"].as_str(),
+            frame["topic"].as_str(),
+            frame["method"].as_str(),
+        ) {
             (Some("sub"), Some("sessions"), _) => {
                 seen.subscription = id.clone();
                 vec![Reply::Frame(json!({"t":"state","sub":id,"items":[
@@ -97,8 +118,10 @@ async fn turning(cx: &mut TestAppContext) -> Turning<'_> {
             }
             (Some("sub"), ..) => vec![Reply::Frame(json!({"t":"state","sub":id,"items":[]}))],
             (Some("call"), _, Some("test_state")) => vec![
-                Reply::Frame(json!({"t":"change","sub":seen.subscription,"key":frame["args"]["session"],
-                    "item":session_row(frame["args"]["session"].as_str().unwrap(),frame["args"]["state"].as_str().unwrap())})),
+                Reply::Frame(
+                    json!({"t":"change","sub":seen.subscription,"key":frame["args"]["session"],
+                    "item":session_row(frame["args"]["session"].as_str().unwrap(),frame["args"]["state"].as_str().unwrap())}),
+                ),
                 Reply::Frame(json!({"t":"result","id":id,"result":{}})),
             ],
             (Some("call"), _, Some("status")) => {
@@ -109,7 +132,9 @@ async fn turning(cx: &mut TestAppContext) -> Turning<'_> {
             }
             (Some("call"), _, Some("history")) => {
                 seen.history += 1;
-                vec![Reply::Frame(json!({"t":"result","id":id,"result":{"commits":[],"nextCursor":null}}))]
+                vec![Reply::Frame(
+                    json!({"t":"result","id":id,"result":{"commits":[],"nextCursor":null}}),
+                )]
             }
             (Some("call"), ..) => vec![Reply::Frame(json!({"t":"result","id":id,"result":{}}))],
             _ => vec![],
@@ -185,16 +210,27 @@ impl Turning<'_> {
         });
         let _ = call.await;
         let (session, cx) = (session.to_string(), &mut *self.cx);
-        until("the state applied", &mut self.changes, &self.changed, || {
-            cx.run_until_parked();
-            cx.update(|_, cx| {
-                Sessions::try_global(cx).unwrap().read(cx).items().iter()
-                    .any(|item| item.session_id == session && item.state == state)
-            })
-        })
+        until(
+            "the state applied",
+            &mut self.changes,
+            &self.changed,
+            || {
+                cx.run_until_parked();
+                cx.update(|_, cx| {
+                    Sessions::try_global(cx)
+                        .unwrap()
+                        .read(cx)
+                        .items()
+                        .iter()
+                        .any(|item| item.session_id == session && item.state == state)
+                })
+            },
+        )
         .await;
         let barrier = self.cx.update(|_, cx| {
-            SocketClient::global(cx).read(cx).call::<Value>("test", "test_barrier", json!({}), None)
+            SocketClient::global(cx)
+                .read(cx)
+                .call::<Value>("test", "test_barrier", json!({}), None)
         });
         let _ = barrier.await;
         self.cx.run_until_parked();
@@ -209,7 +245,11 @@ impl Turning<'_> {
 async fn a_turn_ending_rereads_the_shown_status(cx: &mut TestAppContext) {
     let mut open = turning(cx).await;
     open.session_becomes("s2", "idle").await;
-    assert_eq!(open.reads(), (1, 1), "another session's turn says nothing about this folder");
+    assert_eq!(
+        open.reads(),
+        (1, 1),
+        "another session's turn says nothing about this folder"
+    );
     open.session_becomes("s1", "idle").await;
     open.reads_reach(2, 2).await;
     open.session_becomes("s1", "failed").await;
@@ -220,7 +260,9 @@ async fn a_turn_ending_rereads_the_shown_status(cx: &mut TestAppContext) {
 async fn a_turn_ending_while_hidden_reads_nothing(cx: &mut TestAppContext) {
     let mut open = turning(cx).await;
     let pane = open.pane.clone();
-    pane.update_in(open.cx, |pane, window, cx| pane.set_active(false, window, cx));
+    pane.update_in(open.cx, |pane, window, cx| {
+        pane.set_active(false, window, cx)
+    });
     open.session_becomes("s1", "idle").await;
     assert_eq!(open.reads(), (1, 1));
 }

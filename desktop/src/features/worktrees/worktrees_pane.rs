@@ -119,8 +119,16 @@ impl Render for WorktreesPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
-        let (line_size, line_height) = Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Body));
-        let line = |text: String| div().px_3().text_size(line_size).line_height(line_height).text_color(muted).child(text);
+        let (line_size, line_height) =
+            Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Body));
+        let line = |text: String| {
+            div()
+                .px_3()
+                .text_size(line_size)
+                .line_height(line_height)
+                .text_color(muted)
+                .child(text)
+        };
         let (shown, reading) = {
             let read = self.read.read(cx);
             (read.shown().clone(), read.reading())
@@ -155,7 +163,12 @@ impl Render for WorktreesPane {
                 .px_3()
                 .gap_2()
                 .items_start()
-                .child(div().text_role(TextRole::Body, cx).text_color(danger).child(message))
+                .child(
+                    div()
+                        .text_role(TextRole::Body, cx)
+                        .text_color(danger)
+                        .child(message),
+                )
                 .child(
                     Button::new("worktrees-retry")
                         .ghost()

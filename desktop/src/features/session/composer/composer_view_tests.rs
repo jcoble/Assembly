@@ -27,9 +27,9 @@ pub(super) fn open(
     let subscription = cx.update(|_, cx| {
         cx.subscribe(&composer, move |_, event: &ComposerEvent, _| {
             seen.borrow_mut().push(match event {
-                ComposerEvent::StartRequested{..} => "start requested".to_string(),
+                ComposerEvent::StartRequested { .. } => "start requested".to_string(),
                 ComposerEvent::Sending => "sending".to_string(),
-                ComposerEvent::Accepted{receipt,..} => format!("queued {}", receipt.session_id),
+                ComposerEvent::Accepted { receipt, .. } => format!("queued {}", receipt.session_id),
                 ComposerEvent::PendingChanged => "pending".into(),
             })
         })
@@ -99,7 +99,10 @@ fn failed_prompt_retry_preserves_original_epoch_and_new_typing(cx: &mut TestAppC
     composer.update_in(cx, |composer, window, cx| {
         composer.set_session(Some("s1".into()), window, cx);
         composer.retry_ids.insert(
-            crate::core::engine::SessionKey{machine:"owner".into(),id:"s1".into()},
+            crate::core::engine::SessionKey {
+                machine: "owner".into(),
+                id: "s1".into(),
+            },
             super::PromptRequest {
                 text: "original".into(),
                 client_id: "stable".into(),
@@ -266,7 +269,10 @@ fn stop_stops_the_running_turn_and_does_nothing_while_idle(cx: &mut TestAppConte
     cx.run_until_parked();
     assert_eq!(
         client.calls(),
-        [("send/stop".to_string(), json!({ "runId": "r7","session":"s1","expectedSource":{"machine":"owner","generation":0,"routeMachine":null} }))]
+        [(
+            "send/stop".to_string(),
+            json!({ "runId": "r7","session":"s1","expectedSource":{"machine":"owner","generation":0,"routeMachine":null} })
+        )]
     );
 }
 

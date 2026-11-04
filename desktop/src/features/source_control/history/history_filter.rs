@@ -48,16 +48,26 @@ impl HistoryFilter {
     /// The commits a branch reaches among the loaded ones; loading more history widens the answer.
     fn reached<'a>(&self, commits: &'a [GitCommit]) -> Option<HashSet<&'a str>> {
         let wanted = self.branch.as_deref()?;
-        let by_sha: HashMap<&str, &GitCommit> =
-            commits.iter().map(|commit| (commit.sha.as_str(), commit)).collect();
+        let by_sha: HashMap<&str, &GitCommit> = commits
+            .iter()
+            .map(|commit| (commit.sha.as_str(), commit))
+            .collect();
         let mut queue: Vec<&str> = commits
             .iter()
-            .filter(|commit| commit.refs.iter().any(|name| branch_of(name) == Some(wanted)))
+            .filter(|commit| {
+                commit
+                    .refs
+                    .iter()
+                    .any(|name| branch_of(name) == Some(wanted))
+            })
             .map(|commit| commit.sha.as_str())
             .collect();
         let mut reached: HashSet<&str> = queue.iter().copied().collect();
         while let Some(sha) = queue.pop() {
-            for parent in by_sha.get(sha).map_or(&[][..], |commit| &commit.parents[..]) {
+            for parent in by_sha
+                .get(sha)
+                .map_or(&[][..], |commit| &commit.parents[..])
+            {
                 if let Some(known) = by_sha.get(parent.as_str()) {
                     if reached.insert(known.sha.as_str()) {
                         queue.push(known.sha.as_str());
@@ -76,7 +86,9 @@ impl HistoryFilter {
             .iter()
             .enumerate()
             .filter(|(_, commit)| {
-                reached.as_ref().is_none_or(|reached| reached.contains(commit.sha.as_str()))
+                reached
+                    .as_ref()
+                    .is_none_or(|reached| reached.contains(commit.sha.as_str()))
                     && author.is_none_or(|wanted| commit.author.trim() == wanted)
                     && (text.is_empty()
                         || [&commit.subject, &commit.sha, &commit.author]

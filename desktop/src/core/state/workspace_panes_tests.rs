@@ -1,7 +1,7 @@
-use super::{PaneCodec, WorkspaceKey, WorkspacePanes, MAX_SNAPSHOT_BYTES, validate};
-use gpui_kit::{App, AppContext as _, Context, IntoElement, Render, Window, div};
+use super::{MAX_SNAPSHOT_BYTES, PaneCodec, WorkspaceKey, WorkspacePanes, validate};
 use gpui::TestAppContext;
-use serde_json::{Value,json};
+use gpui_kit::{App, AppContext as _, Context, IntoElement, Render, Window, div};
+use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::rc::Rc;
 

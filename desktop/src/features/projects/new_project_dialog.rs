@@ -1,6 +1,6 @@
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::folder_browser::{FolderBrowser, FolderChosen};
 use super::new_project::{Kind, NewProjectInput, NewProjectResult, ProjectRecord};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::{
     commands::command_registry::CommandRegistry,
     intents::open_new_project::OpenNewProject,
@@ -338,11 +338,12 @@ impl Render for NewProjectForm {
             .when(self.kind == Kind::Clone, |form| {
                 form.child(Input::new(&self.source).disabled(busy))
             })
-            .children(
-                self.error
-                    .clone()
-                    .map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)),
-            )
+            .children(self.error.clone().map(|error| {
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(danger)
+                    .child(error)
+            }))
             .when(self.operation.read(cx).unconfirmed, |form| {
                 form.child(
                     Button::new("new-project-reconcile")
@@ -354,13 +355,12 @@ impl Render for NewProjectForm {
                         })),
                 )
             })
-            .children(
-                self.operation
-                    .read(cx)
-                    .error
-                    .clone()
-                    .map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)),
-            )
+            .children(self.operation.read(cx).error.clone().map(|error| {
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(danger)
+                    .child(error)
+            }))
             .child(
                 h_flex()
                     .gap_2()

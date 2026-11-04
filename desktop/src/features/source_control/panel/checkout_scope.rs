@@ -2,11 +2,11 @@
 //! it's only ever read: writes and opening a file stay with the session's own folder, and the way to work there is to
 //! make it the session's checkout through the Engine. The read drops the choice with its session; the hint, saved with
 //! the layout, is what brings it back, and only after a fresh list still offers it.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{PaneResult, SourceControlPane};
 use crate::core::socket::checkout_selector::CheckoutSelector;
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
 use crate::core::state::sessions::Sessions;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::features::source_control::actions_menu::STILL_RUNNING;
 use crate::features::source_control::git_checkouts::{CheckoutHint, GitCheckouts, checkout_gone};
 use crate::features::source_control::git_failure::GitFailure;
@@ -48,7 +48,7 @@ impl SourceControlPane {
             self.read_checkouts(cx);
         }
     }
-    fn read_checkouts(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn read_checkouts(&mut self, cx: &mut Context<Self>) {
         let (Some(asked), Some(socket)) =
             (self.checkouts_for.clone(), SocketClient::try_global(cx))
         else {
@@ -292,7 +292,12 @@ impl SourceControlPane {
                             })),
                     ),
             )
-            .child(div().text_role(TextRole::Body, cx).text_color(muted).child(hint))
+            .child(
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(muted)
+                    .child(hint),
+            )
             .into_any_element()
     }
 }

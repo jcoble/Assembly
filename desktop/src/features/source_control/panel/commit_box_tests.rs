@@ -25,11 +25,26 @@ fn status(files: Vec<ChangedFile>, staged: usize) -> GitStatus {
 // Pins: g9#2
 #[test]
 fn commit_is_disabled_without_staged_files_or_a_message_and_while_busy() {
-    assert!(!can_commit(Some(&status(vec![], 0)), "message", false, false));
+    assert!(!can_commit(
+        Some(&status(vec![], 0)),
+        "message",
+        false,
+        false
+    ));
     assert!(!can_commit(Some(&status(vec![], 1)), "   \n", false, false));
-    assert!(!can_commit(Some(&status(vec![], 1)), "message", false, true));
+    assert!(!can_commit(
+        Some(&status(vec![], 1)),
+        "message",
+        false,
+        true
+    ));
     assert!(!can_commit(None, "message", false, false));
-    assert!(can_commit(Some(&status(vec![], 1)), "message", false, false));
+    assert!(can_commit(
+        Some(&status(vec![], 1)),
+        "message",
+        false,
+        false
+    ));
     assert_eq!(
         commit_hint(Some(&status(vec![], 0)), "message", false, false),
         "Stage something first — a commit takes what is staged."
@@ -74,7 +89,10 @@ fn stage_all_takes_changes_and_untracked_files_but_never_marks_a_conflict_resolv
         2,
     );
     assert_eq!(stageable(&current), ["both", "changed", "new"]);
-    assert_eq!(stage_hint(Some(&current), false), "Stage all 3 changed files");
+    assert_eq!(
+        stage_hint(Some(&current), false),
+        "Stage all 3 changed files"
+    );
     assert_eq!(
         stage_hint(Some(&status(vec![file("staged", "M", ".")], 1)), false),
         "Everything is already staged."

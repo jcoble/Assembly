@@ -30,12 +30,16 @@ pub struct FileTouched {
     pub removed: i64,
 }
 
-#[derive(Clone,PartialEq)]
+#[derive(Clone, PartialEq)]
 struct ContextScope {
-    session:String,key:Option<crate::core::engine::SessionKey>,source:Option<crate::core::socket::row_source::ExpectedRowSource>,valid:bool,
+    session: String,
+    key: Option<crate::core::engine::SessionKey>,
+    source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    valid: bool,
 }
 pub struct ContextPane {
-    context_scope:Option<ContextScope>,read_serial:u64,
+    context_scope: Option<ContextScope>,
+    read_serial: u64,
     focus: FocusHandle,
     client: Rc<dyn SessionClient>,
     /// The kit shows this tab; only then does a pick read.
@@ -66,7 +70,8 @@ impl ContextPane {
 
     pub fn new(client: Rc<dyn SessionClient>, cx: &mut Context<Self>) -> Self {
         Self {
-            context_scope:None,read_serial:0,
+            context_scope: None,
+            read_serial: 0,
             focus: cx.focus_handle(),
             client,
             active: false,
@@ -84,7 +89,9 @@ impl ContextPane {
     /// Reads the selected session's files and attachments, if the tab is shown. A hidden tab drops the last session's
     /// lists, so the frame before it's shown again never draws them.
     fn read(&mut self, cx: &mut Context<Self>) {
-        self.read_serial+=1;let serial=self.read_serial;self.context_scope=None;
+        self.read_serial += 1;
+        let serial = self.read_serial;
+        self.context_scope = None;
         (
             self.files,
             self.attachments,
@@ -97,16 +104,35 @@ impl ContextPane {
         if !self.active {
             return;
         }
-        let selected=SelectedSession::global(cx);
-        let selected=selected.read(cx);
-        let Some(session)=selected.session_id().map(str::to_owned)else{return;};
-        let scope=ContextScope{session:session.clone(),key:selected.key().cloned(),source:selected.source().cloned(),valid:true};
-        if (scope.key.is_some()&&scope.source.is_none())||scope.source.as_ref().is_some_and(|source|scope.key.as_ref().is_none_or(|key|key.machine!=source.machine||key.id!=session)) {
-            self.files=Listing::Failed("The selected session source is unavailable.".into());self.attachments=Listing::Failed("The selected session source is unavailable.".into());return;
+        let selected = SelectedSession::global(cx);
+        let selected = selected.read(cx);
+        let Some(session) = selected.session_id().map(str::to_owned) else {
+            return;
+        };
+        let scope = ContextScope {
+            session: session.clone(),
+            key: selected.key().cloned(),
+            source: selected.source().cloned(),
+            valid: true,
+        };
+        if (scope.key.is_some() && scope.source.is_none())
+            || scope.source.as_ref().is_some_and(|source| {
+                scope
+                    .key
+                    .as_ref()
+                    .is_none_or(|key| key.machine != source.machine || key.id != session)
+            })
+        {
+            self.files = Listing::Failed("The selected session source is unavailable.".into());
+            self.attachments =
+                Listing::Failed("The selected session source is unavailable.".into());
+            return;
         }
-        self.context_scope=Some(scope.clone());
-        let mut args=json!({"session":session});
-        if let Some(source)=&scope.source{args["expectedSource"]=json!(source);}
+        self.context_scope = Some(scope.clone());
+        let mut args = json!({"session":session});
+        if let Some(source) = &scope.source {
+            args["expectedSource"] = json!(source);
+        }
         let files = self
             .client
             .call("rows", "files", args.clone(), Some("rows/files"), cx);
@@ -158,7 +184,12 @@ impl BasePanel for ContextPane {
         self.active = active;
         match active {
             true => self.read(cx),
-            false => {self._read=None;self._open=None;self.context_scope=None;self.read_serial+=1;}
+            false => {
+                self._read = None;
+                self._open = None;
+                self.context_scope = None;
+                self.read_serial += 1;
+            }
         }
     }
 }

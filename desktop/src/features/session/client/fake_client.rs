@@ -62,9 +62,15 @@ impl FakeClient {
     }
 
     pub fn push_message(&self, message: &str, machine: Option<&str>, item: Value, cx: &mut App) {
-        self.push_message_result(message,machine,Ok(item),cx);
+        self.push_message_result(message, machine, Ok(item), cx);
     }
-    pub fn push_message_result(&self,message:&str,machine:Option<&str>,item:Result<Value,CallError>,cx:&mut App) {
+    pub fn push_message_result(
+        &self,
+        message: &str,
+        machine: Option<&str>,
+        item: Result<Value, CallError>,
+        cx: &mut App,
+    ) {
         let ids: Vec<u64> = self
             .state
             .borrow()
@@ -155,7 +161,9 @@ impl FakeClient {
         self.state.borrow().config_calls.clone()
     }
 
-    pub fn queue_read_answer(&self, answer: Result<Value, CallError>) { self.state.borrow_mut().read_answers.push_back(answer); }
+    pub fn queue_read_answer(&self, answer: Result<Value, CallError>) {
+        self.state.borrow_mut().read_answers.push_back(answer);
+    }
 
     pub fn reads(&self) -> Vec<Value> {
         self.state.borrow().reads.clone()
@@ -199,7 +207,7 @@ impl SessionClient for FakeClient {
         &self,
         message: &str,
         machine: Option<&str>,
-        _expected_source:Option<&crate::core::socket::row_source::ExpectedRowSource>,
+        _expected_source: Option<&crate::core::socket::row_source::ExpectedRowSource>,
         sink: super::session_client::MessageSink,
         _cx: &App,
     ) -> Subscription {

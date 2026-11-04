@@ -17,10 +17,14 @@ impl SessionPane {
     /// The machine comes from the sessions list, which has it the moment a session opens (the header's own item
     /// arrives later); from the header for a session the list hasn't loaded.
     pub(super) fn tell_offline(&mut self, cx: &mut Context<Self>) {
-        if self.read_only { return; }
-        let Some(source)=self.row_source.as_ref()else{return;};
-        let agent=self.active_provider.clone();
-        let machine=source.route_machine.clone();
+        if self.read_only {
+            return;
+        }
+        let Some(source) = self.row_source.as_ref() else {
+            return;
+        };
+        let agent = self.active_provider.clone();
+        let machine = source.route_machine.clone();
         let route = Machines::try_global(cx)
             .and_then(|machines| {
                 machines

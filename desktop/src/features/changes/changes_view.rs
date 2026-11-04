@@ -1,9 +1,9 @@
 //! How the Changes tab looks: the bar, what's being waited on, the stacked diff and the file tree.
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{ChangesPane, Target};
 use crate::core::intents::open_file::OpenFile;
 use crate::core::socket::{error_code::ErrorCode, row_source::ExpectedRowSource};
 use crate::core::state::{preferences::Preferences, session_read::Shown};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::{
     changed_tree::{TREE_WIDTH, TreeHandler},
     diff_header::{file_heading, part_heading, viewed_button},
@@ -432,8 +432,17 @@ impl Render for ChangesPane {
             .min_h_0()
             .child(bar);
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
-        let (note_size, note_height) = Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Body));
-        let note = |text: String| div().flex_none().px_3().py_1().text_size(note_size).line_height(note_height).child(text);
+        let (note_size, note_height) =
+            Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Body));
+        let note = |text: String| {
+            div()
+                .flex_none()
+                .px_3()
+                .py_1()
+                .text_size(note_size)
+                .line_height(note_height)
+                .child(text)
+        };
         match self.waiting(cx) {
             Some(Waiting::Busy(text)) => {
                 return pane.child(
