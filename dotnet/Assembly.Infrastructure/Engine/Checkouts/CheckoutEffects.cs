@@ -22,21 +22,24 @@ internal sealed class CheckoutEffects(IAppDatabase db, IGit git, CheckoutWrites 
         if (intent is null || intent.Request is null || string.IsNullOrWhiteSpace(intent.Folder) ||
             !Guid.TryParseExact(intent.OperationId, "D", out _) || intent.Epoch < 0 || effect.Id != "checkout/" + intent.OperationId || effect.SessionId is null)
             return Unknown("checkout_intent_invalid");
-        // Folder relocation requires a verified native resume producer, not the public ACP session id.
-        if (intent.Request.CheckoutKind == "folder") return Refuse(intent, "unsupported_resume");
-        if (intent.Request.CheckoutKind == "worktree" && intent.InitialStart is null) return Refuse(intent, "unsupported_resume");
         try
         {
             HandoffGit.NoLinks(intent.Folder);
             if (!Directory.Exists(intent.Folder)) return Refuse(intent, "folder_unavailable");
             var top = await git.RunAsync(intent.Folder, ["rev-parse", "--show-toplevel"], null, null, ct);
-            if (top.ExitCode != 0 && intent.Request.CheckoutKind != "current") return Refuse(intent, "not_git");
+            if (top.ExitCode != 0 && intent.Request.CheckoutKind is not ("current" or "folder")) return Refuse(intent, "not_git");
             var root = Path.GetFullPath(top.ExitCode == 0 ? GitText(top.Output) : intent.Folder);
             HandoffGit.NoLinks(root);
-            if (intent.Request.CheckoutKind != "current" && root != Path.TrimEndingDirectorySeparator(Path.GetFullPath(intent.Folder)))
+            if (intent.Request.CheckoutKind is not ("current" or "folder") && root != Path.TrimEndingDirectorySeparator(Path.GetFullPath(intent.Folder)))
                 return Refuse(intent, "checkout_root_changed");
             string? destination = null;
-            if (intent.InitialStart is not null && intent.Request.CheckoutKind == "branch")
+            if (intent.Request.CheckoutKind == "folder")
+            {
+                destination = Path.GetFullPath(intent.Request.Folder!);
+                HandoffGit.NoLinks(destination);
+                if (!Directory.Exists(destination)) return Refuse(intent, "folder_unavailable");
+            }
+            if (intent.Request.CheckoutKind is "branch" or "worktree" && intent.Request.Branch is not null)
             {
                 var listing = await git.RunAsync(root, ["worktree", "list", "--porcelain", "-z"], null, null, ct);
                 if (listing.ExitCode != 0) return Unknown("worktrees_unavailable");
@@ -54,7 +57,10 @@ internal sealed class CheckoutEffects(IAppDatabase db, IGit git, CheckoutWrites 
                 if (!Quiescent(effect, intent)) return Refuse(intent, "busy");
                 var before = top.ExitCode == 0 ? await Inspect(root, ct) : (Head: (string?)null, Branch: (string?)null);
                 if (intent.Request.CheckoutKind == "current") return Confirm(intent, intent.Folder, before.Branch);
-                if (intent.Request.CheckoutKind == "worktree") return await InitialWorktree(effect, intent, root, reconcile, ct);
+                if (intent.Request.CheckoutKind == "folder")
+                    return await Relocate(effect, intent, lease, destination!, null, ct);
+                if (intent.Request.CheckoutKind == "worktree" && intent.InitialStart is not null)
+                    return await InitialWorktree(effect, intent, root, reconcile, ct);
                 var branch = intent.Request.Branch!;
                 var valid = await git.RunAsync(root, ["check-ref-format", "--branch", branch], null, null, ct);
                 if (valid.ExitCode != 0) return Refuse(intent, "invalid_branch");
@@ -64,7 +70,6 @@ internal sealed class CheckoutEffects(IAppDatabase db, IGit git, CheckoutWrites 
                 if (held.Length > 1) return Unknown("ambiguous_worktree");
                 if (held.Length == 1 && Path.GetFullPath(held[0].Path) != Path.GetFullPath(intent.Folder))
                 {
-                    if (intent.InitialStart is null) return Refuse(intent, "unsupported_resume");
                     var target = Path.GetFullPath(held[0].Path);
                     if (target != destination) return Unknown("checkout_target_changed");
                     HandoffGit.NoLinks(target);
@@ -72,11 +77,9 @@ internal sealed class CheckoutEffects(IAppDatabase db, IGit git, CheckoutWrites 
                     var targetState = await Inspect(target, ct);
                     if (targetState.Branch != branch || intent.Request.ExpectedHead is { } expected && targetState.Head != expected)
                         return Unknown("checkout_target_changed");
-                    var targetPeers = await AcquirePeers(target, effect.SessionId, ct);
-                    if (targetPeers is null) return Refuse(intent, "checkout_busy");
-                    try { return Current(effect, intent) ? Confirm(intent, target, branch) : Unknown("checkout_owner_changed"); }
-                    finally { foreach (var peer in targetPeers) await peer.DisposeAsync(); }
+                    return await Relocate(effect, intent, lease, target, branch, ct);
                 }
+                if (intent.Request.CheckoutKind == "worktree" && held.Length == 0) return Refuse(intent, "worktree_unavailable");
                 if (reconcile)
                 {
                     // No Git replay. Without an accepted exact HEAD a matching branch name alone is not proof.
@@ -111,6 +114,23 @@ internal sealed class CheckoutEffects(IAppDatabase db, IGit git, CheckoutWrites 
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or HandoffRefused or Assembly.Application.Common.Calls.CallFailed)
         { return Unknown("checkout_inspection_failed"); }
+    }
+
+    private async Task<EffectReceipt> Relocate(Effect effect, CheckoutOperation intent, ISessionMaintenanceLease lease,
+        string folder, string? branch, CancellationToken ct)
+    {
+        if (!Current(effect, intent) || !Quiescent(effect, intent)) return Refuse(intent, "busy");
+        var peers = await AcquirePeers(folder, effect.SessionId!, ct);
+        if (peers is null) return Refuse(intent, "checkout_busy");
+        try
+        {
+            if (folder != intent.Folder && intent.ProviderSessionId is { } native &&
+                !await lease.ProbeResumeAsync(native, folder, ct)) return Refuse(intent, "unsupported_resume");
+            return Current(effect, intent) && Quiescent(effect, intent)
+                ? Result(intent, new(folder, branch, intent.ProviderSessionId, null, true, lease.ResumeEvidence))
+                : Unknown("checkout_owner_changed");
+        }
+        finally { foreach (var peer in peers) await peer.DisposeAsync(); }
     }
 
     private Task<EffectReceipt> WithRoots(string root, string? target, Func<Task<EffectReceipt>> work)

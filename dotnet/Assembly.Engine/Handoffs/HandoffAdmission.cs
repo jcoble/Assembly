@@ -120,6 +120,10 @@ internal sealed class HandoffAdmission
             args.Identity.HandoffId), canonical, null, HandoffOperation.Adopt, binding);
     }
 
+    internal static HandoffAdmission Closed(Assembly.Application.Common.Database.IWriteScope scope, HandoffIdentity identity, string canonical, long nowMs) =>
+        new(scope, identity, HandoffAdmissionKeys.TargetContext(identity, true, nowMs),
+            HandoffAdmissionKeys.TargetClosed(identity.TargetMachine, identity.HandoffId), canonical, null, HandoffOperation.Closed);
+
     internal static string NoAdoptCanonical(HandoffIdentity identity)
     {
         using var bytes = new MemoryStream();

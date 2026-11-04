@@ -14,6 +14,8 @@ using Assembly.Engine.Messages;
 using Assembly.Infrastructure.Engine.Needs;
 using Assembly.Engine.Sessions;
 
+using Assembly.Infrastructure.Engine.Handoff;
+
 namespace Assembly.Infrastructure.Engine;
 
 public sealed record MachineCommand(Guid CommandId, string FromMachine, string EntityId,
@@ -22,7 +24,8 @@ public sealed record StartLocationArgs(string ParentSessionId);
 public sealed record StartLocation(string Folder);
 
 /// <summary>The authenticated owner's ordinary machine-coordinator operations. Adoption remains unbound.</summary>
-public sealed partial class MachineCalls(EngineRuntime runtime, TimeProvider time, IAgentLauncher launcher, string checkouts, NeedAnswers needs) : IFeature
+public sealed partial class MachineCalls(EngineRuntime runtime, TimeProvider time, IAgentLauncher launcher, string checkouts, NeedAnswers needs,
+    NativeHandoffProducer? nativeHandoffs = null) : IFeature
 {
     public void Register(ICallRegistry calls)
     {
@@ -211,13 +214,18 @@ public sealed partial class MachineCalls(EngineRuntime runtime, TimeProvider tim
                 }))), order: args => args.Identity.HandoffId);
 
         calls.Write("engine", "handoff_adopt", EngineSocketJson.Default.HandoffAdoptArgs, EngineSocketJson.Default.HandoffAck,
-            (args, call) => Relay<Func<IWriteScope, HandoffAck>>(call, operation =>
-                Task.FromResult(operation.Return<Func<IWriteScope, HandoffAck>>(scope =>
+            (args, call) => Relay<Func<IWriteScope, HandoffAck>>(call, async operation =>
+            {
+                // File reads stay outside the writer. A refused witness leaves the door's plain Waiting answer.
+                var prepared = await PrepareAdoptionAsync(args, operation.Token).ConfigureAwait(false);
+                return operation.Return<Func<IWriteScope, HandoffAck>>(scope =>
                 {
                     RequireHandoffReceiver(scope, args.Identity.TargetMachine);
-                    return Bounded(call, runtime.Commands.ApplyHandoffAdopt(scope, args, time.GetUtcNow().ToUnixTimeMilliseconds()),
-                        EngineSocketJson.Default.HandoffAck);
-                }))), order: args => args.Identity.HandoffId);
+                    var now = time.GetUtcNow().ToUnixTimeMilliseconds();
+                    return Bounded(call, prepared is null ? runtime.Commands.ApplyHandoffAdopt(scope, args, now)
+                        : nativeHandoffs!.Adopt(scope, runtime.Commands, prepared, now), EngineSocketJson.Default.HandoffAck);
+                });
+            }), order: args => args.Identity.HandoffId);
 
         calls.Write("engine", "handoff_seal", EngineSocketJson.Default.HandoffSealArgs, EngineSocketJson.Default.HandoffAck,
             (args, call) => Relay<Func<IWriteScope, HandoffAck>>(call, operation =>
@@ -227,6 +235,13 @@ public sealed partial class MachineCalls(EngineRuntime runtime, TimeProvider tim
                     return Bounded(call, runtime.Commands.SealHandoffTarget(scope, args, time.GetUtcNow().ToUnixTimeMilliseconds()),
                         EngineSocketJson.Default.HandoffAck);
                 }))), order: args => args.Identity.HandoffId);
+    }
+
+    private async Task<PreparedNativeAdoption?> PrepareAdoptionAsync(HandoffAdoptArgs args, CancellationToken ct)
+    {
+        if (nativeHandoffs is null || args.Identity.TargetMachine != runtime.Machine) return null;
+        try { return await nativeHandoffs.PrepareAsync(runtime.Machine, args, ct).ConfigureAwait(false); }
+        catch (Exception error) when (error is HandoffRefused or IOException or UnauthorizedAccessException) { return null; }
     }
 
     // Routing and the current physical receiver are checked in the supplied snapshot/writer. The Engine owns

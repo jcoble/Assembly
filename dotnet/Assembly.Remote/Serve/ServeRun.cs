@@ -156,6 +156,7 @@ public static class ServeRun
                         feed: new EngineFeed(runtime, Console.Out, TimeProvider.System, helperCards),
                         mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens));
                     sessions.BindHelperWorking(helperCards.Working, helperCards.Refresh);
+                    sessions.BindNativeSessions(new Assembly.Infrastructure.Engine.Handoff.NativeSessionProducer(db, sessionStore));
                     workflowReceipts = WorkflowReceipts.Create(db, runtime.Machine, sessions);
                     if (engineEffects is not null) return engineEffects;
                     var catalogue = new AgentCatalogue(sessions, probeFolder, TimeProvider.System);
@@ -196,7 +197,8 @@ public static class ServeRun
             board = new BoardTools(sessionStore, registry, boardTransitions, boardQueries, hostStop.Token);
             var workflowCalls = new Assembly.Infrastructure.Workflows.WorkflowCalls(boardQueries, board.AnswerAsync);
             machinesFeature = new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System);
-            ownerMachineCalls = new MachineCalls(engine, TimeProvider.System, launcher, options.Checkouts, answers);
+            ownerMachineCalls = new MachineCalls(engine, TimeProvider.System, launcher, options.Checkouts, answers,
+                new Assembly.Infrastructure.Engine.Handoff.NativeHandoffProducer(launcher, sessionStore));
             var mcp = new McpServerHost(tokens, new McpRecorder(engine, gate, TimeProvider.System),
                 [new StartSessionTool(gate, () => launcher.Agents.Select(agent => agent.Id).ToArray(), Directory.Exists),
                     new ListSessionsTool(gate), new SendMessageTool(gate), new MessageStatusTool(gate),

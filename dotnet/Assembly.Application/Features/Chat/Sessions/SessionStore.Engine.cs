@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Projects;
 using Assembly.Application.Common.Database;
@@ -84,6 +85,10 @@ public sealed partial class SessionStore : ISessionProjectProjection
     public void SetCheckout(IWriteScope scope, string sessionId, string checkoutRoot, string? branch)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(checkoutRoot);
+        if (NativeLaunch(scope, sessionId) is { } launch && launch.Folder != checkoutRoot)
+            scope.Execute("UPDATE session_config SET native_launch_json=$launch,native_witness_json=NULL WHERE session_id=$id",
+                new SqlArg("$launch", System.Text.Json.JsonSerializer.Serialize(launch with { Folder = checkoutRoot }, SessionsJson.Default.NativeSessionLaunch)),
+                new("$id", sessionId));
         if (scope.Execute("UPDATE session_info SET checkout_root=$root,branch=$branch WHERE session_id=$id",
             new SqlArg("$id", sessionId), new SqlArg("$root", checkoutRoot), new SqlArg("$branch", branch)) != 1)
             throw new InvalidOperationException("The session checkout projection was refused.");
@@ -310,5 +315,36 @@ public sealed partial class SessionStore : ISessionProjectProjection
         _engine.Started(scope, session, initiatingSessionId, projectId, checkout, preparation);
         Publish(scope, session.SessionId);
         return Get(scope, session.SessionId)!;
+    }
+
+    public void RetainNativeLaunch(IWriteScope scope, string session, NativeSessionLaunch launch) => scope.Execute("""
+        INSERT INTO session_config(session_id,native_launch_json) VALUES($id,$launch)
+        ON CONFLICT(session_id) DO UPDATE SET native_launch_json=$launch,native_witness_json=NULL
+        """, new SqlArg("$id", session), new("$launch", JsonSerializer.Serialize(launch, SessionsJson.Default.NativeSessionLaunch)));
+    public NativeSessionLaunch? NativeLaunch(IReadScope scope, string session) => scope.QueryFirst(
+        "SELECT native_launch_json FROM session_config WHERE session_id=$id", row => row.IsNull(0) ? null :
+            JsonSerializer.Deserialize(row.Text(0), SessionsJson.Default.NativeSessionLaunch), new SqlArg("$id", session));
+
+    public NativeSessionLaunch? NativeLaunch(string session)
+    {
+        using var scope = _db.OpenSnapshot(default);
+        return NativeLaunch(scope, session);
+    }
+
+    public void RetainNativeLaunch(string session, NativeSessionLaunch launch) =>
+        _writer.Write("sessions.native.launch", scope =>
+        {
+            RetainNativeLaunch(scope, session, launch);
+            return 0;
+        });
+
+    public void RetainNativeWitness(IWriteScope scope, NativeSessionLaunch launch, NativeSessionCapture capture)
+    {
+        if (NativeLaunch(scope, capture.Current.SessionId) != launch ||
+            Get(scope, capture.Current.SessionId)?.AcpSessionId != launch.AcpSessionId)
+            throw new InvalidOperationException("Native launch changed during capture.");
+        scope.Execute("UPDATE session_config SET native_witness_json=$witness WHERE session_id=$id",
+            new SqlArg("$witness", JsonSerializer.Serialize(capture, SessionsJson.Default.NativeSessionCapture)),
+            new("$id", capture.Current.SessionId));
     }
 }

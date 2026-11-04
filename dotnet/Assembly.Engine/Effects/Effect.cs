@@ -16,7 +16,8 @@ public interface IEngineEffects
     Task<EffectReceipt> ExecuteAsync(Effect effect, CancellationToken cancellationToken);
     Task<EffectReceipt> ReconcileAsync(Effect effect, CancellationToken cancellationToken);
 }
-public sealed record SessionEffectData(string State, string? ProviderSessionId, string? Reason);
+public sealed record SessionEffectData(string State, string? ProviderSessionId, string? Reason,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] NativeResumeEvidence? NativeResume = null);
 public sealed record AnswerEffectData(string ProviderRequestId);
 public sealed record MessageEffectData(string State, string? ProviderTurnId, string? Reason,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] UserRowReference? UserRow = null,

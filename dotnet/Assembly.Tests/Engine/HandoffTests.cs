@@ -6,6 +6,7 @@ using Assembly.Engine.Handoffs;
 using Assembly.Engine.Messages;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Effects;
+using Assembly.Tests.Engine.Handoffs;
 
 namespace Assembly.Tests.Engine;
 
@@ -16,18 +17,20 @@ public sealed class HandoffTests
     [Theory]
     [InlineData("resumed", 8L, "moved")]
     [InlineData("failed", 7L, "idle")]
-    public void Only_resume_moves_epoch(string outcome, long epoch, string state)
+    public async Task Only_resume_moves_epoch(string outcome, long epoch, string state)
     {
         using var f = new EngineFixture(); f.SeedSession("s", epoch: 7);
         using var target = new EngineFixture();
+        await using var provider = new NativeProvider(target);
         Native(f);
         var identity = new HandoffIdentity("h", f.Machine, "s", target.Machine, 7, 8);
         Assert.True(f.Apply(new RequestHandoff("s", target.Machine), "h", epoch: 7).Applied);
         CompleteRelease(f, identity);
-        Assert.True(Phase(f, identity, HandoffPhase.Accept).Receipt!.Applied);
+        var accepted = Phase(f, identity, HandoffPhase.Accept);
+        Assert.True(accepted.Receipt!.Applied);
         Assert.Equal(7, f.Number("SELECT epoch FROM engine_session WHERE id='s'"));
         Assert.Equal("local", f.Text("SELECT holder FROM engine_session WHERE id='s'"));
-        var evidence = outcome == "failed" ? Seal(target, identity) : null;
+        var evidence = outcome == "failed" ? Seal(target, identity) : await provider.ResumeAsync(identity, accepted.Fingerprint!);
         Assert.True(Phase(f, identity, outcome == "failed" ? HandoffPhase.Failed : HandoffPhase.Resumed,
             outcome == "failed" ? "refused" : null, evidence).Receipt?.Applied == true);
         Assert.Equal(epoch, f.Number("SELECT epoch FROM engine_session WHERE id='s'"));
@@ -156,21 +159,25 @@ public sealed class HandoffTests
 
     [Theory]
     [MemberData(nameof(Edges))]
-    public void Allowed_and_invalid_edges(string from, string to, bool allowed)
+    public async Task Allowed_and_invalid_edges(string from, string to, bool allowed)
     {
         using var f = new EngineFixture(); f.SeedSession(epoch: 7); Native(f);
         using var target = new EngineFixture();
+        await using var provider = new NativeProvider(target);
+        HandoffAck? accepted = null;
         var identity = new HandoffIdentity("h", f.Machine, "s", target.Machine, 7, 8);
         Assert.True(f.Apply(new RequestHandoff("s", target.Machine), "h", epoch: 7).Applied);
         long version = 1;
         if (from is "accepted" or "resumed")
         {
             CompleteRelease(f, identity);
-            Assert.True(Phase(f, identity, HandoffPhase.Accept).Receipt!.Applied); version++;
+            accepted = Phase(f, identity, HandoffPhase.Accept);
+            Assert.True(accepted.Receipt!.Applied); version++;
             if (from == "resumed")
             {
                 // The real target native-operation producer is required; display idle cannot stand in for it.
-                Assert.True(Phase(f, identity, HandoffPhase.Resumed).Receipt?.Applied == true); version++;
+                var resumed = await provider.ResumeAsync(identity, accepted.Fingerprint!);
+                Assert.True(Phase(f, identity, HandoffPhase.Resumed, null, resumed).Receipt?.Applied == true); version++;
             }
         }
         if (from == "failed")
@@ -186,7 +193,8 @@ public sealed class HandoffTests
             "failed" => HandoffPhase.Failed,
             _ => (HandoffPhase)999
         };
-        var evidence = to == "failed" && from == "accepted" ? Seal(target, identity) : null;
+        var evidence = to == "failed" && from == "accepted" ? Seal(target, identity)
+            : to == "resumed" && from == "accepted" ? await provider.ResumeAsync(identity, accepted!.Fingerprint!) : null;
         var ack = Phase(f, identity, phase, to == "failed" ? "refused" : null, evidence);
         Assert.Equal(allowed ? to : from, f.State("engine_handoff", "h"));
         Assert.Equal(allowed ? version + 1 : version, f.Number("SELECT version FROM engine_handoff WHERE id='h'"));
@@ -212,7 +220,7 @@ public sealed class HandoffTests
     }
 
     private static void Native(EngineFixture f) => f.Db.Writer.Write("test.native", scope =>
-        scope.Execute("UPDATE engine_session SET provider_session_id='native' WHERE id='s'"));
+        scope.Execute("UPDATE engine_session SET provider_session_id=$native WHERE id='s'", new SqlArg("$native", NativeProvider.NativeId)));
 
     internal static HandoffTargetEvidence Seal(EngineFixture target, HandoffIdentity identity) => target.Db.Writer.Write("test.actual-seal", scope =>
         new EngineCommands(target.Machine, target.Limits).SealHandoffTarget(scope, new(identity, "refused"), 1000)).Target!;

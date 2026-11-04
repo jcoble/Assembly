@@ -163,7 +163,8 @@ public static class EffectTransitions
                 "release" => EngineJournal.ValidHandoffReleaseConfirmation(scope, context, effect, receipt),
                 "answer" => receipt.Data.Deserialize(EngineJson.Default.AnswerEffectData)?.ProviderRequestId ==
                     effect.Payload.Deserialize(EngineJson.Default.NeedAnswer)?.ProviderRequestId,
-                "start" => receipt.Data.Deserialize(EngineJson.Default.SessionEffectData)?.State is "idle" or "lost" or "ended",
+                "start" => receipt.Data.Deserialize(EngineJson.Default.SessionEffectData)?.State is "idle" or "lost" or "ended"
+                    && EngineJournal.ValidNativeStart(scope, context.Machine, effect, receipt),
                 "stop" => receipt.Data.Deserialize(EngineJson.Default.SessionEffectData)?.State is "idle" or "ended",
                 "send" => receipt.Data.Deserialize(EngineJson.Default.MessageEffectData)?.State is "queued" or "delivered_to_turn" or "next_turn" or "unsupported" or "failed",
                 _ => false

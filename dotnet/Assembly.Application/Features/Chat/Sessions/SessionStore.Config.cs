@@ -118,7 +118,7 @@ public sealed partial class SessionStore
 
     internal void ObserveConfig(SessionInfo expected, SessionConfig expectedConfig, SessionLocation expectedLocation, string nativeId,
         string? options, string? commands, IReadOnlyDictionary<string, string> choices, KeyValuePair<string, string>? confirmedModel,
-        Action validate, CancellationToken ct, string? agentOptions = null)
+        Action validate, CancellationToken ct, string? agentOptions = null, NativeSessionLaunch? nativeLaunch = null)
     {
         _writer.Write("sessions.config.observation", scope =>
         {
@@ -135,6 +135,9 @@ public sealed partial class SessionStore
                 throw new CallFailed("The session changed while its settings were being read.");
             scope.Execute("UPDATE session_info SET acp_session_id=$native WHERE session_id=$id", new SqlArg("$native", nativeId), new SqlArg("$id", expected.SessionId));
             SaveOptions(scope, expected.SessionId, options ?? "null");
+            if (nativeLaunch is not null)
+                scope.Execute("UPDATE session_config SET native_launch_json=$launch,native_witness_json=NULL WHERE session_id=$id",
+                    new SqlArg("$launch", JsonSerializer.Serialize(nativeLaunch, SessionsJson.Default.NativeSessionLaunch)), new("$id", expected.SessionId));
             SaveChoices(scope, expected.SessionId, choices);
             if (commands is not null) SaveCommands(scope, expected.SessionId, commands);
             else scope.Execute("INSERT INTO session_commands(session_id,commands) VALUES($id,'null') ON CONFLICT(session_id) DO NOTHING",

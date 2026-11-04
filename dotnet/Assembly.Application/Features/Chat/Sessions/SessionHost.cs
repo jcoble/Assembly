@@ -549,24 +549,38 @@ public sealed partial class SessionHost : IPermissionPolicy
         if (!_session.Wait(0)) return new(null, "busy");
         lock (_gate)
         {
-            if (_shuttingDown || _turn is not null || _kept is not null || _asks.Count != 0 ||
+            if (_shuttingDown || _turn is not null || _kept is not null || _warm is not null || _asks.Count != 0 ||
                 _tasks.Values.Any(task => task.Running) || _subagents.AnyRunning || _startedWorking())
             {
                 _session.Release();
                 return new(null, "busy");
             }
-            return new(new MaintenanceLease(_session), null);
+            return new(new MaintenanceLease(this, _session), null);
         }
     }
 
-    private sealed class MaintenanceLease(SemaphoreSlim session) : ISessionMaintenanceLease
+    internal Task<NativeResumeEvidence> ResumeNativeForMaintenanceAsync(string publicId, string folder, Action validate, CancellationToken ct) =>
+        _opener.Native.ResumeAsync(_sessionId, publicId, folder, validate, ct);
+
+    private sealed class MaintenanceLease(SessionHost owner, SemaphoreSlim session) : ISessionMaintenanceLease
     {
         private int _disposed;
-        public Task<bool> ProbeResumeAsync(string providerSessionId, string folder, CancellationToken ct)
+        public NativeResumeEvidence? ResumeEvidence { get; private set; }
+        public async Task<bool> ProbeResumeAsync(string providerSessionId, string folder, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
-            // The current public ACP id is not a verified native resume witness. Never create a replacement conversation.
-            return Task.FromResult(false);
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            try
+            {
+                ResumeEvidence = await owner._opener.Native.ResumeAsync(owner._sessionId, providerSessionId, folder,
+                    () => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this), ct);
+                return true;
+            }
+            catch (Exception error) when (error is not OperationCanceledException and not OutOfMemoryException)
+            {
+                owner._log.WriteLine($"Native resume refused: {error.GetType().Name}");
+                return false;
+            }
         }
         public ValueTask DisposeAsync()
         {

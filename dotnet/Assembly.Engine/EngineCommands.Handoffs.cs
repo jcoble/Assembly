@@ -22,6 +22,10 @@ public sealed partial class EngineCommands
     public HandoffAck ApplyHandoffAdopt(IWriteScope scope, HandoffAdoptArgs args, long nowMs) =>
         EngineJournal.ExecuteHandoffAdopt(scope, _machine, args, nowMs);
 
+    internal HandoffAck ApplyNativeHandoffAdopt(IWriteScope scope, PreparedNativeAdoption prepared, long nowMs,
+        Action<IWriteScope, string, string?> project) =>
+        EngineJournal.ExecuteNativeHandoffAdopt(scope, _machine, prepared, nowMs, project);
+
     public HandoffAck SealHandoffTarget(IWriteScope scope, HandoffSealArgs args, long nowMs) =>
         EngineJournal.ExecuteHandoffSeal(scope, _machine, args, nowMs);
 }

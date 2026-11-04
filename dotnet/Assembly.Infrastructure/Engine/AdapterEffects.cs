@@ -30,7 +30,8 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
     {
         ct.ThrowIfCancellationRequested();
         if (effect.Kind == "release") return await ExecuteHandoffReleaseAsync(effect, ct);
-        if (effect.Kind == "start" && HandoffStartGate(effect, ct) is { } startGate) return startGate;
+        if (effect.Kind == "start" && HandoffStartGate(effect, ct) is { } startGate)
+            return startGate.Error == NativeStartAdmission ? await ExecuteNativeStartAsync(effect, ct) : startGate;
         if (effect.Kind == "handoff") return Receipt(EffectDisposition.Unavailable, "handoff_not_available");
         try
         {
@@ -78,7 +79,8 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
     {
         ct.ThrowIfCancellationRequested();
         if (effect.Kind == "release") return Task.FromResult(ReconcileHandoffRelease(effect, ct));
-        if (effect.Kind == "start" && HandoffStartGate(effect, ct) is { } startGate) return Task.FromResult(startGate);
+        if (effect.Kind == "start" && HandoffStartGate(effect, ct) is { } startGate)
+            return startGate.Error == NativeStartAdmission ? ExecuteNativeStartAsync(effect, ct) : Task.FromResult(startGate);
         if (effect.Kind == "handoff") return Task.FromResult(Receipt(EffectDisposition.Unavailable, "handoff_not_available"));
         try
         {
@@ -280,6 +282,16 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
             new("$target", identity.TargetMachine)) == 1;
     }
 
+    private const string NativeStartAdmission = "native_start_admission_required";
+
+    private Task<EffectReceipt> ExecuteNativeStartAsync(Effect effect, CancellationToken ct) => Handoff.NativeStarts.ExecuteAsync(effect, hosts, () =>
+    {
+        ct.ThrowIfCancellationRequested();
+        using var scope = db.OpenSnapshot(ct);
+        if (!Owns(scope, effect) || HandoffStartGate(effect, ct)?.Error != NativeStartAdmission)
+            throw new InvalidOperationException("native_start_owner_changed");
+    }, ct);
+
     // Both execute and reconcile must honor a closed/malformed durable carrier. No native admission is invented here.
     private EffectReceipt? HandoffStartGate(Effect effect, CancellationToken ct)
     {
@@ -295,7 +307,7 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
             if (fence.State == HandoffFenceState.Closed) return Receipt(EffectDisposition.Unknown, "handoff_target_closed");
             if (fence.State != HandoffFenceState.Adopted || payload?.Handoff is null || payload.Handoff != fence.Binding)
                 return Receipt(EffectDisposition.Unknown, "handoff_binding_invalid");
-            return Receipt(EffectDisposition.Unavailable, "native_start_admission_required");
+            return Receipt(EffectDisposition.Unavailable, NativeStartAdmission);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception error) when (error is not OutOfMemoryException)

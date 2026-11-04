@@ -277,6 +277,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                         feed: new EngineFeed(runtime, log, TimeProvider.System, helperCards),
                         mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens));
                     sessions.BindHelperWorking(helperCards.Working, helperCards.Refresh);
+                    sessions.BindNativeSessions(new Assembly.Infrastructure.Engine.Handoff.NativeSessionProducer(db, sessionStore));
                     workflowReceipts = WorkflowReceipts.Create(db, runtime.Machine, sessions);
                     if (engineEffects is not null) return engineEffects;
                     var catalogue = new AgentCatalogue(sessions, probeFolder, TimeProvider.System);
@@ -354,7 +355,8 @@ public sealed class DesktopBackend : IAsyncDisposable
             var starts = new MachineStarts(engine, machineForward, connections, sessionLimits, TimeProvider.System);
             var foreignStubs = new ForeignStubs(engine, connections, machineForward, TimeProvider.System);
             relay = new MachineRelay(engine, machineForward, connections, topics, TimeProvider.System, log, answers);
-            ownerMachineCalls = new MachineCalls(engine, TimeProvider.System, launcher, checkouts, answers);
+            ownerMachineCalls = new MachineCalls(engine, TimeProvider.System, launcher, checkouts, answers,
+                new Assembly.Infrastructure.Engine.Handoff.NativeHandoffProducer(launcher, sessionStore));
             var mcp = new McpServerHost(tokens, new McpRecorder(engine, gate, TimeProvider.System),
                 [new StartSessionTool(gate, () => launcher.Agents.Select(agent => agent.Id).ToArray(), Directory.Exists, new McpMachineStarts(starts)),
                     new ListSessionsTool(gate), new SendMessageTool(gate, foreignStubs.EnsureAsync), new MessageStatusTool(gate),
