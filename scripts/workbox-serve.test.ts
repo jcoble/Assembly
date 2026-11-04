@@ -171,3 +171,22 @@ test('cancelling a launcher ends its owned SSH deployment and releases the kerne
     const next=f.run();assert.equal(next.status,0,next.stderr);
   } finally {first.kill('SIGTERM');await ended;f.close()}
 });
+
+test('SSH stdin EOF cancels the remote owner and its build child', {timeout:10_000}, async()=>{
+  const root=mkdtempSync(join(tmpdir(),'assembly-remote-owner-'));
+  const file=join(root,'child-pid');
+  const processModule=new URL('./dev-remote-process.ts',import.meta.url).href;
+  writeFileSync(join(root,'owner.ts'),`import {lifetime,command} from ${JSON.stringify(processModule)};\nconst owner=lifetime(true);try{await command(process.execPath,['-e',${JSON.stringify(`require('fs').writeFileSync(${JSON.stringify(file)},String(process.pid));process.stdin.resume()`)}],{signal:owner.signal})}catch(e){console.log(e.message)}finally{owner.close()}`);
+  const started=untilFile(file);
+  const remote=spawn(process.execPath,[join(root,'owner.ts')],{stdio:['pipe','pipe','pipe']});
+  const ended=new Promise<number|null>(resolve=>remote.on('close',resolve));
+  let out='';remote.stdout.on('data',data=>out+=data);
+  try {
+    await started;
+    const pid=Number(readFileSync(file,'utf8'));
+    remote.stdin.end();
+    assert.equal(await ended,0);
+    assert.match(out,/cancelled with its launcher/);
+    assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
+  }finally {remote.kill('SIGTERM');await ended;rmSync(root,{recursive:true,force:true})}
+});

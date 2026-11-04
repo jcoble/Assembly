@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+process.stdin.resume();
+process.stdin.once('end', () => process.exit(1));
 const lane = JSON.parse(process.argv[1]);
 const root = path.join(process.env.HOME, lane.data);
 if (fs.realpathSync(root) !== root) throw Error('lane root must not be a symlink');
@@ -61,7 +63,7 @@ socket.onmessage=e=>{
  if(frame.t!=='welcome' || frame.machine!=='workbox-test' || frame.protocol!==1 || frame.format!==5 || !/^[a-f0-9]{40}$/.test(frame.commit??'')) {
   console.error('host did not provide a compatible authenticated identity');process.exit(1);
  }
- clearTimeout(deadline);socket.close();
+ clearTimeout(deadline);socket.close();process.stdin.pause();
  console.log(JSON.stringify({commit:frame.commit,engine:frame.engine,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,launcherSha}));
 };
 `;
