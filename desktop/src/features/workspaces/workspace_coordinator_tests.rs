@@ -10,7 +10,7 @@ use crate::core::socket::{
 use crate::core::state::workspace_panes::PaneCodec;
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
-use gpui_kit::{App, AppContext as _, Context, IntoElement, Render, Window, div};
+use gpui_kit::{App, Context, IntoElement, Render, Window, div};
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,

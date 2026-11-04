@@ -11,8 +11,8 @@ use crate::features::source_control::git_status::GitStatus;
 use crate::features::source_control::git_target::GitTarget;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::{TestAppContext, VisualTestContext};
+use gpui_kit::Entity;
 use gpui_kit::component::dock::BasePanel as _;
-use gpui_kit::{AppContext as _, Entity};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 

@@ -14,7 +14,7 @@ use crate::features::source_control::result_line::PaneResult;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::{TestAppContext, VisualTestContext};
 use gpui_kit::component::dock::BasePanel as _;
-use gpui_kit::{AppContext as _, Entity, Focusable as _, Subscription};
+use gpui_kit::{Entity, Focusable as _, Subscription};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 

@@ -19,7 +19,6 @@ async fn a_source_refusal_on_the_prepared_first_page_preserves_the_outgoing_view
     };
     use crate::features::session::client::socket_session_client::SocketSessionClient;
     use futures_channel::mpsc::unbounded;
-    use gpui_kit::AppContext as _;
     use serde_json::json;
     use std::{
         cell::RefCell,

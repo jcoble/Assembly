@@ -8,8 +8,6 @@ use crate::core::ui::center_panes::CenterPanes;
 use gpui_kit::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-#[cfg(test)]
-use serde_json::json;
 use std::collections::HashSet;
 
 #[derive(Clone, Deserialize, Serialize)]

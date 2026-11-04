@@ -136,7 +136,6 @@ async fn a_dispatched_command_with_a_lost_reply_is_unknown_and_is_not_sent_again
         test_wait::until,
     };
     use futures_channel::mpsc::unbounded;
-    use gpui_kit::*;
     let mut commands = 0;
     let backend = FakeBackend::start(move |frame| match frame["t"].as_str() {
         Some("hello") => vec![Reply::Frame(
@@ -210,7 +209,6 @@ async fn a_followed_command_is_asked_once_more_at_the_version_the_refusal_named(
         test_wait::until,
     };
     use futures_channel::mpsc::unbounded;
-    use gpui_kit::*;
     use std::sync::{Arc, Mutex};
     let sent = Arc::new(Mutex::new(Vec::new()));
     let seen = sent.clone();

@@ -1,6 +1,6 @@
 use super::{
-    SocketClient, WorkspaceActivated, WorkspaceCoordinator, WorkspaceKey, WorkspacePanes,
-    WorkspaceSaved, WorkspaceTarget,
+    SocketClient, WorkspaceActivated, WorkspaceCoordinator, WorkspaceKey, WorkspaceSaved,
+    WorkspaceTarget,
 };
 use crate::core::{
     socket::{

@@ -1,7 +1,7 @@
 use super::{DocumentStore, WorkspaceKey, run};
 use crate::features::files::document_store::DocumentKey;
 use gpui::TestAppContext;
-use gpui_kit::{AppContext as _, Context, IntoElement, Render, Window, div};
+use gpui_kit::{Context, IntoElement, Render, Window, div};
 
 struct Host;
 impl Render for Host {

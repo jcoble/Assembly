@@ -7,7 +7,6 @@ use crate::core::socket::{
 };
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
-use gpui_kit::AppContext as _;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 #[gpui::test]

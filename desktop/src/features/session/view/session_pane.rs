@@ -21,7 +21,9 @@ use crate::core::state::machines::GlobalMachines;
 use crate::core::theme::grow::{GROW, faded};
 use crate::core::ui::ask::form::AskForm;
 use crate::core::ui::expand_row::ExpandRow;
-use crate::features::session::client::session_client::{RowUpdate, RowsSink, SessionClient};
+#[cfg(test)]
+use crate::features::session::client::session_client::RowsSink;
+use crate::features::session::client::session_client::{RowUpdate, SessionClient};
 use crate::features::session::composer::composer_view::{Composer, ComposerEvent};
 use crate::features::session::composer::shape::pending_answer;
 use crate::features::session::model::change::Change;

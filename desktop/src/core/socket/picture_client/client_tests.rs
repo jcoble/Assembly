@@ -1,6 +1,5 @@
 use super::{Gate, PictureClient, PictureInterest, Pictures, agent, register};
 use gpui_kit::http_client::{AsyncBody, HttpClient, http};
-use std::future::Future;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 

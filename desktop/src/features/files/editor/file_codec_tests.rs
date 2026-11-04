@@ -3,7 +3,7 @@ use super::{
     select,
 };
 use crate::core::state::workspace_panes::PaneCodec;
-use gpui_kit::{AppContext as _, Context, IntoElement, Render, Window, div};
+use gpui_kit::{Context, IntoElement, Render, Window, div};
 use serde_json::json;
 use std::collections::HashSet;
 fn key() -> WorkspaceKey {
