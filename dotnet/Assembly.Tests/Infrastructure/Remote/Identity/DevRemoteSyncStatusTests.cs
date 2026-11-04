@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Infrastructure.Remote.Development;
+using Assembly.Infrastructure.Updates;
 using Topics = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Infrastructure.Remote;
@@ -9,52 +9,37 @@ namespace Assembly.Tests.Infrastructure.Remote;
 public sealed class DevRemoteSyncStatusTests
 {
     [Fact]
-    public void Warning_updates_preserve_unknown_connection_state_until_an_actual_probe()
-    {
-        var topics = new Topics();
-        var status = new MachineStatus(topics, ["workbox-test"]);
-        var changes = 0;
-        using var subscription = topics.Subscribe(MachinesFeature.Topic, "workbox-test", _ => { }, (_, _) => changes++);
-        status.BackendMismatch("workbox-test", null);
-        status.Deployment("workbox-test", null);
-        Assert.Equal(0, changes);
-        Assert.False(status.Items[1].Checked);
-        status.Deployment("workbox-test", "Host busy; waiting for idle.");
-        Assert.Equal(1, changes);
-        Assert.False(status.Items[1].Checked);
-        Assert.False(status.Items[1].Reachable);
-        status.Reachable("workbox-test");
-        Assert.Equal(2, changes);
-        Assert.True(status.Items[1].Checked);
-        Assert.True(status.Items[1].Reachable);
-        Assert.Equal("Host busy; waiting for idle.", status.Items[1].Reason);
-    }
-
-    [Fact]
-    public async Task Initial_failure_and_atomic_replacement_push_to_machines_without_polling()
+    public async Task A_launch_update_reaches_the_machine_without_polling_and_a_finish_rereads_agents()
     {
         var directory = Directory.CreateTempSubdirectory("dev-sync-state-").FullName;
         var path = Path.Combine(directory, "remote-sync-state.json");
         var topics = new Topics();
         var status = new MachineStatus(topics, ["workbox-test"]);
         status.Reachable("workbox-test");
-        File.WriteAllText(path, """{"reason":"Failed to start; host may be down."}""");
+        File.WriteAllText(path, """{"updating":false,"reason":"Failed to start; host may be down."}""");
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Replace(string json) { File.WriteAllText(path + ".new", json); File.Move(path + ".new", path, overwrite: true); }
         try
         {
-            using var watcher = new DevRemoteSyncStatus(path, status);
-            Assert.Contains("Failed to start", status.Items[1].Reason);
+            using var watcher = new DevRemoteSyncStatus(path, status, () => finished.TrySetResult());
+            Assert.Contains("Failed to start", status.Items[1].UpdateNote);
+            Assert.False(finished.Task.IsCompleted);
             var pushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var subscription = topics.Subscribe(MachinesFeature.Topic, "workbox-test", _ => { }, (_, json) =>
             {
                 using var value = JsonDocument.Parse(json);
-                if (value.RootElement.GetProperty("reason").GetString() == "Host busy; waiting for idle.") pushed.TrySetResult();
+                if (value.RootElement.TryGetProperty("updateNote", out var note) && note.GetString() == "Host busy; waiting for idle.") pushed.TrySetResult();
             });
             try
             {
-                File.WriteAllText(path + ".new", """{"reason":"Host busy; waiting for idle."}""");
-                File.Move(path + ".new", path, overwrite: true);
+                Replace("""{"updating":true,"reason":"Host busy; waiting for idle."}""");
                 await pushed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.True(status.Items[1].Updating);
                 Assert.True(status.Items[1].Reachable);
+                Replace("""{"updating":false,"reason":null}""");
+                await finished.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.False(status.Items[1].Updating);
+                Assert.Null(status.Items[1].UpdateNote);
             }
             finally { topics.Unsubscribe(subscription); }
         }

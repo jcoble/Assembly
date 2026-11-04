@@ -4,6 +4,7 @@ on:
     - cron: '23 8 * * *'
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - '.github/workflows/provider-updates.yml'
       - 'scripts/package-adapters*'
@@ -24,6 +25,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       versions: ${{ steps.versions.outputs.versions }}
+      # Only a scheduled run checks first: a manual run, main and a packaging PR always build.
+      build: ${{ steps.behind.outputs.build || 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -34,8 +37,15 @@ jobs:
       - run: node --test scripts/package-adapters.test.ts scripts/adapters/claude-launcher.test.ts
       - id: versions
         run: node scripts/package-adapters.ts resolve
+      - id: behind
+        if: github.event_name == 'schedule'
+        env:
+          VERSIONS: ${{ steps.versions.outputs.versions }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/package-adapters.ts behind "$VERSIONS"
   package:
     needs: resolve
+    if: needs.resolve.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -69,7 +79,7 @@ jobs:
           retention-days: 3
   publish:
     needs: [resolve, package]
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request'
+    if: needs.resolve.outputs.build == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: release

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Assembly.Application.Common.Topics;
 using Assembly.Application.Features.Chat.Sessions;
 
@@ -7,10 +8,32 @@ namespace Assembly.Application.Common.Machines;
 /// <summary>
 /// One machine as the <c>machines</c> topic sends it, keyed by its name (<c>local</c> for this machine):
 /// <paramref name="Name"/> is null for this machine, <paramref name="Kind"/> is <c>local</c> or <c>remote</c>,
-/// <paramref name="Reason"/> describes connection, backend version or deployment warnings, and <paramref name="Checked"/> is false for a remote until its
-/// first probe answers or fails (until then it's neither up nor down).
+/// <paramref name="Reason"/> describes connection warnings, and <paramref name="Checked"/> is false for a remote until its
+/// first probe answers or fails (until then it's neither up nor down). <paramref name="Backend"/> is what a remote's
+/// last welcome said it runs. <paramref name="Updates"/> is the update check's last answer; the one update's progress or
+/// failure is <paramref name="UpdateNote"/>.
 /// </summary>
-public sealed record MachineItem(string? Name, string Kind, bool Reachable, string? Reason, bool Checked, string? Ssh = null, int? Port = null, string? TokenFile = null);
+public sealed record MachineItem(string? Name, string Kind, bool Reachable, string? Reason, bool Checked, string? Ssh = null, int? Port = null, string? TokenFile = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] RemoteBackend? Backend = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] IReadOnlyList<UpdateItem>? Updates = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Updating = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? UpdateNote = null);
+
+/// <summary>One piece the update check looked at: <paramref name="Kind"/> is desktop, backend, adapter or cli.</summary>
+public sealed record UpdateItem(string Kind, string Name, string? Current, string? Wanted, string State)
+{
+    public const string Behind = "behind", Unknown = "unknown", UpToDate = "current";
+}
+
+/// <summary>
+/// Which backend a remote runs, compared with this desktop's. Information only. <paramref name="Differs"/> is any
+/// difference in the backend's build inputs, what a check before a PR requires. <see cref="VersionDiffers"/> is the one
+/// number: what makes a remote behind, in development and in production.
+/// </summary>
+public sealed record RemoteBackend(string? Commit, string? LocalCommit, bool Differs, string? Version, string? LocalVersion)
+{
+    public bool VersionDiffers => Version != LocalVersion;
+}
 
 /// <summary>
 /// Whether each machine answered last time. This machine always has; a remote starts "not checked yet", and its
@@ -62,27 +85,55 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
         }
     }
 
-    private readonly Dictionary<string, string?> _connectionReasons = [];
-    private readonly Dictionary<string, string?> _backendMismatches = [];
-    private readonly Dictionary<string, string?> _deployments = [];
-
-    public void BackendMismatch(string machine, string? reason) => Warning(machine, reason, false);
-    public void Deployment(string machine, string? reason) => Warning(machine, reason, true);
-
-    private void Warning(string machine, string? reason, bool deployment)
+    public void Backend(string machine, RemoteBackend backend)
     {
         if (_parent is { } parent)
         {
-            lock (parent._gate) if (_active) parent.Warning(machine, reason, deployment);
+            lock (parent._gate) if (_active) parent.Backend(machine, backend);
             return;
         }
+        // Comes just before the reachable it's part of: one change, not two.
         lock (_gate)
         {
-            var warnings = deployment ? _deployments : _backendMismatches;
-            if (warnings.GetValueOrDefault(machine) == reason) return;
-            warnings[machine] = reason;
-            var item = _items.FirstOrDefault(item => item.Name == machine);
-            if (item is not null) Set(machine, item.Reachable, _connectionReasons.GetValueOrDefault(machine), item.Checked);
+            var index = Array.FindIndex(_items, item => item.Name == machine);
+            if (index < 0 || _items[index].Reachable) Change(machine, item => item with { Backend = backend });
+            else
+            {
+                var next = (MachineItem[])_items.Clone();
+                next[index] = next[index] with { Backend = backend };
+                _items = next;
+            }
+        }
+        Welcomed?.Invoke(machine);
+    }
+
+    /// <summary>Each time a remote says hello: a good moment to check it, with no timer. Set once, on the root.</summary>
+    public Action<string>? Welcomed { get; set; }
+
+    /// <summary>The update check's latest answer for a machine; a null name is this machine.</summary>
+    public void Updates(string? machine, IReadOnlyList<UpdateItem> updates)
+    {
+        lock (_gate)
+            if (_items.FirstOrDefault(item => item.Name == machine) is not { } held || (held.Updates?.SequenceEqual(updates) ?? false)) return;
+        Change(machine, item => item with { Updates = updates });
+    }
+
+    /// <summary>Whether the one update is running, and what it's doing or why it failed.</summary>
+    public void Updating(string? machine, bool updating, string? note) => Change(machine, item => item with { Updating = updating, UpdateNote = note });
+
+    private void Change(string? machine, Func<MachineItem, MachineItem> change)
+    {
+        lock (_gate)
+        {
+            var items = _items;
+            var index = Array.FindIndex(items, item => item.Name == machine);
+            if (index < 0) return;
+            var changed = change(items[index]);
+            if (changed == items[index]) return;
+            var next = (MachineItem[])items.Clone();
+            next[index] = changed;
+            _items = next;
+            topics.Publish(MachinesFeature.Topic, machine ?? "local", JsonSerializer.Serialize(changed, SessionsJson.Default.MachineItem));
         }
     }
 
@@ -101,10 +152,6 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
         }
         lock (_gate)
         {
-            _connectionReasons[machine] = reason;
-            reason = string.Join(" ", new[] { reason, _backendMismatches.GetValueOrDefault(machine), _deployments.GetValueOrDefault(machine) }
-                .Where(value => !string.IsNullOrWhiteSpace(value)));
-            if (reason.Length == 0) reason = null;
             var items = _items;
             var index = Array.FindIndex(items, item => item.Name == machine);
             if (index < 0 || (items[index].Checked == checkedState && items[index].Reachable == reachable && items[index].Reason == reason))

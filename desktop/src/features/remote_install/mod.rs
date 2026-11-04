@@ -1,11 +1,13 @@
-//! A temporary development control for putting a local backend bundle on the owned test machine: a palette command that
-//! opens one dialog. The backend's `remoteInstall` feature owns the install and every check on it; this folder only asks
-//! for it and shows how it went. It's built to come out whole: this folder, its line in `features/mod.rs` and its `init`
-//! in `main.rs`. The real product install and connect flow is separate work.
+//! The development control for updating machines: a palette command that opens one dialog. Its top shows what the update
+//! check found behind and has the one button that updates all of it; `npm run deploy:remote` runs the same thing. Below it
+//! is putting a local backend bundle on the owned test machine. The backend owns the check, the update, the install and
+//! every check on them; this folder only asks for them and shows how they went. It's built to come out whole: this folder,
+//! its line in `features/mod.rs` and its calls in `main.rs`. The real product install and connect flow is separate work.
 
 pub mod deploy_form;
 mod deploy_view;
 pub mod job;
+pub mod updates;
 
 use deploy_form::DeployForm;
 use gpui_kit::component::WindowExt as _;

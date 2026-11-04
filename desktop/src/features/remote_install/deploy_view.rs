@@ -349,6 +349,7 @@ impl Render for DeployForm {
                 )
                 .title("DEVELOPMENT"),
             )
+            .child(self.updates_section(cx))
             .child(self.bundle_section(cx))
             .child(self.machine_section(cx))
             .children(self.job_section(cx))

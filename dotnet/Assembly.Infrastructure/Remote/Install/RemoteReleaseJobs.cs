@@ -5,6 +5,7 @@ using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Common.Topics;
+using Assembly.Infrastructure.Updates;
 
 namespace Assembly.Infrastructure.Remote.Install;
 
@@ -28,13 +29,14 @@ internal sealed partial class RemoteReleaseJson : JsonSerializerContext;
 
 /// <summary>The one install running at a time, its state pushed on the topic. Started and stopped with the backend.</summary>
 internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, BackgroundWork work, ITopics topics,
-    Func<string, CancellationToken, SavedMachine?> profile, Func<string, CancellationToken, Task> connect) : IAsyncDisposable
+    Func<string, CancellationToken, SavedMachine?> profile, Func<string, CancellationToken, Task> connect) : IReleaseInstall, IAsyncDisposable
 {
     private sealed class Entry(RemoteReleaseJob job)
     {
         internal RemoteReleaseJob Job = job;
         internal readonly CancellationTokenSource Cancel = new();
         internal readonly TaskCompletionSource Done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal Action<string>? Progress;
         internal bool Terminal => Job.State is "succeeded" or "failed" or "cancelled";
     }
 
@@ -71,6 +73,24 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, Background
         return accepted;
     }
 
+    /// <summary>The one update's way in: the same job and the same one-at-a-time rule as the call, waited for.</summary>
+    public async Task InstallAsync(string machine, Action<string> progress, CancellationToken ct)
+    {
+        var saved = profile(machine, ct) ?? throw new CallFailed("Unknown remote machine.", "unknown_machine");
+        var id = Guid.NewGuid();
+        Entry entry;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_entries.Values.Any(value => !value.Terminal)) throw new CallFailed("A remote install is already running.", "install_busy");
+            entry = new(new(id, 1, machine, "running", "Starting…", null, null, null)) { Progress = progress };
+            _entries.Add(id, entry);
+        }
+        await Run(entry, saved, ct);
+        ct.ThrowIfCancellationRequested();
+        if (entry.Job.State == "failed") throw new CallFailed(entry.Job.Message ?? "The install failed.", entry.Job.ErrorCode ?? "install_failed");
+    }
+
     internal void Cancel(Guid id)
     {
         Entry? entry;
@@ -83,7 +103,7 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, Background
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(entry.Cancel.Token, hostStop);
         try
         {
-            var receipt = await install.InstallLatestAsync(machine, phase => Change(entry, job => job with { Phase = phase }), linked.Token);
+            var receipt = await install.InstallLatestAsync(machine, phase => { entry.Progress?.Invoke(phase); Change(entry, job => job with { Phase = phase }); }, linked.Token);
             Change(entry, job => job with { Phase = "Connecting…" });
             await connect(machine.Name, linked.Token);
             Change(entry, job => job with { State = "succeeded", Result = receipt });

@@ -14,7 +14,7 @@ export async function waitForIdle(readMembers: () => Promise<string[]>, hostPid:
     const children = members.filter(pid => pid !== hostPid);
     if (!children.length) return;
     if (!wait) throw Error('lane host is busy; no restart performed');
-    console.log('ASSEMBLY_REMOTE_SYNC ' + JSON.stringify({ reason: 'Remote is on an older backend. Lane host is busy with a running session; sync will finish when it goes idle.' }));
+    console.log('ASSEMBLY_REMOTE_SYNC ' + JSON.stringify({ reason: 'Remote backend update is waiting: a session is running there. It finishes when the host goes idle.' }));
     const file = join(directory, '.dev-sync-wait-' + randomUUID());
     try {
       await fs.writeFile(file, children.join('\n') + '\n', { flag: 'wx', mode: 0o600 });

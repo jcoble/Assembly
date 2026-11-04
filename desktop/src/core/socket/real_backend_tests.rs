@@ -16,6 +16,7 @@ use super::outcome::Outcome;
 use super::real_backend::{RealBackend, folder};
 use super::test_client::{DEADLINE, TestClient as Client, outcome, updates};
 use super::update::Update;
+use crate::core::state::machine::Machine;
 
 /// A client connected to `backend`; the machine it names.
 fn connect(backend: &RealBackend) -> (Client, String) {
@@ -89,6 +90,36 @@ fn the_machines_topic_starts_with_this_machine_reachable() {
     let (_, local) = local.expect("this machine, keyed local");
     assert_eq!(local["name"], json!(null));
     assert_eq!(local["reachable"], json!(true));
+}
+
+// Pins: TSK-1649 one update check, pushed on the machine
+#[test]
+fn the_update_check_shows_on_this_machine_with_no_ask() {
+    let Some(backend) = RealBackend::start() else {
+        return;
+    };
+    let (client, _) = connect(&backend);
+    let (_, machines) = client.subscribe("machines");
+    let machines = updates(machines);
+    let shown = loop {
+        let item = match machines
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the check's answer")
+        {
+            Update::State(items) => items
+                .into_iter()
+                .find(|(key, _)| key == "local")
+                .map(|(_, item)| item),
+            Update::Change { key, item } => (key == "local").then_some(item),
+        };
+        if let Some(item) = item.filter(|item| item.get("updates").is_some()) {
+            break serde_json::from_value::<Machine>(item).expect("the machine's shape");
+        }
+    };
+    assert!(shown.updates.iter().any(|item| item.kind == "desktop"));
+    // No agents in this backend, so its adapters are missing: behind, and named.
+    let behind: Vec<&str> = shown.behind().map(|item| item.kind.as_str()).collect();
+    assert!(behind.contains(&"adapter"), "{behind:?}");
 }
 
 // Pins: g0-socket#5, g0-socket#15

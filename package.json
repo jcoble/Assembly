@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "app:dev": "node scripts/app-dev.ts"
+    "app:dev": "node scripts/app-dev.ts",
+    "deploy:remote": "node scripts/update-machines.ts"
   }
 }

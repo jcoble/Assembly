@@ -47,6 +47,16 @@ fn backend() -> FakeBackend {
                 *set = id;
                 Vec::new()
             }
+            (Some("call"), Some("start")) => vec![Reply::Frame(
+                json!({"t": "error", "id": id, "code": "no_release", "message": "No signed release."}),
+            )],
+            (Some("call"), Some("behind")) => vec![
+                change(
+                    json!({"name": "box", "kind": "remote", "reachable": true, "reason": null, "checked": true,
+                    "updates": [{"kind": "backend", "name": "Backend", "current": "1", "wanted": "2", "state": "behind"}]}),
+                ),
+                done,
+            ],
             (Some("call"), Some("fail")) => vec![
                 Reply::Frame(
                     json!({"t": "error", "id": set, "code": "failed", "message": "disk full"}),
@@ -272,4 +282,48 @@ async fn an_edit_keeps_its_typing_as_its_machine_answers_and_ends_when_it_is_rem
         page.failure().as_deref(),
         Some("Edit ended: box was removed, so nothing was saved.")
     );
+}
+
+// Pins: TSK-1649 one button for everything behind
+#[gpui::test]
+async fn a_card_with_something_behind_has_the_one_button_and_shows_why_it_failed(
+    cx: &mut TestAppContext,
+) {
+    let backend = backend();
+    let mut page = editing_box(cx, &backend).await;
+    page.backend_does("behind", "box behind", |page| {
+        let machines = page
+            .cx
+            .update(|_, cx| Machines::try_global(cx).expect("the machines list"));
+        page.cx.update(|_, cx| {
+            machines
+                .read(cx)
+                .machines()
+                .nth(1)
+                .is_some_and(|box_| box_.behind().count() == 1)
+        })
+    })
+    .await;
+    page.cx.update(|window, cx| {
+        page.page.update(cx, |page, cx| {
+            page.machine_call(
+                Some("box".into()),
+                "updates",
+                "start",
+                json!({}),
+                "Couldn't update",
+                window,
+                cx,
+            )
+        })
+    });
+    let (mut changes, changed) = (
+        std::mem::replace(&mut page.changes, unbounded().1),
+        page.changed.clone(),
+    );
+    until("the refusal", &mut changes, &changed, || {
+        page.failure().is_some()
+    })
+    .await;
+    assert!(page.failure().unwrap().contains("No signed release"));
 }

@@ -71,32 +71,34 @@ try {
   const seedManifest = request.managed && (request.managed.seedManifest ?? seedTools!.trackedManifest(process.cwd()));
   if (request.managed && await seedTools!.seedCohort(seedManifest) !== request.managed.cohort)
     throw Error('remote seed manifest differs from the local safe-backup cohort');
-  const desiredTools = request.managed ? toolKey(request.managed.versions, request.launcher, 'linux-x64') : undefined;
-  const actual = before.backendIdentity ?? 'unknown';
-  if (actual === identity && before.adapterOK && before.launcherSha === request.launcher && (!request.managed || before.toolsKey === desiredTools && !seedChanged)) {
+  const desiredTools = request.managed ? toolKey(request.managed.versions, request.sources, 'linux-x64') : undefined;
+  const adaptersCurrent = before.adapterOK && before.launcherSha === request.launcher && (request.managed ? before.toolsKey === desiredTools : before.adapterSources === request.sources);
+  const current = before.backendIdentity === identity;
+  if (current && adaptersCurrent && !seedChanged) {
     console.log(`Workbox Test ${target.unit} already matches after acquiring the lane lock; no deploy`);
   } else {
     if (!before.missing) await idle(before.pid);
     // Built from this checkout's launcher: a published release can only match the launcher it was packaged with.
-    // A running unmanaged lane keeps its descriptor; a changed adapter contract is refused below.
-    if (request.managed || before.missing) {
+    let toolsChanged = false;
+    if (request.managed || before.missing || !adaptersCurrent) {
       await fs.mkdir(join(root, 'serve'), { recursive: true });
-      await ensureTools(process.cwd(), join(root, 'adapters'), join(root, 'serve/agents.json'), request.managed?.versions ?? await latestTools(owner.signal), owner.signal);
+      ({ changed: toolsChanged } = await ensureTools(process.cwd(), join(root, 'adapters'), join(root, 'serve/agents.json'), request.managed?.versions ?? await latestTools(owner.signal), owner.signal));
     }
-    const adapterState = before.missing || request.managed ? await probe(true) : before;
+    const adapterState = before.missing || request.managed || !adaptersCurrent ? await probe(true) : before;
     if (!adapterState.adapterOK || adapterState.launcherSha !== request.launcher)
-      throw Error('lane ACP 2 adapter bundle does not satisfy this checkout launcher; update lane adapters before syncing (existing configuration preserved)');
+      throw Error('lane ACP 2 adapter bundle still differs from this checkout launcher after updating it');
     if (!before.missing) await idle(before.pid);
-    if (actual === identity && !seedChanged) {
-      console.log('Workbox Test remote is right; toolchain checked/updated, no backend build or restart');
+    // A running host read its adapters when it started, so new ones need the restart; an idle host loses nothing.
+    if (current && !seedChanged && !toolsChanged) {
+      console.log('Workbox Test remote is right; toolchain checked, no backend build or restart');
     } else {
     const previous = before.missing ? undefined : await installedRelease(before.dll);
-    const prepared = actual === identity && previous ? { identity, commit: before.commit, directory: previous.directory }
+    const prepared = current && previous ? { identity: before.backendIdentity, commit: before.commit, directory: previous.directory }
       : await prepareBackend(root, request, before.missing ? undefined : before.dll, owner.signal);
     const destination = prepared.directory;
     const candidateManifest = JSON.parse(await fs.readFile(join(destination, 'manifest.json'), 'utf8'));
     const previousManifest = previous?.manifest;
-    if (previousManifest && sameBackendFiles(previousManifest.files, candidateManifest.files) && !seedChanged) {
+    if (previousManifest && sameBackendFiles(previousManifest.files, candidateManifest.files) && !seedChanged && !toolsChanged) {
       console.log('Workbox Test compiled backend files are unchanged; no restart');
     } else {
       const latest = await probe();
@@ -121,7 +123,7 @@ TimeoutStopSec=30
       }
       const dll = join(destination, 'backend/Assembly.Remote.dll');
       const updated = unit.replace(before.missing ? 'INITIAL_BACKEND' : (before.unitDll ?? before.dll), dll);
-      if (updated === unit && actual !== identity || updated.split(dll).length !== 2) throw Error('ambiguous unit backend path');
+      if (updated === unit && !current || updated.split(dll).length !== 2) throw Error('ambiguous unit backend path');
       owner.signal.throwIfAborted();
       const restartTime = stage('restart');
       if (!before.missing) {
@@ -145,12 +147,12 @@ TimeoutStopSec=30
       const answerTime = stage('answer');
       await ready(pid);
       const after = await probe();
-      if (after.backendIdentity !== identity || after.commit !== prepared.commit || (!before.missing && after.engine !== before.engine) || after.dll !== dll || request.managed && (after.toolsKey !== desiredTools || after.seedCohort !== request.managed.cohort)) throw Error('new host identity could not be verified; inspect lane host before retrying');
+      if (after.backendIdentity !== prepared.identity || after.commit !== prepared.commit || (!before.missing && after.engine !== before.engine) || after.dll !== dll || request.managed && (after.toolsKey !== desiredTools || after.seedCohort !== request.managed.cohort)) throw Error('new host identity could not be verified; inspect lane host before retrying');
       answerTime();
       // Disk only: a failed cleanup never fails a host that is already verified.
       await pruneReleases(root, [destination, ...(previous ? [previous.directory] : [])])
         .catch(error => console.warn(`Workbox Test old release cleanup failed: ${error instanceof Error ? error.message : String(error)}`));
-      console.log(`Workbox Test ${target.unit} deployed backend ${identity}; authenticated host commit ${after.commit}; PID ${after.pid}; engine preserved ${after.engine}`);
+      console.log(`Workbox Test ${target.unit} deployed backend ${prepared.identity}; authenticated host commit ${after.commit}; PID ${after.pid}; engine preserved ${after.engine}`);
     }
     }
   }

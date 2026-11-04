@@ -271,3 +271,39 @@ async fn editing_the_path_clears_what_was_inspected(cx: &mut TestAppContext) {
     form.update(cx, |form, cx| form.path_changed(cx));
     form.read_with(cx, |form, _| assert!(form.facts.is_none()));
 }
+
+// Pins: TSK-1649 one button for everything behind
+#[gpui::test]
+async fn the_button_asks_the_backend_to_update_and_shows_a_refusal(cx: &mut TestAppContext) {
+    let (fake, frames, changed, mut changes) = backend(|frame, _| {
+        if frame["method"] == "start" && frame["feature"] == "updates" {
+            vec![Reply::Frame(
+                json!({"t":"error","id":frame["id"],"code":"no_release",
+                "message":"No signed release is published yet, so there's nothing to update from."}),
+            )]
+        } else {
+            vec![]
+        }
+    });
+    let (form, cx) = open(fake.port, cx);
+    until("the connection", &mut changes, &changed, || {
+        cx.run_until_parked();
+        form.read_with(cx, |form, cx| form.current_generation(cx).is_some())
+    })
+    .await;
+    form.update(cx, |form, cx| form.update_everything(cx));
+    until("the refusal", &mut changes, &changed, || {
+        cx.run_until_parked();
+        form.read_with(cx, |form, _| form.update_error.is_some())
+    })
+    .await;
+    assert_eq!(call(&frames, "start").unwrap()["feature"], "updates");
+    form.read_with(cx, |form, _| {
+        assert!(
+            form.update_error
+                .as_deref()
+                .unwrap()
+                .contains("No signed release")
+        )
+    });
+}

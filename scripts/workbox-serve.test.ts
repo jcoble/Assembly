@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, watch, existsSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, watch, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { adapterSources, digestInputs, remoteBehindExit, sourcesDigest } from './dev-remote-identity.ts';
 
 const current = 'a'.repeat(40), previous = 'b'.repeat(40);
-const previousIdentity = createHash('sha256').update('assembly-dev-remote-v2:ACP2\n100644 blob ' + '1'.repeat(40) + '\tdotnet/Assembly.Remote/Assembly.Remote.csproj').digest('hex');
+const hostEntries = ['100644 blob ' + '1'.repeat(40) + '\tdotnet/Assembly.Remote/Assembly.Remote.csproj', '100644 blob ' + '3'.repeat(40) + '\tdotnet/Assembly.Infrastructure/Notion/NotionCalls.cs'];
+const previousIdentity = digestInputs(hostEntries, 'none');
 const launcher = createHash('sha256').update('launcher\n').digest('hex');
+const sources = await sourcesDigest(adapterSources, async () => 'launcher\n');
 const fakeGit = `#!/usr/bin/env node
 import fs from 'node:fs';
 const args=process.argv.slice(2), state=JSON.parse(fs.readFileSync(process.env.STATE,'utf8'));
@@ -17,8 +20,8 @@ switch(args[0]) {
  case 'rev-parse': console.log('${current}'); break;
  case 'diff': console.log(state.dirty ?? ''); break;
  case 'ls-files': console.log(state.untracked ?? ''); break;
- case 'ls-tree': console.log('100644 blob '+(state.changed && args.at(-1)==='${current}'?'2':'1').repeat(40)+'\\tdotnet/Assembly.Remote/Assembly.Remote.csproj'); break;
- case 'show': process.stdout.write('launcher\\n'); break;
+ case 'ls-tree': console.log('100644 blob '+(state.changed?'2':'1').repeat(40)+'\\tdotnet/Assembly.Remote/Assembly.Remote.csproj\\n100644 blob '+(state.unrelated?'4':'3').repeat(40)+'\\tdotnet/Assembly.Infrastructure/Notion/NotionCalls.cs'); break;
+ case 'show': process.stdout.write(args.at(-1).endsWith('Cargo.toml') ? (state.version ? '[package]\\nversion = "'+state.version+'"\\n' : '') : args.at(-1).endsWith(state.adapterChange ?? '?') ? 'changed\\n' : 'launcher\\n'); break;
  case 'push': break;
  case 'fetch': break;
  case 'status': console.log(state.mainDirty ? ' M dotnet/Directory.Build.props' : ''); break;
@@ -39,7 +42,7 @@ if (args.at(-1).startsWith('flock ')) {
   child.on('close',code=>process.exit(code));
  } else console.log('deployed backend; authenticated host commit ${current}');
 } else if(state.missing) console.log(JSON.stringify({missing:true}));
-else console.log(JSON.stringify({commit:'${previous}',backendIdentity:'${previousIdentity}',engine:'test-engine',dll:'/lane/bin/old/backend/Assembly.Remote.dll',pid:'123',unitSha:'f'.repeat(64),adapterOK:true,launcherSha:'${launcher}',toolsKey:state.toolsKey,seedCohort:state.seedCohort}));
+else console.log(JSON.stringify({commit:'${previous}',backendIdentity:'${previousIdentity}',version:state.hostVersion===undefined?'none':state.hostVersion,engine:'test-engine',dll:'/lane/bin/old/backend/Assembly.Remote.dll',pid:'123',unitSha:'f'.repeat(64),adapterOK:true,launcherSha:'${launcher}',toolsKey:state.toolsKey,adapterSources:'${sources}',seedCohort:state.seedCohort}));
 `;
 function fixture(state: object = {}) {
   const root = mkdtempSync(join(tmpdir(), 'assembly-devsync-'));
@@ -53,21 +56,96 @@ function fixture(state: object = {}) {
   writeFileSync(join(root, 'bin/ssh'), fakeSsh, { mode: 0o755 });
   const holder = join(root, 'holder.ts');
   writeFileSync(holder, `import fs from 'node:fs';\nconst finish=()=>{if(fs.existsSync(${JSON.stringify(paths.release)})){watcher.close();console.log('deploy completed')}};const watcher=fs.watch(${JSON.stringify(root)},finish);fs.writeFileSync(${JSON.stringify(paths.marker)},String(process.pid));finish();`);
-  const env = { ...process.env, PATH: join(root, 'bin') + ':' + process.env.PATH, STATE: paths.state, CALLS: paths.calls, LOCK: join(root, 'lock'), HOLDER: holder };
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: join(root, 'bin') + ':' + process.env.PATH, STATE: paths.state, CALLS: paths.calls, LOCK: join(root, 'lock'), HOLDER: holder };
   const args = [join(root, 'scripts/workbox-serve.ts'), 'test-lane', '9'];
   return { root, paths, env, args, run: (extra: string[] = []) => spawnSync(process.execPath, extra.length ? [args[0], ...extra] : args, { cwd: root, env, encoding: 'utf8' }),
     calls: () => readFileSync(paths.calls, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as string[]),
     close: () => rmSync(root, { recursive: true, force: true }) };
 }
-for (const changed of [false, true]) test(changed ? 'backend content changes deploy through the lane lock' : 'a desktop-only commit reuses the running backend', () => {
-  const f = fixture({ changed });
+const update = { ASSEMBLY_DEV_REMOTE_SYNC: '1' };
+const check = { ASSEMBLY_DEV_REMOTE_SYNC: 'check' };
+const deploys = (f: ReturnType<typeof fixture>) => f.calls().filter(call => call[0] === 'ssh' && call.at(-1)?.startsWith('flock ')).length;
+const pushes = (f: ReturnType<typeof fixture>) => f.calls().filter(call => call[0] === 'git' && call[1] === 'push').length;
+for (const [name, state] of [
+  ['a desktop-only commit', {}],
+  ['an unrelated backend commit', { unrelated: true }],
+  ['a backend commit that left the number alone', { changed: true }],
+  ['an uncommitted backend edit', { dirty: 'dotnet/Assembly.Engine/EngineCommands.cs' }],
+] as const) test(`launch check: ${name} changes nothing while the number matches`, () => {
+  const f = fixture(state);
+  try {
+    Object.assign(f.env, check);
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /on version none \(host commit [a-f0-9]+\); nothing to do/);
+    assert.equal(deploys(f), 0);
+    assert.equal(pushes(f), 0);
+  } finally { f.close(); }
+});
+for (const [name, state] of [
+  ['a raised number', { version: '0.2.0', hostVersion: '0.1.0' }],
+  ['a remote on a higher number', { version: '0.1.0', hostVersion: '0.2.0' }],
+  ['an old host that reports no number', { hostVersion: null }],
+  ['a lane with nothing installed', { missing: true }],
+] as const) test(`launch check: ${name} is behind, and the check itself deploys nothing`, () => {
+  const f = fixture(state);
+  try {
+    Object.assign(f.env, check);
+    const result = f.run();
+    assert.equal(result.status, remoteBehindExit, result.stderr);
+    assert.equal(deploys(f), 0);
+    assert.equal(pushes(f), 0);
+  } finally { f.close(); }
+});
+test('launch check: a managed lane with a new seed is behind even on the same number', () => {
+  const f = fixture({ seedCohort: 'old' });
+  try {
+    Object.assign(f.env, check);
+    f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, cohort: 'new' });
+    assert.equal(f.run().status, remoteBehindExit);
+    f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, cohort: 'old' });
+    assert.equal(f.run().status, 0);
+  } finally { f.close(); }
+});
+for (const [name, state, expected] of [
+  ['a matching build', {}, 0],
+  ['an unrelated backend commit', { unrelated: true }, 1],
+  ['a change on the list', { changed: true }, 1],
+  ['a release version bump', { version: '0.2.0' }, 1],
+  ['an adapter packaging script change', { adapterChange: 'scripts/package-adapters.ts' }, 1],
+  ['an adapter install script change', { adapterChange: 'dotnet/scripts/agents-file.sh' }, 1],
+] as const) test(`the one update: ${name} ${expected ? 'deploys' : 'builds nothing'}`, () => {
+  const f = fixture(state);
+  try {
+    Object.assign(f.env, update);
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(deploys(f), expected);
+    assert.match(result.stdout, expected ? /building and deploying/ : /no deploy/);
+    if (!expected) assert.equal(pushes(f), 0);
+    assert.ok(f.calls().filter(call=>call[0]==='ssh').every(call=>call.includes('workbox-test')));
+    if (expected) assert.ok(f.calls().some(call => call[0] === 'ssh' && call.at(-1)?.includes('"waitForIdle":true')), 'a running session is never killed');
+  } finally { f.close(); }
+});
+test('the one update: uncommitted desktop edits do not stop it; backend edits say the remote stays behind', () => {
+  const f = fixture({ dirty: 'dotnet/Assembly.Desktop/Serve/DesktopBackend.cs' });
+  try {
+    Object.assign(f.env, update);
+    let result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    writeFileSync(f.paths.state, JSON.stringify({ dirty: 'dotnet/Assembly.Engine/EngineCommands.cs' }));
+    result = f.run();
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /uncommitted backend changes.*stays behind/);
+    assert.equal(deploys(f), 0);
+  } finally { f.close(); }
+});
+test('the dev serve command matches them exactly: an unrelated backend commit deploys when asked', () => {
+  const f = fixture({ unrelated: true });
   try {
     const result = f.run();
     assert.equal(result.status, 0, result.stderr);
-    const deploys = f.calls().filter(call => call[0] === 'ssh' && call.at(-1)?.startsWith('flock '));
-    assert.equal(deploys.length, changed ? 1 : 0);
-    assert.match(result.stdout, changed ? /building and deploying/ : /no deploy/);
-    assert.ok(f.calls().filter(call=>call[0]==='ssh').every(call=>call.includes('workbox-test')));
+    assert.equal(deploys(f), 1);
   } finally { f.close(); }
 });
 test('a reserved lane with no installed unit enters the same deploy path', () => {
@@ -119,34 +197,107 @@ test('second launch during deployment cannot start another deploy', { timeout: 1
   } finally { first.kill('SIGTERM'); await finished; f.close(); }
 });
 
-for (const [state, reason] of [[{unreachable:true}, /Network is unreachable/], [{changed:true,deployFail:true}, /test compiler error/], [{changed:true,startFail:true}, /failed to start/]] as const) {
-  test('app opens during remote sync and reports ' + Object.keys(state).at(-1), { timeout: 10_000 }, async () => {
-    const f=fixture(state);
-    for(const directory of ['desktop','dotnet/scripts']) mkdirSync(join(f.root,directory),{recursive:true});
-    for(const file of ['app-dev.ts','app-dev-remote.ts','seed-dev.ts']) copyFileSync(new URL(file,import.meta.url),join(f.root,'scripts',file));
-    writeFileSync(join(f.root,'scripts/lane-env.sh'), 'LANE_NAME=test-lane\nDATA="$PWD/profile"\nDESKTOP_PORT=18887\nTOKEN_FILE=test\nBOX_PORT=9887\nBOX_TOKEN_FILE=test\n');
-    writeFileSync(join(f.root,'dotnet/scripts/workbox.sh'), `exec node scripts/workbox-serve.ts test-lane 9\n`);
-    writeFileSync(join(f.root,'dotnet/scripts/agents-file.sh'), 'printf "[]" > "$2"\n');
-    writeFileSync(join(f.root,'bin/dotnet'),'#!/bin/sh\nexit 0\n',{mode:0o755});
-    writeFileSync(join(f.root,'bin/cargo'),`#!/usr/bin/env node\nimport fs from 'node:fs';\nconst watcher=fs.watch(${JSON.stringify(f.root)},()=>{if(fs.existsSync(${JSON.stringify(f.paths.release)}))watcher.close()});fs.writeFileSync(${JSON.stringify(f.paths.marker)},'app open');`,{mode:0o755});
-    const opened=untilFile(f.paths.marker);
-    const app=spawn(process.execPath,[join(f.root,'scripts/app-dev.ts')],{cwd:f.root,env:f.env,stdio:['pipe','pipe','pipe']});
-    let stderr='';
-    const reported=new Promise<void>(resolve=>app.stderr.on('data',bytes=>{stderr+=bytes;if(reason.test(stderr))resolve()}));
-    const exited=new Promise<number|null>(resolve=>app.on('close',resolve));
+// A real launch's scripts with fakes at the edges: git, ssh, dotnet, cargo and the tool installer.
+function launchFixture(state: object) {
+  const f = fixture(state);
+  for (const directory of ['desktop', 'dotnet/scripts']) mkdirSync(join(f.root, directory), { recursive: true });
+  for (const file of readdirSync(new URL('./', import.meta.url))) if (file.endsWith('.ts') && !file.endsWith('.test.ts')) copyFileSync(new URL(file, import.meta.url), join(f.root, 'scripts', file));
+  writeFileSync(join(f.root, 'scripts/dev-toolchain.ts'), `import fs from 'node:fs';
+export const packages = [];
+export const toolKey = () => 'key';
+export const toolsCurrent = async () => true;
+export const checkoutSources = async () => 'sources';
+export const latestTools = async () => { fs.appendFileSync(process.env.CALLS, JSON.stringify(['tools','latest'])+'\\n'); return {}; };
+export const ensureTools = async () => { fs.appendFileSync(process.env.CALLS, JSON.stringify(['tools','ensure'])+'\\n'); return { changed: true }; };
+`);
+  writeFileSync(join(f.root, 'scripts/lane-env.sh'), 'LANE_NAME=test-lane\nDATA="$PWD/profile"\nDESKTOP_PORT=18887\nTOKEN_FILE=test\nBOX_PORT=9887\nBOX_TOKEN_FILE=test\n');
+  writeFileSync(join(f.root, 'dotnet/scripts/workbox.sh'), 'exec node scripts/workbox-serve.ts test-lane 9\n');
+  writeFileSync(join(f.root, 'dotnet/scripts/agents-file.sh'), 'printf "[]" > "$2"\n');
+  writeFileSync(join(f.root, 'bin/dotnet'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const desktop = join(f.root, 'desktop-opened');
+  // The desktop build: it never ends until the test says so, so anything that finishes first didn't wait for it.
+  writeFileSync(join(f.root, 'bin/cargo'), `#!/usr/bin/env node\nimport fs from 'node:fs';\nconst finish=()=>{if(fs.existsSync(${JSON.stringify(f.paths.release)})){watcher.close()}};const watcher=fs.watch(${JSON.stringify(f.root)},finish);fs.writeFileSync(${JSON.stringify(desktop)},String(process.pid));finish();\n`, { mode: 0o755 });
+  const statusFile = join(f.root, 'profile/mac/remote-sync-state.json');
+  const launch = () => {
+    const opened = untilFile(desktop);
+    const app = spawn(process.execPath, [join(f.root, 'scripts/app-dev.ts')], { cwd: f.root, env: f.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stderr = '';
+    const heard = (pattern: RegExp) => new Promise<void>(resolve => { const look = () => { if (pattern.test(stderr)) { app.stderr.off('data', listen); resolve(); } }; const listen = (bytes: Buffer) => { stderr += bytes; look(); }; app.stderr.on('data', listen); look(); });
+    const exited = new Promise<number | null>(resolve => app.on('close', resolve));
+    return { app, opened, heard, exited, stderr: () => stderr };
+  };
+  return { ...f, statusFile, desktop, launch };
+}
+const toolCalls = (f: ReturnType<typeof fixture>) => f.calls().filter(call => call[0] === 'tools').length;
+test('dev launch: a matching number does nothing, reads no tool versions, and the desktop opens', { timeout: 20_000 }, async () => {
+  const f = launchFixture({ changed: true });
+  const run = f.launch();
+  try {
+    await run.opened;
+    await run.heard(/nothing to do/);
+    assert.equal(deploys(f), 0);
+    assert.equal(pushes(f), 0);
+    assert.equal(toolCalls(f), 0);
+    assert.deepEqual(JSON.parse(readFileSync(f.statusFile, 'utf8')), { updating: false, reason: null });
+    writeFileSync(f.paths.release, 'close app');
+    assert.equal(await run.exited, 0, run.stderr());
+  } finally { run.app.kill('SIGTERM'); await run.exited; f.close(); }
+});
+test('dev launch: a different number deploys and updates tools in one shot while the desktop is still building, and the next launch builds nothing', { timeout: 20_000 }, async () => {
+  const f = launchFixture({ version: '0.2.0' });
+  let run = f.launch();
+  try {
+    await run.opened;
+    await run.heard(/deployed backend/);
+    assert.equal(existsSync(f.paths.release), false, 'the desktop is still building');
+    assert.equal(deploys(f), 1);
+    assert.equal(pushes(f), 1);
+    assert.ok(toolCalls(f) > 0, 'adapters and CLIs update with it');
+    assert.deepEqual(JSON.parse(readFileSync(f.statusFile, 'utf8')), { updating: false, reason: null });
+    writeFileSync(f.paths.release, 'close app');
+    assert.equal(await run.exited, 0, run.stderr());
+
+    rmSync(f.paths.release); rmSync(f.desktop);
+    writeFileSync(f.paths.state, JSON.stringify({ version: '0.2.0', hostVersion: '0.2.0' }));
+    const before = toolCalls(f);
+    run = f.launch();
+    await run.opened;
+    await run.heard(/nothing to do/);
+    assert.equal(deploys(f), 1);
+    assert.equal(toolCalls(f), before);
+    writeFileSync(f.paths.release, 'close app');
+    assert.equal(await run.exited, 0, run.stderr());
+  } finally { run.app.kill('SIGTERM'); await run.exited; f.close(); }
+});
+for (const [state, reason] of [[{ unreachable: true }, /Network is unreachable/], [{ version: '0.2.0', deployFail: true }, /test compiler error/], [{ version: '0.2.0', startFail: true }, /failed to start/]] as const) {
+  test('dev launch: the app stays open and is told why, on ' + Object.keys(state).at(-1), { timeout: 20_000 }, async () => {
+    const f = launchFixture(state);
+    const run = f.launch();
     try {
-      await opened;
-      assert.equal(app.exitCode,null,'app must stay open independently of sync');
-      await reported;
-      assert.match(stderr,/log: .*\.log/);
-      const state = JSON.parse(readFileSync(join(f.root, 'profile/mac/remote-sync-state.json'), 'utf8'));
-      assert.match(state.reason, reason, 'the desktop must receive the actual sync refusal');
-      if ('startFail' in state) assert.match(state.reason, /Host may be down; no automatic rollback/);
-      writeFileSync(f.paths.release,'close app');
-      assert.equal(await exited,0,stderr);
-    } finally { app.kill('SIGTERM'); await exited; f.close(); }
+      await run.opened;
+      await run.heard(new RegExp(reason.source + '.*log: .*\\.log'));
+      assert.equal(run.app.exitCode, null);
+      const shown = JSON.parse(readFileSync(f.statusFile, 'utf8'));
+      assert.equal(shown.updating, false);
+      assert.match(shown.reason, reason);
+      writeFileSync(f.paths.release, 'close app');
+      assert.equal(await run.exited, 0, run.stderr());
+    } finally { run.app.kill('SIGTERM'); await run.exited; f.close(); }
   });
 }
+test('dev launch: closing the app stops a running update and frees its lock', { timeout: 20_000 }, async () => {
+  const f = launchFixture({ version: '0.2.0', hold: true });
+  const held = untilFile(f.paths.marker);
+  const run = f.launch();
+  try {
+    await run.opened;
+    await held;
+    const pid = Number(readFileSync(f.paths.marker, 'utf8'));
+    run.app.kill('SIGTERM');
+    await run.exited;
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  } finally { run.app.kill('SIGTERM'); await run.exited; f.close(); }
+});
 
 test('backend identity follows real committed build inputs and ignores Rust-only commits', async () => {
   const {backendIdentity,requireCleanBackend}=await import('./dev-remote-identity.ts');
@@ -210,33 +361,16 @@ test('SSH stdin EOF cancels the remote owner and its build child', {timeout:10_0
   }finally {remote.kill('SIGTERM');await ended;rmSync(root,{recursive:true,force:true})}
 });
 
-test('closing app-dev during adapter setup ends the installer and its remote sync', {timeout:10_000}, async()=>{
-  const f=fixture({changed:true,hold:true});
-  for(const directory of ['desktop','dotnet/scripts']) mkdirSync(join(f.root,directory),{recursive:true});
-  for(const file of ['app-dev.ts','app-dev-remote.ts','seed-dev.ts']) copyFileSync(new URL(file,import.meta.url),join(f.root,'scripts',file));
-  writeFileSync(join(f.root,'scripts/lane-env.sh'),'LANE_NAME=test-lane\nDATA="$PWD/profile"\nDESKTOP_PORT=18887\nTOKEN_FILE=test\nBOX_PORT=9887\nBOX_TOKEN_FILE=test\n');
-  writeFileSync(join(f.root,'dotnet/scripts/workbox.sh'),'exec node scripts/workbox-serve.ts test-lane 9\n');
-  const installerPid=join(f.root,'installer-pid'), holder=join(f.root,'installer.ts');
-  writeFileSync(holder,`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(installerPid)},String(process.pid));process.stdin.resume()`);
-  writeFileSync(join(f.root,'dotnet/scripts/agents-file.sh'),'exec node "$INSTALL_HOLDER"\n');
-  writeFileSync(join(f.root,'bin/dotnet'),'#!/bin/sh\nexit 0\n',{mode:0o755});
-  const remoteStarted=untilFile(f.paths.marker), installStarted=untilFile(installerPid);
-  const app=spawn(process.execPath,[join(f.root,'scripts/app-dev.ts')],{cwd:f.root,env:{...f.env,INSTALL_HOLDER:holder},stdio:['pipe','pipe','pipe']});
-  const ended=new Promise<number|null>(resolve=>app.on('close',resolve));
-  try {
-    await Promise.all([remoteStarted,installStarted]);
-    const pids=[Number(readFileSync(f.paths.marker,'utf8')),Number(readFileSync(installerPid,'utf8'))];
-    app.kill('SIGTERM');assert.equal(await ended,1);
-    for(const pid of pids) assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
-  }finally{app.kill('SIGTERM');await ended;f.close()}
-});
-
-for (const changed of [false, true]) test(`read-only lane preflight ${changed ? 'refuses mismatched backend' : 'accepts equivalent backend at another commit'}`, () => {
-  const f = fixture({ changed });
+for (const [name, state, matches] of [
+  ['a desktop-only commit', {}, true],
+  ['an unrelated backend commit', { unrelated: true }, false],
+  ['a change on the list', { changed: true }, false],
+] as const) test(`before a PR: ${name} ${matches ? 'passes' : 'requires an exact match and names both commits'}`, () => {
+  const f = fixture(state);
   try {
     copyFileSync(new URL('./check-remote.ts', import.meta.url), join(f.root, 'scripts/check-remote.ts'));
     const result = spawnSync(process.execPath, [join(f.root, 'scripts/check-remote.ts'), 'test-lane', '9'], { cwd: f.root, env: f.env, encoding: 'utf8' });
-    assert.equal(result.status, changed ? 1 : 0, result.stderr);
+    assert.equal(result.status, matches ? 0 : 1, result.stderr);
     assert.match(result.stdout + result.stderr, new RegExp(`remote ${previous}; desktop ${current}`));
     assert.ok(f.calls().every(call => call[0] !== 'git' || call[1] !== 'push'));
     assert.ok(f.calls().every(call => call[0] !== 'ssh' || !call.at(-1)?.startsWith('flock ')));
@@ -246,13 +380,14 @@ for (const changed of [false, true]) test(`read-only lane preflight ${changed ? 
 for (const adopted of [false, true]) test(`managed ${adopted ? 'adopted' : 'creator'} lane with current backend, tools and seed skips transfer/build/deploy`, async () => {
   const { toolKey, packages } = await import('./dev-toolchain.ts');
   const versions = Object.fromEntries(packages.map(name => [name, '1.2.3']));
-  const cohort = 'd'.repeat(64), key = toolKey(versions as any, launcher, 'linux-x64');
+  const cohort = 'd'.repeat(64), key = toolKey(versions as any, sources, 'linux-x64');
   const f = fixture({ toolsKey: key, seedCohort: cohort });
   try {
     f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, versions, cohort, adopted });
+    f.env.ASSEMBLY_DEV_REMOTE_SYNC = '1';
     const result = f.run();
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /already runs backend.*no deploy/);
+    assert.match(result.stdout, /already matches.*no deploy/);
     assert.equal(f.calls().filter(call => call[0] === 'git' && call[1] === 'push').length, 0);
     assert.equal(f.calls().filter(call => call[0] === 'ssh' && call.at(-1)?.startsWith('flock ')).length, 0);
   } finally { f.close(); }

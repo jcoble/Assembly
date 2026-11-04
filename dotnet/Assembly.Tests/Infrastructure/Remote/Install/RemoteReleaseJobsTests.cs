@@ -59,6 +59,31 @@ public sealed class RemoteReleaseJobsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task The_one_update_goes_through_the_same_job_and_gets_its_failure_and_progress()
+    {
+        var gate = new Gate();
+        gate.Open.SetResult();
+        await using var jobs = Jobs(gate);
+        var phases = new List<string>();
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => jobs.InstallAsync("box", phases.Add, CancellationToken.None));
+        Assert.Equal("release_unavailable", failed.Reason);
+        Assert.NotEmpty(phases);
+        await Assert.ThrowsAsync<CallFailed>(() => jobs.InstallAsync("nobody", _ => { }, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task The_one_update_waits_its_turn_behind_a_running_install()
+    {
+        var gate = new Gate();
+        await using var jobs = Jobs(gate);
+        var running = jobs.InstallAsync("box", _ => { }, CancellationToken.None);
+        var busy = await Assert.ThrowsAsync<CallFailed>(() => jobs.InstallAsync("box", _ => { }, CancellationToken.None));
+        Assert.Equal("install_busy", busy.Reason);
+        gate.Open.SetResult();
+        await Assert.ThrowsAsync<CallFailed>(() => running);
+    }
+
+    [Fact]
     public async Task Only_one_install_runs_and_cancelling_it_stops_it()
     {
         await using var jobs = Jobs(new Gate());

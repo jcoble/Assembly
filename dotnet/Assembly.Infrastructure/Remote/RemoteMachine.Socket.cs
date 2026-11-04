@@ -106,7 +106,6 @@ internal sealed partial class RemoteMachine
             {
                 RequireOwnerBinding(expectedOwner); RequireLiveMirror(expectedOwner, expectedMirror);
             }
-            RequireMatchingBackendForStart(feature, method, args);
             sentOn = socket;
             var json = args.GetRawText();
             startIntent?.SendingNormal(this, socket, feature, method, args, id);
@@ -472,16 +471,8 @@ internal sealed partial class RemoteMachine
             var reason = $"stores rows in format {format}; this computer reads format {RowStore.FormatVersion}";
             throw Unreachable(reason, $"{_name} {reason}");
         }
-        var mismatch = Socket.BackendBuild.Mismatch(
-            welcome.TryGetProperty("backendIdentity", out var identity) && identity.ValueKind == JsonValueKind.String ? identity.GetString() : null,
-            welcome.TryGetProperty("commit", out var commit) && commit.ValueKind == JsonValueKind.String ? commit.GetString() : null);
-        if (path == "/socket")
-        {
-            _backendMismatch = mismatch;
-            _bulkBackendMismatch = null;
-        }
-        else _bulkBackendMismatch = mismatch;
-        _status.BackendMismatch(_name, _backendMismatch ?? _bulkBackendMismatch);
+        string? Text(string name) => welcome.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        _status.Backend(_name, Socket.BackendBuild.Compare(Text("backendIdentity"), Text("commit"), Text("version")));
         return welcome.TryGetProperty("engine", out var engine) && engine.ValueKind == JsonValueKind.String ? engine.GetString() : null;
     }
 

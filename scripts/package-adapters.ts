@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const names = ["claude-agent-acp", "codex-acp"] as const;
 type Versions = Record<(typeof names)[number], string>;
@@ -195,6 +195,28 @@ function publishBundles(assetPath: string, versions: Versions, tag: string, comm
   gh(["edit", tag, "--draft=false", "--latest=false"]);
 }
 
+// What this checkout packages from, recorded in each manifest so a later run can tell whether it would build the same.
+// Loaded here because a release ships this script alone, and installing never needs it.
+export async function packagingDigest(root = fileURLToPath(new URL("../", import.meta.url))) {
+  const { adapterSources, sourcesDigest } = await import("./dev-remote-identity.ts");
+  return sourcesDigest(adapterSources, async file => existsSync(join(root, file)) ? readFileSync(join(root, file)) : undefined);
+}
+
+// True unless every target's latest release already has these upstream versions and these packaging inputs.
+export function releaseBehind(versions: Versions, packaging: string, log = console.log) {
+  for (const target of targets) {
+    const tag = latestProviderTag(target);
+    if (!tag) { log("no published release for " + target); return true; }
+    const manifest = JSON.parse(execFileSync("curl", ["-fsSL", "--connect-timeout", "10", "--max-time", "60",
+      "https://github.com/" + providerRepo + "/releases/download/" + tag + "/assembly-adapters-" + target + ".json"], { encoding: "utf8" }));
+    const changed = names.filter(name => manifest.versions?.[name] !== versions[name]);
+    if (changed.length) { log(target + " in " + tag + " is behind upstream: " + changed.join(", ")); return true; }
+    if (manifest.packaging !== packaging) { log(target + " in " + tag + " was packaged from different inputs"); return true; }
+  }
+  log("the latest release already has these versions and packaging inputs");
+  return false;
+}
+
 export function compareWithLastProviderRelease(target: string, currentBundle: string, scratch: string, log = console.log) {
   const tag = latestProviderTag(target);
   const current = join(currentBundle, entrypoint("claude-agent-acp"));
@@ -238,6 +260,12 @@ async function main() {
     console.log(result);
     return;
   }
+  if (command === "behind") {
+    const build = releaseBehind(validateVersions(JSON.parse(args[0])), await packagingDigest());
+    if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, "build=" + build + "\n");
+    console.log("build=" + build);
+    return;
+  }
   if (command === "provider-tag") {
     // agents-file.sh reports stderr's first error, so a failed lookup prints no Node stack dump.
     try {
@@ -256,7 +284,7 @@ async function main() {
     return;
   }
   const [target, versionsJson, outputPath] = args;
-  if (command !== "build" || !outputPath) throw new Error("Usage: package-adapters.ts resolve | provider-tag <target> | build <target> <versions-json> <output>");
+  if (command !== "build" || !outputPath) throw new Error("Usage: package-adapters.ts resolve | behind <versions-json> | provider-tag <target> | build <target> <versions-json> <output>");
   if (!targets.includes(target) || target !== process.platform + "-" + process.arch) throw new Error("Build requires a native runner for " + target);
   const versions = validateVersions(JSON.parse(versionsJson));
   const output = resolve(outputPath);
@@ -283,7 +311,7 @@ async function main() {
     if (stock?._meta?.steering?.supported === true) console.log("launcher can be dropped (PR 1499 shipped)");
     else console.log("plain dist/index.js does not yet advertise steering");
     compareWithLastProviderRelease(target, bundle, scratch);
-    const verified = { ...manifest, smoke };
+    const verified = { ...manifest, smoke, packaging: await packagingDigest() };
     writeFileSync(join(output, "assembly-adapters-" + target + ".json"), JSON.stringify(verified, null, 2) + "\n");
     console.log(JSON.stringify(verified, null, 2));
   } finally {

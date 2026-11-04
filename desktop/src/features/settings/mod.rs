@@ -2,7 +2,7 @@
 //! Home button's menu, the palette and Cmd-, (Ctrl-, elsewhere), all through the `OpenSettings` intent. Replaces
 //! mac-command-bar's shell/settings/.
 
-mod connections;
+pub(crate) mod connections;
 mod fonts;
 mod machine_edits;
 mod page_content;

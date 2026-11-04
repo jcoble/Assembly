@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startRemoteSync } from './app-dev-remote.ts';
+import { startRemoteUpdate } from './app-dev-remote.ts';
 import { profileFor } from './seed-dev.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -78,11 +78,16 @@ const isManaged = existsSync(join(root, '.lane')) && await (await import('./app-
 if (existsSync(join(root, '.lane')) && !isManaged) console.warn('app:dev: this checkout does not own its lane (made by hand or a copied .lane), so dependency checks, seed and cleanup are off');
 let managed: Awaited<ReturnType<typeof import('./app-dev-managed.ts').prepareManagedLane>> | undefined;
 
-if (lane.status === 0 && laneName) env.ASSEMBLY_DEV_REMOTE_SYNC_STATUS = join(home, 'remote-sync-state.json');
-
-let stopSync = async () => {};
-try { if (!isManaged && lane.status === 0 && laneName && !launch.signal.aborted) stopSync = startRemoteSync(root, home); }
-catch (error) { console.warn(`app:dev: Workbox Test sync could not start: ${error instanceof Error ? error.message : String(error)}`); }
+// The backend's update check compares against this checkout, and its update button runs scripts/update-machines.ts here.
+env.ASSEMBLY_DEV_CHECKOUT = root;
+// The one update runs alongside the builds, never after them: a remote on another version number never waits for the desktop.
+let stopUpdate = async () => {};
+const startUpdate = () => {
+  env.ASSEMBLY_DEV_REMOTE_SYNC_STATUS = join(home, 'remote-sync-state.json');
+  try { stopUpdate = startRemoteUpdate(root, home, env); }
+  catch (error) { console.warn(`app:dev: the remote update could not start: ${error instanceof Error ? error.message : String(error)}`); }
+};
+if (!isManaged && lane.status === 0 && laneName) startUpdate();
 try {
   if (isManaged) {
     managed = await (await import('./app-dev-managed.ts')).prepareManagedLane(root, launch.signal);
@@ -92,7 +97,7 @@ try {
     tokenFile = join(process.env.HOME!, '.config', managed.target.data, 'env');
     remoteTokenFile = `.config/${managed.target.data}/env`;
     env.ASSEMBLY_REMOTE = 'workbox-test';
-    env.ASSEMBLY_DEV_REMOTE_SYNC_STATUS = join(home, 'remote-sync-state.json');
+    startUpdate();
   }
   const cache = existsSync(join(root, '.git')) ? await import('./dev-build-cache.ts') : undefined;
   const publish = async () => run('dotnet', [
@@ -110,7 +115,8 @@ try {
   }, null, 2) + '\n');
   renameSync(temporaryLane, laneFile);
   mkdirSync(home, { recursive: true });
-  if (!managed) {
+  // No agents at all means nothing to run. Otherwise the update above, the button and `npm run deploy:remote` install them.
+  if (!managed && !existsSync(join(home, 'agents.json'))) {
   const installer = ['dotnet/scripts/agents-file.sh', process.env.ADAPTERS ?? adapters, join(home, 'agents.json')];
   const installed = await attempt('bash', installer);
   // The backend starts with an empty list when there's no agents file, so failing here doesn't stop the app.
@@ -123,7 +129,6 @@ try {
   if (cache) {
     const executable = join(root, 'desktop/target/debug/assembly-desktop');
     await cache.ensureBuild(root, 'desktop', [executable], () => run('cargo', ['build', '--locked'], join(root, 'desktop')));
-    if (managed) stopSync = startRemoteSync(root, home, { versions: managed.versions, cohort: managed.cohort, seedManifest: managed.remoteManifest, owner: managed.owner.remoteOwner ?? managed.owner, adopted: managed.adopted, offline: managed.offline });
     console.warn('app:dev: lane dependencies checked; desktop and backend are current');
     await run(executable, process.argv.slice(2));
   } else await run('cargo', ['run', '--locked', '--', ...process.argv.slice(2)], join(root, 'desktop'));
@@ -131,7 +136,7 @@ try {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = (error as { exitCode?: number }).exitCode ?? 1;
 } finally {
-  await stopSync();
+  await stopUpdate();
   managed?.release();
   process.removeListener('SIGINT', interrupt);
   process.removeListener('SIGTERM', interrupt);
