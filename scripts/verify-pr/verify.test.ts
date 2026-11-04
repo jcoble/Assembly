@@ -58,7 +58,8 @@ if(name==='sudo') { const child=require('node:child_process'); const index=args.
  if(index>=0) { const rest=args.slice(index+2); const env={}; while(rest[0]?.includes('=')){const x=rest.shift();const p=x.indexOf('=');env[x.slice(0,p)]=x.slice(p+1);}
  for(const key of ['CALLS','REPLIES','TRAILERS','DIRTY','AGENT_RESULT','DIFF_FILES','DIFF_REPO','REAL_GIT']) if(process.env[key]) env[key]=process.env[key];
  const r=child.spawnSync(rest.shift(),rest,{env,encoding:'utf8'}); process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??1); } }
-if(name==='codex'||name==='claude') { fs.appendFileSync(process.env.CALLS,JSON.stringify({name:'agent-environment',env:process.env,stdin:fs.readFileSync(0,'utf8')})+'\n');
+if(name==='codex'||name==='claude') { const writable=args.flatMap((x,i)=>x==='--add-dir'?[args[i+1]]:[]);
+ fs.appendFileSync(process.env.CALLS,JSON.stringify({name:'agent-environment',env:process.env,stdin:fs.readFileSync(0,'utf8'),directories:writable.map(p=>({path:p,exists:fs.existsSync(p)&&fs.statSync(p).isDirectory()}))})+'\n');
  fs.writeFileSync(process.env.VERIFY_RESULT,process.env.AGENT_RESULT||'{}'); }
 `;
   // JSON.stringify ensures the generated JavaScript contains a newline escape, not a literal newline.
@@ -213,8 +214,34 @@ for (const [trailers, model] of [
   ['',undefined],
 ] as const) test('selects a different model for '+JSON.stringify(trailers),async()=>{
   const { selectModel } = await import('./run.ts');
-  if(model) assert.equal(selectModel(trailers).model,model);
-  else assert.throws(()=>selectModel(trailers));
+  if(model) assert.equal(selectModel(trailers,[]).model,model);
+  else assert.throws(()=>selectModel(trailers,[]));
+});
+test('Codex receives every writable directory and Claude arguments stay unchanged',async()=>{
+  const { selectModel } = await import('./run.ts');
+  const directories=['/verify/result','/verify/assembly-dotnet-verify-pr','/verify/.config/assembly-dotnet-verify-pr'];
+  const codex=selectModel('Committed-by: Codex SOL 6.1',directories);
+  assert.deepEqual(codex.args.flatMap((x,i)=>x==='--add-dir'?[codex.args[i+1]]:[]),directories);
+  assert.deepEqual(selectModel('Committed-by: Luna 6',directories),selectModel('Committed-by: Luna 6',[]));
+});
+test('run creates lane and tool directories as verify before starting the Codex verifier',t=>{
+  const f=fixture(t),dir=f.result(undefined);
+  const directories=[join(f.config.workerHome,'result'),
+    join(f.config.workerHome,'assembly-dotnet-verify-pr'),
+    join(f.config.workerHome,'.config','assembly-dotnet-verify-pr'),
+    join(f.config.workerHome,'.cargo'),join(f.config.workerHome,'.nuget'),
+    join(f.config.workerHome,'.dotnet'),join(f.config.workerHome,'.cache','pnpm'),
+    join(f.config.workerHome,'.local','state','pnpm')];
+  rmSync(directories[0],{recursive:true});
+  const r=f.run('run.ts',[dir,'--locked']); assert.equal(r.status,0,r.stderr);
+  const calls=f.calls(),agent=calls.findIndex(x=>x.name==='codex'); assert.ok(agent>=0);
+  assert.deepEqual(calls[agent].args.flatMap((x,i)=>x==='--add-dir'?[calls[agent].args[i+1]]:[]),directories);
+  for(const directory of directories) {
+    const mkdir=calls.findIndex(x=>x.name==='sudo'&&x.args.includes('mkdir')&&x.args.includes('-p')&&x.args.includes(directory));
+    assert.ok(mkdir>=0&&mkdir<agent,directory+' created before verifier');
+    assert.deepEqual(calls[mkdir].args.slice(0,4),['-n','-u','verify','--']);
+  }
+  assert.deepEqual(calls.find(x=>x.name==='agent-environment').directories,directories.map(path=>({path,exists:true})));
 });
 test('run creates a detached exact-SHA lane, isolates credentials and starts Codex without stdin',t=>{
   const f=fixture(t),dir=f.result(undefined);

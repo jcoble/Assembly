@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { config, context, command, worker, main } from './common.ts';
 import { auditAccount, auditFirewall } from './isolation.ts';
 
-export function selectModel(trailers: string, output?:string): {binary:string;model:string;args:string[]} {
+export function selectModel(trailers: string, writableDirectories:string[]): {binary:string;model:string;args:string[]} {
   const implementers=[...trailers.matchAll(/^Committed-by:\s*(.+)$/gm)].map(m=>m[1].toLowerCase());
   if (!implementers.length) throw Error('BLOCKED: no Committed-by trailers');
   const luna=implementers.some(x=>/luna/.test(x)), sonnet=implementers.some(x=>/sonnet/.test(x));
@@ -16,7 +16,7 @@ export function selectModel(trailers: string, output?:string): {binary:string;mo
   return {binary:'codex',model:'gpt-6-luna',args:[
     'exec','--model','gpt-6-luna','--sandbox','workspace-write',
     '-c','model_reasoning_effort="high"', '-c','sandbox_workspace_write.network_access=true',
-    ...(output?['--add-dir',output]:[]),
+    ...writableDirectories.flatMap(directory=>['--add-dir',directory]),
   ]};
 }
 export function run(directory: string, locked = false) {
@@ -32,12 +32,16 @@ export function run(directory: string, locked = false) {
   const heavy=command('ps',['-eo','comm=']).split('\n').filter(x=>/^(cargo|rustc|dotnet|MSBuild|ninja|cmake)$/.test(x.trim()));
   if (heavy.length >= 3) throw Error('BLOCKED: three or more heavy build processes running');
   auditAccount(c); auditFirewall(c); // Reboot or permission drift cannot silently remove the install boundary.
-  worker(c,'mkdir',['-p',ctx.output,c.worktrees]);
+  const writableDirectories=[ctx.output,join(c.workerHome,'assembly-dotnet-verify-pr'),
+    join(c.workerHome,'.config','assembly-dotnet-verify-pr'),
+    join(c.workerHome,'.cargo'),join(c.workerHome,'.nuget'),join(c.workerHome,'.dotnet'),
+    join(c.workerHome,'.cache','pnpm'),join(c.workerHome,'.local','state','pnpm')];
+  worker(c,'mkdir',['-p',...writableDirectories,c.worktrees]);
   // Public clone and fetch run as verify: no owner GitHub token, credential helper, or home is inherited.
   // Keep full history so posting can compare the PR against its merge base.
   worker(c,'git',['-C',c.clone,'-c','credential.helper=','fetch','--no-tags','origin',ctx.base,ctx.sha]);
   const trailers=worker(c,'git',['-C',c.clone,'log','--format=%B',`${ctx.base}..${ctx.sha}`]);
-  const model=selectModel(trailers,ctx.output);
+  const model=selectModel(trailers,writableDirectories);
   worker(c,'git',['-C',c.clone,'worktree','add','--detach',ctx.worktree,ctx.sha]);
   if(!Number.isInteger(c.laneNumber) || c.laneNumber<1 || c.laneNumber>9)
     throw Error('BLOCKED: invalid verifier lane reservation');
