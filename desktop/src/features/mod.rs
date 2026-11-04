@@ -15,5 +15,6 @@ pub mod source_control;
 pub mod terminal;
 pub mod worktrees;
 
+pub mod component_gallery;
 pub mod preview_screen;
 pub mod workspaces;

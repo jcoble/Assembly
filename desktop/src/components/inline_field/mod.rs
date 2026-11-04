@@ -6,7 +6,6 @@ mod form;
 mod form_state;
 mod kinds;
 mod layout;
-pub mod preview;
 mod state;
 pub use editor::ChoiceOption;
 pub use layout::field_row;

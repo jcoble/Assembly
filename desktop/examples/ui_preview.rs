@@ -16,9 +16,12 @@ mod projects;
 #[path = "../src/features/settings/preview/mod.rs"]
 mod settings_preview;
 
+#[path = "../src/features/component_gallery.rs"]
+mod component_gallery;
 #[path = "../src/features/preview_screen.rs"]
 mod preview_screen;
 mod features {
+    pub(crate) use crate::component_gallery;
     pub(crate) use crate::projects;
     pub(crate) mod source_control {
         pub(crate) use crate::git_operation;

@@ -95,7 +95,11 @@ impl RenderOnce for LinkChip {
             .icon(self.icon)
             .child(div().text_role(TextRole::Meta, cx).child(self.label))
             .when_some(self.on_click, |button, on_click| {
-                button.on_click(move |event, window, cx| on_click(event, window, cx))
+                button.on_click(move |event, window, cx| {
+                    // A chip sits on rows and cards that open on a click.
+                    cx.stop_propagation();
+                    on_click(event, window, cx);
+                })
             })
     }
 }
