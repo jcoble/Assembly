@@ -121,11 +121,6 @@ impl FileView {
         });
     }
 
-    /// Opens the session's file at `path` in the center, or brings its tab forward.
-    pub fn open(session: String, path: String, window: &mut Window, cx: &mut App) {
-        Self::open_at(session, path, None, None, false, None, window, cx);
-    }
-
     pub fn new(session: String, path: String, cx: &mut Context<Self>) -> Self {
         FileView {
             focus: cx.focus_handle(),
@@ -273,8 +268,7 @@ impl FileView {
     pub fn open_at(
         session: String,
         path: String,
-        line: Option<u32>,
-        column: Option<u32>,
+        (line, column): (Option<u32>, Option<u32>),
         pinned: bool,
         source: Option<crate::core::socket::row_source::ExpectedRowSource>,
         window: &mut Window,

@@ -14,11 +14,14 @@ pub enum SaveState {
     Unknown,
 }
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Only tests read what a save confirmed, so far.")
+)]
 pub struct ConfirmedFileSave {
     pub key: DocumentKey,
     pub save_id: String,
     pub saved_version: u64,
-    pub revision: String,
 }
 
 pub struct FileSaveController {
@@ -52,7 +55,7 @@ impl FileSaveController {
         if self.completed {
             return None;
         }
-        docs.saved(&self.captured.key, self.captured.version, revision.clone());
+        docs.saved(&self.captured.key, self.captured.version, revision);
         self.completed = true;
         self.captured.text.clear();
         self.captured.text.shrink_to_fit();
@@ -61,7 +64,6 @@ impl FileSaveController {
             key: self.captured.key.clone(),
             save_id: self.save_id.clone(),
             saved_version: self.captured.version,
-            revision,
         })
     }
 

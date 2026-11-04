@@ -70,6 +70,7 @@ internal sealed partial class RemoteConnections
             : CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, call.SourceGuard.Changed);
         var ct = stop?.Token ?? call.Cancellation;
         var expected = args.ExpectedSource ?? call.ExpectedSource;
+        if (_active.TryGetValue(route, out var active)) active.Machine.RequireMatchingBackendForStart();
         var captured = await CaptureCreationOwner(db, route, expected, call, ct);
         ProjectRecord? project = null;
         if (args.ProjectId is not null)

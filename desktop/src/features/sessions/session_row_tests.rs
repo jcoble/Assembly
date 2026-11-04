@@ -132,7 +132,7 @@ impl gpui_kit::Render for OneRow {
 /// Clicks land where a person's would: on each of the row's three lines.
 #[gpui::test]
 fn clicking_any_line_of_a_row_opens_it_without_touching_its_arrow(cx: &mut gpui::TestAppContext) {
-    use gpui_kit::{AppContext as _, Modifiers, point, px};
+    use gpui_kit::{Modifiers, point, px};
     use std::cell::Cell;
     use std::rc::Rc;
     cx.update(gpui_kit::init);

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 const current = 'a'.repeat(40), previous = 'b'.repeat(40);
+const previousIdentity = createHash('sha256').update('assembly-dev-remote-v2:ACP2\n100644 blob ' + '1'.repeat(40) + '\tdotnet/Assembly.Remote/Assembly.Remote.csproj').digest('hex');
 const launcher = createHash('sha256').update('launcher\n').digest('hex');
 const fakeGit = `#!/usr/bin/env node
 import fs from 'node:fs';
@@ -31,13 +32,14 @@ const args=process.argv.slice(2), state=JSON.parse(fs.readFileSync(process.env.S
 fs.appendFileSync(process.env.CALLS, JSON.stringify(['ssh',...args])+'\\n');
 if (state.unreachable) {console.error('ssh: connect to host workbox-test: Network is unreachable');process.exit(255)}
 if (args.at(-1).startsWith('flock ')) {
+ if (state.startFail) {console.log('ASSEMBLY_REMOTE_SYNC '+JSON.stringify({reason:'Remote backend failed to start. Host may be down; no automatic rollback.'}));console.error('new backend failed to start; no rollback');process.exit(1)}
  if (state.deployFail) {console.error('dotnet publish failed: test compiler error');process.exit(1)}
  if(state.hold) {
   const child=spawn('flock',['-n','-E','75',process.env.LOCK,process.execPath,process.env.HOLDER],{stdio:['inherit','inherit','inherit']});
   child.on('close',code=>process.exit(code));
  } else console.log('deployed backend; authenticated host commit ${current}');
 } else if(state.missing) console.log(JSON.stringify({missing:true}));
-else console.log(JSON.stringify({commit:'${previous}',engine:'test-engine',dll:'/lane/bin/old/backend/Assembly.Remote.dll',pid:'123',unitSha:'f'.repeat(64),adapterOK:true,launcherSha:'${launcher}'}));
+else console.log(JSON.stringify({commit:'${previous}',backendIdentity:'${previousIdentity}',engine:'test-engine',dll:'/lane/bin/old/backend/Assembly.Remote.dll',pid:'123',unitSha:'f'.repeat(64),adapterOK:true,launcherSha:'${launcher}'}));
 `;
 function fixture(state: object = {}) {
   const root = mkdtempSync(join(tmpdir(), 'assembly-devsync-'));
@@ -117,7 +119,7 @@ test('second launch during deployment cannot start another deploy', { timeout: 1
   } finally { first.kill('SIGTERM'); await finished; f.close(); }
 });
 
-for (const [state, reason] of [[{unreachable:true}, /Network is unreachable/], [{changed:true,deployFail:true}, /test compiler error/]] as const) {
+for (const [state, reason] of [[{unreachable:true}, /Network is unreachable/], [{changed:true,deployFail:true}, /test compiler error/], [{changed:true,startFail:true}, /failed to start/]] as const) {
   test('app opens during remote sync and reports ' + Object.keys(state).at(-1), { timeout: 10_000 }, async () => {
     const f=fixture(state);
     for(const directory of ['desktop','dotnet/scripts']) mkdirSync(join(f.root,directory),{recursive:true});
@@ -137,6 +139,9 @@ for (const [state, reason] of [[{unreachable:true}, /Network is unreachable/], [
       assert.equal(app.exitCode,null,'app must stay open independently of sync');
       await reported;
       assert.match(stderr,/log: .*\.log/);
+      const state = JSON.parse(readFileSync(join(f.root, 'profile/mac/remote-sync-state.json'), 'utf8'));
+      assert.match(state.reason, reason, 'the desktop must receive the actual sync refusal');
+      if ('startFail' in state) assert.match(state.reason, /Host may be down; no automatic rollback/);
       writeFileSync(f.paths.release,'close app');
       assert.equal(await exited,0,stderr);
     } finally { app.kill('SIGTERM'); await exited; f.close(); }
@@ -224,4 +229,16 @@ test('closing app-dev during adapter setup ends the installer and its remote syn
     app.kill('SIGTERM');assert.equal(await ended,1);
     for(const pid of pids) assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
   }finally{app.kill('SIGTERM');await ended;f.close()}
+});
+
+for (const changed of [false, true]) test(`read-only lane preflight ${changed ? 'refuses mismatched backend' : 'accepts equivalent backend at another commit'}`, () => {
+  const f = fixture({ changed });
+  try {
+    copyFileSync(new URL('./check-remote.ts', import.meta.url), join(f.root, 'scripts/check-remote.ts'));
+    const result = spawnSync(process.execPath, [join(f.root, 'scripts/check-remote.ts'), 'test-lane', '9'], { cwd: f.root, env: f.env, encoding: 'utf8' });
+    assert.equal(result.status, changed ? 1 : 0, result.stderr);
+    assert.match(result.stdout + result.stderr, new RegExp(`remote ${previous}; desktop ${current}`));
+    assert.ok(f.calls().every(call => call[0] !== 'git' || call[1] !== 'push'));
+    assert.ok(f.calls().every(call => call[0] !== 'ssh' || !call.at(-1)?.startsWith('flock ')));
+  } finally { f.close(); }
 });

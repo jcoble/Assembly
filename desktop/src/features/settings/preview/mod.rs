@@ -1,14 +1,18 @@
 mod connections_view;
 mod controls;
+// This tree also builds on its own in examples/ui_preview, where these three have no parent to reach them through.
+#[allow(clippy::duplicate_mod)]
 #[path = "../fonts.rs"]
 mod fonts;
 mod model;
 mod operations;
 mod provider_view;
+#[allow(clippy::duplicate_mod)]
 #[path = "../row.rs"]
 mod row;
 // The production section model also carries navigation group metadata.
 #[allow(dead_code)]
+#[allow(clippy::duplicate_mod)]
 #[path = "../section.rs"]
 mod section;
 

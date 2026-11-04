@@ -5,17 +5,29 @@ use crate::core::socket::out_frame::OutFrame;
 use serde_json::Value;
 use std::sync::atomic::Ordering;
 
+/// What one Engine feed asks the backend for.
+pub(super) struct EngineRequest {
+    pub topic: String,
+    pub key: Option<String>,
+    pub machine: Option<String>,
+    pub expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    pub scoped: bool,
+}
+
 impl ClientThread {
     pub(super) fn add_engine(
         &mut self,
         id: u64,
-        topic: String,
-        key: Option<String>,
-        machine: Option<String>,
-        expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
-        scoped: bool,
+        request: EngineRequest,
         updates: futures_channel::mpsc::UnboundedSender<EngineUpdate>,
     ) {
+        let EngineRequest {
+            topic,
+            key,
+            machine,
+            expected_source,
+            scoped,
+        } = request;
         let machine = machine.or_else(|| {
             self.connection
                 .as_ref()

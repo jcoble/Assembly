@@ -75,10 +75,7 @@ fn backend(
     (fake, frames, changed, changes)
 }
 
-fn open<'a>(
-    port: u16,
-    cx: &'a mut TestAppContext,
-) -> (Entity<DeployForm>, &'a mut VisualTestContext) {
+fn open(port: u16, cx: &mut TestAppContext) -> (Entity<DeployForm>, &mut VisualTestContext) {
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -90,7 +87,7 @@ fn open<'a>(
             cx,
         );
     });
-    cx.add_window_view(|window, cx| DeployForm::new(window, cx))
+    cx.add_window_view(DeployForm::new)
 }
 
 fn call(frames: &Frames, method: &str) -> Option<Value> {
@@ -237,7 +234,7 @@ async fn a_reopened_dialog_with_no_job_on_the_backend_says_the_outcome_is_unknow
             commit: COMMIT.into(),
         })));
     });
-    let (form, cx) = cx.add_window_view(|window, cx| DeployForm::new(window, cx));
+    let (form, cx) = cx.add_window_view(DeployForm::new);
     until("the unknown outcome", &mut changes, &changed, || {
         cx.run_until_parked();
         form.read_with(cx, |form, _| form.unknown.is_some())

@@ -7,7 +7,7 @@ use crate::core::{
 use crate::features::files::{
     document_store::DocumentKey,
     entry::FileOwnership,
-    file_action_form::{FileActionForm, Finished},
+    file_action_form::{ActionExpected, FileActionForm, Finished},
 };
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
@@ -42,9 +42,11 @@ impl FilesPane {
                 kind,
                 path,
                 destination,
-                expected_owner,
-                self.source.clone(),
-                self.owner.clone(),
+                ActionExpected {
+                    owner: expected_owner,
+                    source: self.source.clone(),
+                    checkout: self.owner.clone(),
+                },
                 window,
                 cx,
             )

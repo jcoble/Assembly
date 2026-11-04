@@ -1,6 +1,15 @@
 //! `NeedRow`'s render: the need's title, detail, answer controls and its working, failed or settled state.
 use super::*;
 
+fn dismiss(cx: &mut Context<NeedRow>) -> impl IntoElement {
+    div().debug_selector(|| "need-dismiss".into()).child(
+        Button::new("dismiss-need")
+            .ghost()
+            .label("Dismiss")
+            .on_click(cx.listener(|row, _, _, cx| row.answer(NeedAnswer::Dismiss, cx))),
+    )
+}
+
 impl Render for NeedRow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
@@ -92,6 +101,20 @@ impl Render for NeedRow {
         if !self.reconciled && self._read.as_ref().is_some_and(|read| !read.is_ready()) {
             return column.child("Checking the current question…");
         }
+        // Nothing here could answer it, so it says so at once rather than behind a button. A failed Dismiss keeps its
+        // way back through Review again, below.
+        if let Some(notice) = self.need.presentation_notice()
+            && matches!(self.state, NeedRowState::Idle | NeedRowState::Open)
+        {
+            return column
+                .child(
+                    div()
+                        .debug_selector(|| "need-no-controls".into())
+                        .text_color(theme.muted_foreground)
+                        .child(notice),
+                )
+                .child(dismiss(cx));
+        }
         if !matches!(self.state, NeedRowState::Open) {
             let label = if matches!(self.state, NeedRowState::Idle) {
                 if self.need.kind == "question" {
@@ -102,15 +125,20 @@ impl Render for NeedRow {
             } else {
                 "Review again"
             };
-            return column.child(Button::new("review-need").ghost().label(label).on_click(
-                cx.listener(|row, _, window, cx| {
-                    if row.reconciled {
-                        row.open(window, cx);
-                    } else {
-                        row.reconcile(row.serial, cx);
-                    }
-                }),
-            ));
+            return column.child(
+                div().debug_selector(|| "need-review".into()).child(
+                    Button::new("review-need")
+                        .ghost()
+                        .label(label)
+                        .on_click(cx.listener(|row, _, window, cx| {
+                            if row.reconciled {
+                                row.open(window, cx);
+                            } else {
+                                row.reconcile(row.serial, cx);
+                            }
+                        })),
+                ),
+            );
         }
         let on_action: controls::OnControl = {
             let row = cx.weak_entity();
@@ -118,6 +146,9 @@ impl Render for NeedRow {
                 let _ = row.update(cx, |row, cx| row.control(action, cx));
             })
         };
+        let mut answers = v_flex()
+            .gap_2()
+            .debug_selector(|| "need-answer-controls".into());
         if let Some(presentation) = &self.need.presentation {
             if let Some(payload) = presentation.provider_payload(
                 &self.need.state,
@@ -125,7 +156,7 @@ impl Render for NeedRow {
                 self.need.answer.clone(),
             ) {
                 if presentation.input_mode == "form" && self.form.is_none() {
-                    column = column.child("This form's input controls are unavailable.");
+                    answers = answers.child("This form's input controls are unavailable.");
                 } else {
                     let choices = presentation
                         .options
@@ -135,7 +166,7 @@ impl Render for NeedRow {
                             (option.id.clone(), option.label.clone(), index == 0)
                         })
                         .collect::<Vec<_>>();
-                    column = column.child(controls::render(
+                    answers = answers.child(controls::render(
                         &format!("need:{}:{}", self.key.machine, self.key.id),
                         &payload,
                         self.form.as_ref(),
@@ -145,7 +176,7 @@ impl Render for NeedRow {
                     ));
                 }
             } else if presentation.input_mode == "text" {
-                column = column
+                answers = answers
                     .child(
                         div()
                             .capture_key_down(cx.listener(|row, event: &KeyDownEvent, _, cx| {
@@ -191,18 +222,9 @@ impl Render for NeedRow {
                         button.secondary()
                     });
                 }
-                column = column.child(choices);
-            } else {
-                column = column.child("Answer controls are unavailable for this item.");
+                answers = answers.child(choices);
             }
-        } else {
-            column = column.child("Answer controls are unavailable for this item.");
         }
-        column.child(
-            Button::new("dismiss-need")
-                .ghost()
-                .label("Dismiss")
-                .on_click(cx.listener(|row, _, _, cx| row.answer(NeedAnswer::Dismiss, cx))),
-        )
+        column.child(answers).child(dismiss(cx))
     }
 }

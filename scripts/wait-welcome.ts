@@ -1,10 +1,11 @@
 // Readiness uses the owner control socket; credentials arrive on stdin, never argv or the URL.
 import { execFile } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { backendIdentity } from './dev-remote-identity.ts';
 import { promisify } from 'node:util';
 
 const git = promisify(execFile);
-export type Welcome = { t: 'welcome'; protocol: number; machine: string; format: number; commit: string | null };
+export type Welcome = { t: 'welcome'; protocol: number; machine: string; format: number; commit: string | null; backendIdentity?: string };
 type Options = { name: string; base: string; commit: string; seconds: number };
 
 export async function waitForWelcome(options: Options, tokenInput: string | typeof process.stdin): Promise<string> {
@@ -63,19 +64,6 @@ export async function waitForWelcome(options: Options, tokenInput: string | type
       controller.signal.addEventListener('abort', abort, { once: true });
     });
   }
-  async function sameCode(seen: string, target: string): Promise<boolean> {
-    if (seen === target) return true;
-    const roots = ['dotnet', 'desktop'];
-    // Retired roots still matter when comparing a build from before their deletion.
-    for (const root of ['app', 'shell']) {
-      for (const revision of [seen, target]) {
-        try { await command(['cat-file', '-e', `${revision}:${root}`]); roots.push(root); break; }
-        catch { if (controller.signal.aborted) return false; }
-      }
-    }
-    try { await command(['diff', '--quiet', seen, target, '--', ...roots]); return true; }
-    catch { return false; }
-  }
   function again(peer: WebSocket) {
     if (finished || peer !== socket) return;
     peer.onopen = peer.onmessage = peer.onerror = peer.onclose = null;
@@ -85,6 +73,7 @@ export async function waitForWelcome(options: Options, tokenInput: string | type
     retry = setTimeout(connect, 100);
   }
   let target: string;
+  let targetIdentity: string;
   function connect() {
     if (finished) return;
     const peer = socket = new WebSocket(url);
@@ -105,26 +94,24 @@ export async function waitForWelcome(options: Options, tokenInput: string | type
       if (typeof frame.commit !== 'string' || !/^[a-f0-9]{40}$/i.test(frame.commit)) {
         finish(undefined, 'welcome commit is missing or invalid (unknown build)'); return;
       }
-      let seen: string;
-      try { seen = await command(['rev-parse', '--verify', `${frame.commit}^{commit}`]); }
-      catch { if (!finished) finish(undefined, 'welcome commit is unknown to this checkout'); return; }
-      if (finished || peer !== socket) return;
-      const matches = await sameCode(seen, target);
-      if (finished || peer !== socket) return;
-      if (matches) finish(seen);
-      else { last = `stale build ${seen}`; again(peer); }
+      if (typeof frame.backendIdentity !== 'string' || !/^[a-f0-9]{64}$/.test(frame.backendIdentity)) {
+        finish(undefined, `remote ${frame.commit}; desktop ${target}: welcome backend identity is missing or invalid`); return;
+      }
+      if (frame.backendIdentity === targetIdentity) finish(frame.commit);
+      else finish(undefined, `backend mismatch: remote ${frame.commit}; desktop ${target}`);
     };
   }
   void readToken().then(value => {
     if (!value || /[\r\n]/.test(value)) throw new Error('owner token is missing or invalid');
     token = value;
     return command(['rev-parse', '--verify', `${options.commit}^{commit}`]);
-  }).then(value => {
+  }).then(async value => {
     target = value;
-    connect();
+    targetIdentity = await backendIdentity(process.cwd(), target, controller.signal);
+    if (!finished) connect();
   }, error => {
     if (!finished) finish(undefined, error instanceof Error && error.message.startsWith('owner token') ? error.message : 'target commit is unknown');
-  });
+  }).catch(error => { if (!finished) finish(undefined, String(error)); });
   return outcome;
 }
 

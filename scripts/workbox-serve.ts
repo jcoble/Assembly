@@ -28,8 +28,7 @@ try {
   const launcher = createHash('sha256').update(await command('git', ['show', `${commit}:scripts/adapters/claude-launcher.ts`], { cwd: root, signal: owner.signal, raw: true })).digest('hex');
   const read = `export PATH="$HOME/.local/bin:$HOME/.dotnet:/usr/local/bin:/usr/bin:/bin"; node --input-type=module -e ${quote(probeSource)} ${quote(JSON.stringify(target))}`;
   const probe = JSON.parse(await command('ssh', [...sshOptions, 'workbox-test', read], { signal: owner.signal })) as Probe;
-  let actual = probe.missing ? 'not installed' : 'unknown';
-  try { if (!probe.missing) actual = await backendIdentity(root, probe.commit, owner.signal); } catch { owner.signal.throwIfAborted(); }
+  const actual = probe.missing ? 'not installed' : probe.backendIdentity ?? 'unknown';
   identityCheck();
   if (actual === identity && probe.adapterOK && probe.launcherSha === launcher) {
     console.log(`Workbox Test ${target.unit} already runs backend ${identity} (host commit ${probe.commit}); no deploy`);
@@ -38,7 +37,7 @@ try {
     const transfer = stage('transfer');
     await command('git', ['push', '-q', 'ssh://workbox-test/~/assembly.git', `+${commit}:refs/heads/dev-sync-${name || 'main'}`], { cwd: root, signal: owner.signal, live: true });
     transfer({ payload: 'git changed source objects', binaryBytes: 0 });
-    const request = JSON.stringify({ lane: target, commit, identity, launcher, probe });
+    const request = JSON.stringify({ lane: target, commit, identity, launcher, probe, waitForIdle: process.env.ASSEMBLY_DEV_REMOTE_SYNC === '1' });
     // Kernel-owned lock covers probe, build, package and activation across Mac/Workbox launches. No stale PID lock.
     const checkout = `${target.data}/checkouts/build`;
     const script = `export PATH="$HOME/.local/bin:$HOME/.dotnet:/usr/local/bin:/usr/bin:/bin"; set -eu; `

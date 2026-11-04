@@ -68,10 +68,10 @@ impl HistoryFilter {
                 .get(sha)
                 .map_or(&[][..], |commit| &commit.parents[..])
             {
-                if let Some(known) = by_sha.get(parent.as_str()) {
-                    if reached.insert(known.sha.as_str()) {
-                        queue.push(known.sha.as_str());
-                    }
+                if let Some(known) = by_sha.get(parent.as_str())
+                    && reached.insert(known.sha.as_str())
+                {
+                    queue.push(known.sha.as_str());
                 }
             }
         }

@@ -24,11 +24,8 @@ pub struct WindowCommand {
 #[serde(rename_all = "camelCase")]
 pub struct CommandReceipt {
     pub applied: bool,
-    pub late: bool,
     pub error: Option<String>,
     pub version: i64,
-    pub seq: i64,
-    pub epoch: i64,
 }
 #[derive(Clone, Debug)]
 pub enum NeedAnswer {

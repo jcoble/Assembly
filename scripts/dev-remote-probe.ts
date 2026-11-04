@@ -64,7 +64,7 @@ socket.onmessage=e=>{
   console.error('host did not provide a compatible authenticated identity');process.exit(1);
  }
  clearTimeout(deadline);socket.close();process.stdin.pause();
- console.log(JSON.stringify({commit:frame.commit,engine:frame.engine,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,launcherSha}));
+ console.log(JSON.stringify({commit:frame.commit,backendIdentity:frame.backendIdentity,engine:frame.engine,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,launcherSha}));
 };
 `;
-export type Probe = { missing?: boolean; commit: string; engine: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean; launcherSha: string };
+export type Probe = { missing?: boolean; commit: string; backendIdentity?: string; engine: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean; launcherSha: string };

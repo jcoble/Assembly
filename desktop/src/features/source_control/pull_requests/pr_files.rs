@@ -157,6 +157,7 @@ impl PrFiles {
     pub fn set_mode(&mut self, mode: DiffMode, cx: &mut Context<Self>) {
         self.state.update(cx, |state, cx| state.set_mode(mode, cx));
     }
+    #[cfg(test)]
     pub fn mode(&self, cx: &App) -> DiffMode {
         self.state.read(cx).mode()
     }
@@ -244,7 +245,7 @@ impl PrFiles {
         let shown: Vec<DiffFile> = self
             .parsed
             .iter()
-            .filter(|file| matches_filter(&file.path().to_string(), &self.filter))
+            .filter(|file| matches_filter(file.path().as_ref(), &self.filter))
             .cloned()
             .collect();
         let viewed = self.viewed.clone();

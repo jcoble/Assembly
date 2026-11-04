@@ -112,8 +112,6 @@ pub fn one_line(text: &str) -> String {
     }
 }
 
-pub use crate::core::ui::ask::controls::asked;
-
 fn truthy(value: &Value) -> bool {
     match value {
         Value::Null | Value::Bool(false) => false,

@@ -11,8 +11,8 @@ use crate::features::source_control::git_status::GitStatus;
 use crate::features::source_control::git_target::GitTarget;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::{TestAppContext, VisualTestContext};
+use gpui_kit::Entity;
 use gpui_kit::component::dock::BasePanel as _;
-use gpui_kit::{AppContext as _, Entity};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 
@@ -115,7 +115,7 @@ async fn a_write_reply_for_the_previous_checkout_does_not_paint_over_the_current
         changed,
         mut changes,
     } = start(cx);
-    let (pane, cx) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    let (pane, cx) = cx.add_window_view(SourceControlPane::new);
     pane.update_in(cx, |pane, window, cx| pane.set_active(true, window, cx));
     until("the first checkout is read", &mut changes, &changed, || {
         cx.run_until_parked();
@@ -161,7 +161,7 @@ async fn branches_read_from_the_previous_checkout_are_replaced_when_the_root_mov
         changed,
         mut changes,
     } = start(cx);
-    let (pane, cx) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    let (pane, cx) = cx.add_window_view(SourceControlPane::new);
     pane.update_in(cx, |pane, window, cx| pane.set_active(true, window, cx));
     let remotes = |pane: &Entity<SourceControlPane>, cx: &mut VisualTestContext| {
         pane.update(cx, |pane, _| {
@@ -227,7 +227,7 @@ async fn a_long_operation_finishing_for_the_previous_checkout_leaves_the_current
         changed,
         mut changes,
     } = start(cx);
-    let (pane, cx) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    let (pane, cx) = cx.add_window_view(SourceControlPane::new);
     pane.update_in(cx, |pane, window, cx| pane.set_active(true, window, cx));
     until("the first checkout is read", &mut changes, &changed, || {
         cx.run_until_parked();

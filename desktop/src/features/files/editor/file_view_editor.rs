@@ -50,17 +50,17 @@ impl FileView {
             ));
             return;
         }
-        if let Some(version) = self.reload_version.take() {
-            if let Err(error) = cx.global_mut::<DocumentStore>().reload(
+        if let Some(version) = self.reload_version.take()
+            && let Err(error) = cx.global_mut::<DocumentStore>().reload(
                 &key,
                 version,
                 revision.to_owned(),
                 text.to_owned(),
-            ) {
-                self.editor_error = Some(format!(
-                    "Reload was refused: {error:?}. Your current draft is preserved."
-                ));
-            }
+            )
+        {
+            self.editor_error = Some(format!(
+                "Reload was refused: {error:?}. Your current draft is preserved."
+            ));
         }
         let snapshot = cx
             .global::<DocumentStore>()

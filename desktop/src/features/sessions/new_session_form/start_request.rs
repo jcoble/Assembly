@@ -6,6 +6,10 @@ use serde_json::{Value, json};
 /// The existing Application CheckoutIntent wire, captured as an unsent choice.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
+#[expect(
+    dead_code,
+    reason = "The Application accepts all three; the form offers only the current checkout so far."
+)]
 pub enum CheckoutIntent {
     Current,
     Branch { branch: String },

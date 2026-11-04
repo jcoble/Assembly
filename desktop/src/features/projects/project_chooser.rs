@@ -14,6 +14,8 @@ pub enum ProjectChoice {
 #[derive(Clone, Debug)]
 pub enum ProjectChooserEvent {
     Picked {
+        // Subscribers read the project so far; this says No project was picked on purpose.
+        #[allow(dead_code)]
         choice: ProjectChoice,
         project: Option<ProjectRecord>,
     },
@@ -119,11 +121,9 @@ impl ProjectChooser {
         }
         cx.notify();
     }
+    #[cfg(test)]
     pub fn choice(&self) -> &ProjectChoice {
         &self.choice
-    }
-    pub fn selected(&self) -> Option<&ProjectRecord> {
-        self.selected.as_ref()
     }
     pub fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.filter.update(cx, |input, cx| input.focus(window, cx));
@@ -272,7 +272,7 @@ fn default_project<'a>(
 }
 impl Render for ProjectChooser {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut view = v_flex()
+        let view = v_flex()
             .gap_1()
             .capture_key_down(cx.listener(Self::key_down))
             .child(Input::new(&self.filter))

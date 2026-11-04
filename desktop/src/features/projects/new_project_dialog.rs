@@ -88,16 +88,15 @@ impl NewProjectForm {
         let operation_heard=cx.observe(&operation,|form:&mut Self,_,cx|{
             if form.operation.read(cx).unconfirmed{form.unconfirmed=true;}
             let status=form.operation.read(cx).status.clone();
-            if let Some(status)=status {
-                if status.state=="succeeded"&&status.version>form.emitted_version {
+            if let Some(status)=status
+                && status.state=="succeeded"&&status.version>form.emitted_version {
                     form.emitted_version=status.version;
                     let result=status.result.and_then(|value|serde_json::from_value::<NewProjectResult>(value).ok());
                     match result {
                         Some(result)if result.project.machine==form.machine&&result.project.root_path==result.inspection.root_path&&result.project.removed_at.is_none()=>cx.emit(Created(result.project)),
                         _=>{form.unconfirmed=true;form.error=Some("The creation result was not confirmed. Refresh Projects before trying again.".into());},
                     }
-                }
-            }cx.notify();
+                }cx.notify();
         });
         let inputs = vec![
             cx.subscribe(&name, |_: &mut Self, _, _: &InputEvent, cx| cx.notify()),

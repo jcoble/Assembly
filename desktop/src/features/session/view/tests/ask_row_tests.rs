@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 
-use super::{asked, one_line, outcome, permission_choices, settled};
+use super::{one_line, outcome, permission_choices, settled};
+use crate::core::ui::ask::controls::asked;
 use crate::core::ui::ask::payload::AskPayload;
 
 fn ask(state: &str, answer: Option<Value>) -> AskPayload {

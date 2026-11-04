@@ -49,6 +49,7 @@ internal sealed partial class RemoteMachine
                 if (expectedEngineId is not null && (!ReferenceEquals(live, RequireEngine(expectedEngineId)) || _bulkEngineIdentity != expectedEngineId))
                     throw Unreachable("unverified engine peer", $"{_name}: bulk socket engine identity differs or is unverified");
                 if (relayBinding is not null) { RequireOwnerBinding(relayBinding); RequireLiveMirror(relayBinding, relayMirror); }
+                RequireMatchingBackendForStart(feature, method, args);
                 startIntent?.SendingBulk(this, _bulkSocket, feature, method, args, id);
                 await SendFrameAsync(_bulkSocket, $"{{\"t\":\"call\",\"id\":{id},\"feature\":\"{feature}\",\"method\":\"{method}\",\"args\":{args.GetRawText()}}}", ct);
                 startIntent?.FrameOrdered();

@@ -157,7 +157,7 @@ async fn bench(cx: &mut TestAppContext, offered: Value) -> Bench<'_> {
             cx,
         );
     });
-    let (pane, visual) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    let (pane, visual) = cx.add_window_view(SourceControlPane::new);
     visual.simulate_resize(size(px(500.), px(300.)));
     let tell = changed.clone();
     let heard = visual.update(|_, cx| {

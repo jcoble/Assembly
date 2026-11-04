@@ -58,7 +58,7 @@ fn badge(text: &str, color: Hsla, cx: &App) -> Div {
 pub fn card(
     pane: &mut BoardPane,
     ix: usize,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut Context<BoardPane>,
 ) -> AnyElement {
     let Some(item) = pane.state.items.get(ix) else {

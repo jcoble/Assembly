@@ -217,24 +217,23 @@ impl FileView {
                 file
             })
         }) && let Some(file) = Self::panel(id, cx)
+            && let Some(document) = file.read(cx).document.clone()
         {
-            if let Some(document) = file.read(cx).document.clone() {
-                let claim = format!(
-                    "document:{}",
-                    serde_json::to_string(&(
-                        &document.machine,
-                        &document.checkout_root,
-                        &document.path
-                    ))
-                    .expect("document identity")
-                );
-                CenterPanes::claim_file(
-                    claim,
-                    super::key(&key.session_id, &document.path),
-                    PanelId::from(file.entity_id()),
-                    cx,
-                );
-            }
+            let claim = format!(
+                "document:{}",
+                serde_json::to_string(&(
+                    &document.machine,
+                    &document.checkout_root,
+                    &document.path
+                ))
+                .expect("document identity")
+            );
+            CenterPanes::claim_file(
+                claim,
+                super::key(&key.session_id, &document.path),
+                PanelId::from(file.entity_id()),
+                cx,
+            );
         }
     }
 }

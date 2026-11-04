@@ -134,8 +134,10 @@ fn adding_fixture_folder_reuses_existing_id_and_never_changes_draft() {
 
 #[test]
 fn project_selection_keeps_draft_and_offline_choice_is_refused() {
-    let mut sample = SampleProjects::default();
-    sample.draft = "Build a calendar".into();
+    let mut sample = SampleProjects {
+        draft: "Build a calendar".into(),
+        ..Default::default()
+    };
     sample.select(Some(2)).unwrap();
     sample.select(None).unwrap();
     assert_eq!(sample.draft, "Build a calendar");
@@ -181,8 +183,10 @@ fn remove_retains_selected_identity_and_draft_and_readd_restores_same_title() {
 
 #[test]
 fn change_folder_refuses_other_live_or_removed_root_and_keeps_machine_and_draft() {
-    let mut sample = SampleProjects::default();
-    sample.draft = "Unsent".into();
+    let mut sample = SampleProjects {
+        draft: "Unsent".into(),
+        ..Default::default()
+    };
     sample.remove(3).unwrap();
     let before = sample.projects[0].clone();
     assert!(
@@ -269,8 +273,10 @@ fn folder_paths_accept_trailing_slash_and_machine_home_shorthand() {
 }
 #[test]
 fn normalized_registration_and_folder_changes_keep_identity_and_draft() {
-    let mut sample = SampleProjects::default();
-    sample.draft = "Keep this draft".into();
+    let mut sample = SampleProjects {
+        draft: "Keep this draft".into(),
+        ..Default::default()
+    };
     let selected = sample.selected;
     let existing = sample.add_folder(Machine::Mac, "~/dev/Assembly/").unwrap();
     assert_eq!(

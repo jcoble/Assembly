@@ -201,6 +201,7 @@ impl FilesPane {
         cx.notify();
     }
 
+    #[cfg(test)]
     pub(super) fn is_loading(&self) -> bool {
         self.observing.is_some() || !self.loads.is_empty()
     }
@@ -392,8 +393,7 @@ impl FilesPane {
                         FileView::open_at(
                             session.clone(),
                             path,
-                            None,
-                            None,
+                            (None, None),
                             true,
                             self.source.clone(),
                             window,

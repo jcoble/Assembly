@@ -46,6 +46,10 @@ fi
 for f in ${features[@]+"${features[@]}"}; do
   [ -x "scripts/features/$f.sh" ] || { echo "no scenario scripts/features/$f.sh (or it isn't executable)" >&2; exit 2; }
 done
+# Refuse stale lanes before profile setup, fixtures, sessions or provider work.
+if [ -z "$(git status --porcelain -- . ':!evidence')" ]; then
+  node scripts/check-remote.ts "$LANE_NAME" "$LANE_NUMBER" HEAD
+fi
 commit=$(git rev-parse HEAD)
 out=evidence/$commit/four-way; [ "$partial" = true ] && out+=-partial
 # Keep every previous attempt, including failures, before creating the current receipt.

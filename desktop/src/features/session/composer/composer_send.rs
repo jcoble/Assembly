@@ -88,7 +88,7 @@ impl Composer {
                 }
             })
             .collect();
-        if self.draft.read(cx).value().to_string() == typed
+        if self.draft.read(cx).value() == typed
             && self
                 .attachments
                 .iter()

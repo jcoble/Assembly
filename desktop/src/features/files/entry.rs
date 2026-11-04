@@ -32,7 +32,6 @@ pub struct PageCursor {
 #[derive(Debug, Deserialize)]
 pub struct ObservedRoot {
     pub lease: String,
-    pub generation: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]

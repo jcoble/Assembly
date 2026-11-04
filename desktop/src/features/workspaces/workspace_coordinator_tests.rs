@@ -10,7 +10,7 @@ use crate::core::socket::{
 use crate::core::state::workspace_panes::PaneCodec;
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
-use gpui_kit::{App, AppContext as _, Context, IntoElement, Render, Window, div};
+use gpui_kit::{App, Context, IntoElement, Render, Window, div};
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -375,10 +375,11 @@ async fn cancelling_a_held_read_emits_one_refusal_and_drops_the_prepared_commit(
         if let Some(reply) = hello(frame) {
             return reply;
         }
-        if frame["t"] == "call" && frame["method"] == "read" {
-            if let Some(seen) = seen.lock().unwrap().take() {
-                let _ = seen.send(());
-            }
+        if frame["t"] == "call"
+            && frame["method"] == "read"
+            && let Some(seen) = seen.lock().unwrap().take()
+        {
+            let _ = seen.send(());
         }
         Vec::new()
     });

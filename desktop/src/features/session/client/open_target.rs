@@ -11,6 +11,13 @@ pub(crate) struct OpenTarget {
     pub key: SessionKey,
     pub source: ExpectedRowSource,
     pub read_only: bool,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Opening decides from the read itself; only tests look at this."
+        )
+    )]
     pub has_history_rows: bool,
     pub recorded_checkout_root: Option<String>,
 }
