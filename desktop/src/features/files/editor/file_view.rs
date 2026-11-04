@@ -249,6 +249,10 @@ impl FileView {
                             return;
                         }
                         view.owner = Some(owner);
+                        // A person's open was refused a save while its owner was unknown, so it's retried now.
+                        if view.expected_workspace.is_none() {
+                            crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
+                        }
                         if view.document.is_some() && view.reload_version.is_none() {
                             cx.notify();
                             return;

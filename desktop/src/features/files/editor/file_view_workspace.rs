@@ -42,10 +42,9 @@ impl FileView {
                 "Finish the current file operation before capturing its center tab.".into(),
             );
         }
-        if self.owning_workspace().as_ref() != Some(key) {
-            return Err("A file tab has no confirmed owning workspace identity.".into());
-        }
-        Ok(&self.path)
+        // A saved tab keeps its validated checkout until it's shown, which is when its owner is first read.
+        self.restored_workspace_path(key)
+            .ok_or_else(|| "A file tab has no confirmed owning workspace identity.".to_string())
     }
     pub(crate) fn captured_workspace_paths(
         key: &WorkspaceKey,
