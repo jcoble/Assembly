@@ -20,7 +20,7 @@ use futures_channel::oneshot;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
-use crate::core::backend::backend_config::BackendConfig;
+use crate::core::backend::backend_config::{self, BackendConfig};
 use crate::core::backend::launcher::Launcher;
 use crate::core::navigation::external_urls::ExternalUrls;
 use crate::core::socket::client::SocketClient;
@@ -83,7 +83,11 @@ fn main() {
         // The window opens once the theme files have loaded, already in its theme. The kit calls this once, so
         // the layout's read and write are taken out on that call.
         let layout = Cell::new(Some((read_layout, write_layout)));
-        theme::init(theme::THEMES_DIR.into(), cx, move |cx| {
+        let themes = packaged_resources().map_or_else(
+            || theme::THEMES_DIR.into(),
+            |resources| resources.join("themes"),
+        );
+        theme::init(themes, cx, move |cx| {
             let Some((read_layout, write_layout)) = layout.take() else {
                 return;
             };
@@ -106,8 +110,13 @@ fn main() {
     });
 }
 
-/// Starts the backend from `ASSEMBLY_BACKEND_DIR`, or the `backend` folder beside the program, and the socket client on
-/// its first ready line. Without a backend the window still opens, in the default layout, and the error says what's
+/// The packaged app's `Contents/Resources`; none when running from a checkout.
+fn packaged_resources() -> Option<PathBuf> {
+    backend_config::packaged_resources(&std::env::current_exe().ok()?)
+}
+
+/// Starts the backend from `ASSEMBLY_BACKEND_DIR`, the packaged app's backend, or the `backend` folder beside the
+/// program, and the socket client on its first ready line. Without a backend the window still opens, in the default layout, and the error says what's
 /// missing. Returns the window layout's read and write, over the backend's preferences.
 fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
     let socket = Rc::new(OnceCell::<Entity<SocketClient>>::new());
@@ -118,6 +127,7 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
     let (give_up, launcher_gave_up) = oneshot::channel::<()>();
     let backend = std::env::var_os("ASSEMBLY_BACKEND_DIR")
         .map(PathBuf::from)
+        .or_else(|| packaged_resources().map(|resources| resources.join("backend")))
         .or_else(|| {
             let program = std::env::current_exe().ok()?;
             Some(program.parent()?.join("backend"))

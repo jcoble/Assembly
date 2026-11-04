@@ -7,6 +7,8 @@ namespace Assembly.Infrastructure.Remote;
 
 internal sealed partial class RemoteConnections
 {
+    internal SavedMachine? SavedProfile(string name, CancellationToken ct) => _store.Get(name, ct);
+
     internal async Task<RemoteInstallBinding> CaptureInstallOwnerAsync(string name, string engine, CancellationToken ct)
     {
         var snapshot = _store.CaptureProfile(name, ct) ?? throw InstallChanged();
