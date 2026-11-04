@@ -46,6 +46,7 @@ mod row_source_tests;
 pub mod row_update;
 mod rows_feed;
 #[cfg(test)]
+#[path = "tests/rows_tests.rs"]
 mod rows_tests;
 #[cfg(test)]
 pub(crate) mod test_client;
