@@ -1,6 +1,6 @@
 import { lstatSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { git, tryGit, defaultBranch, assertExclusive, withWorktree, mutateRegistry } from './worktree-state.ts';
+import { git, tryGit, defaultBranch, onDefault, assertExclusive, withWorktree, mutateRegistry } from './worktree-state.ts';
 import { canonical, inside } from './guard.ts';
 
 export type BackupResult = { status: 'pushed' | 'clean' | 'skipped' | 'failed'; reason?: string; kept: string[] };
@@ -44,6 +44,11 @@ export function backupUnderLock(path: string, owner?: string, verifyOnly = false
     // Reuse the same bounded signature scan on history without executing any diff content.
     if (containsSecret(history)) return { status: 'skipped', reason: 'Secret scanner found a credential in unpushed history.', kept: [] };
     if (verifyOnly) return { status: 'clean', kept: [] };
+    // Nothing is unique to this worktree, so a backup branch would only clutter the remote.
+    if (!tryGit(path, 'status', '--porcelain') && onDefault(path)) {
+      mutateRegistry(rows => { rows[path].backedUpHead = git(path, 'rev-parse', 'HEAD'); rows[path].updated = new Date().toISOString(); delete rows[path].flag; });
+      return { status: 'clean', kept: [] };
+    }
     phase = 'commit';
     if (!branch) { branch = 'backup/' + basename(path); git(path, 'switch', '-c', branch); }
     if (tryGit(path, 'status', '--porcelain')) {

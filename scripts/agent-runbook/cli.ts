@@ -7,6 +7,7 @@ import { checkDataCommand, namesProtectedFolder, DATA_DENY } from './data-guard.
 import { createWorktree, backupWorktree, lease } from './worktree.ts';
 import { registry, tryGit, setHookBudget } from './worktree-state.ts';
 import { spawn } from 'node:child_process';
+import { basename } from 'node:path';
 import { sessionOwner } from './session-owner.ts';
 
 let eventName = '';
@@ -35,13 +36,14 @@ try {
       console.log(JSON.stringify(result.deny ? { hookSpecificOutput: { hookEventName: eventName, permissionDecision: 'deny', permissionDecisionReason: result.deny } } : {}));
     } else if (['SessionEnd', 'WorktreeRemove'].includes(eventName)) {
       const path = event.worktree_path || tryGit(event.cwd, 'rev-parse', '--show-toplevel');
-      if (path && registry()[path]) {
-        const binding = getBinding(provider, session);
-        if (!binding?.readOnly) {
-          lease(path, provider + ':' + session, true);
-          const result = backupWorktree(path, provider + ':' + session);
-          if (result.reason) console.error(result.reason);
-        }
+      const owner = provider + ':' + session;
+      // A subagent's worktree is leased by this session but is not its cwd, so end those leases too.
+      const held = eventName === 'SessionEnd' ? Object.keys(registry()).filter(row => registry()[row].leases[owner]) : [];
+      if (!getBinding(provider, session)?.readOnly) for (const worktree of new Set([path, ...held])) {
+        if (!worktree || !registry()[worktree]) continue;
+        lease(worktree, owner, true);
+        const result = backupWorktree(worktree, owner);
+        if (result.reason) console.error(result.reason);
       }
       if (eventName === 'WorktreeRemove' && (!path || existsSync(path))) {
         console.error('Worktree retained for resume and safe sweep; refusing removal.');
@@ -50,10 +52,14 @@ try {
       console.log('{}');
     } else if (eventName === 'SubagentStop') {
       const path = tryGit(event.cwd, 'rev-parse', '--show-toplevel');
-      if (registry()[path]) {
-        lease(path, provider + ':' + session, true);
-        if (!Object.keys(registry()[path].leases).length) {
-          const result = backupWorktree(path, provider + ':' + session);
+      // The harness names a subagent's worktree after it and leases it to the parent.
+      const created = Object.keys(registry()).find(row => basename(row) === 'agent-' + session);
+      if (created) lease(created, provider + ':' + parentSession, true);
+      for (const worktree of new Set([path, created])) {
+        if (!worktree || !registry()[worktree]) continue;
+        lease(worktree, provider + ':' + session, true);
+        if (!Object.keys(registry()[worktree].leases).length) {
+          const result = backupWorktree(worktree, provider + ':' + session);
           if (result.reason) console.error(result.reason);
         }
       }

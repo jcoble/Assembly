@@ -41,6 +41,9 @@ export function defaultBranch(repo: string): string {
   if (!ref.startsWith('origin/')) throw Error('Default branch is unknown; set origin/HEAD before backup.');
   return ref.slice('origin/'.length);
 }
+export function onDefault(path: string) {
+  try { git(path, 'merge-base', '--is-ancestor', 'HEAD', 'refs/remotes/origin/' + defaultBranch(path)); return true; } catch { return false; }
+}
 export function liveCwds(): { pid: number; path: string }[] {
   // lsof exit 1 also means no matches, but an empty/failed inventory is not proof of safety.
   const text = execFileSync('lsof', ['-nP', '-a', '-d', 'cwd', '-Fpn'], { encoding: 'utf8', timeout: remainingBudget(3000), maxBuffer: 8388608, stdio: ['ignore', 'pipe', 'pipe'] });

@@ -1,6 +1,6 @@
 import { existsSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
-import { git } from './worktree-state.ts';
+import { git, onDefault } from './worktree-state.ts';
 import type { WorktreeRecord } from './worktree-state.ts';
 
 const regenerable = new Set(['target', 'node_modules', 'bin', 'obj', 'dist', 'build', '.build', '.next', '.svelte-kit', '__pycache__', '.turbo', '.cache']);
@@ -17,7 +17,7 @@ export function checkRemovalSafety(path: string, row: WorktreeRecord) {
   const unique = ignored.filter(file => file.split('/').at(-1) !== '.DS_Store' && !file.startsWith('gen/schemas/') && !file.split('/').slice(0, -1).some(part => regenerable.has(part)));
   if (unique.length) throw Error('Ignored files need preservation: ' + unique.slice(0, 10).join(', '));
   const head = git(path, 'rev-parse', 'HEAD');
-  if (git(path, 'ls-remote', '--heads', 'origin', 'refs/heads/' + branch).split(/\s/)[0] !== head) {
+  if (git(path, 'ls-remote', '--heads', 'origin', 'refs/heads/' + branch).split(/\s/)[0] !== head && !onDefault(path)) {
     throw Error('Unpushed commits or remote lacks HEAD; worktree kept.');
   }
 }

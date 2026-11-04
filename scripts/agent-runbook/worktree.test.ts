@@ -485,6 +485,43 @@ test('subagent_stop_releases_shared_lease_without_flagging_parent', t => {
   const row = JSON.parse(readFileSync(f.registry, 'utf8'))[path];
   assert.deepEqual(Object.keys(row.leases), ['codex:parent']); assert.equal(row.flag, undefined); assert.ok(existsSync(path));
 });
+function hookIn(f: any, event: any) {
+  const result = spawnSync(process.execPath, [new URL('./cli.ts', import.meta.url).pathname, 'hook', 'claude'], {
+    cwd: f.repo, input: JSON.stringify({ cwd: f.repo, session_id: 'parent', ...event }), encoding: 'utf8', env: { ...f.env, FAKE_PROCESSES: f.processes },
+  });
+  assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+}
+const remoteTip = (f: any, branch: string) => f.git(f.repo, 'ls-remote', '--heads', 'origin', 'refs/heads/' + branch).split(/\s/)[0];
+test('subagent_stop_backs_up_harness_worktree_and_releases_parent_lease', t => {
+  const f = setup(t), path = hookIn(f, { hook_event_name: 'WorktreeCreate', name: 'agent-child1' });
+  writeFileSync(join(path, 'work'), 'safe');
+  hookIn(f, { hook_event_name: 'SubagentStop', agent_id: 'child1' });
+  const row = JSON.parse(readFileSync(f.registry, 'utf8'))[path];
+  assert.deepEqual(row.leases, {}); assert.equal(row.backedUpHead, f.git(path, 'rev-parse', 'HEAD'));
+  assert.equal(remoteTip(f, 'agent-child1'), row.backedUpHead);
+});
+test('unchanged_agent_worktree_is_removed_without_pushing_a_branch', t => {
+  const f = setup(t), path = hookIn(f, { hook_event_name: 'WorktreeCreate', name: 'agent-child2' });
+  hookIn(f, { hook_event_name: 'SubagentStop', agent_id: 'child2' });
+  assert.equal(remoteTip(f, 'agent-child2'), '');
+  const result = f.run(['sweep']); assert.ok(!existsSync(path), result.stdout);
+});
+test('agent_worktree_with_unpushed_commit_is_pushed_before_removal', t => {
+  const f = setup(t), path = hookIn(f, { hook_event_name: 'WorktreeCreate', name: 'agent-child3' });
+  writeFileSync(join(path, 'work'), 'committed'); f.git(path, 'add', '.'); f.git(path, 'commit', '-m', 'work');
+  const head = f.git(path, 'rev-parse', 'HEAD');
+  hookIn(f, { hook_event_name: 'SubagentStop', agent_id: 'child3' });
+  assert.equal(remoteTip(f, 'agent-child3'), head); assert.ok(existsSync(path));
+});
+test('session_end_releases_only_its_own_leases_outside_cwd', t => {
+  const f = setup(t), mine = hookIn(f, { hook_event_name: 'WorktreeCreate', name: 'mine' });
+  const theirs = hookIn(f, { hook_event_name: 'WorktreeCreate', name: 'theirs', session_id: 'other' });
+  writeFileSync(join(mine, 'work'), 'safe'); writeFileSync(join(theirs, 'work'), 'theirs');
+  hookIn(f, { hook_event_name: 'SessionEnd' });
+  const rows = JSON.parse(readFileSync(f.registry, 'utf8'));
+  assert.deepEqual(rows[mine].leases, {}); assert.equal(remoteTip(f, 'mine'), f.git(mine, 'rev-parse', 'HEAD'));
+  assert.ok(rows[theirs].leases['claude:other']); assert.equal(remoteTip(f, 'theirs'), '');
+});
 test('subagent_stop_backs_up_exclusive_worktree', t => {
   const f = setup(t), path = f.create(); f.run(['lease', path, 'codex:child']); writeFileSync(join(path, 'work'), 'safe');
   const result = spawnSync(process.execPath, [new URL('./cli.ts', import.meta.url).pathname, 'hook', 'codex'], {
