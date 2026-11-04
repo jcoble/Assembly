@@ -9,6 +9,7 @@
 #   scripts/lane.sh remove <name>   removes its Workbox Test host and folders (unless the
 #                                   lane was adopted here: the machine that made it removes those), then the
 #                                   worktree; refuses dirty/unmerged work or running lane processes. Close the native app first
+#   scripts/lane.sh clean <name>    removes everything the lane owns but keeps its worktree; new and remove also run this
 #   scripts/lane.sh list            the lanes here and the numbers reserved on Workbox Test
 set -euo pipefail
 cd "$(dirname "$0")/.."

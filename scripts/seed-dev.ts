@@ -4,7 +4,6 @@ import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, realp
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { lane } from './dev-remote-identity.ts';
 
 export function parseArgs(args: string[]): { worktree: string; manifest: string; dryRun: boolean } {
   let worktree = ''; let manifest = ''; let dryRun = false;
@@ -77,7 +76,7 @@ export async function main(args: string[], launcherOwned = false): Promise<void>
   let remoteData: string | undefined;
   if (remoteIndex >= 0) {
     const [name, rawNumber] = args.slice(remoteIndex + 1, remoteIndex + 3);
-    remoteData = lane(name, Number(rawNumber)).data; remoteLane = { name, number: Number(rawNumber) };
+    remoteData = (await import('./dev-remote-identity.ts')).lane(name, Number(rawNumber)).data; remoteLane = { name, number: Number(rawNumber) };
     args = [...args.slice(0, remoteIndex), ...args.slice(remoteIndex + 3)];
   }
   const options = parseArgs(args); const profile = profileFor(options.worktree); const root = profile.root;
