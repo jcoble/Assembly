@@ -15,7 +15,10 @@ use super::git_target::GitTarget;
 use super::pull_requests::pr_section::PrSection;
 use super::result_line::PaneResult;
 use crate::core::state::session_read::{SessionRead, Shown};
-use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
+use crate::core::ui::center_panes::CenterPanes;
+use gpui_kit::component::dock::{
+    BasePanel, DockPlacement, PaneRef, Panel, PanelEvent, PanelHandle, panel_handle, register_panel,
+};
 use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::*;
 use std::collections::HashSet;
@@ -81,6 +84,8 @@ pub struct SourceControlPane {
     _heard: Vec<Subscription>,
 }
 
+gpui_kit::actions!(source_control, [ShowSourceControl]);
+
 impl SourceControlPane {
     /// Registers the pane under the drawer's Source control name, after the placeholders, since the last registration
     /// wins.
@@ -88,6 +93,50 @@ impl SourceControlPane {
         register_panel(cx, SOURCE_CONTROL, |_, window, cx| {
             panel_handle(cx.new(|cx| SourceControlPane::new(window, cx)))
         });
+        cx.on_action(|_: &ShowSourceControl, cx| {
+            let Some(window) = cx.active_window().or_else(|| cx.windows().into_iter().next()) else {
+                return;
+            };
+            cx.defer(move |cx| {
+                _ = window.update(cx, |_, window, cx| Self::show(window, cx));
+            });
+        });
+    }
+    /// Brings the tab forward in the drawer, opening the drawer if it's shut.
+    fn show(window: &mut Window, cx: &mut App) {
+        let Some(dock) = CenterPanes::dock(cx) else {
+            return;
+        };
+        let mut found = None;
+        for placement in [
+            DockPlacement::Left,
+            DockPlacement::Center,
+            DockPlacement::Right,
+            DockPlacement::Bottom,
+        ] {
+            if let Some(tree) = dock.read(cx).layout(placement) {
+                tree.root().walk(&mut |node| {
+                    if let PaneRef::Tabs { panels, .. } = node.kind() {
+                        for id in panels {
+                            if let Some(panel) = dock.read(cx).panel(*id)
+                                && let Some(handle) = PanelHandle::of(panel)
+                                && handle.view().downcast::<Self>().is_ok()
+                            {
+                                found = Some((*id, placement));
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        if let Some((id, placement)) = found {
+            dock.update(cx, |dock, cx| {
+                dock.select_panel(id, window, cx);
+                if placement != DockPlacement::Center && !dock.is_dock_open(placement) {
+                    dock.toggle_dock(placement, window, cx);
+                }
+            });
+        }
     }
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {

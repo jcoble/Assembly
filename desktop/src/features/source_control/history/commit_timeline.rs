@@ -1,21 +1,17 @@
 //! A visible history owner owns its page and commit reads; hiding or replacing it cancels them.
 use super::{
-    git_history::{GitCommit, GitCommitFile, GitHistory},
-    graph_lanes::{EdgeKind, LaneRow, lanes},
+    git_history::{GitCommitFile, GitHistory},
+    graph_lanes::{LaneRow, lanes},
     history_filter::HistoryFilter,
 };
-use crate::core::{
-    intents::open_commit_diff::OpenCommitDiff,
-    socket::{client::SocketClient, outcome::Outcome},
-};
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use crate::core::socket::{client::SocketClient, outcome::Outcome};
 use gpui_kit::*;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 
+pub use table::{Uncommitted, uncommitted_of};
+/// The list entries around the commits: the uncommitted row and the footer.
+const ITEMS_AROUND: usize = 2;
 pub(super) enum CommitFiles {
     Reading,
     Read(Vec<GitCommitFile>),
@@ -40,6 +36,9 @@ pub struct CommitTimeline {
     /// Drawn in Source control's own scroller: no graph, and more only on Load more.
     inline: bool,
     pages: u32,
+    uncommitted: Option<Uncommitted>,
+    /// The commit file last picked, marked in its row.
+    chosen: Option<(String, String)>,
 }
 impl CommitTimeline {
     /// The list as Source control draws it inside its one scroller.
@@ -76,7 +75,8 @@ impl CommitTimeline {
         inline: bool,
         cx: &mut Context<Self>,
     ) -> Self {
-        let list = ListState::new(0, ListAlignment::Top, px(200.));
+        // The table's list: the uncommitted row, each commit, then the footer.
+        let list = ListState::new(ITEMS_AROUND, ListAlignment::Top, px(200.));
         if !inline {
             let watching = list.clone();
             let weak = cx.entity().downgrade();
@@ -104,6 +104,8 @@ impl CommitTimeline {
             list,
             inline,
             pages: 0,
+            uncommitted: None,
+            chosen: None,
         }
     }
     pub fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
@@ -132,6 +134,20 @@ impl CommitTimeline {
             self.refresh(cx);
         }
     }
+    /// The history's own commits, for the toolbar's pickers and counts.
+    pub fn shown_count(&self) -> usize {
+        self.visible.len()
+    }
+    pub fn is_reading(&self) -> bool {
+        self.reading
+    }
+    pub fn set_uncommitted(&mut self, uncommitted: Option<Uncommitted>, cx: &mut Context<Self>) {
+        if self.uncommitted != uncommitted {
+            self.uncommitted = uncommitted;
+            self.list.splice(0..1, 1);
+            cx.notify();
+        }
+    }
     pub fn set_filter(&mut self, filter: HistoryFilter, cx: &mut Context<Self>) {
         self.filter = filter;
         self.sync_rows();
@@ -143,6 +159,7 @@ impl CommitTimeline {
         self.file_reads.clear();
         self.files.clear();
         self.expanded.clear();
+        self.chosen = None;
         self.history = GitHistory::default();
         self.pages = 0;
         self.sync_rows();
@@ -182,7 +199,6 @@ impl CommitTimeline {
                     Outcome::Ok(page) => {
                         timeline.pages += 1;
                         timeline.history.append(page);
-                        timeline.graph = lanes(&timeline.history.commits);
                         timeline.sync_rows();
                     }
                     Outcome::Failed(failure) => timeline.error = Some(failure.message),
@@ -194,12 +210,13 @@ impl CommitTimeline {
         cx.notify();
     }
     pub(super) fn toggle_commit(&mut self, sha: String, cx: &mut Context<Self>) {
+        let opened = sha.clone();
         if !self.expanded.insert(sha.clone()) {
             self.expanded.remove(&sha);
             self.file_reads.remove(&sha);
             self.files
                 .retain(|key, files| key != &sha || !matches!(files, CommitFiles::Reading));
-            self.list.reset(self.visible.len());
+            self.remeasure(&sha);
             cx.notify();
             return;
         }
@@ -214,6 +231,7 @@ impl CommitTimeline {
                 );
                 self.files.insert(sha.clone(), CommitFiles::Reading);
                 let target = sha.clone();
+                let measured = sha.clone();
                 let task = cx.spawn(async move |timeline, cx| {
                     let outcome = call.await;
                     _ = timeline.update(cx, |timeline, cx| {
@@ -228,284 +246,51 @@ impl CommitTimeline {
                                 }
                             },
                         );
-                        timeline.list.reset(timeline.visible.len());
+                        timeline.remeasure(&measured);
                         cx.notify();
                     });
                 });
                 self.file_reads.insert(sha, task);
             }
         }
-        self.list.reset(self.visible.len());
+        self.remeasure(&opened);
         cx.notify();
     }
-    fn sync_rows(&mut self) {
-        let next: Vec<usize> = self
-            .history
-            .commits
+    /// The commit's row changed height. The list keeps its place, which a reset would lose.
+    fn remeasure(&self, sha: &str) {
+        if let Some(at) = self
+            .visible
             .iter()
-            .enumerate()
-            .filter_map(|(index, commit)| self.filter.matches(commit).then_some(index))
-            .collect();
-        if next.starts_with(&self.visible) {
-            self.list.splice(
-                self.visible.len()..self.visible.len(),
-                next.len() - self.visible.len(),
-            );
+            .position(|&index| self.history.commits[index].sha == sha)
+        {
+            self.list.splice(at + 1..at + 2, 1);
+        }
+    }
+    fn sync_rows(&mut self) {
+        let next = self.filter.visible(&self.history.commits);
+        let appended = next.starts_with(&self.visible);
+        // The picture is drawn for what's on screen: filtered-out commits would leave its lines going nowhere.
+        self.graph = lanes(next.iter().map(|&index| &self.history.commits[index]));
+        if appended {
+            let at = self.visible.len() + 1;
+            self.list.splice(at..at + 1, next.len() - self.visible.len() + 1);
         } else {
-            self.list.reset(next.len());
+            self.list.reset(next.len() + ITEMS_AROUND);
         }
         self.visible = next;
-    }
-    fn row(&mut self, at: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(&index) = self.visible.get(at) else {
-            return Empty.into_any_element();
-        };
-        let commit = self.history.commits[index].clone();
-        let sha = commit.sha.clone();
-        let copy_sha = sha.clone();
-        let copy_subject = commit.subject.clone();
-        let color = cx.theme().muted_foreground;
-        let header = h_flex()
-            .gap_2()
-            .h(px(32.))
-            .px_2()
-            .child(graph(&self.graph[index], cx))
-            .child(
-                Button::new(SharedString::from(format!("commit:{sha}")))
-                    .ghost()
-                    .compact()
-                    .label(commit.short_sha.clone())
-                    .on_click(cx.listener(move |timeline, _, _, cx| {
-                        timeline.toggle_commit(sha.clone(), cx)
-                    })),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_sm()
-                    .child(commit.subject.clone()),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(color)
-                    .child(commit.author.clone()),
-            )
-            .child(
-                Button::new(SharedString::from(format!("copy:{}", commit.sha)))
-                    .ghost()
-                    .compact()
-                    .label("…")
-                    .dropdown_menu(move |menu, _, _| {
-                        menu.item(PopupMenuItem::new("Copy SHA").on_click({
-                            let sha = copy_sha.clone();
-                            move |_, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()))
-                            }
-                        }))
-                        .item(
-                            PopupMenuItem::new("Copy subject").on_click({
-                                let subject = copy_subject.clone();
-                                move |_, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(
-                                        subject.clone(),
-                                    ))
-                                }
-                            }),
-                        )
-                    }),
-            );
-        let mut row = v_flex().child(header);
-        if self.expanded.contains(&commit.sha) {
-            row = row
-                .child(
-                    div()
-                        .pl_4()
-                        .pr_2()
-                        .text_xs()
-                        .text_color(color)
-                        .child(commit.committed_at.clone()),
-                )
-                .child(div().pl_4().pr_2().text_sm().child(commit.body.clone()));
-            match self.files.get(&commit.sha) {
-                Some(CommitFiles::Reading) => {
-                    row = row.child(div().pl_4().text_sm().child("Reading changed files…"))
-                }
-                Some(CommitFiles::Failed(error)) => {
-                    row = row.child(
-                        div()
-                            .pl_4()
-                            .text_sm()
-                            .text_color(cx.theme().danger)
-                            .child(error.clone()),
-                    )
-                }
-                Some(CommitFiles::Read(files)) => {
-                    for file in files {
-                        let intent = OpenCommitDiff {
-                            session_id: self.session.clone(),
-                            expected_source: self.expected_source.clone(),
-                            sha: commit.sha.clone(),
-                            path: file.path.clone(),
-                            title: format!("{} {}", commit.short_sha, commit.subject),
-                        };
-                        let path = file.path.clone();
-                        let copied = path.clone();
-                        row = row.child(
-                            h_flex()
-                                .pl_4()
-                                .gap_2()
-                                .child(
-                                    Button::new(SharedString::from(format!(
-                                        "file:{}:{path}",
-                                        commit.sha
-                                    )))
-                                    .ghost()
-                                    .compact()
-                                    .label(format!("{} {}", file.letter, path))
-                                    .on_click(
-                                        move |_, window, cx| {
-                                            window.dispatch_action(Box::new(intent.clone()), cx)
-                                        },
-                                    ),
-                                )
-                                .child(
-                                    Button::new(SharedString::from(format!(
-                                        "path:{}:{path}",
-                                        commit.sha
-                                    )))
-                                    .ghost()
-                                    .compact()
-                                    .label("Copy path")
-                                    .on_click(
-                                        move |_, _, cx| {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                copied.clone(),
-                                            ))
-                                        },
-                                    ),
-                                ),
-                        );
-                    }
-                }
-                None => {}
-            }
-        }
-        row.into_any_element()
     }
 }
 impl Render for CommitTimeline {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.inline {
-            return self.render_inline(cx);
+            self.render_inline(cx)
+        } else {
+            self.render_table(cx)
         }
-        let weak = cx.entity().downgrade();
-        let muted = cx.theme().muted_foreground;
-        v_flex()
-            .size_full()
-            .min_h_0()
-            .child(
-                div().px_2().text_xs().text_color(muted).child(
-                    self.filter
-                        .summary(self.visible.len(), self.history.commits.len()),
-                ),
-            )
-            .children(self.error.iter().map(|error| {
-                div()
-                    .px_2()
-                    .text_sm()
-                    .text_color(cx.theme().danger)
-                    .child(error.clone())
-            }))
-            .when(self.history.commits.is_empty(), |view| {
-                view.child(
-                    div()
-                        .p_2()
-                        .text_sm()
-                        .text_color(muted)
-                        .child(if self.reading {
-                            "Reading commits…"
-                        } else if self.error.is_some() {
-                            "History unavailable."
-                        } else {
-                            "No commits yet."
-                        }),
-                )
-            })
-            .child(
-                list(self.list.clone(), move |at, window, cx| {
-                    weak.update(cx, |timeline, cx| timeline.row(at, window, cx))
-                        .unwrap_or_else(|_| Empty.into_any_element())
-                })
-                .flex_1(),
-            )
-            .when(self.history.next_cursor.is_some(), |view| {
-                view.child(
-                    Button::new("history-more")
-                        .ghost()
-                        .compact()
-                        .label(if self.reading {
-                            "Reading…"
-                        } else {
-                            "Load more"
-                        })
-                        .disabled(self.reading)
-                        .on_click(cx.listener(|timeline, _, _, cx| timeline.load_more(cx))),
-                )
-            })
-            .into_any_element()
     }
 }
-fn graph(row: &LaneRow, cx: &App) -> impl IntoElement {
-    let row = row.clone();
-    let lane = row.lane;
-    let color = cx.theme().muted_foreground;
-    let width = row
-        .edges
-        .iter()
-        .flat_map(|(_, from, to)| [*from, *to])
-        .max()
-        .unwrap_or(row.lane)
-        .max(row.lane)
-        + 1;
-    div()
-        .relative()
-        .w(px((width * 12 + 8) as f32))
-        .h(px(32.))
-        .flex_none()
-        .child(
-            canvas(
-                |_, _, _| {},
-                move |bounds, _, window, _| {
-                    for (kind, from, to) in &row.edges {
-                        let (top, bottom) = match kind {
-                            EdgeKind::Passing => (0., 32.),
-                            EdgeKind::Child => (0., 16.),
-                            EdgeKind::Parent => (16., 32.),
-                        };
-                        let mut path = PathBuilder::stroke(px(1.));
-                        path.move_to(bounds.origin + point(px((*from * 12 + 8) as f32), px(top)));
-                        path.line_to(bounds.origin + point(px((*to * 12 + 8) as f32), px(bottom)));
-                        if let Ok(path) = path.build() {
-                            window.paint_path(path, color);
-                        }
-                    }
-                },
-            )
-            .size_full(),
-        )
-        .child(
-            div()
-                .absolute()
-                .left(px((lane * 12 + 5) as f32))
-                .top(px(13.))
-                .size(px(6.))
-                .rounded_full()
-                .bg(color),
-        )
-}
+#[path = "commit_table.rs"]
+mod table;
 #[path = "commit_timeline_inline.rs"]
 mod inline;
 #[cfg(test)]

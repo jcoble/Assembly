@@ -23,7 +23,7 @@ fn claim(columns: &mut Vec<Option<String>>, sha: &str) -> usize {
         columns.len() - 1
     }
 }
-pub fn lanes(commits: &[GitCommit]) -> Vec<LaneRow> {
+pub fn lanes<'a>(commits: impl IntoIterator<Item = &'a GitCommit>) -> Vec<LaneRow> {
     let mut columns: Vec<Option<String>> = Vec::new();
     let mut seen = HashSet::new();
     let mut rows = Vec::new();
