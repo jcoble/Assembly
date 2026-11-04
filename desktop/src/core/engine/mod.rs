@@ -13,7 +13,7 @@ pub struct SessionKey {
     pub machine: String,
     pub id: String,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EngineKey {
     pub machine: String,
     pub kind: String,

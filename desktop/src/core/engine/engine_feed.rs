@@ -68,6 +68,25 @@ impl EngineFeed {
     pub fn items(&self, scope: &EngineScope) -> Vec<EngineItem> {
         self.store.items(scope)
     }
+    /// Every coherent machine-wide item of a topic, on all machines someone is watching.
+    pub fn topic_items(&self, topic: &str) -> Vec<EngineItem> {
+        self.store
+            .machine_scopes(topic)
+            .filter(|scope| self.loaded(scope))
+            .flat_map(|scope| self.store.items(scope))
+            .collect()
+    }
+    /// The machines someone holds a coherent view of this topic for.
+    pub fn loaded_machines(&self, topic: &str) -> Vec<String> {
+        let mut machines = self
+            .store
+            .machine_scopes(topic)
+            .filter(|scope| self.loaded(scope))
+            .map(|scope| scope.machine.clone())
+            .collect::<Vec<_>>();
+        machines.sort();
+        machines
+    }
     pub fn need(&self, key: &EngineKey) -> Option<super::engine_items::NeedItem> {
         self.store
             .item(key)

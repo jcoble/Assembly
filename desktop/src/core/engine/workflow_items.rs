@@ -11,6 +11,7 @@ pub struct RunItem {
     pub owner_session_id:Option<String>,pub owner_epoch:Option<i64>,pub worktree:Option<String>,pub branch:Option<String>,pub pr_id:Option<String>,
     pub started_ms:Option<i64>,pub ended_ms:Option<i64>,pub paused:bool,pub reference:bool,
     pub active_step_ids:Vec<String>,pub display_prerequisite:Option<String>,
+    pub task_url:Option<String>,pub rerun_of:Option<String>,pub updated_ms:Option<i64>,
     pub setup_state:Option<String>,pub cleanup_state:Option<String>,pub cleanup_reason:Option<String>,
 }
 #[derive(Clone,Debug,Deserialize)]

@@ -43,6 +43,8 @@ pub struct NeedItem {
     pub answered_by: Option<String>,
     pub answered_ms: Option<i64>,
     pub answered_origin: Option<CommandOrigin>,
+    pub created_ms: Option<i64>,
+    pub updated_ms: Option<i64>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,6 +66,8 @@ struct NeedFields {
     answered_by: Option<String>,
     answered_ms: Option<i64>,
     answered_origin: Option<CommandOrigin>,
+    created_ms: Option<i64>,
+    updated_ms: Option<i64>,
 }
 impl NeedItem {
     pub fn addressee(&self) -> Option<SessionKey> {
@@ -106,6 +110,8 @@ impl NeedItem {
             answered_by: row.answered_by,
             answered_ms: row.answered_ms,
             answered_origin: row.answered_origin,
+            created_ms: row.created_ms,
+            updated_ms: row.updated_ms,
         })
     }
     pub fn presentation_notice(&self) -> Option<&'static str> {
@@ -166,6 +172,11 @@ pub struct SessionItem {
     pub epoch: i64,
     /// The agent reported it can take a message mid-turn. An older owner that never said reads as no.
     pub can_steer: bool,
+    pub task_url: Option<String>,
+    pub project_id: Option<String>,
+    pub branch: Option<String>,
+    pub created_ms: Option<i64>,
+    pub updated_ms: Option<i64>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -182,6 +193,11 @@ struct SessionFields {
     epoch: i64,
     #[serde(default)]
     can_steer: bool,
+    task_url: Option<String>,
+    project_id: Option<String>,
+    branch: Option<String>,
+    created_ms: Option<i64>,
+    updated_ms: Option<i64>,
 }
 impl SessionItem {
     pub fn of(item: &EngineItem) -> Option<Self> {
@@ -208,12 +224,76 @@ impl SessionItem {
             activity_state: row.activity_state,
             epoch: row.epoch,
             can_steer: row.can_steer,
+            task_url: row.task_url,
+            project_id: row.project_id,
+            branch: row.branch,
+            created_ms: row.created_ms,
+            updated_ms: row.updated_ms,
         })
     }
     pub fn session_key(&self) -> SessionKey {
         SessionKey {
             machine: self.key.machine.clone(),
             id: self.key.id.clone(),
+        }
+    }
+}
+
+/// A pull request the engine recorded for a run. The observed state wins over what an agent reported.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PrItem {
+    pub key: EngineKey,
+    pub version: i64,
+    pub run_id: Option<String>,
+    pub owner_session_id: Option<String>,
+    pub repo: String,
+    pub number: Option<i64>,
+    pub head: Option<String>,
+    pub state: String,
+    pub observed_head: Option<String>,
+    pub url: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrFields {
+    run_id: Option<String>,
+    owner_session_id: Option<String>,
+    repo: String,
+    number: Option<i64>,
+    head: Option<String>,
+    state: String,
+    observed_head: Option<String>,
+    url: Option<String>,
+}
+impl PrItem {
+    pub fn of(item: &EngineItem) -> Option<Self> {
+        if item.key.kind != "pr"
+            || item.value["entityKind"] != "pr"
+            || item.value["machine"].as_str() != Some(item.key.machine.as_str())
+            || item.value["id"].as_str() != Some(item.key.id.as_str())
+            || item.value["version"].as_i64() != Some(item.version)
+        {
+            return None;
+        }
+        let row: PrFields = serde_json::from_value(item.value.clone()).ok()?;
+        Some(Self {
+            key: item.key.clone(),
+            version: item.version,
+            run_id: row.run_id,
+            owner_session_id: row.owner_session_id,
+            repo: row.repo,
+            number: row.number,
+            head: row.head,
+            state: row.state,
+            observed_head: row.observed_head,
+            url: row.url,
+        })
+    }
+    /// What the row shows: `repo#12`, or the repo alone before it has a number.
+    pub fn label(&self) -> String {
+        match self.number {
+            Some(number) => format!("{}#{number}", self.repo),
+            None => self.repo.clone(),
         }
     }
 }

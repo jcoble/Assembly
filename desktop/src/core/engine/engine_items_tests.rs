@@ -154,3 +154,31 @@ fn need_addressee_requires_its_actual_exported_owner() {
     row.value["addresseeMachine"]=json!("");
     assert!(NeedItem::of(&row).unwrap().addressee().is_none());
 }
+
+#[test]
+fn a_session_decodes_what_the_board_shows_and_a_pr_keeps_its_own_machine() {
+    use super::engine_items::{PrItem, SessionItem};
+    let session = SessionItem::of(&EngineItem {
+        key: EngineKey { machine: "owner".into(), kind: "session".into(), id: "s".into() },
+        version: 2,
+        value: json!({"entityKind":"session","machine":"owner","id":"s","version":2,"provider":"claude","folder":"/w",
+            "state":"running","activityState":"working","epoch":1,"taskUrl":"https://notion/x","projectId":"p","branch":"b","updatedMs":9}),
+    })
+    .unwrap();
+    assert_eq!(session.task_url.as_deref(), Some("https://notion/x"));
+    assert_eq!(session.project_id.as_deref(), Some("p"));
+    assert_eq!(session.branch.as_deref(), Some("b"));
+    assert_eq!(session.updated_ms, Some(9));
+    let pr = |machine: &str| EngineItem {
+        key: EngineKey { machine: machine.into(), kind: "pr".into(), id: "pr".into() },
+        version: 1,
+        value: json!({"entityKind":"pr","machine":machine,"id":"pr","version":1,"runId":"r","ownerSessionId":"s",
+            "repo":"jcoble/Assembly","number":12,"head":"abc","state":"open","observedHead":"abc","url":"https://x"}),
+    };
+    let local = PrItem::of(&pr("local")).unwrap();
+    assert_ne!(local.key, PrItem::of(&pr("remote")).unwrap().key);
+    assert_eq!(local.label(), "jcoble/Assembly#12");
+    let mut sparse = pr("local");
+    sparse.value = json!({"entityKind":"pr","machine":"local","id":"pr","version":1});
+    assert!(PrItem::of(&sparse).is_none());
+}
