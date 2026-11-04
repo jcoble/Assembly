@@ -5,14 +5,16 @@ use std::rc::Rc;
 
 use chrono::{Local, Timelike as _};
 use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, Size, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, Size, h_flex, v_flex};
 use gpui_kit::*;
 
 use super::board_prefs::{BoardPrefs, BoardTab};
 use super::board_queries::{BoardData, badge_count, open_owner_questions, summary_counts};
 use super::board_sections::{
-    ANSWERED_FOLD, Entry, Section, entries, first_tab, heading, summary, tab_sections,
+    ANSWERED_FOLD, Entry, Section, entries, first_tab, heading, machine_label, summary,
+    tab_sections,
 };
+use super::mute_menu::{MachineMute, OnMute, machine_mutes, mute_button, mute_command, mute_note};
 use super::question_row::{QuestionRows, card_key};
 use super::run_card::{RunCard, RunCardEvent};
 use super::session_tabs::SessionTabs;
@@ -93,6 +95,7 @@ pub struct BoardPanel {
     /// Held only until the existing open action accepts or refuses.
     opening: Option<Subscription>,
     open_failed: Option<SharedString>,
+    muting: Option<Task<()>>,
     focus: FocusHandle,
     #[cfg(test)]
     built_rows: usize,
@@ -165,6 +168,7 @@ impl BoardPanel {
             drew_running: false,
             opening: None,
             open_failed: None,
+            muting: None,
             focus: cx.focus_handle(),
             #[cfg(test)]
             built_rows: 0,
@@ -264,6 +268,40 @@ impl BoardPanel {
             self.list.remeasure();
         }
         self.open_pending(cx);
+    }
+
+    /// Each machine's mute, with the name it goes by here.
+    fn mutes(&self, cx: &App) -> Vec<MachineMute> {
+        let feed = self.feed.read(cx);
+        let machines = feed
+            .loaded_machines("sessions")
+            .into_iter()
+            .map(|machine| {
+                let name = machine_label(&machine, feed, cx);
+                (machine, name)
+            })
+            .collect();
+        machine_mutes(feed, machines, Local::now().timestamp_millis())
+    }
+
+    fn set_mute(&mut self, mute: &MachineMute, until: Option<i64>, cx: &mut Context<Self>) {
+        let command = mute_command(&mute.machine, mute.version, until);
+        let call = self
+            .feed
+            .update(cx, |feed, cx| feed.submit_following(command, cx));
+        self.muting = Some(cx.spawn(async move |panel, cx| {
+            let answer = call.await;
+            let _ = panel.update(cx, |panel, cx| {
+                panel.open_failed = match answer {
+                    Ok(receipt) if receipt.applied => None,
+                    Ok(receipt) => receipt
+                        .error
+                        .map(|error| format!("The mute didn't change: {error}.").into()),
+                    Err(error) => Some(error.message.into()),
+                };
+                cx.notify();
+            });
+        }));
     }
 
     /// The rail holds sessions and needs; only this panel asks for runs and PRs.

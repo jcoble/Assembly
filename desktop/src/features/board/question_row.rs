@@ -24,7 +24,7 @@ pub fn card_key(key: &EngineKey) -> SharedString {
 fn kind_label(need: &NeedItem) -> &'static str {
     match need.kind.as_str() {
         "permission" => "Permission",
-        "confirmation" => "Approval",
+        "confirmation" | "workflow_gate" => "Approval",
         "choice" => "Choice",
         _ => "Question",
     }

@@ -10,16 +10,35 @@ impl Render for BoardPanel {
         let muted = cx.theme().muted_foreground;
         let open = open_owner_questions(&self.data).len();
         let counts = summary_counts(&self.data, local_midnight_ms());
-        let header = v_flex()
+        let mutes = self.mutes(cx);
+        let note = mute_note(&mutes);
+        let this = cx.weak_entity();
+        let on_mute: OnMute = Rc::new(move |mute, until, cx| {
+            let _ = this.update(cx, |panel, cx| panel.set_mute(mute, until, cx));
+        });
+        let header = h_flex()
             .px_3()
             .pt_3()
-            .child(div().text_role(TextRole::Title, cx).child(heading(open)))
+            .items_start()
             .child(
-                div()
-                    .text_role(TextRole::Meta, cx)
-                    .text_color(muted)
-                    .child(summary(counts)),
-            );
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(div().text_role(TextRole::Title, cx).child(heading(open)))
+                    .child(
+                        div()
+                            .text_role(TextRole::Meta, cx)
+                            .text_color(muted)
+                            .child(summary(counts)),
+                    )
+                    .children(note.map(|note| {
+                        div()
+                            .text_role(TextRole::Meta, cx)
+                            .text_color(muted)
+                            .child(note)
+                    })),
+            )
+            .children((!mutes.is_empty()).then(|| mute_button(mutes, on_mute)));
         let bar = TabBar::new("board-tabs")
             .underline()
             .with_size(Size::Small)

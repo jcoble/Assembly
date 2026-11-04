@@ -5,12 +5,20 @@ use std::collections::{HashMap, HashSet};
 
 use gpui_kit::*;
 
+use super::mute_menu::{muted_until, settings_key};
 use super::question_row::title;
 use crate::core::engine::engine_items::{NeedItem, SessionItem};
 use crate::core::engine::{EngineChanged, EngineFeed, EngineKey, SessionKey};
 use crate::core::ui::activity::run_view::now_ms;
 
 const PREVIEW_CHARS: usize = 120;
+
+/// A question waiting to learn whether its machine is muted.
+struct Post {
+    key: EngineKey,
+    heading: String,
+    body: String,
+}
 
 /// A notification's click, for whoever can show that question.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,7 +31,9 @@ pub struct OwnerNotify {
     seen: HashSet<EngineKey>,
     /// What's on the owner's screen now, by the tag it was posted with.
     posted: HashMap<String, EngineKey>,
-    muted_until: HashMap<String, i64>,
+    /// The mute is read fresh when a question is about to post, so a change from any window or phone counts.
+    reading: HashMap<u64, Task<()>>,
+    next_read: u64,
     _changed: Subscription,
 }
 
@@ -58,7 +68,8 @@ impl OwnerNotify {
                 baselined: HashSet::new(),
                 seen: HashSet::new(),
                 posted: HashMap::new(),
-                muted_until: HashMap::new(),
+                reading: HashMap::new(),
+                next_read: 0,
                 _changed: changed,
             }
         });
@@ -73,14 +84,6 @@ impl OwnerNotify {
     pub fn try_global(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<GlobalNotify>()
             .map(|global| global.0.clone())
-    }
-
-    /// The owner machine's mute, from its settings. Only delivery looks at this.
-    pub fn set_muted_until(&mut self, machine: String, until: Option<i64>) {
-        match until {
-            Some(until) => self.muted_until.insert(machine, until),
-            None => self.muted_until.remove(&machine),
-        };
     }
 
     fn clicked(&mut self, tag: &str, cx: &mut Context<Self>) {
@@ -110,38 +113,29 @@ impl OwnerNotify {
                 .and_then(|session| session.title)
                 .unwrap_or_else(|| "A session asks".to_owned())
         };
-        let now = now_ms();
-        let mut show = Vec::new();
+        let mut show: HashMap<String, Vec<Post>> = HashMap::new();
         let mut open = HashSet::new();
         for need in needs
             .iter()
-            .filter(|need| need.state == "open" && need.addressee_session_id.is_none())
+            .filter(|need| need.state == "open" && need.for_owner())
         {
             open.insert(need.key.clone());
             if !self.seen.insert(need.key.clone()) || !self.baselined.contains(&need.key.machine) {
                 continue;
             }
-            if self
-                .muted_until
-                .get(&need.key.machine)
-                .is_some_and(|until| *until > now)
-            {
-                continue;
-            }
             let body = need.text.as_deref().map_or_else(|| title(need), preview);
-            show.push((need.key.clone(), asker(&need.session), body));
+            show.entry(need.key.machine.clone())
+                .or_default()
+                .push(Post {
+                    key: need.key.clone(),
+                    heading: asker(&need.session),
+                    body,
+                });
         }
         let loaded = machines.iter().cloned().collect::<HashSet<_>>();
         self.baselined.extend(machines);
-        for (key, heading, body) in show {
-            let posted = tag(&key);
-            cx.show_system_notification(SystemNotification {
-                tag: posted.clone().into(),
-                title: heading.into(),
-                body: body.into(),
-                actions: Vec::new(),
-            });
-            self.posted.insert(posted, key);
+        for (machine, posts) in show {
+            self.post_unless_muted(machine, posts, cx);
         }
         // A machine out of reach says nothing about its questions, so those stay until it's back.
         let settled = self
@@ -154,6 +148,44 @@ impl OwnerNotify {
             cx.dismiss_system_notification(&tag);
             self.posted.remove(&tag);
         }
+    }
+
+    /// Reads the machine's mute, then posts what's still open. A read that fails goes by the last mute known, since a
+    /// question is worth a banner when in doubt.
+    fn post_unless_muted(&mut self, machine: String, posts: Vec<Post>, cx: &mut Context<Self>) {
+        let read = self
+            .feed
+            .update(cx, |feed, cx| feed.ensure_item(settings_key(&machine), cx));
+        let id = self.next_read;
+        self.next_read += 1;
+        let reading = cx.spawn(async move |notify, cx| {
+            let _ = read.await;
+            let _ = notify.update(cx, |notify, cx| {
+                notify.reading.remove(&id);
+                let feed = notify.feed.read(cx);
+                if muted_until(feed, &machine, now_ms()).is_some() {
+                    return;
+                }
+                let posts = posts
+                    .into_iter()
+                    .filter(|post| {
+                        feed.need(&post.key)
+                            .is_some_and(|need| need.state == "open")
+                    })
+                    .collect::<Vec<_>>();
+                for post in posts {
+                    let posted = tag(&post.key);
+                    cx.show_system_notification(SystemNotification {
+                        tag: posted.clone().into(),
+                        title: post.heading.into(),
+                        body: post.body.into(),
+                        actions: Vec::new(),
+                    });
+                    notify.posted.insert(posted, post.key);
+                }
+            });
+        });
+        self.reading.insert(id, reading);
     }
 }
 

@@ -103,9 +103,7 @@ pub fn task_label(url: &str) -> SharedString {
 fn open_owner_questions(session: &SessionKey, data: &BoardData) -> usize {
     data.needs
         .values()
-        .filter(|need| {
-            need.state == "open" && need.addressee_session_id.is_none() && need.session == *session
-        })
+        .filter(|need| need.state == "open" && need.for_owner() && need.session == *session)
         .count()
 }
 

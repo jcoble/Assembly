@@ -199,10 +199,17 @@ impl Render for NeedRow {
                     ));
             } else if presentation.input_mode == "choice" {
                 let mut choices = h_flex().gap_2().flex_wrap();
+                let gate = self.need().kind == "workflow_gate";
                 for (index, option) in presentation.options.iter().enumerate() {
                     let id = option.id.clone();
+                    // A gate's options arrive as bare words, "approve" and "deny".
+                    let label = if gate {
+                        sentence_case(&option.label)
+                    } else {
+                        option.label.clone()
+                    };
                     let button = Button::new(SharedString::from(format!("need-choice:{id}")))
-                        .label(option.label.clone())
+                        .label(label)
                         .on_click(cx.listener(move |row, _, _, cx| {
                             row.answer(NeedAnswer::Answer(json!(id)), cx)
                         }));
@@ -219,11 +226,19 @@ impl Render for NeedRow {
         } else {
             column = column.child("Answer controls are unavailable for this item.");
         }
-        column.child(
+        // A gate is decided, not dismissed; the engine refuses it.
+        column.children((self.need().kind != "workflow_gate").then(|| {
             Button::new("dismiss-need")
                 .ghost()
                 .label("Dismiss")
-                .on_click(cx.listener(|row, _, _, cx| row.answer(NeedAnswer::Dismiss, cx))),
-        )
+                .on_click(cx.listener(|row, _, _, cx| row.answer(NeedAnswer::Dismiss, cx)))
+        }))
     }
+}
+
+fn sentence_case(word: &str) -> String {
+    let mut letters = word.chars();
+    letters.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(letters).collect()
+    })
 }

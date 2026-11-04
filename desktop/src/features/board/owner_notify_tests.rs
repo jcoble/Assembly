@@ -34,6 +34,18 @@ fn cut(feed: &Entity<EngineFeed>, machine: &str, rows: Vec<Value>, cx: &mut Test
     cx.run_until_parked();
 }
 
+/// The machine's settings as its runs topic carries them. With no backend here, the mute read falls back to these.
+fn settings(feed: &Entity<EngineFeed>, machine: &str, until: Option<i64>, cx: &mut TestAppContext) {
+    let scope = EngineScope {
+        machine: machine.into(),
+        topic: "runs".into(),
+        key: None,
+    };
+    let row = json!({"entityKind":"workflow_settings","id":"workflow-settings","machine":machine,"version":1,"mutedUntil":until});
+    feed.update(cx, |feed, cx| feed.test_snapshot(scope, vec![row], cx));
+    cx.run_until_parked();
+}
+
 fn key(machine: &str, id: &str) -> EngineKey {
     EngineKey {
         machine: machine.into(),
@@ -127,14 +139,32 @@ async fn answering_takes_its_notification_away(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn a_workflow_gate_reaches_the_owner_though_it_names_a_session(cx: &mut TestAppContext) {
+    let (feed, _notify) = start(cx);
+    cut(&feed, "m", vec![], cx);
+    let addressed = json!({"addresseeSessionId":"owner"});
+    let mut gate = addressed.clone();
+    gate["kind"] = json!("workflow_gate");
+    cut(
+        &feed,
+        "m",
+        vec![
+            need("m", "gate", "open", gate),
+            need("m", "for-parent", "open", addressed),
+        ],
+        cx,
+    );
+    let shown = cx.shown_system_notifications();
+    assert_eq!(shown.len(), 1, "only the gate is the owner's");
+    assert_eq!(shown[0].tag.to_string(), tag(&key("m", "gate")));
+}
+
+#[gpui::test]
 async fn a_muted_machine_stays_quiet_with_no_replay_and_others_still_post(cx: &mut TestAppContext) {
-    let (feed, notify) = start(cx);
+    let (feed, _notify) = start(cx);
     cut(&feed, "remote", vec![], cx);
     cut(&feed, "local", vec![], cx);
-    let far = i64::MAX;
-    notify.update(cx, |notify, _| {
-        notify.set_muted_until("remote".into(), Some(far))
-    });
+    settings(&feed, "remote", Some(i64::MAX), cx);
     cut(
         &feed,
         "remote",
@@ -153,9 +183,7 @@ async fn a_muted_machine_stays_quiet_with_no_replay_and_others_still_post(cx: &m
         1,
         "another machine isn't muted"
     );
-    notify.update(cx, |notify, _| {
-        notify.set_muted_until("remote".into(), None)
-    });
+    settings(&feed, "remote", None, cx);
     cut(
         &feed,
         "remote",

@@ -101,7 +101,7 @@ impl BoardData {
 }
 
 fn is_owner_question(need: &NeedItem) -> bool {
-    need.addressee_session_id.is_none()
+    need.for_owner()
 }
 
 fn settled_ms(need: &NeedItem) -> i64 {

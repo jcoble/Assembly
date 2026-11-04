@@ -70,6 +70,12 @@ struct NeedFields {
     updated_ms: Option<i64>,
 }
 impl NeedItem {
+    /// Whether the person answers this. A session answers one addressed to it, except a workflow's gate: that's addressed
+    /// to the run's owning session, and the engine takes its answer only from the owner's window.
+    pub fn for_owner(&self) -> bool {
+        self.addressee_session_id.is_none() || self.kind == "workflow_gate"
+    }
+
     pub fn addressee(&self) -> Option<SessionKey> {
         let machine = self
             .addressee_machine
