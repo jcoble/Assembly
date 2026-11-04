@@ -38,6 +38,8 @@ public sealed class WelcomeSocketTests
         Assert.Equal(1, welcome.GetProperty("protocol").GetInt32());
         Assert.Equal("owner-host", welcome.GetProperty("machine").GetString());
         Assert.Equal(RowStore.FormatVersion, welcome.GetProperty("format").GetInt32());
+        Assert.Matches("^[a-f0-9]{64}$", welcome.GetProperty("backendIdentity").GetString()!);
+        Assert.Equal(BackendBuild.Identity, welcome.GetProperty("backendIdentity").GetString());
         Assert.Equal(BackendBuild.Commit, welcome.GetProperty("commit").GetString());
         Assert.Equal("actual-engine-id", welcome.GetProperty("engine").GetString());
     }

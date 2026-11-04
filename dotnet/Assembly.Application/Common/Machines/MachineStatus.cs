@@ -7,7 +7,7 @@ namespace Assembly.Application.Common.Machines;
 /// <summary>
 /// One machine as the <c>machines</c> topic sends it, keyed by its name (<c>local</c> for this machine):
 /// <paramref name="Name"/> is null for this machine, <paramref name="Kind"/> is <c>local</c> or <c>remote</c>,
-/// <paramref name="Reason"/> says why it's unreachable, and <paramref name="Checked"/> is false for a remote until its
+/// <paramref name="Reason"/> describes connection, backend version or deployment warnings, and <paramref name="Checked"/> is false for a remote until its
 /// first probe answers or fails (until then it's neither up nor down).
 /// </summary>
 public sealed record MachineItem(string? Name, string Kind, bool Reachable, string? Reason, bool Checked, string? Ssh = null, int? Port = null, string? TokenFile = null);
@@ -62,6 +62,28 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
         }
     }
 
+    private readonly Dictionary<string, string?> _connectionReasons = [];
+    private readonly Dictionary<string, string?> _backendMismatches = [];
+    private readonly Dictionary<string, string?> _deployments = [];
+
+    public void BackendMismatch(string machine, string? reason) => Warning(machine, reason, false);
+    public void Deployment(string machine, string? reason) => Warning(machine, reason, true);
+
+    private void Warning(string machine, string? reason, bool deployment)
+    {
+        if (_parent is { } parent)
+        {
+            lock (parent._gate) if (_active) parent.Warning(machine, reason, deployment);
+            return;
+        }
+        lock (_gate)
+        {
+            (deployment ? _deployments : _backendMismatches)[machine] = reason;
+            var item = _items.FirstOrDefault(item => item.Name == machine);
+            if (item is not null) Set(machine, item.Reachable, _connectionReasons.GetValueOrDefault(machine));
+        }
+    }
+
     public void Reachable(string machine) => Set(machine, true, null);
 
     public void Unreachable(string machine, string reason) => Set(machine, false, reason);
@@ -77,6 +99,10 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
         }
         lock (_gate)
         {
+            _connectionReasons[machine] = reason;
+            reason = string.Join(" ", new[] { reason, _backendMismatches.GetValueOrDefault(machine), _deployments.GetValueOrDefault(machine) }
+                .Where(value => !string.IsNullOrWhiteSpace(value)));
+            if (reason.Length == 0) reason = null;
             var items = _items;
             var index = Array.FindIndex(items, item => item.Name == machine);
             if (index < 0 || (items[index].Checked && items[index].Reachable == reachable && items[index].Reason == reason))

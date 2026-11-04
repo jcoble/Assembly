@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
+import { backendIdentity } from './dev-remote-identity.ts';
 import { waitForWelcome } from './wait-welcome.ts';
 
 const original = process.cwd();
@@ -15,8 +16,8 @@ const command = (...args: string[]) => execFileSync('git', args, { cwd: root, en
 command('init', '-q');
 command('config', 'user.name', 'Readiness Test');
 command('config', 'user.email', 'readiness@example.invalid');
-for (const path of ['dotnet', 'desktop', 'app', 'shell', 'scripts']) mkdirSync(join(root, path));
-for (const path of ['dotnet/code.cs', 'desktop/Cargo.toml', 'app/old.ts', 'shell/old.rs']) writeFileSync(join(root, path), 'original\n');
+for (const path of ['dotnet/Assembly.Remote', 'desktop', 'app', 'shell', 'scripts']) mkdirSync(join(root, path), { recursive: true });
+for (const path of ['dotnet/Assembly.Remote/Assembly.Remote.csproj', 'desktop/Cargo.toml', 'app/old.ts', 'shell/old.rs']) writeFileSync(join(root, path), 'original\n');
 function commit(message: string) { command('add', '-A'); command('commit', '-qm', message); return command('rev-parse', 'HEAD'); }
 const historical = commit('historical app and shell');
 command('rm', '-qr', 'app', 'shell');
@@ -26,8 +27,9 @@ const equivalent = commit('tooling only');
 writeFileSync(join(root, 'desktop/Cargo.toml'), 'changed native\n');
 const staleNative = commit('native code changed');
 writeFileSync(join(root, 'desktop/Cargo.toml'), 'original\n');
-writeFileSync(join(root, 'dotnet/code.cs'), 'changed backend\n');
+writeFileSync(join(root, 'dotnet/Assembly.Remote/Assembly.Remote.csproj'), 'changed backend\n');
 const staleBackend = commit('backend code changed');
+const identities = new Map(await Promise.all([historical, target, equivalent, staleNative, staleBackend].map(async commit => [commit, await backendIdentity(root, commit)] as const)));
 process.chdir(root);
 after(() => { process.chdir(original); rmSync(root, { recursive: true, force: true }); });
 
@@ -83,11 +85,11 @@ async function fixture(reply: (peer: any, hello: any, attempt: number) => void, 
     async close() { for (const peer of peers) peer.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); },
   };
 }
-const welcome = (commit: string | null = target) => ({ t: 'welcome', protocol: 1, machine: 'workbox-test', format: 5, commit });
+const welcome = (commit: string | null = target) => ({ t: 'welcome', protocol: 1, machine: 'workbox-test', format: 5, commit, backendIdentity: identities.get(commit ?? '') });
 const token = 'private-owner-token-for-hello';
 const options = (base: string, seconds = 0.6) => ({ name: 'Workbox Test', base, commit: target, seconds });
 
-for (const name of ['wait-version.sh', 'wait-welcome.ts'])
+for (const name of ['wait-version.sh', 'wait-welcome.ts', 'dev-remote-identity.ts', 'dev-remote-process.ts'])
   writeFileSync(join(root, 'scripts', name), readFileSync(join(original, 'scripts', name)));
 
 async function cli(base: string, seconds = '1', sendToken = true) {
@@ -139,25 +141,22 @@ test('a host that starts listening after readiness begins is retried', async () 
   } finally { clearTimeout(startup); await server.close(); }
 });
 
-test('a stale process answers first, then the requested build is accepted', async () => {
-  const server = await fixture((peer, _hello, attempt) => peer.write(serverFrame(welcome(attempt === 1 ? staleNative : target))));
-  try {
-    assert.equal(await waitForWelcome(options(server.base), token), target);
-    await server.drained();
-    assert.equal(server.frames.length, 2);
-  } finally { await server.close(); }
+test('Rust-only and retired frontend revisions use the same backend', async () => {
+  for (const value of [staleNative, historical]) {
+    const server = await fixture(peer => peer.write(serverFrame(welcome(value))));
+    try { assert.equal(await waitForWelcome(options(server.base), token), value); await server.drained(); }
+    finally { await server.close(); }
+  }
 });
 
-for (const [label, value] of [['desktop', staleNative], ['dotnet', staleBackend], ['historical app/shell', historical]]) {
-  test(`rejects stale ${label} code at the owned deadline`, async () => {
-    const server = await fixture(peer => peer.write(serverFrame(welcome(value))));
-    try {
-      await assert.rejects(waitForWelcome(options(server.base, 0.25), token), /Workbox Test on port \d+: deadline.*stale build/);
-      await server.drained();
-      assert.equal(server.httpHits, 0);
-    } finally { await server.close(); }
-  });
-}
+test('a mismatched backend fails on the first welcome and names both commits', async () => {
+  const server = await fixture(peer => peer.write(serverFrame(welcome(staleBackend))));
+  try {
+    await assert.rejects(waitForWelcome(options(server.base, 10), token), new RegExp(`backend mismatch: remote ${staleBackend}; desktop ${target}`));
+    await server.drained();
+    assert.equal(server.frames.length, 1);
+  } finally { await server.close(); }
+});
 
 const invalid: [string, unknown, RegExp][] = [
   ['protocol', { ...welcome(), protocol: 2 }, /incompatible welcome protocol/],
@@ -167,7 +166,7 @@ const invalid: [string, unknown, RegExp][] = [
   ['null commit', welcome(null), /commit is null \(unknown build\)/],
   ['missing producer commit', { t: 'welcome', protocol: 1, machine: 'workbox-test', format: 5, engine: 'workbox-test' }, /commit is missing or invalid/],
   ['malformed commit', welcome('not-a-commit'), /commit is missing or invalid/],
-  ['unknown commit', welcome('0'.repeat(40)), /commit is unknown to this checkout/],
+  ['unknown identity', welcome('0'.repeat(40)), /backend identity is missing or invalid/],
 ];
 for (const [label, frame, expected] of invalid) test(`rejects ${label} without leaking token or waiting for the deadline`, async () => {
   const server = await fixture(peer => peer.write(serverFrame(frame)));

@@ -10,7 +10,7 @@ pub struct Machine {
     pub name: Option<String>,
     pub kind: String,
     pub reachable: bool,
-    /// Why it didn't answer, when it didn't.
+    /// Connection, backend version or deployment detail; may be present while reachable.
     pub reason: Option<String>,
     /// False for a remote until its first probe answers or fails: until then it's neither up nor down.
     #[serde(default)]

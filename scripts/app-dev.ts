@@ -7,7 +7,7 @@ import { profileFor } from './seed-dev.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const backend = join(root, 'desktop/target/dev-backend');
-const env = {
+const env: NodeJS.ProcessEnv = {
   ...process.env,
   DOTNET_CLI_TELEMETRY_OPTOUT: '1',
   DOTNET_NOLOGO: '1',
@@ -71,6 +71,8 @@ printf '%s\\0' "$DESKTOP_PORT" "$DATA/mac" "$TOKEN_FILE" "$BOX_PORT" "$BOX_TOKEN
 `], { cwd: root, env, encoding: 'utf8' });
 if (lane.error) throw lane.error;
 const [port, home, tokenFile, remotePort, remoteTokenFile, adapters, laneName] = lane.status === 0 ? lane.stdout.split('\0') : ownSettings();
+
+if (lane.status === 0 && laneName) env.ASSEMBLY_DEV_REMOTE_SYNC_STATUS = join(home, 'remote-sync-state.json');
 
 let stopSync = async () => {};
 try { if (lane.status === 0 && laneName && !launch.signal.aborted) stopSync = startRemoteSync(root, home); }

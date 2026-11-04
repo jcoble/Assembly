@@ -36,6 +36,9 @@ public sealed partial class MachinesSocketTests
         public Uri Address { get; private set; } = null!;
         public Uri? SocketBackend { get; set; }
         public Func<JsonElement, string?>? SocketFailure { get; set; }
+        public string? BackendIdentity { get; set; } = BackendBuild.Identity;
+        public string? BulkBackendIdentity { get; set; }
+        public string? Commit { get; set; } = BackendBuild.Commit;
         public int Format { get; set; } = RowStore.FormatVersion;
         public int AgentsStatus { get; set; } = 200;
         public string EngineMachine { get; set; } = "stub-engine";
@@ -186,7 +189,7 @@ public sealed partial class MachinesSocketTests
                                     finally { Interlocked.Increment(ref VersionAborted); VersionCancelled.TrySetResult(); }
                                     return;
                                 }
-                                await Send($$"""{"t":"welcome","protocol":1,"machine":"box","format":{{Format}},"engine":{{JsonSerializer.Serialize(EngineMachine)}}}""");
+                                await Send($$"""{"t":"welcome","protocol":1,"machine":"box","format":{{Format}},"commit":{{JsonSerializer.Serialize(Commit)}},"backendIdentity":{{JsonSerializer.Serialize(context.Request.Path.Value!.EndsWith("bulk", StringComparison.Ordinal) ? BulkBackendIdentity ?? BackendIdentity : BackendIdentity)}},"engine":{{JsonSerializer.Serialize(EngineMachine)}}}""");
                                 break;
                             case "sub":
                                 if (json.TryGetProperty("stream", out var stream) && stream.GetString() == "engine")
