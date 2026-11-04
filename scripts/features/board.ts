@@ -1,11 +1,9 @@
 // Board proof uses only host-authenticated owner calls and the real provider's configured MCP reporting tool.
 import { randomUUID } from 'node:crypto';
 
-type OwnerPromptAccepted = { sessionId: string; messageId: string; clientId: string; state: 'queued'; messageVersion: number; seq: number; epoch: number; runId: null };
-type Row = { sessionId: string; runId: string | null; kind: string; payload: { clientId?: string } };
-type Frame = { row?: Row; t: string; id?: number; sub?: number; code?: string; message?: string; result?: any; item?: any; items?: { key: string; item: any }[] };
-type Detail = { task: { machineId: string; taskKey: string; creatorSessionId: string; state: string }; questions: any[]; feed: any[] };
-type Page = { items: { task: Detail['task'] }[]; nextCursor: string | null };
+type OwnerPromptAccepted = { sessionId: string; state: 'queued' };
+type Frame = { t: string; id?: number; sub?: number; code?: string; message?: string; result?: any; machine?: string; engine?: string; items?: any[]; events?: any[]; more?: boolean };
+type Need = { id: string; machine: string; version: number; sessionId: string; state: string; text?: string; answerText?: string };
 class Client {
   socket: WebSocket;
   frames: Frame[] = [];
@@ -29,12 +27,7 @@ class Client {
       this.changed = undefined;
     }
   }
-  async ready() { await this.take(f => f.t === 'welcome'); }
-  async sub(topic: string, key: string | null = null) {
-    const id = ++this.id;
-    this.send({ t: 'sub', id, topic, key });
-    return { id, state: await this.take(f => f.sub === id && f.t === 'state') };
-  }
+  async ready() { return await this.take(f => f.t === 'welcome'); }
   async response(feature: string, method: string, args: object) {
     const id = ++this.id;
     this.send({ t: 'call', id, feature, method, args });
@@ -54,124 +47,75 @@ function requireValue(value: unknown, message: string): asserts value { if (!val
 async function open(api: string, token: string, path?: string) {
   const client = new Client(api, token, path); clients.push(client); await client.ready(); return client;
 }
-async function pageContains(client: Client, machineId: string, taskKey: string, expected: string) {
-  let cursor: string | null = null;
-  do {
-    const page: Page = await client.call('board', 'page', { project: null, state: null, cursor });
-    const found = page.items.find(x => x.task.machineId === machineId && x.task.taskKey === taskKey);
-    if (found) { requireValue(found.task.state === expected, 'Retained state differs'); return found.task; }
-    cursor = page.nextCursor;
-  } while (cursor !== null);
-  throw new Error('Task absent from all SQL pages');
+// The rows the panel reads, as one whole cut of the scope. Sparse events only say to read again.
+async function cut(client: Client, topic: string, machine: string, expectedSource: object | null) {
+  const id = ++client.id;
+  client.send({ t: 'sub', id, stream: 'engine', topic, machine, ...(expectedSource ? { expectedSource } : {}) });
+  const items: any[] = [];
+  while (true) {
+    const frame = await client.take(f => f.id === id && (f.t === 'engine_snapshot' || f.t === 'error'));
+    if (frame.t === 'error') throw new Error(frame.message ?? frame.code);
+    items.push(...frame.items!);
+    if (!frame.more) break;
+  }
+  client.send({ t: 'unsub', id });
+  return items;
 }
 async function main() {
   const desktop = await open(env.CHECK4_API!, env.CHECK4_TOKEN!);
-  const board = await desktop.sub('board');
-  requireValue(board.state.items?.length === 0, 'Board topic must have empty state');
-  const argv = process.argv.slice(2);
-  if (argv[0] === '--verify-retained') {
-    const option = (name: string) => argv[argv.indexOf(name) + 1];
-    const machineId = option('--machine'), taskKey = option('--task'), state = option('--state');
-    requireValue(argv.includes('--machine') && argv.includes('--task') && argv.includes('--state') && machineId && taskKey && state, 'Retained mode needs machine, task and state');
-    await pageContains(desktop, machineId, taskKey, state);
-    const detail = await desktop.response('board', 'task', { machineId, taskKey, beforeSeq: null, questionCursor: null });
-    requireValue(detail.t === 'result' || detail.code === 'unreachable', 'Detail must succeed online or fail unreachable offline');
-    console.log('ok retained SQL card and explicit source reachability');
-    return;
-  }
-  const machineId = env.CHECK4_MACHINE === 'local' ? 'local' : env.CHECK4_MACHINE!;
-  const created = await desktop.call('sessions', 'create', { agent: env.CHECK4_AGENT, repoUrl: env.CHECK4_REPO,
-    machine: machineId === 'local' ? null : machineId, parentSessionId: null, title: null });
+  const route = env.CHECK4_MACHINE === 'local' ? null : env.CHECK4_MACHINE!;
+  const source = await desktop.call('sessions', 'resolve_source', { routeMachine: route });
+  const machine = source.machine as string;
+  const expected = route ? source : null;
+  const created = await desktop.call('sessions', 'create', { agent: env.CHECK4_AGENT, repoUrl: env.CHECK4_REPO, machine: route, parentSessionId: null, title: null });
   const session = created.sessionId as string;
-  const sessionSub = await desktop.sub('sessions', session);
-  requireValue(sessionSub.state.items?.some(x => x.item.sessionId === session), 'Desktop must know recovery session');
-  // This new session has no submitted turn yet. Subscribe before either prompt so delivery
-  // can be correlated even when the user row reaches us before the committed acknowledgment.
-  const rowSub = await desktop.sub('rows', session);
-  async function prompt(text: string): Promise<string> {
-    const clientId = randomUUID();
-    const accepted = await desktop.call<OwnerPromptAccepted>('send', 'send', { session, clientId, text });
-    requireValue(accepted?.sessionId === session && accepted.messageId === `prompt/${session}/${clientId}` &&
-      accepted.clientId === clientId && accepted.state === 'queued' && accepted.runId === null &&
-      Number.isSafeInteger(accepted.messageVersion) && accepted.messageVersion > 0 &&
-      Number.isSafeInteger(accepted.seq) && accepted.seq > 0 && Number.isSafeInteger(accepted.epoch) && accepted.epoch >= 0,
-      'Invalid committed owner prompt acknowledgment');
-    const delivered = await desktop.take(f => f.t === 'rows' && f.sub === rowSub.id &&
-      f.row?.sessionId === session && f.row.kind === 'user' && f.row.payload?.clientId === clientId);
-    requireValue(delivered.row?.sessionId === session && typeof delivered.row.runId === 'string' && delivered.row.runId,
-      'Delivered owner prompt has no matching session/run identity');
-    return delivered.row.runId;
+  const rows = await desktop.sub('rows', session);
+  async function prompt(text: string) {
+    const accepted = await desktop.call<OwnerPromptAccepted>('send', 'send', { session, clientId: randomUUID(), text });
+    requireValue(accepted?.sessionId === session && accepted.state === 'queued', 'The owner prompt was not accepted');
   }
-  const source = await open(env.CHECK4_HOST_API!, env.CHECK4_HOST_TOKEN!);
-  const sourceBoard = await source.sub('board');
-  const key = 'board-proof-' + randomUUID();
-  const base = { taskKey: key, title: 'Board proof with two independent questions and a long project name',
-    state: 'running', summary: 'Awaiting two independent choices', taskUrl: null, prUrl: null, changedPaths: null, question: null, answerReceived: null };
-  const report = (question: object | null, extra: object = {}) => JSON.stringify({ ...base, question, ...extra });
-  const detail = () => source.call<Detail>('board', 'task', { machineId: 'local', taskKey: key, beforeSeq: null, questionCursor: null });
-  async function reported(predicate: (d: Detail) => boolean) {
+  // Waits on the socket's own frames: any event on the machine's needs reads the whole cut again.
+  const needEvents = ++desktop.id;
+  desktop.send({ t: 'sub', id: needEvents, stream: 'engine', topic: 'needs_me', machine, ...(expected ? { expectedSource: expected } : {}) });
+  await desktop.take(f => f.id === needEvents && f.t === 'engine_snapshot' && !f.more);
+  async function needMatching(match: (need: Need) => boolean): Promise<Need> {
     while (true) {
-      await source.take(f => f.t === 'change' && f.sub === sourceBoard.id && f.item?.taskKey === key);
-      const current = await detail();
-      if (predicate(current)) return current;
+      const found = (await cut(desktop, 'needs_me', machine, expected) as Need[]).find(need => need.sessionId === session && match(need));
+      if (found) return found;
+      await desktop.take(f => f.id === needEvents && f.t === 'engine_events');
     }
   }
-  async function idle(runId: string) {
-    let running = false;
-    while (true) {
-      const frame = await desktop.take(f => f.t === 'change' && f.sub === sessionSub.id);
-      if (frame.item?.activeRunId === runId) running = true;
-      if (running && frame.item?.activeRunId === null) return;
-    }
-  }
-  const firstTurn = await prompt(
-    'Use the Assembly board_update MCP tool exactly twice in this order with these JSON arguments. Do not use helpers or change files. ' +
-    report({ questionKey: 'choice', expectedGeneration: 0, kind: 'text', prompt: 'Which option?', recommendation: 'Simple' }) + '\n' +
-    report({ questionKey: 'approval', expectedGeneration: 0, kind: 'approval', prompt: 'Approve the proposal?', recommendation: null }) +
-    '\nThen end this turn. You will receive a Board answer later.');
-  await reported(d => d.questions.length === 2);
-  await idle(firstTurn);
-  console.log('ok real provider reported two independent questions through MCP');
-  const answer = { machineId, taskKey: key, questionKey: 'choice', generation: 1, answerKey: randomUUID(), answer: { kind: 'text', text: 'Simple' } };
-  const accepted = await desktop.call('board', 'answer', answer);
-  const duplicate = await desktop.call('board', 'answer', answer);
-  requireValue(JSON.stringify(accepted) === JSON.stringify(duplicate), 'Duplicate acceptance changed');
-  // The answer itself starts the next real provider turn; require that turn to report receipt and reask.
-  // It receives the instructions here as a steering message only after the answer's turn has settled.
-  const delivered = await detail();
-  const answerTurn = delivered.questions.find(q => q.questionKey === 'choice').deliveryTurnId;
-  requireValue(answerTurn, 'Answer delivery has no acknowledged turn');
-  await idle(answerTurn);
-  const receivedKey = randomUUID();
-  const finalTurn = await prompt(
-    'Inspect the immediately preceding Board answer in this chat. Only if it names question choice, generation 1 and answer Simple, ' +
-    'use board_update first to reask choice using ' +
-    report({ questionKey: 'choice', expectedGeneration: 1, kind: 'text', prompt: 'Confirm simple?', recommendation: 'Simple' }) +
-    '. Then record an answer already received in this chat for approval using ' +
-    report(null, { answerReceived: { questionKey: 'approval', generation: 1, answerKey: receivedKey, answer: { kind: 'approve', text: null } },
-      summary: 'Confirmed Board answer receipt; approval recorded from chat' }) + '. End the turn.');
-  const reasked = await reported(d => d.questions.some(q => q.questionKey === 'choice' && q.generation === 2) &&
-    d.questions.some(q => q.questionKey === 'approval' && q.deliveryState === 'recorded_in_chat'));
-  requireValue(reasked.questions.find(q => q.questionKey === 'choice').answer === null, 'Reasked question must be unanswered');
-  const approval = reasked.questions.find(q => q.questionKey === 'approval');
-  requireValue(approval.deliveryClientId === null && approval.deliveryTurnId === null, 'Chat-recorded answer must not send');
-  const stale = await desktop.response('board', 'answer', { ...answer, answerKey: randomUUID() });
-  requireValue(stale.code === 'failed' && stale.message?.includes('stale_generation'), 'Old generation was not rejected');
-  await idle(finalTurn);
-  console.log('ok real provider received answer; reask rejected stale answer; chat answer recorded without echo');
-  // Read the owning session's actual chat through the same bulk path used by the session view.
-  const bulk = await open(env.CHECK4_API!, env.CHECK4_TOKEN!, '/socket/bulk');
-  const chat = await bulk.call('rows', 'page', { session, limit: 100 });
-  requireValue(chat.rows?.some((row: any) => row.kind === 'user'), 'Recovery session chat is unavailable');
-  const sourceSeq = (await detail()).feed[0].seq as number;
-  while (true) {
-    const frame = await desktop.take(f => f.t === 'change' && f.sub === board.id && f.item?.taskKey === key && f.item?.machineId === machineId);
-    if (frame.item.seq >= sourceSeq) break;
-  }
-  await pageContains(desktop, machineId, key, 'running');
-  const routed = await desktop.call<Detail>('board', 'task', { machineId, taskKey: key, beforeSeq: null, questionCursor: null });
-  requireValue(routed.task.creatorSessionId === session && routed.task.machineId === machineId, 'Recovery link/source identity differs');
-  console.log('ok desktop SQL mirror, source detail and actual recovery chat agree');
+  const epoch = async () => {
+    const row = (await cut(desktop, 'sessions', machine, expected)).find(item => item.id === session);
+    requireValue(Number.isSafeInteger(row?.epoch), 'The session has no current owner epoch');
+    return row.epoch as number;
+  };
+  const resolve = async (need: Need, answer: string) => desktop.call('engine', 'command', {
+    commandId: randomUUID(), entityId: need.id, expectedVersion: need.version, epoch: await epoch(), machine, surface: 'board',
+    command: { kind: 'resolve_need', state: 'answered', answer } });
+  await prompt('Use the Assembly ask_owner MCP tool once, with the question "Which option?" and kind "question". ' +
+    'When it returns, repeat the answer you received in one line and end the turn. Change no files and use no helpers.');
+  const asked = await needMatching(need => need.state === 'open');
+  requireValue(asked.text === 'Which option?', `The need holds ${asked.text}`);
+  console.log('ok real provider asked through ask_owner and the need reached the engine stream');
+  const receipt = await resolve(asked, 'Simple');
+  requireValue(receipt.applied === true, `The answer was refused: ${receipt.error}`);
+  const answered = await needMatching(need => need.id === asked.id && need.state !== 'open');
+  requireValue(answered.state === 'answered' && answered.answerText === 'Simple', 'The need did not record its answer');
+  const stale = await resolve(asked, 'Again');
+  requireValue(stale.applied !== true, 'A second answer at the old version was applied');
+  await desktop.take(f => f.sub === rows.id && f.t === 'rows' && JSON.stringify((f as any).row?.payload ?? '').includes('Simple'));
+  console.log('ok one answer recorded and delivered to the asker; the old version was refused');
+  await prompt('Use the Assembly ask_owner MCP tool once, with the question "Second question?" and kind "question".');
+  const second = await needMatching(need => need.state === 'open' && need.id !== asked.id);
+  await desktop.call('engine', 'command', {
+    commandId: randomUUID(), entityId: session, expectedVersion: (await cut(desktop, 'sessions', machine, expected)).find(item => item.id === session).version,
+    epoch: await epoch(), machine, surface: null, command: { kind: 'stop_session' } });
+  const closed = await needMatching(need => need.id === second.id && need.state !== 'open');
+  requireValue(closed.state === 'cancelled', `Ending the asker left the need ${closed.state}`);
+  const late = await resolve(second, 'Too late').catch((error: Error) => ({ applied: false, error: error.message }));
+  requireValue(late.applied !== true, 'A cancelled need took an answer');
+  console.log('ok ending the asker cancelled its open need and a late answer was refused');
 }
 try { await main(); }
 catch (error) { console.log('fail board: ' + (error instanceof Error ? error.message : String(error))); process.exitCode = 1; }

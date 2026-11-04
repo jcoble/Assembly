@@ -1,6 +1,7 @@
 //! How the panel draws each listed row.
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::BoardPanel;
@@ -10,10 +11,17 @@ use crate::core::engine::{EngineKey, SessionKey};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::activity::run_view::now_ms;
 use crate::features::board::board_queries::is_terminal;
-use crate::features::board::board_sections::{Entry, machine_label, offline_reason};
+use crate::features::board::board_sections::{Entry, group_heading, machine_label, offline_reason};
 use crate::features::board::question_row::{card_key, need_card};
 use crate::features::board::run_steps::pill;
 use crate::features::board::session_tabs::{session_entry, task_label};
+
+fn row_machine(entry: &Entry) -> Option<&str> {
+    match entry {
+        Entry::Need(key) | Entry::Run(key) | Entry::Session(key) => Some(&key.machine),
+        _ => None,
+    }
+}
 
 impl BoardPanel {
     fn run_row(&self, run: &RunItem, this: WeakEntity<Self>) -> RunRow {
@@ -61,8 +69,7 @@ impl BoardPanel {
                 .into_any_element(),
             Entry::Group { machine } => {
                 let feed = self.feed.read(cx);
-                let name = machine_label(&machine, feed, cx);
-                let line = offline_reason(&machine, feed, cx).map_or(name, |reason| reason.to_string());
+                let line = group_heading(&machine_label(&machine, feed, cx), offline_reason(&machine, feed, cx).is_some());
                 div().pt_2().text_role(TextRole::Meta, cx).text_color(muted).child(line).into_any_element()
             }
             Entry::Need(key) => match self.data.needs.get(&key) {
@@ -89,6 +96,8 @@ impl BoardPanel {
             }
         };
         self.hold_clock_if_needed(cx);
-        div().pb_2().child(row).into_any_element()
+        // What an offline machine last said stays readable, dimmed, and its actions refuse.
+        let dim = self.entries.get(index).and_then(row_machine).is_some_and(|machine| offline_reason(machine, self.feed.read(cx), cx).is_some());
+        div().pb_2().when(dim, |row| row.opacity(0.6)).child(row).into_any_element()
     }
 }

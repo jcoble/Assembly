@@ -1,7 +1,7 @@
 //! What each tab lists and the words above it.
 use serde_json::{Value, json};
 
-use super::{Entry, Section, entries, first_tab, heading, summary, tab_sections};
+use super::{Entry, Section, entries, first_tab, group_heading, heading, summary, tab_sections};
 use crate::core::engine::{EngineItem, EngineKey};
 use crate::features::board::board_prefs::{BoardPrefs, BoardTab};
 use crate::features::board::board_queries::BoardData;
@@ -103,4 +103,10 @@ fn an_empty_tab_says_so_and_machines_head_their_groups() {
     let rows = entries(&tab_sections(&full(), BoardTab::Sessions, MIDNIGHT, None, &[]), BoardTab::Sessions, &prefs);
     assert_eq!(rows[0], Entry::Group { machine: "m".into() });
     assert_eq!(rows[1], Entry::Session(key("session", "live")));
+}
+
+#[test]
+fn offline_group_header_and_disabled_actions() {
+    assert_eq!(group_heading("Workbox Test", true), "Workbox Test · offline");
+    assert_eq!(group_heading("Workbox Test", false), "Workbox Test");
 }

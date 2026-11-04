@@ -108,6 +108,22 @@ async fn settled(row:&gpui_kit::Entity<NeedRow>,visual:&mut gpui_kit::VisualTest
     panic!("the row never heard the answer");
 }
 #[gpui::test]
+async fn offline_machine_refuses_and_keeps_draft(cx:&mut TestAppContext) {
+    let(state,row,watch,_held,visual)=open_row(asked(),cx).await;
+    row.update_in(visual,|row,window,cx|{
+        row.open(window,cx);
+        row.text.update(cx,|text,cx|text.set_value("my draft",window,cx));
+        row.set_offline(Some("Workbox Test is offline".into()),cx);
+        row.answer(NeedAnswer::Answer(json!("my draft")),cx);
+    });
+    visual.run_until_parked();
+    assert_eq!(state.lock().unwrap().commands,0,"nothing is sent to a machine that's offline");
+    row.read_with(visual,|row,cx|assert_eq!(row.text.read(cx).value().as_ref(),"my draft"));
+    row.update(visual,|row,cx|row.set_offline(None,cx));
+    drop(watch);
+}
+
+#[gpui::test]
 async fn another_answer_preserves_the_unsent_draft_without_replay(cx:&mut TestAppContext) {
     let(state,row,watch,_held,visual)=open_row(asked(),cx).await;
     let events=Arc::new(Mutex::new(0));let count=events.clone();

@@ -106,6 +106,11 @@ pub fn entries(sections: &[Section], tab: BoardTab, prefs: &BoardPrefs) -> Vec<E
     rows
 }
 
+/// A machine's heading. Its rows stay listed while it's offline, and nothing about it is guessed.
+pub fn group_heading(name: &str, offline: bool) -> String {
+    if offline { format!("{name} · offline") } else { name.to_owned() }
+}
+
 /// "This Mac" for the local engine, a saved remote's own name, or the engine's id until one is known.
 pub fn machine_label(machine: &str, feed: &EngineFeed, cx: &App) -> String {
     let local = SocketClient::try_global(cx).and_then(|socket| socket.read(cx).engine_machine());
