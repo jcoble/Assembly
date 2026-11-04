@@ -124,7 +124,7 @@ public sealed partial class SessionHost : IPermissionPolicy
     {
         var options = request.Options.Select(option => new AskOption(option.OptionId, option.Name, option.Kind)).ToList();
         var card = new AskPayload("permission", "open", Titled(request.SessionId, request.Title), request.Description, ToolCallId(request.ToolCall), options, null, null);
-        var answer = await AskAsync(card, cancellationToken, observed, context, providerGone, request.SessionId);
+        var answer = await AskAsync(card, cancellationToken, observed, context, providerGone, request.SessionId, request);
         return PermissionOutcome.Selected(answer.GetProperty("optionId").GetString()!);
     }
 
@@ -260,7 +260,8 @@ public sealed partial class SessionHost : IPermissionPolicy
 
     // Shows the card and waits for its answer; a cancel settles the card as cancelled and goes on up.
     private async Task<JsonElement> AskAsync(AskPayload card, CancellationToken cancellationToken,
-        SessionObservation? observed, JsonRpcRequestContext? request, Func<bool>? providerGone, string acpSessionId)
+        SessionObservation? observed, JsonRpcRequestContext? request, Func<bool>? providerGone, string acpSessionId,
+        RequestPermissionRequest? permission = null)
     {
         var askId = Guid.NewGuid().ToString();
         var ask = new OpenAsk(card, new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously), observed, request, acpSessionId);
@@ -271,7 +272,12 @@ public sealed partial class SessionHost : IPermissionPolicy
             try
             {
                 var prepared = observed is null || request is null ? null : _feed?.PrepareAsked(observed, askId, card, request);
-                Apply(new AskChanged(Now(), askId, card), observe: prepared);
+                var batch = new RowBatch();
+                if (permission is not null)
+                    foreach (var change in _updateReader.ReadPermission(permission, Now()))
+                        Apply(change, batch);
+                Apply(new AskChanged(Now(), askId, card), batch);
+                _hub.Publish(_sessionId, batch, prepared);
             }
             catch
             {
