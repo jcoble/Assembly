@@ -1,13 +1,21 @@
 //! Lazy workflow display: one shared runs lease and one cancellable coalesced paged read.
 use crate::core::{
     engine::{
-        EngineChanged, EngineFeed, EngineScope, EngineWatch, SessionKey, workflow_items::RunView,
+        EngineChanged, EngineFeed, EngineScope, EngineWatch, SessionKey,
+        workflow_items::{RunItem, RunView, StepItem},
     },
     socket::client::SocketClient,
+    ui::activity::step_controls::{self, StepControl},
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
+/// What the engine said about a step, for as long as the step stays as it was when it said it.
+struct StepRefusal {
+    step: String,
+    version: i64,
+    text: String,
+}
 pub struct RunActivity {
     parent: SessionKey,
     feed: Entity<EngineFeed>,
@@ -18,6 +26,8 @@ pub struct RunActivity {
     dirty: bool,
     serial: u64,
     read: Option<Task<()>>,
+    sending: Option<Task<()>>,
+    refusal: Option<StepRefusal>,
     connections: Vec<(Entity<SocketClient>, u64)>,
     _connections: Vec<Subscription>,
     _changed: Subscription,
@@ -46,6 +56,8 @@ impl RunActivity {
             dirty: true,
             serial: 0,
             read: None,
+            sending: None,
+            refusal: None,
             connections: Vec::new(),
             _connections: Vec::new(),
             _changed: changed,
@@ -156,6 +168,90 @@ impl RunActivity {
         }));
     }
 }
+impl RunActivity {
+    /// The step's new state comes back on the run's stream, like anyone else's change.
+    fn send(&mut self, step_id: &str, control: StepControl, cx: &mut Context<Self>) {
+        let Some(page) = self.view.as_ref().filter(|_| self.sending.is_none()) else {
+            return;
+        };
+        let Some(step) = page.steps.iter().find(|step| step.id == step_id) else {
+            return;
+        };
+        let version = step.version;
+        let step = step_id.to_owned();
+        self.refusal = None;
+        match step_controls::command(&page.run, step_id, control) {
+            Ok(command) => {
+                let answer = self
+                    .feed
+                    .update(cx, |feed, cx| feed.submit_following(command, cx));
+                self.sending = Some(cx.spawn(async move |view, cx| {
+                    let answer = answer.await;
+                    let _ = view.update(cx, |view, cx| {
+                        view.sending = None;
+                        view.refusal = step_controls::refusal(answer).map(|text| StepRefusal {
+                            step,
+                            version,
+                            text,
+                        });
+                        cx.notify();
+                    });
+                }));
+            }
+            Err(refused) => {
+                self.refusal = Some(StepRefusal {
+                    step,
+                    version,
+                    text: refused.message,
+                });
+            }
+        }
+        cx.notify();
+    }
+    fn controls(
+        &self,
+        run: &RunItem,
+        step: &StepItem,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let refusal = self
+            .refusal
+            .as_ref()
+            .filter(|refusal| refusal.step == step.id && refusal.version == step.version);
+        let offered = step_controls::offered(run, step);
+        if offered.is_empty() && refusal.is_none() {
+            return None;
+        }
+        let mut buttons = h_flex().gap_2();
+        for control in offered {
+            let name = format!("step-control:{}:{}", step.id, control.label());
+            let id = step.id.clone();
+            buttons = buttons.child(
+                div().debug_selector(|| name.clone()).child(
+                    Button::new(SharedString::from(name.clone()))
+                        .outline()
+                        .small()
+                        .label(control.label())
+                        .disabled(self.sending.is_some())
+                        .on_click(cx.listener(move |view, _, _, cx| view.send(&id, control, cx))),
+                ),
+            );
+        }
+        let said = refusal.map(|refusal| {
+            div()
+                .debug_selector(|| format!("step-refusal:{}", step.id))
+                .text_color(cx.theme().danger)
+                .child(refusal.text.clone())
+        });
+        Some(
+            v_flex()
+                .gap_1()
+                .child(buttons)
+                .children(said)
+                .into_any_element(),
+        )
+    }
+}
 impl Render for RunActivity {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh(cx);
@@ -198,7 +294,13 @@ impl Render for RunActivity {
                 .map(|time| time.as_millis().min(i64::MAX as u128) as i64)
                 .unwrap_or(0);
             for step in &page.steps {
-                body = body.child(crate::core::ui::activity::step_row::render(step, now, cx));
+                body = body
+                    .child(
+                        div()
+                            .debug_selector(|| format!("step-row-shown:{}", step.id))
+                            .child(crate::core::ui::activity::step_row::render(step, now, cx)),
+                    )
+                    .children(self.controls(&page.run, step, cx));
             }
         } else if self.read.is_some() {
             body = body.child("Loading workflow…");
