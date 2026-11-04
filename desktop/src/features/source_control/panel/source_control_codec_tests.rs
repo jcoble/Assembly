@@ -75,6 +75,7 @@ struct Seen {
     lists: usize,
     cancels: usize,
     root: Option<String>,
+    alternate_root: Option<String>,
     hold_status: bool,
     hold_list: bool,
     offered: Value,
@@ -114,10 +115,11 @@ async fn bench(cx: &mut TestAppContext, offered: Value) -> Bench<'_> {
                 if seen.hold_status {
                     vec![]
                 } else {
-                    let root = frame["args"]
-                        .get("checkoutPath")
-                        .cloned()
-                        .unwrap_or(json!(seen.root));
+                    let root = match (frame["args"].get("checkoutPath"), &seen.alternate_root) {
+                        (Some(_), Some(root)) => json!(root),
+                        (Some(path), None) => path.clone(),
+                        (None, _) => json!(seen.root),
+                    };
                     vec![Reply::Frame(json!({"t":"result","id":id,"result":{
                         "branch":"main","head":"a".repeat(40),"ahead":0,"behind":0,"hasUpstream":false,"files":rows(),
                         "totalFiles":100,"totalStaged":0,"fingerprint":"same","checkoutRoot":root}}))]
@@ -404,7 +406,7 @@ async fn a_hidden_pane_restores_without_reading_until_it_is_shown(cx: &mut TestA
             ..at(40.)
         },
     );
-    bench.cx.run_until_parked();
+    bench.delivered().await;
     {
         let seen = bench.seen.lock().unwrap();
         assert_eq!((seen.statuses.len(), seen.lists), (0, 0));
@@ -593,3 +595,5 @@ fn a_workspace_round_trips_through_the_registry_and_only_under_its_own_key(
         );
     });
 }
+#[path = "codec_tests/fence_tests.rs"]
+mod fence;

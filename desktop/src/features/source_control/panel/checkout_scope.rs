@@ -47,7 +47,7 @@ impl SourceControlPane {
             self.read_checkouts(cx);
         }
     }
-    fn read_checkouts(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn read_checkouts(&mut self, cx: &mut Context<Self>) {
         let (Some(asked), Some(socket)) =
             (self.checkouts_for.clone(), SocketClient::try_global(cx))
         else {
