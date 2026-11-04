@@ -195,6 +195,10 @@ public sealed partial class SessionRailTests : IDisposable
                 'idle',NULL,m.machine,0,0,'',0
             FROM session_info s JOIN engine_mirror_row m ON m.entity_kind='session' AND m.entity_id=s.session_id
             WHERE s.session_id IN ($first,$second);
+            UPDATE engine_mirror_row AS m SET row_json=json_set(row_json,
+                '$.provider',s.agent,'$.folder',s.repo_url,'$.title',s.title,'$.updatedMs',s.updated_at)
+            FROM session_info s WHERE m.entity_kind='session' AND m.entity_id=s.session_id
+                AND s.session_id IN ($first,$second);
             """, new("$first", c), new("$second", otherRemote)));
         var settled = Parent("claude");
         Running(settled);

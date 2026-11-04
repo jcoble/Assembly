@@ -38,7 +38,10 @@ public sealed class EngineSnapshot : IDisposable
     {
         var selects = kinds.Select(kind => $"""
             SELECT '{kind}' AS kind,t.id AS id,{(topic == "mirror" ? DisplayQueries.MirrorJson(kind) : DisplayQueries.Json(kind))} AS item,{DisplayQueries.PrefixColumns(kind)}
-            FROM {DisplayQueries.Source(kind)} t WHERE t.machine=$machine AND ($key IS NULL OR {DisplayQueries.KeyPredicate(topic, kind)})
+            FROM {DisplayQueries.Source(kind)} t JOIN (SELECT t.id FROM {DisplayQueries.Source(kind)} t
+                WHERE t.machine=$machine AND ($key IS NULL OR {DisplayQueries.KeyPredicate(topic, kind)})
+                    AND ('{kind}'>$kind OR ('{kind}'=$kind AND t.id>$id))
+                ORDER BY t.id LIMIT 201) page ON page.id=t.id
             """);
         return string.Join(" UNION ALL ", selects);
     }

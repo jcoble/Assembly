@@ -153,10 +153,6 @@ public sealed partial class SessionRailTests
                         holder = "local",
                         state = "idle",
                         parentId = parent,
-                        provider = facade.Agent,
-                        folder = facade.RepoUrl,
-                        title = facade.Title,
-                        updatedMs = facade.UpdatedAt,
                         model = "recorded-model"
                     })));
             }

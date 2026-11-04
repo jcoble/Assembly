@@ -40,6 +40,7 @@ public sealed class SessionCreateCompositionTests
             Assert.NotNull(desktopEngine);
             Assert.NotEqual(desktopEngine.Machine, remote.Runtime.Machine);
             using var socket = await ApiTests.OpenOwnerSocketAsync(desktop.Address, token);
+            await desktop.Connections.ReadyAsync(route);
             var mirrored = Assert.Single(desktop.Connections.CaptureMirrorOwners()).Mirror;
             var caughtUp = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             void Ready() => caughtUp.TrySetResult();

@@ -71,6 +71,10 @@ public sealed class MessageReadProvenanceTests
             ALTER TABLE engine_message DROP COLUMN origin_machine;
             ALTER TABLE engine_message DROP COLUMN message_created_seq;
             DROP INDEX engine_message_read_order;
+            ALTER TABLE engine_workflow_settings DROP COLUMN version;
+            ALTER TABLE engine_run DROP COLUMN keep_token;
+            ALTER TABLE engine_run DROP COLUMN keep_until_ms;
+            ALTER TABLE engine_run DROP COLUMN keep_version;
             UPDATE engine_meta SET schema_version=13;
             """));
         f.Reopen();
@@ -89,6 +93,7 @@ public sealed class MessageReadProvenanceTests
             scope.Execute("DELETE FROM engine_outbox; DELETE FROM engine_event; DELETE FROM engine_command_receipt;");
             scope.Execute("UPDATE engine_message SET sender_kind='system' WHERE id='known'");
             scope.Execute("ALTER TABLE engine_message DROP COLUMN origin_machine; ALTER TABLE engine_message DROP COLUMN message_created_seq; DROP INDEX engine_message_read_order;");
+            scope.Execute("ALTER TABLE engine_workflow_settings DROP COLUMN version; ALTER TABLE engine_run DROP COLUMN keep_token; ALTER TABLE engine_run DROP COLUMN keep_until_ms; ALTER TABLE engine_run DROP COLUMN keep_version;");
             return scope.Execute("UPDATE engine_meta SET schema_version=13");
         });
         f.Reopen();

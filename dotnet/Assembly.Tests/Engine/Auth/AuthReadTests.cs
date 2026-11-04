@@ -117,7 +117,11 @@ public sealed class AuthReadTests
         await using var f = new AuthRuntimeFixture(); f.Begin();
         foreach (var topic in new[] { "runs", "sessions", "needs_me", "messages", "prs", "usage" })
         {
-            using var snapshot = f.Runtime.Reader.Snapshot(topic, null, default); Assert.Empty(snapshot.ReadNext().Items);
+            using var snapshot = f.Runtime.Reader.Snapshot(topic, null, default);
+            var items = snapshot.ReadNext().Items;
+            if (topic == "runs")
+                Assert.Equal("{\"entityKind\":\"workflow_settings\",\"id\":\"workflow-settings\",\"version\":0,\"mutedUntil\":null}", Assert.Single(items).GetRawText());
+            else Assert.Empty(items);
             var page = f.Runtime.Reader.Since(topic, null, 0, default); Assert.Empty(page.Events); Assert.Equal(f.Runtime.Reader.HighWatermark(default), page.Through);
         }
         var providers = f.Runtime.Reader.Since("providers", null, 0, default); Assert.Equal(2, providers.Events.Count);

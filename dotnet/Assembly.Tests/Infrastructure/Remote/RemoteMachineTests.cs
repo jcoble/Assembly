@@ -39,8 +39,21 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         await StartDesktopAsync();
     }
 
-    private async Task StartDesktopAsync() =>
+    private async Task StartDesktopAsync()
+    {
         _desktop = await DesktopBackend.StartAsync(_desktopHome, DesktopToken, port: 0, _desktopLauncher, _log, new RemoteConfig(Box, _box.Address, BoxToken));
+        await _desktop.Connections.ReadyAsync(Box);
+        var mirror = Assert.Single(_desktop.Connections.CaptureMirrorOwners()).Mirror;
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void CaughtUp() => ready.TrySetResult();
+        mirror.CaughtUp += CaughtUp;
+        try
+        {
+            if (await mirror.CaptureLiveBindingAsync(default) is null)
+                await ready.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        finally { mirror.CaughtUp -= CaughtUp; }
+    }
 
     [Fact]
     public async Task A_session_made_on_the_remote_runs_its_turn_there_and_its_rows_are_copied_here()
@@ -309,11 +322,12 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         var created = await FeatureResultAsync(_desktop!, DesktopToken, "sessions", "create",
             new { agent = "claude", clientId = Guid.NewGuid().ToString("N") });
         var parent = created.GetProperty("sessionId").GetString()!;
-        await SendAsync(parent);
+        var clientId = await SendAsync(parent);
         var desktop = await _desktopLauncher.NextAsync();
         var parentToken = SessionToken(await desktop.StartAsync(acpSessionId: "acp-parent"));
         var parentPrompt = await desktop.ReadAsync("session/prompt");
         await desktop.InsertAsync(parentPrompt, "local-parent-prompt");
+        await ProviderInsertionAsync(_desktop!, DesktopToken, parent, clientId, "local-parent-prompt");
         var helperId = (await ToolAsync(_desktop!, parentToken, "start_session", new { prompt = "Count the lines.", title = "Count the lines.", provider = "codex", folder = _boxHome, machine = await RemoteEngineMachineAsync() }))
             .GetProperty("sessionId").GetString()!;
         var box = await _boxLauncher.NextAsync();

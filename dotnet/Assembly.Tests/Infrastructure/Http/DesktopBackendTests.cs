@@ -421,8 +421,8 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         await agent.InsertAsync(prompt, "exclusive-inserted");
         using var live = await OpenLiveAsync(sessionId, after: 0);
         ApiTests.RunOfPrompt(await ApiTests.ReadRowsAsync(live, 2), sessionId, clientId);
+        await ApiTests.MessageInsertedAsync(_backend, Token, $"prompt/{sessionId}/{clientId}");
         var before = Rows();
-
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => DesktopBackend.StartAsync(_home, Token, port: 0, _launcher, _log));
 
         Assert.StartsWith("home in use by pid ", error.Message);
