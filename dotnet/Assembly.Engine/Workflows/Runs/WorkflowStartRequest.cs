@@ -13,7 +13,7 @@ public sealed record WorkflowStartAck(string RunId, string DefinitionHash, Comma
 
 internal sealed record WorkflowStartBody(CommandContext Context, WorkflowStartRequest Request,
     string ProjectId, string ProjectRoot, WorkflowSnapshot Snapshot, WorkflowInputs Inputs,
-    ImmutableSortedDictionary<string, string> StepIds, string RequestFingerprint);
+    ImmutableSortedDictionary<string, string> StepIds, string RequestFingerprint, WorkflowRerunSource? Rerun = null);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(WorkflowStartBody))]

@@ -79,7 +79,13 @@ public static class WorkflowPrBodies
     private const string MaterialCte = """
         WITH picked(id) AS (
           SELECT receipt.id FROM engine_step step JOIN engine_workflow_receipt receipt ON receipt.id=step.receipt_id
-          WHERE step.run_id=$run AND receipt.state='accepted' AND receipt.generation=step.generation AND receipt.attempt=step.attempt
+          WHERE step.run_id=$run AND receipt.state='accepted' AND (
+            receipt.generation=step.generation AND receipt.attempt=step.attempt
+            OR step.dispatch_state='inherited' AND EXISTS(
+              SELECT 1 FROM engine_workflow_history inherited JOIN engine_run retry ON retry.id=inherited.run_id
+              WHERE inherited.run_id=step.run_id AND inherited.step_id=step.id AND inherited.kind='retry_inherited'
+                AND retry.rerun_of=receipt.run_id AND json_extract(inherited.safe_body_json,'$.sourceStepId')=receipt.step_id
+                AND json_extract(inherited.safe_body_json,'$.sourceReceiptId')=receipt.id))
           UNION SELECT id FROM (SELECT id FROM engine_workflow_receipt WHERE run_id=$run AND kind='review' AND state='accepted'
             ORDER BY checked_ms DESC,created_ms DESC,id DESC LIMIT 1)
         )

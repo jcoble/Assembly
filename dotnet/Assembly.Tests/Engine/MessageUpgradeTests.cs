@@ -160,7 +160,7 @@ public sealed class MessageUpgradeTests
     public void Fresh_is_combined_v3_and_reopen_is_inert()
     {
         using var f = new EngineFixture();
-        Assert.Equal(14, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(15, f.Number("SELECT schema_version FROM engine_meta"));
         f.SeedSession();
         f.Apply(new SendMessage(null, "s", "hello", "prompt"), "m");
         var before = f.Text("SELECT group_concat(payload_json) FROM engine_outbox");
@@ -189,7 +189,7 @@ public sealed class MessageUpgradeTests
         var terminal = f.Rows("SELECT id,version,state,provider_turn_id,reason,text FROM engine_message WHERE state NOT IN ('queued','held') ORDER BY id");
         var mirrors = version == 2 ? f.Rows("SELECT machine,name,generation,through,at_json,retained_after,state,updated_ms FROM engine_mirror") + f.Rows("SELECT machine,entity_kind,entity_id,generation,version,row_json FROM engine_mirror_row") : "";
         f.Upgrade();
-        Assert.Equal(14, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(15, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(machine, f.Machine);
         Assert.Equal(history, f.Rows($"SELECT id,version,machine,created_ms,updated_ms,task_url,seq,kind,entity_kind,entity_id,entity_version,at_ms,late,data_json FROM engine_event WHERE machine!='{machine}' OR seq<{next} ORDER BY id"));
         Assert.Equal(chat, f.Rows("SELECT session_id,next_seq FROM sessions ORDER BY session_id") + f.Rows("SELECT session_id,seq,run_id,item_id,kind,payload,created_at FROM rows ORDER BY session_id,seq"));
@@ -414,7 +414,7 @@ public sealed class MessageUpgradeTests
         Assert.Equal(before, f.Snapshot());
         f.Write("DROP TRIGGER test_block_engine_schema");
         f.Upgrade();
-        Assert.Equal(14, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(15, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM engine_event WHERE entity_id='send/pending' AND json_extract(data_json,'$.state')='dead'"));
         var fake = Fake((e, _) => Task.FromResult(e.SessionId == "pending" ? Delivered() : Unavailable()));
         await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, new(() => 1, () => 5), fake);
@@ -425,10 +425,10 @@ public sealed class MessageUpgradeTests
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
-    public void Future_version_15_refuses_without_mutation_and_malformed_payload_rolls_back(int version)
+    public void Future_version_16_refuses_without_mutation_and_malformed_payload_rolls_back(int version)
     {
         using var f = new OldDb(version);
-        foreach (var unsupported in new[] { 0, -1, 15 })
+        foreach (var unsupported in new[] { 0, -1, 16 })
         {
             f.Write($"UPDATE engine_meta SET schema_version={unsupported}");
             var unchanged = f.Snapshot();

@@ -79,6 +79,7 @@ public static partial class CommandStepTransitions
         s.Execute("""
             UPDATE engine_needs_me SET state='answered',version=version+1,updated_ms=$now,answer_json='"retry"',answered_by=$actor,answered_ms=$now,answered_origin_json=$origin WHERE id=$need;
             UPDATE engine_step SET state='pending',dispatch_state='pending',outcome_reason=NULL,ended_ms=NULL,deadline_ms=NULL,
+              generation=generation+1,attempt_in_generation=0,scope_granted=0,
               version=version+1,updated_ms=$now WHERE id=$step;
             """, new("$now", c.NowMs), new("$actor", c.Actor.Id), new("$origin", NeedTransitions.OriginJson(c)), new("$need", needId), new("$step", c.EntityId));
         List<EventDraft> events = [new("needs_me.answered", "needs_me", needId, row.NeedVersion + 1, false, new(row.Owner, row.Run, c.EntityId, row.Owner, "answered", c.Epoch)),

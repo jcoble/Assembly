@@ -13,7 +13,7 @@ public sealed class SessionProjectSchemaTests
     public void A_fresh_engine_has_schema_ten_and_unassigned_ready_project_fields()
     {
         using var f = new EngineFixture(); f.SeedSession();
-        Assert.Equal(14, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(15, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Null(f.Text("SELECT project_id FROM engine_session WHERE id='s'"));
         Assert.Null(f.Text("SELECT branch FROM engine_session WHERE id='s'"));
         Assert.Equal("ready", f.Text("SELECT checkout_state FROM engine_session WHERE id='s'"));
@@ -26,7 +26,7 @@ public sealed class SessionProjectSchemaTests
         var before = f.Text("SELECT id||'|'||provider||'|'||folder||'|'||account_context FROM engine_session WHERE id='s'");
         var originalMachine = f.Machine;
         Assert.Equal(originalMachine, EngineSchema.Open(f.Db, 2000));
-        Assert.Equal(14, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(15, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(before, f.Text("SELECT id||'|'||provider||'|'||folder||'|'||account_context FROM engine_session WHERE id='s'"));
         Assert.Null(f.Text("SELECT project_id FROM engine_session WHERE id='s'"));
         Assert.Equal("ready", f.Text("SELECT checkout_state FROM engine_session WHERE id='s'"));

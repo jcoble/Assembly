@@ -196,8 +196,10 @@ public sealed class CommandStepTests
         Assert.Throws<InvalidOperationException>(() => f.Prepare(deadline + 1));
         Assert.Equal(2, f.Core.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='workflow_command'"));
         var need = f.Core.Text("SELECT id FROM engine_needs_me WHERE state='open'")!;
-        var retry = c with { CommandId = Guid.NewGuid(), ExpectedVersion = f.Core.Number("SELECT version FROM engine_step"), Epoch = 0, Actor = new(ActorKind.Window, "owner") };
-        Assert.True(f.Core.Db.Writer.Write("test.owner-timeout-retry", scope => CommandStepTransitions.AuthorizeTimeoutRetry(scope, retry, need)).Applied);
+        var retry = c with { CommandId = Guid.NewGuid(), EntityId = f.Run, ExpectedVersion = f.Core.Number("SELECT version FROM engine_run"), Epoch = 0, Actor = new(ActorKind.Window, "owner") };
+        Assert.True(f.Core.Apply(retry, new Assembly.Engine.Workflows.Runs.RetryWorkflowStep(f.Step)).Applied);
+        Assert.Equal("answered", f.Core.State("engine_needs_me", need));
+        Assert.Equal(1, f.Core.Number("SELECT generation FROM engine_step"));
         Assert.Equal("running", f.Core.Text("SELECT state FROM engine_run"));
         Assert.True(f.Start(f.Prepare(deadline + 2)).Applied);
         Assert.Equal(2, f.Core.Number("SELECT attempt FROM engine_step"));

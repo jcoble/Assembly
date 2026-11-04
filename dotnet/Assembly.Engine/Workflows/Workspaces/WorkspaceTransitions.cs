@@ -145,6 +145,7 @@ public static class WorkspaceTransitions
             s.Execute("UPDATE engine_run SET setup_state=$state,work_head=$head,version=version+1,updated_ms=$now WHERE id=$run",
                 new("$state", state), new("$head", result.Error is null ? result.Head : null), new("$now", c.NowMs), new("$run", i.RunId));
             events.Add(RunChanged(i.RunId, run.Version + 1, run.Owner, run.State));
+            if (result.Error is null) events.AddRange(WorkflowRetrySeeds.Apply(s, c, i.RunId));
         }
         History(s, c, i, "workspace_" + state, JsonSerializer.Serialize(result, EngineJson.Default.WorkspacePrepared));
         EngineJournal.Commit(s, c, version, c.Epoch, events, []);

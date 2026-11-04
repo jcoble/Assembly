@@ -6,6 +6,13 @@ namespace Assembly.Engine.Reading;
 
 public sealed partial class EngineReader(IAppDatabase db, string machine)
 {
+    public JsonElement WorkflowSettings(CancellationToken cancellationToken)
+    {
+        using var read = db.OpenSnapshot(cancellationToken);
+        ReadMeta(read, machine);
+        return Workflows.Reading.WorkflowQueries.Settings(read);
+    }
+
     public JsonElement WorkflowRuns(JsonElement filters, CancellationToken cancellationToken)
     {
         using var read = db.OpenSnapshot(cancellationToken);
@@ -161,7 +168,7 @@ public sealed partial class EngineReader(IAppDatabase db, string machine)
             return mirrored is null ? null : DisplayQueries.Parse(mirrored);
         }
         if (entityKind == "pr_observation") projection = DisplayQueries.ObservationDetails;
-        var json = read.QueryFirst($"SELECT {projection},{DisplayQueries.PrefixColumns(entityKind)} FROM engine_{entityKind} t WHERE t.id=$id AND t.machine=$machine",
+        var json = read.QueryFirst($"SELECT {projection},{DisplayQueries.PrefixColumns(entityKind)} FROM {DisplayQueries.Source(entityKind)} t WHERE t.id=$id AND t.machine=$machine",
             r => (JsonElement?)DisplayQueries.Project(r, 0), new("$id", entityId), new("$machine", machine));
         return json;
     }

@@ -23,10 +23,11 @@ public sealed partial class EngineCommands
             : WorkflowExecutionNeeds.Open(scope, context, effect, reason));
     }
 
-    public CommandResult ApplyPreparedWorkflowCommandRetry(IWriteScope scope, CommandContext context, PreparedWorkflowCommandRetry prepared) =>
-        EngineJournal.Execute(scope, context, prepared.CanonicalJournal, () => context.Machine != _machine
-            ? new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch)
-            : CommandRetryTransitions.Apply(scope, context, prepared));
+    public CommandResult ApplyPreparedWorkflowControlRetry(IWriteScope scope, CommandContext context,
+        Workflows.WorkflowCommand command, PreparedWorkflowCommandRetry prepared) =>
+        EngineJournal.Execute(scope, context, JsonSerializer.Serialize((EngineCommand)command, EngineJson.Default.EngineCommand), () =>
+            context.Machine != _machine ? new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch)
+                : Workflows.Runs.WorkflowControlTransitions.Apply(scope, context, command, prepared));
 
     public CommandResult ExpireWorkflowCommand(IWriteScope scope, CommandContext context) =>
         EngineJournal.Execute(scope, context, "\"workflow_command_timeout/v1\"", () => context.Machine != _machine
