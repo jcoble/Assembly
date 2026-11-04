@@ -6,11 +6,11 @@ use super::{PaneResult, SourceControlPane};
 use crate::core::socket::checkout_selector::CheckoutSelector;
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
 use crate::core::state::sessions::Sessions;
-use crate::core::ui::center_panes::CenterPanes;
 use crate::features::source_control::actions_menu::STILL_RUNNING;
 use crate::features::source_control::git_checkouts::{CheckoutHint, GitCheckouts, checkout_gone};
 use crate::features::source_control::git_failure::GitFailure;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, v_flex};
@@ -18,7 +18,8 @@ use gpui_kit::*;
 use serde_json::json;
 
 const SCOPE_TIP: &str = "Folder this panel reads";
-const CHECKOUT_GONE: &str = "That checkout can't be read any more, so this panel went back to the session folder.";
+const CHECKOUT_GONE: &str =
+    "That checkout can't be read any more, so this panel went back to the session folder.";
 
 impl SourceControlPane {
     pub(super) fn selection(&self, cx: &App) -> Option<CheckoutSelector> {
@@ -47,9 +48,12 @@ impl SourceControlPane {
         }
     }
     fn read_checkouts(&mut self, cx: &mut Context<Self>) {
-        let (Some(asked), Some(socket)) = (self.checkouts_for.clone(), SocketClient::try_global(cx)) else {
+        let (Some(asked), Some(socket)) =
+            (self.checkouts_for.clone(), SocketClient::try_global(cx))
+        else {
             return;
         };
+        let epoch = self.workspace_epoch;
         let key = format!("git/checkouts/{}", cx.entity_id());
         let call = socket.read(cx).call::<GitCheckouts>(
             "git",
@@ -60,7 +64,7 @@ impl SourceControlPane {
         self.checkouts_read = Some(cx.spawn(async move |pane, cx| {
             let answer = call.await;
             _ = pane.update(cx, |pane, cx| {
-                if pane.checkouts_for.as_ref() == Some(&asked) {
+                if pane.workspace_epoch == epoch && pane.checkouts_for.as_ref() == Some(&asked) {
                     pane.checkouts_read = None;
                     pane.checkouts_answered(answer, cx);
                 }
@@ -77,23 +81,34 @@ impl SourceControlPane {
         };
         self.settle_hint(cx);
         if let Some(selection) = self.selection(cx)
-            && !self.checkouts.as_ref().is_some_and(|checkouts| checkouts.offers(&selection))
+            && !self
+                .checkouts
+                .as_ref()
+                .is_some_and(|checkouts| checkouts.offers(&selection))
         {
             self.leave_checkout(cx);
         }
+        self.settle_place(cx);
         cx.notify();
     }
     /// A hint for this session becomes a read if this answer offers it, and otherwise is dropped and said so. A hint for
     /// another session waits for that session.
     fn settle_hint(&mut self, cx: &mut Context<Self>) {
-        let (Some(hint), Some((session, source))) = (self.checkout_hint.clone(), self.checkouts_for.clone()) else {
+        let (Some(hint), Some((session, source))) =
+            (self.checkout_hint.clone(), self.checkouts_for.clone())
+        else {
             return;
         };
-        if hint.session != session || self.selection(cx).as_ref() == Some(&hint.selector()) || self.busy(cx) {
+        if hint.session != session
+            || self.selection(cx).as_ref() == Some(&hint.selector())
+            || self.busy(cx)
+        {
             return;
         }
         match hint.qualified(&session, &source, self.checkouts.as_ref()) {
-            Some(selector) => self.read.update(cx, |read, cx| read.set_checkout(Some(selector), cx)),
+            Some(selector) => self
+                .read
+                .update(cx, |read, cx| read.set_checkout(Some(selector), cx)),
             None => self.leave_checkout(cx),
         }
     }
@@ -107,7 +122,6 @@ impl SourceControlPane {
     pub(super) fn back_to_session_folder(&mut self, cx: &mut Context<Self>) {
         self.checkout_hint = None;
         self.read.update(cx, |read, cx| read.set_checkout(None, cx));
-        CenterPanes::save_layout(cx);
     }
     /// `None` is the session's own folder.
     pub(super) fn pick_checkout(&mut self, path: Option<String>, cx: &mut Context<Self>) {
@@ -118,17 +132,26 @@ impl SourceControlPane {
         }
         let selector = match path {
             None => None,
-            Some(path) => match self.checkouts.as_ref().and_then(|checkouts| checkouts.selector(&path)) {
+            Some(path) => match self
+                .checkouts
+                .as_ref()
+                .and_then(|checkouts| checkouts.selector(&path))
+            {
                 Some(selector) => Some(selector),
                 None => return,
             },
         };
         let here = self.checkouts_for.clone();
         self.checkout_hint = match (&selector, &here) {
-            (Some(selector), Some((session, source))) => Some(CheckoutHint::new(session, source, selector)),
-            _ => self.checkout_hint.take().filter(|hint| here.as_ref().is_some_and(|(session, _)| hint.session != *session)),
+            (Some(selector), Some((session, source))) => {
+                Some(CheckoutHint::new(session, source, selector))
+            }
+            _ => self.checkout_hint.take().filter(|hint| {
+                here.as_ref()
+                    .is_some_and(|(session, _)| hint.session != *session)
+            }),
         };
-        CenterPanes::save_layout(cx);
+        WorkspaceCoordinator::changed(cx);
         if selector == self.selection(cx) {
             return;
         }
@@ -136,7 +159,8 @@ impl SourceControlPane {
         self.hovered_section = None;
         self.hovered_file = None;
         self.selected_file = None;
-        self.read.update(cx, |read, cx| read.set_checkout(selector, cx));
+        self.read
+            .update(cx, |read, cx| read.set_checkout(selector, cx));
     }
     fn checkout_hint(&self, cx: &App) -> (String, bool) {
         if self.checkout.is_some() {
@@ -148,21 +172,37 @@ impl SourceControlPane {
         let session = self.read.read(cx).session();
         let running = Sessions::try_global(cx).is_some_and(|sessions| {
             let sessions = sessions.read(cx);
-            sessions.items().iter().any(|item| Some(item.session_id.as_str()) == session && item.state == "running")
+            sessions
+                .items()
+                .iter()
+                .any(|item| Some(item.session_id.as_str()) == session && item.state == "running")
         });
         if running {
-            return ("Finish the active turn before changing checkout.".into(), false);
+            return (
+                "Finish the active turn before changing checkout.".into(),
+                false,
+            );
         }
-        ("Use this linked worktree as the session checkout.".into(), true)
+        (
+            "Use this linked worktree as the session checkout.".into(),
+            true,
+        )
     }
     /// The picker, offered once there's somewhere else to look.
     pub(super) fn scope_picker(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let choices = self.checkouts.as_ref().filter(|list| list.has_others())?.scope_choices();
+        let choices = self
+            .checkouts
+            .as_ref()
+            .filter(|list| list.has_others())?
+            .scope_choices();
         let current = self.selection(cx).map(|selection| selection.path);
         let label = choices
             .iter()
             .find(|choice| choice.path == current)
-            .map_or_else(|| "Session folder".to_string(), |choice| choice.label.clone());
+            .map_or_else(
+                || "Session folder".to_string(),
+                |choice| choice.label.clone(),
+            );
         let pane = cx.entity().downgrade();
         Some(
             div()
@@ -188,15 +228,22 @@ impl SourceControlPane {
                                 .disabled(self.busy(cx)),
                         )
                         .content(move |_, _, _| {
-                            v_flex().min_w(px(240.)).p_1().children(choices.iter().enumerate().map(|(at, choice)| {
-                                let (pane, path) = (pane.clone(), choice.path.clone());
-                                ListItem::new(SharedString::from(format!("git-scope-choice-{at}")))
+                            v_flex()
+                                .min_w(px(240.))
+                                .p_1()
+                                .children(choices.iter().enumerate().map(|(at, choice)| {
+                                    let (pane, path) = (pane.clone(), choice.path.clone());
+                                    ListItem::new(SharedString::from(format!(
+                                        "git-scope-choice-{at}"
+                                    )))
                                     .selected(choice.path == current)
                                     .on_click(move |_, _, cx| {
-                                        _ = pane.update(cx, |pane, cx| pane.pick_checkout(path.clone(), cx));
+                                        _ = pane.update(cx, |pane, cx| {
+                                            pane.pick_checkout(path.clone(), cx)
+                                        });
                                     })
                                     .child(choice.label.clone())
-                            }))
+                                }))
                         }),
                 )
                 .into_any_element(),
@@ -208,7 +255,11 @@ impl SourceControlPane {
             .map(|picker| div().px_2().pb_2().child(picker).into_any_element())
     }
     /// What stands where the commit box was while another checkout is shown.
-    pub(super) fn read_only_block(&self, selection: &CheckoutSelector, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn read_only_block(
+        &self,
+        selection: &CheckoutSelector,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let (hint, can) = self.checkout_hint(cx);
         let folder = selection.path.clone();
@@ -221,20 +272,24 @@ impl SourceControlPane {
                     .child(format!("Viewing {} (read-only)", selection.path)),
             )
             .child(
-                div().debug_selector(|| "git-use-session-checkout".into()).child(
-                    Button::new("git-use-session-checkout")
-                        .outline()
-                        .small()
-                        .w_full()
-                        .label(if self.checkout.is_some() {
-                            "Changing checkout…"
-                        } else {
-                            "Use as session checkout"
-                        })
-                        .tooltip(hint.clone())
-                        .disabled(!can)
-                        .on_click(cx.listener(move |pane, _, _, cx| pane.move_to_folder(folder.clone(), cx))),
-                ),
+                div()
+                    .debug_selector(|| "git-use-session-checkout".into())
+                    .child(
+                        Button::new("git-use-session-checkout")
+                            .outline()
+                            .small()
+                            .w_full()
+                            .label(if self.checkout.is_some() {
+                                "Changing checkout…"
+                            } else {
+                                "Use as session checkout"
+                            })
+                            .tooltip(hint.clone())
+                            .disabled(!can)
+                            .on_click(cx.listener(move |pane, _, _, cx| {
+                                pane.move_to_folder(folder.clone(), cx)
+                            })),
+                    ),
             )
             .child(div().text_sm().text_color(muted).child(hint))
             .into_any_element()

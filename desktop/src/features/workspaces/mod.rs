@@ -18,6 +18,7 @@ pub fn init(cx:&mut gpui_kit::App)->Result<(),String> {
     crate::features::session::view::session_pane::SessionPane::register_workspace(cx)?;
     crate::core::state::workspace_panes::WorkspacePanes::register(Box::new(top_tabs_codec::TopTabsCodec),cx)?;
     crate::core::state::workspace_panes::WorkspacePanes::register(Box::new(drawer_codec::DrawerCodec),cx)?;
+    crate::features::source_control::source_control_pane::SourceControlPane::register_workspace(cx)?;
     workspace_coordinator::WorkspaceCoordinator::init(cx);
     Ok(())
 }

@@ -1,10 +1,12 @@
 use super::SourceControlPane;
+use super::codec::SavedView;
 use crate::core::socket::{
     client::SocketClient,
     endpoint::Endpoint,
     fake_backend::{FakeBackend, Reply, hello},
     test_wait::until,
 };
+use crate::core::state::workspace_panes::WorkspaceKey;
 use crate::core::state::{selected_session::SelectedSession, sessions::Sessions};
 use crate::features::source_control::git_status::Section;
 use futures_channel::mpsc::unbounded;
@@ -113,17 +115,51 @@ fn a_session_comes_back_with_its_own_open_sections_and_place(cx: &mut TestAppCon
     });
     let (pane, visual) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
     let at = |y: f32| gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(y));
+    let key = |session: &str| WorkspaceKey {
+        machine: "owner".into(),
+        session_id: session.into(),
+        checkout_root: format!("/{session}"),
+    };
     pane.update(visual, |pane, cx| {
+        pane.bind_workspace(Some(key("a")), SavedView::default(), cx);
         pane.session_changed(Some("a".into()), cx);
         pane.open_sections.insert(Section::Staged);
         pane.scroll.set_offset(at(-40.));
+        let saved = pane.saved_view(&key("a"));
+        let view = SavedView::parse(&serde_json::Value::Null, &key("b")).unwrap();
+        pane.bind_workspace(Some(key("b")), view, cx);
         pane.session_changed(Some("b".into()), cx);
-        assert!(pane.open_sections.is_empty(), "another session starts folded");
+        assert!(
+            pane.open_sections.is_empty(),
+            "another session starts folded"
+        );
         assert_eq!(pane.scroll.offset(), at(0.));
         pane.open_sections.insert(Section::Untracked);
+        let view = SavedView::parse(&saved, &key("a")).unwrap();
+        pane.bind_workspace(Some(key("a")), view, cx);
         pane.session_changed(Some("a".into()), cx);
         assert_eq!(pane.open_sections, HashSet::from([Section::Staged]));
-        assert_eq!(pane.scroll.offset(), at(-40.));
+        assert_eq!(
+            pane.pending_place.map(|place| place.top),
+            Some(40.),
+            "the place waits for a read that proves it"
+        );
+    });
+}
+#[gpui::test]
+fn a_session_with_no_workspace_starts_folded(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        SelectedSession::init(cx);
+    });
+    let (pane, visual) = cx.add_window_view(|window, cx| SourceControlPane::new(window, cx));
+    pane.update(visual, |pane, cx| {
+        pane.open_sections.insert(Section::Staged);
+        pane.scroll
+            .set_offset(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-40.)));
+        pane.session_changed(Some("a".into()), cx);
+        assert!(pane.open_sections.is_empty());
+        assert_eq!(f32::from(pane.scroll.offset().y), 0.);
     });
 }
 // Pins: g9#9

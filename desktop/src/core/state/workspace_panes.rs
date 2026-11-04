@@ -27,7 +27,9 @@ pub trait PaneCodec: 'static {
         cx: &App,
     ) -> Result<(), String>;
     fn restore(&self, value: &Value, window: &mut Window, cx: &mut App);
-    fn validate_deactivate(&self,_:&App)->Result<(),String> {Ok(())}
+    fn validate_deactivate(&self, _: &App) -> Result<(), String> {
+        Ok(())
+    }
     /// Releases checkout-owned panes after a validated transcript-only commit; Chat keeps its staged rows.
     fn deactivate(&self, _: &mut Window, _: &mut App) {}
 }
@@ -73,7 +75,14 @@ impl WorkspacePanes {
         let name = codec.name();
         if !matches!(
             name,
-            "files" | "tree" | "chat" | "topTabs" | "drawerTab" | "diff" | "browser"
+            "files"
+                | "tree"
+                | "chat"
+                | "topTabs"
+                | "drawerTab"
+                | "diff"
+                | "browser"
+                | "sourceControl"
         ) {
             return Err("Unknown workspace pane.".into());
         }
@@ -117,8 +126,12 @@ impl WorkspacePanes {
         }
         Ok(snapshot)
     }
-    pub fn validate_deactivate(cx:&App)->Result<(),String> {
-        if let Some(panes)=cx.try_global::<Self>() {for codec in panes.codecs.values() {codec.validate_deactivate(cx)?;}}
+    pub fn validate_deactivate(cx: &App) -> Result<(), String> {
+        if let Some(panes) = cx.try_global::<Self>() {
+            for codec in panes.codecs.values() {
+                codec.validate_deactivate(cx)?;
+            }
+        }
         Ok(())
     }
     pub fn deactivate(window: &mut Window, cx: &mut App) {
@@ -197,6 +210,7 @@ fn validate(snapshot: &Value) -> Result<(), String> {
                     | "drawerTab"
                     | "diff"
                     | "browser"
+                    | "sourceControl"
             )
         })
     {
