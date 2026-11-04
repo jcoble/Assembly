@@ -1,13 +1,16 @@
 #[path = "ui_preview/support.rs"]
 mod core;
-// The preview exercises a subset of the reusable field API.
+// The preview exercises a subset of the reusable pieces.
+#[allow(dead_code)]
+#[path = "../src/components/activity/mod.rs"]
+mod activity;
 #[allow(dead_code)]
 #[path = "../src/features/source_control/git/git_operation.rs"]
 mod git_operation;
 #[allow(dead_code)]
 #[path = "../src/features/source_control/git/git_target.rs"]
 mod git_target;
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/components/inline_field/mod.rs"]
 mod inline_field;
 #[allow(dead_code)]
@@ -16,10 +19,13 @@ mod projects;
 #[path = "../src/features/settings/preview/mod.rs"]
 mod settings_preview;
 
+#[path = "../src/features/component_gallery.rs"]
+mod component_gallery;
 #[allow(dead_code)]
 #[path = "../src/features/preview_screen.rs"]
 mod preview_screen;
 mod features {
+    pub(crate) use crate::component_gallery;
     pub(crate) use crate::projects;
     pub(crate) mod source_control {
         pub(crate) use crate::git_operation;

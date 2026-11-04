@@ -19,6 +19,11 @@ fn child(machine: &str) -> SessionItem {
         activity_state: "working".into(),
         epoch: 12,
         can_steer: false,
+        task_url: None,
+        project_id: None,
+        branch: None,
+        created_ms: None,
+        updated_ms: None,
     }
 }
 #[test]

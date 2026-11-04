@@ -98,6 +98,9 @@ impl SessionsPane {
     }
     fn hold_source(&mut self, source: ExpectedRowSource, cx: &mut Context<Self>) {
         let feed = EngineFeed::global(cx);
+        feed.update(cx, |feed, _| {
+            feed.name_machine(source.machine.clone(), source.route_machine.clone())
+        });
         for topic in ["sessions", "needs_me"] {
             let scope = EngineScope {
                 machine: source.machine.clone(),

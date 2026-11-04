@@ -48,6 +48,7 @@ pub struct EngineFeed {
     watches: HashMap<EngineScope, Weak<ScopeWatch>>,
     pub(super) native_watches: HashMap<SessionKey, Weak<super::native_activity::NativeScope>>,
     error: Option<EngineRefusal>,
+    machine_names: HashMap<String, String>,
 }
 struct GlobalEngine(Entity<EngineFeed>);
 impl Global for GlobalEngine {}
@@ -67,6 +68,70 @@ impl EngineFeed {
     }
     pub fn items(&self, scope: &EngineScope) -> Vec<EngineItem> {
         self.store.items(scope)
+    }
+    /// A whole cut of a scope, as a snapshot delivers it.
+    #[cfg(test)]
+    pub fn test_snapshot(
+        &mut self,
+        scope: EngineScope,
+        values: Vec<serde_json::Value>,
+        cx: &mut Context<Self>,
+    ) {
+        let keys = self
+            .store
+            .snapshot(
+                scope.clone(),
+                super::EngineCursor {
+                    through: 1,
+                    at: None,
+                },
+                values,
+            )
+            .expect("a valid cut");
+        // A watch nothing can run, so the scope reads as someone holding it. The test's lifetime keeps it.
+        let watch = Rc::new(ScopeWatch {
+            _task: Task::ready(()),
+            active: Rc::new(Cell::new(true)),
+            coherent: Rc::new(Cell::new(true)),
+            resnapshot: Box::new(|| {}),
+        });
+        self.watches.insert(scope.clone(), Rc::downgrade(&watch));
+        std::mem::forget(watch);
+        cx.emit(EngineChanged {
+            scopes: vec![scope],
+            keys,
+            sessions: Vec::new(),
+        });
+        cx.notify();
+    }
+    /// A saved remote's own name for an engine, from whoever resolved it. The local engine has none.
+    pub fn name_machine(&mut self, machine: String, name: Option<String>) {
+        match name {
+            Some(name) => self.machine_names.insert(machine, name),
+            None => self.machine_names.remove(&machine),
+        };
+    }
+    pub fn machine_name(&self, machine: &str) -> Option<&str> {
+        self.machine_names.get(machine).map(String::as_str)
+    }
+    /// Every coherent machine-wide item of a topic, on all machines someone is watching.
+    pub fn topic_items(&self, topic: &str) -> Vec<EngineItem> {
+        self.store
+            .machine_scopes(topic)
+            .filter(|scope| self.loaded(scope))
+            .flat_map(|scope| self.store.items(scope))
+            .collect()
+    }
+    /// The machines someone holds a coherent view of this topic for.
+    pub fn loaded_machines(&self, topic: &str) -> Vec<String> {
+        let mut machines = self
+            .store
+            .machine_scopes(topic)
+            .filter(|scope| self.loaded(scope))
+            .map(|scope| scope.machine.clone())
+            .collect::<Vec<_>>();
+        machines.sort();
+        machines
     }
     pub fn need(&self, key: &EngineKey) -> Option<super::engine_items::NeedItem> {
         self.store

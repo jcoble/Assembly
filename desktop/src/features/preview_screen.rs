@@ -1,6 +1,6 @@
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::features::component_gallery::ComponentGallery;
 use crate::features::{projects, settings::preview as settings_preview};
-use crate::inline_field;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -10,8 +10,8 @@ pub struct Preview {
     projects: Entity<projects::ProjectsSampleScreen>,
     settings: Entity<settings_preview::SettingsPreview>,
     show_settings: bool,
-    show_fields: bool,
-    fields: Entity<inline_field::preview::InlineFieldPreview>,
+    show_gallery: bool,
+    gallery: Entity<ComponentGallery>,
     _navigation: Subscription,
 }
 
@@ -34,7 +34,7 @@ impl Render for Preview {
                             .label("Projects")
                             .on_click(cx.listener(|s, _, _, cx| {
                                 s.show_settings = false;
-                                s.show_fields = false;
+                                s.show_gallery = false;
                                 cx.notify();
                             })),
                     )
@@ -44,16 +44,16 @@ impl Render for Preview {
                             .label("Settings")
                             .on_click(cx.listener(|s, _, _, cx| {
                                 s.show_settings = true;
-                                s.show_fields = false;
+                                s.show_gallery = false;
                                 cx.notify();
                             })),
                     )
                     .child(
-                        Button::new("inline-fields")
+                        Button::new("components")
                             .outline()
-                            .label("Inline fields")
+                            .label("Components")
                             .on_click(cx.listener(|s, _, _, cx| {
-                                s.show_fields = true;
+                                s.show_gallery = true;
                                 cx.notify();
                             })),
                     )
@@ -69,8 +69,8 @@ impl Render for Preview {
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .child(if self.show_fields {
-                        self.fields.clone().into_any_element()
+                    .child(if self.show_gallery {
+                        self.gallery.clone().into_any_element()
                     } else if self.show_settings {
                         self.settings.clone().into_any_element()
                     } else {
@@ -83,7 +83,7 @@ impl Render for Preview {
 impl Preview {
     pub fn show_settings(&mut self, settings: bool, cx: &mut Context<Self>) {
         self.show_settings = settings;
-        self.show_fields = false;
+        self.show_gallery = false;
         cx.notify();
     }
 
@@ -95,7 +95,7 @@ impl Preview {
                 view.settings
                     .update(cx, |settings, cx| settings.focus_machine(name, cx));
                 view.show_settings = true;
-                view.show_fields = false;
+                view.show_gallery = false;
                 cx.notify();
             }
         });
@@ -104,8 +104,8 @@ impl Preview {
             projects,
             settings: cx.new(|cx| settings_preview::SettingsPreview::new(window, cx)),
             show_settings: false,
-            show_fields: false,
-            fields: cx.new(|cx| inline_field::preview::InlineFieldPreview::new(window, cx)),
+            show_gallery: false,
+            gallery: cx.new(|cx| ComponentGallery::new(window, cx)),
             _navigation: navigation,
         }
     }

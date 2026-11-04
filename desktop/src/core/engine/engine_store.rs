@@ -25,6 +25,12 @@ impl EngineStore {
             .filter_map(|key| self.items.get(key).cloned())
             .collect()
     }
+    /// The whole-machine scopes of a topic this store has heard from.
+    pub fn machine_scopes(&self, topic: &str) -> impl Iterator<Item = &EngineScope> {
+        self.scopes
+            .keys()
+            .filter(move |scope| scope.topic == topic && scope.key.is_none())
+    }
     /// Index references only: display facts remain solely in items.
     pub fn needs_for(&self, session: &SessionKey) -> Vec<&EngineItem> {
         self.needs_by_session

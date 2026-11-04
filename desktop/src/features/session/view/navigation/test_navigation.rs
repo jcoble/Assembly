@@ -361,10 +361,6 @@ impl NavigationFixture {
             .insert(row["id"].as_str().unwrap().into(), row);
         state.start_reply = Some(reply);
     }
-    /// Forgets the results so far, so `opened` waits for the next one.
-    pub fn forget_results(&self) {
-        self.results.borrow_mut().clear();
-    }
     pub fn fail_next_warm(&self) {
         self.state.lock().unwrap().fail_warm = true;
     }

@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Images;
 using System.Net;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
