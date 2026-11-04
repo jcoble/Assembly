@@ -7,6 +7,10 @@ namespace Assembly.Engine.Workflows.Reading;
 
 public static partial class WorkflowQueries
 {
+    public static JsonElement Settings(IReadScope scope) => scope.QueryFirst(
+        "SELECT json_object('id','workflow-settings','version',version,'mutedUntil',muted_until) FROM engine_workflow_settings WHERE singleton=1",
+        row => DisplayQueries.Parse(row.Text(0)));
+
     private const int ItemBudget = 32 * 1024;
     private const int PageBudget = 1024 * 1024;
     private sealed record Candidate(string? Json, long Bytes, string Id, long Position);

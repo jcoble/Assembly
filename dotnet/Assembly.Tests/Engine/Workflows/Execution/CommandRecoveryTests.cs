@@ -75,6 +75,27 @@ public sealed class CommandRecoveryTests
     }
 
     [Fact]
+    public async Task Standard_run_retry_uses_checked_absence_and_keeps_the_window_command_receipt()
+    {
+        await using var held = await InterruptedCommand.StartAsync(true);
+        await held.InterruptAsync(); var f = held.Fixture;
+        f.Core.Db.Writer.Write("test.retry-budget", scope => scope.Execute("UPDATE engine_step SET max_attempts=2"));
+        var need = held.OwnerContext();
+        var context = need with { EntityId = f.Run, ExpectedVersion = f.Core.Number("SELECT version FROM engine_run") };
+        var command = new Assembly.Engine.Workflows.Runs.RetryWorkflowStep(f.Core.Text("SELECT id FROM engine_step")!);
+        Assert.Equal("executor_quiescence_required", f.Core.Apply(context, command).Error);
+        await held.StopAndLoseExitAsync();
+        var prepared = await new WorkflowCommandRecovery(f.Core.Db, f.ProofRoot).PrepareAsync(need, default);
+        context = context with { CommandId = Guid.NewGuid() };
+        var result = f.Core.Db.Writer.Write("test.standard-retry", scope => f.Commands.ApplyPreparedWorkflowControlRetry(scope, context, command, prepared));
+        Assert.True(result.Applied, result.Error);
+        Assert.Equal("pending", f.Core.Text("SELECT state FROM engine_step"));
+        Assert.Equal("failed", f.Core.Text("SELECT state FROM engine_step_attempt"));
+        Assert.Equal(result, f.Core.Apply(context, command));
+        Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind='command_retry_authorized'"));
+    }
+
+    [Fact]
     public async Task Cancelled_parked_unknown_waits_for_exact_saved_executor_to_stop()
     {
         await using var held = await InterruptedCommand.StartAsync(false);

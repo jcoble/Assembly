@@ -47,6 +47,17 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (_recovering)
+                {
+                    db.Writer.Write("engine.recover", scope =>
+                    {
+                        var rows = Candidates(scope, "state='inflight'");
+                        foreach (var row in rows) Apply(scope, row, new RecoverEffect());
+                        _recovering = rows.Count == 100;
+                        return rows.Count;
+                    });
+                    if (_recovering) continue;
+                }
                 await CancelWorkflowExecutorsAsync(cancellationToken);
                 foreach (var (owner, active) in _active.Where(pair => pair.Value.Task.IsCompleted).ToArray())
                 {
@@ -118,13 +129,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
     private (Candidate? Claim, long? Deadline, bool More) Pass(IWriteScope s)
     {
         var now = time.GetUtcNow().ToUnixTimeMilliseconds();
-        if (_recovering)
-        {
-            var rows = Candidates(s, "state='inflight'");
-            foreach (var row in rows) Apply(s, row, new RecoverEffect());
-            _recovering = rows.Count == 100;
-            if (_recovering) return (null, null, true);
-        }
+        Workflows.Runs.WorkflowGates.OpenReady(s, machine, now);
         var expiryContext = new CommandContext(Guid.NewGuid(), machine, new(ActorKind.System, "engine.worker"), "message.expiry", 0, 0, now);
         var expiry = MessageExpiry.ExpireDue(s, expiryContext);
         if (expiry.Events.Count > 0)
