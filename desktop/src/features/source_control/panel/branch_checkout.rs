@@ -3,8 +3,9 @@
 //! before the receipt, so the wait starts before the command goes.
 use super::{PaneResult, SourceControlPane};
 use crate::core::engine::commands::WindowCommand;
+use crate::core::engine::engine_items::SessionItem;
 use crate::core::engine::{
-    EngineChanged, EngineFeed, EngineKey, EngineScope, EngineWatch, SessionKey,
+    EngineChanged, EngineFeed, EngineItem, EngineKey, EngineScope, EngineWatch, SessionKey,
 };
 use crate::features::source_control::git_failure::{GitFailure, Recovery};
 use gpui_kit::*;
@@ -176,17 +177,21 @@ impl SourceControlPane {
             })
         });
         self.checkout_task = Some(cx.spawn(async move |pane, cx| {
-            if let Some(row) = row {
-                if let Err(refusal) = row.await {
-                    _ = pane.update(cx, |pane, cx| {
-                        pane.checkout_refused(&refusal.message, false, cx)
-                    });
-                    return;
-                }
-            }
-            let Ok(Some(submitted)) =
-                pane.update(cx, |pane, cx| pane.submit_checkout(wire, operation, cx))
-            else {
+            let read = match row {
+                Some(row) => match row.await {
+                    Ok(read) => read,
+                    Err(refusal) => {
+                        _ = pane.update(cx, |pane, cx| {
+                            pane.checkout_refused(&refusal.message, false, cx)
+                        });
+                        return;
+                    }
+                },
+                None => None,
+            };
+            let Ok(Some(submitted)) = pane.update(cx, |pane, cx| {
+                pane.submit_checkout(wire, operation, read, cx)
+            }) else {
                 return;
             };
             let answer = submitted.await;
@@ -215,6 +220,7 @@ impl SourceControlPane {
         &mut self,
         wire: Value,
         operation: String,
+        read: Option<EngineItem>,
         cx: &mut Context<Self>,
     ) -> Option<
         Task<
@@ -226,7 +232,9 @@ impl SourceControlPane {
     > {
         let key = self.checkout.as_ref()?.key.clone();
         let feed = EngineFeed::global(cx);
-        let Some(session) = feed.read(cx).session(&key) else {
+        // The feed keeps a row it's asked for only once its subscription holds it, which may not have happened yet.
+        let held = feed.read(cx).session(&key);
+        let Some(session) = held.or_else(|| read.as_ref().and_then(SessionItem::of)) else {
             self.checkout_refused("This session isn't available.", false, cx);
             return None;
         };
