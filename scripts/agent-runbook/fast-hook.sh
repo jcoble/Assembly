@@ -4,7 +4,7 @@ umask 077
 payload=$(cat)
 case "$1" in
   pre)
-    case "$payload" in *worktree*) ;; *) printf '{}\n'; exit 0 ;; esac
+    case "$payload" in *worktree*|*[Aa][Ss][Ss][Ee][Mm][Bb][Ll][Yy]-[Dd][Oo][Tt][Nn][Ee][Tt]*) ;; *) printf '{}\n'; exit 0 ;; esac
     ;;
   post)
     # Standard JSON paths/IDs need no parser process. Escaped paths go to Node.

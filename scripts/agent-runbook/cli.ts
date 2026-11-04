@@ -5,6 +5,7 @@ import { harnessFor } from './harnesses.ts';
 import { stopDecision, shouldNudge, contextPercent, toolCallsSince } from './stale.ts';
 import { setHookBudget } from './notion.ts';
 import { checkWorktreeCommand } from './guard.ts';
+import { checkDataCommand, namesProtectedFolder, DATA_DENY } from './data-guard.ts';
 import { createWorktree, backupWorktree, lease } from './worktree.ts';
 import { registry, tryGit } from './worktree-state.ts';
 import { spawn } from 'node:child_process';
@@ -27,7 +28,12 @@ try {
       lease(path, provider + ':' + session);
       console.log(path);
     } else if (eventName === 'PreToolUse') {
-      const result = checkWorktreeCommand(String(event.tool_input?.command || ''), event.cwd);
+      const text = String(event.tool_input?.command || '');
+      let data: { deny?: string };
+      try { data = checkDataCommand(text, event.cwd); } catch { data = namesProtectedFolder(text) ? { deny: DATA_DENY } : {}; }
+      let worktree: { deny?: string } = {};
+      try { worktree = checkWorktreeCommand(text, event.cwd); } catch (error) { if (!data.deny) throw error; }
+      const result = worktree.deny ? worktree : data;
       flushPending(provider, session);
       console.log(JSON.stringify(result.deny ? { hookSpecificOutput: { hookEventName: eventName, permissionDecision: 'deny', permissionDecisionReason: result.deny } } : {}));
     } else if (['SessionEnd', 'WorktreeRemove'].includes(eventName)) {
