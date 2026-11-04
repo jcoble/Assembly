@@ -20,6 +20,7 @@ public sealed partial class RemoteMachineTests
         };
         await remote.StartAsync();
         await using var desktop = await DesktopOnAsync(remote, Directory.CreateTempSubdirectory("assembly-desktop-").FullName);
+        await desktop.Connections.ReadyAsync(Box);
 
         using var socket = await ApiTests.OpenOwnerSocketAsync(desktop.Address, DesktopToken);
         var created = await ApiTests.SocketRequestAsync(socket, 1, "machines", "agents",
