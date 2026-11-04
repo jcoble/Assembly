@@ -3,7 +3,8 @@ using Assembly.Application.Features.Chat.Rows;
 
 namespace Assembly.DevSeed;
 
-public sealed record SeedRequest(int Version, string CanonicalWorktree, string ComputedHome, string ManifestPath, bool DryRun = false);
+public sealed record SeedRemoteLane(string Name, int Number);
+public sealed record SeedRequest(int Version, string CanonicalWorktree, string ComputedHome, string ManifestPath, bool DryRun = false, SeedRemoteLane? RemoteLane = null);
 public sealed record SeedManifest(int Version, string OriginId, string Kind, IReadOnlyList<SeedSource> Sources);
 public sealed record SeedSource
 {

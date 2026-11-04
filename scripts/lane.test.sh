@@ -20,7 +20,10 @@ export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
 export CALLS=$fixture/calls
 mkdir -p "$fixture_home/dev/work/worktrees/Assembly" "$fixture/bin" "$fixture/main/scripts" "$fixture/main/dotnet/scripts" "$fixture/main/desktop"
-cp "$here/lane.sh" "$here/lane-env.sh" "$fixture/main/scripts/"
+cp "$here/lane.sh" "$here/lane-env.sh" "$here/dev-lane-clean.ts" "$here/dev-remote-identity.ts" "$here/dev-remote-process.ts" "$here/seed-dev.ts" "$fixture/main/scripts/"
+mkdir -p "$fixture/main/dotnet/Assembly.Desktop"
+printf '<Project/>\n' > "$fixture/main/dotnet/Assembly.Desktop/Assembly.Desktop.csproj"
+printf 'native fixture\n' > "$fixture/main/desktop/Cargo.toml"
 printf '.lane\n' > "$fixture/main/.gitignore"
 printf 'native fixture\n' > "$fixture/main/desktop/marker"
 cat > "$fixture/main/dotnet/scripts/workbox.sh" <<'SH'
@@ -30,9 +33,12 @@ SH
 chmod +x "$fixture/main/dotnet/scripts/workbox.sh"
 cat > "$fixture/bin/ssh" <<'SH'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$CALLS"
 # Lane 1 is already reserved; new lanes must use 2.
-case "$*" in *'cat ~/assembly-dotnet-*/lane-number'*) echo 1 ;; esac
+case "$*" in
+  *'flock '*) echo rpc >> "$CALLS"; echo '{"host":"fixture","reserved":true}' ;;
+  *'cat ~/assembly-dotnet-*/lane-number'*) echo 1 ;;
+  *) printf '%s\n' "$*" >> "$CALLS" ;;
+esac
 SH
 chmod +x "$fixture/bin/ssh"
 export PATH=$fixture/bin:$PATH
@@ -57,7 +63,13 @@ wait_fixture_path() {
 }
 make_lane() {
   git -C "$repo" worktree add -q -b lane/example "$lane" main
-  printf 'LANE_NAME=example\nLANE_NUMBER=2\n' > "$lane/.lane"
+  owner=11111111-1111-1111-1111-111111111111
+  printf 'LANE_NAME=example\nLANE_NUMBER=2\nLANE_OWNER=%s\n' "$owner" > "$lane/.lane"
+  mkdir -p "$fixture_home/assembly-dev/lanes"
+  node --input-type=module - "$fixture_home/assembly-dev/lanes/example.json" "$lane" "$owner" <<'JS'
+import fs from 'node:fs'; import {hostname} from 'node:os';
+fs.writeFileSync(process.argv[2], JSON.stringify({version:1,name:'example',number:2,owner:process.argv[4],host:hostname(),worktree:process.argv[3]}));
+JS
   : > "$CALLS"
 }
 refused() {
@@ -131,9 +143,9 @@ printf '%s\n' "$unrelated" > "$data/mac/app.pid"
 printf 'app=%s\n' "$unrelated" > "$data/ui-check/state"
 removed
 kill -0 "$unrelated"
-[ "$(cat "$CALLS")" = 'remove lane/example' ]
-[ -f "$data/mac/app.pid" ]
-echo 'PASS merged removal preserves unrelated PID and desktop data; cleans remote once'
+[ "$(cat "$CALLS")" = $'rpc\nrpc' ]
+[ ! -e "$data" ]
+echo 'PASS merged removal preserves unrelated PID, inspects remote and cleans owned data'
 make_lane
 printf 'LANE_ADOPTED=1\n' >> "$lane/.lane"
 removed
@@ -142,7 +154,9 @@ echo 'PASS adopted removal preserves remote reservation'
 # New checkout succeeds with only native roots, keeps reserved numbering/ports and needs no pnpm installs.
 run_lane new fresh > "$fixture/output" 2>&1
 fresh=$fixture_home/dev/work/worktrees/Assembly/fresh
-[ "$(cat "$fresh/.lane")" = $'LANE_NAME=fresh\nLANE_NUMBER=2' ]
+grep -qx 'LANE_NAME=fresh' "$fresh/.lane"
+grep -qx 'LANE_NUMBER=2' "$fresh/.lane"
+grep -q '^LANE_OWNER=' "$fresh/.lane"
 values=$(cd "$fresh" && HOME="$fixture_home" bash -ec '. scripts/lane-env.sh; echo "$DESKTOP_PORT $BOX_PORT $BOX_UNIT $DATA"')
 [ "$values" = "18817 9817 assembly-dotnet-fresh $fixture_home/assembly-dotnet-fresh" ]
 [ "$(git -C "$fresh" rev-parse HEAD)" = "$(git -C "$repo" rev-parse main)" ]

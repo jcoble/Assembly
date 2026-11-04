@@ -1,9 +1,9 @@
 // Shared local/remote development dependency check. Installs exact versions in lane-owned immutable directories.
-import { promises as fs } from 'node:fs';
+import { constants as fsConstants, promises as fs } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { command } from './dev-remote-process.ts';
-// Pinned and lane-owned: Workbox Test has no npm, and every machine should install with the same one.
+// Workbox Test has no npm, so a machine without one gets this pinned copy in the lane's own folder.
 export const npmPin = { version: '11.17.0', integrity: 'sha512-PurxiZexEHDTE4SSaLI3ZrnbAGiZfeyUcQcxcP5D+hfytNAze/D1IzDuInTn9XVLIbAQUnQuSPXJx02LHjLvQw==' };
 export const packages = ['@agentclientprotocol/claude-agent-acp', '@agentclientprotocol/codex-acp', '@anthropic-ai/claude-code', '@openai/codex'] as const;
 export type ToolVersions = Record<typeof packages[number], string>;
@@ -37,9 +37,11 @@ export async function toolsCurrent(adapters: string, descriptor: string, key: st
 async function readAgents(descriptor: string): Promise<Record<string, { cli?: string; args: string[] }>> {
   return Object.fromEntries(JSON.parse(await fs.readFile(descriptor, 'utf8')).map((agent: { id: string }) => [agent.id, agent]));
 }
-export async function ensureNpm(adapters: string, signal: AbortSignal, run = command, pin = npmPin) {
+export async function ensureNpm(adapters: string, signal: AbortSignal, run = command, pin = npmPin, path = process.env.PATH ?? '') {
   const home = join(adapters, 'npm', pin.version), bin = join(home, 'bin');
-  try { await fs.access(join(bin, 'npm')); return bin; } catch { }
+  for (const directory of [bin, ...path.split(':').filter(Boolean)]) {
+    try { await fs.access(join(directory, 'npm'), fsConstants.X_OK); return directory; } catch { }
+  }
   const stage = home + '.' + randomUUID(), archive = join(stage, 'npm.tgz');
   await fs.mkdir(join(stage, 'bin'), { recursive: true });
   try {

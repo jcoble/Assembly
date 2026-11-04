@@ -24,22 +24,30 @@ public static partial class DevSeed
 {
     // Tests inject crashes at transaction/asset boundaries; production has no injection input.
     public static SeedReport Run(SeedRequest request, CancellationToken cancellationToken = default, Action<string>? fault = null)
+        => RunOnHost(request, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), cancellationToken, fault);
+
+    internal static SeedReport RunOnHost(SeedRequest request, string userHome, CancellationToken cancellationToken = default, Action<string>? fault = null)
     {
         if (request.Version != 1) throw new InvalidDataException("Unsupported request version.");
         var worktree = SeedFiles.SafePath(request.CanonicalWorktree);
-        var home = SeedFiles.SafePath(SeedFiles.Profile(worktree), false);
+        var home = SeedFiles.SafePath(request.RemoteLane is { } lane ? SeedFiles.RemoteProfile(worktree, lane, userHome) : SeedFiles.Profile(worktree, userHome), false);
         if (request.ComputedHome != home) throw new InvalidDataException("Destination must be the exact launcher-derived profile.");
         var bundle = SeedSources.Read(request.ManifestPath, cancellationToken);
+        // The same archive can be visible on both hosts in one desktop store; their replica keys must be disjoint.
+        if (request.RemoteLane is not null)
+            bundle = bundle with { Manifest = bundle.Manifest with { OriginId = SeedJson.Stringify(new[] { "remote", bundle.Manifest.OriginId }) } };
         if (SeedFiles.OverlapsHome(bundle.Inputs.Select(input => input.Path), home)) throw new InvalidDataException("Source/target overlap is refused.");
         var replicas = Transform(bundle, home);
         var folders = Folders(bundle, replicas, home);
         var digest = SeedFiles.Hash(SeedJson.Stringify(new { home, bundle.Manifest.OriginId, bundle.Inputs, replicas, folders }));
         var originals = bundle.Sessions.ToDictionary(s => s.Key);
+        var transformations = new List<string> { "Fresh deterministic session/run identities", "Provider resume handles and machines removed", "Generated isolated fixture repository; surrounding files are synthetic unless explicitly listed", "Only recognized exact attachment/file references rewritten" };
+        if (request.RemoteLane is not null) transformations.Add("Remote replica identities use a separate origin namespace to coexist with local replicas.");
         var template = new SeedReceipt(1, digest, bundle.Manifest.OriginId, bundle.Inputs, replicas.Select(r => new ReceiptReplica(r.OriginalKey, r.Id, r.TopId, r.ParentId, originals[r.OriginalKey].Metadata, originals[r.OriginalKey].Provider,
                 originals[r.OriginalKey].ProviderConfidence, originals[r.OriginalKey].OriginalHost,
                 originals[r.OriginalKey].Provenance, originals[r.OriginalKey].Inputs ?? [], r.Fingerprint,
                 r.Rows.Select(row => SeedFiles.Hash(SeedJson.Stringify(row))).ToArray(), r.Details.Select(d => SeedFiles.Hash(SeedJson.Stringify(d))).ToArray(), r.RunMap, r.ItemMap)).ToArray(), folders,
-            ["Fresh deterministic session/run identities", "Provider resume handles and machines removed", "Generated isolated fixture repository; surrounding files are synthetic unless explicitly listed", "Only recognized exact attachment/file references rewritten"], bundle.Limitations);
+            transformations, bundle.Limitations);
         var directory = Path.Combine(home, "seed-imports");
         var final = Path.Combine(directory, digest + ".json"); var pending = Path.Combine(directory, digest + ".pending.json");
         var databasePath = Path.Combine(home, "assembly.db"); var stageDatabase = databasePath + ".seed-" + digest + ".staging";

@@ -12,8 +12,15 @@
 #   scripts/lane.sh list            the lanes here and the numbers reserved on Workbox Test
 set -euo pipefail
 cd "$(dirname "$0")/.."
-mode=${1:?usage: scripts/lane.sh new|remove|list [name]}
+mode=${1:?usage: scripts/lane.sh new|adopt|clean|remove|list [name]}
+script_root=$PWD
 name=${2:-}
+if [ "$mode" != list ]; then
+  [[ $name =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "a lane name is lowercase letters, digits and dashes" >&2; exit 2; }
+  case "$name" in main|base|rail|remote|assembly-dotnet|assembly-dotnet-base|assembly-dotnet-rail|assembly-remote)
+    echo "lane lifecycle refuses protected names" >&2; exit 1 ;;
+  esac
+fi
 lanes=$HOME/dev/work/worktrees/Assembly
 dir=$lanes/$name
 main=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
@@ -23,14 +30,15 @@ case "$mode" in
   new)
     [[ $name =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "a lane name is lowercase letters, digits and dashes" >&2; exit 2; }
     [ ! -e "$dir" ] || { echo "$dir already exists" >&2; exit 1; }
+    node "$script_root/scripts/dev-lane-clean.ts" stale "$dir"
     used=$(reserved)
     number=""
     for n in $(seq 9); do grep -qx "$n" <<<"$used" || { number=$n; break; }; done
     [ -n "$number" ] || { echo "all 9 lane numbers are taken on Workbox Test; remove a lane first" >&2; exit 1; }
-    ssh workbox-test "mkdir -p ~/assembly-dotnet-$name && echo $number > ~/assembly-dotnet-$name/lane-number"
+    owner=$(node "$script_root/scripts/dev-lane-clean.ts" init "$dir" "$number")
     git -C "$main" worktree add -q -b "lane/$name" "$dir" main
     git -C "$dir" config core.hooksPath .githooks
-    printf 'LANE_NAME=%s\nLANE_NUMBER=%s\n' "$name" "$number" > "$dir/.lane"
+    printf 'LANE_NAME=%s\nLANE_NUMBER=%s\nLANE_OWNER=%s\n' "$name" "$number" "$owner" > "$dir/.lane"
     (cd "$dir" && . scripts/lane-env.sh && echo "lane $name (number $number) is at $dir on lane/$name:
   Desktop backend 127.0.0.1:$DESKTOP_PORT, data $DATA
   Workbox Test host 127.0.0.1:$BOX_PORT, unit $BOX_UNIT, folder ~/$BOX_DATA") ;;
@@ -40,11 +48,22 @@ case "$mode" in
     number=$(ssh workbox-test "cat ~/assembly-dotnet-$name/lane-number 2>/dev/null" || true)
     [ -n "$number" ] || { echo "no lane named '$name' is reserved on Workbox Test" >&2; exit 1; }
     git -C "$main" fetch -q origin "lane/$name"
-    git -C "$main" worktree add -q -B "lane/$name" "$dir" FETCH_HEAD
+    owner=$(node "$script_root/scripts/dev-lane-clean.ts" adopt "$dir" "$number")
+    if git -C "$main" show-ref --verify --quiet "refs/heads/lane/$name"; then
+      [ "$(git -C "$main" rev-parse "lane/$name")" = "$(git -C "$main" rev-parse FETCH_HEAD)" ] || {
+        echo "existing lane branch differs from origin; its work is preserved" >&2; exit 1;
+      }
+      git -C "$main" worktree add -q "$dir" "lane/$name"
+    else
+      git -C "$main" worktree add -q -b "lane/$name" "$dir" FETCH_HEAD
+    fi
     git -C "$dir" branch -q --set-upstream-to="origin/lane/$name"
     git -C "$dir" config core.hooksPath .githooks
-    printf 'LANE_NAME=%s\nLANE_NUMBER=%s\nLANE_ADOPTED=1\n' "$name" "$number" > "$dir/.lane"
+    printf 'LANE_NAME=%s\nLANE_NUMBER=%s\nLANE_ADOPTED=1\nLANE_OWNER=%s\n' "$name" "$number" "$owner" > "$dir/.lane"
     echo "adopted lane $name (number $number) at $dir on lane/$name" ;;
+  clean)
+    [ -n "$name" ] || { echo "clean needs a lane name" >&2; exit 2; }
+    exec node "$script_root/scripts/dev-lane-clean.ts" clean "$dir" ;;
   remove)
     [ -n "$name" ] && [ -f "$dir/.lane" ] || { echo "no lane named '$name' at $dir" >&2; exit 1; }
     dirty=$(git -C "$dir" status --short)
@@ -87,14 +106,15 @@ case "$mode" in
       fi
     )
     if grep -q '^LANE_ADOPTED=1' "$dir/.lane"; then
-      echo "lane $name was adopted here; its Workbox Test host stays for the machine that made it to remove"
+      node "$script_root/scripts/dev-lane-clean.ts" local "$dir"
+      echo "lane $name was adopted here; its Workbox Test host stays for the creator"
     else
-      "$dir/dotnet/scripts/workbox.sh" remove "lane/$name"
+      node "$script_root/scripts/dev-lane-clean.ts" clean "$dir"
     fi
     git -C "$main" worktree remove "$dir"
     git -C "$main" worktree prune
     git -C "$main" branch -d "lane/$name" 2>/dev/null && echo "deleted the local branch lane/$name (merged, or all of it pushed)" || echo "kept branch lane/$name (it has commits that aren't merged or pushed)"
-    echo "removed lane $name; its desktop data folder, if any, stays at ~/assembly-dotnet-$name" ;;
+    echo "removed lane $name and its exclusively owned resources" ;;
   list)
     git -C "$main" worktree list | grep "$lanes/" || echo "no lanes here"
     echo "numbers reserved on Workbox Test:"

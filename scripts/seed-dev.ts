@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { lane } from './dev-remote-identity.ts';
 
 export function parseArgs(args: string[]): { worktree: string; manifest: string; dryRun: boolean } {
   let worktree = ''; let manifest = ''; let dryRun = false;
@@ -69,14 +70,26 @@ Stop the isolated app first. Existing sessions, drafts, settings and files are p
 replicas are refused. No provider resumes, remote connections, owner clones, app launch or overwrite.
 Output reports unique real/synthetic sessions, rows/tools/details/files/attachments and limitations.
 Dry run validates without destination writes. Never publish private manifests or source recordings.`;
-export async function main(args: string[]): Promise<void> {
+export async function main(args: string[], launcherOwned = false): Promise<void> {
   if (args.length === 1 && args[0] === '--help') { console.log(help); return; }
-  const options = parseArgs(args); const { root, home } = profileFor(options.worktree);
+  const remoteIndex = args.indexOf('--lane-remote');
+  let remoteLane: { name: string; number: number } | undefined;
+  let remoteData: string | undefined;
+  if (remoteIndex >= 0) {
+    const [name, rawNumber] = args.slice(remoteIndex + 1, remoteIndex + 3);
+    remoteData = lane(name, Number(rawNumber)).data; remoteLane = { name, number: Number(rawNumber) };
+    args = [...args.slice(0, remoteIndex), ...args.slice(remoteIndex + 3)];
+  }
+  const options = parseArgs(args); const profile = profileFor(options.worktree); const root = profile.root;
+  const home = remoteLane ? safePath(join(homedir(), remoteData!, 'serve'), false) : profile.home;
+  if (remoteLane && root !== join(homedir(), remoteData!, 'checkouts/build')) throw Error('remote seed checkout is not lane-owned');
+  if (launcherOwned && JSON.parse(readFileSync(join(home, 'launcher.lock'), 'utf8')).launcher !== process.pid)
+    throw Error('seed requires the calling launcher lock');
   const manifestPath = safePath(options.manifest);
   const info = lstatSync(manifestPath);
   if (!info.isFile() || info.nlink !== 1) throw new Error('Manifest must be a regular file without hardlink aliases.');
   console.log(`Worktree: ${root}\nLocal database: ${join(home, 'assembly.db')}`);
-  const release = options.dryRun ? () => {} : takeLauncherLock(home);
+  const release = options.dryRun || launcherOwned ? () => {} : takeLauncherLock(home);
   const environment = { ...process.env, MSBUILDDISABLENODEREUSE: '1', DOTNET_CLI_TELEMETRY_OPTOUT: '1', DOTNET_NOLOGO: '1' };
   delete environment.ASSEMBLY_REMOTE;
   let child: ReturnType<typeof spawn> | undefined;
@@ -103,7 +116,7 @@ export async function main(args: string[]): Promise<void> {
     child = spawn('dotnet', [join(output, 'Assembly.DevSeed.dll')], { cwd: root, env: environment, stdio: ['pipe', 'inherit', 'inherit'] });
     const applied = waitForOwnedClose(child);
     child.stdin!.on('error', () => {});
-    child.stdin!.end(JSON.stringify({ version: 1, canonicalWorktree: root, computedHome: home, manifestPath, dryRun: options.dryRun }));
+    child.stdin!.end(JSON.stringify({ version: 1, canonicalWorktree: root, computedHome: home, manifestPath, dryRun: options.dryRun, remoteLane }));
     const code = await applied;
     checkCancellation();
     if (code !== 0) throw new Error(`Development seed companion failed (${code}).`);

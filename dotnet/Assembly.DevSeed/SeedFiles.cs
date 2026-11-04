@@ -127,13 +127,24 @@ public static partial class SeedFiles
         try { if (Fsync(fd) != 0) throw new IOException("Cannot sync seed publication directory."); }
         finally { Close(fd); }
     }
-    public static string Profile(string worktree)
+    public static string Profile(string worktree, string? userHome = null)
     {
         worktree = SafePath(worktree);
         foreach (var marker in new[] { "desktop/Cargo.toml", "dotnet/Assembly.Desktop/Assembly.Desktop.csproj" })
             if (!File.Exists(Path.Combine(worktree, marker))) throw new InvalidDataException("Not an Assembly worktree.");
         var name = Regex.Replace(Path.GetFileName(worktree), "[^a-zA-Z0-9-]", "-");
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "assembly-dev", "worktrees", name + "-" + Hash(worktree)[..16]);
+        return Path.Combine(userHome ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "assembly-dev", "worktrees", name + "-" + Hash(worktree)[..16]);
+    }
+    public static string RemoteProfile(string worktree, SeedRemoteLane lane, string userHome)
+    {
+        if (!Regex.IsMatch(lane.Name, "^[a-z0-9][a-z0-9-]*$") || lane.Number is < 1 or > 9 ||
+            new[] { "main", "base", "rail", "remote", "assembly-dotnet", "assembly-dotnet-base", "assembly-dotnet-rail", "assembly-remote" }.Contains(lane.Name))
+            throw new InvalidDataException("Remote seed refuses main or protected lane names.");
+        var root = Path.Combine(userHome, "assembly-dotnet-" + lane.Name);
+        if (worktree != Path.Combine(root, "checkouts", "build") || File.ReadAllText(Path.Combine(root, "lane-number")).Trim() != lane.Number.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            throw new InvalidDataException("Remote seed must use the lane-owned checkout and reservation.");
+        _ = Profile(worktree, userHome);
+        return Path.Combine(root, "serve");
     }
     public static void CheckAsset(SeedAsset asset, bool attachment, string? attachmentRoot)
     {

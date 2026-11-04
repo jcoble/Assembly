@@ -52,6 +52,8 @@ export async function requireCleanBackend(root: string, signal?: AbortSignal) {
 }
 export type Lane = { name: string; number: number; unit: string; data: string; port: number };
 export function lane(name: string, number: number): Lane {
+  if (['main', 'base', 'rail', 'remote', 'assembly-dotnet', 'assembly-dotnet-base', 'assembly-dotnet-rail', 'assembly-remote'].includes(name))
+    throw new Error('lane identity refuses protected names');
   if (!/^[a-z0-9][a-z0-9-]*$/.test(name) || !Number.isInteger(number) || number < 1 || number > 9)
     throw new Error('automatic remote sync refuses main or an invalid lane');
   return { name, number, unit: `assembly-dotnet-${name}`, data: `assembly-dotnet-${name}`, port: 9797 + number * 10 };

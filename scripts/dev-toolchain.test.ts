@@ -88,17 +88,26 @@ test('a machine with no npm gets the pinned one, usable from PATH, and only down
   const f = fixture();
   try {
     const { archive, pin } = fakeNpmArchive(f.root), calls: string[] = [], adapters = join(f.root, 'adapters');
-    const bin = await ensureNpm(adapters, new AbortController().signal, realTools(archive, calls) as any, pin);
+    const bin = await ensureNpm(adapters, new AbortController().signal, realTools(archive, calls) as any, pin, '');
     assert.equal(execFileSync(join(bin, 'npm'), { encoding: 'utf8' }).trim(), 'pinned-npm');
-    assert.equal(await ensureNpm(adapters, new AbortController().signal, realTools(archive, calls) as any, pin), bin);
+    assert.equal(await ensureNpm(adapters, new AbortController().signal, realTools(archive, calls) as any, pin, ''), bin);
     assert.deepEqual(calls, ['curl', 'tar']);
+  } finally { f.close(); }
+});
+test('a machine that already has npm downloads nothing', async () => {
+  const f = fixture();
+  try {
+    const own = join(f.root, 'own-bin'), calls: string[] = [];
+    f.write(join(own, 'npm'), '#!/bin/sh\n'); execFileSync('chmod', ['+x', join(own, 'npm')]);
+    assert.equal(await ensureNpm(join(f.root, 'adapters'), new AbortController().signal, realTools('', calls) as any, undefined, own), own);
+    assert.deepEqual(calls, []);
   } finally { f.close(); }
 });
 test('an npm archive that differs from the pin is refused and leaves nothing installed', async () => {
   const f = fixture();
   try {
     const { archive, pin } = fakeNpmArchive(f.root), adapters = join(f.root, 'adapters'), calls: string[] = [];
-    await assert.rejects(ensureNpm(adapters, new AbortController().signal, realTools(archive, calls) as any, { ...pin, integrity: 'sha512-wrong' }), /pinned integrity/);
+    await assert.rejects(ensureNpm(adapters, new AbortController().signal, realTools(archive, calls) as any, { ...pin, integrity: 'sha512-wrong' }, ''), /pinned integrity/);
     assert.deepEqual(calls, ['curl']);
     assert.equal(existsSync(join(adapters, 'npm', pin.version)), false);
   } finally { f.close(); }
