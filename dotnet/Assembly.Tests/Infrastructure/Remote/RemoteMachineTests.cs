@@ -535,6 +535,27 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     private static async Task<JsonElement> SessionAsync(DesktopBackend backend, string token, string session) =>
         Assert.Single((await TopicStateAsync(backend, token, "sessions", session)).GetProperty("items").EnumerateArray()).GetProperty("item").Clone();
 
+    // sessions.create returns before the owner's checkout settles and its start is delivered, and config.warm refuses with
+    // checkout_not_ready until then. Like the app, wait on the owner's pushed Engine row instead of racing it.
+    private async Task WaitSessionReadyAsync(string sessionId)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var changed = new SemaphoreSlim(0);
+        using var subscription = _boxEngine.Publisher.Register(_ => changed.Release(), out _);
+        while (true)
+        {
+            var row = _boxEngine.Reader.Entity("session", sessionId, deadline.Token);
+            if (row is { } session && session.GetProperty("checkoutState").GetString() == "ready"
+                && session.GetProperty("state").GetString() == "idle" && session.GetProperty("activityState").GetString() == "idle")
+                return;
+            try { await changed.WaitAsync(deadline.Token); }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+            {
+                Assert.Fail($"The owner's session never became ready: {row}");
+            }
+        }
+    }
+
     private static Task<JsonElement> RowsPageAsync(DesktopBackend backend, string token, string session, int limit = 50) =>
         FeatureResultAsync(backend, token, "rows", "page", new { session, limit }, bulk: true);
 

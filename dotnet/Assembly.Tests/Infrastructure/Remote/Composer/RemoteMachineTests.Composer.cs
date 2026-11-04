@@ -51,6 +51,7 @@ public sealed partial class RemoteMachineTests
         var saved = await FeatureResultAsync(_box, BoxToken, "config", "get", new { session = id });
         Assert.Equal("b", saved.GetProperty("choices").GetProperty("model").GetString());
         Assert.Equal(_boxHome, (await SessionAsync(_box, BoxToken, id)).GetProperty("root").GetString());
+        await WaitSessionReadyAsync(id);
         await SendTextAsync(socket, $$$$$"""{"t":"call","id":2,"feature":"config","method":"warm","args":{"session":"{{{{{id}}}}}","targetId":"{{{{{target}}}}}"}}""");
         var warmingTask = _boxLauncher.NextAsync();
         var warmReply = ReadTextAsync(socket);

@@ -31,5 +31,5 @@ fi
 [ "$(wc -l < "$fixture/calls")" -eq 1 ]
 [ "$(cat "$fixture/calls")" = 'scripts/check-remote.ts throwaway 8 HEAD' ] || { echo "FAIL: first command was $(cat "$fixture/calls"), expected the identity preflight"; exit 1; }
 [ ! -e "$fixture/evidence" ]
-rg -q 'remote a+; desktop b+' "$fixture/out"
+grep -Eq 'remote a+; desktop b+' "$fixture/out"
 echo 'ok check4 refuses mismatched backend before setup or tests'
