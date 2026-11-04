@@ -39,6 +39,7 @@ impl PrDetail {
     pub(super) fn summary_page(
         &self,
         detail: Option<&PullRequestDetail>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let wide = self.width == px(0.) || self.width >= px(TWO_COLUMNS);
@@ -56,7 +57,7 @@ impl PrDetail {
         )
         .absolute()
         .size_full();
-        let main = self.main_column(detail, wide, cx);
+        let main = self.main_column(detail, wide, window, cx);
         let side = detail.map(|detail| self.side_column(detail, cx));
         let page = if wide {
             h_flex()
@@ -140,6 +141,7 @@ impl PrDetail {
         &self,
         detail: Option<&PullRequestDetail>,
         wide: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let column = v_flex()
@@ -171,10 +173,15 @@ impl PrDetail {
         let open = detail.state == "OPEN";
         let activity = v_flex()
             .gap_2()
-            .pt_3()
+            .pt_4()
             .border_t_1()
             .border_color(border)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child("Activity"))
+            .child(
+                div()
+                    .text_size(px(15.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Activity"),
+            )
             .children(
                 activity_rows(detail)
                     .into_iter()
@@ -196,10 +203,10 @@ impl PrDetail {
             )
             .child(body)
             .child(activity)
-            .children(self.reply_box(cx))
+            .children(self.reply_box(window, cx))
             .when(open, |column| {
                 column
-                    .child(self.composer(cx))
+                    .child(self.composer(window, cx))
                     .child(self.merge_card(detail, cx))
             })
             .into_any_element()

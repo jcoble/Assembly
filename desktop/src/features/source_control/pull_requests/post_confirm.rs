@@ -3,7 +3,9 @@ use super::{
     review_draft::{LineComment, ReviewDraft, ReviewIdentity},
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
+};
 use gpui_kit::*;
 use serde_json::{Value, json};
 
@@ -83,6 +85,17 @@ impl PostRequest {
             Action::Comment => "Post this comment?",
         }
     }
+    /// What follows the pull request's name at the top: the head a review is tied to, or the comment a reply answers.
+    fn fact(&self) -> Option<String> {
+        match self.action {
+            Action::Review(_) => Some(format!(
+                "head {}",
+                self.identity.head.chars().take(10).collect::<String>()
+            )),
+            Action::Reply(id) => Some(format!("comment {id}")),
+            Action::Comment => None,
+        }
+    }
     pub(super) fn action(&self) -> &'static str {
         match self.action {
             Action::Review(_) => "review",
@@ -152,11 +165,11 @@ impl PostConfirm {
 impl Render for PostConfirm {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (danger, muted, border, radius) = (
+        let (danger, muted, border, mono) = (
             theme.danger,
             theme.muted_foreground,
             theme.border,
-            theme.radius,
+            theme.mono_font_family.clone(),
         );
         let current = self.current(cx);
         let can_post = self.free(cx)
@@ -165,32 +178,39 @@ impl Render for PostConfirm {
                 .is_some_and(|current| self.request.args(current).is_ok());
         let identity = &self.request.identity;
         let is_comment = matches!(self.request.action, Action::Comment);
-        let head: String = identity.head.chars().take(10).collect();
         v_flex()
             .gap_2()
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(format!(
-                "{} #{} · head {head}",
-                identity.repository, identity.number
-            )))
-            .children(match self.request.action {
-                Action::Reply(id) => Some(format!("Reply to review comment {id}")),
-                _ => None,
-            })
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("{} #{}", identity.repository, identity.number)),
+                    )
+                    .children(self.request.fact().map(|fact| format!("· {fact}"))),
+            )
             .child(
                 div()
                     .id("post-body")
-                    .max_h(px(240.))
+                    .max_h(px(250.))
                     .overflow_y_scroll()
-                    .p_2()
-                    .rounded(radius)
+                    .p_3()
+                    .rounded(px(8.))
                     .border_1()
                     .border_color(border)
+                    .text_xs()
+                    .font_family(mono)
                     .child(self.request.body.clone()),
             )
             .children(self.request.comments().iter().map(|comment| {
                 h_flex()
                     .gap_2()
                     .text_sm()
+                    .text_color(muted)
                     .child(
                         div()
                             .flex_none()
@@ -216,23 +236,27 @@ impl Render for PostConfirm {
             }))
             .child(
                 h_flex()
+                    .mt_1()
                     .gap_2()
                     .justify_end()
                     .child(
                         Button::new("post-close")
                             .ghost()
+                            .small()
                             .label("Cancel")
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .children(current.is_none().then(|| {
                         Button::new("post-refresh")
                             .ghost()
+                            .small()
                             .label("Refresh this pull request")
                             .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx)))
                     }))
                     .child(
                         Button::new("post-confirm")
                             .primary()
+                            .small()
                             .label(if self.request.is_reply() {
                                 "Post reply to GitHub"
                             } else {

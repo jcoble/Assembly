@@ -470,8 +470,8 @@ impl PrDetail {
             .when(detail.more_files, |page| {
                 page.child(
                     div()
-                        .px_3()
-                        .py_1()
+                        .px_4()
+                        .py_2()
                         .text_sm()
                         .text_color(muted)
                         .child("Showing the first 100 files. Open GitHub to see the rest."),
@@ -480,28 +480,28 @@ impl PrDetail {
             .when(lines > 0, |page| {
                 page.child(
                     h_flex()
-                        .px_3()
-                        .py_1()
+                        .px_4()
+                        .py_2()
                         .gap_1()
                         .text_sm()
                         .text_color(muted)
                         .child(if lines == 1 {
-                            "1 line comment in your review.".to_string()
+                            "1 line comment in your review. Post it from".to_string()
                         } else {
-                            format!("{lines} line comments in your review.")
+                            format!("{lines} line comments in your review. Post them from")
                         })
                         .child(
-                            Button::new("pr-post-from-summary")
-                                .link()
-                                .small()
-                                .label(if lines == 1 {
-                                    "Post it from Summary."
-                                } else {
-                                    "Post them from Summary."
-                                })
-                                .on_click(cx.listener(|view, _, _, cx| {
-                                    view.select_page(Page::Summary, cx)
-                                })),
+                            h_flex()
+                                .child(
+                                    Button::new("pr-post-from-summary")
+                                        .link()
+                                        .small()
+                                        .label("Summary")
+                                        .on_click(cx.listener(|view, _, _, cx| {
+                                            view.select_page(Page::Summary, cx)
+                                        })),
+                                )
+                                .child("."),
                         ),
                 )
             })
@@ -523,7 +523,7 @@ impl Render for PrDetail {
                 .p_3()
                 .when(self.loading, |page| page.child(loading_line(cx)))
                 .into_any_element(),
-            (detail, _) => self.summary_page(detail.as_ref(), cx),
+            (detail, _) => self.summary_page(detail.as_ref(), window, cx),
         };
         v_flex()
             .size_full()
