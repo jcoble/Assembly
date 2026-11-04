@@ -6,8 +6,6 @@ import { inside, canonical, worktreeRoot } from './guard.ts';
 import { git, tryGit, defaultBranch, registry, mutateRegistry, withLock, withWorktree, assertExclusive, repositories, stateRoot, liveCwds, lease } from './worktree-state.ts';
 import { backupWorktree, backupUnderLock } from './backup.ts';
 import { checkRemovalSafety, idleHours } from './worktree-safety.ts';
-import { markWorktreeRunbooksDone } from './worktree-outcome.ts';
-import { collectMeta } from './meta.ts';
 export { backupWorktree, lease };
 
 function managedPath(name: string, repo: string) {
@@ -20,9 +18,7 @@ function managedPath(name: string, repo: string) {
 }
 function register(path: string, repo: string) {
   const now = new Date().toISOString();
-  let taskKey: string | undefined, taskId: string | undefined;
-  try { ({ taskKey, taskId } = collectMeta(path, 'workflow', 'worktree')); } catch {}
-  mutateRegistry(rows => { rows[canonical(path)] = { repo, branch: git(path, 'branch', '--show-current'), created: now, updated: now, leases: {}, taskKey, taskId }; });
+  mutateRegistry(rows => { rows[canonical(path)] = { repo, branch: git(path, 'branch', '--show-current'), created: now, updated: now, leases: {} }; });
 }
 export function createWorktree(name: string, cwd: string): string {
   if (git(cwd, 'rev-parse', '--is-bare-repository') !== 'false') throw Error('WorktreeCreate requires a non-bare checkout.');
@@ -81,7 +77,6 @@ function remove(path: string, owner?: string, idle = false) {
   git(row.repo, 'worktree', 'remove', '--', path);
   if (existsSync(path)) throw Error('Git left the worktree directory; keep residual files for inspection.');
   mutateRegistry(rows => { delete rows[path]; });
-  markWorktreeRunbooksDone(path);
 }
 export function done(path: string, owner?: string) {
   path = canonical(path);

@@ -47,7 +47,7 @@ test('backup_commits_and_pushes_branch', t => {
   const f = setup(t), path = f.create(); writeFileSync(join(path, 'work.txt'), 'ordinary work\n');
   const result = JSON.parse(f.run(['backup', path]).stdout); assert.equal(result.status, 'pushed', result.reason);
   assert.equal(f.git(path, 'rev-parse', 'HEAD'), f.git(path, 'rev-parse', 'refs/remotes/origin/tsk-1666-fixture'));
-  assert.match(f.git(path, 'log', '-1', '--format=%B'), /Committed-by: Codex SOL 6.1$/);
+  assert.match(f.git(path, 'log', '-1', '--format=%B'), /Committed-by: agent-worktree$/);
 });
 test('backup_refuses_default_branch', t => {
   const f = setup(t), path = f.create(); writeFileSync(join(path, 'dirty'), 'keep');
@@ -184,13 +184,11 @@ test('installed_launchers_and_hook_payloads_run_from_temp_HOME', t => {
   const f = setup(t);
   const install = spawnSync(process.execPath, [new URL('./install.ts', import.meta.url).pathname, '--without-codex-trust'], { cwd: f.repo, encoding: 'utf8', env: f.env });
   assert.equal(install.status, 0, install.stderr);
-  const projects = JSON.parse(readFileSync(join(f.home, '.config/agent-runbook/projects.json'), 'utf8'));
-  assert.equal(projects.Assembly, '406394b0689d8162a0a4c21e11a6d23a');
   const launcher = join(f.home, '.local/bin/agent-worktree');
   const created = spawnSync(launcher, ['create', 'installed-test'], { cwd: f.repo, encoding: 'utf8', env: f.env });
   assert.equal(created.status, 0, created.stderr); assert.ok(existsSync(created.stdout.trim()));
   const codex = JSON.parse(readFileSync(join(f.home, '.codex/hooks.json'), 'utf8'));
-  assert.equal(Object.keys(codex.hooks).length, 8); assert.equal(codex.hooks.PreToolUse[0].matcher, 'Bash'); assert.equal(codex.hooks.SessionEnd[0].hooks[0].timeout, 60);
+  assert.equal(Object.keys(codex.hooks).length, 6); assert.equal(codex.hooks.PreToolUse[0].matcher, 'Bash'); assert.equal(codex.hooks.SessionEnd[0].hooks[0].timeout, 60);
   const claude = JSON.parse(readFileSync(join(f.home, '.claude/settings.json'), 'utf8')); assert.ok(claude.hooks.WorktreeCreate); assert.ok(claude.hooks.WorktreeRemove);
   const payload = { cwd: f.repo, session_id: 'one', hook_event_name: 'PreToolUse', tool_input: { command: 'git worktree add /tmp/outside' } };
   const guarded = spawnSync('/bin/sh', ['-c', codex.hooks.PreToolUse[0].hooks[0].command], { cwd: f.repo, input: JSON.stringify(payload), encoding: 'utf8', env: f.env });
@@ -283,14 +281,12 @@ for (const activity of ['file', 'index', 'lease']) test('sweep_uses_newest_activ
   }
   assert.ok(existsSync(path)); assert.match(f.run(['sweep']).stdout, /12/); assert.ok(existsSync(path));
 });
-test('sweep_marks_existing_runbook_row_done', t => {
+test('sweep_removes_worktree_with_existing_runbook', t => {
   const { f, path } = idle(t), cli = new URL('./cli.ts', import.meta.url).pathname;
   const run = (args: string[], input = '') => spawnSync(process.execPath, [cli, ...args], { cwd: path, input, encoding: 'utf8', env: f.env });
   assert.equal(run(['init', 'codex', 'row']).status, 0);
   assert.equal(run(['update', 'codex', 'row'], 'Safe fixture runbook').status, 0);
-  const binding = JSON.parse(run(['where', 'codex', 'row']).stdout);
   const result = f.run(['sweep']); assert.ok(!existsSync(path), result.stdout);
-  assert.ok(f.db().calls.some((call: any) => call.path === '/v1/pages/' + binding.notionPageId && call.body?.properties?.Status?.select?.name === 'Done'));
 });
 
 test('sweep_keeps_clean_excluded_files', t => {
@@ -311,4 +307,107 @@ test('sweep_dry_run_preserves_registry_and_files', t => {
   const { f, path } = idle(t); writeFileSync(join(f.repo, '.git/info/exclude'), 'unique\n'); writeFileSync(join(path, 'unique'), 'important');
   const before = readFileSync(f.registry, 'utf8'); f.run(['sweep', '--dry-run']);
   assert.equal(readFileSync(f.registry, 'utf8'), before); assert.ok(existsSync(path));
+});
+
+function installCommitHook(f: ReturnType<typeof setup>, path: string) {
+  const hooks = join(f.home, 'commit-hooks'); mkdirSync(hooks);
+  writeFileSync(join(hooks, 'commit-msg'), readFileSync(new URL('../check-commit-msg.sh', import.meta.url)), { mode: 0o755 });
+  f.git(path, 'config', 'core.hooksPath', hooks);
+}
+const taskLine = 'Task: TSK-1666 https://app.notion.com/p/40e394b0689d813ba726f42786e4d040';
+test('backup_on_tsk_branch_reuses_task_line_from_history', t => {
+  const f = setup(t), path = f.create(); installCommitHook(f, path);
+  f.git(path, 'commit', '--allow-empty', '-m', 'chore: bind task\n\nArchitecture: unchanged\n' + taskLine + '\nCommitted-by: Fixture');
+  f.git(path, 'commit', '--allow-empty', '-m', 'chore: latest task\n\nArchitecture: unchanged\n' + taskLine.replace('40e394b0689d813ba726f42786e4d040', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') + '\nCommitted-by: Fixture');
+  writeFileSync(join(path, 'work'), 'safe');
+  const result = JSON.parse(f.run(['backup', path]).stdout); assert.equal(result.status, 'pushed', result.reason);
+  assert.match(f.git(path, 'log', '-1', '--format=%B'), /Task: TSK-1666 https:\/\/app.notion.com\/p\/a{32}/);
+  assert.match(f.git(path, 'log', '-1', '--format=%B'), /Committed-by: agent-worktree$/);
+});
+test('backup_on_tsk_branch_without_task_line_keeps_and_flags', t => {
+  const f = setup(t), path = f.create();
+  // A different task's line must never be reused.
+  f.git(path, 'commit', '--allow-empty', '-m', taskLine.replace('TSK-1666', 'TSK-999'));
+  installCommitHook(f, path);
+  const head = f.git(path, 'rev-parse', 'HEAD'); writeFileSync(join(path, 'work'), 'keep');
+  const result = JSON.parse(f.run(['backup', path]).stdout); assert.equal(result.status, 'failed');
+  assert.match(result.reason, /add Task: TSK-1666/); assert.ok(existsSync(path));
+  assert.equal(f.git(path, 'rev-parse', 'HEAD'), head);
+  assert.equal(f.git(path, 'ls-remote', '--heads', 'origin', 'refs/heads/tsk-1666-fixture'), '');
+  assert.match(JSON.parse(readFileSync(f.registry, 'utf8'))[path].flag, /add Task: TSK-1666/);
+});
+test('backup_on_plain_branch_has_no_task_line', t => {
+  const f = setup(t), path = f.create('plain'); installCommitHook(f, path);
+  f.git(path, 'commit', '--allow-empty', '-m', 'chore: unrelated task\n\nArchitecture: unchanged\n' + taskLine + '\nCommitted-by: Fixture');
+  writeFileSync(join(path, 'work'), 'safe');
+  const result = JSON.parse(f.run(['backup', path]).stdout); assert.equal(result.status, 'pushed', result.reason);
+  assert.doesNotMatch(f.git(path, 'log', '-1', '--format=%B'), /^Task:/m);
+});
+test('install_registers_only_expected_events', t => {
+  const f = setup(t);
+  for (const [provider, file] of [['codex', '.codex/hooks.json'], ['claude', '.claude/settings.json']]) {
+    mkdirSync(join(f.home, provider === 'codex' ? '.codex' : '.claude'), { recursive: true });
+    writeFileSync(join(f.home, file), JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Read', hooks: [{ type: 'command', command: 'user-hook' }] }] } }));
+  }
+  const result = spawnSync(process.execPath, [new URL('./install.ts', import.meta.url).pathname, '--without-codex-trust'], { cwd: f.repo, env: f.env, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  for (const [provider, file, extra] of [['codex', '.codex/hooks.json', []], ['claude', '.claude/settings.json', ['WorktreeCreate', 'WorktreeRemove']]] as const) {
+    const config = JSON.parse(readFileSync(join(f.home, file), 'utf8'));
+    const events = ['SessionStart', 'PreCompact', 'SubagentStart', 'SubagentStop', 'PreToolUse', 'SessionEnd', ...extra];
+    assert.deepEqual(Object.keys(config.hooks).sort(), events.sort(), provider);
+    assert.equal(config.hooks.PreToolUse[0].hooks[0].command, 'user-hook');
+    assert.equal(config.hooks.PreToolUse[0].matcher, 'Read');
+    assert.equal(config.hooks.PreToolUse[1].matcher, 'Bash');
+  }
+});
+
+test('backup_on_tsk_branch_ignores_task_line_in_main', t => {
+  const f = setup(t);
+  f.git(f.repo, 'commit', '--allow-empty', '-m', taskLine);
+  f.git(f.repo, 'push');
+  const path = f.create(); installCommitHook(f, path); writeFileSync(join(path, 'work'), 'keep');
+  const result = JSON.parse(f.run(['backup', path]).stdout);
+  assert.equal(result.status, 'failed'); assert.match(result.reason, /add Task: TSK-1666/);
+  assert.ok(existsSync(path)); assert.match(JSON.parse(readFileSync(f.registry, 'utf8'))[path].flag, /add Task: TSK-1666/);
+});
+
+test('subagent_stop_releases_shared_lease_without_flagging_parent', t => {
+  const f = setup(t), path = f.create();
+  f.run(['lease', path, 'codex:parent']); f.run(['lease', path, 'codex:child']);
+  const result = spawnSync(process.execPath, [new URL('./cli.ts', import.meta.url).pathname, 'hook', 'codex'], {
+    cwd: f.home, input: JSON.stringify({ cwd: path, session_id: 'parent', agent_id: 'child', hook_event_name: 'SubagentStop' }),
+    encoding: 'utf8', env: { ...f.env, FAKE_PROCESSES: f.processes },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const row = JSON.parse(readFileSync(f.registry, 'utf8'))[path];
+  assert.deepEqual(Object.keys(row.leases), ['codex:parent']); assert.equal(row.flag, undefined); assert.ok(existsSync(path));
+});
+test('subagent_stop_backs_up_exclusive_worktree', t => {
+  const f = setup(t), path = f.create(); f.run(['lease', path, 'codex:child']); writeFileSync(join(path, 'work'), 'safe');
+  const result = spawnSync(process.execPath, [new URL('./cli.ts', import.meta.url).pathname, 'hook', 'codex'], {
+    cwd: f.home, input: JSON.stringify({ cwd: path, session_id: 'parent', agent_id: 'child', hook_event_name: 'SubagentStop' }),
+    encoding: 'utf8', env: { ...f.env, FAKE_PROCESSES: f.processes },
+  });
+  assert.equal(result.status, 0, result.stderr); assert.ok(existsSync(path));
+  const row = JSON.parse(readFileSync(f.registry, 'utf8'))[path];
+  assert.deepEqual(row.leases, {}); assert.equal(row.flag, undefined);
+  assert.equal(row.backedUpHead, f.git(path, 'rev-parse', 'HEAD'));
+  assert.equal(f.git(path, 'ls-remote', '--heads', 'origin', 'refs/heads/tsk-1666-fixture').split(/\s/)[0], row.backedUpHead);
+});
+
+test('install_removes_legacy_stop_and_post_hooks_and_preserves_user_hooks', t => {
+  const f = setup(t);
+  for (const [provider, file] of [['codex', '.codex/hooks.json'], ['claude', '.claude/settings.json']]) {
+    mkdirSync(join(f.home, provider === 'codex' ? '.codex' : '.claude'), { recursive: true });
+    const launcher = "'" + join(f.home, '.local/bin/agent-runbook') + "' hook " + provider;
+    const post = "/bin/sh '" + join(f.home, '.local/share/agent-runbook/fast-hook.sh') + "' post '" + process.execPath + "' '" + join(f.home, '.local/share/agent-runbook/cli.ts') + "' " + provider;
+    const hooks = Object.fromEntries([['Stop', launcher], ['PostToolUse', post]].map(([event, command]) => [event, [{ hooks: [{ type: 'command', command }, { type: 'command', command: 'user-' + event }] }]]));
+    writeFileSync(join(f.home, file), JSON.stringify({ hooks }));
+  }
+  const result = spawnSync(process.execPath, [new URL('./install.ts', import.meta.url).pathname, '--without-codex-trust'], { cwd: f.repo, env: f.env, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  for (const file of ['.codex/hooks.json', '.claude/settings.json']) {
+    const config = JSON.parse(readFileSync(join(f.home, file), 'utf8'));
+    for (const event of ['Stop', 'PostToolUse']) assert.deepEqual(config.hooks[event], [{ hooks: [{ type: 'command', command: 'user-' + event }] }]);
+  }
 });

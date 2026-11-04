@@ -11,11 +11,9 @@ function fixture(t: any) {
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const cwd = join(home, 'Assembly');
   mkdirSync(cwd);
-  const fakeBin = join(home, 'fake-bin'); mkdirSync(fakeBin);
-  writeFileSync(join(fakeBin, 'ntn'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   function run(args: string[], input = '') {
     return spawnSync(process.execPath, [cli.pathname, ...args], {
-      cwd, input, encoding: 'utf8', env: { ...process.env, HOME: home, PATH: fakeBin + ':' + process.env.PATH },
+      cwd, input, encoding: 'utf8', env: { ...process.env, HOME: home },
     });
   }
   function hook(provider: string, event: any) {
@@ -66,12 +64,11 @@ test('subagent inherits parent runbook read-only and sessions remain isolated', 
   f.run(['update', 'codex', 'parent'], 'Parent state, approved step 2.');
   const child = f.hook('codex', { hook_event_name: 'SubagentStart', agent_id: 'child', agent_type: 'worker' });
   assert.match(child.hookSpecificOutput.additionalContext, /Parent state, approved step 2/);
-  assert.match(child.hookSpecificOutput.additionalContext, /check with.*parent/i);
-  assert.equal(f.run(['update', 'codex', 'child'], 'Child own state').status, 0);
+  assert.match(child.hookSpecificOutput.additionalContext, /Check with.*parent/);
+  assert.notEqual(f.run(['update', 'codex', 'child'], 'bad overwrite').status, 0);
   const binding = JSON.parse(f.run(['where', 'codex', 'child']).stdout);
   assert.equal(binding.parent, 'codex:parent');
-  assert.equal(binding.readOnly, false);
-  assert.notEqual(binding.path, JSON.parse(f.run(['where', 'codex', 'parent']).stdout).path);
+  assert.equal(binding.readOnly, true);
   const before = f.run(['read', 'codex', 'parent']).stdout;
   f.hook('codex', { hook_event_name: 'PreCompact', session_id: 'parent', agent_id: 'child', trigger: 'auto' });
   assert.equal(f.run(['read', 'codex', 'parent']).stdout, before);
@@ -130,9 +127,9 @@ test('child recovery with shared session_id never checkpoints parent and missing
   assert.equal(f.run(['read', 'claude', 'parent']).stdout, before);
   const context = f.hook('claude', { hook_event_name: 'SessionStart', source: 'compact', agent_id: 'child' }).hookSpecificOutput.additionalContext;
   assert.match(context, /read-only/);
-  const codex = f.hook('codex', { hook_event_name: 'PreCompact', session_id: 'unknown', trigger: 'manual' });
+  const codex = f.hook('codex', { hook_event_name: 'PreCompact', session_id: 'unknown', trigger: 'auto' });
   assert.equal(codex.continue, false);
-  const claude = f.run(['hook', 'claude'], JSON.stringify({ cwd: f.cwd, session_id: 'unknown', hook_event_name: 'PreCompact', trigger: 'manual' }));
+  const claude = f.run(['hook', 'claude'], JSON.stringify({ cwd: f.cwd, session_id: 'unknown', hook_event_name: 'PreCompact', trigger: 'auto' }));
   assert.equal(claude.status, 2);
   assert.equal(JSON.parse(claude.stdout).decision, 'block');
 });

@@ -4,10 +4,8 @@ import { homedir, hostname } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { rules } from './rules.ts';
-import { createRunbookPage, writeRunbookBody, readRunbookBody, notionRequest } from './notion.ts';
-import { collectMeta } from './meta.ts';
 
-export type Binding = { path: string; project: string; owner: string; readOnly: boolean; parent?: string; parentPageId?: string; ssh?: string; cwd?: string; task?: string; notionPageId?: string; syncPending?: boolean; worktreeDonePending?: boolean; syncError?: string; updateCursor?: { bytes: number; at: string }; transcriptPath?: string; nudged?: boolean; stopContinued?: boolean; checkedBytes?: number };
+export type Binding = { path: string; project: string; owner: string; readOnly: boolean; parent?: string; ssh?: string };
 export const STATE = '\n<!-- live-state -->\n';
 export const OBSERVED = '\n<!-- observed-checkpoint -->\n';
 const root = () => join(homedir(), '.local/state/agent-runbook');
@@ -60,7 +58,7 @@ export function init(provider: string, id: string, cwd: string, path?: string, t
   }
   path ??= join(root(), 'runs', provider, createHash('sha256').update(id).digest('hex'), 'runbook.md');
   if (existsSync(path) || existsSync(path + '.owner.json')) throw Error('Refusing to claim an existing runbook.');
-  const binding: Binding = { path, project: projectFor(cwd), owner, readOnly: false, cwd, task };
+  const binding = { path, project: projectFor(cwd), owner, readOnly: false };
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(path + '.owner.json', JSON.stringify({ owner }), { flag: 'wx', mode: 0o600 });
   atomicWrite(path, render(binding, 'Task: ' + (task || 'UNASSIGNED — parent must bind/record the canonical host/path on the active task.') + '\nCurrent step / next action: not recorded.\nWriter: ' + owner + '\nHost/worktree: ' + hostname() + ' ' + cwd));
@@ -83,57 +81,11 @@ export function update(provider: string, id: string, state: string) {
   const binding = getBinding(provider, id);
   if (!binding) throw Error('No runbook binding; initialize or ask your parent.');
   ownerCheck(provider, id, binding);
-  if (!state.trim() || state.length > 6500 || state.includes(STATE.trim()) || state.includes(OBSERVED.trim())) throw Error('Live state must be 1–6,500 characters without managed section markers; delete finished items before updating.');
+  if (!state.trim() || state.length > 6500 || state.includes(STATE.trim()) || state.includes(OBSERVED.trim())) throw Error('Live state must be 1–6,500 characters without managed section markers.');
   const old = readRunbook(binding);
   if (!old.includes(STATE) || !old.includes(OBSERVED)) throw Error('Unrecognized runbook format; do not overwrite it.');
   const checkpoint = old.split(OBSERVED)[1].replace(/^## Automatic checkpoint\n/, '');
   atomicWrite(binding.path, render(binding, 'Updated: ' + new Date().toISOString() + '\n' + state, checkpoint));
-  binding.syncPending = true;
-  binding.nudged = false; binding.stopContinued = false;
-  binding.updateCursor = { bytes: binding.transcriptPath && existsSync(binding.transcriptPath) ? statSync(binding.transcriptPath).size : 0, at: new Date().toISOString() };
-  saveBinding(provider, id, binding);
-  flushPending(provider, id);
-}
-export function flushPending(provider: string, id: string) {
-  const binding = getBinding(provider, id);
-  if (!binding || binding.readOnly || binding.ssh || (!binding.syncPending && !binding.worktreeDonePending)) return;
-  ownerCheck(provider, id, binding);
-  try {
-    if (binding.worktreeDonePending && binding.notionPageId) {
-      notionRequest('PATCH', '/v1/pages/' + encodeURIComponent(binding.notionPageId), { properties: { Status: { select: { name: 'Done' } } } });
-      delete binding.worktreeDonePending;
-    }
-    if (!binding.syncPending) { saveBinding(provider, id, binding); return; }
-    const text = readRunbook(binding);
-    if (binding.notionPageId) writeRunbookBody(binding.notionPageId, text);
-    else {
-      if (binding.parent) {
-        const colon = binding.parent.indexOf(':');
-        binding.parentPageId = getBinding(binding.parent.slice(0, colon), binding.parent.slice(colon + 1))?.notionPageId || binding.parentPageId;
-      }
-      const meta = collectMeta(binding.cwd || process.cwd(), provider, id, binding.parentPageId, binding.task);
-      if (binding.parent) meta.kind = 'Subagent';
-      binding.notionPageId = createRunbookPage(meta, text).id;
-    }
-    binding.syncPending = false; delete binding.syncError;
-  } catch (error) {
-    binding.syncError = 'Notion sync pending: ' + (error as Error).message.split('\n')[0];
-    console.error(binding.syncError);
-  }
-  saveBinding(provider, id, binding);
-}
-export function recordWorktreeOutcome(provider: string, id: string, result: { status: string; reason?: string }) {
-  const binding = getBinding(provider, id);
-  if (!binding || binding.readOnly) return;
-  ownerCheck(provider, id, binding);
-  const old = readRunbook(binding);
-  if (!old.includes(STATE) || !old.includes(OBSERVED)) throw Error('Unrecognized runbook format; worktree result not written.');
-  const state = old.split(STATE)[1].split(OBSERVED)[0].replace(/^## Live state\n/, '');
-  const observed = 'Worktree backup: ' + result.status + (result.reason ? '; ' + result.reason.split('\n')[0] : '') + '. Retained until explicit done or safe sweep (merged or idle 12 hours).\n' + new Date().toISOString();
-  atomicWrite(binding.path, render(binding, state, observed));
-  if (binding.notionPageId) binding.syncPending = true;
-  saveBinding(provider, id, binding);
-  flushPending(provider, id);
 }
 function transcriptExcerpt(path?: string) {
   if (!path) return 'Transcript unavailable; semantic state was not inferred.';
@@ -176,17 +128,11 @@ export function checkpoint(provider: string, id: string, event: any) {
     transcriptExcerpt(event.transcript_path),
   ].join('\n');
   atomicWrite(binding.path, render(binding, state, observed));
-  if (binding.notionPageId || binding.syncPending) {
-    binding.syncPending = true; saveBinding(provider, id, binding); flushPending(provider, id);
-  }
 }
 export function recover(provider: string, id: string, binding: Binding, eventName = 'SessionStart') {
   let text: string;
   try {
-    if (binding.notionPageId && !binding.syncPending) {
-      try { text = readRunbookBody(binding.notionPageId, 4000); }
-      catch { text = readRunbook(binding) + '\nNotion unavailable; recovering from local cache.'; }
-    } else text = readRunbook(binding) + (binding.syncPending ? '\nNotion sync pending; recovering from local cache.' : '');
+    text = readRunbook(binding);
     const header = rules(binding.project);
     if (!text.startsWith(header)) text = header + '\n' + text;
   }

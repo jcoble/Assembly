@@ -19,7 +19,7 @@ export function backupUnderLock(path: string, owner?: string, verifyOnly = false
   let phase = 'preflight';
   try {
     if (!inside(path)) return { status: 'skipped', reason: 'Outside managed worktree root.', kept: [] };
-    const row = assertExclusive(path, owner);
+    assertExclusive(path, owner);
     if (git(path, 'rev-parse', '--is-bare-repository') !== 'false') throw Error('Bare repository; kept.');
     const main = git(path, 'worktree', 'list', '--porcelain').split('\n')[0].slice(9);
     if (canonical(main) === path) return { status: 'skipped', reason: 'Main checkout; kept.', kept: [] };
@@ -47,8 +47,11 @@ export function backupUnderLock(path: string, owner?: string, verifyOnly = false
     phase = 'commit';
     if (!branch) { branch = 'backup/' + basename(path); git(path, 'switch', '-c', branch); }
     if (tryGit(path, 'status', '--porcelain')) {
-      const task = row.taskKey && row.taskId ? 'Task: ' + row.taskKey + ' https://app.notion.com/p/' + row.taskId.replaceAll('-', '') + '\n' : '';
-      git(path, 'commit', '-m', 'chore: back up agent worktree\n\n' + task + 'Architecture: unchanged\nCommitted-by: Codex SOL 6.1');
+      const taskNumber = /^tsk-(\d+)/.exec(branch)?.[1];
+      const taskPattern = taskNumber ? new RegExp('^Task: TSK-' + taskNumber + ' https://app[.]notion[.]com/p/[0-9a-fA-F]{32}([?].*)?$') : undefined;
+      const taskLine = taskPattern ? git(path, 'log', '--format=%B', defaultName + '..HEAD').split('\n').find(line => taskPattern.test(line)) : undefined;
+      const task = taskLine ? taskLine + '\n' : '';
+      git(path, 'commit', '-m', 'chore: back up agent worktree\n\n' + task + 'Architecture: unchanged\nCommitted-by: agent-worktree');
     }
     phase = 'push';
     git(path, 'push', '-u', 'origin', 'HEAD:refs/heads/' + branch);

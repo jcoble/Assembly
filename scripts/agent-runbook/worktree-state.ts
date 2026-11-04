@@ -5,11 +5,17 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { atomicWrite } from './runbook.ts';
 import { inside, canonical } from './guard.ts';
-import { remainingBudget } from './notion.ts';
+let deadline = Infinity;
+export function setHookBudget(milliseconds: number) { deadline = Date.now() + milliseconds; }
+export function remainingBudget(maximum: number) {
+  const budget = Math.min(maximum, deadline - Date.now());
+  if (budget <= 0) throw Error('Hook I/O budget exhausted; worktree kept.');
+  return budget;
+}
 
 export const stateRoot = () => join(homedir(), '.local/state/agent-runbook');
 export type Lease = { pid?: number };
-export type WorktreeRecord = { repo: string; branch: string; created: string; updated: string; leases: Record<string, Lease>; backedUpHead?: string; done?: boolean; flag?: string; taskKey?: string; taskId?: string };
+export type WorktreeRecord = { repo: string; branch: string; created: string; updated: string; leases: Record<string, Lease>; backedUpHead?: string; done?: boolean; flag?: string };
 export const registryPath = () => join(stateRoot(), 'worktrees.json');
 export function registry(): Record<string, WorktreeRecord> {
   return existsSync(registryPath()) ? JSON.parse(readFileSync(registryPath(), 'utf8')) : {};
