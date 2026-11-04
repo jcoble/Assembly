@@ -41,6 +41,9 @@ expect 0 "a fix that changes a .NET test passes" work $'fix(chat): rows keep ord
 expect 0 "a fix that changes an app test passes" work $'Fix rows\n\nArchitecture: unchanged\nCommitted-by: Claude' app/test/x.test.ts
 expect 0 "a fix that changes only a script test passes" work $'fix: guard\n\nArchitecture: unchanged\nCommitted-by: Claude' scripts/x.test.sh
 expect 1 "a fix that changes only a script that isn't a test stops it" work $'fix: guard\n\nArchitecture: unchanged\nCommitted-by: Claude' scripts/x.sh
+expect 0 "a fix that changes only a TypeScript script test passes" work $'fix: guard\n\nArchitecture: unchanged\nCommitted-by: Claude' scripts/x.test.ts
+expect 0 "a fix that changes only a nested script test passes" work $'fix: guard\n\nArchitecture: unchanged\nCommitted-by: Claude' scripts/verify-pr/x.test.ts
+expect 1 "a fix that changes only a nested script stops" work $'fix: guard\n\nArchitecture: unchanged\nCommitted-by: Claude' scripts/verify-pr/x.ts
 expect 0 "a fix that changes a Rust test file beside the code passes" work $'fix: frames\n\nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/core/socket/frames_tests.rs
 expect 0 "a fix that changes a Rust tests.rs beside the code passes" work $'fix: frames\n\nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/core/socket/tests.rs
 expect 0 "a fix that changes a Rust test under desktop/tests passes" work $'fix: frames\n\nArchitecture: unchanged\nCommitted-by: Claude' desktop/tests/x.rs
