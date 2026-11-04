@@ -24,6 +24,12 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     internal void Begin()
     {
         status.Welcomed = machine => Check(machine);
+        // app-dev runs the launch's update itself, so it can start before the desktop is built, and tells this app how it goes.
+        if (Environment.GetEnvironmentVariable(DevRemoteSyncStatus.Variable) is { Length: > 0 } path) work.Start("launch update status", async stop =>
+        {
+            using var watcher = new DevRemoteSyncStatus(path, status, Updated);
+            await Task.Delay(Timeout.Infinite, stop).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        });
         Check(null);
         foreach (var item in status.Items.Where(item => item.Name is not null && item.Backend is not null)) Check(item.Name);
     }
@@ -67,7 +73,6 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         {
             Show(true, null);
             await source.UpdateAsync([.. machines.OfType<string>()], note => Show(true, note), stop);
-            reload?.Invoke();
         }
         catch (CallFailed error) { ending = "Update failed: " + error.Message; }
         catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }
@@ -76,6 +81,14 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             Volatile.Write(ref _updating, 0);
             Show(false, ending);
         }
-        foreach (var machine in machines) Check(machine);
+        if (ending is null) Updated();
+        else foreach (var machine in machines) Check(machine);
+    }
+
+    /// <summary>Adapters may be new: agents are read again, and every machine checked again.</summary>
+    private void Updated()
+    {
+        reload?.Invoke();
+        foreach (var machine in status.Items.Select(item => item.Name)) Check(machine);
     }
 }

@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, watch, existsSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, watch, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { adapterSources, digestContract, digestInputs, remoteContractInput, sourcesDigest } from './dev-remote-identity.ts';
+import { adapterSources, digestInputs, remoteBehindExit, sourcesDigest } from './dev-remote-identity.ts';
 
 const current = 'a'.repeat(40), previous = 'b'.repeat(40);
 const hostEntries = ['100644 blob ' + '1'.repeat(40) + '\tdotnet/Assembly.Remote/Assembly.Remote.csproj', '100644 blob ' + '3'.repeat(40) + '\tdotnet/Assembly.Infrastructure/Notion/NotionCalls.cs'];
-const previousIdentity = digestInputs(hostEntries, 'none'), previousContract = digestContract(hostEntries.filter(line => remoteContractInput(line.split('\t')[1])), 'none');
+const previousIdentity = digestInputs(hostEntries, 'none');
 const launcher = createHash('sha256').update('launcher\n').digest('hex');
 const sources = await sourcesDigest(adapterSources, async () => 'launcher\n');
 const fakeGit = `#!/usr/bin/env node
@@ -21,7 +21,7 @@ switch(args[0]) {
  case 'diff': console.log(state.dirty ?? ''); break;
  case 'ls-files': console.log(state.untracked ?? ''); break;
  case 'ls-tree': console.log('100644 blob '+(state.changed?'2':'1').repeat(40)+'\\tdotnet/Assembly.Remote/Assembly.Remote.csproj\\n100644 blob '+(state.unrelated?'4':'3').repeat(40)+'\\tdotnet/Assembly.Infrastructure/Notion/NotionCalls.cs'); break;
- case 'show': process.stdout.write(args.at(-1).endsWith('Cargo.toml') ? (state.version ? 'version = "'+state.version+'"\\n' : '') : args.at(-1).endsWith(state.adapterChange ?? '?') ? 'changed\\n' : 'launcher\\n'); break;
+ case 'show': process.stdout.write(args.at(-1).endsWith('Cargo.toml') ? (state.version ? '[package]\\nversion = "'+state.version+'"\\n' : '') : args.at(-1).endsWith(state.adapterChange ?? '?') ? 'changed\\n' : 'launcher\\n'); break;
  case 'push': break;
  case 'fetch': break;
  case 'status': console.log(state.mainDirty ? ' M dotnet/Directory.Build.props' : ''); break;
@@ -42,7 +42,7 @@ if (args.at(-1).startsWith('flock ')) {
   child.on('close',code=>process.exit(code));
  } else console.log('deployed backend; authenticated host commit ${current}');
 } else if(state.missing) console.log(JSON.stringify({missing:true}));
-else console.log(JSON.stringify({commit:'${previous}',backendIdentity:'${previousIdentity}',remoteContract:state.hostContract===undefined?'${previousContract}':state.hostContract,engine:'test-engine',dll:'/lane/bin/old/backend/Assembly.Remote.dll',pid:'123',unitSha:'f'.repeat(64),adapterOK:true,launcherSha:'${launcher}',toolsKey:state.toolsKey,adapterSources:'${sources}',seedCohort:state.seedCohort}));
+else console.log(JSON.stringify({commit:'${previous}',backendIdentity:'${previousIdentity}',version:state.hostVersion===undefined?'none':state.hostVersion,engine:'test-engine',dll:'/lane/bin/old/backend/Assembly.Remote.dll',pid:'123',unitSha:'f'.repeat(64),adapterOK:true,launcherSha:'${launcher}',toolsKey:state.toolsKey,adapterSources:'${sources}',seedCohort:state.seedCohort}));
 `;
 function fixture(state: object = {}) {
   const root = mkdtempSync(join(tmpdir(), 'assembly-devsync-'));
@@ -63,15 +63,58 @@ function fixture(state: object = {}) {
     close: () => rmSync(root, { recursive: true, force: true }) };
 }
 const update = { ASSEMBLY_DEV_REMOTE_SYNC: '1' };
+const check = { ASSEMBLY_DEV_REMOTE_SYNC: 'check' };
 const deploys = (f: ReturnType<typeof fixture>) => f.calls().filter(call => call[0] === 'ssh' && call.at(-1)?.startsWith('flock ')).length;
+const pushes = (f: ReturnType<typeof fixture>) => f.calls().filter(call => call[0] === 'git' && call[1] === 'push').length;
+for (const [name, state] of [
+  ['a desktop-only commit', {}],
+  ['an unrelated backend commit', { unrelated: true }],
+  ['a backend commit that left the number alone', { changed: true }],
+  ['an uncommitted backend edit', { dirty: 'dotnet/Assembly.Engine/EngineCommands.cs' }],
+] as const) test(`launch check: ${name} changes nothing while the number matches`, () => {
+  const f = fixture(state);
+  try {
+    Object.assign(f.env, check);
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /on version none \(host commit [a-f0-9]+\); nothing to do/);
+    assert.equal(deploys(f), 0);
+    assert.equal(pushes(f), 0);
+  } finally { f.close(); }
+});
+for (const [name, state] of [
+  ['a raised number', { version: '0.2.0', hostVersion: '0.1.0' }],
+  ['a remote on a higher number', { version: '0.1.0', hostVersion: '0.2.0' }],
+  ['an old host that reports no number', { hostVersion: null }],
+  ['a lane with nothing installed', { missing: true }],
+] as const) test(`launch check: ${name} is behind, and the check itself deploys nothing`, () => {
+  const f = fixture(state);
+  try {
+    Object.assign(f.env, check);
+    const result = f.run();
+    assert.equal(result.status, remoteBehindExit, result.stderr);
+    assert.equal(deploys(f), 0);
+    assert.equal(pushes(f), 0);
+  } finally { f.close(); }
+});
+test('launch check: a managed lane with a new seed is behind even on the same number', () => {
+  const f = fixture({ seedCohort: 'old' });
+  try {
+    Object.assign(f.env, check);
+    f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, cohort: 'new' });
+    assert.equal(f.run().status, remoteBehindExit);
+    f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, cohort: 'old' });
+    assert.equal(f.run().status, 0);
+  } finally { f.close(); }
+});
 for (const [name, state, expected] of [
-  ['a desktop-only commit', {}, 0],
-  ['an unrelated backend commit', { unrelated: true }, 0],
+  ['a matching build', {}, 0],
+  ['an unrelated backend commit', { unrelated: true }, 1],
   ['a change on the list', { changed: true }, 1],
   ['a release version bump', { version: '0.2.0' }, 1],
   ['an adapter packaging script change', { adapterChange: 'scripts/package-adapters.ts' }, 1],
   ['an adapter install script change', { adapterChange: 'dotnet/scripts/agents-file.sh' }, 1],
-] as const) test(`deploy remote: ${name} ${expected ? 'deploys' : 'builds nothing'}`, () => {
+] as const) test(`the one update: ${name} ${expected ? 'deploys' : 'builds nothing'}`, () => {
   const f = fixture(state);
   try {
     Object.assign(f.env, update);
@@ -79,25 +122,12 @@ for (const [name, state, expected] of [
     assert.equal(result.status, 0, result.stderr);
     assert.equal(deploys(f), expected);
     assert.match(result.stdout, expected ? /building and deploying/ : /no deploy/);
-    if (!expected) assert.equal(f.calls().filter(call => call[0] === 'git' && call[1] === 'push').length, 0);
+    if (!expected) assert.equal(pushes(f), 0);
     assert.ok(f.calls().filter(call=>call[0]==='ssh').every(call=>call.includes('workbox-test')));
+    if (expected) assert.ok(f.calls().some(call => call[0] === 'ssh' && call.at(-1)?.includes('"waitForIdle":true')), 'a running session is never killed');
   } finally { f.close(); }
 });
-test('deploy remote: a change on the list deploys once, and the next run builds nothing', () => {
-  const f = fixture({ changed: true });
-  try {
-    Object.assign(f.env, update);
-    assert.equal(f.run().status, 0);
-    assert.equal(deploys(f), 1);
-    const deployed = digestContract(['100644 blob ' + '2'.repeat(40) + '\tdotnet/Assembly.Remote/Assembly.Remote.csproj'], 'none');
-    writeFileSync(f.paths.state, JSON.stringify({ changed: true, hostContract: deployed }));
-    const next = f.run();
-    assert.equal(next.status, 0, next.stderr);
-    assert.equal(deploys(f), 1);
-    assert.match(next.stdout, /no deploy/);
-  } finally { f.close(); }
-});
-test('deploy remote: uncommitted unrelated backend edits do not stop it; edits on the list say the remote stays behind', () => {
+test('the one update: uncommitted desktop edits do not stop it; backend edits say the remote stays behind', () => {
   const f = fixture({ dirty: 'dotnet/Assembly.Desktop/Serve/DesktopBackend.cs' });
   try {
     Object.assign(f.env, update);
@@ -115,14 +145,6 @@ test('the dev serve command matches them exactly: an unrelated backend commit de
   try {
     const result = f.run();
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(deploys(f), 1);
-  } finally { f.close(); }
-});
-test('an old host that reports no list identity gets one deploy', () => {
-  const f = fixture({ hostContract: null });
-  try {
-    Object.assign(f.env, update);
-    assert.equal(f.run().status, 0);
     assert.equal(deploys(f), 1);
   } finally { f.close(); }
 });
@@ -173,6 +195,108 @@ test('second launch during deployment cannot start another deploy', { timeout: 1
     writeFileSync(f.paths.release,'finish');
     assert.equal(await finished,0);
   } finally { first.kill('SIGTERM'); await finished; f.close(); }
+});
+
+// A real launch's scripts with fakes at the edges: git, ssh, dotnet, cargo and the tool installer.
+function launchFixture(state: object) {
+  const f = fixture(state);
+  for (const directory of ['desktop', 'dotnet/scripts']) mkdirSync(join(f.root, directory), { recursive: true });
+  for (const file of readdirSync(new URL('./', import.meta.url))) if (file.endsWith('.ts') && !file.endsWith('.test.ts')) copyFileSync(new URL(file, import.meta.url), join(f.root, 'scripts', file));
+  writeFileSync(join(f.root, 'scripts/dev-toolchain.ts'), `import fs from 'node:fs';
+export const packages = [];
+export const toolKey = () => 'key';
+export const toolsCurrent = async () => true;
+export const checkoutSources = async () => 'sources';
+export const latestTools = async () => { fs.appendFileSync(process.env.CALLS, JSON.stringify(['tools','latest'])+'\\n'); return {}; };
+export const ensureTools = async () => { fs.appendFileSync(process.env.CALLS, JSON.stringify(['tools','ensure'])+'\\n'); return { changed: true }; };
+`);
+  writeFileSync(join(f.root, 'scripts/lane-env.sh'), 'LANE_NAME=test-lane\nDATA="$PWD/profile"\nDESKTOP_PORT=18887\nTOKEN_FILE=test\nBOX_PORT=9887\nBOX_TOKEN_FILE=test\n');
+  writeFileSync(join(f.root, 'dotnet/scripts/workbox.sh'), 'exec node scripts/workbox-serve.ts test-lane 9\n');
+  writeFileSync(join(f.root, 'dotnet/scripts/agents-file.sh'), 'printf "[]" > "$2"\n');
+  writeFileSync(join(f.root, 'bin/dotnet'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const desktop = join(f.root, 'desktop-opened');
+  // The desktop build: it never ends until the test says so, so anything that finishes first didn't wait for it.
+  writeFileSync(join(f.root, 'bin/cargo'), `#!/usr/bin/env node\nimport fs from 'node:fs';\nconst finish=()=>{if(fs.existsSync(${JSON.stringify(f.paths.release)})){watcher.close()}};const watcher=fs.watch(${JSON.stringify(f.root)},finish);fs.writeFileSync(${JSON.stringify(desktop)},String(process.pid));finish();\n`, { mode: 0o755 });
+  const statusFile = join(f.root, 'profile/mac/remote-sync-state.json');
+  const launch = () => {
+    const opened = untilFile(desktop);
+    const app = spawn(process.execPath, [join(f.root, 'scripts/app-dev.ts')], { cwd: f.root, env: f.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stderr = '';
+    const heard = (pattern: RegExp) => new Promise<void>(resolve => { const look = () => { if (pattern.test(stderr)) { app.stderr.off('data', listen); resolve(); } }; const listen = (bytes: Buffer) => { stderr += bytes; look(); }; app.stderr.on('data', listen); look(); });
+    const exited = new Promise<number | null>(resolve => app.on('close', resolve));
+    return { app, opened, heard, exited, stderr: () => stderr };
+  };
+  return { ...f, statusFile, desktop, launch };
+}
+const toolCalls = (f: ReturnType<typeof fixture>) => f.calls().filter(call => call[0] === 'tools').length;
+test('dev launch: a matching number does nothing, reads no tool versions, and the desktop opens', { timeout: 20_000 }, async () => {
+  const f = launchFixture({ changed: true });
+  const run = f.launch();
+  try {
+    await run.opened;
+    await run.heard(/nothing to do/);
+    assert.equal(deploys(f), 0);
+    assert.equal(pushes(f), 0);
+    assert.equal(toolCalls(f), 0);
+    assert.deepEqual(JSON.parse(readFileSync(f.statusFile, 'utf8')), { updating: false, reason: null });
+    writeFileSync(f.paths.release, 'close app');
+    assert.equal(await run.exited, 0, run.stderr());
+  } finally { run.app.kill('SIGTERM'); await run.exited; f.close(); }
+});
+test('dev launch: a different number deploys and updates tools in one shot while the desktop is still building, and the next launch builds nothing', { timeout: 20_000 }, async () => {
+  const f = launchFixture({ version: '0.2.0' });
+  let run = f.launch();
+  try {
+    await run.opened;
+    await run.heard(/deployed backend/);
+    assert.equal(existsSync(f.paths.release), false, 'the desktop is still building');
+    assert.equal(deploys(f), 1);
+    assert.equal(pushes(f), 1);
+    assert.ok(toolCalls(f) > 0, 'adapters and CLIs update with it');
+    assert.deepEqual(JSON.parse(readFileSync(f.statusFile, 'utf8')), { updating: false, reason: null });
+    writeFileSync(f.paths.release, 'close app');
+    assert.equal(await run.exited, 0, run.stderr());
+
+    rmSync(f.paths.release); rmSync(f.desktop);
+    writeFileSync(f.paths.state, JSON.stringify({ version: '0.2.0', hostVersion: '0.2.0' }));
+    const before = toolCalls(f);
+    run = f.launch();
+    await run.opened;
+    await run.heard(/nothing to do/);
+    assert.equal(deploys(f), 1);
+    assert.equal(toolCalls(f), before);
+    writeFileSync(f.paths.release, 'close app');
+    assert.equal(await run.exited, 0, run.stderr());
+  } finally { run.app.kill('SIGTERM'); await run.exited; f.close(); }
+});
+for (const [state, reason] of [[{ unreachable: true }, /Network is unreachable/], [{ version: '0.2.0', deployFail: true }, /test compiler error/], [{ version: '0.2.0', startFail: true }, /failed to start/]] as const) {
+  test('dev launch: the app stays open and is told why, on ' + Object.keys(state).at(-1), { timeout: 20_000 }, async () => {
+    const f = launchFixture(state);
+    const run = f.launch();
+    try {
+      await run.opened;
+      await run.heard(new RegExp(reason.source + '.*log: .*\\.log'));
+      assert.equal(run.app.exitCode, null);
+      const shown = JSON.parse(readFileSync(f.statusFile, 'utf8'));
+      assert.equal(shown.updating, false);
+      assert.match(shown.reason, reason);
+      writeFileSync(f.paths.release, 'close app');
+      assert.equal(await run.exited, 0, run.stderr());
+    } finally { run.app.kill('SIGTERM'); await run.exited; f.close(); }
+  });
+}
+test('dev launch: closing the app stops a running update and frees its lock', { timeout: 20_000 }, async () => {
+  const f = launchFixture({ version: '0.2.0', hold: true });
+  const held = untilFile(f.paths.marker);
+  const run = f.launch();
+  try {
+    await run.opened;
+    await held;
+    const pid = Number(readFileSync(f.paths.marker, 'utf8'));
+    run.app.kill('SIGTERM');
+    await run.exited;
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  } finally { run.app.kill('SIGTERM'); await run.exited; f.close(); }
 });
 
 test('backend identity follows real committed build inputs and ignores Rust-only commits', async () => {

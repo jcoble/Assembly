@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { startRemoteUpdate } from './app-dev-remote.ts';
 import { profileFor } from './seed-dev.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -79,6 +80,14 @@ let managed: Awaited<ReturnType<typeof import('./app-dev-managed.ts').prepareMan
 
 // The backend's update check compares against this checkout, and its update button runs scripts/update-machines.ts here.
 env.ASSEMBLY_DEV_CHECKOUT = root;
+// The one update runs alongside the builds, never after them: a remote on another version number never waits for the desktop.
+let stopUpdate = async () => {};
+const startUpdate = () => {
+  env.ASSEMBLY_DEV_REMOTE_SYNC_STATUS = join(home, 'remote-sync-state.json');
+  try { stopUpdate = startRemoteUpdate(root, home, env); }
+  catch (error) { console.warn(`app:dev: the remote update could not start: ${error instanceof Error ? error.message : String(error)}`); }
+};
+if (!isManaged && lane.status === 0 && laneName) startUpdate();
 try {
   if (isManaged) {
     managed = await (await import('./app-dev-managed.ts')).prepareManagedLane(root, launch.signal);
@@ -88,6 +97,7 @@ try {
     tokenFile = join(process.env.HOME!, '.config', managed.target.data, 'env');
     remoteTokenFile = `.config/${managed.target.data}/env`;
     env.ASSEMBLY_REMOTE = 'workbox-test';
+    startUpdate();
   }
   const cache = existsSync(join(root, '.git')) ? await import('./dev-build-cache.ts') : undefined;
   const publish = async () => run('dotnet', [
@@ -105,7 +115,7 @@ try {
   }, null, 2) + '\n');
   renameSync(temporaryLane, laneFile);
   mkdirSync(home, { recursive: true });
-  // A launch only checks; the update button and `npm run deploy:remote` install. No agents at all means nothing to run.
+  // No agents at all means nothing to run. Otherwise the update above, the button and `npm run deploy:remote` install them.
   if (!managed && !existsSync(join(home, 'agents.json'))) {
   const installer = ['dotnet/scripts/agents-file.sh', process.env.ADAPTERS ?? adapters, join(home, 'agents.json')];
   const installed = await attempt('bash', installer);
@@ -126,6 +136,7 @@ try {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = (error as { exitCode?: number }).exitCode ?? 1;
 } finally {
+  await stopUpdate();
   managed?.release();
   process.removeListener('SIGINT', interrupt);
   process.removeListener('SIGTERM', interrupt);

@@ -7,12 +7,12 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
 // Full launcher lifecycle using owned fake build/install processes. No remote service, registry or provider conversation.
-test('a second managed dev launch runs no build, install or seed process, and neither launch touches the remote', { timeout: 25000 }, () => {
+test('a second managed dev launch runs no build, install or seed process', { timeout: 25000 }, () => {
   const top = mkdtempSync(join(realpathSync(tmpdir()), 'managed-launch-'));
   const home = join(top, 'user'), root = join(home, 'dev/work/worktrees/Assembly/example'), log = join(top, 'calls'), marker = join(top, 'remote-checked');
   const write = (file: string, text: string, mode = 0o600) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text, { mode }); };
   try {
-    for (const file of ['app-dev.ts', 'app-dev-managed.ts', 'seed-dev.ts', 'dev-seed-cohort.ts', 'dev-build-cache.ts', 'dev-toolchain.ts', 'dev-lane-clean.ts', 'dev-remote-identity.ts', 'dev-remote-process.ts']) {
+    for (const file of ['app-dev.ts', 'app-dev-remote.ts', 'update-machines.ts', 'app-dev-managed.ts', 'seed-dev.ts', 'dev-seed-cohort.ts', 'dev-build-cache.ts', 'dev-toolchain.ts', 'dev-lane-clean.ts', 'dev-remote-identity.ts', 'dev-remote-process.ts']) {
       mkdirSync(join(root, 'scripts'), { recursive: true }); copyFileSync(new URL(file, import.meta.url), join(root, 'scripts', file));
     }
     const owner = { version: 1, name: 'example', number: 2, owner: randomUUID(), host: hostname(), worktree: root };
@@ -64,11 +64,11 @@ write(descriptor,JSON.stringify([{id:'claude',cli:path.join(bin,'claude'),args:[
       assert.equal(result.status, 0, result.stderr + result.error);
       return performance.now() - started;
     };
-    const first = run(); assert.match(readFileSync(log, 'utf8'), /dotnet publish/); assert.match(readFileSync(log, 'utf8'), /cargo build/); assert.doesNotMatch(readFileSync(log, 'utf8'), /remote-check/);
+    const first = run(); assert.match(readFileSync(log, 'utf8'), /dotnet publish/); assert.match(readFileSync(log, 'utf8'), /cargo build/);
     write(log, '');
     const second = run(), calls = readFileSync(log, 'utf8');
     assert.doesNotMatch(calls, /dotnet|cargo|npm|adapter build/);
-    assert.doesNotMatch(calls, /remote-check/); assert.match(calls, /native launch/);
+    assert.match(calls, /native launch/);
     // A hand-made or copied .lane still opens, with no dependency check, seed or request to the shared remote.
     write(join(root, '.lane'), 'LANE_NAME=example\nLANE_NUMBER=2\n');
     write(log, '');

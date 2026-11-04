@@ -12,10 +12,7 @@ internal static class BackendBuild
     /// <summary>Every compile input: an exact match, what a check before a PR requires.</summary>
     internal static string? Identity { get; } = Metadata("BackendIdentity");
 
-    /// <summary>The inputs on the list of changes that need the remote to change too (scripts/dev-remote-identity.ts).</summary>
-    internal static string? RemoteContract { get; } = Metadata("RemoteContract");
-
-    /// <summary>The real release version, which moves only on a release and sign.</summary>
+    /// <summary>The one version number: <c>version</c> under [package] in desktop/Cargo.toml. A remote on another one gets replaced, and a release tag must equal it.</summary>
     internal static string? Version { get; } = Metadata("ReleaseVersion");
 
     /// <summary>The adapters, launcher and their scripts this build was made with (scripts/dev-remote-identity.ts).</summary>
@@ -24,9 +21,9 @@ internal static class BackendBuild
     private static string? Metadata(string key) => typeof(BackendBuild).Assembly
         .GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == key)?.Value;
 
-    /// <summary>What a machine's welcome says it runs, against this build. Information only: nothing is refused on it.</summary>
-    internal static RemoteBackend Compare(string? identity, string? contract, string? commit, string? version) =>
-        new(commit, Commit, identity != Identity, contract != RemoteContract, version, Version);
+    /// <summary>What a machine's welcome says it runs, against this build. Nothing is refused on it.</summary>
+    internal static RemoteBackend Compare(string? identity, string? commit, string? version) =>
+        new(commit, Commit, identity != Identity, version, Version);
 
     internal static string? ReadCommit(string? informationalVersion) =>
         informationalVersion?.Split('+') is [_, { Length: > 0 } commit] ? commit : null;

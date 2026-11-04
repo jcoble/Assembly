@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { installedRelease, prepareBackend, pruneReleases } from './dev-remote-build.ts';
 import { sameBackendFiles } from './remote-backend-package.ts';
-import { backendIdentity, lane, remoteContract, type Lane } from './dev-remote-identity.ts';
+import { backendIdentity, lane, type Lane } from './dev-remote-identity.ts';
 import { command, lifetime } from './dev-remote-process.ts';
 import { probeSource, type Probe } from './dev-remote-probe.ts';
 import { ensureTools, latestTools, toolKey } from './dev-toolchain.ts';
@@ -65,7 +65,7 @@ try {
     throw Error('managed lane reservation belongs to another checkout; no update performed');
   const before = await probe();
   const identity = await backendIdentity(process.cwd(), request.commit, owner.signal);
-  if (identity !== request.identity || await remoteContract(process.cwd(), request.commit, owner.signal) !== request.contract) throw Error('source identity differs after transfer');
+  if (identity !== request.identity) throw Error('source identity differs after transfer');
   const seedTools = request.managed ? await import('./dev-seed-cohort.ts') : undefined;
   const seedChanged = Boolean(request.managed && !await seedTools!.seedCurrent(join(root, 'serve'), request.managed.cohort));
   const seedManifest = request.managed && (request.managed.seedManifest ?? seedTools!.trackedManifest(process.cwd()));
@@ -73,8 +73,7 @@ try {
     throw Error('remote seed manifest differs from the local safe-backup cohort');
   const desiredTools = request.managed ? toolKey(request.managed.versions, request.sources, 'linux-x64') : undefined;
   const adaptersCurrent = before.adapterOK && before.launcherSha === request.launcher && (request.managed ? before.toolsKey === desiredTools : before.adapterSources === request.sources);
-  // A launch (waitForIdle) replaces the backend only when the list differs; the serve command when anything built does.
-  const current = request.waitForIdle ? before.remoteContract === request.contract : before.backendIdentity === identity;
+  const current = before.backendIdentity === identity;
   if (current && adaptersCurrent && !seedChanged) {
     console.log(`Workbox Test ${target.unit} already matches after acquiring the lane lock; no deploy`);
   } else {

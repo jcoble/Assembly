@@ -472,7 +472,7 @@ internal sealed partial class RemoteMachine
             throw Unreachable(reason, $"{_name} {reason}");
         }
         string? Text(string name) => welcome.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-        _status.Backend(_name, Socket.BackendBuild.Compare(Text("backendIdentity"), Text("remoteContract"), Text("commit"), Text("version")));
+        _status.Backend(_name, Socket.BackendBuild.Compare(Text("backendIdentity"), Text("commit"), Text("version")));
         return welcome.TryGetProperty("engine", out var engine) && engine.ValueKind == JsonValueKind.String ? engine.GetString() : null;
     }
 

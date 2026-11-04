@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { adapterInput, adapterSources, backendIdentity, backendInput, sourcesDigest, remoteContract, remoteContractInput, workingBackendIdentity, workingRemoteContract } from './dev-remote-identity.ts';
+import { adapterInput, adapterSources, backendIdentity, backendInput, hardContract, remoteContractInput, requireCleanBackend, sourcesDigest, versionIn, workingBackendIdentity } from './dev-remote-identity.ts';
 
 for (const [file, onList] of [
   ['dotnet/Assembly.Infrastructure/Socket/SocketFrames.cs', true],
@@ -42,7 +42,7 @@ for (const [file, onList] of [
   ['desktop/Cargo.toml', false],
 ] as const) test(`${file} is ${onList ? 'on' : 'off'} the list`, () => assert.equal(remoteContractInput(file), onList));
 
-test('everything on the list is also a build input, so an exact match implies a list match', () => {
+test('everything on the list is also a build input, so an exact match covers it too', () => {
   for (const file of ['dotnet/Assembly.Engine/EngineCommands.cs', 'dotnet/global.json'])
     assert.ok(remoteContractInput(file) && backendInput(file));
 });
@@ -56,35 +56,17 @@ test('adapters, launchers and their scripts have their own check, and an exact m
   assert.notEqual(await sourcesDigest(adapterSources, async () => undefined), await digest('a'));
 });
 
-test('the list identity ignores what is off the list, the release version moves both, and uncommitted edits count', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'backend-contract-'));
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
-  const commit = () => { git('add', '.'); git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture'); return git('rev-parse', 'HEAD'); };
-  try {
-    git('init', '-q');
-    mkdirSync(join(root, 'dotnet/Assembly.Remote'), { recursive: true });
-    mkdirSync(join(root, 'dotnet/Assembly.Infrastructure/Notion'), { recursive: true });
-    mkdirSync(join(root, 'desktop'));
-    writeFileSync(join(root, 'dotnet/Assembly.Remote/Assembly.Remote.csproj'), 'backend');
-    writeFileSync(join(root, 'dotnet/Assembly.Infrastructure/Notion/NotionCalls.cs'), 'first');
-    writeFileSync(join(root, 'desktop/Cargo.toml'), '[package]\nname = "x"\nversion = "0.1.0"\n[dependencies]\nversion = "9"\n');
-    const first = commit();
-    const contract = await remoteContract(root, first), exact = await backendIdentity(root, first);
-    assert.equal(await workingRemoteContract(root, first), contract);
-    writeFileSync(join(root, 'dotnet/Assembly.Infrastructure/Notion/NotionCalls.cs'), 'second');
-    const unrelated = commit();
-    assert.equal(await remoteContract(root, unrelated), contract);
-    assert.notEqual(await backendIdentity(root, unrelated), exact);
-    writeFileSync(join(root, 'desktop/Cargo.toml'), '[package]\nname = "changed"\nversion = "0.1.0"\n');
-    const manifest = commit();
-    assert.equal(await remoteContract(root, manifest), contract);
-    writeFileSync(join(root, 'desktop/Cargo.toml'), '[package]\nname = "changed"\nversion = "0.2.0"\n');
-    const release = commit();
-    assert.notEqual(await remoteContract(root, release), contract);
-    assert.equal(await workingRemoteContract(root, release), await remoteContract(root, release));
-    writeFileSync(join(root, 'dotnet/Assembly.Remote/new.cs'), 'pending');
-    assert.notEqual(await workingRemoteContract(root, release), await remoteContract(root, release));
-  } finally { rmSync(root, { recursive: true, force: true }); }
+test('the one version number is the package version, not a dependency called version', () => {
+  assert.equal(versionIn('[package]\nname = "x"\nversion = "0.3.0"\n[dependencies]\nversion = "9"\n'), '0.3.0');
+  assert.equal(versionIn('[dependencies]\nversion = "9"\n'), 'none');
+});
+
+test('the guard takes the hard contracts only; the rest of the list is the author\'s judgment', () => {
+  for (const file of ['dotnet/Assembly.Infrastructure/Socket/SocketJson.cs', 'dotnet/Assembly.Application/Features/Chat/Rows/RowStore.cs', 'dotnet/Assembly.Domain/Rows/Row.cs',
+    'dotnet/Assembly.Engine/Persistence/EngineSchema.cs', 'dotnet/Assembly.Application/Features/Chat/Sessions/SessionStore.cs', 'dotnet/Assembly.Infrastructure/Persistence/AppDatabase.cs',
+    'dotnet/Assembly.Application/Common/Acp/AcpProtocol.cs', 'dotnet/Assembly.Infrastructure/Agents/AgentsFile.cs', 'scripts/package-adapters.ts', 'scripts/adapters/claude-launcher.ts']) assert.ok(hardContract(file), file);
+  for (const file of ['dotnet/Assembly.Engine/EngineCommands.cs', 'dotnet/Assembly.Application/Features/Chat/Sessions/SendFeature.cs', 'dotnet/Assembly.Infrastructure/Git/GitRun.cs',
+    'dotnet/Assembly.Remote/Serve/ServeRun.cs', 'dotnet/Assembly.Infrastructure/Remote/RemoteMachine.cs', 'desktop/src/main.rs', 'scripts/workbox-serve.ts']) assert.ok(!hardContract(file), file);
 });
 
 test('build identity ignores Rust-only revisions and detects uncommitted backend inputs', async () => {

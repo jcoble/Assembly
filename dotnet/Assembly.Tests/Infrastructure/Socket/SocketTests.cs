@@ -109,7 +109,7 @@ public sealed partial class SocketTests : IAsyncLifetime
 
         await SendAsync(socket, """{"t":"hello","token":"socket-token","protocol":1}""");
 
-        Assert.Equal($$"""{"t":"welcome","protocol":1,"machine":"test-machine","format":{{Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion}},"commit":{{JsonSerializer.Serialize(BackendBuild.Commit)}},"backendIdentity":{{JsonSerializer.Serialize(BackendBuild.Identity)}},"remoteContract":{{JsonSerializer.Serialize(BackendBuild.RemoteContract)}},"version":{{JsonSerializer.Serialize(BackendBuild.Version)}}}""", await ReadAsync(socket));
+        Assert.Equal($$"""{"t":"welcome","protocol":1,"machine":"test-machine","format":{{Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion}},"commit":{{JsonSerializer.Serialize(BackendBuild.Commit)}},"backendIdentity":{{JsonSerializer.Serialize(BackendBuild.Identity)}},"version":{{JsonSerializer.Serialize(BackendBuild.Version)}}}""", await ReadAsync(socket));
     }
 
     // Pins: base#10

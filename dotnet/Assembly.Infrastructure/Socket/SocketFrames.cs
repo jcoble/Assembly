@@ -12,7 +12,7 @@ internal sealed record InFrame(string? T, string? Token, int? Protocol, long? Id
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExpectedSource? ExpectedSource = null);
 
 internal sealed record WelcomeFrame(int Protocol, string Machine, int Format, string? Commit,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Engine = null, string? BackendIdentity = null, string? RemoteContract = null, string? Version = null)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Engine = null, string? BackendIdentity = null, string? Version = null)
 {
     [JsonPropertyOrder(-1)]
     public string T => "welcome";

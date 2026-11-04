@@ -4,9 +4,9 @@ namespace Assembly.Infrastructure.Updates;
 
 /// <summary>
 /// What each piece should be, from an <see cref="IUpdateSource"/>. A null value is unknown: the check says so and never
-/// calls it behind. <paramref name="BackendBehind"/> decides whether a remote's backend is behind.
+/// calls it behind. <paramref name="Backend"/> is the one version number a remote's backend must be on.
 /// </summary>
-internal sealed record UpdateWanted(string? App, Func<RemoteBackend, bool> BackendBehind, string? Backend,
+internal sealed record UpdateWanted(string? App, string? Backend,
     IReadOnlyDictionary<string, string?> Adapters, string? Packaging, IReadOnlyDictionary<string, string?> Clis);
 
 /// <summary>The one check, the same in development and in production: only its wanted values differ.</summary>
@@ -17,8 +17,8 @@ internal static class UpdateCheck
          .. Tools(installed, wanted)];
 
     internal static IReadOnlyList<UpdateItem> Remote(RemoteBackend? backend, InstalledTools? installed, UpdateWanted wanted) =>
-        [new("backend", "Backend", backend?.Version ?? backend?.Commit, wanted.Backend,
-             backend is null ? UpdateItem.Unknown : wanted.BackendBehind(backend) ? UpdateItem.Behind : UpdateItem.UpToDate),
+        [new("backend", "Backend", backend?.Version, wanted.Backend,
+             backend is null ? UpdateItem.Unknown : backend.Version != wanted.Backend ? UpdateItem.Behind : UpdateItem.UpToDate),
          .. Tools(installed, wanted)];
 
     private static IEnumerable<UpdateItem> Tools(InstalledTools? installed, UpdateWanted wanted)

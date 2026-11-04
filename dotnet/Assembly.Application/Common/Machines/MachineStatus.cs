@@ -27,11 +27,10 @@ public sealed record UpdateItem(string Kind, string Name, string? Current, strin
 
 /// <summary>
 /// Which backend a remote runs, compared with this desktop's. Information only. <paramref name="Differs"/> is any
-/// difference in the backend's build inputs, what a check before a PR requires. <paramref name="ListDiffers"/> is a
-/// change on the list of what needs the remote to change, what counts as behind in development.
-/// <see cref="VersionDiffers"/> is a real release difference, what counts as behind in production.
+/// difference in the backend's build inputs, what a check before a PR requires. <see cref="VersionDiffers"/> is the one
+/// number: what makes a remote behind, in development and in production.
 /// </summary>
-public sealed record RemoteBackend(string? Commit, string? LocalCommit, bool Differs, bool ListDiffers, string? Version, string? LocalVersion)
+public sealed record RemoteBackend(string? Commit, string? LocalCommit, bool Differs, string? Version, string? LocalVersion)
 {
     public bool VersionDiffers => Version != LocalVersion;
 }

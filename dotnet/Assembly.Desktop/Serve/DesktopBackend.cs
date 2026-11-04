@@ -390,7 +390,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             var notionCache = new Assembly.Application.Features.Notion.NotionCache(db, notionSettings);
             var notionEdits = new Assembly.Application.Features.Notion.NotionEdits(db, notionSettings, notionHttp);
             notion = new Assembly.Infrastructure.Notion.NotionCalls(notionSettings, new Assembly.Infrastructure.Notion.NotionOAuth(cliHttp, notionSettings, TimeProvider.System), new Assembly.Infrastructure.Notion.NotionDetailReader(notionHttp), notionCache, new Assembly.Infrastructure.Notion.NotionRefresh(notionHttp, notionCache, notionSettings, TimeProvider.System), notionEdits, new Assembly.Infrastructure.Notion.NotionImageUpload(Path.Combine(home, "staging", "notion"), notionHttp, notionSettings, notionEdits));
-            var updates = new MachineUpdates(UpdateSources.ForHost(cliHttp, TimeProvider.System), status, new InstalledCalls(launcher, TimeProvider.System),
+            var updates = new MachineUpdates(UpdateSources.ForHost(cliHttp, TimeProvider.System, remoteReleases), status, new InstalledCalls(launcher, TimeProvider.System),
                 async (machine, ct) => connections!.ByName(machine) is { } reached ? await reached.InstalledToolsAsync(ct) : null,
                 agentsFile is null ? null : () => agentsFile.Reload(), work, log);
             var cliUpdates = new UpdateCalls(launcher, engine.Machine, cliHttp, TimeProvider.System, hostStop.Token,

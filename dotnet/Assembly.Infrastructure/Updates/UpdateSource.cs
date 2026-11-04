@@ -36,10 +36,10 @@ internal static class UpdateSources
         LatestAsync(CliReleaseSource.Families, CliReleaseSource.PackageOf, npm, ct);
 }
 
-/// <summary>Development: this checkout is what's wanted, and the list decides whether a remote's backend is behind.</summary>
+/// <summary>Development: the update builds this checkout. app-dev starts it on launch when a remote's number differs, without waiting on the desktop.</summary>
 internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm) : IUpdateSource
 {
-    public async Task<UpdateWanted> WantedAsync(CancellationToken ct) => new(BackendBuild.Version, backend => backend.ListDiffers, BackendBuild.Version,
+    public async Task<UpdateWanted> WantedAsync(CancellationToken ct) => new(BackendBuild.Version, BackendBuild.Version,
         await UpdateSources.LatestAsync(UpdateSources.AdapterNames, UpdateSources.AdapterPackage, npm, ct), BackendBuild.AdapterSources,
         await UpdateSources.CliVersionsAsync(npm, ct));
 
@@ -77,26 +77,17 @@ internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm) : 
 /// <summary>The production install, which has each remote fetch its signed backend and adapters from GitHub itself.</summary>
 internal interface IReleaseInstall
 {
-    /// <summary>The newest signed backend version.</summary>
-    Task<string> LatestBackendAsync(CancellationToken ct);
     Task InstallAsync(string machine, Action<string> progress, CancellationToken ct);
 }
 
 /// <summary>
-/// A delivered app: a remote's backend must be on the newest signed release, and CLIs have npm. A build with no
-/// <see cref="IReleaseInstall"/> has nothing to update from. The app's own feed and the published adapter versions plug in here.
+/// A delivered app: everything is the same except that the update comes from the signed release. A build with no <see cref="IReleaseInstall"/> has nothing
+/// to update from. The app's own feed and the published adapter versions plug in here.
 /// </summary>
 internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall? release) : IUpdateSource
 {
-    public async Task<UpdateWanted> WantedAsync(CancellationToken ct)
-    {
-        string? latest = null;
-        if (release is not null)
-            try { latest = await release.LatestBackendAsync(ct); }
-            catch (CallFailed) { }
-        return new(null, backend => latest is not null && backend.Version is { } have && CliVersion.Compare(have, latest) == "update_available", latest,
-            UpdateSources.AdapterNames.ToDictionary(name => name, _ => (string?)null, StringComparer.Ordinal), null, await UpdateSources.CliVersionsAsync(npm, ct));
-    }
+    public async Task<UpdateWanted> WantedAsync(CancellationToken ct) => new(null, BackendBuild.Version,
+        UpdateSources.AdapterNames.ToDictionary(name => name, _ => (string?)null, StringComparer.Ordinal), null, await UpdateSources.CliVersionsAsync(npm, ct));
 
     public async Task UpdateAsync(IReadOnlyList<string> remotes, Action<string> progress, CancellationToken ct)
     {

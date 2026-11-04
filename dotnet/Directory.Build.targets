@@ -8,9 +8,8 @@
     </Exec>
     <ItemGroup>
       <AssemblyMetadata Include="BackendIdentity" Value="$(AssemblyBackendStamp.Split(' ')[0])" />
-      <AssemblyMetadata Include="RemoteContract" Value="$(AssemblyBackendStamp.Split(' ')[1])" />
-      <AssemblyMetadata Include="ReleaseVersion" Value="$(AssemblyBackendStamp.Split(' ')[2])" />
-      <AssemblyMetadata Include="AdapterSources" Value="$(AssemblyBackendStamp.Split(' ')[3])" />
+      <AssemblyMetadata Include="ReleaseVersion" Value="$(AssemblyBackendStamp.Split(' ')[1])" />
+      <AssemblyMetadata Include="AdapterSources" Value="$(AssemblyBackendStamp.Split(' ')[2])" />
     </ItemGroup>
   </Target>
 </Project>

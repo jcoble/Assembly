@@ -25,13 +25,13 @@ export async function sourcesDigest(files: string[], read: (file: string) => Pro
   for (const file of files) digest.update(file + '\0').update((await read(file)) ?? 'missing').update('\0');
   return digest.digest('hex');
 }
-// The list: every kind of backend change that needs the remote to change too. One difference here is why a dev launch
-// builds and deploys its backend; anything else leaves the backend alone. Off the list: the desktop's client side of the
-// remote, features only the desktop hosts, tooling that isn't compiled in, docs, and the adapter sources above, which
-// have their own check. The release version counts as well.
+// The list: every kind of backend change the remote may have to run too. Its author raises the version number (version under
+// [package] in desktop/Cargo.toml) when the remote must run the change to test it, and the next dev start builds and deploys.
+// Only hardContract below is enforced. Off the list: the desktop's client side of the remote, features only the desktop
+// hosts, tooling that isn't compiled in, and docs.
 const offTheList = new RegExp([
   String.raw`^dotnet/Assembly\.Infrastructure/(Remote|Notion|Clock)/`,
-  String.raw`^dotnet/Assembly\.Infrastructure/Updates/(UpdateCalls|UpdateCheck|UpdateSource|MachineUpdates)`,
+  String.raw`^dotnet/Assembly\.Infrastructure/Updates/(UpdateCalls|UpdateCheck|UpdateSource|MachineUpdates|DevRemoteSyncStatus)`,
   String.raw`^dotnet/Assembly\.Infrastructure/Workflows/RemoteWorkflowMirror\.cs$`,
   String.raw`^dotnet/Assembly\.Application/Features/(Notion|Workspaces)/`,
   String.raw`\.md$`,
@@ -43,15 +43,39 @@ export function remoteContractInput(file: string) {
 export function digestInputs(inputs: string[], version: string) {
   return createHash('sha256').update(`assembly-dev-remote-v3:ACP2:${version}\n` + [...inputs].sort().join('\n')).digest('hex');
 }
-export function digestContract(inputs: string[], version: string) {
-  return createHash('sha256').update(`assembly-dev-remote-list-v1:ACP2:${version}\n` + [...inputs].sort().join('\n')).digest('hex');
+// Where the two sides can't work together until the remote changes: the socket protocol and frames, row and message shapes,
+// the database on data the remote holds, and the adapter and launcher contract. The commit hook refuses a change to one of
+// these that doesn't raise the version number. Everything else on the list is the author's judgment.
+const hardContracts = new RegExp([
+  String.raw`^dotnet/Assembly\.Infrastructure/Socket/`,
+  String.raw`^dotnet/Assembly\.Application/Features/Chat/Rows/`,
+  String.raw`^dotnet/Assembly\.Domain/(Rows|Events|Sessions|Markdown)/`,
+  String.raw`^dotnet/Assembly\.Engine/Persistence/`,
+  String.raw`^dotnet/Assembly\.Engine/Providers/ProviderSchema`,
+  String.raw`^dotnet/Assembly\.Engine/Workflows/Persistence`,
+  String.raw`^dotnet/Assembly\.Application/Features/Chat/ChatSchema`,
+  String.raw`^dotnet/Assembly\.Application/Features/Chat/Sessions/(SessionStore|MachineStore)`,
+  String.raw`^dotnet/Assembly\.Application/Features/Projects/ProjectsSchema`,
+  String.raw`^dotnet/Assembly\.Application/Features/Preferences/PreferencesSchema`,
+  String.raw`^dotnet/Assembly\.Application/Features/Workflows/WorkflowSchema`,
+  String.raw`^dotnet/Assembly\.Infrastructure/Persistence/`,
+  String.raw`^dotnet/Assembly\.Infrastructure/Phone/PhoneSchema`,
+  String.raw`^dotnet/Assembly\.Application/Common/(Acp|Agents)/`,
+  String.raw`^dotnet/Assembly\.Infrastructure/Agents/`,
+  String.raw`^dotnet/Assembly\.Application/Features/Agents/`,
+].join('|'));
+export function hardContract(file: string) {
+  return hardContracts.test(file) && !/\.md$/.test(file) || adapterInput(file);
 }
+// What a check-only run exits with when the remote's number differs.
+export const remoteBehindExit = 10;
 const path = (line: string) => line.split('\t')[1] ?? '';
-// The app's real release version, which moves only on a release: the package version desktop/Cargo.toml declares.
-function versionIn(manifest: string) {
-  return /^version\s*=\s*"([^"]+)"/m.exec(manifest)?.[1] ?? 'none';
+// The one version number: the package version desktop/Cargo.toml declares. Set by hand, in the source; a release only reads it.
+export const versionFile = 'desktop/Cargo.toml';
+export function versionIn(manifest: string) {
+  return /^\[package\][^[]*?^version\s*=\s*"([^"]+)"/m.exec(manifest)?.[1] ?? 'none';
 }
-async function committedVersion(root: string, commit: string, signal?: AbortSignal) {
+export async function committedVersion(root: string, commit: string, signal?: AbortSignal) {
   try { return versionIn(await command('git', ['show', `${commit}:desktop/Cargo.toml`], { cwd: root, signal })); }
   catch (error) { signal?.throwIfAborted(); return versionIn(''); }
 }
@@ -69,9 +93,6 @@ async function committedInputs(root: string, commit: string, signal?: AbortSigna
 }
 export async function backendIdentity(root: string, commit: string, signal?: AbortSignal) {
   return digestInputs(await committedInputs(root, commit, signal), await committedVersion(root, commit, signal));
-}
-export async function remoteContract(root: string, commit: string, signal?: AbortSignal) {
-  return digestContract((await committedInputs(root, commit, signal)).filter(line => remoteContractInput(path(line))), await committedVersion(root, commit, signal));
 }
 // The files actually being built, including dirty edits; git is never needed by a delivered binary.
 async function workingInputs(root: string, commit: string, signal?: AbortSignal) {
@@ -95,15 +116,12 @@ async function workingInputs(root: string, commit: string, signal?: AbortSignal)
 export async function workingBackendIdentity(root: string, commit: string, signal?: AbortSignal) {
   return digestInputs(await workingInputs(root, commit, signal), await workingVersion(root));
 }
-export async function workingRemoteContract(root: string, commit: string, signal?: AbortSignal) {
-  return digestContract((await workingInputs(root, commit, signal)).filter(line => remoteContractInput(path(line))), await workingVersion(root));
-}
-export async function requireCleanBackend(root: string, signal?: AbortSignal, input: (file: string) => boolean = backendInput) {
+export async function requireCleanBackend(root: string, signal?: AbortSignal) {
   const [paths, untracked] = await Promise.all([
     command('git', ['diff', '--name-only', 'HEAD'], { cwd: root, signal }),
     command('git', ['ls-files', '--others', '--exclude-standard'], { cwd: root, signal }),
   ]);
-  if ([...paths.split('\n'), ...untracked.split('\n')].some(input))
+  if ([...paths.split('\n'), ...untracked.split('\n')].some(backendInput))
     throw new Error('uncommitted backend changes: Workbox Test stays behind this checkout; commit them before launching again');
 }
 export type Lane = { name: string; number: number; unit: string; data: string; port: number };
@@ -118,7 +136,7 @@ export function lane(name: string, number: number): Lane {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const root = process.argv[2];
   const commit = await command('git', ['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: root });
-  // Stamped into the binary (dotnet/Directory.Build.targets): exact identity, list identity, release version, adapter sources.
+  // Stamped into the binary (dotnet/Directory.Build.targets): exact identity, release version, adapter sources.
   const sources = await sourcesDigest(adapterSources, file => readFile(join(root, file)).catch(() => undefined));
-  console.log(`${await workingBackendIdentity(root, commit)} ${await workingRemoteContract(root, commit)} ${await workingVersion(root)} ${sources}`);
+  console.log(`${await workingBackendIdentity(root, commit)} ${await workingVersion(root)} ${sources}`);
 }

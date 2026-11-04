@@ -2,6 +2,7 @@ using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
+using Assembly.Infrastructure.Socket;
 using Assembly.Infrastructure.Topics;
 using Assembly.Infrastructure.Updates;
 
@@ -9,8 +10,8 @@ namespace Assembly.Tests.Infrastructure.Updates;
 
 public sealed class UpdateCheckTests
 {
-    private static readonly RemoteBackend Same = new("a", "a", false, false, "1.0.0", "1.0.0");
-    private static UpdateWanted Dev(string? adapter = "2.0.0", string? cli = "3.0.0") => new(null, backend => backend.ListDiffers, "1.0.0",
+    private static readonly RemoteBackend Same = new("a", "a", false, "1.0.0", "1.0.0");
+    private static UpdateWanted Dev(string? adapter = "2.0.0", string? cli = "3.0.0") => new(null, "1.0.0",
         new Dictionary<string, string?> { ["adapter-acp"] = adapter }, "sources", new Dictionary<string, string?> { ["family"] = cli });
     private static InstalledTools Tools(string adapter = "2.0.0", string? packaging = "sources", string? cli = "3.0.0") =>
         new(new Dictionary<string, string> { ["adapter-acp"] = adapter }, packaging, [new("family", cli)]);
@@ -22,7 +23,7 @@ public sealed class UpdateCheckTests
     [Fact]
     public void Each_piece_is_behind_on_its_own()
     {
-        Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { ListDiffers = true }, Tools(), Dev())));
+        Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { Version = "0.9.0" }, Tools(), Dev())));
         Assert.Equal(["adapter"], Behind(UpdateCheck.Remote(Same, Tools(adapter: "1.9.0"), Dev())));
         Assert.Equal(["adapter"], Behind(UpdateCheck.Remote(Same, Tools(packaging: "older"), Dev())));
         Assert.Equal(["cli"], Behind(UpdateCheck.Remote(Same, Tools(cli: "2.9.9"), Dev())));
@@ -30,10 +31,11 @@ public sealed class UpdateCheckTests
     }
 
     [Fact]
-    public void Development_goes_by_the_list()
+    public void Only_the_version_number_makes_a_backend_behind()
     {
         var unrelated = Same with { Commit = "b", Differs = true };
         Assert.Empty(Behind(UpdateCheck.Remote(unrelated, Tools(), Dev())));
+        Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { Version = null }, Tools(), Dev())));
     }
 
     [Fact]
@@ -146,7 +148,6 @@ public sealed class UpdateCheckTests
     private sealed class FakeRelease : IReleaseInstall
     {
         public List<string> Installed { get; } = [];
-        public Task<string> LatestBackendAsync(CancellationToken ct) => Task.FromResult("2.0.0");
         public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct)
         {
             Installed.Add(machine);
@@ -161,7 +162,7 @@ public sealed class UpdateCheckTests
     }
 
     [Fact]
-    public async Task A_release_install_runs_on_every_remote_and_a_backend_behind_the_newest_release_shows()
+    public async Task A_release_install_runs_on_every_remote_and_a_delivered_app_compares_the_same_number()
     {
         var release = new FakeRelease();
         var source = UpdateSources.ForHost(new HttpClient(new NoNetwork()), TimeProvider.System, release, "");
@@ -170,9 +171,9 @@ public sealed class UpdateCheckTests
         Assert.Equal(["box", "other"], release.Installed);
         Assert.Equal(["Downloading.", "Downloading."], notes);
         var wanted = await source.WantedAsync(CancellationToken.None);
-        Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same, null, wanted)));
-        Assert.Empty(Behind(UpdateCheck.Remote(Same with { Version = "2.0.0" }, null, wanted)));
-        Assert.Empty(Behind(UpdateCheck.Remote(Same with { Version = "2.1.0" }, null, wanted)));
+        Assert.Equal(BackendBuild.Version, wanted.Backend);
+        Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { Version = "0.0.0-other" }, null, wanted)));
+        Assert.Empty(Behind(UpdateCheck.Remote(Same with { Version = BackendBuild.Version }, null, wanted)));
     }
 
     [Fact]

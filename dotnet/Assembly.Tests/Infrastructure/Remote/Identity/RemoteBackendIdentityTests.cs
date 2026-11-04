@@ -52,7 +52,7 @@ public sealed class RemoteBackendIdentityTests
         var item = Assert.Single(status.Items, item => item.Name == "box");
         Assert.True(item.Reachable);
         Assert.Null(item.Reason);
-        Assert.Equal(new RemoteBackend(remote.Commit, BackendBuild.Commit, true, false, BackendBuild.Version, BackendBuild.Version), item.Backend);
+        Assert.Equal(new RemoteBackend(remote.Commit, BackendBuild.Commit, true, BackendBuild.Version, BackendBuild.Version), item.Backend);
     }
 
     [Fact]

@@ -40,7 +40,7 @@ export async function prepareManagedLane(root: string, signal: AbortSignal) {
   try {
     const manifest = process.env.ASSEMBLY_DEV_SEED_MANIFEST ?? trackedManifest(root);
     const cohort = await seedCohort(manifest);
-    // A launch only checks. A lane with no tools at all has nothing to run, so its first launch installs them.
+    // A lane with no tools at all has nothing to run, so its first launch installs them. Otherwise the launch's update does.
     if (!await present(join(home, 'agents.json'))) await ensureTools(root, join(home, 'adapters'), join(home, 'agents.json'), (await managedTools(root, home, signal)).versions, signal);
     return { target, home, owner, release, seed: async () => {
         if (!await seedCurrent(home, cohort)) {

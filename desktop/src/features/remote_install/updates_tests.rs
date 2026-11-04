@@ -9,7 +9,7 @@ fn machine(value: serde_json::Value) -> Machine {
 fn with_updates() -> Machine {
     machine(
         json!({"name":"box","kind":"remote","reachable":true,"reason":null,"checked":true,
-        "backend":{"commit":"a1b2c3d4e5","localCommit":"f6e5d4c3b2","differs":true,"listDiffers":true,"version":"0.1.0","localVersion":"0.1.0","versionDiffers":false},
+        "backend":{"commit":"a1b2c3d4e5","localCommit":"f6e5d4c3b2","differs":true,"version":"0.1.0","localVersion":"0.2.0","versionDiffers":false},
         "updates":[
             {"kind":"backend","name":"Backend","current":"0.1.0","wanted":"0.1.0","state":"behind"},
             {"kind":"adapter","name":"codex-acp","current":"1.0.0","wanted":"1.1.0","state":"behind"},
