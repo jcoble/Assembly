@@ -60,6 +60,7 @@ internal static class DisplayQueries
         if (kind == "session") fields = fields.Select(field => field == "'title',t.title" ? "'title',NULL" : field);
         if (kind == "needs_me") fields = fields.Select(field => field == "'text',t.text" ? "'text',NULL" : field);
         if (kind == "session") return $"json_object('entityKind','{kind}',{string.Join(",", fields)}," +
+            $"'isBare',json(CASE WHEN {Assembly.Application.Common.Engine.BareSessionFolder.Predicate("t.project_id", "t.folder")} THEN 'true' ELSE 'false' END)," +
             "'canSteer',json(CASE WHEN t.can_steer=1 THEN 'true' ELSE 'false' END)," +
             "'parentMachine',(SELECT parent.machine FROM engine_session parent WHERE parent.id=t.parent_id)," +
             "'checkoutReason',(SELECT CASE WHEN json_type(o.receipt_json,'$.data.reason')='text' AND " +

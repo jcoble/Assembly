@@ -28,7 +28,7 @@ public sealed partial class SessionStore
         CREATE INDEX IF NOT EXISTS helper_messages_pair ON helper_messages(from_session, to_session);
         """;
 
-    private const string Columns = "session_id, agent, repo_url, CAST(title AS BLOB), acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, completed_at, settled_at, title_source, working_folder, project_id, checkout_root, branch";
+    private const string Columns = "session_id, agent, repo_url, CAST(title AS BLOB), acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, completed_at, settled_at, title_source, working_folder, project_id, checkout_root, branch, is_bare";
 
     // A database made before sessions had a machine gets the column; its sessions all ran where it lives.
     private const string HasMachine = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'machine';";
@@ -406,12 +406,13 @@ public sealed partial class SessionStore
                     AND {Rank("$source")} >= {Rank("title_source")} THEN $source ELSE title_source END,
                   updated_at = $at,
                   project_id = COALESCE($project, project_id),
+                  is_bare = CASE WHEN COALESCE($project, project_id) IS NULL THEN $bare ELSE 0 END,
                   checkout_root = COALESCE($checkout, checkout_root),
                   branch = CASE WHEN $checkout IS NOT NULL THEN $branch ELSE branch END
                 WHERE session_id = $id;
                 """, new SqlArg("$id", item.SessionId), new SqlArg("$title", exactTitle),
                 new SqlArg("$source", item.TitleSource ?? "prompt"), new SqlArg("$at", item.UpdatedAt),
-                new SqlArg("$project", item.ProjectId), new SqlArg("$checkout", item.CheckoutRoot), new SqlArg("$branch", item.Branch));
+                new SqlArg("$project", item.ProjectId), new SqlArg("$bare", item.IsBare ? 1 : 0), new SqlArg("$checkout", item.CheckoutRoot), new SqlArg("$branch", item.Branch));
             validate?.Invoke(scope);
             if (Get(scope, item.SessionId) is { } session)
             {
@@ -557,7 +558,7 @@ public sealed partial class SessionStore
             row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1, row.Long(10),
             row.IsNull(11) ? null : row.Long(11), row.IsNull(12) ? null : row.Long(12), row.IsNull(13) ? null : row.Text(13), WorkingFolder: row.IsNull(14) ? null : row.Text(14),
             ProjectId: row.IsNull(15) ? null : row.Text(15), CheckoutRoot: row.IsNull(16) ? null : row.Text(16),
-            Branch: row.IsNull(17) ? null : row.Text(17));
+            Branch: row.IsNull(17) ? null : row.Text(17), IsBare: row.Long(18) == 1);
 
     private static SqlArg[] Args((string Name, object? Value)[] parameters) =>
         Array.ConvertAll(parameters, parameter => new SqlArg(parameter.Name, parameter.Value));

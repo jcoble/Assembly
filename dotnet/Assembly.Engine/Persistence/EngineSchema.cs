@@ -20,6 +20,8 @@ public static class EngineSchema
                 machine_id TEXT NOT NULL, next_seq INTEGER NOT NULL, retained_after INTEGER NOT NULL,
                 snapshot_seq INTEGER NOT NULL);
             """);
+        if (scope.QueryFirst("SELECT COUNT(*) FROM pragma_table_info('engine_meta') WHERE name='bare_folder'", r => r.Long(0)) == 0)
+            scope.Execute("ALTER TABLE engine_meta ADD COLUMN bare_folder TEXT NULL");
         var meta = scope.QueryFirst("SELECT schema_version,machine_id FROM engine_meta WHERE singleton=1",
             r => (Version: r.Long(0), Machine: r.Text(1)));
         if (meta.Machine is null)

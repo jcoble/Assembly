@@ -27,6 +27,8 @@ public sealed partial class SessionStore : ISessionProjectProjection
 
     private static void EnsureProjectProjectionSchema(IWriteScope scope)
     {
+        if (scope.QueryFirst("SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name='is_bare'", r => r.Long(0)) == 0)
+            scope.Execute("ALTER TABLE session_info ADD COLUMN is_bare INTEGER NOT NULL DEFAULT 0");
         foreach (var column in new[] { "project_id", "checkout_root", "branch", "client_id" })
             if (scope.QueryFirst("SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name=$name", r => r.Long(0), new SqlArg("$name", column)) == 0)
                 scope.Execute($"ALTER TABLE session_info ADD COLUMN {column} TEXT NULL");
@@ -39,9 +41,41 @@ public sealed partial class SessionStore : ISessionProjectProjection
             """);
     }
 
+    public void ProjectBare(IWriteScope scope, string sessionId)
+    {
+        var bare = BareSessionFolder.Predicate("e.project_id", "e.folder");
+        if (scope.Execute($"""
+            UPDATE session_info SET is_bare=EXISTS(SELECT 1 FROM engine_session e WHERE e.id=$id AND {bare})
+            WHERE session_id=$id AND COALESCE(machine,'')=''
+              AND is_bare<>EXISTS(SELECT 1 FROM engine_session e WHERE e.id=$id AND {bare})
+            """, new SqlArg("$id", sessionId)) > 0)
+            Publish(scope, sessionId);
+    }
+
+    public void ProjectRemoteBare(IWriteScope scope, string machine, string route)
+    {
+        var changed = scope.Query($"""
+            WITH owner_sessions AS (
+              SELECT r.entity_id AS id,json_extract(r.row_json,'$.provider') AS provider,
+                json_extract(r.row_json,'$.parentId') AS parent,
+                json_extract(r.row_json,'$.isBare')=1 AND json_extract(r.row_json,'$.projectId') IS NULL AS bare
+              FROM engine_mirror_row r JOIN engine_mirror m ON m.machine=r.machine AND m.generation=r.generation
+              WHERE m.machine=$machine AND m.state='live' AND r.entity_kind='session'
+                AND json_type(r.row_json,'$.isBare') IN ('true','false')
+                AND json_extract(r.row_json,'$.id')=r.entity_id AND json_extract(r.row_json,'$.machine')=r.machine)
+            UPDATE session_info AS s SET is_bare=CASE WHEN s.project_id IS NULL THEN owner.bare ELSE 0 END
+            FROM owner_sessions owner WHERE s.session_id=owner.id AND s.machine=$route AND s.agent=owner.provider
+              AND s.parent_session_id IS owner.parent AND s.is_bare<>CASE WHEN s.project_id IS NULL THEN owner.bare ELSE 0 END
+              AND NOT EXISTS(SELECT 1 FROM engine_session other WHERE other.id=s.session_id AND other.machine<>$machine)
+            RETURNING {Columns}
+            """, ReadSession, new SqlArg("$machine", machine), new("$route", route));
+        foreach (var session in changed)
+            Publish(scope, session, SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None, null));
+    }
+
     public void Assigned(IWriteScope scope, string sessionId, string? projectId)
     {
-        if (scope.Execute("UPDATE session_info SET project_id=$project WHERE session_id=$id AND (project_id IS NULL OR project_id=$project)",
+        if (scope.Execute("UPDATE session_info SET project_id=$project,is_bare=CASE WHEN $project IS NULL THEN is_bare ELSE 0 END WHERE session_id=$id AND (project_id IS NULL OR project_id=$project)",
             new SqlArg("$id", sessionId), new SqlArg("$project", projectId)) != 1)
             throw new InvalidOperationException("The session project projection was refused.");
         Publish(scope, sessionId);
@@ -124,13 +158,14 @@ public sealed partial class SessionStore : ISessionProjectProjection
         return session;
     }
 
-    private const string ClientCorrelation = """
+    private static readonly string ClientCorrelation = $"""
         SELECT s.session_id,
             CASE WHEN e.checkout_operation_id=initial.operation THEN e.checkout_state ELSE NULL END,e.state,
             CASE WHEN COALESCE(s.machine,'')='' AND e.holder='local'
                 AND e.machine=(SELECT machine_id FROM engine_meta WHERE singleton=1) AND e.machine=$owner
                 AND e.provider=s.agent AND e.parent_id IS s.parent_session_id THEN 1 ELSE 0 END,
-            initial.operation,e.project_id,initial.root,e.machine,e.provider,e.parent_id,e.folder,e.managed_checkout,s.repo_url
+            initial.operation,e.project_id,initial.root,e.machine,e.provider,e.parent_id,e.folder,e.managed_checkout,s.repo_url,
+            {BareSessionFolder.Predicate("e.project_id", "e.folder")}
         FROM session_info s LEFT JOIN engine_session e ON e.id=s.session_id
         LEFT JOIN (
             SELECT accepted.id AS session_id,json_extract(accepted.checkout_intent_json,'$.initialOperationId') AS operation,
@@ -162,7 +197,7 @@ public sealed partial class SessionStore : ISessionProjectProjection
         var root = row.IsNull(6) ? null : row.Text(6);
         if (root is not null && !Path.IsPathFullyQualified(root)) root = null;
         var facts = new SessionsFeature.CreatedSessionFacts(row.Text(7), row.Text(8), row.IsNull(9) ? null : row.Text(9),
-            row.Text(10), row.Long(11) != 0, row.Text(12));
+            row.Text(10), row.Long(11) != 0, row.Text(12), row.Long(13) == 1);
         if (string.IsNullOrWhiteSpace(facts.Machine) || string.IsNullOrWhiteSpace(facts.Agent) ||
             !Path.IsPathFullyQualified(facts.Folder) ||
             System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(facts, SessionsJson.Default.CreatedSessionFacts).Length > 64 * 1024)
@@ -210,15 +245,21 @@ public sealed partial class SessionStore : ISessionProjectProjection
                 throw new CallFailed("The copied session identity changed.", "source_changed");
             accepted?.Invoke(scope);
             validate(scope);
-            return existing;
+            var isBare = existing.ProjectId is null && projectId is null && facts.IsBare;
+            if (existing.IsBare != isBare)
+            {
+                scope.Execute("UPDATE session_info SET is_bare=$bare WHERE session_id=$id", new SqlArg("$bare", isBare ? 1 : 0), new("$id", sessionId));
+                Publish(scope, sessionId);
+            }
+            return existing with { IsBare = isBare };
         }
         var session = new SessionInfo(sessionId, facts.Agent, facts.RepoUrl, null, null, Now(), route,
-            ParentSessionId: facts.ParentSessionId, Helper: facts.ParentSessionId is not null, WorkingFolder: facts.Folder, ProjectId: projectId);
+            ParentSessionId: facts.ParentSessionId, Helper: facts.ParentSessionId is not null, WorkingFolder: facts.Folder, ProjectId: projectId, IsBare: projectId is null && facts.IsBare);
         scope.Execute("""
-            INSERT INTO session_info(session_id,agent,repo_url,created_at,updated_at,machine,parent_session_id,helper,working_folder,project_id)
-            VALUES($id,$agent,$repo,$now,$now,$machine,$parent,$helper,$folder,$project)
+            INSERT INTO session_info(session_id,agent,repo_url,created_at,updated_at,machine,parent_session_id,helper,working_folder,project_id,is_bare)
+            VALUES($id,$agent,$repo,$now,$now,$machine,$parent,$helper,$folder,$project,$bare)
             """, new("$id", sessionId), new("$agent", facts.Agent), new("$repo", facts.RepoUrl), new("$now", session.UpdatedAt),
-            new("$machine", route), new("$parent", facts.ParentSessionId), new("$helper", session.Helper ? 1 : 0), new("$folder", facts.Folder), new("$project", projectId));
+            new("$machine", route), new("$parent", facts.ParentSessionId), new("$helper", session.Helper ? 1 : 0), new("$folder", facts.Folder), new("$project", projectId), new("$bare", session.IsBare ? 1 : 0));
         accepted?.Invoke(scope);
         validate(scope);
         Publish(scope, session.SessionId);
