@@ -149,6 +149,21 @@ fn text_roles_scale_with_the_interface_size() {
 }
 
 #[test]
+fn role_size_follows_the_interface_size() {
+    use crate::core::theme::text::{TextRole, kit_size};
+    use gpui_kit::component::{Size, StyleSized as _};
+    use gpui_kit::{Styled as _, div};
+    for (interface, expected) in [(16, 14.), (13, 11.375), (18, 15.75)] {
+        let appearance = saved(&[(UI_FONT_SIZE.key, json!(interface))]);
+        let size = kit_size(appearance.ui_text(TextRole::Body).0);
+        assert!(matches!(size, Size::Size(_)), "the kit reads it as a custom size");
+        let mut text = div().input_text_size(size);
+        let drawn = text.text_style().font_size.expect("the kit sets a text size");
+        assert_eq!(drawn, px(expected).into());
+    }
+}
+
+#[test]
 fn chat_line_height_keeps_its_reading_ratio() {
     use crate::core::theme::text::TextRole;
     let compact = saved(&[(UI_LINE_HEIGHT.key, json!(1.2))]);

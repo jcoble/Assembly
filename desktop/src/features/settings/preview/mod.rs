@@ -153,6 +153,7 @@ impl SettingsPreview {
                         }
                         field.update(cx, |field, cx| {
                             let request: crate::inline_field::SaveRequest = save.request;
+                            let result = result.map_err(crate::inline_field::SaveFailure::Refused);
                             field.complete_save(request, result, window, cx);
                         });
                         cx.notify();

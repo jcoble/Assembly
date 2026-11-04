@@ -2,7 +2,7 @@
 //! kit draws, and the code face for paths, commands and code outside the editor. A theme file sets its own sizes, so
 //! this runs again after every change to the theme. Text sizes come from `TextRole`, not from the rem.
 
-use gpui_kit::component::Theme;
+use gpui_kit::component::{Size, Theme};
 use gpui_kit::{App, Global, Pixels, SharedString, Styled, px};
 
 use crate::core::state::appearance::UI_FONT_SIZE;
@@ -101,3 +101,16 @@ pub trait TextRoleExt: Styled + Sized {
 }
 
 impl<T: Styled + Sized> TextRoleExt for T {}
+
+/// The kit draws a control's custom size at this share of itself (its `input_text_size`).
+const KIT_TEXT_SHARE: f32 = 0.875;
+
+/// What to give a kit control's `with_size`, so its text comes out at this role's size. A custom size keeps the
+/// geometry of the kit's Small control: only its text follows the interface size.
+pub fn role_size(role: TextRole, cx: &App) -> Size {
+    Preferences::read(cx, |appearance| kit_size(appearance.ui_text(role).0))
+}
+
+pub(crate) fn kit_size(text: Pixels) -> Size {
+    Size::Size(text / KIT_TEXT_SHARE)
+}

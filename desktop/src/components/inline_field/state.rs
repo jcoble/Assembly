@@ -2,6 +2,14 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SaveRequest(u64);
 
+/// Why a save didn't commit. `Refused` nothing changed, so it can be retried. `Uncertain` the owner can't tell whether
+/// it landed, so nothing more is sent until the owner has read what's really there and calls `set_committed`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SaveFailure {
+    Refused(String),
+    Uncertain(String),
+}
+
 pub struct EditState<T> {
     committed: T,
     draft: T,
@@ -9,6 +17,7 @@ pub struct EditState<T> {
     pending: Option<SaveRequest>,
     next_request: u64,
     error: Option<String>,
+    uncertain: bool,
 }
 impl<T: Clone + PartialEq> EditState<T> {
     pub fn new(value: T) -> Self {
@@ -19,6 +28,7 @@ impl<T: Clone + PartialEq> EditState<T> {
             pending: None,
             next_request: 0,
             error: None,
+            uncertain: false,
         }
     }
     pub fn committed(&self) -> &T {
@@ -33,6 +43,9 @@ impl<T: Clone + PartialEq> EditState<T> {
     pub fn pending(&self) -> bool {
         self.pending.is_some()
     }
+    pub fn uncertain(&self) -> bool {
+        self.uncertain
+    }
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
@@ -46,7 +59,7 @@ impl<T: Clone + PartialEq> EditState<T> {
         true
     }
     pub fn change(&mut self, value: T) -> bool {
-        if !self.editing || self.pending() {
+        if !self.editing || self.pending() || self.uncertain {
             return false;
         }
         self.draft = value;
@@ -59,11 +72,12 @@ impl<T: Clone + PartialEq> EditState<T> {
         }
         self.draft = self.committed.clone();
         self.error = None;
+        self.uncertain = false;
         self.editing = false;
         true
     }
     pub fn save(&mut self) -> Option<(SaveRequest, T)> {
-        if !self.editing || self.pending() {
+        if !self.editing || self.pending() || self.uncertain {
             return None;
         }
         if self.draft == self.committed {
@@ -76,7 +90,13 @@ impl<T: Clone + PartialEq> EditState<T> {
         self.error = None;
         Some((request, self.draft.clone()))
     }
-    pub fn complete(&mut self, request: SaveRequest, result: Result<T, String>) -> bool {
+    /// A value that failed validation: it stays open with the reason, and nothing was sent.
+    pub fn reject(&mut self, message: String) {
+        if self.editing && !self.pending() {
+            self.error = Some(message);
+        }
+    }
+    pub fn complete(&mut self, request: SaveRequest, result: Result<T, SaveFailure>) -> bool {
         if self.pending != Some(request) {
             return false;
         }
@@ -88,17 +108,27 @@ impl<T: Clone + PartialEq> EditState<T> {
                 self.editing = false;
                 self.error = None;
             }
-            Err(error) => {
+            Err(SaveFailure::Refused(error)) => {
                 self.error = Some(error);
+            }
+            Err(SaveFailure::Uncertain(error)) => {
+                self.error = Some(error);
+                self.uncertain = true;
             }
         }
         true
     }
-    /// A new authoritative value supersedes any outstanding request. An open draft stays recoverable.
+    /// A new authoritative value supersedes any outstanding request. An open draft stays recoverable, unless the owner
+    /// was only finding out whether this draft landed and it did.
     pub fn set_committed(&mut self, value: T) {
+        let landed = self.uncertain && self.draft == value;
         self.pending = None;
         self.error = None;
+        self.uncertain = false;
         self.committed = value.clone();
+        if landed {
+            self.editing = false;
+        }
         if !self.editing {
             self.draft = value;
         }
