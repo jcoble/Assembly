@@ -224,6 +224,14 @@ test('Codex receives every writable directory and Claude arguments stay unchange
   assert.deepEqual(codex.args.flatMap((x,i)=>x==='--add-dir'?[codex.args[i+1]]:[]),directories);
   assert.deepEqual(selectModel('Committed-by: Luna 6',directories),selectModel('Committed-by: Luna 6',[]));
 });
+test('the Claude fallback can run shell commands, and the prompt stays a prompt',async()=>{
+  const { selectModel } = await import('./run.ts');
+  const {args}=selectModel('Committed-by: Luna 6',[]);
+  assert.equal(args[args.indexOf('--allowedTools')+1],'Bash');
+  // A value-taking flag as the last argument would swallow the prompt appended after these.
+  assert.match(args[args.indexOf('--allowedTools')+2],/^--/);
+  assert.equal(args.at(-2),'--permission-mode');
+});
 test('run creates lane and tool directories as verify before starting the Codex verifier',t=>{
   const f=fixture(t),dir=f.result(undefined);
   const directories=[join(f.config.workerHome,'result'),

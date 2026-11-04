@@ -12,7 +12,10 @@ export function selectModel(trailers: string, writableDirectories:string[]): {bi
   if (luna) return {binary:'claude',model:'claude-sonnet-5-5',args:[
     '-p','--model','claude-sonnet-5-5','--setting-sources','',
     '--settings','{"disableAllHooks":true}', '--strict-mcp-config','--mcp-config','{"mcpServers":{}}',
-    '--permission-mode','acceptEdits',
+    // Headless acceptEdits still denies shell commands. The verify account is this path's boundary.
+    // https://code.claude.com/docs/en/headless#auto-approve-tools
+    // --allowedTools takes many values, so a flag must follow it or it would swallow the prompt.
+    '--allowedTools','Bash','--permission-mode','acceptEdits',
   ]};
   return {binary:'codex',model:'gpt-6-luna',args:[
     'exec','--model','gpt-6-luna','--sandbox','workspace-write',
