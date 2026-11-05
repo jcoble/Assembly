@@ -131,6 +131,8 @@ pub enum ComposerEvent {
         receipt: OwnerPromptAccepted,
     },
     PendingChanged,
+    /// The session's source moved under a read; the pane owns reopening it.
+    SourceLost,
 }
 #[path = "owner_prompt.rs"]
 mod owner_prompt;

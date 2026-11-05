@@ -180,3 +180,97 @@ async fn a_remote_machine_going_away_is_no_error_and_its_session_reopens_when_it
     });
     nav.calls_at_least("open_target", targets + 1).await;
 }
+
+async fn on_a_remote_session<'a>(
+    cx: &'a mut TestAppContext,
+) -> (NavigationFixture, &'a mut gpui::VisualTestContext) {
+    cx.executor().allow_parking();
+    cx.update(gpui_kit::init);
+    cx.update(SelectedSession::init);
+    let (host, cx) = cx.add_window_view(|_, _| NavigationHost::default());
+    let mut nav = cx.update(|window, cx| NavigationFixture::new(false, window, cx));
+    nav.operational();
+    host.update(cx, |host, cx| {
+        host.pane = Some(nav.pane.clone());
+        cx.notify();
+    });
+    nav.ready(cx).await;
+    nav.request_engine("a", cx).await;
+    nav.calls_at_least("warm", 1).await;
+    cx.run_until_parked();
+    nav.pane.update(cx, |pane, _| {
+        pane.row_source = Some(ExpectedRowSource {
+            machine: "owner".into(),
+            generation: 3,
+            route_machine: Some("lane".into()),
+        });
+    });
+    (nav, cx)
+}
+
+fn opens(nav: &NavigationFixture) -> usize {
+    nav.calls()
+        .iter()
+        .filter(|call| call["method"] == "open_target")
+        .count()
+}
+
+#[gpui::test]
+async fn a_read_refused_on_a_returning_machine_reopens_the_session_with_no_error(
+    cx: &mut TestAppContext,
+) {
+    use crate::features::session::composer::composer_view::ComposerEvent;
+    let (mut nav, cx) = on_a_remote_session(cx).await;
+    let before = opens(&nav);
+    let composer = nav.pane.read_with(cx, |pane, _| pane.composer.clone());
+    composer.update(cx, |_, cx| cx.emit(ComposerEvent::SourceLost));
+    nav.calls_at_least("open_target", before + 1).await;
+    assert_eq!(
+        nav.pane
+            .read_with(cx, |pane, _| pane.status.clone())
+            .as_ref(),
+        ""
+    );
+}
+
+#[gpui::test]
+async fn an_answer_refused_on_a_returning_machine_says_so_plainly_and_reopens_the_session(
+    cx: &mut TestAppContext,
+) {
+    use crate::features::session::client::session_client::CallError;
+    let (mut nav, cx) = on_a_remote_session(cx).await;
+    let before = opens(&nav);
+    nav.pane.update(cx, |pane, cx| {
+        pane.send_refused(
+            CallError::Refused {
+                code: "source_changed".into(),
+                message: "The selected row source changed.".into(),
+            },
+            cx,
+        );
+        assert_eq!(pane.status.as_ref(), "That didn't reach lane. Try again.");
+    });
+    nav.calls_at_least("open_target", before + 1).await;
+}
+
+#[gpui::test]
+async fn a_source_that_keeps_moving_stops_reopening_and_says_so(cx: &mut TestAppContext) {
+    let (nav, cx) = on_a_remote_session(cx).await;
+    let before = opens(&nav);
+    nav.pane.update(cx, |pane, cx| {
+        pane.source_reopens = 3;
+        pane.on_rows(
+            RowUpdate::Refused {
+                code: "source_changed".into(),
+                message: "The selected row source changed.".into(),
+            },
+            cx,
+        );
+        assert_eq!(
+            pane.status.as_ref(),
+            "lane keeps reconnecting. Open the session again."
+        );
+    });
+    cx.run_until_parked();
+    assert_eq!(opens(&nav), before);
+}

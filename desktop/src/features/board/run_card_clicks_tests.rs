@@ -60,6 +60,7 @@ async fn opened<'a>(
     cx: &'a mut TestAppContext,
 ) -> Card<'a> {
     let mut engine = TestEngine::start(seeded, scopes, cx).await;
+    cx.update(crate::core::state::machines::Machines::start);
     let key = EngineKey {
         machine: MACHINE.into(),
         kind: "run".into(),
@@ -415,6 +416,31 @@ async fn a_machine_that_cant_be_reached_shows_its_last_known_steps_and_no_error(
         assert_eq!(reader.error(), None);
         assert_eq!(reader.view().unwrap().steps.len(), 2);
     });
+}
+
+#[gpui::test]
+async fn a_card_on_its_last_known_steps_reads_again_when_the_machine_returns(
+    cx: &mut TestAppContext,
+) {
+    use crate::core::state::machines::Machines;
+    let seeded = last_known(("unreachable", "Workbox Test is reconnecting"));
+    let scopes = [("runs", None), ("runs", Some("r"))];
+    let mut card = opened(seeded, &scopes, "the last known steps", cx).await;
+    card.engine.state.lock().unwrap().run_refused = None;
+    card.cx.update(|_, cx| {
+        let machines = Machines::try_global(cx).unwrap();
+        machines.update(cx, |_, cx| cx.notify());
+    });
+    let (changed, reader) = (
+        card.engine.changed.clone(),
+        card.cx.read(|cx| card.card.read(cx).reader.clone()),
+    );
+    let cx = &mut *card.cx;
+    until("the fresh read", &mut card.engine.changes, &changed, || {
+        cx.run_until_parked();
+        cx.read(|cx| !reader.read(cx).is_last_known())
+    })
+    .await;
 }
 
 #[gpui::test]

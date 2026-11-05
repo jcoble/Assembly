@@ -7,6 +7,7 @@ use crate::core::engine::workflow_read::{self, UNREACHABLE};
 use crate::core::engine::{EngineChanged, EngineFeed, EngineScope, EngineWatch, SessionKey};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
+use crate::core::state::machines::Machines;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunSource {
@@ -29,6 +30,7 @@ pub struct RunReader {
     connections: Vec<(Entity<SocketClient>, u64)>,
     _connections: Vec<Subscription>,
     _changed: Subscription,
+    _returned: Option<Subscription>,
 }
 
 impl RunReader {
@@ -48,6 +50,16 @@ impl RunReader {
                 cx.notify();
             }
         });
+        // The machine's row says it's back before anything else from it has to change.
+        let returned = Machines::try_global(cx).map(|machines| {
+            cx.observe(&machines, |reader: &mut Self, _, cx| {
+                if reader.last_known {
+                    reader.dirty = true;
+                    reader.refresh(cx);
+                    cx.notify();
+                }
+            })
+        });
         let mut reader = Self {
             source,
             feed,
@@ -62,6 +74,7 @@ impl RunReader {
             connections: Vec::new(),
             _connections: Vec::new(),
             _changed: changed,
+            _returned: returned,
         };
         for socket in [SocketClient::try_global(cx), SocketClient::try_bulk(cx)]
             .into_iter()

@@ -51,6 +51,9 @@ impl SessionPane {
             composer.set_offline(offline, cx);
             composer.set_owner(agent, machine, route, cx);
         });
+        if still_offline {
+            self.source_reopens = 0;
+        }
         if self.source_lost && !still_offline {
             self.reopen_lost_source(cx);
         }

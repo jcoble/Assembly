@@ -73,6 +73,12 @@ impl Composer {
         self.read_pending(cx);
         cx.notify();
     }
+    /// Not an error of this composer's: the pane owning the session decides what to say and reopens it.
+    pub(super) fn source_lost(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_source(cx);
+        cx.emit(super::ComposerEvent::SourceLost);
+    }
+
     pub fn invalidate_source(&mut self, cx: &mut Context<Self>) {
         if self.start_draft.is_some() {
             cx.notify();

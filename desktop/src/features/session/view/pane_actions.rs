@@ -350,19 +350,36 @@ impl SessionPane {
                     Ok(_) | Err(CallError::Aborted) => {}
                     // Said only where it was sent from: the reader may have switched away since.
                     Err(_) if pane.session != session || pane.row_source != source => {}
-                    Err(error) => {
-                        if matches!(&error,CallError::Refused{code,..} if code=="source_changed") {
-                            pane._rows = None;
-                            pane.active_source_cut = None;
-                            pane.composer
-                                .update(cx, |composer, cx| composer.invalidate_source(cx));
-                        }
-                        pane.say_failed("That didn't go through", error, cx);
-                    }
+                    Err(error) => pane.send_refused(error, cx),
                 })
                 .ok();
             }),
         );
+    }
+
+    pub(super) fn send_refused(&mut self, error: CallError, cx: &mut Context<Self>) {
+        let moved = matches!(&error,CallError::Refused{code,..} if code=="source_changed");
+        let remote = (self.row_source.as_ref()).and_then(|source| source.route_machine.clone());
+        if let (true, Some(machine)) = (moved, remote) {
+            self.composer
+                .update(cx, |composer, cx| composer.invalidate_source(cx));
+            self.on_rows(
+                crate::features::session::client::session_client::RowUpdate::Refused {
+                    code: "source_changed".into(),
+                    message: error.reason(),
+                },
+                cx,
+            );
+            self.status = format!("That didn't reach {machine}. Try again.").into();
+            return;
+        }
+        if moved {
+            self._rows = None;
+            self.active_source_cut = None;
+            self.composer
+                .update(cx, |composer, cx| composer.invalidate_source(cx));
+        }
+        self.say_failed("That didn't go through", error, cx);
     }
 
     fn say_failed(&mut self, what: &str, error: CallError, cx: &mut Context<Self>) {

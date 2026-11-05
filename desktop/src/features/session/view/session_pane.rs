@@ -45,6 +45,7 @@ pub struct SessionPane {
     active_open_serial: Option<u64>,
     /// The machine behind this session stopped answering; it opens again when the machine does.
     source_lost: bool,
+    source_reopens: u8,
     active_reopen: Option<(
         crate::core::intents::session_open::SessionOpenRequest,
         AnyWindowHandle,
@@ -191,6 +192,9 @@ impl SessionPane {
     /// Takes a rows event: a `Jump` drops what's held and loads the page again; a row updates its item and the
     /// timeline measures only that one again.
     fn on_rows(&mut self, event: RowUpdate, cx: &mut Context<Self>) {
+        if !matches!(event, RowUpdate::Refused { .. } | RowUpdate::Jump { .. }) {
+            self.source_reopens = 0;
+        }
         match event {
             RowUpdate::Refused { code, message } => {
                 self.composer

@@ -121,6 +121,36 @@ fn pending_reads_carry_the_prepared_source_and_a_refusal_disables_writes_without
 }
 
 #[gpui::test]
+fn a_source_moving_under_the_pending_read_is_no_error_and_goes_to_the_pane(
+    cx: &mut TestAppContext,
+) {
+    use crate::features::session::client::session_client::CallError;
+    let (composer, client, _, cx) = super::tests::open(cx);
+    let heard = std::rc::Rc::new(std::cell::Cell::new(false));
+    let told = heard.clone();
+    let _listening = cx.update(|_, cx| {
+        cx.subscribe(&composer, move |_, event: &super::ComposerEvent, _| {
+            if matches!(event, super::ComposerEvent::SourceLost) {
+                told.set(true);
+            }
+        })
+    });
+    client.queue_engine_answer(Err(CallError::Refused {
+        code: "source_changed".into(),
+        message: "The selected row source changed.".into(),
+    }));
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_target(Some(key("a")), Some(source("a")), window, cx);
+    });
+    cx.run_until_parked();
+    composer.read_with(cx, |composer, _| {
+        assert!(!composer.operational());
+        assert_eq!(composer.error, None);
+    });
+    assert!(heard.get());
+}
+
+#[gpui::test]
 fn prompt_stop_and_config_keep_the_prepared_source_and_refusal_never_retries_unqualified(
     cx: &mut TestAppContext,
 ) {

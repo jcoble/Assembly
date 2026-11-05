@@ -4,6 +4,9 @@ use super::{
     opening::{ConnectionCut, refused},
 };
 use gpui_kit::*;
+/// How many times running a session reopens by itself before its source has said anything.
+const MOST_SOURCE_REOPENS: u8 = 3;
+
 impl SessionPane {
     pub(super) fn reopen_after_connection(&mut self, active: u64, cx: &mut Context<Self>) {
         if self.active_open_serial != Some(active)
@@ -41,6 +44,18 @@ impl SessionPane {
             && self.pending_open.is_none()
             && self.reopen_queued.is_none()
         {
+            // Each reopen answers at once, so a source that never settles must not spin here.
+            if self.source_reopens >= MOST_SOURCE_REOPENS {
+                self.source_lost = false;
+                let machine = (self.row_source.as_ref())
+                    .and_then(|source| source.route_machine.clone())
+                    .unwrap_or_default();
+                self.status =
+                    format!("{machine} keeps reconnecting. Open the session again.").into();
+                cx.notify();
+                return;
+            }
+            self.source_reopens += 1;
             self.queue_reopen(active, cx);
         }
     }
