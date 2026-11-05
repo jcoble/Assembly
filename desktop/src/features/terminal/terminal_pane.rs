@@ -20,7 +20,7 @@ use gpui_kit::*;
 
 use super::terminal_draw::draw;
 use super::terminal_grid::{HoveredLink, TerminalGrid};
-use super::terminal_keys::{key_bytes, pasted};
+use super::terminal_keys::key_bytes;
 use super::terminal_link::TerminalLink;
 use super::terminal_palette::palette;
 use crate::core::socket::update::Update;
@@ -74,6 +74,8 @@ pub struct TerminalPane {
     cell: Size<Pixels>,
     /// A left-button drag is selecting.
     selecting: bool,
+    /// Where that drag's mouse last was, in the window.
+    dragged_to: Point<Pixels>,
     /// The wheel's movement not yet a whole line.
     wheeled: Pixels,
     link: Option<TerminalLink>,
@@ -111,8 +113,7 @@ pub struct TerminalPane {
     retries: usize,
     /// Blinks the cursor while the pane has the focus; dropping it stops the timer.
     _blink: Option<Task<()>>,
-    /// Scrolls during a drag near the edge. Stub until Task 6.
-    #[allow(dead_code)]
+    /// Scrolls during a drag near the edge or past it; dropping it stops the timer.
     _autoscroll: Option<Task<()>>,
     /// The scrollbar's opacity, from 0 to 1. Stub until Task 7.
     #[allow(dead_code)]
@@ -156,6 +157,7 @@ impl TerminalPane {
             origin: Point::default(),
             cell: Size::default(),
             selecting: false,
+            dragged_to: Point::default(),
             wheeled: px(0.),
             link: None,
             held: None,
@@ -206,6 +208,7 @@ impl TerminalPane {
         (self.link, self.held, self.writing) = (None, None, false);
         (self._resize, self.resize_wanted, self.size_unsent) = (None, None, false);
         (self._retry, self.retries, self.retried) = (None, 0, false);
+        (self._autoscroll, self.selecting) = (None, false);
         self.reopen.clear();
         self.typed.clear();
         self.grid = TerminalGrid::new(self.size.0, self.size.1);
@@ -296,14 +299,18 @@ impl TerminalPane {
             return;
         }
         let bytes = match shortcut("v") {
-            true => (cx.read_from_clipboard().and_then(|item| item.text()))
-                .map(|text| pasted(&text, self.grid.bracketed_paste())),
+            true => self.clipboard_bytes(cx),
             false => key_bytes(keystroke, self.grid.app_cursor()),
         };
         let Some(bytes) = bytes else {
             return;
         };
         cx.stop_propagation();
+        self.send_typed(bytes, cx);
+    }
+
+    /// Typed or pasted bytes go to the shell, and the view returns to the bottom.
+    fn send_typed(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
         self.grid.scroll_to_bottom();
         self.cursor_on = true;
         self.typed.extend(bytes);
@@ -377,10 +384,6 @@ impl TerminalPane {
     fn catching_up(&self) -> bool {
         self.held.is_some()
     }
-
-    /// Sends the clipboard's text to the shell. Stub until Task 6.
-    #[allow(dead_code)]
-    fn paste(&mut self, _cx: &mut Context<Self>) {}
 }
 
 impl EventEmitter<PanelEvent> for TerminalPane {}
@@ -450,9 +453,11 @@ impl Render for TerminalPane {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
             .on_mouse_up(MouseButton::Middle, cx.listener(Self::mouse_up))
             .on_mouse_up(MouseButton::Right, cx.listener(Self::mouse_up))
+            .on_mouse_down_out(cx.listener(Self::pressed_outside))
             .on_scroll(cx.listener(Self::wheel))
             .size_full()
-            .text_role(TextRole::Body, cx);
+            .text_role(TextRole::Body, cx)
+            .when(self.selecting, |pane| pane.child(self.drag_listeners(cx)));
         let note = |text: SharedString| {
             h_flex()
                 .gap_1()
@@ -463,7 +468,7 @@ impl Render for TerminalPane {
                 })
                 .child(text)
         };
-        match (&self.shown, self.status()) {
+        let pane = match (&self.shown, self.status()) {
             (Shown::Nothing, _) => pane.child(note("Pick a session to open its terminal.".into())),
             // Stopped with no shell: the note fills the pane.
             (Shown::Said(_) | Shown::Gone, Some(status)) if self.link.is_none() => {
@@ -501,7 +506,8 @@ impl Render for TerminalPane {
                     None => pane.child(grid),
                 }
             }
-        }
+        };
+        self.with_menu(pane, cx)
     }
 }
 
@@ -510,6 +516,9 @@ mod mouse;
 
 #[path = "terminal_pane_state.rs"]
 mod state;
+
+#[path = "terminal_pane_select.rs"]
+mod select;
 
 #[path = "terminal_pane_ime.rs"]
 mod ime;

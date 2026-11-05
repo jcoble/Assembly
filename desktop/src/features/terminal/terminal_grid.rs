@@ -119,15 +119,41 @@ impl TerminalGrid {
         }
     }
 
-    /// Selects the word at a cell of the screen as shown, and says whether there was one. Stub until Task 6.
-    #[allow(dead_code)]
-    pub fn select_word(&mut self, _column: usize, _line: usize) -> bool {
-        false
+    /// Selects the word at a cell of the screen as shown, and says whether there was one; a blank clears the
+    /// selection. A word is letters, digits, `_` and `-`, on that row only, as the old renderer's `getWordAtCell`.
+    pub fn select_word(&mut self, column: usize, line: usize) -> bool {
+        let (point, _) = self.point(column, line, false);
+        let row = &self.term.grid()[point.line];
+        let word = |column: usize| {
+            let cell = &row[Column(column)];
+            cell.c.is_alphanumeric()
+                || cell.c == '_'
+                || cell.c == '-'
+                || cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+        };
+        if column >= self.term.columns() || !word(column) {
+            self.clear_selection();
+            return false;
+        }
+        let start = (0..column).rev().take_while(|&at| word(at)).last();
+        let end = (column + 1..self.term.columns())
+            .take_while(|&at| word(at))
+            .last();
+        let at = |column| Point::new(point.line, Column(column));
+        let mut selection = Selection::new(
+            SelectionType::Simple,
+            at(start.unwrap_or(column)),
+            Side::Left,
+        );
+        selection.update(at(end.unwrap_or(column)), Side::Right);
+        self.term.selection = Some(selection);
+        true
     }
 
-    /// Stub until Task 6.
-    #[allow(dead_code)]
-    pub fn clear_selection(&mut self) {}
+    /// Says whether there was a selection to clear.
+    pub fn clear_selection(&mut self) -> bool {
+        self.term.selection.take().is_some()
+    }
 
     /// The lines kept above the screen. Stub until Task 7.
     #[allow(dead_code)]

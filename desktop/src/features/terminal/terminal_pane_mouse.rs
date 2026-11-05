@@ -1,5 +1,6 @@
-//! The mouse on the Terminal tab: a drag selects (Copy is in `key_down`), and the wheel scrolls back through the
-//! history, or reports the mouse in the tracking/encoding modes requested by the program.
+//! The mouse on the Terminal tab: a drag selects (terminal_pane_select.rs follows it), a double-click selects a word,
+//! and the wheel scrolls back through the history, or reports the mouse in the tracking/encoding modes requested by the
+//! program.
 
 use alacritty_terminal::term::TermMode;
 use gpui_kit::*;
@@ -26,9 +27,17 @@ impl TerminalPane {
         if event.button != MouseButton::Left {
             return;
         }
-        self.grid.select_start(column, line, right);
-        self.selecting = true;
         cx.notify();
+        if event.click_count == 2 {
+            if self.grid.select_word(column, line)
+                && let Some(text) = self.grid.selection_text()
+            {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+            return;
+        }
+        self.grid.select_start(column, line, right);
+        (self.selecting, self.dragged_to) = (true, event.position);
     }
 
     pub(super) fn mouse_move(
@@ -37,22 +46,13 @@ impl TerminalPane {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A selecting drag is followed by terminal_pane_select.rs, past the pane's edge too.
         let mode = self.grid.mouse_mode();
-        if mode.intersects(TermMode::MOUSE_MODE) {
-            if mode.contains(TermMode::MOUSE_MOTION)
-                || (mode.contains(TermMode::MOUSE_DRAG) && event.pressed_button.is_some())
-            {
-                let button = event.pressed_button.and_then(button_code).unwrap_or(3) + 32;
-                self.report_mouse(button, event.position, event.modifiers, false, cx);
-            }
-            return;
-        }
-        if !self.selecting || event.pressed_button != Some(MouseButton::Left) {
-            return;
-        }
-        if let Some((column, line, right)) = self.cell_at(event.position) {
-            self.grid.select_to(column, line, right);
-            cx.notify();
+        if mode.contains(TermMode::MOUSE_MOTION)
+            || (mode.contains(TermMode::MOUSE_DRAG) && event.pressed_button.is_some())
+        {
+            let button = event.pressed_button.and_then(button_code).unwrap_or(3) + 32;
+            self.report_mouse(button, event.position, event.modifiers, false, cx);
         }
     }
 
@@ -62,7 +62,9 @@ impl TerminalPane {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.selecting = false;
+        if event.button == MouseButton::Left {
+            self.end_drag(cx);
+        }
         if let Some(button) = button_code(event.button) {
             self.report_mouse(button, event.position, event.modifiers, true, cx);
         }
@@ -171,7 +173,7 @@ impl TerminalPane {
 
     /// The screen cell under a window position and whether it's on the cell's right half; none before the grid is
     /// drawn.
-    fn cell_at(&self, position: Point<Pixels>) -> Option<(usize, usize, bool)> {
+    pub(super) fn cell_at(&self, position: Point<Pixels>) -> Option<(usize, usize, bool)> {
         if self.cell.width <= px(0.) || self.cell.height <= px(0.) {
             return None;
         }
