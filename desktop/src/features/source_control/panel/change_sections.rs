@@ -217,6 +217,7 @@ impl SourceControlPane {
                         "git-section-hover-{}",
                         section.label()
                     )))
+                    .debug_selector(move || format!("git-section-{}", section.label()))
                     .on_hover(hover)
                     .child(heading),
             )

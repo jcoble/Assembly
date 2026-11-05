@@ -21,6 +21,8 @@ use gpui_kit::*;
 
 const NOT_A_REPOSITORY: &str = "This folder isn't a git repository yet.";
 const AMEND_TIP: &str = "Rewrite the last commit instead of adding one. Never do this to a commit that is already pushed and shared.";
+/// The running and result lines under the list; long git text under Details scrolls inside it.
+const FOOTER_MAX_HEIGHT: f32 = 160.;
 
 /// What an empty panel shows: one icon, a short title, a sentence or two, and at most one thing to press.
 fn empty_state(
@@ -242,7 +244,21 @@ impl SourceControlPane {
             .as_ref()
             .map(|(_, section)| section.clone());
         let muted = cx.theme().muted_foreground;
-        div()
+        // What's running and what the last write came to sit under the list, so they never push its rows down.
+        let footer = (running.is_some() || result.is_some()).then(|| {
+            div()
+                .id("git-result-footer")
+                .debug_selector(|| "git-result-footer".into())
+                .flex_none()
+                .max_h(px(FOOTER_MAX_HEIGHT))
+                .overflow_y_scroll()
+                .p_2()
+                .border_t_1()
+                .border_color(cx.theme().border)
+                .children(running)
+                .children(result)
+        });
+        let list = div()
             .relative()
             .flex_1()
             .min_h_0()
@@ -257,8 +273,6 @@ impl SourceControlPane {
                             .p_2()
                             .gap_1()
                             .children(change_area)
-                            .children(running)
-                            .children(result)
                             .children(status.more_line().map(|line| {
                                 div()
                                     .text_role(TextRole::Body, cx)
@@ -280,7 +294,12 @@ impl SourceControlPane {
                             .children(pull_requests),
                     ),
             )
-            .vertical_scrollbar(&self.scroll)
+            .vertical_scrollbar(&self.scroll);
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(list)
+            .children(footer)
             .into_any_element()
     }
     fn commit_row(&mut self, status: &GitStatus, busy: bool, cx: &mut Context<Self>) -> Div {

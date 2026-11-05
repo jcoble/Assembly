@@ -421,6 +421,33 @@ async fn a_switch_from_the_panel_tells_files_the_folder_changed(cx: &mut TestApp
     });
 }
 
+/// What a write came to shows under the list, so the rows stay where they were.
+#[gpui::test]
+async fn the_result_line_does_not_push_the_rows_down(cx: &mut TestAppContext) {
+    let mut open = open(cx).await;
+    open.until("the staged section", |_, cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("git-section-Staged").is_some()
+    })
+    .await;
+    let before = open.cx.debug_bounds("git-section-Staged").unwrap();
+    assert!(open.cx.debug_bounds("git-result-footer").is_none());
+    open.pane.update(open.cx, |pane, cx| {
+        pane.result = Some(PaneResult::Done("Staged 1 file.".into()));
+        cx.notify();
+    });
+    open.cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert_eq!(
+        open.cx.debug_bounds("git-section-Staged").unwrap().origin,
+        before.origin
+    );
+    let footer = open.cx.debug_bounds("git-result-footer").unwrap();
+    assert!(
+        footer.origin.y > before.origin.y,
+        "{footer:?} under {before:?}"
+    );
+}
+
 /// Read-only stops writes, not reads: the branch menu still lists the folder it is looking at.
 #[gpui::test]
 async fn a_read_only_viewed_folder_still_reads_its_own_branches(cx: &mut TestAppContext) {
