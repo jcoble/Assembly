@@ -103,6 +103,7 @@ fn main() {
                 cx.new(|cx| WindowRoot::new(frame, window, cx))
             })
             .expect("open the window");
+            Launcher::tell_if_update_finishing(cx);
             cx.activate(true);
             external_urls.start(core::navigation::deep_links::handle_route, cx);
         });

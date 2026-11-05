@@ -344,7 +344,7 @@ public sealed class AppSwapTests : IDisposable
         var running = AppSwap.RunAsync(plan with { Check = CheckProgram });
         await Appears("checking");
 
-        Assert.Contains("home in use", Assert.Throws<InvalidOperationException>(() => HomeLock.Take(Home)).Message, StringComparison.Ordinal);
+        Assert.Contains("home in use", Assert.Throws<HomeInUseException>(() => HomeLock.Take(Home)).Message, StringComparison.Ordinal);
         File.WriteAllText(Path.Combine(Home, "go"), "");
         Assert.Equal(0, await running.WaitAsync(TimeSpan.FromSeconds(30)));
         using var free = HomeLock.Take(Home);

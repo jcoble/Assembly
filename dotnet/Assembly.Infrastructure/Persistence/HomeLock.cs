@@ -19,10 +19,13 @@ public static class HomeLock
         }
         catch (IOException) when (File.Exists(pidPath))
         {
-            throw new InvalidOperationException($"home in use by pid {File.ReadAllText(pidPath).Trim()}");
+            throw new HomeInUseException($"home in use by pid {File.ReadAllText(pidPath).Trim()}");
         }
 
         File.WriteAllText(pidPath, $"{Environment.ProcessId}\n");
         return file;
     }
 }
+
+/// <summary>Another process holds this home folder.</summary>
+public sealed class HomeInUseException(string message) : InvalidOperationException(message);

@@ -12,7 +12,7 @@ public sealed class HomeLockTests : IDisposable
     {
         using (HomeLock.Take(_home))
         {
-            var error = Assert.Throws<InvalidOperationException>(() => HomeLock.Take(_home));
+            var error = Assert.Throws<HomeInUseException>(() => HomeLock.Take(_home));
             Assert.Equal($"home in use by pid {Environment.ProcessId}", error.Message);
         }
 

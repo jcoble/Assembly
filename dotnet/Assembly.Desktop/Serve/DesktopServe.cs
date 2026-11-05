@@ -10,6 +10,9 @@ namespace Assembly.Desktop.Serve;
 /// <summary>Runs the desktop backend until Ctrl+C, with a remote machine when <c>--remote</c> names one.</summary>
 public static class DesktopServe
 {
+    /// <summary>Another process has this home folder, most likely the update helper at work. The window's launcher knows this code.</summary>
+    public const int HomeInUseExit = 75;
+
     /// <summary>
     /// The update helper's check after an install on quit: this version runs and opens the database, migrating it, with no
     /// window and nothing else started. Non-zero puts the old version back.
@@ -41,6 +44,16 @@ public static class DesktopServe
             return 2;
         }
 
+        try { return await ServeAsync(options); }
+        catch (Assembly.Infrastructure.Persistence.HomeInUseException refused)
+        {
+            Console.Error.WriteLine($"Assembly can't open {options.Home}: {refused.Message}");
+            return HomeInUseExit;
+        }
+    }
+
+    private static async Task<int> ServeAsync(DesktopOptions options)
+    {
         var token = TokenFile.ReadOrCreate(options.TokenFile);
         if (AgentsFile.OpenOrSay(options.AgentsFile, Console.Error) is not { } agents) return 1;
         var launcher = new AdapterLauncher(agents, options.Checkouts, new UnclaimedPermissions());
