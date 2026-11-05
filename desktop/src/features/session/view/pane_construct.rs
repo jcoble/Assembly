@@ -114,6 +114,7 @@ impl SessionPane {
             reveal: None,
             revealed_at: Instant::now(),
             frame_asked: false,
+            _reveal_tick: None,
             now: None,
             live_since: None,
             reading: HashMap::new(),

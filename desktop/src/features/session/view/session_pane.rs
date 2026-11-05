@@ -82,6 +82,7 @@ pub struct SessionPane {
     revealed_at: Instant,
     /// A frame is asked for the reveal's next step.
     frame_asked: bool,
+    _reveal_tick: Option<Task<()>>,
     /// The backend clock's last second while a turn runs, which the "Working for" line counts by.
     now: Option<i64>,
     /// The run going now and when it started: its turn row's time, or when the pane first saw it, as the web does,
