@@ -13,6 +13,7 @@ using Assembly.Engine.Workflows.Execution;
 using Assembly.Engine.Workflows.Runs;
 using Assembly.Engine.Workflows.Workspaces;
 using Assembly.Infrastructure.Engine.Workflows;
+using Assembly.Infrastructure.Phone;
 
 namespace Assembly.Tests.Engine.Workflows.Execution;
 
@@ -219,6 +220,90 @@ public sealed class CommandStepTests
         Assert.Equal(1, f.Core.Count("engine_step_attempt"));
     }
 
+    private const string ApprovalBesideCommandFlow = """
+        name: Flow
+        policy:
+          default: allow
+          commands:
+            ask: ['printf needs-approval']
+        steps:
+          build:
+            run: [printf built]
+          test:
+            needs: [build]
+            on_fail: build
+            run: [printf tested]
+          checks:
+            needs: [test]
+            run: [printf needs-approval]
+          approve:
+            needs: [test]
+            gate: {prompt: Ship it?}
+        """;
+
+    /// <summary>The command has asked the owner, and the gate beside it is open too. With <paramref name="settled"/> false
+    /// the executor's "waiting on policy" is still on its way back when the revision lands.</summary>
+    private static async Task<(string CommandNeed, string GateNeed, Effect Effect, EffectReceipt Blocked)> BothAsking(Fixture f, bool settled)
+    {
+        foreach (var key in new[] { "build", "test" })
+        {
+            var ran = f.StartStep(key);
+            Assert.True(f.Complete(ran, await f.Host().ExecuteAsync(ran, default)).Applied);
+        }
+        var effect = f.StartStep("checks");
+        var blocked = await f.Host().ExecuteAsync(effect, default);
+        Assert.Equal(EffectDisposition.Unavailable, blocked.Disposition);
+        if (settled) Assert.True(f.Complete(effect, blocked).Applied);
+        Assert.Equal(1, f.Core.Db.Writer.Write("test.open-gate", s => WorkflowGates.OpenReady(s, f.Core.Machine, 1000)));
+        return (f.Core.Text("SELECT id FROM engine_needs_me WHERE kind='permission' AND state='open'")!,
+            f.Core.Text("SELECT id FROM engine_needs_me WHERE source_kind='workflow_gate' AND state='open'")!, effect, blocked);
+    }
+
+    private static CommandResult AnswerNeed(Fixture f, string need, string answerJson)
+    {
+        var version = f.Core.Number("SELECT version FROM engine_needs_me WHERE id=$id", new SqlArg("$id", need));
+        using var answer = JsonDocument.Parse(answerJson);
+        var prepared = EngineCommands.PrepareOwnerNeedCommand(Guid.NewGuid(), f.Core.Machine, need, version, 0,
+            new ResolveNeed("answered", answer.RootElement.Clone()), null, null, default, new CommandOrigin("desktop", null, "board"));
+        return f.Core.Db.Writer.Write("test.answer", s => f.Commands.ApplyPreparedOwnerNeed(s, prepared, 2000));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_revision_closes_an_open_command_approval_and_the_rerun_asks_it_again(bool settled)
+    {
+        using var f = new Fixture([], "allow", flow: ApprovalBesideCommandFlow, first: "build");
+        var (commandNeed, gateNeed, effect, blocked) = await BothAsking(f, settled);
+        IReadOnlyList<string> PhoneInbox()
+        {
+            using var scope = f.Core.Db.OpenSnapshot(default);
+            return PhoneNeedsRoutes.Read(scope, f.Core.Machine).Select(item => item.Id).ToArray();
+        }
+        Assert.Contains(commandNeed, PhoneInbox());
+
+        var revised = AnswerNeed(f, gateNeed, """{"choice":"revise","text":"Smaller"}""");
+        Assert.True(revised.Applied, revised.Error);
+        Assert.Equal("superseded", f.Core.Text("SELECT state FROM engine_needs_me WHERE id=$id", new SqlArg("$id", commandNeed)));
+        Assert.Empty(PhoneInbox());
+        Assert.Equal("already_resolved", AnswerNeed(f, commandNeed, "\"allow_once\"").Error);
+        if (!settled) Assert.True(f.Complete(effect, blocked).Applied);
+        Assert.Equal("failed", f.Core.Text("SELECT state FROM engine_outbox WHERE id=$id", new SqlArg("$id", effect.Id)));
+        Assert.Equal("running", f.Core.Text("SELECT state FROM engine_run"));
+        var intent = effect.Payload.Deserialize(WorkflowExecutionJson.Default.CommandExecutionIntent)!;
+        Assert.False(File.Exists(intent.OutputPath));
+
+        Assert.Equal(1, new WorkflowAdvancementPreparation(f.Core.Db, f.Commands, f.Core.Machine, f.Core.Time).AdvancePending(default));
+        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE state<>'pending'"));
+
+        var (askedAgain, _, _, _) = await BothAsking(f, settled: true);
+        Assert.NotEqual(commandNeed, askedAgain);
+        Assert.Contains(askedAgain, PhoneInbox());
+        Assert.True(AnswerNeed(f, askedAgain, "\"allow_once\"").Applied);
+        var allowed = f.Claim(); Assert.True(f.Complete(allowed, await f.Host().ExecuteAsync(allowed, default)).Applied);
+        Assert.Equal("succeeded", f.Core.Text("SELECT state FROM engine_step WHERE definition_key='checks'"));
+    }
+
     internal sealed class Fixture : IDisposable
     {
         private readonly string _temp = Directory.CreateTempSubdirectory("assembly-command-engine-").FullName;
@@ -230,7 +315,7 @@ public sealed class CommandStepTests
         private string Proof => Path.Combine(_temp, "proof");
         public string ProofRoot => Proof;
         public Fixture(params string[] scripts) : this(scripts, "allow") { }
-        public Fixture(string[] scripts, string policy, bool onFail = false, bool repeat = false, Assembly.Application.Common.Topics.ITopics? topics = null)
+        public Fixture(string[] scripts, string policy, bool onFail = false, bool repeat = false, Assembly.Application.Common.Topics.ITopics? topics = null, string? flow = null, string? first = null)
         {
             Core = new(topics: topics);
             Core.SeedSession("owner"); var root = Path.Combine(_temp, "repo"); Directory.CreateDirectory(root);
@@ -239,7 +324,7 @@ public sealed class CommandStepTests
             var request = new WorkflowStartRequest(Guid.NewGuid(), Run, 0, 0, "owner", "request", ".assembly/workflows/flow.yml", project.Id,
                 "commands", null, JsonSerializer.SerializeToElement(new { }));
             var c = new CommandContext(request.CommandId, Core.Machine, new(ActorKind.Window, "owner"), Run, 0, 0, 1000);
-            var yaml = "name: Flow\npolicy:\n  commands:\n    " + policy + ": ['*']\nsteps:\n"
+            var yaml = flow ?? "name: Flow\npolicy:\n  commands:\n    " + policy + ": ['*']\nsteps:\n"
                 + (onFail ? "  build:\n    run: [printf built]\n" : "")
                 + "  checks:\n" + (onFail ? "    needs: [build]\n    on_fail: build\n" : "")
                 + (repeat ? "    repeat: true\n" : "") + "    run: " + JsonSerializer.Serialize(scripts) + "\n";
@@ -252,7 +337,7 @@ public sealed class CommandStepTests
             Assert.True(Complete(EffectTransitions.Read(Core.Db, setup, default)!, new(EffectDisposition.Confirmed,
                 JsonSerializer.SerializeToElement(new WorkspaceSetupData(anchor.AllocationId), EngineJson.Default.WorkspaceSetupData), null)).Applied);
             CompleteWorkspace(anchor);
-            CompleteWorkspace(Workspace(onFail ? Core.Text("SELECT id FROM engine_step WHERE definition_key='build'")! : Step));
+            CompleteWorkspace(Workspace(onFail || first is not null ? Core.Text("SELECT id FROM engine_step WHERE definition_key='" + (first ?? "build") + "'")! : Step));
         }
         private WorkspaceIntent Workspace(string? step)
         {
@@ -285,6 +370,14 @@ public sealed class CommandStepTests
             CompleteWorkspace(Workspace(Step));
         }
         public PreparedCommandStep Prepare(long now = 1000) => PrepareFor(Step, now);
+        /// <summary>Readies the step's workspace if it has none yet and starts it; the next claim is its command.</summary>
+        public Effect StartStep(string key, long now = 1000)
+        {
+            var step = Core.Text("SELECT id FROM engine_step WHERE definition_key='" + key + "'")!;
+            if (Core.Text("SELECT workspace_id FROM engine_step WHERE id='" + step + "'") is null) CompleteWorkspace(Workspace(step));
+            var started = Start(PrepareFor(step, now)); Assert.True(started.Applied, started.Error);
+            return Claim();
+        }
         private PreparedCommandStep PrepareFor(string step, long now)
         {
             using var scope = Core.Db.OpenSnapshot(default);

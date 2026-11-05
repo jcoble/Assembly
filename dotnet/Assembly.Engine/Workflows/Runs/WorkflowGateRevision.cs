@@ -4,6 +4,8 @@ using Assembly.Engine.Workflows.Definitions;
 
 namespace Assembly.Engine.Workflows.Runs;
 
+internal sealed record OpenApproval(string Need, long Version, string Step, int Attempt, int Generation, string Kind);
+
 /// <summary>Who a revision at an approval gate goes to: the nearest earlier step that did the work being approved.</summary>
 internal static class WorkflowGateRevision
 {
@@ -37,14 +39,16 @@ internal static class WorkflowGateRevision
         return Nearest(steps, row.Key, live.ContainsKey) is { } key ? live[key] : null;
     }
 
-    /// <summary>Redoing the target takes everything after it, and an approval still open there can only end with an answer,
-    /// so the redo would wait on it with this gate already answered. The owner answers that one first.</summary>
-    internal static bool AnotherOpenApproval(IReadScope s, string gateStep, string target) => s.QueryFirst("""
+    /// <summary>Redoing the target takes everything after it, so an approval still open there no longer asks about the
+    /// work it would be approving. These are closed with the revision, and the rerun asks them again.</summary>
+    internal static IReadOnlyList<OpenApproval> OpenApprovalsAfter(IReadScope s, string gateStep, string target) => s.Query("""
         WITH RECURSIVE affected(id) AS (
             SELECT $target UNION SELECT d.step_id FROM engine_step_dependency d JOIN affected a ON d.dependency_id=a.id
-        ) SELECT EXISTS(SELECT 1 FROM engine_step st JOIN engine_needs_me n ON n.step_id=st.id AND n.run_id=st.run_id AND n.state='open'
-            WHERE st.id IN affected AND st.id<>$gate AND st.kind IN ('gate','command'))
-        """, r => r.Long(0) != 0, new SqlArg("$target", target), new("$gate", gateStep));
+        ) SELECT n.id,n.version,st.id,st.attempt,st.generation,st.kind FROM engine_step st
+          JOIN engine_needs_me n ON n.step_id=st.id AND n.run_id=st.run_id AND n.state='open'
+          WHERE st.id IN affected AND st.id<>$gate AND st.kind IN ('gate','command') ORDER BY n.id
+        """, r => new OpenApproval(r.Text(0), r.Long(1), r.Text(2), checked((int)r.Long(3)), checked((int)r.Long(4)), r.Text(5)),
+        new SqlArg("$target", target), new("$gate", gateStep));
 
     /// <summary>Walks back level by level. Of two steps at one level the later-declared wins, and a review or a failed
     /// check's own target stands in for it, since those judge the work rather than do it.</summary>

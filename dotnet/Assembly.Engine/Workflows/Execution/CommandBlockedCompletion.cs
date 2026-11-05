@@ -16,6 +16,7 @@ public static partial class CommandStepTransitions
         if (receipt.Disposition != EffectDisposition.Unavailable || receipt.Error != "workflow_policy_pending") return ordinaryState;
         var policy = WorkflowExecutionNeeds.Policy(s, effect);
         if (policy == "allow") return "pending"; // An answer may commit before this handler completion.
+        if (policy == "closed") return "failed"; // So may a revision that closed the question; the step waits for its redo.
         if (policy != "deny") return "unavailable";
         var i = effect.Payload.Deserialize(WorkflowExecutionJson.Default.CommandExecutionIntent)!;
         if (!Current(s, i, c.Machine)) return "failed";

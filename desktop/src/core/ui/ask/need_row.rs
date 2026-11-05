@@ -3,7 +3,7 @@ use crate::core::{
     engine::{
         EngineChanged, EngineFeed, EngineKey, EngineRefusal, EngineScope, SessionKey,
         commands::NeedAnswer,
-        engine_items::{NO_ANSWER_CONTROLS, NeedItem},
+        engine_items::{NO_ANSWER_CONTROLS, NeedItem, WORK_REDONE},
     },
     ui::ask::{
         controls::{self, ControlAction},
@@ -44,6 +44,11 @@ pub enum NeedRowState {
     Failed { message: String },
 }
 pub(super) fn settled_state(need: &NeedItem, here: bool) -> NeedRowState {
+    if need.state == "superseded" {
+        return NeedRowState::Closed {
+            state: WORK_REDONE.into(),
+        };
+    }
     if need.state != "answered" {
         return NeedRowState::Closed {
             state: need.state.clone().into(),
@@ -71,9 +76,6 @@ pub(super) fn failure_state(error: &EngineRefusal) -> NeedRowState {
         },
         "already_resolved" => NeedRowState::Refused {
             reason: error.message.clone(),
-        },
-        "other_gate_open" => NeedRowState::Failed {
-            message: "Answer the other open approval first.".into(),
         },
         "revision_target_undefined" => NeedRowState::Failed {
             message: "There's no earlier step to send this back to.".into(),

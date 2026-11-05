@@ -179,12 +179,6 @@ async fn refused(code: &'static str, words: &str, cx: &mut TestAppContext) -> St
 }
 
 #[gpui::test]
-async fn another_open_approval_is_said_plainly_and_keeps_the_words(cx: &mut TestAppContext) {
-    let line = refused("other_gate_open", "Try again", cx).await;
-    assert_eq!(line, "Answer the other open approval first.");
-}
-
-#[gpui::test]
 async fn nothing_earlier_to_send_it_to_is_said_plainly(cx: &mut TestAppContext) {
     let line = refused("revision_target_undefined", "Try again", cx).await;
     assert_eq!(line, "There's no earlier step to send this back to.");

@@ -9,7 +9,7 @@ use gpui_kit::*;
 use super::board_queries::BoardData;
 use super::question_actions::explain_more;
 use crate::activity::{CardBody, NeedsCard, NeedsState, StatusChip, Tone};
-use crate::core::engine::engine_items::NeedItem;
+use crate::core::engine::engine_items::{NeedItem, WORK_REDONE};
 use crate::core::engine::{EngineFeed, EngineKey, EngineScope, SessionKey};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::ask::need_row::{NeedRow, NeedRowEvent};
@@ -94,6 +94,10 @@ pub fn card_state(need: &NeedItem) -> NeedsState {
         },
         "cancelled" => NeedsState::Answered {
             summary: "Session ended".into(),
+            delivery: None,
+        },
+        "superseded" => NeedsState::Answered {
+            summary: WORK_REDONE.into(),
             delivery: None,
         },
         other => NeedsState::Answered {

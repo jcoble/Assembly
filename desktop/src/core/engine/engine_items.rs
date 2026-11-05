@@ -24,6 +24,9 @@ pub enum NeedAnswerDisplay {
 /// What a need says when its input mode has no controls here, or it has no presentation at all.
 pub const NO_ANSWER_CONTROLS: &str = "Answer controls are unavailable for this item.";
 
+/// What a question says after a revision of an earlier approval closed it (`state` is `superseded`).
+pub const WORK_REDONE: &str = "Closed: the work it follows is being redone";
+
 #[derive(Clone, Debug)]
 pub struct NeedItem {
     pub key: EngineKey,

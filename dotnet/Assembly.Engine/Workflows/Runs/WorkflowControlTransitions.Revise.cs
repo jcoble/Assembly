@@ -4,6 +4,7 @@ using Assembly.Engine.Contracts;
 using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
+using Assembly.Engine.Workflows.Execution;
 using Assembly.Engine.Workflows.Reviews;
 
 namespace Assembly.Engine.Workflows.Runs;
@@ -13,8 +14,11 @@ internal static partial class WorkflowControlTransitions
     private sealed record GateStep(string Id, long Version, int Attempt, int Generation);
     private sealed record GateNeed(string Id, long Version);
 
+    private const string WorkRedone = "work_redone";
+
     /// <summary>Answers the gate with the owner's text and sends the work back through the existing redo: the target and
-    /// everything after it run again with that text as their findings, and the gate opens anew when they finish.</summary>
+    /// everything after it run again with that text as their findings, and the gate opens anew when they finish. Any other
+    /// approval open after the target closes here, unanswered, and is asked again when the rerun reaches it.</summary>
     private static CommandResult Revise(IWriteScope s, CommandContext c, Run run, GateStep gate, GateNeed need, string target, string text)
     {
         s.Execute("""
@@ -34,11 +38,30 @@ internal static partial class WorkflowControlTransitions
             new("$step", gate.Id), new("$attempt", gate.Attempt));
         List<EventDraft> events = [new("needs_me.answered", "needs_me", need.Id, need.Version + 1, false,
             new(run.Owner, c.EntityId, gate.Id, run.Owner, "answered", run.Epoch))];
+        foreach (var other in WorkflowGateRevision.OpenApprovalsAfter(s, gate.Id, target)) events.Add(CloseOpenApproval(s, c, run, other));
         events.AddRange(RunTransitions.Recompute(s, c, c.EntityId));
         return Changed(s, c, run with
         {
             Version = CurrentVersion(s, c.EntityId),
             State = s.QueryFirst("SELECT state FROM engine_run WHERE id=$id", r => r.Text(0), new SqlArg("$id", c.EntityId))!
         }, events, []);
+    }
+
+    /// <summary>Nothing it would have approved happens: no answer is written, and the step waits for the redo to reset it.</summary>
+    private static EventDraft CloseOpenApproval(IWriteScope s, CommandContext c, Run run, OpenApproval open)
+    {
+        s.Execute("UPDATE engine_needs_me SET state='superseded',version=version+1,updated_ms=$now WHERE id=$need",
+            new("$now", c.NowMs), new("$need", open.Need));
+        s.Execute("""
+            INSERT INTO engine_workflow_history(id,version,machine,created_ms,updated_ms,run_id,history_seq,step_id,attempt,generation,kind,at_ms,safe_body_json)
+            SELECT $id,1,$machine,$now,$now,$run,COALESCE(MAX(history_seq),0)+1,$step,$attempt,$generation,'workflow_decision',$now,
+              json_object('decision','closed','reason',$reason) FROM engine_workflow_history WHERE run_id=$run
+            """, new("$id", c.CommandId.ToString("N") + "/closed/" + open.Need), new("$machine", c.Machine), new("$now", c.NowMs), new("$run", c.EntityId),
+            new("$step", open.Step), new("$attempt", open.Attempt), new("$generation", open.Generation), new("$reason", WorkRedone));
+        if (open.Kind == "command") WorkflowExecutionNeeds.CloseForRedo(s, c, open.Need, WorkRedone);
+        else s.Execute("UPDATE engine_step_attempt SET state='cancelled',reason=$reason,gate_state='settled',ended_ms=$now WHERE step_id=$step AND attempt=$attempt",
+            new("$reason", WorkRedone), new("$now", c.NowMs), new("$step", open.Step), new("$attempt", open.Attempt));
+        return new("needs_me.cancelled", "needs_me", open.Need, open.Version + 1, false,
+            new(run.Owner, c.EntityId, open.Step, run.Owner, "superseded", run.Epoch));
     }
 }
