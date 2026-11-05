@@ -133,4 +133,39 @@ public sealed partial class RemoteReleaseInstallTests
         Assert.Contains("Installing adapters and CLIs on the remote machine…", phases);
         Assert.False(File.Exists(Path.Combine(Github, "fetched")));
     }
+
+    [Fact]
+    public async Task A_first_install_that_stopped_partway_carries_on_at_the_next_press()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (_, shell, _, _) = Fixture();
+        File.Delete(Path.Combine(Bin, "node"));
+        Script("node", "#!/bin/sh\necho 'no network' >&2\nexit 1\n");
+        var development = new CheckoutPackages(shell, _ => Task.FromResult(Path.Combine(Github, Archive)));
+        var feed = new RemoteReleaseFeed(new HttpClient(new RemoteReleaseFeedTests.Handler([])), LastSigner!.PublicKey);
+        var install = new RemoteReleaseInstall(feed, shell, TimeProvider.System, packages: development);
+
+        await Assert.ThrowsAsync<CallFailed>(() => install.InstallLatestAsync(Machine, _ => { }, default));
+        Assert.False(File.Exists(Path.Combine(Installed, "bin/assembly-remote-server")));
+
+        File.Delete(Path.Combine(Bin, "node"));
+        Script("node", "#!/bin/sh\nprintf '[]' >\"$HOME/assembly-host/serve/agents.json\"\n");
+        Assert.Equal(Version, (await install.InstallLatestAsync(Machine, _ => { }, default)).Version);
+    }
+
+    [Fact]
+    public async Task A_port_held_by_a_real_program_is_named_and_a_free_one_is_free()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (_, shell, _, _) = Fixture();
+        File.Delete(Path.Combine(Bin, "ss"));
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        var holder = (await shell.RunAsync("fixture-host", RemoteMachineCheck.Command(port), null, default)).Split('\t')[2];
+        Assert.DoesNotContain(holder, new[] { "free", "ours", "another" });
+        Assert.DoesNotContain("user@", holder, StringComparison.Ordinal);
+        listener.Stop();
+        Assert.Equal("fresh\tnone\tfree", await shell.RunAsync("fixture-host", RemoteMachineCheck.Command(port), null, default));
+    }
 }

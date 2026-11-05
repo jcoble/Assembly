@@ -72,6 +72,7 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
             throw new CallFailed("Remote home directory is invalid.", "remote_invalid");
         phase("Checking what's on the remote machine…");
         RemoteMachineCheck.Require(await shell.RunAsync(target, RemoteMachineCheck.Command(machine.Port), null, ct), machine, toolsOnly);
+        if (!toolsOnly) await shell.RunAsync(target, RemoteMachineCheck.Claim, null, ct);
 
         var stage = $"{home}/.cache/.assembly-install-{Guid.NewGuid():N}";
         var quoted = Quote(stage);

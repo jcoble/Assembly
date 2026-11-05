@@ -8,6 +8,7 @@ namespace Assembly.Infrastructure.Remote.Install;
 /// What's on a machine before anything is put there. An install has one form: this folder and this service. Anything
 /// else in those places is somebody's, so it stops here, by name, with nothing changed; there's no going ahead anyway.
 /// Updating tools needs an install of that form to be there already, since a host this installer didn't make isn't its to change.
+/// A first install that stopped partway has left the mark, so the next press carries on rather than refusing its own files.
 /// </summary>
 internal static class RemoteMachineCheck
 {
@@ -15,6 +16,7 @@ internal static class RemoteMachineCheck
         root=$HOME/assembly-host; unit=$HOME/.config/systemd/user/assembly-host.service
         if [ ! -e "$root" ] || [ -z "$(ls -A "$root" 2>/dev/null)" ]; then folder=fresh
         elif [ -x "$root/bin/assembly-remote-server" ] && grep -q '"packageType": "assembly-remote-backend"' "$root/serve/backend-manifest.json" 2>/dev/null; then folder=ours
+        elif [ -e "$root/.made-by-assembly" ]; then folder=started
         else folder=other; fi
         if [ ! -e "$unit" ]; then service=none
         elif grep -q "^ExecStart=$root/bin/assembly-remote-server serve " "$unit"; then service=ours
@@ -26,12 +28,17 @@ internal static class RemoteMachineCheck
           if [ -n "$pid" ] && [ "$pid" = "$(systemctl --user show assembly-host.service -p MainPID --value 2>/dev/null)" ]; then holder=ours
           else
             holder=$(sed -n 's#.*/\([^/]*\.service\).*#\1#p' "/proc/$pid/cgroup" 2>/dev/null | tail -n 1)
+            # An account's own manager says nothing about what's listening: the program's name does.
+            case "$holder" in user@*) holder= ;; esac
             [ -n "$holder" ] || holder=$(printf '%s' "$listener" | sed -n 's/.*users:(("\([^"]*\)".*/\1/p')
             [ -n "$holder" ] || holder=another
           fi
         fi
         printf '%s\t%s\t%s\n' "$folder" "$service" "$holder"
         """.Replace("PORT", port.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+
+    /// <summary>Claims the folder for this installer, once the check has said it's free or already ours.</summary>
+    internal const string Claim = "mkdir -p \"$HOME/assembly-host\"; : > \"$HOME/assembly-host/.made-by-assembly\"";
 
     internal static void Require(string said, SavedMachine machine, bool toolsOnly)
     {
