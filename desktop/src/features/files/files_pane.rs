@@ -54,7 +54,7 @@ pub struct FilesPane {
     action_event: Option<Subscription>,
     action_loading: Option<Task<()>>,
     action_error: Option<String>,
-    _heard: [Subscription; 2],
+    _heard: [Subscription; 3],
 }
 
 impl FilesPane {
@@ -71,6 +71,12 @@ impl FilesPane {
         let viewed = crate::core::state::viewed_project::ViewedProject::global(cx);
         let heard = cx.observe(&SelectedSession::global(cx), |pane, _, cx| pane.follow(cx));
         let heard_viewed = cx.observe(&viewed, |pane, _, cx| pane.follow(cx));
+        let touched = crate::core::state::folder_touched::FolderTouched::global(cx);
+        let heard_touched = cx.observe(&touched, |pane, touched, cx| {
+            if pane.session.is_some() && touched.read(cx).session() == pane.session.as_deref() {
+                pane.reload_kept(cx);
+            }
+        });
         let mut pane = FilesPane {
             focus: cx.focus_handle(),
             session: None,
@@ -94,7 +100,7 @@ impl FilesPane {
             action_event: None,
             action_loading: None,
             action_error: None,
-            _heard: [heard, heard_viewed],
+            _heard: [heard, heard_viewed, heard_touched],
         };
         pane.follow(cx);
         pane

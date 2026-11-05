@@ -358,3 +358,34 @@ async fn a_running_selected_turn_ending_refreshes_once_only_while_shown(cx: &mut
         vec!["s1", "s1", "s1", "s2"]
     );
 }
+
+impl Open<'_> {
+    fn touch(&mut self, session: &str) {
+        self.cx
+            .update(|cx| crate::core::state::folder_touched::FolderTouched::touch(session, cx));
+        self.cx.run_until_parked();
+    }
+}
+
+#[gpui::test]
+async fn a_tool_changing_the_selected_session_s_folder_reads_it_again_mid_turn(
+    cx: &mut TestAppContext,
+) {
+    let mut open = open(cx);
+    open.read
+        .update(open.cx, |read, cx| read.refresh_on_settle(cx));
+    open.select(Some("s1"));
+    open.show(true);
+    open.until("initial read", |seen, shown| {
+        seen.reads.len() == 1 && matches!(shown, Shown::Read(_))
+    })
+    .await;
+    open.touch("s1");
+    open.until("touched read", |seen, _| seen.reads.len() == 2)
+        .await;
+    open.touch("another-session");
+    assert_eq!(open.seen.lock().unwrap().reads.len(), 2);
+    open.show(false);
+    open.touch("s1");
+    assert_eq!(open.seen.lock().unwrap().reads.len(), 2);
+}

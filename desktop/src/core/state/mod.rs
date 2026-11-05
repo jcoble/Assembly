@@ -1,6 +1,7 @@
 //! The facts the window shows, one owner each, kept current from the backend's topics and calls.
 
 pub mod appearance;
+pub mod folder_touched;
 pub mod inspected_checkout;
 pub mod machine;
 pub mod machines;

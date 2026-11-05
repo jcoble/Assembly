@@ -7,6 +7,7 @@ use gpui_kit::*;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+use super::folder_touched::FolderTouched;
 use super::selected_session::SelectedSession;
 use super::sessions::Sessions;
 use super::viewed_project::ViewedProject;
@@ -47,6 +48,7 @@ pub struct SessionRead<T> {
     _read: Option<Task<()>>,
     _selected: Subscription,
     _settled: Option<Subscription>,
+    _touched: Option<Subscription>,
     settled_state: Option<(String, String)>,
     /// Reads the viewed folder instead of the session while one is viewed.
     follows_view: bool,
@@ -75,6 +77,7 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
             _read: None,
             _selected: selected,
             _settled: None,
+            _touched: None,
             settled_state: None,
             follows_view: false,
             _viewed: None,
@@ -98,11 +101,19 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         }));
     }
 
-    /// Refreshes on the selected session's actual running-to-settled transition; never polls.
+    /// Refreshes on the selected session's actual running-to-settled transition, and mid-turn when one of its tool
+    /// calls that can change its folder finishes; never polls.
     pub fn refresh_on_settle(&mut self, cx: &mut Context<Self>) {
         if self._settled.is_some() {
             return;
         }
+        let touched = FolderTouched::global(cx);
+        self._touched = Some(cx.observe(&touched, |read, touched, cx| {
+            let session = touched.read(cx).session().map(str::to_string);
+            if read.active && session.is_some() && session == read.read_for {
+                read.read(true, cx);
+            }
+        }));
         let Some(sessions) = Sessions::try_global(cx) else {
             return;
         };
