@@ -8,7 +8,7 @@ use gpui_kit::{Entity, VisualTestContext};
 use serde_json::{Value, json};
 
 use gpui_kit::AppContext as _;
-use gpui_kit::component::dock::{DockArea, DockPlacement, panel_handle};
+use gpui_kit::component::dock::{BasePanel as _, DockArea, DockPlacement, panel_handle};
 
 use super::{OpenPane, TasksPane};
 use crate::core::intents::open_url::OpenUrl;
@@ -101,6 +101,15 @@ enum Settings {
 /// A backend that never pushes the settings, answers the settings question as `settings` says, and answers every page
 /// read with a 404. Returns the page reads it was asked for.
 fn backend(cx: &mut TestAppContext, answer: Settings) -> (FakeBackend, Arc<Mutex<Vec<Value>>>) {
+    reading(cx, answer, Some("notion_http_404"))
+}
+
+/// As `backend`, with each page read failing with `failure`, or answered as an empty page with none.
+fn reading(
+    cx: &mut TestAppContext,
+    answer: Settings,
+    failure: Option<&'static str>,
+) -> (FakeBackend, Arc<Mutex<Vec<Value>>>) {
     let asked = Arc::new(Mutex::new(Vec::new()));
     let details = asked.clone();
     let mut held: Option<Value> = None;
@@ -124,8 +133,14 @@ fn backend(cx: &mut TestAppContext, answer: Settings) -> (FakeBackend, Arc<Mutex
             }
             (Some("call"), Some("detail")) => {
                 details.lock().unwrap().push(frame["args"].clone());
+                let Some(failure) = failure else {
+                    return vec![result(json!({
+                        "operationId":"o","revision":"r","properties":null,"blocks":[],"comments":[],
+                        "next":null,"bodyComplete":true,"commentsUnavailable":false,
+                    }))];
+                };
                 vec![Reply::Frame(
-                    json!({"t":"error","id":id,"code":"failed","message":"notion_http_404"}),
+                    json!({"t":"error","id":id,"code":"failed","message":failure}),
                 )]
             }
             (Some("call"), Some("ping")) => vec![result(Value::Null)],
@@ -148,10 +163,24 @@ fn start_sockets(port: u16, cx: &mut TestAppContext) {
     });
 }
 
+/// One round trip on the main socket, after which everything it answered before has reached the tab.
 async fn round_trip(method: &str, cx: &mut VisualTestContext) {
+    on_socket(method, SocketClient::try_global, cx).await;
+}
+
+/// One round trip on the bulk socket, which carries the page reads, so their answers have reached the tab.
+async fn bulk_round_trip(cx: &mut VisualTestContext) {
+    on_socket("ping", SocketClient::try_bulk, cx).await;
+}
+
+async fn on_socket(
+    method: &str,
+    socket: fn(&gpui_kit::App) -> Option<Entity<SocketClient>>,
+    cx: &mut VisualTestContext,
+) {
     cx.run_until_parked();
     let call = cx.update(|_, cx| {
-        let socket = SocketClient::try_global(cx).expect("the socket");
+        let socket = socket(cx).expect("the socket");
         socket
             .read(cx)
             .call::<Value>("fixture", method, json!({}), None)
@@ -178,7 +207,7 @@ async fn a_link_before_the_connection_is_known_asks_and_a_newer_link_replaces_it
     assert_eq!(opened_task(&pane, cx), None);
     round_trip("release", cx).await;
     round_trip("ping", cx).await;
-    round_trip("ping", cx).await;
+    bulk_round_trip(cx).await;
     let asked = asked.lock().unwrap().clone();
     assert_eq!(asked.len(), 1, "only the newer link was read: {asked:?}");
     assert_eq!(asked[0]["source"]["pageId"], ID);
@@ -275,10 +304,61 @@ async fn a_notion_page_that_is_no_task_leaves_the_tab_where_it_was(cx: &mut Test
     cx.update(|_, cx| pane.update(cx, |pane, cx| pane.settings_pushed(settings(true), cx)));
     let url = format!("https://www.notion.so/Plan-{HEX}");
     follow(&url, cx);
-    round_trip("ping", cx).await;
-    round_trip("ping", cx).await;
+    bulk_round_trip(cx).await;
     assert_eq!(asked.lock().unwrap().len(), 1, "the page was read");
     assert_eq!(cx.opened_url().as_deref(), Some(url.as_str()));
     let open = cx.read(|cx| dock.read(cx).is_dock_open(DockPlacement::Right));
     assert!(!open, "the drawer stays shut");
+}
+
+/// A docked tab, its dock, the page reads asked for, and the backend, which lives as long as the test holds it.
+type Docked<'a> = (
+    Entity<TasksPane>,
+    Entity<DockArea>,
+    Arc<Mutex<Vec<Value>>>,
+    FakeBackend,
+    &'a mut VisualTestContext,
+);
+
+/// Follows a Notion page in a docked, connected tab whose page reads go as `failure` says, once every answer is in.
+async fn follow_docked<'a>(
+    failure: Option<&'static str>,
+    cx: &'a mut TestAppContext,
+) -> Docked<'a> {
+    let (backend, asked) = reading(cx, Settings::Held, failure);
+    let (pane, dock, cx) = docked(cx);
+    // The tab is hidden, as a shut drawer's is, so it holds no topics.
+    pane.update_in(cx, |pane, window, cx| pane.set_active(false, window, cx));
+    cx.update(|_, cx| pane.update(cx, |pane, cx| pane.settings_pushed(settings(true), cx)));
+    follow(&format!("https://www.notion.so/Plan-{HEX}"), cx);
+    round_trip("ping", cx).await;
+    bulk_round_trip(cx).await;
+    (pane, dock, asked, backend, cx)
+}
+
+// Review fix 11: a page Notion couldn't read just now (here a 500) may still be a task, so the tab comes forward and
+// shows the error instead of the link doing nothing.
+#[gpui::test]
+async fn a_page_notion_could_not_read_brings_the_tab_forward_with_its_error(
+    cx: &mut TestAppContext,
+) {
+    let (pane, dock, _, _backend, cx) = follow_docked(Some("notion_http_500"), cx).await;
+    assert_eq!(cx.opened_url(), None);
+    assert!(cx.read(|cx| dock.read(cx).is_dock_open(DockPlacement::Right)));
+    cx.read(|cx| {
+        let pane = pane.read(cx);
+        assert!(pane.detail.is_some(), "the page stays open");
+        assert!(pane.state.detail_error.is_some(), "with its error");
+    });
+}
+
+// Review fix 12: a page that reads as a task brings the tab forward, and coming forward doesn't read it again.
+#[gpui::test]
+async fn a_page_that_reads_as_a_task_comes_forward_and_is_read_once(cx: &mut TestAppContext) {
+    let (pane, dock, asked, _backend, cx) = follow_docked(None, cx).await;
+    // Anything coming forward started has gone out and been answered.
+    bulk_round_trip(cx).await;
+    assert!(cx.read(|cx| dock.read(cx).is_dock_open(DockPlacement::Right)));
+    assert_eq!(opened_task(&pane, cx).as_deref(), Some(ID));
+    assert_eq!(asked.lock().unwrap().len(), 1, "read once");
 }

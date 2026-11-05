@@ -108,6 +108,13 @@ impl TasksPane {
         }));
     }
 
+    /// Brings forward a tab that has just read, or failed to read, a page it held back. It starts first, so coming
+    /// forward doesn't read the page again.
+    fn come_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.start(cx);
+        Self::show(window, cx);
+    }
+
     pub(super) fn detail_read(
         &mut self,
         token: DetailToken,
@@ -121,7 +128,7 @@ impl TasksPane {
                     return;
                 }
                 if self.page_fallback.take().is_some() {
-                    Self::show(window, cx);
+                    self.come_forward(window, cx);
                 }
                 if let Some(view) = &self.detail {
                     view.update(cx, |view, cx| view.detail_arrived(&detail, window, cx));
@@ -135,10 +142,15 @@ impl TasksPane {
                     error.code.as_str(),
                     "notion_source_mismatch" | "notion_http_403" | "notion_http_404"
                 );
-                if let Some(url) = self.page_fallback.take().filter(|_| elsewhere) {
-                    window.dispatch_action(Box::new(OpenInBrowser { url }), cx);
-                    self.go_back(window, cx);
-                    return;
+                match self.page_fallback.take() {
+                    Some(url) if elsewhere => {
+                        window.dispatch_action(Box::new(OpenInBrowser { url }), cx);
+                        self.go_back(window, cx);
+                        return;
+                    }
+                    // It may be a task Notion couldn't read just now: the tab comes forward to say so.
+                    Some(_) => self.come_forward(window, cx),
+                    None => {}
                 }
                 if let Some(view) = &self.detail {
                     view.update(cx, |view, cx| {

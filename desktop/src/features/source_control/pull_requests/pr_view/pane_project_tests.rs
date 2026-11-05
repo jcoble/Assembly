@@ -354,3 +354,36 @@ async fn with_the_tab_on_a_project_a_link_to_another_project_moves_there(cx: &mu
         assert_eq!(pane.failure, None);
     });
 }
+
+// Review fix 7, several holders: a tab on a project that doesn't hold the link's repository moves to all local projects,
+// and the tab asks which of the projects holding it should answer.
+#[gpui::test]
+async fn with_the_tab_on_a_project_a_link_held_by_several_asks_which(cx: &mut TestAppContext) {
+    let held = |id: &str, machine: &str| {
+        json!({
+            "id":id,"machine":machine,"rootPath":format!("/{machine}/b"),"title":"b",
+            "repoKey":"github.com/a/b","createdAt":1,
+        })
+    };
+    let projects = json!([holder(LANE, "lane"), held(FAR, "far"), held(HERE, "local")]);
+    let mut fake = fake(cx, projects, Source::Answers);
+    let window = cx.add_empty_window();
+    let pane = pane_with_projects(&mut fake, window).await;
+    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_project(Some(LANE.into()), cx)));
+    follow(&pane, "a/b", 3, window);
+    window.run_until_parked();
+    window.update(|_, cx| {
+        let pane = pane.read(cx);
+        assert_eq!(pane.project, None, "all local projects");
+        assert_eq!(pane.failure, None);
+        let choice = pane.choosing.as_ref().expect("the question");
+        let mut ids: Vec<_> = choice
+            .projects
+            .iter()
+            .map(|project| project.id.as_str())
+            .collect();
+        ids.sort();
+        assert_eq!(ids, [FAR, HERE]);
+    });
+    assert!(calls(&fake.seen, "pr").is_empty());
+}
