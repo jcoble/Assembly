@@ -1,4 +1,7 @@
-use super::{LARGEST_PICTURE, is_picture, may_ask_first, may_follow, picture_url};
+use super::{
+    LARGEST_PICTURE, is_picture, may_ask_first, may_follow, may_read_on_page, picture_format,
+    picture_url,
+};
 use url::Url;
 
 fn url(text: &str) -> Url {
@@ -96,4 +99,43 @@ fn only_real_pictures_count() {
     let mut too_long = PNG.to_vec();
     too_long.resize(LARGEST_PICTURE as usize + 1, 0);
     assert!(!is_picture("image/png", &too_long));
+}
+#[test]
+fn a_page_picture_can_be_on_any_named_host_over_plain_https() {
+    for allowed in [
+        "https://prod-files-secure.s3.us-west-2.amazonaws.com/a/b/shot.png?X-Amz-Signature=abc",
+        "https://example.com/shot",
+    ] {
+        assert!(may_read_on_page(&url(allowed)), "{allowed}");
+    }
+}
+#[test]
+fn a_page_picture_cant_reach_this_machine_or_carry_credentials() {
+    for refused in [
+        "http://example.com/shot.png",
+        "https://localhost/shot.png",
+        "https://localhost./shot.png",
+        "https://127.0.0.1/shot.png",
+        "https://192.168.1.2/shot.png",
+        "https://[::1]/shot.png",
+        "https://someone:secret@example.com/shot.png",
+        "https://example.com:8443/shot.png",
+        "file:///etc/hosts",
+    ] {
+        assert!(!may_read_on_page(&url(refused)), "{refused}");
+    }
+}
+#[test]
+fn the_bytes_say_what_kind_of_picture_it_is() {
+    assert_eq!(picture_format(PNG), Some(gpui_kit::ImageFormat::Png));
+    assert_eq!(
+        picture_format(b"GIF89a.."),
+        Some(gpui_kit::ImageFormat::Gif)
+    );
+    assert_eq!(
+        picture_format(b"RIFF\0\0\0\0WEBPrest"),
+        Some(gpui_kit::ImageFormat::Webp)
+    );
+    assert_eq!(picture_format(b"<svg></svg>"), None);
+    assert_eq!(picture_format(b""), None);
 }

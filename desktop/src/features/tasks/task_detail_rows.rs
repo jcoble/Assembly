@@ -17,6 +17,7 @@ use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::inline_field::field_row;
 
 use super::super::task_body::{BodyRow, edit_kind};
+use super::pictures::{PictureState, largest};
 use super::{TaskDetailEvent, TaskDetailView, muted_note};
 
 /// Selectable text; a link in it goes through the Tasks tab, which knows where each kind belongs.
@@ -210,7 +211,8 @@ impl TaskDetailView {
             .into_any_element()
     }
 
-    /// An image's bytes have no read path yet, so it opens in the browser.
+    /// A picture shows where it sits on the page and opens in the browser when pressed. One that can't be read, or has no
+    /// address, is its name.
     fn image_row(&self, row: &BodyRow, cx: &App) -> AnyElement {
         let image = row
             .image
@@ -227,6 +229,37 @@ impl TaskDetailView {
         let Some(url) = image.url else {
             return muted_note(label, cx).into_any_element();
         };
+        match self.pictures.state(&row.id) {
+            PictureState::Shown(picture) => {
+                let most = largest(picture.size(0));
+                return v_flex()
+                    .w_full()
+                    .gap_1()
+                    .items_start()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("image-{}", row.id)))
+                            .debug_selector(|| format!("picture-{}", row.id))
+                            .w_full()
+                            .max_w(most.width)
+                            .aspect_ratio(most.width / most.height)
+                            .cursor_pointer()
+                            .rounded(cx.theme().radius)
+                            .overflow_hidden()
+                            .on_click(move |_, window, cx| {
+                                let url = url.clone();
+                                window.dispatch_action(Box::new(OpenUrl { url }), cx)
+                            })
+                            .child(img(picture).size_full()),
+                    )
+                    .when(!image.caption.is_empty(), |column| {
+                        column.child(muted_note(image.caption.clone(), cx))
+                    })
+                    .into_any_element();
+            }
+            PictureState::Coming => return muted_note("Loading picture…", cx).into_any_element(),
+            PictureState::Unreadable => {}
+        }
         Button::new(SharedString::from(format!("image-{}", row.id)))
             .small()
             .ghost()
@@ -284,7 +317,10 @@ impl TaskDetailView {
             return self.head(cx);
         }
         match self.rows.get(index - 1).cloned() {
-            Some(row) => self.body_row(&row, cx),
+            Some(row) => {
+                self.want_picture(&row, cx);
+                self.body_row(&row, cx)
+            }
             None => self.foot(cx),
         }
     }

@@ -23,6 +23,8 @@ use super::tasks_view::{priority_tone, status_tone};
 
 #[path = "task_images.rs"]
 mod images;
+#[path = "task_pictures.rs"]
+mod pictures;
 #[path = "task_detail_rows.rs"]
 mod rows;
 
@@ -81,6 +83,7 @@ pub struct TaskDetailView {
     pub(super) focus: FocusHandle,
     pub(super) saves: Vec<Task<()>>,
     images: images::ImageQueue,
+    pub(super) pictures: pictures::PagePictures,
     _heard: Vec<Subscription>,
 }
 
@@ -156,6 +159,7 @@ impl TaskDetailView {
             cx.observe(&status, |view, _, cx| view.field_changed(cx)),
             cx.observe(&priority, |view, _, cx| view.field_changed(cx)),
             cx.observe(&add_text, |view, _, cx| view.field_changed(cx)),
+            cx.on_release(|view, cx| view.pictures.release(cx)),
         ];
         Self {
             source,
@@ -181,6 +185,7 @@ impl TaskDetailView {
             focus: cx.focus_handle(),
             saves: Vec::new(),
             images: images::ImageQueue::default(),
+            pictures: pictures::PagePictures::default(),
             _heard: heard,
         }
     }
@@ -255,8 +260,13 @@ impl TaskDetailView {
         self.comments = detail.comments.iter().map(comment).collect();
         self.comments_unavailable = detail.comments_unavailable;
         self.rebuild_rows();
+        self.pictures.keep_only(&self.rows, window, cx);
         if self.images.take_reveal() {
-            self.list.scroll_to_reveal_item(self.rows.len());
+            // Every row was just reset, so nothing has a height to reveal by: go to the new picture's row itself.
+            self.list.scroll_to(ListOffset {
+                item_ix: self.rows.len(),
+                offset_in_item: px(0.),
+            });
         }
         self.checking = None;
         if self

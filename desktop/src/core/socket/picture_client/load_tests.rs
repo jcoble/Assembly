@@ -1,4 +1,4 @@
-use super::{Hop, NoPicture, load};
+use super::{Hop, NoPicture, PAGE, load, load_within};
 use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
@@ -143,4 +143,59 @@ fn a_screen_gone_between_redirects_stops_the_asking() {
     );
     assert_eq!(result, Err(NoPicture::NoLongerWanted));
     assert_eq!(asked.get(), 1);
+}
+/// A page picture's load over the given answers, with no time passing.
+fn run_page(first: &str, answers: Vec<Hop>) -> Result<Vec<u8>, NoPicture> {
+    let start = Instant::now();
+    let mut answers = answers.into_iter();
+    load_within(
+        &PAGE,
+        first,
+        || start,
+        || true,
+        |_, _| Ok(answers.next().expect("asked more often than answered")),
+    )
+}
+const SHOT: &str = "https://files.example.com/shot.png?X-Amz-Signature=abc";
+
+#[test]
+fn a_page_picture_counts_by_its_bytes_whatever_the_server_calls_it() {
+    let answer = Hop::Answer {
+        content_type: "binary/octet-stream".to_owned(),
+        bytes: PNG.to_vec(),
+    };
+    assert_eq!(run_page(SHOT, vec![answer]), Ok(PNG.to_vec()));
+}
+#[test]
+fn a_page_answer_that_isnt_pixels_is_no_picture_even_called_an_image() {
+    let answer = Hop::Answer {
+        content_type: "image/svg+xml".to_owned(),
+        bytes: b"<svg></svg>".to_vec(),
+    };
+    assert_eq!(run_page(SHOT, vec![answer]), Err(NoPicture::NotAPicture));
+}
+#[test]
+fn a_page_picture_can_move_host_but_not_off_https_or_onto_this_machine() {
+    assert_eq!(
+        run_page(
+            SHOT,
+            vec![redirect("https://cdn.example.net/shot"), picture()]
+        ),
+        Ok(PNG.to_vec())
+    );
+    assert_eq!(
+        run_page(SHOT, vec![redirect("http://cdn.example.net/shot")]),
+        Err(NoPicture::NotAllowed)
+    );
+    assert_eq!(
+        run_page(SHOT, vec![redirect("https://localhost/shot")]),
+        Err(NoPicture::NotAllowed)
+    );
+}
+#[test]
+fn a_page_picture_at_a_refused_address_is_never_asked_for() {
+    assert_eq!(
+        run_page("http://example.com/shot.png", vec![]),
+        Err(NoPicture::NotAllowed)
+    );
 }

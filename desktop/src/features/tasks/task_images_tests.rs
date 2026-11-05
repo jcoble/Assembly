@@ -10,6 +10,7 @@ use gpui_kit::{
 };
 
 use super::super::super::task_export::*;
+use super::super::super::tasks_state::TaskDetail;
 use super::super::{TaskDetailEvent, TaskDetailView, TaskSeed};
 use super::{ImageCalls, MAX_BYTES, TOO_LARGE, WRONG_KIND, accepted};
 
@@ -309,4 +310,49 @@ fn a_picture_over_the_limit_is_turned_away() {
     assert!(accepted(Some("image/png"), at_limit).is_ok());
     let over: std::sync::Arc<[u8]> = vec![0; MAX_BYTES + 1].into();
     assert_eq!(accepted(Some("image/png"), over).unwrap_err(), TOO_LARGE);
+}
+
+#[gpui::test]
+fn the_next_read_after_a_picture_lands_goes_to_its_row(cx: &mut TestAppContext) {
+    let (view, _, _, cx) = open(Backend::default(), cx);
+    paste(&view, &picture(b"png!"), cx);
+    let block = |id: &str| NotionBlock {
+        id: id.into(),
+        kind: "paragraph".into(),
+        content: serde_json::json!({"rich_text":[]}),
+        children: vec![],
+    };
+    let detail = TaskDetail {
+        source: NotionTaskRef {
+            data_source_id: "s".into(),
+            page_id: "p".into(),
+        },
+        revision: "r".into(),
+        properties: serde_json::json!({}),
+        blocks: vec![block("a"), block("b"), block("c")],
+        comments: vec![],
+        comments_unavailable: false,
+    };
+    let arrive = |view: &Entity<TaskDetailView>, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| view.detail_arrived(&detail, window, cx));
+            view.read(cx).list.logical_scroll_top().item_ix
+        })
+    };
+    assert_eq!(
+        arrive(&view, cx),
+        3,
+        "the head, then the last of three rows"
+    );
+    cx.update(|_, cx| {
+        view.read(cx).list.scroll_to(gpui::ListOffset {
+            item_ix: 0,
+            offset_in_item: gpui::px(0.),
+        });
+    });
+    assert_eq!(
+        arrive(&view, cx),
+        0,
+        "a later read stays where the reader is"
+    );
 }
