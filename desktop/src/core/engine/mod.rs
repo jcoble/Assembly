@@ -50,6 +50,9 @@ mod engine_store_tests;
 #[cfg(test)]
 mod engine_feed_tests;
 
+#[cfg(test)]
+pub(crate) mod test_engine;
+
 pub mod engine_items;
 #[cfg(test)]
 mod engine_items_tests;

@@ -3,7 +3,7 @@ use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::tag::Tag;
-use gpui_kit::component::{ActiveTheme as _, Sizable as _};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -54,6 +54,39 @@ impl RenderOnce for StatusChip {
         Tag::custom(color.opacity(0.12), color, color.opacity(0.24))
             .small()
             .text_role(TextRole::Meta, cx)
+            .child(self.label)
+    }
+}
+
+/// A count or a few words that want attention: the rail's amber chip with its dot.
+#[derive(IntoElement)]
+pub struct DotChip {
+    label: SharedString,
+    tone: Tone,
+}
+
+impl DotChip {
+    pub fn new(label: impl Into<SharedString>, tone: Tone) -> Self {
+        Self {
+            label: label.into(),
+            tone,
+        }
+    }
+}
+
+impl RenderOnce for DotChip {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let color = self.tone.color(cx);
+        h_flex()
+            .h(px(18.))
+            .px(px(7.))
+            .gap(px(4.))
+            .rounded_full()
+            .bg(color.opacity(0.12))
+            .text_role(TextRole::Meta, cx)
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(color)
+            .child(div().size(px(6.)).rounded_full().bg(color))
             .child(self.label)
     }
 }

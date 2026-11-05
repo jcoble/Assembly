@@ -178,9 +178,21 @@ fn an_empty_tab_says_so_and_machines_head_their_groups() {
 
 #[test]
 fn offline_group_header_and_disabled_actions() {
+    use chrono::{Local, TimeZone};
+    let since = Local
+        .with_ymd_and_hms(2026, 11, 4, 14, 2, 0)
+        .unwrap()
+        .timestamp_millis();
     assert_eq!(
-        group_heading("Workbox Test", true),
+        group_heading("Workbox Test", true, Some(since)),
+        "Workbox Test · offline since 14:02"
+    );
+    assert_eq!(
+        group_heading("Workbox Test", true, None),
         "Workbox Test · offline"
     );
-    assert_eq!(group_heading("Workbox Test", false), "Workbox Test");
+    assert_eq!(
+        group_heading("Workbox Test", false, Some(since)),
+        "Workbox Test"
+    );
 }

@@ -59,6 +59,8 @@ public sealed partial class EngineSocketTests
     {
         SeedGateWithWorkBefore();
         Assert.Equal("[\"approve\",\"revise\",\"deny\"]", _f.Text("SELECT options_json FROM engine_needs_me"));
+        Assert.Equal("choice", _f.Text("SELECT json_extract(presentation_json,'$.inputMode') FROM engine_needs_me"));
+        Assert.Equal("revise", _f.Text("SELECT json_extract(presentation_json,'$.options[1].id') FROM engine_needs_me"));
         var need = _f.Text("SELECT id FROM engine_needs_me")!;
         using var socket = await Open();
         var answer = JsonSerializer.SerializeToElement(new { choice = "revise", text = "Smaller schema" });

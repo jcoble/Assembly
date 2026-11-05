@@ -270,3 +270,58 @@ fn started_line_reads_owner_and_time() {
     let started = read(json!({"ownerSessionId":"s","startedMs":0})).unwrap();
     assert!(started.starts_with("Mute lane · Started "), "{started}");
 }
+
+#[test]
+fn pills_cover_check_done_closed_cancelled() {
+    let pills = |run_state: &str, item: StepItem| {
+        let rows = card_steps(&run(run_state, json!({})), &[&item], 0);
+        rows[0]
+            .pills
+            .iter()
+            .map(|(label, _)| label.to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        pills("running", step("a", "running", json!({"result":"check"}))),
+        ["Check"]
+    );
+    assert_eq!(
+        pills("succeeded", step("a", "succeeded", json!({}))),
+        ["Done"]
+    );
+    assert_eq!(
+        pills("failed", step("a", "failed", json!({"closed":true}))),
+        ["Failed", "Closed"]
+    );
+    assert_eq!(
+        pills("cancelled", step("a", "cancelled", json!({"closed":true}))),
+        ["Closed", "Cancelled"]
+    );
+    let cancelled = run("cancelled", json!({}));
+    assert_eq!(pill(&cancelled, &[], false), Pill::Cancelled);
+    assert_eq!(Pill::Cancelled.label(), "Cancelled");
+}
+
+#[test]
+fn a_rows_controls_are_the_words_the_engine_sent() {
+    use super::board_commands::step_recovery;
+    let labels = |recovery: Value| {
+        step_recovery(&step("a", "failed", json!({"recovery":recovery})))
+            .into_iter()
+            .map(|(label, action)| {
+                assert!(!action.starts_a_new_run(), "it stays on this run");
+                label
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        labels(json!(["retry", "skip", "continue"])),
+        ["Retry", "Skip", "Continue"]
+    );
+    assert!(labels(json!([])).is_empty());
+    assert!(labels(json!(["something_newer"])).is_empty());
+    assert!(
+        step_recovery(&step("a", "failed", json!({}))).is_empty(),
+        "an older engine sends none"
+    );
+}

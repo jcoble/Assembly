@@ -1,4 +1,5 @@
 //! What a run opens into: its steps, a waiting step's question in place, its footer's actions and their toast.
+use std::rc::Rc;
 use std::time::Duration;
 
 use chrono::{Local, TimeZone as _};
@@ -11,14 +12,14 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::board_commands::{
-    BoardRunAction, refusal_line, run_command, selected_after, undo_token,
+    BoardRunAction, refusal_line, run_command, selected_after, step_recovery, undo_token,
 };
 use super::board_queries::BoardData;
 use super::board_sections::offline_reason;
 use super::question_row::{QuestionRows, need_card};
 use super::run_footer::{Footer, RunAction, footer};
 use super::run_steps::{card_steps, visible_steps};
-use crate::activity::{StepView, step_list};
+use crate::activity::{StepAction, StepView, step_list};
 use crate::core::engine::workflow_items::{RunItem, StepItem};
 use crate::core::engine::{EngineFeed, EngineKey};
 use crate::core::socket::client::SocketClient;
@@ -33,7 +34,7 @@ const TOAST: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunCardEvent {
-    /// A new run the engine accepted, to select once its row arrives.
+    /// A run to show open on Workflows: a new one the engine accepted, once its row arrives, or this one.
     Select(EngineKey),
 }
 
@@ -231,14 +232,38 @@ impl RunCard {
         });
     }
 
-    fn grant(&mut self, step_id: String, scope: String, cx: &mut Context<Self>) {
+    fn act_on_step(&mut self, action: BoardRunAction, cx: &mut Context<Self>) {
         if self.action.is_some() {
             return;
         }
         let Some(run) = self.reader.read(cx).view().map(|page| page.run.clone()) else {
             return;
         };
-        self.send(&run, BoardRunAction::Grant { step_id, scope }, cx);
+        self.send(&run, action, cx);
+    }
+
+    /// The row's recovery controls, as the engine offers them.
+    fn step_actions(
+        &self,
+        step: &StepItem,
+        offline: Option<&SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Vec<StepAction> {
+        let busy = self.action.is_some();
+        step_recovery(step)
+            .into_iter()
+            .map(|(label, action)| {
+                let card = cx.weak_entity();
+                StepAction {
+                    label: label.into(),
+                    disabled: busy || offline.is_some(),
+                    reason: offline.cloned(),
+                    on_click: Rc::new(move |cx| {
+                        let _ = card.update(cx, |card, cx| card.act_on_step(action.clone(), cx));
+                    }),
+                }
+            })
+            .collect()
     }
 
     pub(super) fn started_line(run: &RunItem, data: &BoardData) -> Option<String> {
@@ -268,16 +293,24 @@ impl RunCard {
     fn menu(&self, run: &RunItem, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let weak = cx.weak_entity();
         let id = run.id.clone();
+        let selected = self.key.clone();
         let live = !matches!(run.state.as_str(), "succeeded" | "failed" | "cancelled");
-        Button::new(SharedString::from(format!("run-menu:{}", run.id)))
+        let button = Button::new(SharedString::from(format!("run-menu:{}", run.id)))
             .ghost()
             .xsmall()
             .icon(IconName::Ellipsis)
             .accessibility_label("Run actions")
             .dropdown_menu(move |menu, _, _| {
                 let id = id.clone();
-                let menu =
-                    menu.item(PopupMenuItem::new("Copy run id").on_click(move |_, _, cx| {
+                let (open, key) = (weak.clone(), selected.clone());
+                let menu = menu
+                    .item(
+                        PopupMenuItem::new("Open in Workflows").on_click(move |_, _, cx| {
+                            let key = key.clone();
+                            let _ = open.update(cx, |_, cx| cx.emit(RunCardEvent::Select(key)));
+                        }),
+                    )
+                    .item(PopupMenuItem::new("Copy run id").on_click(move |_, _, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(id.clone()))
                     }));
                 if !live {
@@ -287,7 +320,8 @@ impl RunCard {
                 menu.item(PopupMenuItem::new("Stop").on_click(move |_, _, cx| {
                     let _ = weak.update(cx, |card, cx| card.act(RunAction::Stop, cx));
                 }))
-            })
+            });
+        div().debug_selector(|| "run-menu".into()).child(button)
     }
 
     fn footer_row(
@@ -309,24 +343,24 @@ impl RunCard {
                     .child(footer.summary),
             )
             .children(footer.actions.into_iter().map(|action| {
-                let button = Button::new(SharedString::from(format!(
-                    "run-action:{}:{}",
-                    self.key.id,
-                    action.label()
-                )))
-                .xsmall()
-                .label(action.label())
-                .disabled(busy || offline.is_some())
-                .on_click(cx.listener(move |card, _, _, cx| card.act(action, cx)));
+                let id = format!("run-action:{}:{}", self.key.id, action.label());
+                let selector = id.clone();
+                let button = Button::new(SharedString::from(id))
+                    .xsmall()
+                    .label(action.label())
+                    .disabled(busy || offline.is_some())
+                    .on_click(cx.listener(move |card, _, _, cx| card.act(action, cx)));
                 let button = match action {
                     RunAction::Stop => button.ghost(),
                     RunAction::Retry(_) | RunAction::Rerun => button.primary(),
                     _ => button.outline(),
                 };
-                match &offline {
-                    Some(reason) => button.tooltip(reason.clone()),
-                    None => button,
-                }
+                div()
+                    .debug_selector(move || selector)
+                    .child(match &offline {
+                        Some(reason) => button.tooltip(reason.clone()),
+                        None => button,
+                    })
             }))
     }
 }
@@ -374,7 +408,11 @@ impl RunCard {
             visible_steps(&all)
         };
         let waiting = waiting_at(&visible, data, &run.machine);
-        let rows = card_steps(run, &visible, now);
+        let offline = offline_reason(&run.machine, self.feed.read(cx), cx);
+        let mut rows = card_steps(run, &visible, now);
+        for (row, step) in rows.iter_mut().zip(&visible) {
+            row.actions = self.step_actions(step, offline.as_ref(), cx);
+        }
         let list_key = SharedString::from(run.id.clone());
         let split = waiting
             .as_ref()
@@ -402,7 +440,6 @@ impl RunCard {
             self.undo.is_some(),
             now,
         );
-        let offline = offline_reason(&run.machine, self.feed.read(cx), cx);
         let grants = all
             .iter()
             .filter(|step| step.state == "waiting" || step.state == "failed")
@@ -437,14 +474,16 @@ impl RunCard {
             .children(question)
             .children((!after.is_empty()).then(|| step_list(list_key, after, &steps, cx)))
             .children((more > 0).then(|| {
-                Button::new(SharedString::from(format!("run-more:{}", run.id)))
-                    .ghost()
-                    .xsmall()
-                    .label(format!("{more} more after these"))
-                    .on_click(cx.listener(|card, _, _, cx| {
-                        card.show_all = true;
-                        cx.notify();
-                    }))
+                div().debug_selector(|| "run-more".into()).child(
+                    Button::new(SharedString::from(format!("run-more:{}", run.id)))
+                        .ghost()
+                        .xsmall()
+                        .label(format!("{more} more after these"))
+                        .on_click(cx.listener(|card, _, _, cx| {
+                            card.show_all = true;
+                            cx.notify();
+                        })),
+                )
             }))
             .children(grants.into_iter().map(|(step, scope)| {
                 let target = step.clone();
@@ -465,7 +504,13 @@ impl RunCard {
                             .label("I granted it")
                             .disabled(busy || offline.is_some())
                             .on_click(cx.listener(move |card, _, _, cx| {
-                                card.grant(target.clone(), granted.clone(), cx)
+                                card.act_on_step(
+                                    BoardRunAction::Grant {
+                                        step_id: target.clone(),
+                                        scope: granted.clone(),
+                                    },
+                                    cx,
+                                )
                             })),
                     )
             }))
@@ -484,3 +529,7 @@ impl RunCard {
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "run_card_clicks_tests.rs"]
+mod clicks_tests;

@@ -34,6 +34,9 @@ pub struct Machine {
     /// What the update is doing, or why it failed.
     #[serde(default)]
     pub update_note: Option<String>,
+    /// When a remote stopped answering; cleared when it answers.
+    #[serde(default)]
+    pub offline_since_ms: Option<i64>,
 }
 
 /// Information only: nothing is refused on it.
