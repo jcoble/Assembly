@@ -66,6 +66,10 @@ impl TerminalPane {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if event.button == MouseButton::Left && self.release_bar(cx) {
+            cx.stop_propagation();
+            return;
+        }
         if event.button == MouseButton::Left {
             self.end_drag(cx);
         }
@@ -160,9 +164,7 @@ impl TerminalPane {
             return;
         }
         if !self.grid.wheel_sends_arrows() {
-            let offset = self.grid.display_offset();
-            self.grid.scroll(lines);
-            if self.grid.display_offset() != offset {
+            if self.grid.scroll(lines) {
                 self.show_scrollbar(cx);
             }
             cx.notify();

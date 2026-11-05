@@ -121,6 +121,8 @@ pub struct TerminalPane {
     scrollbar_opacity: f32,
     /// The scrollbar's thumb is held: where the press was, from the grid's top, and the offset then.
     dragging_bar: Option<(Pixels, usize)>,
+    /// A press on the scrollbar, thumb or track, until its release, which it takes.
+    bar_pressed: bool,
     /// Fades the scrollbar in, waits and fades it out; it ends once hidden.
     _scrollbar: Option<Task<()>>,
     /// The link under the mouse. Stub until Task 8.
@@ -183,6 +185,7 @@ impl TerminalPane {
             _autoscroll: None,
             scrollbar_opacity: 0.,
             dragging_bar: None,
+            bar_pressed: false,
             _scrollbar: None,
             hovered: None,
             marked: None,
@@ -209,7 +212,8 @@ impl TerminalPane {
         (self._resize, self.resize_wanted, self.size_unsent) = (None, None, false);
         (self._retry, self.retries, self.retried) = (None, 0, false);
         (self._autoscroll, self.selecting) = (None, false);
-        (self._scrollbar, self.scrollbar_opacity, self.dragging_bar) = (None, 0., None);
+        (self._scrollbar, self.scrollbar_opacity) = (None, 0.);
+        (self.dragging_bar, self.bar_pressed) = (None, false);
         self.reopen.clear();
         self.typed.clear();
         self.grid = TerminalGrid::new(self.size.0, self.size.1);
@@ -312,7 +316,9 @@ impl TerminalPane {
 
     /// Typed or pasted bytes go to the shell, and the view returns to the bottom.
     fn send_typed(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
-        self.grid.scroll_to_bottom();
+        if self.grid.scroll_to_bottom() {
+            self.show_scrollbar(cx);
+        }
         self.cursor_on = true;
         self.typed.extend(bytes);
         self.write(cx);
@@ -459,9 +465,7 @@ impl Render for TerminalPane {
             .size_full()
             .text_role(TextRole::Body, cx)
             .when(self.selecting, |pane| pane.child(self.drag_listeners(cx)))
-            .when(self.dragging_bar.is_some(), |pane| {
-                pane.child(self.bar_listeners(cx))
-            });
+            .when(self.bar_pressed, |pane| pane.child(self.bar_listeners(cx)));
         let note = |text: SharedString| {
             h_flex()
                 .gap_1()

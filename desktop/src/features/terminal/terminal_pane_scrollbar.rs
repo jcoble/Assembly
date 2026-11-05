@@ -1,7 +1,7 @@
 //! The Terminal tab's scrollbar (spec 6): it shows while scrolling, only with history to scroll back to, fades in and
 //! out over `FADE` and hides `HIDE_AFTER` the last scroll, as the old renderer's. One task does the fading and the wait
-//! and ends once hidden. A press on the bar's column drags the thumb, or jumps the view to a point on the track first;
-//! it neither selects nor reaches a program holding the mouse, and the bar stays shown while held.
+//! and ends once hidden. A press on the bar's column drags the thumb, or jumps the view to a point on the track; it
+//! neither selects nor reaches a program holding the mouse, nor does its release, and the bar stays shown while held.
 
 use std::time::Duration;
 
@@ -35,15 +35,19 @@ async fn fade(pane: &WeakEntity<TerminalPane>, cx: &mut AsyncApp, from: f32, to:
 }
 
 impl TerminalPane {
-    /// The view scrolled: the bar fades in, if it isn't in yet, and the wait to hide it starts over.
+    /// The view scrolled: a hidden bar fades in, one that shows (fading out too) is fully shown at once, as the old
+    /// renderer's, and the wait to hide it starts over.
     pub(super) fn show_scrollbar(&mut self, cx: &mut Context<Self>) {
         if self.grid.history_size() == 0 {
             return;
         }
-        let from = self.scrollbar_opacity;
+        let fading_in = self.scrollbar_opacity == 0. && self._scrollbar.is_none();
+        if !fading_in {
+            self.scrollbar_opacity = 1.;
+            cx.notify();
+        }
         self._scrollbar = Some(cx.spawn(async move |pane, cx| {
-            let fading_in = from < 1.;
-            if fading_in && !fade(&pane, cx, from, 1.).await {
+            if fading_in && !fade(&pane, cx, 0., 1.).await {
                 return;
             }
             let waited = if fading_in { FADE } else { Duration::ZERO };
@@ -64,8 +68,8 @@ impl TerminalPane {
         )
     }
 
-    /// A left press: on the bar's column, with history, it takes the thumb, jumping there first when off the thumb,
-    /// and says so.
+    /// A left press: on the bar's column, with history, it takes the thumb, or jumps there when off the thumb, and
+    /// says so.
     pub(super) fn press_bar(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) -> bool {
         let history = self.grid.history_size();
         let (area, at) = (self.grid_area(), position - self.origin);
@@ -80,8 +84,10 @@ impl TerminalPane {
         );
         if at.y < top || at.y > top + size {
             self.scroll_bar_to(offset_at(at.y, history, area.height), cx);
+        } else {
+            self.dragging_bar = Some((at.y, self.grid.display_offset()));
         }
-        self.dragging_bar = Some((at.y, self.grid.display_offset()));
+        self.bar_pressed = true;
         cx.notify();
         true
     }
@@ -94,8 +100,9 @@ impl TerminalPane {
         }
     }
 
-    /// The bar is held: the thumb follows the mouse, and a release lets go of it and starts the wait to hide.
-    /// Taken before the pane's own listeners, so none of it selects or reaches a program, past the pane's edge too.
+    /// The bar is pressed: a held thumb follows the mouse, and a release lets go of it. Taken before the pane's own
+    /// listeners, so none of it selects or reaches a program, past the pane's edge too. A release in the same frame as
+    /// the press, before these are painted, reaches the pane's `mouse_up`, which lets go the same way.
     pub(super) fn bar_listeners(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let this = cx.entity().downgrade();
         canvas(
@@ -103,7 +110,7 @@ impl TerminalPane {
             move |_, _, window, _| {
                 let moved = this.clone();
                 window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
-                    if phase.capture() {
+                    if phase.capture() && event.pressed_button == Some(MouseButton::Left) {
                         let y = event.position.y;
                         moved.update(cx, |pane, cx| pane.drag_bar(y, cx)).ok();
                         cx.stop_propagation();
@@ -132,13 +139,18 @@ impl TerminalPane {
         self.scroll_bar_to(dragged((self.size.1, history, from), moved, height), cx);
     }
 
-    fn release_bar(&mut self, cx: &mut Context<Self>) {
-        // As the old renderer, only a bar that shows starts its wait again.
+    /// Lets go of a press on the bar, and says whether there was one. As the old renderer, only a thumb drag of a
+    /// bar that shows starts its wait again.
+    pub(super) fn release_bar(&mut self, cx: &mut Context<Self>) -> bool {
         let showing = self.scrollbar_opacity > 0. || self._scrollbar.is_some();
         if self.dragging_bar.take().is_some() && showing {
             self.show_scrollbar(cx);
+        }
+        let pressed = std::mem::take(&mut self.bar_pressed);
+        if pressed {
             cx.notify();
         }
+        pressed
     }
 
     /// The bar over the grid while it shows.

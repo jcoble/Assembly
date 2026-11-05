@@ -90,13 +90,21 @@ impl TerminalGrid {
         self.term.resize(Cells(cols, rows));
     }
 
-    /// Moves the view `lines` back into the history, or forward when negative; it stops at either end.
-    pub fn scroll(&mut self, lines: i32) {
-        self.term.scroll_display(Scroll::Delta(lines));
+    /// Moves the view `lines` back into the history, or forward when negative; it stops at either end. Says whether
+    /// the view moved.
+    pub fn scroll(&mut self, lines: i32) -> bool {
+        self.moved(Scroll::Delta(lines))
     }
 
-    pub fn scroll_to_bottom(&mut self) {
-        self.term.scroll_display(Scroll::Bottom);
+    /// Says whether the view moved.
+    pub fn scroll_to_bottom(&mut self) -> bool {
+        self.moved(Scroll::Bottom)
+    }
+
+    fn moved(&mut self, scroll: Scroll) -> bool {
+        let offset = self.display_offset();
+        self.term.scroll_display(scroll);
+        self.display_offset() != offset
     }
 
     /// A full-screen program (an editor, a pager) shows its own screen with no history: the wheel goes to it as
@@ -125,16 +133,9 @@ impl TerminalGrid {
     pub fn select_word(&mut self, column: usize, line: usize) -> bool {
         let (point, _) = self.point(column, line, false);
         let row = &self.term.grid()[point.line];
-        let letter = |column: usize| {
+        let word = |column: usize| {
             let c = row[Column(column)].c;
             c.is_ascii_alphanumeric() || c == '_' || c == '-'
-        };
-        // A wide character's spacer only continues a word character.
-        let word = |column: usize| {
-            letter(column)
-                || (column > 0
-                    && row[Column(column)].flags.contains(Flags::WIDE_CHAR_SPACER)
-                    && letter(column - 1))
         };
         if column >= self.term.columns() || !word(column) {
             self.clear_selection();
