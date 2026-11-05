@@ -29,6 +29,8 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
     internal string? Order<T>(T args, JsonTypeInfo<T> type)
     {
         var json = JsonSerializer.SerializeToElement(args, type);
+        if (HasTarget(json, out var machine))
+            return machine is null ? null : "files-path:" + machine + ":" + json.GetProperty("target").GetProperty("path").GetString();
         if (!json.TryGetProperty("session", out var session) || session.GetString() is not { } id) return null;
         // Queue ordering is not authority. Qualified calls validate the supplied source before any owner lookup.
         if (!json.TryGetProperty("expectedSource", out var source) || source.ValueKind == JsonValueKind.Null) return null;
@@ -42,6 +44,7 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
         var json = JsonSerializer.SerializeToElement(args, input);
         if (json.TryGetProperty("relayScope", out var relayed) && relayed.ValueKind != JsonValueKind.Null)
             return (false, default!); // An admitted remote scope executes only this server's existing local producer.
+        if (HasTarget(json, out var targetMachine) && targetMachine is null) return (false, default!); // This machine's file.
         var expected = json.TryGetProperty("expectedSource", out var asserted) && asserted.ValueKind != JsonValueKind.Null
             ? asserted.Deserialize(FilesJson.Default.ExpectedSource) : null;
         var expectedOwner = json.TryGetProperty("expectedOwner", out var ownerValue) && ownerValue.ValueKind != JsonValueKind.Null
@@ -217,6 +220,14 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
             route.Closed = true;
         }
         if (route.Channel is not null) CloseChannel(route);
+    }
+
+    private static bool HasTarget(JsonElement args, out string? machine)
+    {
+        machine = null;
+        if (!args.TryGetProperty("target", out var target) || target.ValueKind == JsonValueKind.Null) return false;
+        machine = target.GetProperty("machine").GetString();
+        return true;
     }
 
     private static (string Kind, string Id)? Resource(string method, JsonElement args)

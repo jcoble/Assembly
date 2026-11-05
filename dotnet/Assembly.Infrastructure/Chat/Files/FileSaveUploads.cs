@@ -29,7 +29,7 @@ public sealed class FileSaveUploads
         ct.ThrowIfCancellationRequested();
         if (args.Size < 0 || args.Size > FileRead.MaxBytes || args.ExpectedRevision is null || args.ExpectedRevision.Length != 64)
             throw new CallFailed("invalid save size or base revision");
-        var full = SessionPaths.ResolveFile(root, args.Path);
+        var full = SessionPaths.ResolveFile(root, args.Path!);
         if (Directory.Exists(full)) throw new CallFailed("the target is a directory");
         // A deleted target can still be compared with its retained draft; commit never recreates it.
         var id = Guid.NewGuid().ToString("N");
@@ -38,9 +38,14 @@ public sealed class FileSaveUploads
         {
             if (uploads.Values.Count(upload => upload.Connection == connection) >= 4)
                 throw new CallFailed("four file uploads are already open on this connection");
-            using (var stream = new FileStream(stage, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            try
             {
+                using var stream = new FileStream(stage, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                 if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(stage, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                throw new CallFailed("That folder can't be written, so the file wasn't saved.", "not_writable");
             }
             uploads.Add(id, new Upload(id, connection, root, args, stage, replyId));
         }
@@ -73,7 +78,7 @@ public sealed class FileSaveUploads
     }
 
     internal async Task<SaveResult> CommitAsync(string id, string connection, CancellationToken ct,
-        Action<string, string>? validateOwner = null)
+        Action<BeginSave, string>? validateOwner = null)
     {
         var upload = Find(id, connection);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, upload.Closing.Token);
@@ -84,14 +89,16 @@ public sealed class FileSaveUploads
         {
             if (upload.Ended || upload.Offset != upload.Args.Size) throw new CallFailed("the save upload is not complete");
             ct.ThrowIfCancellationRequested();
-            return await FileSave.CommitStageAsync(upload.Root, upload.Args.Path, upload.Args.ExpectedRevision, upload.Stage, ct,
-                validateOwner is null ? null : () => validateOwner(upload.Args.Session, upload.Root));
+            // Before the stage is read: a folder that moved took the stage with it.
+            validateOwner?.Invoke(upload.Args, upload.Root);
+            return await FileSave.CommitStageAsync(upload.Root, upload.Args.Path!, upload.Args.ExpectedRevision, upload.Stage, ct,
+                validateOwner is null ? null : () => validateOwner(upload.Args, upload.Root));
         }
         finally { End(upload); FinishTurn(upload); }
     }
 
     internal async Task<FileComparison> CompareAsync(string id, string connection, CancellationToken ct,
-        Action<string, string>? validateOwner = null)
+        Action<BeginSave, string>? validateOwner = null)
     {
         var upload = Find(id, connection);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, upload.Closing.Token);
@@ -102,21 +109,21 @@ public sealed class FileSaveUploads
         {
             if (upload.Ended || upload.Offset != upload.Args.Size) throw new CallFailed("the draft upload is not complete");
             ct.ThrowIfCancellationRequested();
-            validateOwner?.Invoke(upload.Args.Session, upload.Root);
-            var full = SessionPaths.ResolveFile(upload.Root, upload.Args.Path);
+            validateOwner?.Invoke(upload.Args, upload.Root);
+            var full = SessionPaths.ResolveFile(upload.Root, upload.Args.Path!);
             if (Directory.Exists(full)) throw new CallFailed("the target is a directory");
             // Hash these exact captured bytes, never a second read of a changing disk file.
-            byte[]? disk = File.Exists(full) ? await FileRead.CaptureAsync(upload.Root, upload.Args.Path, ct) : null;
+            byte[]? disk = File.Exists(full) ? await FileRead.CaptureAsync(upload.Root, upload.Args.Path!, ct) : null;
             var revision = disk is null ? null : Convert.ToHexStringLower(SHA256.HashData(disk));
             await using var stream = new FileStream(upload.Stage, FileMode.Open, FileAccess.Read, FileShare.None,
                 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
             if (stream.Length != upload.Args.Size) throw new CallFailed("the draft upload size changed");
             var draft = new byte[checked((int)upload.Args.Size)];
             await stream.ReadExactlyAsync(draft, ct);
-            var diff = await new GitTextPatch(new GitCli()).ReadAsync(upload.Args.Path, null,
+            var diff = await new GitTextPatch(new GitCli()).ReadAsync(upload.Args.Path!, null,
                 disk is null ? (ReadOnlyMemory<byte>?)null : new ReadOnlyMemory<byte>(disk), new ReadOnlyMemory<byte>(draft), ct);
             ct.ThrowIfCancellationRequested();
-            validateOwner?.Invoke(upload.Args.Session, upload.Root);
+            validateOwner?.Invoke(upload.Args, upload.Root);
             return new FileComparison(revision, diff);
         }
         catch { End(upload); throw; }
@@ -140,7 +147,7 @@ public sealed class FileSaveUploads
     internal string? OrderKey(string id)
     {
         lock (gate) return uploads.TryGetValue(id, out var upload)
-            ? "files:" + SessionPaths.ResolveFile(upload.Root, upload.Args.Path) : null;
+            ? "files:" + SessionPaths.ResolveFile(upload.Root, upload.Args.Path!) : null;
     }
 
     internal void FailedBegin(string connection, long? replyId)
