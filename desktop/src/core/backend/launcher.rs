@@ -145,8 +145,10 @@ impl Launcher {
     /// Tells the first window, if there is one, that the update helper has the home folder. Asked when the launcher gives up
     /// and again when the window opens, whichever comes second finds both. One id, so it's one notice either way.
     pub fn tell_if_update_finishing(cx: &mut App) {
-        let finishing = cx.try_global::<Self>().is_some_and(Self::update_finishing);
-        let (true, Some(window)) = (finishing, cx.windows().into_iter().next()) else {
+        let (true, Some(window)) = (
+            Self::update_is_finishing(cx),
+            cx.windows().into_iter().next(),
+        ) else {
             return;
         };
         cx.defer(move |cx| {
@@ -157,6 +159,11 @@ impl Launcher {
                 window.push_notification(note, cx)
             });
         });
+    }
+
+    /// Whether the last backend was refused its home because the update helper has it.
+    pub fn update_is_finishing(cx: &App) -> bool {
+        cx.try_global::<Self>().is_some_and(Self::update_finishing)
     }
 
     fn update_finishing(&self) -> bool {
