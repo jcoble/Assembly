@@ -13,6 +13,15 @@ pub fn pasted(text: &str, bracketed: bool) -> Vec<u8> {
     }
 }
 
+/// A character typed with no modifier but Shift: left to the window's input handler, so a dead key or an input method
+/// composes it first (spec 8). Control, Alt, Cmd and the named keys are written by the pane itself.
+pub fn left_to_input(keystroke: &Keystroke) -> bool {
+    let modifiers = keystroke.modifiers;
+    !(modifiers.control || modifiers.alt || modifiers.platform || modifiers.function)
+        && (keystroke.key_char.as_deref())
+            .is_some_and(|typed| !typed.is_empty() && !typed.chars().any(char::is_control))
+}
+
 /// The bytes a key sends to the program, as xterm sends them; none for a key the window keeps (a Cmd shortcut).
 pub fn key_bytes(keystroke: &Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
     let modifiers = keystroke.modifiers;

@@ -20,7 +20,7 @@ use gpui_kit::*;
 
 use super::terminal_draw::draw;
 use super::terminal_grid::{HoveredLink, TerminalGrid};
-use super::terminal_keys::key_bytes;
+use super::terminal_keys::{key_bytes, left_to_input};
 use super::terminal_link::TerminalLink;
 use super::terminal_palette::palette;
 use crate::core::socket::update::Update;
@@ -307,7 +307,8 @@ impl TerminalPane {
             }
             return;
         }
-        if !self.typing() {
+        // A typed character goes on to the input handler (terminal_pane_ime.rs), which writes it once.
+        if !self.typing() || left_to_input(keystroke) {
             return;
         }
         let bytes = match shortcut("v") {
@@ -327,6 +328,8 @@ impl TerminalPane {
             self.show_scrollbar(cx);
         }
         self.cursor_on = true;
+        // A composition the platform finished without unmarking it (an xkb compose) is over.
+        self.marked = None;
         self.typed.extend(bytes);
         self.write(cx);
     }
