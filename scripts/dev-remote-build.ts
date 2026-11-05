@@ -75,16 +75,6 @@ export async function prepareBackend(root: string, request: { identity: string; 
   const temporary = await fs.mkdtemp(join(root, '.dev-sync-'));
   try {
     const publish = join(temporary, 'publish');
-    // Seed target-specific restore state from committed locks. The SDK may update its analyzer/RID entries,
-    // while committed runtime dependency selections remain the starting point and tracked source stays clean.
-    const locks = await command('git', ['ls-files', '--', 'dotnet/**/packages.lock.json'], { signal });
-    for (const file of locks.split('\n').filter(Boolean)) {
-      const target = join(dirname(file), 'obj/dev-remote.packages.lock.json');
-      await fs.mkdir(dirname(target), { recursive: true });
-      const staging = target + '.' + randomUUID();
-      await fs.copyFile(file, staging);
-      await fs.rename(staging, target);
-    }
     await command('dotnet', ['publish', 'dotnet/Assembly.Remote', ...remotePublishArguments,
       `-p:SourceRevisionId=${request.commit}`, '-o', publish], { signal, live: true });
     try { await command('git', ['diff', '--quiet', 'HEAD'], { signal }); }

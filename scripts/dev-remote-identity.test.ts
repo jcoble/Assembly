@@ -18,7 +18,6 @@ for (const [file, onList] of [
   ['dotnet/Assembly.Infrastructure/Updates/RemoteCliCapture.cs', true],
   ['dotnet/Assembly.Remote/Serve/ServeRun.cs', true],
   ['dotnet/Directory.Packages.props', true],
-  ['dotnet/Assembly.Engine/packages.lock.json', true],
   ['scripts/dev-remote-build-profile.ts', true],
   ['dotnet/Assembly.Desktop/Serve/DesktopBackend.cs', false],
   ['dotnet/Assembly.Tests/Socket/SocketTests.cs', false],
