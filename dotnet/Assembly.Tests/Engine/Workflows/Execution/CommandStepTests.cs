@@ -209,6 +209,21 @@ public sealed class CommandStepTests
     }
 
     [Fact]
+    public async Task A_retried_failed_command_runs_again()
+    {
+        using var f = new Fixture([], "allow", flow: "name: Flow\npolicy: {default: allow}\nsteps:\n  checks:\n    max_attempts: 2\n    run: [\"exit 3\"]\n");
+        Assert.True(f.Start(f.Prepare()).Applied);
+        var ran = f.Claim(); Assert.True(f.Complete(ran, await f.Host().ExecuteAsync(ran, default)).Applied);
+        Assert.Equal("failed", f.Core.Text("SELECT state FROM engine_step"));
+        var retry = new CommandContext(Guid.NewGuid(), f.Core.Machine, new(ActorKind.Window, "owner"), f.Run,
+            f.Core.Number("SELECT version FROM engine_run"), 0, 2000);
+        Assert.True(f.Core.Apply(retry, new Assembly.Engine.Workflows.Runs.RetryWorkflowStep(f.Step)).Applied);
+        var started = f.Start(f.Prepare(3000));
+        Assert.True(started.Applied, started.Error);
+        Assert.Equal(2, f.Core.Number("SELECT attempt FROM engine_step"));
+    }
+
+    [Fact]
     public void Prepared_command_identity_ignores_clock_and_never_starts_twice()
     {
         using var f = new Fixture("printf once");

@@ -125,7 +125,6 @@ internal static partial class WorkflowControlTransitions
               scope_granted=CASE WHEN $state='pending' THEN 0 ELSE scope_granted END,
               session_id=CASE WHEN $state='pending' THEN NULL ELSE session_id END,
               authority_session_id=CASE WHEN $state='pending' THEN NULL ELSE authority_session_id END,
-              authority_machine=CASE WHEN $state='pending' THEN NULL ELSE authority_machine END,
               authority_epoch=CASE WHEN $state='pending' THEN NULL ELSE authority_epoch END,
               receipt_id=CASE WHEN $state='pending' THEN NULL ELSE receipt_id END,
               proof_json=CASE WHEN $state='pending' THEN NULL ELSE proof_json END,
