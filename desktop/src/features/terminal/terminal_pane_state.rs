@@ -46,6 +46,7 @@ impl TerminalPane {
                 match kept {
                     Ok(bytes) => {
                         pane.grid.feed(&bytes);
+                        pane.unhover();
                         pane.link = Some(link);
                         pane.reconnected(cx);
                         for update in held {
@@ -112,6 +113,7 @@ impl TerminalPane {
         match output {
             Output::Bytes(bytes) => {
                 self.grid.feed(&bytes);
+                self.unhover();
                 self.reconnected(cx);
             }
             Output::Caught => self.reconnected(cx),

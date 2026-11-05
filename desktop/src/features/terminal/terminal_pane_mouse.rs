@@ -21,11 +21,14 @@ impl TerminalPane {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus, cx);
+        // A release that landed elsewhere or never came leaves nothing for the next one to swallow.
+        self.link_pressed = false;
         if event.button == MouseButton::Left && self.press_bar(event.position, cx) {
             cx.stop_propagation();
             return;
         }
-        // Cmd or Ctrl on a link opens it, even with a program holding the mouse, which hears neither press nor release.
+        // Cmd or Ctrl on a link opens it once, even with a program holding the mouse, which hears neither press nor
+        // release; a double-click's second press only goes nowhere.
         if event.button == MouseButton::Left
             && event.modifiers.secondary(cx)
             && let Some(link) = (self.cell_at(event.position))
@@ -33,7 +36,9 @@ impl TerminalPane {
         {
             self.link_pressed = true;
             cx.stop_propagation();
-            window.dispatch_action(Box::new(OpenUrl { url: link.url }), cx);
+            if event.click_count == 1 {
+                window.dispatch_action(Box::new(OpenUrl { url: link.url }), cx);
+            }
             return;
         }
         let Some((column, line, right)) = self.cell_at(event.position) else {
@@ -69,6 +74,10 @@ impl TerminalPane {
         if event.pressed_button.is_none() {
             self.hover(event.position, cx);
         }
+        // A link's modifier-click never reached the program, so the moves it holds the button for don't either.
+        if self.link_pressed && event.pressed_button.is_some() {
+            return;
+        }
         // A selecting drag is followed by terminal_pane_select.rs, past the pane's edge too.
         let mode = self.grid.mouse_mode();
         if mode.contains(TermMode::MOUSE_MOTION)
@@ -102,18 +111,31 @@ impl TerminalPane {
     }
 
     /// Finds the link under the mouse, on its row only, and draws again when it changed.
+    /// Looks again only when the mouse is over another cell.
     fn hover(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let link =
-            (self.cell_at(position)).and_then(|(column, line, _)| self.grid.link_at(column, line));
+        let cell = self
+            .cell_at(position)
+            .map(|(column, line, _)| (column, line));
+        if cell == self.hovered_cell {
+            return;
+        }
+        self.hovered_cell = cell;
+        let link = cell.and_then(|(column, line)| self.grid.link_at(column, line));
         if link != self.hovered {
             self.hovered = link;
             cx.notify();
         }
     }
 
+    /// The text under the mouse moved: the link found there no longer is, and the next move looks again.
+    pub(super) fn unhover(&mut self) {
+        (self.hovered, self.hovered_cell) = (None, None);
+    }
+
     /// The mouse left the pane: no link is under it.
     pub(super) fn hovered_pane(&mut self, hovered: &bool, _: &mut Window, cx: &mut Context<Self>) {
-        if !*hovered && self.hovered.take().is_some() {
+        if !*hovered && self.hovered.is_some() {
+            self.unhover();
             cx.notify();
         }
     }
@@ -219,6 +241,7 @@ impl TerminalPane {
         }
         if !self.grid.wheel_sends_arrows() {
             if self.grid.scroll(lines) {
+                self.unhover();
                 self.show_scrollbar(cx);
             }
             cx.notify();

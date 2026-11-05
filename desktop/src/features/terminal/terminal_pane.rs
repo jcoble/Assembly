@@ -127,6 +127,8 @@ pub struct TerminalPane {
     _scrollbar: Option<Task<()>>,
     /// The link under the mouse.
     hovered: Option<HoveredLink>,
+    /// The cell the mouse was last looked at over.
+    hovered_cell: Option<(usize, usize)>,
     /// A Cmd or Ctrl-click opened a link: its release goes nowhere.
     link_pressed: bool,
     /// The composition in progress. Stub until Task 9.
@@ -189,6 +191,7 @@ impl TerminalPane {
             bar_pressed: false,
             _scrollbar: None,
             hovered: None,
+            hovered_cell: None,
             link_pressed: false,
             marked: None,
         }
@@ -216,7 +219,7 @@ impl TerminalPane {
         (self._autoscroll, self.selecting) = (None, false);
         (self._scrollbar, self.scrollbar_opacity) = (None, 0.);
         (self.dragging_bar, self.bar_pressed) = (None, false);
-        (self.hovered, self.link_pressed) = (None, false);
+        (self.hovered, self.hovered_cell, self.link_pressed) = (None, None, false);
         self.reopen.clear();
         self.typed.clear();
         self.grid = TerminalGrid::new(self.size.0, self.size.1);
