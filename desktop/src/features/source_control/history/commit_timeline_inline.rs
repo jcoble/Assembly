@@ -6,6 +6,8 @@ use super::super::section_heading::heading_label;
 use super::{CommitFiles, CommitTimeline};
 use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_file::OpenFile};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids as ids;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::list::ListItem;
@@ -142,6 +144,7 @@ impl CommitTimeline {
             .child(div().flex_1())
             .child(
                 Button::new("commits-refresh")
+                    .control(ids::commits::REFRESH, "Refresh the commit list")
                     .ghost()
                     .compact()
                     .icon(Icon::new(IconName::RefreshCw).size(px(14.)))

@@ -18,6 +18,10 @@ use super::settings_page::SettingsPage;
 use crate::core::socket::client::SocketClient;
 use crate::core::state::machine::Machine;
 use crate::core::state::machines::Machines;
+use crate::core::ui::access::control_ids::{
+    machine_button as machine_button_id, machine_line, settings as ids,
+};
+use crate::core::ui::access::{Control as _, say};
 
 /// What the form shows in a blank port or token file: the backend's defaults (SavedMachine.cs), which it fills in.
 const DEFAULT_PORT: &str = "9797";
@@ -81,11 +85,13 @@ impl SettingsPage {
             .flex_1()
             .min_w_0()
             .child(
-                div()
-                    .text_role(TextRole::Body, cx)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.foreground)
-                    .child(machine.name.clone().unwrap_or("This Mac".into())),
+                say(
+                    machine_line(machine.name.as_deref().unwrap_or("local"), "name"),
+                    machine.name.clone().unwrap_or("This Mac".into()),
+                )
+                .text_role(TextRole::Body, cx)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme.foreground),
             )
             .child(
                 h_flex()
@@ -95,33 +101,39 @@ impl SettingsPage {
                     .text_color(theme.muted_foreground)
                     .child(div().flex_none().size(px(6.)).rounded_full().bg(dot))
                     .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .whitespace_normal()
-                            .child(row_status(&machine, reached, &status)),
+                        say(
+                            machine_line(machine.name.as_deref().unwrap_or("local"), "status"),
+                            row_status(&machine, reached, &status),
+                        )
+                        .flex_1()
+                        .min_w_0()
+                        .whitespace_normal(),
                     ),
             );
         // This machine's row has no name, but its update button still needs somewhere to say why it failed.
         let key = machine.name.clone().unwrap_or("local".to_string());
         let failure = self.failure_about(Some(&key), cx);
         let update = (machine.behind().next().is_some() || machine.updating).then(|| {
-            self.machine_button(format!("start-{key}").into(), UPDATE)
-                .primary()
-                .loading(machine.updating)
-                .disabled(machine.updating || self.machine_call.is_some())
-                .on_click(cx.listener(move |page, _, window, cx| {
-                    let about = Some(key.clone());
-                    page.machine_call(
-                        about,
-                        "updates",
-                        "start",
-                        json!({}),
-                        "Couldn't update",
-                        window,
-                        cx,
-                    )
-                }))
+            self.machine_button(
+                format!("start-{key}").into(),
+                machine_button_id(&key, "update"),
+                UPDATE,
+            )
+            .primary()
+            .loading(machine.updating)
+            .disabled(machine.updating || self.machine_call.is_some())
+            .on_click(cx.listener(move |page, _, window, cx| {
+                let about = Some(key.clone());
+                page.machine_call(
+                    about,
+                    "updates",
+                    "start",
+                    json!({}),
+                    "Couldn't update",
+                    window,
+                    cx,
+                )
+            }))
         });
         let actions = machine
             .name
@@ -164,21 +176,33 @@ impl SettingsPage {
         };
         let about = Some(name.clone());
         let connection = self
-            .machine_button(format!("{method}-{name}").into(), label)
+            .machine_button(
+                format!("{method}-{name}").into(),
+                machine_button_id(&name, method),
+                label,
+            )
             .outline()
             .on_click(cx.listener(move |page, _, window, cx| {
                 let (about, args) = (about.clone(), args.clone());
                 page.machine_call(about, "machines", method, args, doing, window, cx)
             }));
         let edit = self
-            .machine_button(format!("edit-{name}").into(), "Edit")
+            .machine_button(
+                format!("edit-{name}").into(),
+                machine_button_id(&name, "edit"),
+                "Edit",
+            )
             .ghost()
             .disabled(self.machine_call.is_some() || editing)
             .on_click(
                 cx.listener(move |page, _, window, cx| page.edit_machine(&machine, window, cx)),
             );
         let remove = self
-            .machine_button(format!("remove-{name}").into(), "Remove")
+            .machine_button(
+                format!("remove-{name}").into(),
+                machine_button_id(&name, "remove"),
+                "Remove",
+            )
             .ghost()
             .disabled(self.machine_call.is_some() || editing)
             .on_click(
@@ -209,11 +233,11 @@ impl SettingsPage {
             "Add machine"
         };
         let save = self
-            .machine_button("set".into(), save_label)
+            .machine_button("set".into(), ids::MACHINE_SAVE.into(), save_label)
             .primary()
             .on_click(cx.listener(|page, _, window, cx| page.save_machine(window, cx)));
         let cancel = editing.is_some().then(|| {
-            self.machine_button("cancel-edit".into(), "Cancel")
+            self.machine_button("cancel-edit".into(), ids::MACHINE_CANCEL.into(), "Cancel")
                 .ghost()
                 .on_click(cx.listener(|page, _, window, cx| {
                     page.machine_edits.editing = None;
@@ -227,22 +251,28 @@ impl SettingsPage {
             .py_3()
             .gap_3()
             .child(
-                div()
+                say(ids::MACHINE_FORM_TITLE, title)
                     .text_role(TextRole::Body, cx)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.foreground)
-                    .child(title),
+                    .text_color(theme.foreground),
             )
             .when(editing.is_none(), |form| {
-                form.child(field("Machine name", name, saving, cx))
+                form.child(field("Machine name", ids::MACHINE_NAME, name, saving, cx))
             })
-            .child(field("SSH destination", ssh, saving, cx))
+            .child(field("SSH destination", ids::MACHINE_SSH, ssh, saving, cx))
             .child(
                 h_flex()
                     .gap_3()
-                    .child(div().w(px(120.)).child(field("Port", port, saving, cx)))
+                    .child(div().w(px(120.)).child(field(
+                        "Port",
+                        ids::MACHINE_PORT,
+                        port,
+                        saving,
+                        cx,
+                    )))
                     .child(div().flex_1().child(field(
                         "Token file on the machine",
+                        ids::MACHINE_TOKEN_FILE,
                         token_file,
                         saving,
                         cx,
@@ -259,20 +289,24 @@ impl SettingsPage {
     }
 
     /// The last failed call's reason, in red, when it came from machine `about`'s row, or from the form (`None`).
-    fn failure_about(&self, about: Option<&String>, cx: &App) -> Option<Div> {
+    fn failure_about(&self, about: Option<&String>, cx: &App) -> Option<Stateful<Div>> {
         let (from, why) = self.machine_edits.failure.as_ref()?;
         (from.as_ref() == about).then(|| {
-            div()
+            let id = match about {
+                Some(machine) => machine_line(machine, "error"),
+                None => ids::MACHINE_FORM_ERROR.into(),
+            };
+            say(id, why.clone())
                 .text_role(TextRole::Meta, cx)
                 .text_color(cx.theme().danger)
-                .child(why.clone())
         })
     }
 
     /// A small button that shows its call running, and waits while any machine call runs.
-    fn machine_button(&self, id: SharedString, label: &'static str) -> Button {
+    fn machine_button(&self, id: SharedString, tree_id: String, label: &'static str) -> Button {
         let running = self.machine_call.as_ref().map(|(running, _)| running);
         Button::new(id.clone())
+            .control(tree_id, label)
             .small()
             .label(label)
             .loading(running == Some(&id))
@@ -413,7 +447,13 @@ fn confirm_remove(name: String, window: &mut Window, cx: &mut Context<SettingsPa
 }
 
 /// One of the form's inputs, under its label; a `locked` one takes no typing.
-fn field(label: &'static str, state: &Entity<InputState>, locked: bool, cx: &App) -> Div {
+fn field(
+    label: &'static str,
+    id: &'static str,
+    state: &Entity<InputState>,
+    locked: bool,
+    cx: &App,
+) -> Div {
     v_flex()
         .gap_1()
         .child(
@@ -422,7 +462,12 @@ fn field(label: &'static str, state: &Entity<InputState>, locked: bool, cx: &App
                 .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
-        .child(Input::new(state).small().disabled(locked))
+        .child(
+            Input::new(state)
+                .control(id, label)
+                .small()
+                .disabled(locked),
+        )
 }
 
 #[cfg(test)]

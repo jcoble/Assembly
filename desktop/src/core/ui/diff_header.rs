@@ -2,6 +2,7 @@
 //! counts and whatever actions the view gives it. Replaces MultiFileDiff.svelte's section header.
 use super::file_icon::file_icon;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Named as _;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::diff::DiffFile;
@@ -22,7 +23,13 @@ pub fn viewed_button(
     viewed: bool,
     on_toggle: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Button {
+    let words = if viewed {
+        "Mark as not viewed"
+    } else {
+        "Mark as viewed"
+    };
     Button::new(SharedString::from(format!("viewed:{path}")))
+        .named(words)
         .ghost()
         .small()
         .icon(if viewed {
@@ -30,11 +37,7 @@ pub fn viewed_button(
         } else {
             IconName::Eye
         })
-        .tooltip(if viewed {
-            "Mark as not viewed"
-        } else {
-            "Mark as viewed"
-        })
+        .tooltip(words)
         .on_click(move |_, window, cx| on_toggle(window, cx))
 }
 /// `tag` names the part of the file these lines are, when a file shows two.

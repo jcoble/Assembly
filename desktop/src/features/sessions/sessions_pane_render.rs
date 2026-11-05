@@ -1,6 +1,7 @@
 //! `SessionsPane`'s panel traits (name, title, focus) and its render: the header, filters, search and rail list.
 use super::*;
 use crate::activity::{DotChip, Tone};
+use crate::core::ui::access::say;
 
 impl EventEmitter<PanelEvent> for SessionsPane {}
 
@@ -38,6 +39,7 @@ impl Render for SessionsPane {
             pane.update(cx, |pane, cx| pane.set_view(view, cx)).ok();
         });
         let new_session = header_button(Button::new("new-session"), cx)
+            .control(ids::NEW_SESSION, "New session")
             .icon(IconName::Plus)
             .tooltip("New session")
             .on_click(cx.listener(|pane, _, window, cx| pane.show_draft(window, cx)));
@@ -71,29 +73,27 @@ impl Render for SessionsPane {
                             .mt(px(-2.))
                             .pr(px(12.))
                             .pb(px(8.))
-                            .child(DotChip::new(words, Tone::Warning))
+                            .child(DotChip::new(words, Tone::Warning).named(ids::NEEDS_YOU))
                     })),
             )
             // Above the list, which takes all the height there is and would push this out of the window.
             .when_some(self.row_error.clone(), |pane, error| {
                 pane.child(
-                    div()
+                    say(ids::ROW_ERROR, error)
                         .px_3()
                         .py_1()
                         .text_role(TextRole::Body, cx)
-                        .text_color(danger)
-                        .child(error),
+                        .text_color(danger),
                 )
             })
             .map(|pane| match self.entries.is_empty() {
                 false => pane.child(list),
                 true => pane.child(
-                    div()
+                    say(ids::EMPTY, empty)
                         .px_3()
                         .py_2()
                         .text_role(TextRole::Body, cx)
-                        .text_color(muted)
-                        .child(empty),
+                        .text_color(muted),
                 ),
             })
             .when_some(self.rail.error.clone(), |pane, error| {
@@ -104,9 +104,10 @@ impl Render for SessionsPane {
                         .gap_2()
                         .text_role(TextRole::Body, cx)
                         .text_color(danger)
-                        .child(error)
+                        .child(say(ids::RAIL_ERROR, error))
                         .child(
                             Button::new("retry-rail")
+                                .control(ids::RETRY, "Retry loading sessions")
                                 .ghost()
                                 .compact()
                                 .label("Retry")

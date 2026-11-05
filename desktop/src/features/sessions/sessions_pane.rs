@@ -32,6 +32,8 @@ use crate::core::state::machines::GlobalMachines;
 use crate::core::state::preferences::Preferences;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::GlobalSessions;
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::sessions as ids;
 use crate::core::ui::filter_pills::{FilterGroup, FilterOption, FilterPills, FilterPillsChanged};
 
 const RAIL_TOPIC: &str = "sessionRail";
@@ -117,6 +119,7 @@ impl SessionsPane {
         let pills = cx.new(|cx| {
             let provider = FilterGroup::new("Provider", Vec::new());
             FilterPills::new(
+                "sessions",
                 vec![
                     provider,
                     FilterGroup::new("Status", statuses.into()),
@@ -397,7 +400,12 @@ impl SessionsPane {
                     .size(px(13.))
                     .text_color(theme.muted_foreground.opacity(0.65)),
             )
-            .child(Input::new(&self.filter).small().appearance(false));
+            .child(
+                Input::new(&self.filter)
+                    .small()
+                    .appearance(false)
+                    .control(ids::SEARCH, "Search sessions"),
+            );
         h_flex()
             .pl(px(12.))
             .pr(px(8.))

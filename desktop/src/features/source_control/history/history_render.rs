@@ -1,5 +1,7 @@
 //! `HistoryPane`'s render: the toolbar with its repository, branch and author pickers and filter box, and the timeline.
 use super::*;
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids as ids;
 
 /// One of the toolbar's pickers: its value on the trigger, "All…" and each choice in its menu.
 fn picker(
@@ -98,6 +100,7 @@ impl Render for HistoryPane {
                     .child(
                         div().debug_selector(|| "history-path-clear".into()).child(
                             Button::new("history-path-clear")
+                                .control(ids::history::PATH_CLEAR, "Show all repository history")
                                 .ghost()
                                 .compact()
                                 .icon(Icon::new(IconName::X).size(px(14.)))
@@ -146,6 +149,7 @@ impl Render for HistoryPane {
             .child(div().flex_1())
             .child(
                 Button::new("history-refresh")
+                    .control(ids::history::REFRESH, "Read the commit history again")
                     .ghost()
                     .compact()
                     .icon(Icon::new(IconName::RefreshCw).size(px(14.)))

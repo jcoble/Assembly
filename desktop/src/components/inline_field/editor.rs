@@ -1,6 +1,7 @@
 use super::field::{FieldValue, InlineField};
 use super::kinds::TextShape;
 use crate::activity::{StatusChip, Tone};
+use crate::core::ui::access::Named as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::calendar::Date;
 use gpui_kit::component::date_picker::{DatePicker, DatePickerState, DateTime};
@@ -83,6 +84,7 @@ fn chip_menu(
     let (label, tone) = ChoiceOption::shown(options, value);
     let (options, current) = (options.to_vec(), value.map(str::to_owned));
     Button::new("inline-chip")
+        .named(label.clone())
         .ghost()
         .xsmall()
         .child(StatusChip::new(label, tone))

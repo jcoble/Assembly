@@ -17,6 +17,8 @@ use super::{drawer_buttons, top_tabs};
 use crate::activity::{DotChip, Tone};
 use crate::core::engine::{EngineChanged, EngineFeed};
 use crate::core::intents::open_settings::OpenSettings;
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::topbar as ids;
 use crate::features::board::ToggleBoard;
 use crate::features::board::board_panel::{BoardMemory, BoardPanel, top_bar_badge};
 use crate::features::board::owner_notify::{OpenNeed, OwnerNotify};
@@ -126,7 +128,7 @@ impl Render for TopBar {
             .icon(IconName::House)
             .with_size(HOME_SIZE)
             .rounded_full()
-            .accessibility_label("Home")
+            .control(ids::HOME, "Home")
             .tooltip("Home")
             .dropdown_menu(|menu, _, _| {
                 menu.min_w(px(190.))
@@ -158,12 +160,16 @@ impl Render for TopBar {
                             }),
                     )
             });
-        let trigger = Button::new("board").ghost().small().label("Board");
+        let trigger = Button::new("board")
+            .control(ids::BOARD, "Board")
+            .ghost()
+            .small()
+            .label("Board");
         let trigger = match self.badge.clone() {
             Some(count) => trigger.child(
                 div()
                     .debug_selector(|| "board-badge".into())
-                    .child(DotChip::new(count, Tone::Warning)),
+                    .child(DotChip::new(count, Tone::Warning).named(ids::BOARD_BADGE)),
             ),
             None => trigger,
         };

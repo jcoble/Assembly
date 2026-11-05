@@ -1,6 +1,7 @@
 //! The rail's section and project headers: fold chevron, backend count, project machines and New session.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Named as _;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::tooltip::Tooltip;
@@ -158,6 +159,7 @@ impl RenderOnce for ProjectHeader {
             .child(count(self.count, faint, cx))
             .child(
                 Button::new(SharedString::from(format!("new:{}", self.key)))
+                    .named("New session in this project")
                     .ghost()
                     .xsmall()
                     .icon(IconName::Plus)
@@ -225,6 +227,11 @@ impl RenderOnce for SectionHeader {
 /// A header's fold chevron, the mock's 14 px faint one.
 fn chevron(id: String, folded: bool, faint: Hsla, on_toggle: OnToggle) -> Button {
     Button::new(SharedString::from(id))
+        .named(if folded {
+            "Expand group"
+        } else {
+            "Collapse group"
+        })
         .ghost()
         .with_size(px(18.))
         .size(px(20.))

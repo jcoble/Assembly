@@ -12,6 +12,8 @@ use super::{
     review_draft::{ReviewDraft, ReviewIdentity},
 };
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::control_ids as ids;
+use crate::core::ui::access::{Control as _, Named as _};
 use crate::core::{
     intents::open_url::OpenUrl,
     socket::{client::SocketClient, outcome::Outcome},
@@ -344,6 +346,7 @@ impl PrDetail {
             .border_color(border)
             .child(
                 Button::new("pr-back")
+                    .control(ids::pr::BACK, "All pull requests")
                     .ghost()
                     .small()
                     .icon(IconName::ChevronLeft)
@@ -367,6 +370,7 @@ impl PrDetail {
                     )
                     .child(
                         Button::new("pr-page-changes")
+                            .named("Changes")
                             .ghost()
                             .small()
                             .rounded(ButtonRounded::Size(px(999.)))
@@ -419,6 +423,11 @@ impl PrDetail {
                     .p(px(2.))
                     .child(
                         Button::new("pr-copy-link")
+                            .named(if self.copied.is_some() {
+                                "Link copied"
+                            } else {
+                                "Copy link"
+                            })
                             .ghost()
                             .small()
                             .rounded(ButtonRounded::Size(px(999.)))
@@ -433,6 +442,7 @@ impl PrDetail {
                     )
                     .child(
                         Button::new("pr-refresh")
+                            .control(ids::pr::REFRESH, "Refresh this pull request")
                             .ghost()
                             .small()
                             .rounded(ButtonRounded::Size(px(999.)))
@@ -443,6 +453,7 @@ impl PrDetail {
                     )
                     .child(
                         Button::new("pr-open-web")
+                            .control(ids::pr::OPEN_WEB, "Open on GitHub")
                             .ghost()
                             .small()
                             .rounded(ButtonRounded::Size(px(999.)))

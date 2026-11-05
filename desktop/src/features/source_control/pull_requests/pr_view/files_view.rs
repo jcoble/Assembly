@@ -1,6 +1,7 @@
 //! How the Changes page looks: the stacked diff with its file header buttons, comment cards and the file tree.
 use super::*;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Named as _;
 use crate::core::ui::changed_tree::{TREE_WIDTH, TreeHandler};
 use crate::core::ui::diff_header::{file_heading, viewed_button};
 use crate::core::{intents::open_file::OpenFile, state::selected_session::SelectedSession};
@@ -140,6 +141,7 @@ impl PrFiles {
 fn file_menu(path: &str, session: Option<String>) -> impl IntoElement + use<> {
     let (opened, copied) = (path.to_string(), path.to_string());
     Button::new(SharedString::from(format!("file-menu:{path}")))
+        .named("More file actions")
         .ghost()
         .small()
         .icon(IconName::Ellipsis)

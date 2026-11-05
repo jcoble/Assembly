@@ -1,5 +1,7 @@
 //! How a task's page draws: the header, then the list of its head, body rows and comments.
 
+use crate::core::ui::access::control_ids as ids;
+use crate::core::ui::access::{Control as _, Named as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
@@ -157,6 +159,11 @@ impl TaskDetailView {
                     .items_start()
                     .child(
                         Button::new(SharedString::from(format!("toggle-{}", row.id)))
+                            .named(if row.open == Some(true) {
+                                "Collapse"
+                            } else {
+                                "Expand"
+                            })
                             .ghost()
                             .xsmall()
                             .disabled(row.open.is_none())
@@ -181,6 +188,7 @@ impl TaskDetailView {
                 .group_hover(group.clone(), |style| style.opacity(1.))
                 .child(
                     Button::new(SharedString::from(format!("edit-{}", row.id)))
+                        .named("Edit")
                         .ghost()
                         .xsmall()
                         .icon(IconName::Pencil)
@@ -279,12 +287,14 @@ impl Render for TaskDetailView {
         }
         let muted = cx.theme().muted_foreground;
         let back = Button::new("task-back")
+            .control(ids::task::BACK, "Back to tasks")
             .ghost()
             .small()
             .icon(IconName::ArrowLeft)
             .tooltip("Back to tasks")
             .on_click(cx.listener(|_, _, _, cx| cx.emit(TaskDetailEvent::Back)));
         let open = Button::new("task-open")
+            .control(ids::task::OPEN, "Open in Notion")
             .ghost()
             .small()
             .icon(IconName::ExternalLink)

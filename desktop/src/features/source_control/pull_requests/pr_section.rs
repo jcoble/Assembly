@@ -7,6 +7,8 @@ use super::pull_request::{CheckTone, PullRequestSummary};
 use super::{create_pr_dialog, pr_queue::PrQueue};
 use crate::core::intents::{open_pull_requests::OpenPullRequests, open_url::OpenUrl};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::control_ids as ids;
+use crate::core::ui::access::{Control as _, Named as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::list::ListItem;
@@ -138,6 +140,7 @@ impl PrSection {
                     .children(check)
                     .child(
                         Button::new(SharedString::from(format!("session-pr-open:{id}")))
+                            .named("Open on GitHub")
                             .ghost()
                             .compact()
                             .icon(Icon::new(IconName::ExternalLink).size(px(14.)))
@@ -164,6 +167,7 @@ impl Render for PrSection {
         let actions = if expanded {
             vec![
                 Button::new("pr-section-refresh")
+                    .control(ids::pr::SECTION_REFRESH, "Refresh")
                     .ghost()
                     .compact()
                     .icon(Icon::new(IconName::RefreshCw).size(px(14.)))

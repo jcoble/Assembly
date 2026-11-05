@@ -1,5 +1,7 @@
 //! The Tasks tab's list: reading pages of the saved tasks, following what's pushed, and drawing it.
 
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids as ids;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
@@ -230,6 +232,7 @@ impl TasksPane {
                     )))
                     .child(
                         Button::new("tasks-settings")
+                            .control(ids::tasks::SETTINGS, "Task settings")
                             .ghost()
                             .small()
                             .icon(IconName::Settings)
@@ -241,6 +244,7 @@ impl TasksPane {
                     )
                     .child(
                         Button::new("tasks-refresh")
+                            .control(ids::tasks::REFRESH, "Refresh tasks")
                             .ghost()
                             .small()
                             .icon(IconName::RefreshCw)

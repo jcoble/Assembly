@@ -2,6 +2,8 @@
 //! then the one overflow tool last picked, which the next pick replaces. Only the close button shuts the drawer. The dock
 //! remains the authority for the shown pane and its saved layout.
 
+use crate::core::ui::access::control_ids::{drawer as ids, drawer_pane, topbar};
+use crate::core::ui::access::{Control as _, ExposedElement as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{DockArea, DockPlacement, PaneRef, PanelId};
@@ -85,9 +87,10 @@ impl RenderOnce for DrawerButtons {
             theme.foreground,
             theme.secondary,
         );
-        let button = |name: &'static str, glyph: IconName, on: bool| {
+        let button = |name: &'static str, tree_id: String, glyph: IconName, on: bool| {
             div()
                 .id(name)
+                .selected_in_tree(Role::Button, tree_id, name, on)
                 .debug_selector(move || format!("drawer-button-{name}"))
                 .w(PILL_W)
                 .h(PILL_H)
@@ -112,7 +115,7 @@ impl RenderOnce for DrawerButtons {
             .filter(|(_, name, _)| primary(name) || extra == Some(*name))
             .map(|(id, name, shown)| {
                 let dock = self.dock.clone();
-                button(name, icon(name), open && shown).on_click(move |_, window, cx| {
+                button(name, drawer_pane(name), icon(name), open && shown).on_click(move |_, window, cx| {
                     cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
                     dock.update(cx, |dock, cx| match press(open) {
                         Press::Open => {
@@ -125,6 +128,7 @@ impl RenderOnce for DrawerButtons {
             });
         let dock = self.dock.clone();
         let menu = Button::new("drawer-overflow")
+            .control(ids::MORE_PANELS, "More panels")
             .ghost()
             .icon(Icon::new(IconName::Ellipsis).size(GLYPH))
             .w(CONTROL)
@@ -161,7 +165,7 @@ impl RenderOnce for DrawerButtons {
                 )
             });
         let dock = self.dock.clone();
-        let close = button("Close side panel", IconName::X, false).w(CONTROL).h(CONTROL).rounded_md().on_click(move |_, window, cx| {
+        let close = button("Close side panel", ids::CLOSE.into(), IconName::X, false).w(CONTROL).h(CONTROL).rounded_md().on_click(move |_, window, cx| {
                     cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
             dock.update(cx, |dock, cx| {
                 dock.toggle_dock(DockPlacement::Right, window, cx)
@@ -196,6 +200,12 @@ pub fn toggle(dock: Entity<DockArea>, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
     div()
         .id("drawer-toggle")
+        .selected_in_tree(
+            Role::Button,
+            topbar::DRAWER_TOGGLE,
+            "Toggle tools drawer",
+            open,
+        )
         .debug_selector(|| "drawer-toggle".into())
         .size(px(30.))
         .flex()

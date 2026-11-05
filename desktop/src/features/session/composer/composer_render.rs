@@ -5,6 +5,8 @@
 //! sits above the box, and the "/" list floats just above it.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::composer as ids;
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Textarea;
@@ -108,6 +110,7 @@ impl Render for Composer {
             })
             .child(
                 Textarea::new(&self.draft)
+                    .control(ids::INPUT, "Message")
                     .disabled(self.start_busy() || locked)
                     .appearance(false)
                     .xsmall()
@@ -245,6 +248,7 @@ impl Render for Composer {
                         .child(line)
                         .child(
                             Button::new("composer:connect")
+                                .control(ids::CONNECT, "Connect")
                                 .ghost()
                                 .compact()
                                 .label(if connecting {
