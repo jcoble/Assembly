@@ -28,6 +28,7 @@ const NOT_IN_FINDER: &str = "This file is on a remote machine, so Finder cannot 
 const NO_ROOT: &str = "This panel is not pointed at a repository folder yet.";
 const DELETED: &str = "This file was deleted, so there is nothing on disk to open.";
 const ALL_STAGED: &str = "Everything in this file is already staged.";
+const CONFLICT_STAYS: &str = "Resolve this conflict first. Unstaging would erase it.";
 const NOTHING_STAGED: &str = "Nothing about this file is staged.";
 
 /// Which way the row's first button goes.
@@ -93,7 +94,11 @@ pub(super) fn file_reasons(file: &ChangedFile, has_root: bool, busy: bool) -> Fi
     let deleted = file.worktree == "D" || (file.index == "D" && file.worktree == ".");
     FileReasons {
         stage: write((file.worktree == ".").then_some(ALL_STAGED)),
-        unstage: write((file.index == "." || file.index == "?").then_some(NOTHING_STAGED)),
+        unstage: write(if file.conflicted() {
+            Some(CONFLICT_STAYS)
+        } else {
+            (file.index == "." || file.index == "?").then_some(NOTHING_STAGED)
+        }),
         discard: write(None),
         open: if has_root {
             deleted.then_some(DELETED)

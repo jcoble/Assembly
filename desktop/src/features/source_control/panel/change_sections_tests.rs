@@ -99,6 +99,12 @@ fn a_conflict_shows_u_in_staged_and_changes_and_does_not_make_anything_committab
     assert!(!status.has_staged_files());
 }
 #[test]
+fn a_conflict_cannot_be_unstaged_from_its_menu() {
+    let reasons = file_reasons(&file("a", "U", "U"), true, false);
+    assert!(reasons.unstage.is_some());
+    assert_eq!(reasons.stage, None);
+}
+#[test]
 fn stage_all_leaves_conflicts_for_a_person() {
     let status = status(vec![
         file("clean", ".", "M"),
