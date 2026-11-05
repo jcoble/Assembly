@@ -163,7 +163,7 @@ impl RenderOnce for SessionRow {
         let opened = id.clone();
         let selector = format!("session-{id}");
         let status = Status::of(entry.completed_at);
-        let link = session_link(&id, entry.machine.as_deref());
+        let link_machine = route.clone();
         ThreeLineRow {
             key: format!("session:{id}").into(),
             lead: mark,
@@ -195,10 +195,11 @@ impl RenderOnce for SessionRow {
                     PopupMenuItem::new(label).on_click(move |_, _, cx| on_mark(id.clone(), to, cx)),
                 );
             }
-            let link = link.clone();
+            let (id, machine) = (id.clone(), link_machine.clone());
             menu.separator().item(
                 PopupMenuItem::new("Copy deeplink").on_click(move |_, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(link.clone()))
+                    let link = session_link(&id, machine.as_deref());
+                    cx.write_to_clipboard(ClipboardItem::new_string(link))
                 }),
             )
         })
