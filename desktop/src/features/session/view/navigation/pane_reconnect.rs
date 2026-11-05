@@ -66,7 +66,11 @@ impl SessionPane {
                         cx.notify();
                         return;
                     }
-                    request.request_id = format!("reconnect:{}", uuid::Uuid::new_v4());
+                    request.request_id = format!(
+                        "{}{}",
+                        crate::core::intents::session_open::RECONNECT_REQUEST,
+                        uuid::Uuid::new_v4()
+                    );
                     pane.request_open(request, window, cx);
                 });
             });

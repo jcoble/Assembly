@@ -23,12 +23,26 @@ pub struct SessionOpenRequest {
     pub target: SessionOpenTarget,
 }
 
+/// Starts the request id of an open a link made.
+pub const LINK_REQUEST: &str = "link:";
+/// Starts the request id of an open a reconnect made.
+pub const RECONNECT_REQUEST: &str = "reconnect:";
+
 #[derive(Clone, Debug)]
 pub struct SessionOpenResult {
     pub request_id: String,
     /// Original requested key when known, not descriptor proof; None only for pre-discovery refusal/cancel.
     pub key: Option<SessionKey>,
     pub result: Result<(), EngineRefusal>,
+}
+
+impl SessionOpenResult {
+    /// The answer to an open someone asked for. One that was cancelled no longer stands: what replaced it answers too.
+    pub fn from_a_person(&self) -> bool {
+        !self.request_id.starts_with(LINK_REQUEST)
+            && !self.request_id.starts_with(RECONNECT_REQUEST)
+            && !matches!(&self.result, Err(refusal) if refusal.code == "cancelled")
+    }
 }
 
 impl SessionOpenRequest {

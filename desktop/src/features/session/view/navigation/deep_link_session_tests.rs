@@ -483,3 +483,23 @@ async fn a_link_does_not_retry_over_an_open_in_flight(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(opens.borrow().len(), 1, "the click isn't cut off");
 }
+
+#[gpui::test]
+async fn only_a_person_opening_a_session_ends_a_waiting_link(cx: &mut TestAppContext) {
+    let (host, opens, cx) = window(cx);
+    let _nav = ready(&host, cx).await;
+    hold_machines(true, true, cx);
+    link("s1", Some("Box"), cx);
+    answer(&last(&opens), refused("source_changed"), cx);
+    let other = |request_id: &str| OpenSession {
+        id: "other".into(),
+        route_machine: None,
+        request_id: request_id.into(),
+        historical: false,
+    };
+    answer(&other("reconnect:1"), Ok(()), cx);
+    answer(&other("person"), refused("cancelled"), cx);
+    cx.update(|_, cx| Machines::change_holding(box_machine(true, true), cx));
+    cx.run_until_parked();
+    assert_eq!(opens.borrow().len(), 2, "the link still waits");
+}

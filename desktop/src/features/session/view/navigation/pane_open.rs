@@ -66,6 +66,12 @@ impl SessionPane {
         ConnectionCut::capture(cx).is_ok()
             && crate::core::ui::center_panes::CenterPanes::find::<Self>("Chat", cx).is_some()
     }
+
+    /// Chat has an open not answered yet, which another open would cancel.
+    pub(crate) fn open_is_out(cx: &App) -> bool {
+        crate::core::ui::center_panes::CenterPanes::find::<Self>("Chat", cx)
+            .is_some_and(|pane| pane.read(cx).pending_open.is_some())
+    }
 }
 pub(super) struct PendingOpen {
     pub checked_engine: Option<crate::core::engine::EngineItem>,

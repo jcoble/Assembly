@@ -7,7 +7,7 @@ use gpui_kit::*;
 
 use super::deep_links::show_notice;
 use crate::core::intents::open_session::OpenSession;
-use crate::core::intents::session_open::SessionOpenResult;
+use crate::core::intents::session_open::{LINK_REQUEST, SessionOpenResult};
 use crate::core::socket::client::{GlobalBulk, GlobalSocket, SocketClient};
 use crate::core::state::machines::{GlobalMachines, Machines};
 use crate::core::state::selected_session::SelectedSession;
@@ -32,7 +32,12 @@ pub fn open(id: String, machine: Option<String>, cx: &mut App) {
     cx.set_global(Current {
         _link: Some(link.clone()),
     });
-    link.update(cx, |link, cx| link.try_open(cx));
+    // The newest open wins, so a link that has just arrived may replace one that's out.
+    link.update(cx, |link, cx| {
+        if SessionPane::can_open_links(cx) {
+            link.send_open(cx);
+        }
+    });
 }
 
 struct WaitingSessionLink {
@@ -109,13 +114,20 @@ impl WaitingSessionLink {
         self.try_open(cx);
     }
 
-    /// One open at a time: a change during one is tried after its answer.
+    /// Never over an open that's out, which it would cancel: a change during one is tried after its answer.
     fn try_open(&mut self, cx: &mut Context<Self>) {
-        if !self.try_owed || self.opening.is_some() || !SessionPane::can_open_links(cx) {
-            return;
+        if self.try_owed
+            && self.opening.is_none()
+            && SessionPane::can_open_links(cx)
+            && !SessionPane::open_is_out(cx)
+        {
+            self.send_open(cx);
         }
+    }
+
+    fn send_open(&mut self, cx: &mut Context<Self>) {
         self.try_owed = false;
-        let request_id = uuid::Uuid::new_v4().to_string();
+        let request_id = format!("{LINK_REQUEST}{}", uuid::Uuid::new_v4());
         self.opening = Some(request_id.clone());
         cx.dispatch_action(&OpenSession {
             id: self.id.clone(),
@@ -127,7 +139,12 @@ impl WaitingSessionLink {
 
     fn answered(&mut self, event: &SessionOpenResult, cx: &mut Context<Self>) {
         if self.opening.as_ref() != Some(&event.request_id) {
-            return;
+            // A person's open wins. Any other that was out has finished, so this link may try.
+            return if event.from_a_person() {
+                end(None, cx)
+            } else {
+                self.try_open(cx)
+            };
         }
         self.opening = None;
         let refusal = match &event.result {
