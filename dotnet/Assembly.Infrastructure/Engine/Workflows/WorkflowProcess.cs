@@ -33,7 +33,7 @@ public sealed partial class WorkflowProcess(string proofRoot,
         ct.ThrowIfCancellationRequested();
         Directory.CreateDirectory(Path.GetDirectoryName(intent.OutputPath)!);
         var nonce = Guid.NewGuid().ToString("N");
-        var command = ProcessGroup.Leading(new AgentCommand("/bin/sh", ["-c", intent.Script], intent.Cwd, intent.Bindings));
+        var command = ProcessGroup.Supervised(new AgentCommand("/bin/sh", ["-c", intent.Script], intent.Cwd, intent.Bindings));
         var start = new ProcessStartInfo(command.FileName, command.Arguments)
         { WorkingDirectory = intent.Cwd, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var pair in intent.Bindings) start.Environment[pair.Key] = pair.Value;

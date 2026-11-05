@@ -1,4 +1,5 @@
-//! Chat's workspace codec persists only its actual row anchor, pixel offset, and following state.
+//! Chat's workspace codec persists only its actual row anchor and following state; its offset field stays 0 until the
+//! kit can scroll into a row.
 use super::SessionPane;
 use crate::core::{
     state::workspace_panes::{PaneCodec, WorkspaceKey, WorkspacePanes},

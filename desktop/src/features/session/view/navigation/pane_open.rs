@@ -408,6 +408,24 @@ pub(super) fn call_refusal(error: CallError) -> EngineRefusal {
     }
 }
 
+/// Whether a session's row, changed since an open checked it, still opens the same way. A session's row changes all the
+/// time while it runs, and comes again after a reconnect; only what the open was built on can stop it.
+pub(super) fn opens_the_same(
+    checked: &crate::core::engine::EngineItem,
+    current: &crate::core::engine::EngineItem,
+) -> bool {
+    use crate::core::engine::engine_items::SessionItem;
+    match (SessionItem::of(checked), SessionItem::of(current)) {
+        (Some(checked), Some(current)) => {
+            checked.provider == current.provider
+                && checked.parent_id == current.parent_id
+                && checked.parent_machine == current.parent_machine
+                && online_historical(&checked.state) == online_historical(&current.state)
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn online_historical(state: &str) -> bool {
     matches!(state, "ended" | "lost" | "moved" | "handing_off")
 }

@@ -157,7 +157,9 @@ impl Timeline {
         let offset = scroller.logical_scroll_top();
         super::session_pane::chat_codec::ChatPlace {
             item_key: self.entries.get(offset.item_ix).map(|(key, _)| key.clone()),
-            offset: f32::from(offset.offset_in_item),
+            // The kit can scroll to a row but not into one, so a place records its row: an offset here would be refused
+            // on restore, and on capture too, which stops every save and session switch while scrolled up.
+            offset: 0.,
             following: scroller.is_following_tail(),
         }
     }
