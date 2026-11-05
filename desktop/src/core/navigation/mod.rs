@@ -3,6 +3,8 @@
 pub mod deep_links;
 #[cfg(test)]
 mod deep_links_tests;
+#[cfg(test)]
+mod deep_links_file_tests;
 pub mod external_urls;
 #[cfg(test)]
 mod external_urls_shapes_tests;
