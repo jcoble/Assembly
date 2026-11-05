@@ -58,7 +58,7 @@ impl SourceControlPane {
             self.result = None;
         }
         self.sync_children(cx);
-        let target = self.target(cx);
+        let target = self.shown_target(cx);
         if self.branches_target.is_some() && self.branches_target != target {
             self.forget_branches();
         }
@@ -342,9 +342,12 @@ impl SourceControlPane {
         self.branches_failure = None;
         self.branches_read = None;
         self.branches_target = None;
+        self.stashes.clear();
+        self.stashes_read = None;
     }
+    /// Reads what's shown, read-only or not: read-only stops writes, not the menu's list.
     pub(super) fn read_branches(&mut self, cx: &mut Context<Self>) {
-        let Some(target) = self.target(cx) else {
+        let Some(target) = self.shown_target(cx) else {
             return;
         };
         let Some(socket) = SocketClient::try_global(cx) else {

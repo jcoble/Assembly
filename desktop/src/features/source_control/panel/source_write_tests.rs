@@ -8,7 +8,9 @@ use crate::core::socket::{
     row_source::ExpectedRowSource,
     test_wait::until,
 };
-use crate::core::state::{selected_session::SelectedSession, sessions::Sessions};
+use crate::core::state::{
+    selected_session::SelectedSession, session_item::SessionItem, sessions::Sessions,
+};
 use crate::features::source_control::branch_menu::BranchPicked;
 use crate::features::source_control::result_line::PaneResult;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
@@ -29,6 +31,7 @@ fn session_row(version: i64, checkout: &str, operation: &str) -> Value {
 struct Seen {
     commits: Vec<Value>,
     switches: Vec<Value>,
+    branch_reads: Vec<Value>,
     commands: Vec<Value>,
     statuses: usize,
     subscriptions: Vec<Value>,
@@ -72,7 +75,10 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
                     "totalFiles":1,"totalStaged":1,"fingerprint":"f"}),
                 )]
             }
-            (Some("call"), Some("branches")) => vec![result(json!({"remotes":[]}))],
+            (Some("call"), Some("branches")) => {
+                seen.branch_reads.push(frame["args"].clone());
+                vec![result(json!({"remotes":[]}))]
+            }
             (Some("call"), Some("switchBranch")) => {
                 seen.switches.push(frame["args"].clone());
                 vec![result(json!({}))]
@@ -364,4 +370,48 @@ async fn a_viewed_folders_branch_is_switched_there_and_no_session_moves(cx: &mut
     assert_eq!(seen.switches[0]["create"], true);
     assert_eq!(seen.switches[0]["expectedHead"], HEAD);
     assert!(seen.commands.is_empty(), "the session's checkout stays put");
+}
+
+/// Read-only stops writes, not reads: the branch menu still lists the folder it is looking at.
+#[gpui::test]
+async fn a_read_only_viewed_folder_still_reads_its_own_branches(cx: &mut TestAppContext) {
+    use crate::core::state::viewed_project::{Viewed, ViewedProject};
+
+    let mut open = open(cx).await;
+    open.cx.update(|_, cx| {
+        let working: SessionItem = serde_json::from_value(json!({
+            "sessionId":"s2","agent":"fixture","repoUrl":"/other","updatedAt":0,
+            "state":"waiting","title":"Busy","root":"/other","machine":"local"
+        }))
+        .unwrap();
+        Sessions::start_holding(vec![working], false, false, cx);
+        let viewed = Viewed {
+            project_id: "p".into(),
+            machine: "local".into(),
+            folder: "/other".into(),
+            title: "other".into(),
+        };
+        ViewedProject::set(Some("s1".into()), Some(viewed), cx);
+    });
+    let id = "view:70:2f6f74686572";
+    open.until("the read-only viewed status", |pane, cx| {
+        pane.read_with(cx, |pane, cx| {
+            pane.read_only(cx)
+                && pane
+                    .shown_target(cx)
+                    .is_some_and(|target| target.session == id)
+        })
+    })
+    .await;
+    let pane = open.pane.clone();
+    pane.update_in(open.cx, |pane, _, cx| pane.set_branch_open(true, cx));
+    let seen = open.seen.clone();
+    open.until("the branch list of the viewed folder", |_, _| {
+        seen.lock()
+            .unwrap()
+            .branch_reads
+            .iter()
+            .any(|args| args["session"] == id)
+    })
+    .await;
 }

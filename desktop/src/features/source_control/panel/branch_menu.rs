@@ -12,6 +12,9 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+/// The kit's list row turns off without looking off, so a row that can't run dims itself like the old menu's.
+const OFF_ROW_OPACITY: f32 = 0.5;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum BranchPicked {
     /// A branch with nothing holding it: this checkout switches to it.
@@ -223,6 +226,7 @@ impl BranchMenu {
         v_flex()
             .children(shown.into_iter().map(|branch| {
                 let choice = choice_for(&branch);
+                let choice_off = choice.is_none();
                 ListItem::new(SharedString::from(format!("branch:{}", branch.name)))
                     .py_1()
                     .disabled(busy || choice.is_none())
@@ -233,6 +237,7 @@ impl BranchMenu {
                     }))
                     .child(
                         h_flex()
+                            .when(busy || choice_off, |row| row.opacity(OFF_ROW_OPACITY))
                             .w_full()
                             .min_w_0()
                             .gap_2()
@@ -322,7 +327,7 @@ impl Render for BranchMenu {
                         } else {
                             "Nothing to stash".to_string()
                         },
-                    )),
+                    ).when(busy || !has_changes, |row| row.opacity(OFF_ROW_OPACITY))),
             )
             .when_some(self.stashes.first().cloned(), |menu, latest| {
                 let label = format!("Pop {}", latest.description());
@@ -334,7 +339,10 @@ impl Render for BranchMenu {
                         .on_click(cx.listener(move |_, _, _, cx| {
                             cx.emit(BranchPicked::PopStash(sha.clone()))
                         }))
-                        .child(Self::icon_row(IconName::ArchiveRestore, label)),
+                        .child(
+                            Self::icon_row(IconName::ArchiveRestore, label)
+                                .when(busy, |row| row.opacity(OFF_ROW_OPACITY)),
+                        ),
                 )
             })
             .when(self.stashes.len() > 1, |menu| {
@@ -354,7 +362,11 @@ impl Render for BranchMenu {
                     .py_1()
                     .disabled(busy)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(BranchPicked::OpenStashes)))
-                    .child(div().child("Stashes…")),
+                    .child(
+                        div()
+                            .when(busy, |row| row.opacity(OFF_ROW_OPACITY))
+                            .child("Stashes…"),
+                    ),
             )
     }
 }
