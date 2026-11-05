@@ -11,7 +11,7 @@ using Assembly.Tests.Infrastructure.Remote;
 namespace Assembly.Tests.Infrastructure.Updates;
 
 /// <summary>Everything before the swap, from a signed local feed into a throwaway folder. tar and the signature check are real.</summary>
-public sealed class AppUpdateTests : IDisposable
+public sealed partial class AppUpdateTests : IDisposable
 {
     private const string Listing = "https://api.github.com/repos/jcoble/Assembly/releases?per_page=100";
     private const string Base = "https://github.com/jcoble/Assembly/releases/download/assembly-v2.0.0/";
@@ -66,73 +66,6 @@ public sealed class AppUpdateTests : IDisposable
         return new(new HttpClient(around?.Invoke(answers) ?? answers), _signer.PublicKey);
     }
 
-    // Sends the first half of the archive, then holds until the reader gives up.
-    private sealed class HeldArchive(byte[] archive) : Stream
-    {
-        private bool _sent;
-        internal readonly TaskCompletionSource Reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
-        {
-            if (!_sent)
-            {
-                _sent = true;
-                var half = Math.Min(buffer.Length, archive.Length / 2);
-                archive.AsMemory(0, half).CopyTo(buffer);
-                return half;
-            }
-            Reached.TrySetResult();
-            await Task.Delay(Timeout.Infinite, cancellationToken);
-            return 0;
-        }
-        public override bool CanRead => true;
-        public override bool CanSeek => false;
-        public override bool CanWrite => false;
-        public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-        public override void Flush() { }
-        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-    }
-
-    private sealed class HoldingArchive(HttpMessageHandler answers, HeldArchive held) : DelegatingHandler(answers)
-    {
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            var response = await base.SendAsync(request, cancellationToken);
-            if (request.RequestUri!.ToString().EndsWith(Archive, StringComparison.Ordinal)) response.Content = new StreamContent(held);
-            return response;
-        }
-    }
-
-    [Fact]
-    public async Task A_download_called_off_partway_leaves_nothing_behind_and_the_app_as_it_was()
-    {
-        var archive = Package("2.0.0");
-        var held = new HeldArchive(archive);
-        var status = new MachineStatus(new Assembly.Infrastructure.Topics.Topics(), []);
-        var progress = new UpdateProgress(status);
-        var run = progress.Begin(null, UpdateProgress.ThisMachine, 0, downloads: true);
-        var update = Update(Feed(archive, around: answers => new HoldingArchive(answers, held)), progress: progress);
-        var before = Snapshot(App);
-
-        var staging = update.StageAsync("2.0.0", _ => { }, run);
-        await held.Reached.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        Assert.True(status.Items[0].UpdatePercent > 0, $"Partway through the download the figure is {status.Items[0].UpdatePercent}.");
-        Assert.True(status.Items[0].UpdateCancellable);
-
-        Assert.True(progress.Cancel());
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => staging);
-
-        Assert.Empty(Directory.GetDirectories(Path.GetDirectoryName(App)!, ".assembly-update-*"));
-        Assert.Null(update.Ready);
-        Assert.Equal(before, Snapshot(App));
-    }
-
-    private static string[] Snapshot(string folder) => [.. Directory.GetFiles(folder, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal)
-        .Select(file => $"{file}:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(file)))}")];
-
     private AppUpdate Update(RemoteReleaseFeed feed, Func<CancellationToken, Task>? idle = null, Func<bool>? busy = null, UpdateProgress? progress = null)
     {
         Directory.CreateDirectory(Path.Combine(App, "Contents"));
@@ -144,14 +77,6 @@ public sealed class AppUpdateTests : IDisposable
             busy ?? (() => false),
             (_, plan, _) => { Assert.True(File.Exists(plan)); _steps.Add("helper"); return Task.FromResult<Action>(() => _steps.Add("called off")); },
             () => Environment.ProcessId, () => _steps.Add("quit"), progress);
-    }
-
-    [Fact]
-    public void A_new_version_has_five_minutes_to_say_its_window_is_up_before_it_goes_back()
-    {
-        var home = Path.Combine(_root, "home");
-        var plan = AppSwapPlan.For(new(App, home, Path.Combine(home, "assembly.db"), "1.0.0"), "fresh", "program", "stage", "2.0.0", "backup", Environment.ProcessId);
-        Assert.Equal(TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(plan.AcknowledgeSeconds));
     }
 
     [Fact]

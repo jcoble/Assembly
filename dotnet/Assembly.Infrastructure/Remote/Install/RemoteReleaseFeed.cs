@@ -69,8 +69,11 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
     /// <summary>This Mac's app for exactly this version. The archive is only trusted once its signature has passed.</summary>
     internal async Task<AppRelease> AppReleaseAsync(string version, CancellationToken ct)
     {
-        using var listing = await ListingAsync(ct);
-        var release = Published(listing.RootElement, TagPrefix + version);
+        // The check that found this version has just read the listing; a release it didn't have is read again.
+        using var kept = _checked is { } bytes ? JsonDocument.Parse(bytes) : null;
+        var found = kept is null ? default : Published(kept.RootElement, TagPrefix + version);
+        using var listing = found.ValueKind == JsonValueKind.Undefined ? await ListingAsync(ct) : null;
+        var release = listing is null ? found : Published(listing.RootElement, TagPrefix + version);
         if (release.ValueKind == JsonValueKind.Undefined) throw Failure($"Assembly {version} has no published release to install.", "release_missing");
         var assets = Assets(release);
         var feed = Find(assets, AppFeed) ?? throw Failure($"Assembly {version} has no {AppFeed}.", "release_incomplete");
@@ -133,7 +136,9 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
     {
         try
         {
-            using var listing = await ListingAsync(ct);
+            var read = await GetAsync(Endpoint, MaxListing, "Could not check public backend releases", ct);
+            using var listing = JsonDocument.Parse(read);
+            _checked = read;
             var app = await Unknown(() => AppVersionAsync(listing.RootElement, ct));
             var adapters = await Unknown(async () => AdapterFacts((await AdaptersAsync(listing.RootElement, RemoteAdapters, ct)).Manifest));
             return new(app, adapters?.Versions, adapters?.Packaging);
@@ -167,6 +172,9 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
         var versions = json.RootElement.GetProperty("versions").EnumerateObject().ToDictionary(item => item.Name, item => item.Value.GetString()!, StringComparer.Ordinal);
         return new(versions, json.RootElement.TryGetProperty("packaging", out var packaging) ? packaging.GetString() : null);
     }
+
+    // What the last check read, for getting that version ready. Every check reads it again.
+    private volatile byte[]? _checked;
 
     private async Task<JsonDocument> ListingAsync(CancellationToken ct) =>
         JsonDocument.Parse(await GetAsync(Endpoint, MaxListing, "Could not check public backend releases", ct));
