@@ -7,6 +7,7 @@ using Assembly.Engine.Runs;
 using Assembly.Engine.Workflows.Execution;
 using Assembly.Engine.Workflows.Receipts;
 using Assembly.Engine.Workflows.Reviews;
+using Assembly.Engine.Workflows.Scheduling;
 
 namespace Assembly.Engine.Workflows.Runs;
 
@@ -135,6 +136,8 @@ internal static partial class WorkflowControlTransitions
               reason=$reason,gate_state='settled',ended_ms=$now WHERE step_id=$step AND attempt=$attempt AND state IN ('running','waiting');
             """, new("$state", state), new("$recovery", recovery ? 1 : 0), new("$reason", decision == "skip" ? "condition_false" : decision), new("$now", c.NowMs), new("$step", id), new("$attempt", step.Attempt));
         List<EventDraft> events = [StepEvent("step.changed", state)];
+        if (decision == "retry" && WorkflowBlockedWords.StoppedByProvider(step.Reason))
+            s.Execute("UPDATE engine_step SET dispatch_state=$recheck WHERE id=$step", new("$recheck", WorkflowBlockedWords.Recheck), new("$step", id));
         if (need is not null && decision is "approve" or "deny" or "retry")
         {
             s.Execute("""
