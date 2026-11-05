@@ -124,7 +124,8 @@ public static class RunTransitions
                 s.Execute("INSERT INTO engine_step_dependency(step_id,dependency_id,optional) VALUES($step,$dep,$optional)",
                     new("$step", step.Id), new("$dep", dependency.StepId), new("$optional", dependency.Optional ? 1 : 0));
         return EngineJournal.Commit(s, c, 1, owner.Epoch,
-            [Changed(c.EntityId, 1, command.OwnerSessionId, "queued")], effects ?? []);
+            [Changed(c.EntityId, 1, command.OwnerSessionId, "queued"),
+             .. command.Steps.Select(step => StepPending(step.Id, c.EntityId, command.OwnerSessionId))], effects ?? []);
     }
 
     private static bool ValidDefinitions(IWriteScope s, IReadOnlyList<StepDefinition>? steps)
@@ -275,6 +276,8 @@ public static class RunTransitions
     private static Run? Find(IWriteScope s, string id) => s.QueryFirst("""
         SELECT r.version,r.owner_session_id,r.state,se.epoch,r.definition_hash IS NOT NULL,r.machine FROM engine_run r JOIN engine_session se ON se.id=r.owner_session_id WHERE r.id=$id
         """, r => new Run(r.Long(0), r.Text(1), r.Text(2), r.Long(3), r.Long(4) != 0, r.Text(5)), new SqlArg("$id", id));
+    private static EventDraft StepPending(string id, string run, string owner) =>
+        new("step.changed", "step", id, 1, false, new(null, run, id, owner, "pending", null));
     private static EventDraft StepCancelled(string id, long version, string? session, string run, string owner) =>
         new("step.changed", "step", id, version, false, new(session, run, id, owner, "cancelled", null));
     private static EventDraft Changed(string id, long version, string owner, string state) =>

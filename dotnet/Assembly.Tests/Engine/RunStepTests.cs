@@ -231,7 +231,7 @@ public sealed class RunStepTests
         var fact = global::System.Text.Json.JsonSerializer.Deserialize(json, Assembly.Engine.EngineJson.Default.EngineCommand)!;
         Assert.Equal("forbidden", f.Apply(fact, "s", 1).Error);
         Assert.Equal("pending", f.State("engine_step", "s"));
-        Assert.Equal(1, f.Count("engine_event"));
+        Assert.Equal(2, f.Count("engine_event")); // The run and its one step, once: neither the replay nor the refusal adds any.
     }
 
     [Fact]

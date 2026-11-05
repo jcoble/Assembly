@@ -121,6 +121,16 @@ public sealed partial class WorkflowScheduleTests
         Assert.Equal(1500, row.GetProperty("updatedMs").GetInt64());
     }
 
+    [Fact]
+    public void A_new_run_tells_clients_about_every_step_before_any_of_them_moves()
+    {
+        using var f = new Fixture(prompt: "Work", yaml: GatedFlow);
+        var steps = f.Core.Db.Query("SELECT id FROM engine_step", r => r.Text(0), default);
+        Assert.True(steps.Count > 1);
+        var announced = f.Core.Db.Query("SELECT entity_id FROM engine_event WHERE kind='step.changed'", r => r.Text(0), default);
+        Assert.Equal(steps.Order(), announced.Order());
+    }
+
     private const string TwoGatesFlow = """
         name: Two gates
         steps:
