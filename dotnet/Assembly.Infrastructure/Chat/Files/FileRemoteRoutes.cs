@@ -30,6 +30,12 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
     {
         var json = JsonSerializer.SerializeToElement(args, type);
         if (!json.TryGetProperty("session", out var session) || session.GetString() is not { } id) return null;
+        // A viewed folder sends no source. On another machine its writes queue by the view, since there's no local root.
+        if (FolderView.IsView(id))
+        {
+            var owner = owners.Resolve(id, CancellationToken.None);
+            return owners.IsLocal(owner, CancellationToken.None) ? null : "files-source:" + owner.Machine + ":" + id;
+        }
         // Queue ordering is not authority. Qualified calls validate the supplied source before any owner lookup.
         if (!json.TryGetProperty("expectedSource", out var source) || source.ValueKind == JsonValueKind.Null) return null;
         return "files-source:" + source.GetProperty("machine").GetString() + ":" + id;
