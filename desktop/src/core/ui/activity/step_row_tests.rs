@@ -49,3 +49,13 @@ fn failure_reason_and_skipped_state_remain_distinct() {
     let item = StepItem::decode(value).unwrap();
     assert_eq!(view(&item, 2000).tone, StepTone::Skipped);
 }
+
+#[test]
+fn a_rerun_step_counts_its_attempts_from_one_against_its_limit() {
+    let mut value = step();
+    value["attempt"] = json!(2);
+    value["maxAttempts"] = json!(1);
+    value["attemptInGeneration"] = json!(1);
+    let row = view(&StepItem::decode(value).unwrap(), 0);
+    assert_eq!((row.attempt, row.max_attempts), (1, 1));
+}
