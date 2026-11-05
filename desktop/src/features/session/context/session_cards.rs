@@ -109,24 +109,26 @@ pub(super) fn usage_words(
     (figures.percent, words)
 }
 
-/// A figure's words, muted when nobody reported it.
+/// A figure's words, muted when nobody reported it. Long words, such as "not reported by Claude" in a narrow drawer,
+/// wrap rather than cut off.
 fn figure(words: Words, muted: Hsla) -> Div {
     let id = words.id;
     div()
         .debug_selector(move || id.into())
         .min_w_0()
-        .truncate()
         .when(!words.reported, |figure| figure.text_color(muted))
         .child(words.text)
 }
 
-/// Two things on one line, the first on the left and the second on the right.
+/// Two things on one line, the first on the left and the second on the right, each wrapping onto more lines when
+/// they don't fit side by side; the right one stays against the right edge.
 fn pair(left: impl IntoElement, right: impl IntoElement) -> Div {
     h_flex()
         .gap_2()
+        .items_start()
         .child(left)
         .child(div().flex_1())
-        .child(right)
+        .child(div().min_w_0().text_right().child(right))
 }
 
 impl ContextPane {

@@ -494,3 +494,36 @@ fn an_older_remotes_bad_args_reads_as_not_reported_and_keeps_the_source(cx: &mut
         ("not reported by Claude", false)
     );
 }
+
+// Pins: g0-shape#17
+#[gpui::test]
+fn not_reported_figures_wrap_whole_in_a_narrow_drawer(cx: &mut TestAppContext) {
+    use crate::core::state::preferences::Preferences;
+    use crate::core::theme::text::TextRole;
+    use gpui_kit::{px, size};
+
+    let (pane, client, cx) = open(cx);
+    let width = px(260.);
+    cx.simulate_resize(size(width, px(1200.)));
+    shown_on_s1(Ok(json!({})), &pane, &client, cx);
+    let mut bare = facts(&pane, "s1", None, 0);
+    (bare.context, bare.input_tokens, bare.output_tokens) = (None, None, None);
+    publish(bare, cx);
+    draw(cx);
+
+    let line =
+        cx.update(|_, cx| Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Body)).1);
+    let used = cx.debug_bounds("context-used").unwrap();
+    let window = cx.debug_bounds("context-window").unwrap();
+    assert!(
+        window.right() <= width,
+        "the window size stays inside the drawer"
+    );
+    assert!(used.right() <= window.left(), "the two don't overlap");
+    for (id, bounds) in [("context-used", used), ("context-window", window)] {
+        assert!(
+            bounds.size.height >= line * 1.5,
+            "{id} wraps onto a second line rather than cutting off: {bounds:?}"
+        );
+    }
+}

@@ -13,6 +13,8 @@ use super::listing::Listing;
 use super::{ContextPane, FileTouched};
 use crate::activity::{StatusChip, Tone};
 use crate::core::intents::open_file::OpenFile;
+use crate::core::state::preferences::Preferences;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::features::session::client::session_client::CallError;
 use crate::section_card::SectionCard;
 
@@ -20,6 +22,8 @@ impl ContextPane {
     pub(super) fn files_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (muted, success, danger) = (theme.muted_foreground, theme.success, theme.danger);
+        // Every row is one Body line tall: a count chip is taller than the line and would otherwise grow its row.
+        let line_height = Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Body)).1;
         let note = |id: &'static str, text: SharedString| {
             div()
                 .debug_selector(move || id.into())
@@ -48,6 +52,7 @@ impl ContextPane {
                             h_flex()
                                 .w_full()
                                 .min_w_0()
+                                .h(line_height)
                                 .gap_2()
                                 .child(
                                     div()
@@ -89,6 +94,7 @@ impl ContextPane {
                                 });
                         ListItem::new(("touched-file", index))
                             .debug_selector(move || selector)
+                            .text_role(TextRole::Body, cx)
                             .cursor_pointer()
                             .on_click(cx.listener(move |pane, _, window, cx| {
                                 pane.open_touched(&clicked, window, cx)

@@ -15,6 +15,7 @@ use serde_json::Value;
 use super::ContextPane;
 use super::listing::Listing;
 use crate::activity::{StatusChip, Tone};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::composer::attachment::Attachment;
 use crate::features::session::context::live_facts::DraftImage;
@@ -44,6 +45,7 @@ impl ContextPane {
                 draft.preview.clone().map(ImageSource::from),
                 draft.name.clone(),
                 draft.mime,
+                Some(cx.theme().foreground),
                 cx,
             );
             match draft.preview {
@@ -53,7 +55,8 @@ impl ContextPane {
                         open_lightbox(image.clone(), name.clone(), window, cx)
                     })
                 }
-                None => row,
+                // Nothing to open: the kit's still row, which doesn't hover, with its name as bright as any other.
+                None => row.disabled(true),
             }
         });
         let draft_rows: Vec<_> = draft_rows.collect();
@@ -81,6 +84,7 @@ impl ContextPane {
                         thumbnail,
                         name.clone().into(),
                         sent_type(path, name),
+                        None,
                         cx,
                     );
                     match remote {
@@ -298,13 +302,14 @@ pub(super) fn type_words(mime: Option<&str>) -> SharedString {
 }
 
 /// One image's row: its thumbnail slot, which shows `preview` or else a plain box with an image icon, its name and its
-/// type chip.
+/// type chip. The name takes the row's colour unless `name_color` sets its own, which a still row keeps.
 fn row(
     id: impl Into<ElementId>,
     selector: String,
     preview: Option<ImageSource>,
     name: SharedString,
     mime: Option<&'static str>,
+    name_color: Option<Hsla>,
     cx: &App,
 ) -> ListItem {
     let theme = cx.theme();
@@ -335,19 +340,29 @@ fn row(
                     .text_color(theme.muted_foreground),
             ),
         });
-    ListItem::new(id).debug_selector(move || selector).child(
-        h_flex()
-            .w_full()
-            .min_w_0()
-            .gap_2()
-            .child(thumbnail)
-            .child(div().flex_1().min_w_0().truncate().child(name))
-            .child(
-                div()
-                    .flex_none()
-                    .child(StatusChip::new(type_words(mime), Tone::Neutral)),
-            ),
-    )
+    ListItem::new(id)
+        .debug_selector(move || selector)
+        .text_role(TextRole::Body, cx)
+        .child(
+            h_flex()
+                .w_full()
+                .min_w_0()
+                .gap_2()
+                .child(thumbnail)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .when_some(name_color, |name, color| name.text_color(color))
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .child(StatusChip::new(type_words(mime), Tone::Neutral)),
+                ),
+        )
 }
 
 #[cfg(test)]
