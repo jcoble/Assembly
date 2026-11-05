@@ -75,7 +75,8 @@ public sealed partial class SessionRailTests : IDisposable
         Running(started);
         Asking(started);
         Assert.Equal([started, other, starter], Collect(next => Read(after: next, limit: 1)));
-        Assert.Equal(new RailTotals(1), Read().Totals);
+        // Locally the question is addressed to the session that started it, so the session answers it, not the person.
+        Assert.Equal(new RailTotals(remote ? 1 : 0), Read().Totals);
         Assert.False(Entry(Read(), starter).Running);
         Assert.True(Entry(Read(), started).Running);
         if (remote)
@@ -393,7 +394,7 @@ public sealed partial class SessionRailTests : IDisposable
         Asking(helper);
         Assert.Contains((RailTopic, (string?)helper, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
         var rail = Read();
-        Assert.Equal(new RailTotals(1), rail.Totals);
+        Assert.Equal(new RailTotals(0), rail.Totals);
         Assert.Equal(helper, Entry(rail, helper).SessionId);
     }
 

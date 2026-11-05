@@ -7,6 +7,7 @@ using Assembly.Engine.Runs;
 using Assembly.Engine.Workflows.Execution;
 using Assembly.Engine.Workflows.Receipts;
 using Assembly.Engine.Workflows.Reviews;
+using Assembly.Engine.Workflows.Scheduling;
 
 namespace Assembly.Engine.Workflows.Runs;
 
@@ -58,7 +59,7 @@ internal static partial class WorkflowControlTransitions
         }
         var decision = command is RetryWorkflowStep ? "retry" : ((DecideWorkflowStep)command).Decision;
         if (decision is not ("approve" or "revise" or "deny" or "retry" or "skip" or "continue" or "cancel")) return Refuse("bad_args");
-        if (step.Kind == "gate" && c.Actor.Kind != ActorKind.Window || step.Kind == "gate" && c.Origin?.Channel == "phone") return Refuse("forbidden");
+        if (step.Kind == "gate" && c.Actor.Kind != ActorKind.Window) return Refuse("forbidden");
         if (command is DecideWorkflowStep && step.Kind == "gate" && (need is null || step.State != "waiting")) return Refuse("already_resolved");
         if (need is not null && need.Source == "workflow" && step.Kind == "command" && decision is "approve" or "deny" or "cancel")
         {
@@ -100,8 +101,9 @@ internal static partial class WorkflowControlTransitions
                 var text = ((DecideWorkflowStep)command).Reply!;
                 if (text.Length > 32768) return Refuse("bad_args");
                 // A gate nothing earlier can answer stays open rather than acknowledge and repeat the same question.
-                if (WorkflowGateRevision.Target(s, id!) is not { } target) return Refuse("revision_target_undefined");
-                return Revise(s, c, run, new(id!, step.Version, step.Attempt, step.Generation), new(need.Id, need.Version), target, text);
+                var targets = WorkflowGateRevision.Targets(s, id!);
+                if (targets.Count == 0) return Refuse("revision_target_undefined");
+                return Revise(s, c, run, new(id!, step.Version, step.Attempt, step.Generation), new(need.Id, need.Version), targets, text);
             }
         }
         else if (decision == "skip")
@@ -128,11 +130,14 @@ internal static partial class WorkflowControlTransitions
               authority_epoch=CASE WHEN $state='pending' THEN NULL ELSE authority_epoch END,
               receipt_id=CASE WHEN $state='pending' THEN NULL ELSE receipt_id END,
               proof_json=CASE WHEN $state='pending' THEN NULL ELSE proof_json END,
+              explanation=CASE WHEN $state='pending' THEN NULL ELSE explanation END,
               outcome_reason=$reason,ended_ms=CASE WHEN $state='pending' THEN NULL ELSE $now END,deadline_ms=NULL,
               version=version+1,updated_ms=$now WHERE id=$step;
             UPDATE engine_step_attempt SET state=CASE WHEN $state='pending' THEN 'failed' ELSE $state END,
               reason=$reason,gate_state='settled',ended_ms=$now WHERE step_id=$step AND attempt=$attempt AND state IN ('running','waiting');
             """, new("$state", state), new("$recovery", recovery ? 1 : 0), new("$reason", decision == "skip" ? "condition_false" : decision), new("$now", c.NowMs), new("$step", id), new("$attempt", step.Attempt));
+        if (decision == "retry" && WorkflowBlockedWords.StoppedByProvider(step.Reason))
+            s.Execute("UPDATE engine_step SET dispatch_state=$recheck WHERE id=$step", new("$recheck", WorkflowBlockedWords.Recheck), new("$step", id));
         List<EventDraft> events = [StepEvent("step.changed", state)];
         if (need is not null && decision is "approve" or "deny" or "retry")
         {

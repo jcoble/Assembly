@@ -239,7 +239,8 @@ impl SessionPane {
         self.loading = false;
         self.retry_first = None;
         self.failed_before = None;
-        self.status = SharedString::default();
+        // An answer that went unheard is why this reopened, so its line outlives the reopening.
+        self.status = self.unheard.take().unwrap_or_default();
         self.open_folds.clear();
         self.kept.clear();
         self.fresh.clear();

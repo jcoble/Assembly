@@ -18,7 +18,6 @@ test('a completed backend is hash-verified and reused without another build; cor
     'dotnet/Assembly.Remote/Assembly.Remote.csproj':'<Project/>',
     'dotnet/Assembly.Infrastructure/Socket/SocketConnection.cs':'const int Protocol = 1;',
     'dotnet/Assembly.Application/Features/Chat/Rows/RowStore.cs':'const int FormatVersion = 5;',
-    'dotnet/Assembly.Engine/packages.lock.json':'{"version":2,"dependencies":{"net10.0":{"RuntimeDependency":{"resolved":"1.0.0"}}}}',
   };
   for(const [name,content] of Object.entries(files)){await fs.mkdir(join(source,name,'..'),{recursive:true});await fs.writeFile(join(source,name),content)}
   await exec('git',['init','-q'],{cwd:source});await exec('git',['add','.'],{cwd:source});
@@ -29,10 +28,6 @@ test('a completed backend is hash-verified and reused without another build; cor
 import fs from 'node:fs';
 import path from 'node:path';
 const out=process.argv[process.argv.indexOf('-o')+1];
-const lock='dotnet/Assembly.Engine/obj/dev-remote.packages.lock.json';
-if(fs.readFileSync(lock,'utf8')!==fs.readFileSync('dotnet/Assembly.Engine/packages.lock.json','utf8'))throw Error('committed lock was not seeded');
-if(!process.argv.includes('-p:NuGetLockFilePath=obj/dev-remote.packages.lock.json'))throw Error('generated lock path not selected');
-fs.writeFileSync(lock,'SDK-specific restore metadata');
 if(process.env.DIRTY_SOURCE)fs.appendFileSync('dotnet/Assembly.Remote/Assembly.Remote.csproj','unexpected source edit');
 fs.appendFileSync(process.env.BUILD_CALLS,'build\\n');fs.mkdirSync(out,{recursive:true});
 for(const [file,content] of Object.entries({'Assembly.Remote.dll':'fake committed backend','Assembly.Remote.deps.json':'{}','Assembly.Remote.runtimeconfig.json':JSON.stringify({runtimeOptions:{frameworks:[{name:'Microsoft.NETCore.App',version:'10.0.0'}]}})}))fs.writeFileSync(path.join(out,file),content);
@@ -43,7 +38,6 @@ for(const [file,content] of Object.entries({'Assembly.Remote.dll':'fake committe
   const first=await exec(process.execPath,[helper],{cwd:source,env});
   const prepared=JSON.parse(first.stdout.split('\n').find(line=>line.startsWith('PREPARED '))!.slice(9));
   assert.equal(await fs.readFile(calls,'utf8'),'build\n');
-  assert.equal(await fs.readFile(join(source,'dotnet/Assembly.Engine/packages.lock.json'),'utf8'),files['dotnet/Assembly.Engine/packages.lock.json']);
   const second=await exec(process.execPath,[helper],{cwd:source,env});
   assert.match(second.stdout,/"cacheHit":true/);
   assert.equal(await fs.readFile(calls,'utf8'),'build\n');

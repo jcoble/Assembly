@@ -248,6 +248,12 @@ public sealed partial class SessionHost : IPermissionPolicy
 
     private static bool FitsChoice(JsonElement field, JsonElement value)
     {
+        if (field.TryGetProperty("type", out var kind) && kind.ValueKind == JsonValueKind.String)
+        {
+            if (kind.GetString() == "boolean") return value.ValueKind is JsonValueKind.True or JsonValueKind.False;
+            if (kind.GetString() == "integer") return value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out _);
+            if (kind.GetString() == "number") return value.ValueKind == JsonValueKind.Number;
+        }
         if (value.ValueKind != JsonValueKind.String) return false;
         if (field.TryGetProperty("type", out var type) && (type.ValueKind != JsonValueKind.String || type.GetString() != "string")) return false;
         if (field.TryGetProperty("enum", out var options))

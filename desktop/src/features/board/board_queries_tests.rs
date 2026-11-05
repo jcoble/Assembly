@@ -26,7 +26,7 @@ fn need(machine: &str, id: &str, state: &str, created: i64) -> EngineItem {
         machine,
         "needs_me",
         id,
-        json!({"sessionId":"s","kind":"question","state":state,"createdMs":created,"answeredMs":null,"updatedMs":created}),
+        json!({"sessionId":"s","forOwner":true,"kind":"question","state":state,"createdMs":created,"answeredMs":null,"updatedMs":created}),
     )
 }
 
@@ -60,6 +60,7 @@ fn ids(keys: Vec<EngineKey>) -> Vec<String> {
 fn only_questions_addressed_to_the_owner_are_listed_oldest_first() {
     let mut to_parent = need("m", "to-parent", "open", 1);
     to_parent.value["addresseeSessionId"] = json!("parent");
+    to_parent.value["forOwner"] = json!(false);
     let data = data(
         &[
             need("m", "newer", "open", 20),
@@ -185,6 +186,7 @@ fn a_child_question_shows_on_its_parent_not_on_a_stranger() {
     let mut asked = need("m", "from-child", "open", 1);
     asked.value["sessionId"] = json!("child");
     asked.value["addresseeSessionId"] = json!("top");
+    asked.value["forOwner"] = json!(false);
     asked.value["addresseeMachine"] = json!("m");
     let data = data(
         &[asked],
@@ -264,4 +266,61 @@ fn counts_split_running_from_waiting_and_count_today_only() {
         ],
     );
     assert_eq!(summary_counts(&data, MIDNIGHT), (1, 2, 1));
+}
+
+fn step(machine: &str, id: &str, run: &str, state: &str, needs_owner: bool) -> EngineItem {
+    item(
+        machine,
+        "step",
+        id,
+        json!({"runId":run,"name":id,"kind":"command","state":state,"attempt":1,"maxAttempts":2,"required":1,"ruleSkippable":0,
+            "labelPresent":id,"labelPast":id,"badges":[],"scopeGranted":false,"closed":false,"dependencies":[],"needsMeIds":[],
+            "needsOwner":needs_owner}),
+    )
+}
+
+#[test]
+fn the_engine_says_whose_question_it_is_even_when_a_session_is_addressed() {
+    let mut command_approval = need("m", "approval", "open", 1);
+    command_approval.value["addresseeSessionId"] = json!("s");
+    command_approval.value["kind"] = json!("permission");
+    let data = data(&[command_approval], &[], &[]);
+    assert_eq!(ids(open_owner_questions(&data)), ["approval"]);
+    assert_eq!(badge_count(&data), 1);
+}
+
+#[test]
+fn a_stopped_step_counts_once_and_lists_its_run() {
+    let data = data(
+        &[],
+        &[],
+        &[
+            run("m", "r", "running", None),
+            step("m", "failed", "r", "failed", true),
+            step("m", "fine", "r", "pending", false),
+        ],
+    );
+    assert_eq!(badge_count(&data), 1);
+    assert_eq!(ids(stopped_runs(&data)), ["r"]);
+    assert_eq!(summary_counts(&data, MIDNIGHT), (0, 1, 0));
+}
+
+#[test]
+fn an_idle_session_waiting_on_a_question_is_live_in_or_out_of_a_run() {
+    let mut asks_as_child = session("m", "child", "idle");
+    asks_as_child.value["parentId"] = json!("top");
+    let mut child_need = need("m", "from-child", "open", 1);
+    child_need.value["sessionId"] = json!("child");
+    let data = data(
+        &[need("m", "plain", "open", 1), child_need],
+        &[
+            session("m", "s", "idle"),
+            session("m", "quiet", "idle"),
+            asks_as_child,
+        ],
+        &[],
+    );
+    let mut live = ids(live_top_level(&data));
+    live.sort();
+    assert_eq!(live, ["child", "s"]);
 }
