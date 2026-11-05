@@ -1,8 +1,12 @@
 //! A file link opens through the selected session, the only way the backend reads a file, or says why it can't. The
 //! selection stays as it is and nothing waits: the one call asks for the folder, and its answer is the end of the link.
 //! Every link's call goes out when it arrives and each waits for the one before, so files open in the order they came.
+//! A link for another session than the one before it doesn't wait: the newer selection drops the older links, whose
+//! calls are cancelled. A dropped connection answers every call at once; a call the backend never answers while the
+//! connection stays up has no event at all, so it alone has a deadline, which cancels it.
 
 use std::path::Path;
+use std::time::Duration;
 
 use gpui_kit::*;
 use serde_json::json;
@@ -10,15 +14,21 @@ use serde_json::json;
 use super::deep_links::show_notice;
 use crate::core::engine::SessionKey;
 use crate::core::intents::open_file::OpenFile;
+use crate::core::socket::call_failure::CallFailure;
 use crate::core::socket::client::SocketClient;
+use crate::core::socket::error_code::ErrorCode;
 use crate::core::socket::outcome::Outcome;
 use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::state::selected_session::SelectedSession;
 use crate::features::files::entry::FileOwnership;
 
-/// The newest link's task, which holds the one before it until that has finished.
+/// How long the backend has to answer a link's call.
+const ANSWER_WITHIN: Duration = Duration::from_secs(30);
+
+/// The newest link's task, which holds the one before it until that has finished, and the session they're for.
 #[derive(Default)]
 struct Asking {
+    key: Option<SessionKey>,
     last: Option<Task<()>>,
 }
 
@@ -37,21 +47,38 @@ pub fn open(path: String, machine: Option<String>, cx: &mut App) {
     let Some(socket) = SocketClient::try_global(cx) else {
         return show_notice(didnt_open("The backend isn't running."), cx);
     };
-    let owner = socket.read(cx).call::<FileOwnership>(
-        "files",
-        "owner",
-        json!({ "session": key.id, "expectedSource": source }),
-        None,
-    );
-    let earlier = cx.default_global::<Asking>().last.take();
-    let asking = cx.spawn(async move |cx| {
-        let answer = owner.await;
+    let owner = socket
+        .read(cx)
+        .call::<FileOwnership>(
+            "files",
+            "owner",
+            json!({ "session": key.id, "expectedSource": source }),
+            None,
+        )
+        .with_timeout(ANSWER_WITHIN, cx.background_executor());
+    let asking = cx.default_global::<Asking>();
+    // Dropping the older session's links cancels their calls; they'd end quietly anyway, as the person moved on.
+    let earlier = asking
+        .last
+        .take()
+        .filter(|_| asking.key.as_ref() == Some(&key));
+    asking.key = Some(key.clone());
+    let task = cx.spawn(async move |cx| {
+        let answer = owner.await.unwrap_or_else(|_| {
+            Outcome::Failed(CallFailure {
+                code: ErrorCode::Failed,
+                message: format!(
+                    "The backend didn't answer within {} seconds.",
+                    ANSWER_WITHIN.as_secs()
+                ),
+            })
+        });
         if let Some(earlier) = earlier {
             earlier.await;
         }
         cx.update(|cx| answered(answer, &path, key, source, cx))
     });
-    cx.default_global::<Asking>().last = Some(asking);
+    cx.default_global::<Asking>().last = Some(task);
 }
 
 fn answered(

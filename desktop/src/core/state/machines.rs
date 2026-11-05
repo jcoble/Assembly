@@ -15,6 +15,8 @@ const TOPIC: &str = "machines";
 pub struct Machines {
     /// In the order they first came, by the topic's key: the name, or "local" for this machine.
     machines: Vec<(String, Machine)>,
+    /// The topic's first state has come, so a name missing from the list isn't coming.
+    loaded: bool,
     /// Owns the `machines` subscription; dropping it unsubscribes.
     _feed: Task<()>,
 }
@@ -42,6 +44,7 @@ impl Machines {
     pub fn start_holding(items: Vec<(String, Value)>, cx: &mut App) {
         let state = cx.new(|_| Self {
             machines: Vec::new(),
+            loaded: false,
             _feed: Task::ready(()),
         });
         cx.set_global(GlobalMachines(state));
@@ -70,6 +73,7 @@ impl Machines {
         });
         Self {
             machines: Vec::new(),
+            loaded: false,
             _feed: feed,
         }
     }
@@ -90,6 +94,20 @@ impl Machines {
         })
     }
 
+    /// Whether the loaded list has no machine `name`. This machine (`None`) and a list not loaded yet aren't missing.
+    pub fn missing(name: Option<&str>, cx: &App) -> bool {
+        let Some(name) = name else {
+            return false;
+        };
+        Machines::try_global(cx).is_some_and(|machines| {
+            let machines = machines.read(cx);
+            machines.loaded
+                && !machines
+                    .machines()
+                    .any(|held| held.name.as_deref() == Some(name))
+        })
+    }
+
     /// When the machine `name` stopped answering, while it's offline.
     pub fn offline_since(name: &str, cx: &App) -> Option<i64> {
         let machines = Machines::try_global(cx)?;
@@ -100,7 +118,10 @@ impl Machines {
 
     fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
         match update {
-            Update::State(items) => replace(&mut self.machines, items),
+            Update::State(items) => {
+                replace(&mut self.machines, items);
+                self.loaded = true;
+            }
             Update::Change { key, item } => read(&mut self.machines, key, item),
         }
         cx.notify();

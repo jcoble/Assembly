@@ -14,7 +14,7 @@ use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::{GlobalSessions, Sessions};
 use crate::core::ui::center_panes::CenterPanes;
 use crate::features::session::view::session_pane::SessionPane;
-use crate::features::sessions::sessions_pane::refusal_words;
+use crate::features::sessions::sessions_pane::{not_connected, refusal_words};
 use crate::features::tasks::tasks_pane::NOT_OPENABLE;
 
 const WAIT: Duration = Duration::from_secs(60);
@@ -34,6 +34,9 @@ pub fn open(id: String, machine: Option<String>, cx: &mut App) {
     });
     // The newest open wins, so a link that has just arrived may replace one that's out.
     link.update(cx, |link, cx| {
+        if link.ended_on_a_missing_machine(cx) {
+            return;
+        }
         if SessionPane::can_open_links(cx) {
             link.send_open(cx);
         }
@@ -116,6 +119,9 @@ impl WaitingSessionLink {
 
     /// Never over an open that's out, which it would cancel: a change during one is tried after its answer.
     fn try_open(&mut self, cx: &mut Context<Self>) {
+        if self.ended_on_a_missing_machine(cx) {
+            return;
+        }
         if self.try_owed
             && self.opening.is_none()
             && SessionPane::can_open_links(cx)
@@ -123,6 +129,15 @@ impl WaitingSessionLink {
         {
             self.send_open(cx);
         }
+    }
+
+    /// A machine the loaded list doesn't have isn't coming, so the link ends now rather than at its minute.
+    fn ended_on_a_missing_machine(&self, cx: &mut Context<Self>) -> bool {
+        let missing = Machines::missing(self.machine.as_deref(), cx);
+        if let (true, Some(machine)) = (missing, &self.machine) {
+            end(Some(not_connected(machine)), cx);
+        }
+        missing
     }
 
     fn send_open(&mut self, cx: &mut Context<Self>) {
