@@ -5,6 +5,25 @@ namespace Assembly.Tests.Draft.SourceControl;
 
 public sealed class GitStashesTests
 {
+    // Git strips trailing whitespace from the subject it stores, so "assembly s1 <time>: " comes back without its space.
+    [Theory]
+    [InlineData("", ":")]
+    [InlineData("   ", ":")]
+    [InlineData("wip  ", ": wip")]
+    public async Task A_stash_whose_text_ends_in_space_is_found_after_git_strips_it(string text, string ending)
+    {
+        using var repo = new GitHistoryTestRepository(); await repo.InitializeAsync(); await repo.Write("a", "base\n"); await repo.Commit("Root");
+        var stashes = new GitStashes(repo.Git, TimeProvider.System);
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "a"), "changed\n");
+
+        var result = await stashes.StashAsync(repo.Root, "s1", text, false, default);
+
+        var stash = Assert.Single(await stashes.ListAsync(repo.Root, default));
+        Assert.Equal("Stashed changes as " + stash.Sha, result.Message);
+        Assert.True(stash.MadeByAssembly);
+        Assert.EndsWith(ending, stash.Message);
+        Assert.Equal("base\n", await File.ReadAllTextAsync(Path.Combine(repo.Root, "a")));
+    }
     // Pins: g9#7
     [Fact]
     public async Task Applying_an_older_stash_drops_only_its_sha_and_keeps_the_newer_one()
