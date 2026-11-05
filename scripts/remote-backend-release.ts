@@ -180,10 +180,19 @@ new_agents=
 if [ -z "$keep" ]; then
   # Written aside from a copy, which keeps its settings, and put in place only past the last check. Bundles are never changed
   # in place, and the one in use stays until the install after this, so a session in one is unaffected.
-  [ ! -e "$root/serve/agents.json" ] || cp -p "$root/serve/agents.json" "$before/agents.new.json"
+  if [ -e "$root/serve/agents.json" ]; then
+    cp -p "$root/serve/agents.json" "$before/agents.new.json"
+    read_from=$(sha256sum <"$root/serve/agents.json")
+  fi
   ASSEMBLY_ADAPTER_TAG=$2 ASSEMBLY_ADAPTER_MANIFEST_SHA256=$3 bash payload/dotnet/scripts/agents-file.sh "$root/adapters" "$before/agents.new.json"
   new_agents=1
   refuse_if_running
+  # A setting saved during the download isn't in the new file, and would be lost. The app tries again, as after a session.
+  if [ -e "$root/serve/agents.json" ] && [ "$(sha256sum <"$root/serve/agents.json")" != "\${read_from:-}" ]; then
+    echo "This machine's agents file changed during the update, so nothing was stopped" >&2
+    rm -rf "$before"
+    exit 75
+  fi
 fi
 
 listening() {

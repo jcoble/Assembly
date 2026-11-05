@@ -252,7 +252,7 @@ case "$*" in *":$port"*) printf 'LISTEN 0 128 127.0.0.1:%s 0.0.0.0:*\\n' "$port"
       const stage = path.join(home, `stage-${run++}`);
       await mkdir(path.join(stage, 'payload/dotnet/scripts'), { recursive: true });
       await writeFile(path.join(stage, 'payload/assembly-remote-server'), binary);
-      await writeFile(path.join(stage, 'payload/dotnet/scripts/agents-file.sh'), 'printf "%s" "$ASSEMBLY_ADAPTER_TAG" >"$2"\n[ -z "${SESSION_STARTS:-}" ] || echo "$SESSION_STARTS" >"$HOME/cgroup/cgroup.procs"\n');
+      await writeFile(path.join(stage, 'payload/dotnet/scripts/agents-file.sh'), 'printf "%s" "$ASSEMBLY_ADAPTER_TAG" >"$2"\n[ -z "${SESSION_STARTS:-}" ] || echo "$SESSION_STARTS" >"$HOME/cgroup/cgroup.procs"\n[ -z "${SETTING_SAVED:-}" ] || echo saved-meanwhile >"$HOME/assembly-host/serve/agents.json"\n');
       await writeFile(path.join(stage, 'install.sh'), REMOTE_BACKEND_INSTALL_SCRIPT);
       await writeFile(path.join(stage, 'manifest.json'), JSON.stringify({ version }, null, 2));
       const sum = createHash('sha256').update(binary).digest('hex');
@@ -466,5 +466,23 @@ test('a session in what a killed install left is not ended: the next run refuses
     const after = await installed(home);
     assert.equal(after.binary, 'good two');
     assert.equal(after.database, old.database);
+  });
+});
+
+test('a setting saved during the adapters is never overwritten: the update refuses and can run again', async () => {
+  await withMachine(async (run, home) => {
+    const old = await installedWithData(run, home);
+    const refused = await run('good two', '2.0.0', ['9801', 'new-tag', 'x'], { SETTING_SAVED: '1' });
+    assert.equal(refused.code, 75);
+    assert.match(refused.stderr, /agents file changed/);
+    const after = await installed(home);
+    assert.equal(after.agents, 'saved-meanwhile\n');
+    assert.equal(after.binary, old.binary);
+    assert.equal(after.state, old.state);
+    assert.equal(after.before, false);
+
+    const again = await run('good two', '2.0.0', ['9801', 'new-tag', 'x']);
+    assert.equal(again.code, 0, again.stderr);
+    assert.equal((await installed(home)).agents, 'new-tag');
   });
 });
