@@ -27,6 +27,27 @@ internal static class ToolSummary
         return null;
     }
 
+    /// <summary>A shell call's command, an argv's parts quoted so a shell reads them back as they were; null when the input has none.</summary>
+    public static string? Command(JsonElement? input)
+    {
+        if (input is not { ValueKind: JsonValueKind.Object } fields)
+            return null;
+        foreach (var key in (string[])["command", "cmd"])
+        {
+            if (!fields.TryGetProperty(key, out var value))
+                continue;
+            if (value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } text)
+                return text;
+            if (value.ValueKind == JsonValueKind.Array && value.EnumerateArray().All(part => part.ValueKind == JsonValueKind.String))
+                return string.Join(' ', value.EnumerateArray().Select(part => Quoted(part.GetString()!)));
+        }
+
+        return null;
+    }
+
+    private static string Quoted(string part) =>
+        part.Length > 0 && part.All(c => char.IsLetterOrDigit(c) || "-_./~=:,+@%".Contains(c)) ? part : $"'{part.Replace("'", "'\\''")}'";
+
     public static string? Path(JsonElement? input)
     {
         if (input is not { ValueKind: JsonValueKind.Object } fields)

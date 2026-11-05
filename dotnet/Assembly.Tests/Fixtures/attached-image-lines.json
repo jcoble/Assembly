@@ -1,0 +1,10 @@
+[
+  { "line": "Attached image: /home/u/attachments/t1/b.jpg (photo.jpg)", "path": "/home/u/attachments/t1/b.jpg", "name": "photo.jpg" },
+  { "line": "Attached image: /home/u/attachments/t1/a.png (Screen Shot (2).png)", "path": "/home/u/attachments/t1/a.png", "name": "Screen Shot (2).png" },
+  { "line": "Attached image: /home/u/attachments/t1/a.png (Screen Shot (2).png) thumbnail: /home/u/attachments/t1/c.webp", "path": "/home/u/attachments/t1/a.png", "name": "Screen Shot (2).png" },
+  { "line": "Attached image: attachments/t1/a.png (a.png)", "path": null, "name": null },
+  { "line": "Attached image: /home/u/attachments/t1/a.png", "path": null, "name": null },
+  { "line": "Attached image: /home/u/my shots/a.png (a.png)", "path": null, "name": null },
+  { "line": "Attached image: /home/u/a.png (a.png) thumbnail: thumbs/c.webp", "path": null, "name": null },
+  { "line": "is how the composer writes it", "path": null, "name": null }
+]
