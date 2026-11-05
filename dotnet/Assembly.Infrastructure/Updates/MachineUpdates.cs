@@ -14,6 +14,7 @@ namespace Assembly.Infrastructure.Updates;
 internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status, InstalledCalls local,
     Func<string, CancellationToken, Task<InstalledTools?>> remote, Action? reload, BackgroundWork work, TextWriter log) : IFeature
 {
+    private const string ThisApp = "";
     private int _updating;
     private readonly HashSet<string> _started = [];
 
@@ -28,6 +29,12 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         {
             if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
             return Task.FromResult(new UpdateStarted(Install(args.Machine)));
+        });
+        calls.Read("updates", "appStarted", UpdatesJson.Default.InstalledArgs, UpdatesJson.Default.UpdateChecked, (_, call) =>
+        {
+            if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
+            source.AppStarted();
+            return Task.FromResult(new UpdateChecked(true));
         });
         calls.Read("updates", "check", UpdatesJson.Default.InstallArgs, UpdatesJson.Default.UpdateChecked, async (args, call) =>
         {
@@ -52,6 +59,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     internal void Begin()
     {
         status.Welcomed = machine => Check(machine);
+        if (source.AppNote is { } note) status.Updating(null, false, note);
         // app-dev runs the launch's update itself, so it can start before the desktop is built, and tells this app how it goes.
         if (Environment.GetEnvironmentVariable(DevRemoteSyncStatus.Variable) is { Length: > 0 } path) work.Start("launch update status", async stop =>
         {
@@ -72,7 +80,13 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     internal async Task CheckAsync(string? machine, CancellationToken stop, bool fresh = false)
     {
         var wanted = await source.WantedAsync(stop, fresh);
-        if (machine is null) { status.Updates(null, UpdateCheck.Local(BackendBuild.Version, await TryRead(async () => await local.ReadAsync(stop)), wanted)); return; }
+        if (machine is null)
+        {
+            var here = UpdateCheck.Local(BackendBuild.Version, await TryRead(async () => await local.ReadAsync(stop)), wanted);
+            status.Updates(null, here);
+            if (here.Any(item => item.Kind == "desktop" && item.State == UpdateItem.Behind && item.Wanted is not null && source.StartsAppUpdate(item.Wanted))) StartBy(ThisApp);
+            return;
+        }
         var items = UpdateCheck.Remote(status.Items.FirstOrDefault(item => item.Name == machine)?.Backend, await TryRead(() => remote(machine, stop)), wanted);
         status.Updates(machine, items);
         if (source.StartsRemoteUpdates(machine) && items.Any(item => item.Kind == "backend" && item.State == UpdateItem.Behind)) StartBy(machine);

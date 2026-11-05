@@ -1,11 +1,13 @@
 //! What the update check found, from the `machines` topic, and the one button that updates it. Nothing here checks or
 //! polls: the backend checks at start and at each remote's hello, and pushes the answer.
 
+use crate::core::socket::client::SocketClient;
 use crate::core::state::machine::{Machine, UpdateItem};
 use crate::core::state::machines::Machines;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
+use serde_json::{Value, json};
 
 fn machine_name(machine: &Machine) -> &str {
     machine.name.as_deref().unwrap_or("This machine")
@@ -47,7 +49,25 @@ pub fn tell_when_behind(cx: &mut App) {
         return;
     };
     let mut last = None;
+    // Held for the app's life, and set once: the window coming up is only said once.
+    let mut said_started: Option<Task<()>> = None;
     let heard = cx.observe(&machines, move |machines, cx| {
+        if machines.read(cx).machines().any(|machine| machine.quit) {
+            cx.quit();
+            return;
+        }
+        // An update that just replaced this app is waiting to hear its window came up.
+        if said_started.is_none() && !cx.windows().is_empty() {
+            let call = SocketClient::global(cx).read(cx).call::<Value>(
+                "updates",
+                "appStarted",
+                json!({}),
+                None,
+            );
+            said_started = Some(cx.background_spawn(async move {
+                _ = call.await;
+            }));
+        }
         let words = behind_words(machines.read(cx).machines());
         if words == last {
             return;

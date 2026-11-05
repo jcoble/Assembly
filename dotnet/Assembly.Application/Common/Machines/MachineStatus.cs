@@ -17,7 +17,8 @@ public sealed record MachineItem(string? Name, string Kind, bool Reachable, stri
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] RemoteBackend? Backend = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] IReadOnlyList<UpdateItem>? Updates = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Updating = false,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? UpdateNote = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? UpdateNote = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Quit = false);
 
 /// <summary>One piece the update check looked at: <paramref name="Kind"/> is desktop, backend, adapter or cli.</summary>
 public sealed record UpdateItem(string Kind, string Name, string? Current, string? Wanted, string State)
@@ -120,6 +121,9 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
 
     /// <summary>Whether the one update is running, and what it's doing or why it failed.</summary>
     public void Updating(string? machine, bool updating, string? note) => Change(machine, item => item with { Updating = updating, UpdateNote = note });
+
+    /// <summary>Asks the window to quit: a new version of the app is ready to take over.</summary>
+    public void QuitWindow() => Change(null, item => item with { Quit = true });
 
     private void Change(string? machine, Func<MachineItem, MachineItem> change)
     {

@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Assembly.Application.Common.Calls;
@@ -12,6 +13,9 @@ internal sealed record VerifiedAdapters(string Tag, string ManifestSha256);
 /// <summary>A release whose signed files passed. The archive URL, record and adapters are what a remote is told to fetch and check.</summary>
 internal sealed record VerifiedRemoteRelease(string ArchiveUrl, RemoteReleaseRecord Record, VerifiedAdapters Adapters);
 /// <summary>What's published, for the update check. A null is something that couldn't be read, which never counts as behind.</summary>
+/// <summary>The app's archive for one version, and the signature its release's latest.json carries for it.</summary>
+internal sealed record AppRelease(string Version, string ArchiveUrl, long Bytes, string Signature);
+
 internal sealed record PublishedVersions(string? App, IReadOnlyDictionary<string, string>? Adapters, string? Packaging);
 
 /// <summary>
@@ -22,6 +26,8 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
 {
     internal const string Target = "x86_64-unknown-linux-gnu";
     internal const long MaxArchive = 512L * 1024 * 1024;
+    private const long MaxApp = 1024L * 1024 * 1024;
+    private const string AppPlatform = "darwin-aarch64-app";
     private const string Endpoint = "https://api.github.com/repos/jcoble/Assembly/releases?per_page=100";
     private const string TagPrefix = "assembly-v";
     private const string RemoteAdapters = "linux-x64", AppFeed = "latest.json";
@@ -58,6 +64,47 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
         Validate(parsed, archive, number);
         RequirePublicUrl(archive.Url);
         return new(archive.Url, parsed, (await AdaptersAsync(listing.RootElement, RemoteAdapters, ct)).Verified);
+    }
+
+    /// <summary>This Mac's app for exactly this version. The archive is only trusted once its signature has passed.</summary>
+    internal async Task<AppRelease> AppReleaseAsync(string version, CancellationToken ct)
+    {
+        using var listing = await ListingAsync(ct);
+        var release = Published(listing.RootElement, TagPrefix + version);
+        if (release.ValueKind == JsonValueKind.Undefined) throw Failure($"Assembly {version} has no published release to install.", "release_missing");
+        var assets = Assets(release);
+        var feed = Find(assets, AppFeed) ?? throw Failure($"Assembly {version} has no {AppFeed}.", "release_incomplete");
+        var archive = Find(assets, $"Assembly_{version}_aarch64.app.tar.gz") ?? throw Failure($"Assembly {version} has no app for this Mac.", "release_incomplete");
+        try
+        {
+            using var json = JsonDocument.Parse(await SmallAsync(feed, ct));
+            var platform = json.RootElement.GetProperty("platforms").GetProperty(AppPlatform);
+            var url = platform.GetProperty("url").GetString();
+            if (json.RootElement.GetProperty("version").GetString() != version || url != archive.Url || archive.Size <= 0 || archive.Size > MaxApp)
+                throw Failure($"Assembly {version}'s {AppFeed} doesn't match its release.", "release_invalid");
+            RequirePublicUrl(archive.Url);
+            return new(version, archive.Url, archive.Size, platform.GetProperty("signature").GetString()!);
+        }
+        catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException)
+        { throw Failure($"Assembly {version}'s {AppFeed} can't be read.", "release_invalid"); }
+    }
+
+    /// <summary>Downloads the app's archive to a file and checks it against the pinned key.</summary>
+    internal async Task DownloadAppAsync(AppRelease app, string file, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, app.ArchiveUrl);
+            request.Headers.UserAgent.ParseAdd("Assembly-backend-installer");
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!response.IsSuccessStatusCode) throw Failure($"Could not download Assembly {app.Version}: HTTP {(int)response.StatusCode}.", "release_unavailable");
+            await using (var output = File.Create(file))
+            await using (var body = await response.Content.ReadAsStreamAsync(ct))
+                await body.CopyToAsync(output, ct);
+        }
+        catch (HttpRequestException error) { throw Failure($"Could not download Assembly {app.Version}: {error.Message}", "release_unavailable"); }
+        if (new FileInfo(file).Length != app.Bytes) throw Failure($"The download of Assembly {app.Version} was incomplete.", "release_invalid");
+        RemoteReleaseTrust.Verify(await File.ReadAllBytesAsync(file, ct), Encoding.UTF8.GetBytes(app.Signature), publicKey);
     }
 
     /// <summary>The newest signed adapters for one platform, for this machine's own install.</summary>

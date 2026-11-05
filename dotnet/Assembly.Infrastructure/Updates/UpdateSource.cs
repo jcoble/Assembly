@@ -15,6 +15,12 @@ internal interface IUpdateSource
     Task<UpdateWanted> WantedAsync(CancellationToken ct, bool fresh = false);
     /// <summary>True when a remote on an older version is this app's to update. app-dev starts its own lane's itself, before the desktop is built.</summary>
     bool StartsRemoteUpdates(string machine);
+    /// <summary>True when an app behind installs this version by itself. One that failed to start is left to the button.</summary>
+    bool StartsAppUpdate(string version) => false;
+    /// <summary>What the last app update left to say.</summary>
+    string? AppNote => null;
+    /// <summary>This app's window is up.</summary>
+    void AppStarted() { }
     /// <summary>Puts a backend on a saved machine, from wherever this source's files come from, and connects.</summary>
     Task InstallAsync(string machine, Action<string> progress, CancellationToken ct);
     /// <summary>
@@ -50,9 +56,9 @@ internal static class UpdateSources
     /// <summary>app-dev names its checkout; anything else is a delivered app.</summary>
     internal static string? Checkout => Environment.GetEnvironmentVariable("ASSEMBLY_DEV_CHECKOUT") is { Length: > 0 } root ? root : null;
 
-    internal static IUpdateSource ForHost(HttpClient http, TimeProvider time, IReleaseInstall? release = null, string? checkout = null, string? home = null) =>
+    internal static IUpdateSource ForHost(HttpClient http, TimeProvider time, IReleaseInstall? release = null, string? checkout = null, string? home = null, IAppInstall? app = null) =>
         (checkout ?? Checkout) is { Length: > 0 } root
-            ? new CheckoutUpdateSource(root, new(http, time), release, home) : new ReleaseUpdateSource(new(http, time), release, time);
+            ? new CheckoutUpdateSource(root, new(http, time), release, home) : new ReleaseUpdateSource(new(http, time), release, time, app);
 
     /// <summary>
     /// Each remote's share of the one update, the same from a checkout or a release. One that can't be reached doesn't hold
@@ -170,13 +176,16 @@ internal interface IReleaseInstall
 /// A delivered app: everything is the same except that wanted versions and the update come from the signed release. A build
 /// with no <see cref="IReleaseInstall"/> has nothing to update from.
 /// </summary>
-internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall? release, TimeProvider time) : IUpdateSource
+internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall? release, TimeProvider time, IAppInstall? app = null) : IUpdateSource
 {
     // A check runs at start and at each remote's hello, and GitHub allows an address 60 unsigned reads an hour.
     private static readonly TimeSpan PublishedLasts = TimeSpan.FromMinutes(10);
     private (PublishedVersions Read, DateTimeOffset At)? _published;
 
     public bool StartsRemoteUpdates(string machine) => true;
+    public bool StartsAppUpdate(string version) => app is not null && app.FailedVersion != version;
+    public string? AppNote => app?.Note;
+    public void AppStarted() => app?.Started();
 
     public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct) =>
         (release ?? throw new CallFailed("No signed release is published yet, so there's nothing to install.", "no_release")).InstallAsync(machine, progress, ct);
@@ -202,10 +211,15 @@ internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall?
     {
         if (release is null) throw new CallFailed("No signed release is published yet, so there's nothing to update from.", "no_release");
         var failures = new List<string>();
+        // The app first: it's the side behind, and once it's back, every machine is checked against the new number.
+        var behind = machines.FirstOrDefault(machine => machine.Name is null)?.Behind.FirstOrDefault(item => item.Kind == "desktop");
+        if (behind?.Wanted is { } wanted && app is not null)
+        {
+            try { await app.InstallAsync(wanted, progress, ct); return; }
+            catch (CallFailed failed) { failures.Add(failed.Message); }
+        }
         await UpdateSources.RemotesAsync(release, machines, progress, failures, ct);
-        // Installing the app itself isn't built yet (Step 19.09). The button says so rather than appearing to have done it.
-        var app = machines.FirstOrDefault(machine => machine.Name is null)?.Behind.FirstOrDefault(item => item.Kind == "desktop");
-        if (app is not null && !automatic) failures.Add($"Assembly {app.Wanted} is out, and this app can't install it yet: install it from the release page.");
+        if (behind is not null && app is null && !automatic) failures.Add($"Assembly {behind.Wanted} is out, and this app can't install it from here: install it from the release page.");
         if (failures.Count > 0) throw new CallFailed(string.Join(" ", failures), "update_failed");
     }
 }

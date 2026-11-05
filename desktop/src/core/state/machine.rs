@@ -34,6 +34,9 @@ pub struct Machine {
     /// What the update is doing, or why it failed.
     #[serde(default)]
     pub update_note: Option<String>,
+    /// A new version of the app is ready and asks this window to quit.
+    #[serde(default)]
+    pub quit: bool,
 }
 
 /// Information only: nothing is refused on it.
