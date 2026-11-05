@@ -10,7 +10,6 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
 
-use super::TITLE;
 use super::deploy_form::DeployForm;
 
 fn machine_name(machine: &Machine) -> &str {
@@ -40,6 +39,11 @@ pub fn behind_words<'a>(machines: impl Iterator<Item = &'a Machine>) -> Option<S
     (!found.is_empty()).then(|| format!("Behind on {}.", found.join("; ")))
 }
 
+/// The notice's whole text, naming the button every app has: its card in Settings.
+pub fn behind_notice(words: &str) -> String {
+    format!("{words} Use Update everything in Settings to update them.")
+}
+
 /// Says once what's behind each time that changes, in the place a person sees when the app starts.
 pub fn tell_when_behind(cx: &mut App) {
     let Some(machines) = Machines::try_global(cx) else {
@@ -55,7 +59,7 @@ pub fn tell_when_behind(cx: &mut App) {
         let (Some(words), Some(window)) = (words, cx.windows().into_iter().next()) else {
             return;
         };
-        let text = format!("{words} Use {TITLE} to update them.");
+        let text = behind_notice(&words);
         cx.defer(move |cx| {
             _ = window.update(cx, |_, window, cx| {
                 window.push_notification(Notification::warning(text), cx)

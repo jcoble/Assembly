@@ -1,4 +1,4 @@
-use super::{Machine, behind_words, item_words};
+use super::{Machine, behind_notice, behind_words, item_words};
 use crate::features::settings::connections::row_status;
 use serde_json::json;
 
@@ -39,6 +39,16 @@ fn the_notice_names_what_is_behind_and_stays_quiet_otherwise() {
         "updates":[{"kind":"cli","name":"codex","current":"2.0.0","wanted":"2.0.0","state":"current"}]}),
     )];
     assert_eq!(behind_words(current.iter()), None);
+}
+
+#[test]
+fn the_notice_points_at_the_button_a_delivered_app_has() {
+    let text = behind_notice("Behind on box: codex-acp.");
+    assert_eq!(
+        text,
+        "Behind on box: codex-acp. Use Update everything in Settings to update them."
+    );
+    assert!(!text.contains(crate::features::remote_install::TITLE));
 }
 
 #[test]

@@ -78,7 +78,10 @@ fn main() {
         PaletteView::init(cx);
         core::intents::open_url::register(cx);
         features::settings::init(cx);
-        features::remote_install::init(cx);
+        // A development control: a delivered app's only way to update is the button on each connection's card.
+        if packaged_resources().is_none() {
+            features::remote_install::init(cx);
+        }
         features::meter::start_if_on(cx);
         // The window opens once the theme files have loaded, already in its theme. The kit calls this once, so
         // the layout's read and write are taken out on that call.

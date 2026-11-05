@@ -2,7 +2,8 @@
 //! check found behind and has the one button that updates all of it; `npm run deploy:remote` runs the same thing. Below it
 //! is putting a local backend bundle on the owned test machine. The backend owns the check, the update, the install and
 //! every check on them; this folder only asks for them and shows how they went. It's built to come out whole: this folder,
-//! its line in `features/mod.rs` and its calls in `main.rs`. The real product install and connect flow is separate work.
+//! its line in `features/mod.rs` and its calls in `main.rs`. A packaged app doesn't list it. The real product install and
+//! connect flow is separate work.
 
 pub mod deploy_form;
 mod deploy_view;
