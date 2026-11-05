@@ -14,9 +14,10 @@ use crate::core::ui::access::control_ids::topbar;
 const WORDS: &str = "Restart to Update";
 
 pub struct RestartButton {
-    /// Whether this app has an update ready, and whether it's already on its way.
+    /// Whether this app has an update ready, whether it's already on its way, and what it's doing or waiting for.
     ready: bool,
     updating: bool,
+    note: Option<String>,
     _machines: Option<Subscription>,
     _follow: Subscription,
     _call: Option<Task<()>>,
@@ -27,6 +28,7 @@ impl RestartButton {
         let mut button = Self {
             ready: false,
             updating: false,
+            note: None,
             _machines: None,
             _follow: cx.observe_global::<GlobalMachines>(Self::follow),
             _call: None,
@@ -53,9 +55,18 @@ impl RestartButton {
             .find(|machine| machine.name.is_none());
         let ready = here.is_some_and(|machine| machine.restart_ready.is_some());
         let updating = here.is_some_and(|machine| machine.updating);
-        if (ready, updating) != (self.ready, self.updating) {
-            (self.ready, self.updating) = (ready, updating);
+        let note = here.and_then(|machine| machine.update_note.clone());
+        if (ready, updating, &note) != (self.ready, self.updating, &self.note) {
+            (self.ready, self.updating, self.note) = (ready, updating, note);
             cx.notify();
+        }
+    }
+
+    /// A press that's held up says why right here, where it was pressed.
+    fn words(&self) -> &str {
+        match &self.note {
+            Some(note) if self.updating => note,
+            _ => WORDS,
         }
     }
 
@@ -75,19 +86,22 @@ impl Render for RestartButton {
         if !self.ready {
             return div().into_any_element();
         }
+        let mut button = Button::new("restart-to-update")
+            .primary()
+            .small()
+            .label(self.words().to_owned())
+            .loading(self.updating)
+            .disabled(self.updating)
+            .control(topbar::RESTART_TO_UPDATE, WORDS)
+            .on_click(cx.listener(|button, _, _, cx| button.press(cx)));
+        // Why the last press didn't get there, for pressing again.
+        if let Some(failure) = self.note.as_ref().filter(|_| !self.updating) {
+            button = button.tooltip(failure.clone());
+        }
         div()
             .flex_none()
             .debug_selector(|| "restart-to-update".into())
-            .child(
-                Button::new("restart-to-update")
-                    .primary()
-                    .small()
-                    .label(WORDS)
-                    .loading(self.updating)
-                    .disabled(self.updating)
-                    .control(topbar::RESTART_TO_UPDATE, WORDS)
-                    .on_click(cx.listener(|button, _, _, cx| button.press(cx))),
-            )
+            .child(button)
             .into_any_element()
     }
 }

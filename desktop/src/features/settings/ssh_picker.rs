@@ -90,6 +90,7 @@ pub(super) struct SshPicker {
     pub(super) failure: Option<String>,
     loaded: bool,
     _loading: Option<Task<()>>,
+    _picking: Option<Task<()>>,
     _picked: Subscription,
 }
 
@@ -123,6 +124,7 @@ impl SshPicker {
             failure: None,
             loaded: false,
             _loading: None,
+            _picking: None,
             _picked: picked,
         }
     }
@@ -193,7 +195,7 @@ impl SettingsPage {
             socket
                 .read(cx)
                 .call::<SshTarget>("sshHosts", "target", json!({ "host": host }), None);
-        self.ssh_picker._loading = Some(cx.spawn_in(window, async move |page, cx| {
+        self.ssh_picker._picking = Some(cx.spawn_in(window, async move |page, cx| {
             let outcome = call.await;
             _ = page.update_in(cx, |page, window, cx| {
                 match outcome {

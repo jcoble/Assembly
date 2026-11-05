@@ -40,6 +40,12 @@ fn backend(asked: Arc<Mutex<Vec<String>>>, tell: UnboundedSender<()>) -> FakeBac
                 ),
                 Reply::Frame(json!({"t": "result", "id": id, "result": {}})),
             ],
+            (Some("call"), Some("waiting")) => vec![
+                Reply::Frame(json!({"t": "change", "sub": *sub, "key": "local", "item": {
+                    "name": null, "kind": "local", "reachable": true, "reason": null, "checked": true,
+                    "restartReady": "2.0.0", "updating": true, "updateNote": "Waiting for running sessions to finish…"}})),
+                Reply::Frame(json!({"t": "result", "id": id, "result": {}})),
+            ],
             (Some("call"), Some(method)) => {
                 asked.lock().unwrap().push(format!(
                     "{}/{method}",
@@ -69,10 +75,14 @@ async fn it_appears_when_an_update_is_ready_and_only_a_press_asks_for_the_restar
     let backend = backend(asked.clone(), changed.clone());
     cx.update(gpui_kit::init);
     // As in the app: the window is up before the backend's first ready line starts the machines list.
-    let (_, cx) = cx.add_window_view(|window, cx| {
+    let made = Arc::new(Mutex::new(None));
+    let keep = made.clone();
+    let (_, cx) = cx.add_window_view(move |window, cx| {
         let button = cx.new(RestartButton::new);
+        *keep.lock().unwrap() = Some(button.clone());
         gpui_kit::base::Root::new(button, window, cx)
     });
+    let button = made.lock().unwrap().clone().expect("the button");
     cx.simulate_resize(size(px(400.), px(100.)));
     cx.update(|_, cx| {
         let endpoint = Endpoint {
@@ -121,4 +131,24 @@ async fn it_appears_when_an_update_is_ready_and_only_a_press_asks_for_the_restar
     })
     .await;
     assert_eq!(*asked.lock().unwrap(), ["updates/restart"]);
+    assert_eq!(
+        cx.update(|_, cx| button.read(cx).words().to_owned()),
+        "Restart to Update"
+    );
+
+    // Pressed, and held up by a running turn: the button says so rather than only spinning.
+    let call = cx.update(|_, cx| {
+        SocketClient::global(cx)
+            .read(cx)
+            .call::<Value>("test", "waiting", json!({}), None)
+    });
+    _ = call.await;
+    until("waiting", &mut changes, &changed, || {
+        cx.update(|_, cx| machines.read(cx).machines().any(|machine| machine.updating))
+    })
+    .await;
+    assert_eq!(
+        cx.update(|_, cx| button.read(cx).words().to_owned()),
+        "Waiting for running sessions to finish…"
+    );
 }
