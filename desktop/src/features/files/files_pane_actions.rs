@@ -222,21 +222,15 @@ impl FilesPane {
                 ))
                 .separator();
         } else {
-            let (timeline_session, timeline_path, timeline_source) =
-                (session.clone(), path.clone(), source.clone());
-            let (history_path, history_source) = (path.clone(), source.clone());
+            let (timeline_path, history_path, history_source) =
+                (path.clone(), path.clone(), source.clone());
             menu = menu
-                .item(
-                    PopupMenuItem::new("Open Timeline").on_click(move |_, window, cx| {
-                        crate::features::files::file_view::FileView::open_history(
-                            timeline_session.clone(),
-                            timeline_path.clone(),
-                            timeline_source.clone(),
-                            window,
-                            cx,
-                        )
-                    }),
-                )
+                .item(item(
+                    "Open Timeline",
+                    None,
+                    false,
+                    Box::new(move |pane, _, cx| pane.open_timeline(timeline_path.clone(), cx)),
+                ))
                 .item(PopupMenuItem::new("Git: View File History").on_click(
                     move |_, window, cx| {
                         window.dispatch_action(

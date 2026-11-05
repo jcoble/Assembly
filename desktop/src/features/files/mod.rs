@@ -8,7 +8,6 @@ pub mod document_store;
 pub mod editor_surface;
 pub mod entry;
 pub mod file_filter;
-#[path = "editor/file_history.rs"]
 pub mod file_history;
 #[path = "editor/file_save.rs"]
 pub mod file_save;
@@ -18,6 +17,7 @@ pub mod file_tree;
 #[path = "editor/file_view.rs"]
 pub mod file_view;
 pub mod files_pane;
+pub mod history_target;
 pub mod panel_message;
 
 #[cfg(test)]
@@ -26,6 +26,8 @@ mod files_entry_real_tests;
 mod files_filter_real_tests;
 #[cfg(test)]
 mod files_header_real_tests;
+#[cfg(test)]
+mod files_history_real_tests;
 #[cfg(test)]
 mod files_message_real_tests;
 #[cfg(test)]

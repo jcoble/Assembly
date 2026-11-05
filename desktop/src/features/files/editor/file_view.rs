@@ -7,7 +7,6 @@ use serde_json::{Value, json};
 use super::document_store::{DocumentKey, DocumentSnapshot, DocumentStore, DocumentView};
 use super::editor_surface::EditorSurface;
 use super::entry::{FileChunk, FileOwnership};
-use super::file_history::FileHistory;
 use super::file_save::{ConfirmedFileSave, FileSaveController, SaveState};
 
 #[path = "file_view_close.rs"]
@@ -62,9 +61,7 @@ pub struct FileView {
     saving: Option<Task<()>>,
     upload: Option<String>,
     last_save: Option<ConfirmedFileSave>,
-    history: Option<Entity<FileHistory>>,
     comparison: Option<Entity<super::file_comparison::FileComparison>>,
-    history_shown: bool,
     prompting: Option<Task<()>>,
     reload_version: Option<u64>,
     closing_window: Option<AnyWindowHandle>,
@@ -169,9 +166,7 @@ impl FileView {
             saving: None,
             upload: None,
             last_save: None,
-            history: None,
             comparison: None,
-            history_shown: false,
             prompting: None,
             reload_version: None,
             closing_window: None,
@@ -350,46 +345,6 @@ impl FileView {
         }
     }
 
-    pub fn open_history(
-        session: String,
-        path: String,
-        source: Option<crate::core::socket::row_source::ExpectedRowSource>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        let alias = key(&session, &path);
-        if let Some(id) = CenterPanes::open(alias, window, cx, |_, cx| {
-            cx.new(|cx| {
-                let mut view = Self::new(session, path, cx);
-                view.source = source.clone();
-                view
-            })
-        }) && let Some(view) = Self::panel(id, cx)
-        {
-            view.update(cx, |view, cx| {
-                view.pinned = true;
-                if !view.history_shown {
-                    view.toggle_history(cx);
-                }
-            });
-        }
-    }
-
-    fn toggle_history(&mut self, cx: &mut Context<Self>) {
-        self.history_shown = !self.history_shown;
-        if self.history.is_none() {
-            self.history = Some(cx.new(|_| {
-                FileHistory::new(self.session.clone(), self.path.clone(), self.source.clone())
-            }));
-        }
-        if let Some(history) = &self.history {
-            history.update(cx, |history, cx| {
-                history.set_active(self.active && self.history_shown, cx)
-            });
-        }
-        cx.notify();
-    }
-
     pub(crate) fn matches_path(&self, machine: &str, root: &str, path: &str) -> bool {
         self.document.as_ref().is_some_and(|key| {
             key.machine == machine
@@ -425,11 +380,15 @@ impl FileView {
         self.loading = None;
         self.release_read(cx);
         self.comparison = None;
-        if let Some(history) = self.history.take() {
-            history.update(cx, |history, cx| history.set_active(false, cx));
-        }
-        self.history_shown = false;
         self.path = format!("{}{}", destination, &self.path[source.len()..]);
+        if self.active {
+            crate::core::state::active_file::ActiveFile::set(
+                &self.session,
+                &self.path,
+                self.source.clone(),
+                cx,
+            );
+        }
         let key = self.document.as_mut().expect("matching document");
         key.path = self.path.clone();
         let real = format!(

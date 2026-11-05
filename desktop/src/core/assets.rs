@@ -78,7 +78,13 @@ gpui_kit::assets::icon_assets!(
         Coffee,
         Container,
         Table,
-        Binary
+        Binary,
+        FilePlus,
+        FolderPlus,
+        ArrowDownAZ,
+        ArrowUpZA,
+        FileUp,
+        Maximize2
     ]
 );
 

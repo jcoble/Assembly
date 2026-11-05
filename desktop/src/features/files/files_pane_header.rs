@@ -12,7 +12,7 @@ use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex};
 use gpui_kit::*;
 
 /// An icon button whose tooltip and accessible name are what it does.
-fn tool(id: &'static str, icon: IconName, tip: impl Into<SharedString>) -> Button {
+pub(super) fn tool(id: &'static str, icon: IconName, tip: impl Into<SharedString>) -> Button {
     let tip = tip.into();
     Button::new(id)
         .control(id, tip.clone())

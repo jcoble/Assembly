@@ -205,6 +205,7 @@ impl FilesPane {
                             pane.selected = Some(expected.clone());
                         }
                     }
+                    pane.sync_history(cx);
                     if pane.session.as_deref() == Some(session.as_str()) {
                         pane.reload_kept(cx);
                     }

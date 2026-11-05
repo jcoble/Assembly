@@ -18,6 +18,8 @@ mod entry_bar;
 mod filter;
 #[path = "files_pane_header.rs"]
 mod header;
+#[path = "file_history_card.rs"]
+mod history_card;
 #[path = "files_pane_render.rs"]
 mod render;
 #[path = "files_pane_root.rs"]
@@ -94,6 +96,11 @@ pub struct FilesPane {
     /// The field empties on the next draw: another folder starts with no filter.
     clear_filter_input: bool,
     filter_list: UniformListScrollHandle,
+    /// The file history card's list, its drop-down, and which file it follows.
+    pub(super) history: Entity<super::file_history::FileHistoryList>,
+    history_drops: Entity<crate::core::ui::row_drop_down::RowDropDowns>,
+    history_target: super::history_target::HistoryTarget,
+    _history_heard: [Subscription; 3],
     _heard: [Subscription; 4],
 }
 
@@ -119,6 +126,9 @@ impl FilesPane {
         });
         let filter = cx.new(|_| super::file_filter::FileFilter::default());
         let heard_filter = cx.observe(&filter, |_, _, cx| cx.notify());
+        let history = cx.new(super::file_history::FileHistoryList::new);
+        let history_drops = cx.new(|_| crate::core::ui::row_drop_down::RowDropDowns::default());
+        let history_heard = Self::history_heard(&history_drops, cx);
         let mut pane = FilesPane {
             focus: cx.focus_handle(),
             session: None,
@@ -153,6 +163,10 @@ impl FilesPane {
             filter_input: None,
             clear_filter_input: false,
             filter_list: UniformListScrollHandle::new(),
+            history,
+            history_drops,
+            history_target: Default::default(),
+            _history_heard: history_heard,
             _heard: [heard, heard_viewed, heard_touched, heard_filter],
         };
         pane.follow(cx);
@@ -197,6 +211,8 @@ impl FilesPane {
         self.started = false;
         self.clear_filter(cx);
         self.sync_filter(cx);
+        self.history_target = Default::default();
+        self.follow_active_file(cx);
         self.start(cx);
         cx.notify();
     }
@@ -315,6 +331,7 @@ impl FilesPane {
                 }
                 pane.continue_reveal(cx);
                 pane.continue_workspace_tree(cx);
+                pane.sync_history(cx);
                 cx.notify();
             });
         });
@@ -340,6 +357,7 @@ impl FilesPane {
             RevealStep::Ready => {
                 self.selected = Some(path.clone());
                 self.revealing = None;
+                self.sync_history(cx);
                 let rows = self.tree.visible(0..self.tree.row_count());
                 if let Some(ix) = rows
                     .iter()
@@ -385,6 +403,7 @@ impl FilesPane {
         if rebuilding {
             self.reload_kept(cx);
         }
+        self.sync_history(cx);
         crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
         cx.notify();
     }
@@ -442,6 +461,7 @@ impl FilesPane {
             }
             _ => return,
         }
+        self.sync_history(cx);
         crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
         cx.stop_propagation();
         cx.notify();
@@ -488,6 +508,7 @@ impl BasePanel for FilesPane {
             self.start(cx);
             self.continue_reveal(cx);
         }
+        self.sync_history(cx);
         cx.notify();
     }
 }

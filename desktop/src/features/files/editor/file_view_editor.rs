@@ -83,15 +83,11 @@ impl FileView {
                 let incoming = cx.entity();
                 let jump = self.jump.take();
                 let pinned = self.pinned;
-                let history_shown = self.history_shown;
                 let handle = window.window_handle();
                 cx.defer(move |cx| {
                     let _ = handle.update(cx, |_, window, cx| {
                         existing.update(cx, |view, cx| {
                             view.pinned |= pinned;
-                            if history_shown && !view.history_shown {
-                                view.toggle_history(cx);
-                            }
                             if let Some((line, column)) = jump {
                                 if let Some(editor) = &mut view.editor {
                                     editor.jump(line, column, cx);

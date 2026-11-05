@@ -102,7 +102,7 @@ impl FilesPane {
                         let picked = menu_path.to_string();
                         cx.listener(move |pane, _, _, cx| {
                             pane.selected = Some(picked.clone());
-                            cx.notify();
+                            pane.sync_history(cx);
                         })
                     })
                     .context_menu(move |menu, _, cx| {
@@ -262,5 +262,6 @@ impl Render for FilesPane {
                     .py_1(),
                 )
             })
+            .when(header, |pane| pane.child(self.history_card(cx)))
     }
 }
