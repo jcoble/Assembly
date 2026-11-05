@@ -312,6 +312,7 @@ dependencies = [
  "gpui-pre",
  "libc",
  "open",
+ "percent-encoding",
  "serde",
  "serde_json",
  "tungstenite",
