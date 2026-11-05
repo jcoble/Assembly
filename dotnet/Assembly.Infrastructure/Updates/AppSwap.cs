@@ -29,7 +29,8 @@ internal sealed record AppSwapPlan(string App, string Fresh, string Program, str
 }
 
 /// <summary>Why an update didn't happen, for the app it went back to.</summary>
-internal sealed record AppSwapResult(string Version, string Note);
+/// <param name="Restored">The database went back too, so the copy that did it has nothing left to do.</param>
+internal sealed record AppSwapResult(string Version, string Note, bool Restored = false);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(AppSwapPlan))]
@@ -182,8 +183,10 @@ internal static partial class AppSwap
             catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception or InvalidOperationException) { }
             return 1;
         }
-        var kept = written ? $" Anything written after the update is kept in {plan.Database}.failed-{plan.Version}, not in this app's database." : "";
-        Say(plan, $"Assembly {plan.Version} didn't start, so this app went back to {plan.Previous}.{kept}");
+        var log = $"{plan.Database}-wal.failed-{plan.Version}";
+        var where = File.Exists(log) ? $"{plan.Database}.failed-{plan.Version} and its log {log}" : $"{plan.Database}.failed-{plan.Version}";
+        var kept = written ? $" Anything written after the update is kept in {where}, not in this app's database." : "";
+        Say(plan, $"Assembly {plan.Version} didn't start, so this app went back to {plan.Previous}.{kept}", restored: true);
         await home.DisposeAsync();
         Relaunch(plan);
         return 1;
@@ -369,8 +372,9 @@ internal static partial class AppSwap
         var mark = Path.Combine(folder, InstalledMark);
         if (MarkedVersion(mark) == version) File.Delete(mark);
         // After a going back, the old version up again means the copy that put it back has done its job.
-        if (FailedVersion(folder) is { } failed && failed != version)
-            foreach (var suffix in KeptFiles) File.Delete(Path.Combine(folder, $"{BackupPrefix}{failed}.db{suffix}"));
+        // Only once the database went back: otherwise the copy is the way back the note names.
+        if (FailedResult(folder) is { Restored: true } failed && failed.Version != version)
+            foreach (var suffix in KeptFiles) File.Delete(Path.Combine(folder, $"{BackupPrefix}{failed.Version}.db{suffix}"));
         var address = Path.Combine(folder, Socket);
         if (!File.Exists(address)) return;
         try
@@ -382,10 +386,10 @@ internal static partial class AppSwap
         catch (SocketException) { }
     }
 
-    private static string? FailedVersion(string folder)
+    private static AppSwapResult? FailedResult(string folder)
     {
         var file = Path.Combine(folder, "failed.json");
-        try { return File.Exists(file) ? JsonSerializer.Deserialize(File.ReadAllBytes(file), AppSwapJson.Default.AppSwapResult)?.Version : null; }
+        try { return File.Exists(file) ? JsonSerializer.Deserialize(File.ReadAllBytes(file), AppSwapJson.Default.AppSwapResult) : null; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { return null; }
     }
 
@@ -438,14 +442,27 @@ internal static partial class AppSwap
     }
 
     // What the new version wrote, log and all, in the one file the note names, so it opens alone. Each version's stays.
+    // One SQLite can't fold is kept as it is, its log beside it, and the going back carries on.
     private static void Keep(AppSwapPlan plan)
     {
         var kept = $"{plan.Database}.failed-{plan.Version}";
         var partial = kept + ".partial";
-        foreach (var suffix in new[] { "-wal", "-shm" }) File.Delete(partial + suffix);
+        foreach (var suffix in new[] { "-wal", "-shm" })
+        {
+            File.Delete(partial + suffix);
+            File.Delete($"{plan.Database}{suffix}.failed-{plan.Version}");
+        }
         foreach (var suffix in KeptFiles)
             if (File.Exists(plan.Database + suffix)) File.Copy(plan.Database + suffix, partial + suffix, overwrite: true);
-        if (File.Exists(partial + "-wal")) Fold(partial);
+        try { if (File.Exists(partial + "-wal")) Fold(partial); }
+        catch (SqliteException)
+        {
+            foreach (var suffix in new[] { "-wal", "-shm" })
+            {
+                File.Delete(partial + suffix);
+                if (File.Exists(plan.Database + suffix)) File.Move(plan.Database + suffix, $"{plan.Database}{suffix}.failed-{plan.Version}", overwrite: true);
+            }
+        }
         File.Move(partial, kept, overwrite: true);
     }
 
@@ -485,12 +502,12 @@ internal static partial class AppSwap
         foreach (var suffix in new[] { "-wal", "-shm" }) File.Delete(file + suffix);
     }
 
-    private static void Say(AppSwapPlan plan, string note)
+    private static void Say(AppSwapPlan plan, string note, bool restored = false)
     {
         Directory.CreateDirectory(plan.Folder);
         var file = Path.Combine(plan.Folder, "failed.json");
         var partial = file + ".partial";
-        File.WriteAllBytes(partial, JsonSerializer.SerializeToUtf8Bytes(new AppSwapResult(plan.Version, note), AppSwapJson.Default.AppSwapResult));
+        File.WriteAllBytes(partial, JsonSerializer.SerializeToUtf8Bytes(new AppSwapResult(plan.Version, note, restored), AppSwapJson.Default.AppSwapResult));
         File.Move(partial, file, overwrite: true);
     }
 
