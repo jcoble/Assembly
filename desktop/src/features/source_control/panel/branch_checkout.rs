@@ -7,6 +7,7 @@ use crate::core::engine::engine_items::SessionItem;
 use crate::core::engine::{
     EngineChanged, EngineFeed, EngineItem, EngineKey, EngineScope, EngineWatch, SessionKey,
 };
+use crate::core::state::folder_touched::FolderTouched;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::viewed_project::{Viewed, ViewedProject, is_view};
 use crate::features::source_control::git_failure::{GitFailure, Recovery};
@@ -354,6 +355,9 @@ impl SourceControlPane {
             return;
         };
         self.checkout_task = None;
+        if let Some(session) = self.read.read(cx).session().map(str::to_string) {
+            FolderTouched::git_panel_wrote(&session, cx);
+        }
         self.result = Some(PaneResult::Done(pending.done));
         if pending.created.is_some() {
             self.branch_open = false;

@@ -109,8 +109,13 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         }
         let touched = FolderTouched::global(cx);
         self._touched = Some(cx.observe(&touched, |read, touched, cx| {
-            let session = touched.read(cx).session().map(str::to_string);
-            if read.active && session.is_some() && session == read.read_for {
+            let touched = touched.read(cx);
+            let session = touched.session().map(str::to_string);
+            if read.active
+                && !touched.by_git_panel()
+                && session.is_some()
+                && session == read.read_for
+            {
                 read.read(true, cx);
             }
         }));

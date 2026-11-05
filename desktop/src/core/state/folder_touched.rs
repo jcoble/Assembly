@@ -1,6 +1,7 @@
 //! `FolderTouched` says a session's tool call that can change its folder (an edit, a move, a command) just finished,
 //! so Git and Files read that folder again mid-turn. The session pane raises it from the rows it already gets pushed;
-//! nothing polls or watches the disk.
+//! nothing polls or watches the disk. The Git panel raises it after its own write that changed the folder, which it
+//! already shows, so only Files reads again then.
 
 use gpui_kit::*;
 
@@ -8,6 +9,7 @@ use gpui_kit::*;
 pub struct FolderTouched {
     session: Option<String>,
     count: u64,
+    by_git_panel: bool,
 }
 
 struct Holder(Entity<FolderTouched>);
@@ -28,8 +30,24 @@ impl FolderTouched {
         Self::global(cx).update(cx, |this, cx| {
             this.session = Some(session.to_string());
             this.count += 1;
+            this.by_git_panel = false;
             cx.notify();
         });
+    }
+
+    /// The Git panel's own write changed the folder `session` reads (a switch, stash, pull or discard).
+    pub fn git_panel_wrote(session: &str, cx: &mut App) {
+        Self::global(cx).update(cx, |this, cx| {
+            this.session = Some(session.to_string());
+            this.count += 1;
+            this.by_git_panel = true;
+            cx.notify();
+        });
+    }
+
+    /// Whether the last touch was the Git panel's own write, which the panel shows without reading again.
+    pub fn by_git_panel(&self) -> bool {
+        self.by_git_panel
     }
 
     /// The session the last touch was for.

@@ -2,6 +2,7 @@
 //! returned status needs no second read, and an operation's terminal state is taken once.
 use super::{PaneResult, RunningOperation, SourceControlPane};
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::state::folder_touched::FolderTouched;
 use crate::core::state::inspected_checkout::{Inspected, InspectedCheckout};
 use crate::core::state::session_read::Shown;
 use crate::features::source_control::commit_timeline::CommitTimeline;
@@ -205,6 +206,9 @@ impl SourceControlPane {
         }
         self.details_open = false;
         if succeeded {
+            if let Some(target) = &decided_against {
+                FolderTouched::git_panel_wrote(&target.session, cx);
+            }
             self.result = message.map(PaneResult::Done);
             if let Some(status) = status {
                 self.read.update(cx, |read, cx| read.show(status, cx));
@@ -322,6 +326,9 @@ impl SourceControlPane {
     }
     /// A sync moved refs the status doesn't show, so the branches and commits read again whatever the head did.
     fn after_sync(&mut self, status: Option<GitStatus>, cx: &mut Context<Self>) {
+        if let Some(session) = self.read.read(cx).session().map(str::to_string) {
+            FolderTouched::git_panel_wrote(&session, cx);
+        }
         match status {
             Some(status) => {
                 self.read.update(cx, |read, cx| read.show(status, cx));

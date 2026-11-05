@@ -389,3 +389,18 @@ async fn a_tool_changing_the_selected_session_s_folder_reads_it_again_mid_turn(
     open.touch("s1");
     assert_eq!(open.seen.lock().unwrap().reads.len(), 2);
 }
+
+#[gpui::test]
+async fn the_git_panel_s_own_write_is_not_read_again(cx: &mut TestAppContext) {
+    let mut open = open(cx);
+    open.read
+        .update(open.cx, |read, cx| read.refresh_on_settle(cx));
+    open.select(Some("s1"));
+    open.show(true);
+    open.until("initial read", |seen, _| seen.reads.len() == 1)
+        .await;
+    open.cx
+        .update(|cx| crate::core::state::folder_touched::FolderTouched::git_panel_wrote("s1", cx));
+    open.cx.run_until_parked();
+    assert_eq!(open.seen.lock().unwrap().reads.len(), 1);
+}

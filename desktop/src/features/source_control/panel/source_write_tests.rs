@@ -85,7 +85,10 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
             }
             (Some("call"), Some("switchBranch")) => {
                 seen.switches.push(frame["args"].clone());
-                vec![result(json!({}))]
+                vec![result(
+                    json!({"message":"Switched to made.","status":{"branch":"made","head":HEAD,"ahead":0,"behind":0,
+                    "hasUpstream":false,"files":[],"totalFiles":0,"totalStaged":0,"fingerprint":"g"}}),
+                )]
             }
             (Some("call"), Some("commit")) => {
                 seen.commits.push(frame["args"].clone());
@@ -374,6 +377,48 @@ async fn a_viewed_folders_branch_is_switched_there_and_no_session_moves(cx: &mut
     assert_eq!(seen.switches[0]["create"], true);
     assert_eq!(seen.switches[0]["expectedHead"], HEAD);
     assert!(seen.commands.is_empty(), "the session's checkout stays put");
+}
+
+/// Files reads the folder again after the panel's own switch; the panel shows its answer without a second read.
+#[gpui::test]
+async fn a_switch_from_the_panel_tells_files_the_folder_changed(cx: &mut TestAppContext) {
+    use crate::core::state::folder_touched::FolderTouched;
+    use crate::core::state::viewed_project::{Viewed, ViewedProject};
+
+    let mut open = open(cx).await;
+    open.cx.update(|_, cx| {
+        let viewed = Viewed {
+            project_id: "p".into(),
+            machine: "local".into(),
+            folder: "/other".into(),
+            title: "other".into(),
+        };
+        ViewedProject::set(Some("s1".into()), Some(viewed), cx);
+    });
+    let id = "view:70:2f6f74686572";
+    open.until("the viewed status", |pane, cx| {
+        pane.read_with(cx, |pane, cx| {
+            pane.target(cx).is_some_and(|target| target.session == id)
+                && pane.shown_status(cx).is_some()
+        })
+    })
+    .await;
+    let before = open
+        .cx
+        .update(|_, cx| FolderTouched::global(cx).read(cx).count());
+    let pane = open.pane.clone();
+    pane.update_in(open.cx, |pane, window, cx| {
+        pane.branch_picked(BranchPicked::Create("made".into()), window, cx)
+    });
+    open.until("the touch", |_, cx| {
+        cx.update(|_, cx| FolderTouched::global(cx).read(cx).count() > before)
+    })
+    .await;
+    open.cx.update(|_, cx| {
+        let touched = FolderTouched::global(cx).read(cx);
+        assert_eq!(touched.session(), Some(id));
+        assert!(touched.by_git_panel());
+    });
 }
 
 /// Read-only stops writes, not reads: the branch menu still lists the folder it is looking at.
