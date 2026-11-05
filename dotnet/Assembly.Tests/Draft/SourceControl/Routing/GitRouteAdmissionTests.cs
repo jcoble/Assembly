@@ -37,15 +37,15 @@ public sealed class GitRouteAdmissionTests
     [InlineData("operation_host", CallKind.Read)]
     [InlineData("prFile", CallKind.BulkRead)]
     [InlineData("commit", CallKind.Write)]
+    [InlineData("switchBranch", CallKind.Write)]
     [InlineData("start", CallKind.Write)]
     [InlineData("cancel", CallKind.Write)]
     public void Named_git_methods_keep_their_reviewed_kind(string method, CallKind kind) =>
         Assert.Equal(kind, GitCallKinds.KindOf(method));
     [Theory]
-    [InlineData("switchBranch")]
     [InlineData("push")]
     [InlineData("review")]
     [InlineData("arbitrary")]
-    public void Network_actions_and_checkout_cannot_be_invented_as_direct_socket_methods(string method) =>
+    public void Network_actions_cannot_be_invented_as_direct_socket_methods(string method) =>
         Assert.Null(GitCallKinds.KindOf(method));
 }
