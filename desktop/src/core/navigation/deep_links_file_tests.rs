@@ -401,3 +401,44 @@ async fn the_same_session_on_a_new_source_while_asking_says_so(cx: &mut TestAppC
         ["That file didn't open: The session's source changed."]
     );
 }
+
+// Follow-up, finding 4: a file call the backend never answers ends with a notice, and the links after it still open.
+#[gpui::test]
+async fn an_unanswered_file_call_ends_with_a_notice_and_the_next_link_opens(
+    cx: &mut TestAppContext,
+) {
+    let mut h = harness(cx);
+    h.connect();
+    h.select("s1", None);
+    h.owner.lock().unwrap().hold = true;
+    h.link("/work/a/one.cs", None).await;
+    h.owner.lock().unwrap().hold = false;
+    h.link("/work/a/two.cs", None).await;
+    assert!(h.opened().is_empty(), "two still waits for one");
+    h.cx.executor().advance_clock(std::time::Duration::from_secs(31));
+    h.flush("ping").await;
+    let paths: Vec<_> = h.opened().into_iter().map(|open| open.path).collect();
+    assert_eq!(paths, ["two.cs"]);
+    assert_eq!(
+        h.shown(),
+        ["That file didn't open: The backend didn't answer within 30 seconds."]
+    );
+}
+
+#[gpui::test]
+async fn a_link_for_a_newly_selected_session_never_waits_behind_the_old_one(
+    cx: &mut TestAppContext,
+) {
+    let mut h = harness(cx);
+    h.connect();
+    h.select("s1", None);
+    h.owner.lock().unwrap().hold = true;
+    h.link("/work/a/one.cs", None).await;
+    h.owner.lock().unwrap().hold = false;
+    h.select("s2", None);
+    h.link("/work/a/two.cs", None).await;
+    let opened = h.opened();
+    assert_eq!(opened.len(), 1, "two opens without waiting for s1's call");
+    assert_eq!(opened[0].session_id, "s2");
+    assert!(h.shown().is_empty(), "s1's link ends quietly: the person moved on");
+}

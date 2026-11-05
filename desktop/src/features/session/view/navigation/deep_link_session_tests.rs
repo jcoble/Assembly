@@ -503,3 +503,33 @@ async fn only_a_person_opening_a_session_ends_a_waiting_link(cx: &mut TestAppCon
     cx.run_until_parked();
     assert_eq!(opens.borrow().len(), 2, "the link still waits");
 }
+
+// Follow-up, finding 2: a machine missing from the loaded list can't come, so the link says so at once.
+#[gpui::test]
+async fn a_link_to_a_machine_missing_from_the_loaded_list_fails_at_once(cx: &mut TestAppContext) {
+    let (host, opens, cx) = window(cx);
+    let _nav = ready(&host, cx).await;
+    hold_machines(true, true, cx);
+    link("s2", Some("Nowhere"), cx);
+    cx.run_until_parked();
+    assert!(opens.borrow().is_empty(), "nothing to open on a machine the app doesn't have");
+    assert_eq!(
+        shown(cx),
+        ["That session is on Nowhere, which this app isn't connected to."]
+    );
+}
+
+#[gpui::test]
+async fn a_link_waiting_for_the_list_fails_once_the_list_lacks_its_machine(
+    cx: &mut TestAppContext,
+) {
+    let (host, _opens, cx) = window(cx);
+    let _nav = ready(&host, cx).await;
+    link("s2", Some("Nowhere"), cx);
+    assert!(shown(cx).is_empty(), "the list isn't here yet");
+    hold_machines(true, true, cx);
+    assert_eq!(
+        shown(cx),
+        ["That session is on Nowhere, which this app isn't connected to."]
+    );
+}
