@@ -320,3 +320,29 @@ async fn a_file_link_does_not_wait_for_a_connection(cx: &mut TestAppContext) {
     assert!(shown[0].starts_with("That file didn't open: "), "{shown:?}");
     assert!(h.opened().is_empty());
 }
+
+// From review: Finder hands over a multi-select as several links in one go, and each opens.
+#[gpui::test]
+async fn several_files_at_once_all_open(cx: &mut TestAppContext) {
+    let mut h = harness(cx);
+    h.connect();
+    h.select("s1", None);
+    let routes: Vec<_> = ["/work/a/one.cs", "/work/a/two.cs", "/work/a/three.cs"]
+        .into_iter()
+        .map(|path| ExternalRoute::File {
+            path: path.into(),
+            machine: None,
+        })
+        .collect();
+    h.cx.update(|_, cx| {
+        cx.defer(move |cx| {
+            for route in routes {
+                handle_route(route, cx);
+            }
+        })
+    });
+    h.cx.run_until_parked();
+    h.flush("ping").await;
+    let paths: Vec<_> = h.opened().into_iter().map(|open| open.path).collect();
+    assert_eq!(paths, ["one.cs", "two.cs", "three.cs"]);
+}
