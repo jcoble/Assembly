@@ -12,7 +12,7 @@ namespace Assembly.Infrastructure.Chat.Files;
 /// <summary>Files uses the existing verified owner transport, with one resource scope per incoming socket and owner.</summary>
 internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, RemoteConnections connections, BackgroundWork work)
 {
-    private sealed class Route
+    internal sealed class Route
     {
         internal readonly SemaphoreSlim Gate = new(1);
         internal RemoteMachine.FileRelayChannel? Channel;
@@ -69,7 +69,7 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
             machineOwner = await TargetOwner(targetMachine, call.Cancellation);
             if (expectedOwner is not null && expectedOwner.Machine != machineOwner.Engine)
                 throw new CallFailed("The file owner changed. Reopen the file.", "source_changed");
-            route = TargetRoute((call.Connection, "path:" + machineOwner.Engine), machineOwner.Binding, call.Closed);
+            route = TargetRoute(call.Connection, machineOwner, call.Closed);
         }
         else if (json.TryGetProperty("session", out var session))
         {
@@ -194,19 +194,25 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
         finally { route.Gate.Release(); }
     }
 
-    /// <summary>The route for this connection's path targets on one engine. A route opened on an earlier connection to that
-    /// engine can't serve this one, so it's forgotten: a write already sent on it stays uncertain, and this call opens a new
-    /// one. A socket already closed gets no route, since its <see cref="Close"/> would never remove it.</summary>
-    private Route TargetRoute((string, string) key, RemoteMachine.OwnerConnectionBinding owner, CancellationToken closed)
+    /// <summary>The route for this connection's path targets on one engine. A route whose connection to that engine has ended
+    /// can't serve this call, so it's forgotten: a write already sent on it stays uncertain, and this call opens a new one. A
+    /// route still live belongs to a newer connection than this call captured, so this call is refused and its uploads are
+    /// left alone. A socket already closed gets no route, since its <see cref="Close"/> would never remove it.</summary>
+    internal Route TargetRoute(string connection, RemoteConnections.ProjectOwner owner, CancellationToken closed)
     {
+        var key = (connection, "path:" + owner.Engine);
         Route? stale = null;
         Route route;
         lock (gate)
         {
             closed.ThrowIfCancellationRequested();
-            if (routes.TryGetValue(key, out var held) && ReferenceEquals(held.Owner, owner)) return held;
-            stale = held;
-            routes[key] = route = new Route { Owner = owner };
+            if (routes.TryGetValue(key, out var held))
+            {
+                if (ReferenceEquals(held.Owner, owner.Binding)) return held;
+                if (held.Owner is { IsInvalidated: false }) throw ConnectionChanged(owner.Profile.Name);
+                stale = held;
+            }
+            routes[key] = route = new Route { Owner = owner.Binding };
         }
         if (stale is not null) Forget(stale);
         return route;
@@ -225,8 +231,11 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
     {
         try { connections.RequireProjectOwner(owner, CancellationToken.None); }
         catch (CallFailed failed) when (failed.Reason == "project_owner_changed")
-        { throw new CallFailed($"{owner.Profile.Name}'s connection changed. Reopen the file.", "project_owner_changed"); }
+        { throw ConnectionChanged(owner.Profile.Name); }
     }
+
+    private static CallFailed ConnectionChanged(string machine) =>
+        new($"{machine}'s connection changed. Reopen the file.", "project_owner_changed");
 
     /// <summary>A remote whose files calls don't know path targets yet (plan ruling 3).</summary>
     private static CallFailed Older(string machine) =>

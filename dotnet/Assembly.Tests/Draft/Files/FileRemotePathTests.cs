@@ -29,6 +29,7 @@ public sealed class FileRemotePathTests : IAsyncLifetime
     private readonly DirectoryInfo _folder = Directory.CreateTempSubdirectory("files-remote-path-");
     private readonly ConcurrentDictionary<string, int> _remoteCalls = new();
     private FileOwner _macOwners = null!;
+    private FileRemoteRoutes _routes = null!;
     private Func<FileOwnership>? _olderOwner;
     private Func<string, Task>? _remoteWriting;
     private readonly TaskCompletionSource _scopeClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -56,8 +57,8 @@ public sealed class FileRemotePathTests : IAsyncLifetime
         await _hosts.Start();
         await _hosts.StartMirror();
         _macOwners = new FileOwner(_hosts.Mac.Sessions, _hosts.Mac.Fixture.Db);
-        new FilesFeature(_hosts.Mac.Sessions, _macOwners, _macWork,
-            new FileRemoteRoutes(_hosts.Mac.Fixture.Db, _macOwners, _hosts.Connections, _macWork)).Register(macCalls!);
+        _routes = new FileRemoteRoutes(_hosts.Mac.Fixture.Db, _macOwners, _hosts.Connections, _macWork);
+        new FilesFeature(_hosts.Mac.Sessions, _macOwners, _macWork, _routes).Register(macCalls!);
     }
 
     public async Task DisposeAsync()
@@ -260,6 +261,45 @@ public sealed class FileRemotePathTests : IAsyncLifetime
         finally { release.TrySetResult(); }
         _remoteWriting = null;
         Assert.NotEqual(JsonValueKind.Null, Result(await CallAsync(bulk, 9, "read", $$"""{"target":{{target}}}""")).GetProperty("revision").ValueKind);
+    }
+
+    [Fact]
+    public async Task A_second_target_call_during_a_staged_upload_leaves_the_upload_alive()
+    {
+        using var bulk = await OpenAsync(bulk: true);
+        var target = $$$"""{"path":"{{{Target}}}","machine":"{{{Remote}}}"}""";
+        var upload = await StagedAsync(bulk, target, "new");
+        Assert.Equal("old", Result(await CallAsync(bulk, 8, "read", $$"""{"target":{{target}}}""")).GetProperty("content").GetString());
+        Assert.Equal("saved", Result(await CallAsync(bulk, 9, "commitSave", $$"""{"upload":"{{upload}}"}""")).GetProperty("state").GetString());
+        Assert.Equal("new", await File.ReadAllTextAsync(Target));
+    }
+
+    /// <summary>Call A captured its owner before a reconnect and reaches the routes after it, when call B has already opened
+    /// the live route and begun an upload. A can't time that through the socket, so it goes to the route step directly.</summary>
+    [Fact]
+    public async Task A_call_holding_the_old_connection_is_refused_and_leaves_the_live_route_s_upload_alive()
+    {
+        var old = await _hosts.Connections.CaptureProjectOwnerAsync(Remote, default);
+        await ReconnectAsync();
+        var call = new CallContext(CancellationToken.None, "live", Peer: new OwnerPeer());
+        var begun = await _routes.Invoke("beginSave",
+            new BeginSave(null, null, await FileSave.RevisionAsync(Target, default), 3, Target: new PathTarget(Target, Remote)),
+            FilesJson.Default.BeginSave, FilesJson.Default.BegunSave, call, bulk: true, write: true);
+        Assert.True(begun.Forwarded);
+        var upload = begun.Result.Upload;
+        await _routes.Invoke("saveChunk", new SaveChunk(upload, 0, Encoding.UTF8.GetBytes("new")),
+            FilesJson.Default.SaveChunk, FilesJson.Default.UploadAccepted, call, bulk: true, write: true);
+
+        var refused = Assert.Throws<CallFailed>(() => _routes.TargetRoute("live", old, CancellationToken.None));
+        Assert.Equal("project_owner_changed", refused.Reason);
+        Assert.Equal("workbox-test's connection changed. Reopen the file.", refused.Message);
+
+        var saved = await _routes.Invoke("commitSave", new CommitSave(upload),
+            FilesJson.Default.CommitSave, FilesJson.Default.SaveResult, call, bulk: true, write: true);
+        Assert.True(saved.Forwarded);
+        Assert.Equal("saved", saved.Result.State);
+        Assert.Equal("new", await File.ReadAllTextAsync(Target));
+        _routes.Close("live");
     }
 
     [Fact]
