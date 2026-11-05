@@ -566,13 +566,16 @@ fn checked_words(machine: &Machine) -> Option<String> {
 /// Where the machine is, how it answered, then its backend and what's behind, all as information.
 pub(crate) fn row_status(machine: &Machine, reached: &str, status: &str) -> String {
     let mut parts = vec![reached.to_string(), status.to_string()];
-    parts.extend(machine.backend_note());
-    parts.extend(
-        machine
-            .updates
-            .iter()
-            .filter_map(crate::features::remote_install::updates::newer_words),
-    );
+    // What a machine that isn't answering last said about its versions may no longer be true.
+    if machine.reachable {
+        parts.extend(machine.backend_note());
+        parts.extend(
+            machine
+                .updates
+                .iter()
+                .filter_map(crate::features::remote_install::updates::newer_words),
+        );
+    }
     let behind: Vec<&str> = machine.behind().map(|item| item.name.as_str()).collect();
     if machine.updating {
         parts.push(
@@ -583,10 +586,12 @@ pub(crate) fn row_status(machine: &Machine, reached: &str, status: &str) -> Stri
         );
     } else if let Some(note) = &machine.update_note {
         parts.push(note.clone());
-    } else if !behind.is_empty() {
-        parts.push(format!("{} behind", behind.join(", ")));
-    } else {
-        parts.extend(checked_words(machine));
+    } else if machine.reachable {
+        if behind.is_empty() {
+            parts.extend(checked_words(machine));
+        } else {
+            parts.push(format!("{} behind", behind.join(", ")));
+        }
     }
     parts.join(" · ")
 }

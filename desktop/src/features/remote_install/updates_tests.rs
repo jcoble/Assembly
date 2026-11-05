@@ -119,3 +119,39 @@ fn the_row_shows_the_commit_and_what_is_behind_as_information() {
         "host · Connected · Waiting."
     );
 }
+
+// With nothing there to ask, "same as this app" and "Nothing is behind" were only what it last said; a real card said
+// them after the install had been removed.
+#[test]
+fn a_machine_that_did_not_answer_claims_no_versions_but_keeps_its_note() {
+    let offline = |extra: serde_json::Value| {
+        let mut value = json!({"name":"box","kind":"remote","reachable":false,"reason":"didn't answer","checked":true,
+            "backend":{"commit":"a1b2c3d4e5","localCommit":"a1b2c3d4e5","differs":false},
+            "updates":[{"kind":"adapter","name":"codex-acp","current":"1.0.0","wanted":"1.1.0","state":"behind"}]});
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        machine(value)
+    };
+    assert_eq!(
+        row_status(&offline(json!({})), "host", "Offline"),
+        "host · Offline"
+    );
+    assert_eq!(
+        row_status(
+            &offline(json!({"updateNote":"Install failed: no."})),
+            "host",
+            "Offline"
+        ),
+        "host · Offline · Install failed: no."
+    );
+    assert_eq!(
+        row_status(
+            &offline(json!({"updating":true,"updateNote":"Sending…"})),
+            "host",
+            "Offline"
+        ),
+        "host · Offline · Sending…"
+    );
+}
