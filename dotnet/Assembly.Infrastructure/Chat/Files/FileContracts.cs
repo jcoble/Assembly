@@ -3,6 +3,7 @@ using Assembly.Application.Features.Chat.SourceControl;
 
 namespace Assembly.Infrastructure.Chat.Files;
 
+public sealed record PathTarget(string Path, string? Machine = null, string? InsideOf = null);
 public sealed record FileFault(string Code, string Message);
 public sealed record SaveResult(string State, string? Revision, FileFault? Error);
 public sealed record BeginSave(string Session, string Path, string ExpectedRevision, long Size, string? RelayScope = null, ExpectedSource? ExpectedSource = null, FileOwnership? ExpectedOwner = null);

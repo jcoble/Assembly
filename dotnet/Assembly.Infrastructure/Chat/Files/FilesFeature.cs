@@ -145,6 +145,7 @@ internal sealed partial class FilesFeature(SessionStore sessions, FileOwner owne
 [JsonSerializable(typeof(FileActionArgs))]
 [JsonSerializable(typeof(ActionResult))]
 [JsonSerializable(typeof(FileOwnership))]
+[JsonSerializable(typeof(PathTarget))]
 [JsonSerializable(typeof(ObserveRoot))]
 [JsonSerializable(typeof(UnobserveRoot))]
 [JsonSerializable(typeof(ObservedRoot))]
