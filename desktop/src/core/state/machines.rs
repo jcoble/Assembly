@@ -37,6 +37,24 @@ impl Machines {
             .map(|state| state.0.clone())
     }
 
+    /// A list holding `items`, that follows nothing, for a view's tests.
+    #[cfg(test)]
+    pub fn start_holding(items: Vec<(String, Value)>, cx: &mut App) {
+        let state = cx.new(|_| Self {
+            machines: Vec::new(),
+            _feed: Task::ready(()),
+        });
+        cx.set_global(GlobalMachines(state));
+        Self::change_holding(items, cx);
+    }
+
+    /// Replaces a held list, as the topic's state does.
+    #[cfg(test)]
+    pub fn change_holding(items: Vec<(String, Value)>, cx: &mut App) {
+        let state = Self::try_global(cx).expect("a held list");
+        state.update(cx, |machines, cx| machines.apply(Update::State(items), cx));
+    }
+
     /// Subscribes to the `machines` topic.
     pub fn new(cx: &mut Context<Self>) -> Self {
         let mut subscription = SocketClient::global(cx).read(cx).subscribe(TOPIC, None);

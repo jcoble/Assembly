@@ -471,6 +471,9 @@ mod navigation_switch_tests;
 #[path = "navigation/test_navigation.rs"]
 pub(crate) mod test_navigation;
 
+#[cfg(test)]
+#[path = "navigation/deep_link_session_tests.rs"]
+mod deep_link_session_tests;
 #[path = "navigation/pane_reconnect.rs"]
 mod reconnect;
 #[cfg(test)]

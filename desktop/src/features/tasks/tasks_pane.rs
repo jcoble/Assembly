@@ -304,6 +304,8 @@ pub fn handle_external(route: ExternalRoute, cx: &mut App) {
             let url = format!("assembly://task/{page_id}");
             TasksPane::in_window(cx, move |pane, window, cx| pane.open_link(&url, window, cx));
         }
+        ExternalRoute::Session { .. } | ExternalRoute::Open { .. } | ExternalRoute::File { .. } => {
+        }
         ExternalRoute::Unsupported => {
             if let Some(window) = cx
                 .active_window()

@@ -38,5 +38,8 @@ fn is_web_page(address: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "open_url_links_tests.rs"]
+mod links_tests;
+#[cfg(test)]
 #[path = "open_url_tests.rs"]
 mod tests;

@@ -199,5 +199,8 @@ impl RenderOnce for SessionRow {
 }
 
 #[cfg(test)]
+#[path = "session_row_menu_tests.rs"]
+mod menu_tests;
+#[cfg(test)]
 #[path = "session_row_tests.rs"]
 mod tests;

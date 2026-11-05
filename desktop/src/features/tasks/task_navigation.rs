@@ -35,6 +35,14 @@ pub struct RouteContext {
     pub source: Option<String>,
 }
 
+/// Whether a link `route_url` refused is one to hand on to the app's link handling, and as what.
+pub fn passes_on(
+    _address: &str,
+    _refused: RouteRefused,
+) -> Option<crate::core::navigation::external_urls::ExternalRoute> {
+    None
+}
+
 pub fn route_url(address: &str, context: &RouteContext) -> Result<TaskRoute, RouteRefused> {
     if address.chars().any(|c| c.is_control() || c.is_whitespace()) {
         return Err(RouteRefused::Unsupported);

@@ -16,8 +16,24 @@ pub const MAX_URL_BYTES: usize = 8 * 1024;
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum ExternalRoute {
-    NotionOAuth { state: String, claim_code: String },
-    Task { page_id: String },
+    NotionOAuth {
+        state: String,
+        claim_code: String,
+    },
+    Task {
+        page_id: String,
+    },
+    Session {
+        id: String,
+        machine: Option<String>,
+    },
+    Open {
+        url: String,
+    },
+    File {
+        path: String,
+        machine: Option<String>,
+    },
     Unsupported,
 }
 
@@ -26,6 +42,9 @@ impl fmt::Debug for ExternalRoute {
         match self {
             Self::NotionOAuth { .. } => formatter.write_str("NotionOAuth"),
             Self::Task { page_id } => write!(formatter, "Task({page_id})"),
+            Self::Session { id, machine } => write!(formatter, "Session({id}, {machine:?})"),
+            Self::Open { url } => write!(formatter, "Open({url})"),
+            Self::File { path, machine } => write!(formatter, "File({path}, {machine:?})"),
             Self::Unsupported => formatter.write_str("Unsupported"),
         }
     }
@@ -72,6 +91,16 @@ pub fn parse_external(address: &str) -> ExternalRoute {
             }),
         _ => ExternalRoute::Unsupported,
     }
+}
+
+/// A link from the system: as `parse_external`, and a `file:` URL is a file on this machine.
+pub fn parse_incoming(address: &str) -> ExternalRoute {
+    parse_external(address)
+}
+
+/// The link that opens this session.
+pub fn session_link(_id: &str, _machine: Option<&str>) -> String {
+    String::new()
 }
 
 /// Exactly one state and one code, each present and non-empty.

@@ -135,3 +135,15 @@ fn another_connection_drops_what_the_old_one_showed(cx: &mut TestAppContext) {
     });
     assert_eq!((rows, detail, drawn), (0, false, 0));
 }
+
+// Spec section 6: a task page hands on what `route_url` refuses but the app accepts.
+#[gpui::test]
+fn an_open_link_on_a_task_page_goes_where_web_links_go(cx: &mut TestAppContext) {
+    let (pane, cx) = open(cx);
+    cx.update(|_, cx| crate::core::intents::open_url::register(cx));
+    pane.update_in(cx, |pane, window, cx| {
+        pane.open_link("assembly://open?url=https%3A%2F%2Fa.test%2Fb", window, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.opened_url().as_deref(), Some("https://a.test/b"));
+}

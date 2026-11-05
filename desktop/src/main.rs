@@ -105,7 +105,7 @@ fn main() {
             })
             .expect("open the window");
             cx.activate(true);
-            external_urls.start(features::tasks::tasks_pane::handle_external, cx);
+            external_urls.start(core::navigation::deep_links::handle_route, cx);
         });
     });
 }
