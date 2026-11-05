@@ -43,6 +43,15 @@ fn a_combining_mark_stays_with_its_cell() {
 }
 
 #[test]
+fn a_multi_codepoint_character_stays_in_one_cell() {
+    // A heart with its emoji selector, and a letter with two marks: three characters over two cells.
+    let runs = first_line("\u{2764}\u{fe0f}e\u{301}\u{323}x".as_bytes());
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "\u{2764}\u{fe0f}e\u{301}\u{323}x ");
+    assert_eq!(runs[0].columns, 4);
+}
+
+#[test]
 fn a_run_breaks_where_the_style_changes() {
     for (code, look) in [
         ("3", (|run| run.italic) as fn(&super::Run) -> bool),

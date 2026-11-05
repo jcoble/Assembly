@@ -143,6 +143,21 @@ async fn selecting_copies_when_the_button_comes_up(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn selecting_and_copying_work_after_exit(cx: &mut TestAppContext) {
+    let mut open = printed(cx, "hello world").await;
+    open.push_row(json!({"seq": 12, "prevSeq": 11, "exit": 7}));
+    let shown = open.pane.read_with(open.cx, |pane, _| match pane.shown {
+        super::Shown::Exited(code) => super::Shown::Exited(code),
+        _ => super::Shown::Nothing,
+    });
+    assert_eq!(shown, super::Shown::Exited(7));
+    let (from, to) = (at(&mut open, 0.2, 0.5), at(&mut open, 4.8, 0.5));
+    drag(&mut open, from, to);
+    assert_eq!(selection(&mut open).as_deref(), Some("hello"));
+    assert_eq!(clipboard(&mut open).as_deref(), Some("hello"));
+}
+
+#[gpui::test]
 async fn a_plain_click_copies_nothing(cx: &mut TestAppContext) {
     let mut open = printed(cx, "hello world").await;
     // A drag does copy, so the click below isn't quiet only because nothing ever copies.

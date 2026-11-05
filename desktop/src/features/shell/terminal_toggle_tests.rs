@@ -1,14 +1,32 @@
 //! The Terminal's button in the top row and its item in the "..." menu, in a real frame's dock.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
 use gpui_kit::component::dock::{DockPlacement, PaneRef};
-use gpui_kit::{Entity, Modifiers, VisualTestContext};
+use gpui_kit::{App, Entity, Modifiers, Task, VisualTestContext, Window, px, size};
 use serde_json::{Value, json};
 
 use super::default_layout::{LAYOUT_VERSION, PROBLEMS, TERMINAL};
 use super::frame::Frame;
 use super::frame_tests::{dump, open};
+use super::layout_store::WriteLayout;
+use super::placeholder_pane::PlaceholderPane;
 use super::terminal_toggle::{TerminalPress, press_terminal, terminal_showing};
+use crate::core::socket::client::SocketClient;
+use crate::core::socket::endpoint::Endpoint;
+use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
+use crate::core::socket::test_wait::until;
+use crate::core::state::selected_session::SelectedSession;
+use crate::core::state::workspace_panes::{PaneCodec, WorkspaceKey, WorkspacePanes};
+use crate::features::terminal::terminal_pane::TerminalPane;
+use crate::features::workspaces::workspace_coordinator::{
+    WorkspaceActivated, WorkspaceCoordinator, WorkspaceSaved, WorkspaceTarget,
+};
 use DockPlacement::{Bottom, Center, Right};
 
 /// The pane a dock shows, by name, from its saved form.
@@ -261,6 +279,144 @@ fn the_menu_item_does_the_same_and_its_check_means_showing(cx: &mut TestAppConte
     press_menu_item(cx);
     assert_eq!(bottom(&frame, cx).0, false, "showing: shuts the dock");
     assert!(!showing(&frame, cx));
+}
+
+#[gpui::test]
+fn the_highlight_clears_when_problems_is_clicked(cx: &mut TestAppContext) {
+    let (frame, _, cx) = open(None, cx);
+    toggle_bottom(&frame, cx);
+    select(&frame, Bottom, TERMINAL, cx);
+    // The button's highlight is `terminal_showing`, so it's pinned through that, as the menu's check mark is.
+    assert!(showing(&frame, cx), "the Terminal is showing");
+    let problems = cx
+        .debug_bounds("dock-tab-0")
+        .expect("the bottom dock's first tab");
+    cx.simulate_click(problems.center(), Modifiers::none());
+    draw(cx);
+    assert_eq!(bottom(&frame, cx), (true, json!(PROBLEMS)));
+    assert!(!showing(&frame, cx), "Problems took the dock");
+}
+
+/// The workspace's panes, which capture a value the test sets.
+struct Captured(Rc<RefCell<Value>>);
+
+impl PaneCodec for Captured {
+    fn name(&self) -> &'static str {
+        "files"
+    }
+    fn capture(&self, _: &Window, _: &App) -> Result<Value, String> {
+        Ok(self.0.borrow().clone())
+    }
+    fn validate(&self, _: &Value, _: &WorkspaceKey, _: &Value, _: &App) -> Result<(), String> {
+        Ok(())
+    }
+    fn restore(&self, _: &Value, _: &mut Window, _: &mut App) {}
+}
+
+#[gpui::test]
+async fn the_button_tells_the_workspace_the_layout_changed(cx: &mut TestAppContext) {
+    let saves = Arc::new(AtomicUsize::new(0));
+    let counted = saves.clone();
+    let backend = FakeBackend::start(move |frame| {
+        if let Some(reply) = hello(frame) {
+            return reply;
+        }
+        if frame["t"] != "call" {
+            return Vec::new();
+        }
+        let result = match frame["method"] == "save" {
+            true => json!({"revision": counted.fetch_add(1, Ordering::SeqCst) + 1}),
+            false => json!({"revision": 0, "snapshot": null}),
+        };
+        vec![Reply::Frame(
+            json!({"t": "result", "id": frame["id"], "result": result}),
+        )]
+    });
+    cx.executor().allow_parking();
+    let (_frame, _, cx) = open(None, cx);
+    let live = Rc::new(RefCell::new(json!({"files": []})));
+    let coordinator = cx.update(|_, cx| {
+        let endpoint = Endpoint {
+            port: backend.port,
+            token: "secret".into(),
+        };
+        SocketClient::start_bulk(endpoint, cx);
+        WorkspacePanes::register(Box::new(Captured(live.clone())), cx).unwrap();
+        WorkspaceCoordinator::init(cx)
+    });
+    let (changed, mut changes) = unbounded();
+    let tell = changed.clone();
+    let _activated = cx.update(|_, cx| {
+        cx.subscribe(&coordinator, move |_, _: &WorkspaceActivated, _| {
+            _ = tell.unbounded_send(());
+        })
+    });
+    let key = WorkspaceKey {
+        machine: "this-machine".into(),
+        session_id: "s".into(),
+        checkout_root: "/a".into(),
+    };
+    cx.update(|window, cx| {
+        coordinator.update(cx, |view, cx| {
+            view.request(
+                WorkspaceTarget::Checkout(key),
+                Box::new(|_, _, _| Ok(())),
+                window,
+                cx,
+            );
+        })
+    });
+    changes.recv().await.unwrap();
+    assert_eq!(saves.load(Ordering::SeqCst), 0);
+    let tell = changed.clone();
+    let _saved = cx.update(|_, cx| {
+        cx.subscribe(&coordinator, move |_, _: &WorkspaceSaved, _| {
+            _ = tell.unbounded_send(());
+        })
+    });
+    *live.borrow_mut() = json!({"files": [], "activePath": "changed since the last save"});
+    press_button(cx);
+    until("the workspace saved", &mut changes, &changed, || {
+        saves.load(Ordering::SeqCst) == 1
+    })
+    .await;
+}
+
+#[gpui::test]
+fn the_real_pane_takes_the_focus_when_opened(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        SelectedSession::init(cx);
+        PlaceholderPane::register_all(cx);
+        TerminalPane::register(cx);
+    });
+    let write: WriteLayout = Box::new(|_, _| Task::ready(()));
+    let (frame, cx) =
+        cx.add_window_view(|window, cx| Frame::new(Task::ready(None), write, window, cx));
+    cx.simulate_resize(size(px(1400.), px(900.)));
+    press_button(cx);
+    let (real, focused) = cx.update(|window, cx| {
+        let area = frame.read(cx).dock().read(cx);
+        let mut pane = None;
+        area.layout(Bottom)
+            .expect("the bottom dock")
+            .root()
+            .walk(&mut |node| {
+                if let PaneRef::Tabs { panels, .. } = node.kind() {
+                    for id in panels.iter() {
+                        let panel = area.panel(*id).filter(|panel| panel.panel_name(cx) == TERMINAL);
+                        pane = pane.take().or(panel.cloned());
+                    }
+                }
+            });
+        let pane = pane.expect("the Terminal is in the bottom dock");
+        (
+            pane.view().downcast::<TerminalPane>().is_ok(),
+            pane.focus_handle(cx).contains_focused(window, cx),
+        )
+    });
+    assert!(real, "the dock built the real pane, not a placeholder");
+    assert!(focused, "the pane is ready to type");
 }
 
 #[gpui::test]

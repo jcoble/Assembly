@@ -233,6 +233,56 @@ public sealed class RemoteTerminalFollowTests
         Assert.Equal("source_changed", failure.Reason);
     }
 
+    [Fact]
+    public async Task A_main_socket_reconnect_on_the_same_engine_recovers_followers()
+    {
+        await using var f = await Fixture.Start();
+        var rows = new System.Collections.Concurrent.ConcurrentQueue<TerminalUnavailable>();
+        var lost = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var viewer = f.Hosts.Mac.Topics.Subscribe("terminal", f.Id, _ => { }, (_, json) =>
+        {
+            var row = JsonSerializer.Deserialize(json, TerminalJson.Default.OutputRow)!;
+            if (row.Unavailable is { } unavailable)
+            {
+                rows.Enqueue(unavailable);
+                if (unavailable == TerminalUnavailable.ConnectionLost) lost.TrySetResult();
+            }
+            if (row.Data is { } bytes && Encoding.UTF8.GetString(bytes).Contains("after the reconnect")) recovered.TrySetResult();
+        });
+        await f.Routed.ReadAsync(f.Id, 0, default);
+        var engine = f.Hosts.Remote.Runtime.Machine;
+        var binding = await f.Hosts.ConnectedMachine.CaptureOwnerBindingAsync(engine, default);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var blocked = 0;
+        f.OwnerCalls.Reading = async ct =>
+        {
+            if (Interlocked.Exchange(ref blocked, 1) != 0) return;
+            entered.TrySetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+        };
+        var pending = f.Routed.ReadAsync(f.Id, 0, default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var connections = f.Hosts.Remote.TerminalConnections;
+
+        // The same engine answers again, but every main socket open invalidates the owner binding.
+        f.Hosts.Remote.Endpoint.DropAll();
+
+        var failure = await Assert.ThrowsAsync<CallFailed>(() => pending.WaitAsync(TimeSpan.FromSeconds(15)));
+        await lost.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        f.RemotePty.Started[0].Emit("after the reconnect"u8.ToArray());
+        await recovered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.True(binding.IsInvalidated, "the main socket didn't reconnect, so this proved nothing");
+        Assert.Equal(engine, f.Hosts.Remote.Runtime.Machine);
+        Assert.True(f.Hosts.Remote.TerminalConnections > connections, "the terminal socket didn't reconnect");
+        Assert.DoesNotContain(TerminalUnavailable.SourceChanged, rows);
+        Assert.NotEmpty((await f.Routed.ReadAsync(f.Id, 0, default).WaitAsync(TimeSpan.FromSeconds(10))).Data);
+        Assert.Single(f.RemotePty.Started);
+        Assert.Equal(0, f.OwnerCalls.Starts);
+        Assert.Equal("connection_lost", failure.Reason);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         internal readonly TwoHosts Hosts = new();

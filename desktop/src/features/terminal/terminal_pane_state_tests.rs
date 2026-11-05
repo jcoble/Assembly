@@ -473,6 +473,74 @@ async fn switching_sessions_during_an_outage(cx: &mut TestAppContext) {
     assert_eq!(open.count("list"), lists, "an open pane opened again");
 }
 
+impl Open<'_> {
+    /// Waits `seconds` on the test clock: no `list` a moment before, and exactly one more, from `owner`, by then.
+    async fn retried_after(&mut self, seconds: u64, owner: &str) {
+        let lists = self.count("list");
+        self.advance(seconds * 1000 - 1);
+        assert_eq!(self.count("list"), lists, "too soon, before {seconds} s");
+        self.advance(1);
+        let wanted = lists + 1;
+        self.until("the retry failed", |terminals, pane| {
+            terminals.of("list").len() >= wanted && pane.shown == Shown::Reconnecting
+        })
+        .await;
+        let list = self.terminals.lock().unwrap().of("list");
+        assert_eq!(list.len(), wanted, "more than one retry after {seconds} s");
+        assert_eq!(list[wanted - 1]["owner"], owner);
+    }
+}
+
+// Spec section 4, no push can come: the machine isn't offline and the window's socket is connected.
+#[gpui::test]
+async fn a_dead_link_retries_with_backoff_only_while_showing(cx: &mut TestAppContext) {
+    let mut open = showing(
+        cx,
+        "hello",
+        vec![json!({"key": "Workbox Test", "item": machine(true)})],
+    )
+    .await;
+    open.start_machines().await;
+    open.refuse("list", "unreachable", "Workbox Test didn't answer");
+    pick("b", open.cx);
+    open.settled().await;
+    open.assert_stopped(Shown::Reconnecting, RECONNECTING, false, "");
+    for seconds in [1, 2, 5, 5, 5] {
+        open.retried_after(seconds, "b").await;
+    }
+
+    // Hidden: nothing more, however long.
+    open.shown(false);
+    open.cx.run_until_parked();
+    let lists = open.count("list");
+    open.advance(60_000);
+    assert_eq!(open.count("list"), lists, "it retried while hidden");
+
+    // Shown again with the link back: it opens, and that's the last of the retries.
+    open.allow("list");
+    open.shown(true);
+    open.until("the shell opened", |_, pane| {
+        following(pane) && pane.grid.text() == "hello"
+    })
+    .await;
+    let lists = open.count("list");
+    open.advance(60_000);
+    assert_eq!(open.count("list"), lists, "it retried once open");
+
+    // Another session: its own retries start over, and the old one's are gone.
+    open.refuse("list", "unreachable", "Workbox Test didn't answer");
+    open.shown(false);
+    open.shown(true);
+    open.settled().await;
+    open.retried_after(1, "b").await;
+    open.advance(1500);
+    pick("a", open.cx);
+    open.settled().await;
+    for seconds in [1, 2] {
+        open.retried_after(seconds, "a").await;
+    }
+}
+
 #[gpui::test]
 async fn folder_missing_fills_the_pane_with_the_backends_message(cx: &mut TestAppContext) {
     let why = "The session's folder /gone isn't available.";
