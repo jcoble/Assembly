@@ -70,22 +70,29 @@ function assertions(source: string): Map<string, string[]> {
   }
   return result;
 }
+// The tests whose assertions are not all still there, unchanged, in the same test.
+export function changedAssertions(before: string, after: string): string[] {
+  const names: string[] = [], kept = assertions(after);
+  for (const [name, values] of assertions(before)) {
+    const remaining = [...(kept.get(name) ?? [])];
+    let changed = false;
+    for (const value of values) {
+      const index = remaining.indexOf(value);
+      if (index < 0) changed = true; else remaining.splice(index, 1);
+    }
+    if (changed) names.push(name);
+  }
+  return names;
+}
 export function violations(changes: Change[], message: string): string[] {
   const errors: string[] = [], tests = changes.filter(change => (isTest(change.path) || Boolean(change.previousPath && isTest(change.previousPath))));
   const production = changes.some(change => !isTest(change.path) && !/^(?:docs\/|evidence\/|scripts\/|\.githooks\/|\.github\/|\.claude\/|\.codex\/)|\.(?:md|mdx)$/.test(change.path));
   const tokens = message.split('\n').map(line => line.trim());
   if (tests.length && !production && !tokens.some(line => /^TEST-CHANGE:\s*\S/.test(line))) errors.push('Test-only changes require TEST-CHANGE: <reason>.');
   for (const change of tests) {
-    const before = assertions(change.before), after = assertions(change.after);
-    for (const [name, values] of before) {
-      const remaining = [...(after.get(name) ?? [])];
-      let changed = false;
-      for (const value of values) {
-        const index = remaining.indexOf(value);
-        if (index < 0) changed = true; else remaining.splice(index, 1);
-      }
+    for (const name of changedAssertions(change.before, change.after)) {
       const prefix = 'TEST-CHANGE: ' + name + ':';
-      if (changed && !tokens.some(line => line.startsWith(prefix) && line.slice(prefix.length).trim())) errors.push(change.path + ': changed/removed assertion in ' + name + '; add ' + prefix + ' <reason and governing contract>.');
+      if (!tokens.some(line => line.startsWith(prefix) && line.slice(prefix.length).trim())) errors.push(change.path + ': changed/removed assertion in ' + name + '; add ' + prefix + ' <reason and governing contract>.');
     }
   }
   return errors;

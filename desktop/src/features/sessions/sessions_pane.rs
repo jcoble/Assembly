@@ -481,13 +481,22 @@ fn needs_words(needs: usize) -> Option<String> {
 
 /// Says why a row didn't open. A row on another machine is refused as `source_changed` when that machine can't be
 /// reached, which reads as nonsense to someone who only clicked a row, so it names the machine instead.
-fn refusal_words(route: Option<&str>, error: &crate::core::engine::EngineRefusal) -> String {
+pub(crate) fn refusal_words(
+    route: Option<&str>,
+    error: &crate::core::engine::EngineRefusal,
+) -> String {
     match route {
-        Some(machine) if error.code == "source_changed" => {
-            format!("That session is on {machine}, which this app isn't connected to.")
-        }
+        _ if error.code == "unknown_engine_session" => NOT_FOUND.into(),
+        Some(machine) if error.code == "source_changed" => not_connected(machine),
         _ => format!("That session didn't open: {}", error.message),
     }
+}
+
+const NOT_FOUND: &str = "That session wasn't found. It may have been removed, or the link may be wrong; check the Sessions list.";
+
+/// A session on `machine`, which this app can't reach or doesn't have.
+pub(crate) fn not_connected(machine: &str) -> String {
+    format!("That session is on {machine}, which this app isn't connected to.")
 }
 
 #[cfg(test)]

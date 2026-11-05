@@ -76,7 +76,7 @@ fn main() {
             .expect("one workspace registry after concrete pane registration");
         let (read_layout, write_layout) = start_backend(cx);
         PaletteView::init(cx);
-        core::intents::open_url::register(cx);
+        core::navigation::open_url_handler::register(cx);
         features::settings::init(cx);
         features::remote_install::init(cx);
         features::meter::start_if_on(cx);
@@ -105,7 +105,7 @@ fn main() {
             })
             .expect("open the window");
             cx.activate(true);
-            external_urls.start(features::tasks::tasks_pane::handle_external, cx);
+            external_urls.start(core::navigation::deep_links::handle_route, cx);
         });
     });
 }

@@ -10,14 +10,39 @@ use std::rc::Rc;
 
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui_kit::*;
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
+
+use crate::core::intents::open_url::is_web_page;
 
 pub const MAX_QUEUED: usize = 32;
 pub const MAX_URL_BYTES: usize = 8 * 1024;
+/// Everything in a link's id or machine is encoded except what a URL leaves alone anyway.
+const LINK_VALUE: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum ExternalRoute {
-    NotionOAuth { state: String, claim_code: String },
-    Task { page_id: String },
+    NotionOAuth {
+        state: String,
+        claim_code: String,
+    },
+    Task {
+        page_id: String,
+    },
+    Session {
+        id: String,
+        machine: Option<String>,
+    },
+    Open {
+        url: String,
+    },
+    File {
+        path: String,
+        machine: Option<String>,
+    },
     Unsupported,
 }
 
@@ -26,6 +51,9 @@ impl fmt::Debug for ExternalRoute {
         match self {
             Self::NotionOAuth { .. } => formatter.write_str("NotionOAuth"),
             Self::Task { page_id } => write!(formatter, "Task({page_id})"),
+            Self::Session { id, machine } => write!(formatter, "Session({id}, {machine:?})"),
+            Self::Open { url } => write!(formatter, "Open({url})"),
+            Self::File { path, machine } => write!(formatter, "File({path}, {machine:?})"),
             Self::Unsupported => formatter.write_str("Unsupported"),
         }
     }
@@ -70,8 +98,126 @@ pub fn parse_external(address: &str) -> ExternalRoute {
             .map_or(ExternalRoute::Unsupported, |page_id| ExternalRoute::Task {
                 page_id,
             }),
-        _ => ExternalRoute::Unsupported,
+        _ => exact_link(address).unwrap_or(ExternalRoute::Unsupported),
     }
+}
+
+/// A link from the system: as `parse_external`, and a `file:` URL is a file on this machine.
+pub fn parse_incoming(address: &str) -> ExternalRoute {
+    match address.strip_prefix("file:///") {
+        Some(path) if is_bare_text(address) => {
+            file_url_route(path).unwrap_or(ExternalRoute::Unsupported)
+        }
+        Some(_) => ExternalRoute::Unsupported,
+        None => parse_external(address),
+    }
+}
+
+/// The link that opens this session.
+pub fn session_link(id: &str, machine: Option<&str>) -> String {
+    let id = utf8_percent_encode(id, LINK_VALUE);
+    match machine {
+        Some(machine) => format!(
+            "assembly://session/{id}?profile={}",
+            utf8_percent_encode(machine, LINK_VALUE)
+        ),
+        None => format!("assembly://session/{id}"),
+    }
+}
+
+/// The session, open and file shapes, read from the link's own text: `url::Url` cleans up dot segments, ports, empty
+/// credentials, case and spare separators, so what it hands back isn't what the link says.
+fn exact_link(address: &str) -> Option<ExternalRoute> {
+    let rest = address
+        .strip_prefix("assembly://")
+        .filter(|_| is_bare_text(address))?;
+    let (target, query) = match rest.split_once('?') {
+        Some((target, query)) => (target, Some(query)),
+        None => (rest, None),
+    };
+    match target {
+        "open" | "open/" => open_route(query),
+        "file" | "file/" => file_route(query),
+        _ => session_route(target.strip_prefix("session/")?, query),
+    }
+}
+
+/// No whitespace, control character or fragment anywhere in the raw text.
+fn is_bare_text(address: &str) -> bool {
+    !address
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || c == '#')
+}
+
+fn session_route(segment: &str, query: Option<&str>) -> Option<ExternalRoute> {
+    let id = decoded(segment)
+        .filter(|id| !id.is_empty() && !id.contains('/') && id != "." && id != "..")?;
+    let [machine] = query_values(query, ["profile"])?;
+    Some(ExternalRoute::Session { id, machine })
+}
+
+fn open_route(query: Option<&str>) -> Option<ExternalRoute> {
+    let [address] = query_values(query, ["url"])?;
+    let address = address?;
+    is_web_page(&address).then_some(ExternalRoute::Open { url: address })
+}
+
+fn file_route(query: Option<&str>) -> Option<ExternalRoute> {
+    let [path, machine] = query_values(query, ["path", "profile"])?;
+    let path = path?;
+    is_clean_path(&path).then_some(ExternalRoute::File { path, machine })
+}
+
+/// What follows `file:///`. No query or backslash, and each component is written out: an encoded slash would add one.
+fn file_url_route(text: &str) -> Option<ExternalRoute> {
+    if text.contains(['?', '\\']) {
+        return None;
+    }
+    let path = decoded(text)?;
+    if path.split('/').count() != text.split('/').count() || path.split('/').any(str::is_empty) {
+        return None;
+    }
+    let path = format!("/{path}");
+    is_clean_path(&path).then_some(ExternalRoute::File {
+        path,
+        machine: None,
+    })
+}
+
+/// Absolute, with no `.` or `..` component.
+fn is_clean_path(path: &str) -> bool {
+    path.starts_with('/') && !path.split('/').any(|part| part == "." || part == "..")
+}
+
+/// The value of each key, in the order asked. Each key comes at most once, spelled exactly, with a non-empty value. A
+/// query holding anything else is refused, even an empty pair.
+fn query_values<const N: usize>(
+    query: Option<&str>,
+    keys: [&str; N],
+) -> Option<[Option<String>; N]> {
+    let mut values = [const { None }; N];
+    let Some(query) = query else {
+        return Some(values);
+    };
+    for pair in query.split('&') {
+        let (key, value) = pair.split_once('=')?;
+        let at = keys.iter().position(|known| *known == key)?;
+        if values[at].is_some() || value.is_empty() {
+            return None;
+        }
+        values[at] = Some(decoded(value)?);
+    }
+    Some(values)
+}
+
+/// Percent-decoded, and only escapes decode: a `+` stays a `+`. Bytes that aren't UTF-8, or a control character, are
+/// refused.
+fn decoded(text: &str) -> Option<String> {
+    percent_decode_str(text)
+        .decode_utf8()
+        .ok()
+        .filter(|value| !value.contains(char::is_control))
+        .map(|value| value.into_owned())
 }
 
 /// Exactly one state and one code, each present and non-empty.
@@ -141,7 +287,7 @@ impl ExternalUrls {
             loop {
                 cx.update(|cx| {
                     for url in urls.take() {
-                        handle(parse_external(&url), cx);
+                        handle(parse_incoming(&url), cx);
                     }
                 });
                 if woken.recv().await.is_err() {

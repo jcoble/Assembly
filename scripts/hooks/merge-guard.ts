@@ -16,12 +16,19 @@ export function blocked(command: string, branch: string): string | undefined {
   if ((branch === 'main' || branch === 'master' || selectedDefault) && new RegExp(anchor + git + 'merge\\b').test(command)) return 'local merge into the default branch';
   return undefined;
 }
+// Outside a repository there's no current branch. Refusing there would lock the shell out of every command, even the cd back.
+function currentBranch(): string {
+  try {
+    return execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    return '';
+  }
+}
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   let input = ''; for await (const chunk of process.stdin) input += chunk;
   try {
     const payload = JSON.parse(input), command = payload.tool_input?.command ?? payload.tool_input?.cmd ?? '';
-    const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim();
-    const reason = blocked(command, branch);
+    const reason = blocked(command, currentBranch());
     if (reason) { process.stderr.write('Blocked: ' + reason + '. Owner permission is required for a merge.\n'); process.exitCode = 2; }
   } catch (error) { process.stderr.write('Merge guard could not validate input: ' + String(error) + '\n'); process.exitCode = 2; }
 }
