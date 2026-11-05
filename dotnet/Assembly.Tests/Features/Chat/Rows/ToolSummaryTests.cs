@@ -47,6 +47,22 @@ public sealed class ToolSummaryTests
     }
 
     [Fact]
+    public void A_leading_dot_slash_is_dropped_when_joining_and_dot_dot_is_left_alone()
+    {
+        Assert.Equal("/repo/src/a.rs", ToolSummary.Path(Input("""{"file_path":"./src/a.rs","workdir":"/repo"}""")));
+        Assert.Equal("/repo/src/a.rs", ToolSummary.Path(Input("""{"file_path":"././src/a.rs","workdir":"/repo"}""")));
+        Assert.Equal("/repo/../a.rs", ToolSummary.Path(Input("""{"file_path":"../a.rs","workdir":"/repo"}""")));
+        Assert.Equal("./src/a.rs", ToolSummary.Path(Input("""{"file_path":"./src/a.rs"}""")));
+    }
+
+    [Fact]
+    public void A_relative_folder_leaves_the_path_unchanged()
+    {
+        Assert.Equal("src/a.rs", ToolSummary.Path(Input("""{"file_path":"src/a.rs","workdir":"sub"}""")));
+        Assert.Equal("src/a.rs", ToolSummary.Path(Input("""{"file_path":"src/a.rs","workdir":"sub","cwd":"/repo"}""")));
+    }
+
+    [Fact]
     public void A_diff_path_joins_the_call_s_workdir_too()
     {
         var input = Input("""{"command":["apply_patch"],"workdir":"/repo/other"}""");

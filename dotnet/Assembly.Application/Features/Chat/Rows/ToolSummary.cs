@@ -38,14 +38,24 @@ internal static class ToolSummary
         return null;
     }
 
-    /// <summary>A relative path joined onto the call's own <c>workdir</c>, else its <c>cwd</c>; anything else is unchanged.</summary>
+    /// <summary>
+    /// A relative path joined onto the call's own <c>workdir</c>, else its <c>cwd</c>, when that folder is absolute; a leading
+    /// <c>./</c> is dropped because a path with a <c>.</c> component can't be opened. Anything else is unchanged.
+    /// </summary>
     public static string? InFolder(string? path, JsonElement? input)
     {
         if (path is null || System.IO.Path.IsPathRooted(path) || path.StartsWith('~') || input is not { ValueKind: JsonValueKind.Object } fields)
             return path;
         foreach (var key in (string[])["workdir", "cwd"])
-            if (fields.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } folder)
-                return System.IO.Path.Join(folder, path);
+        {
+            if (!fields.TryGetProperty(key, out var value) || value.ValueKind != JsonValueKind.String || value.GetString() is not { Length: > 0 } folder)
+                continue;
+            if (!System.IO.Path.IsPathRooted(folder))
+                return path;
+            while (path.StartsWith("./", StringComparison.Ordinal))
+                path = path[2..];
+            return System.IO.Path.Join(folder, path);
+        }
         return path;
     }
 }
