@@ -68,6 +68,8 @@ public static class PromptPaths
     private static IEnumerable<string> Words(string text)
     {
         var start = -1;
+        // True until the word has a character that can't open it, so a quote never rescans what came before it.
+        var opening = false;
         for (var i = 0; i < text.Length; i++)
         {
             if (char.IsWhiteSpace(text[i]))
@@ -76,9 +78,14 @@ public static class PromptPaths
                 start = -1;
                 continue;
             }
-            if (start < 0) start = i;
-            if (text[i] == '"' && text[start..i].All(c => Leading.Contains(c)) && ClosingQuote(text, i) is { } close)
+            if (start < 0) (start, opening) = (i, true);
+            if (opening && text[i] == '"' && ClosingQuote(text, i) is { } close)
+            {
                 i = close;
+                opening = false;
+            }
+            else
+                opening = opening && Leading.Contains(text[i]);
         }
         if (start >= 0) yield return text[start..];
     }

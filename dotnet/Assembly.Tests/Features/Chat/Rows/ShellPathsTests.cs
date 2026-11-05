@@ -190,6 +190,7 @@ public sealed class ShellPathsTests
     [InlineData("echo hi >&2", "")]
     [InlineData("echo hi 2>&1", "")]
     [InlineData("cat <&3", "")]
+    [InlineData("cat <&in.txt", "in.txt")]
     // Heredocs and here-strings.
     [InlineData("cat <<-EOF\n\tcat ignored.md\n\tEOF\ncat after.md", "after.md")]
     [InlineData("cat <<< notes.md", "")]

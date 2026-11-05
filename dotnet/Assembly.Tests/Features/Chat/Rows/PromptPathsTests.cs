@@ -104,4 +104,16 @@ public sealed class PromptPathsTests
     [Fact]
     public void Punctuation_around_a_quoted_path_goes_and_the_group_holds() =>
         Assert.Equal(["/my docs/a.md"], PromptPaths.Of("see (\"/my docs/a.md\"), ok").Named);
+
+    // These two read in one pass; a copy per quote would hang the run here.
+    [Fact]
+    public void A_megabyte_of_minified_json_reads_and_the_path_after_it_is_named()
+    {
+        var json = "{" + string.Concat(Enumerable.Repeat("\"key\":\"value\",", 70_000)) + "}";
+        Assert.Equal(["/real/path.md"], PromptPaths.Of($"{json} see /real/path.md").Named);
+    }
+
+    [Fact]
+    public void A_megabyte_of_quotes_reads_and_the_path_after_it_is_named() =>
+        Assert.Equal(["/real/path.md"], PromptPaths.Of($"{new string('"', 1_000_000)} see /real/path.md").Named);
 }
