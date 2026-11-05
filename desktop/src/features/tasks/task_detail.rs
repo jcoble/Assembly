@@ -21,6 +21,8 @@ use super::task_properties::{choice_of, other_properties, title_of};
 use super::tasks_state::TaskDetail;
 use super::tasks_view::{priority_tone, status_tone};
 
+#[path = "task_images.rs"]
+mod images;
 #[path = "task_detail_rows.rs"]
 mod rows;
 
@@ -78,6 +80,7 @@ pub struct TaskDetailView {
     pub(super) list: ListState,
     pub(super) focus: FocusHandle,
     pub(super) saves: Vec<Task<()>>,
+    images: images::ImageQueue,
     _heard: Vec<Subscription>,
 }
 
@@ -133,6 +136,8 @@ impl TaskDetailView {
             )
         });
         let add_text = cx.new(|cx| InlineField::multiline("Add text", "", window, cx));
+        Self::hand_pasted_pictures_to_page(&title, cx);
+        Self::hand_pasted_pictures_to_page(&add_text, cx);
         let property_saved = |name: &'static str| {
             move |view: &mut Self,
                   field: &Entity<InlineField>,
@@ -175,8 +180,20 @@ impl TaskDetailView {
             list: ListState::new(2, ListAlignment::Top, px(600.)),
             focus: cx.focus_handle(),
             saves: Vec::new(),
+            images: images::ImageQueue::default(),
             _heard: heard,
         }
+    }
+
+    /// A picture pasted into a text box goes on the page, as one pasted anywhere else does.
+    fn hand_pasted_pictures_to_page(field: &Entity<InlineField>, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
+        field.update(cx, |field, _| {
+            field.take_pastes(move |item, window, cx| {
+                view.update(cx, |view, cx| view.paste_item(item, window, cx))
+                    .unwrap_or(false)
+            });
+        });
     }
 
     /// A field can change height as it opens, shuts or wraps.
@@ -238,6 +255,9 @@ impl TaskDetailView {
         self.comments = detail.comments.iter().map(comment).collect();
         self.comments_unavailable = detail.comments_unavailable;
         self.rebuild_rows();
+        if self.images.take_reveal() {
+            self.list.scroll_to_reveal_item(self.rows.len());
+        }
         self.checking = None;
         if self
             .editor
@@ -374,6 +394,7 @@ impl TaskDetailView {
         let (id, kind, checked) = (row.id.clone(), row.kind.clone(), row.checked);
         let field =
             cx.new(|cx| InlineField::multiline("Edit block", row.plain.clone(), window, cx));
+        Self::hand_pasted_pictures_to_page(&field, cx);
         let saved = cx.subscribe_in(
             &field,
             window,

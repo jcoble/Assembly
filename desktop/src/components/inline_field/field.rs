@@ -68,13 +68,19 @@ pub struct InlineField {
     rules: Vec<FieldRule>,
     mode: SaveMode,
     read_only: bool,
+    /// Offered each paste into a multi-line box first; `true` means it took it.
+    pastes: Option<PasteHandler>,
     /// The form this field is in has sent it.
     saving: bool,
     _heard: Vec<Subscription>,
 }
 impl EventEmitter<SaveRequested> for InlineField {}
+pub(crate) type PasteHandler = Rc<dyn Fn(&ClipboardItem, &mut Window, &mut App) -> bool>;
 #[cfg(test)]
 impl InlineField {
+    pub(crate) fn pastes_for_test(&self) -> PasteHandler {
+        self.pastes.clone().expect("the field takes pastes")
+    }
     /// A pick from the choice's menu, without opening it.
     pub fn pick_for_test(&mut self, value: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.edit(window, cx);
@@ -177,6 +183,7 @@ impl InlineField {
             rules: Vec::new(),
             mode: SaveMode::Single,
             read_only: false,
+            pastes: None,
             saving: false,
             _heard: std::iter::once(left)
                 .chain(Self::hear(&editor, window, cx))
@@ -269,6 +276,13 @@ impl InlineField {
     }
     pub fn editing(&self) -> bool {
         self.state.editing()
+    }
+    /// Offers each paste into a multi-line box to `pastes` first, which answers `true` if it took it.
+    pub fn take_pastes(
+        &mut self,
+        pastes: impl Fn(&ClipboardItem, &mut Window, &mut App) -> bool + 'static,
+    ) {
+        self.pastes = Some(Rc::new(pastes));
     }
     /// Sets an authoritative external value. An open draft stays intact; older save receipts become stale.
     pub fn set_committed(
@@ -485,6 +499,7 @@ impl Render for InlineField {
                 disabled,
                 role_size(TextRole::Body, cx),
                 cx.entity().downgrade(),
+                self.pastes.clone(),
             )
         } else if self.read_only || self.mode == SaveMode::Form {
             self.display_element(cx)

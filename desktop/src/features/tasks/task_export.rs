@@ -162,10 +162,6 @@ pub struct NotionRefreshReceipt {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[expect(
-    dead_code,
-    reason = "No pane uploads task images yet, and no test calls these."
-)]
 pub struct NotionImageLease {
     pub upload_id: String,
     pub chunk_bytes: i32,

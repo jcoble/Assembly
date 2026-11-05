@@ -188,10 +188,6 @@ impl NotionClient {
             cx,
         )
     }
-    #[expect(
-        dead_code,
-        reason = "No pane uploads task images yet, and no test calls these."
-    )]
     pub fn image_begin(
         &self,
         source: NotionTaskRef,
@@ -206,10 +202,6 @@ impl NotionClient {
             cx,
         )
     }
-    #[expect(
-        dead_code,
-        reason = "No pane uploads task images yet, and no test calls these."
-    )]
     pub fn image_chunk(
         &self,
         upload_id: String,
@@ -224,10 +216,6 @@ impl NotionClient {
             cx,
         )
     }
-    #[expect(
-        dead_code,
-        reason = "No pane uploads task images yet, and no test calls these."
-    )]
     pub fn image_commit(
         &self,
         upload_id: String,
@@ -235,10 +223,6 @@ impl NotionClient {
     ) -> Task<Result<NotionEditReceipt, NotionError>> {
         self.call("imageCommit", json!({"uploadId":upload_id}), true, cx)
     }
-    #[expect(
-        dead_code,
-        reason = "No pane uploads task images yet, and no test calls these."
-    )]
     pub fn image_drop(
         &self,
         upload_id: String,

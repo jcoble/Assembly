@@ -422,6 +422,11 @@ pub fn error_text(code: &str) -> String {
         "notion_too_large" => "That's too large to read or save here.".into(),
         "notion_connection_changed" => "The Notion connection changed. Try again.".into(),
         "cancelled" => "The call was cancelled.".into(),
+        "unsupported_image_type" | "image_type_mismatch" => {
+            "Notion takes PNG, JPEG, GIF or WebP pictures.".into()
+        }
+        "image_too_large" => "That picture is over Notion's 20 MB limit.".into(),
+        "upload_capacity" => "Too many pictures are on their way. Try again shortly.".into(),
         other => format!("Notion reported a problem: {other}"),
     }
 }

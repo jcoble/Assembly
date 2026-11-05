@@ -238,7 +238,7 @@ impl TaskDetailView {
             .into_any_element()
     }
 
-    fn foot(&self, cx: &App) -> AnyElement {
+    fn foot(&self, cx: &mut Context<Self>) -> AnyElement {
         let mut comments =
             ActivitySection::new("task-comments", "Comments").count(self.comments.len());
         if self.comments_unavailable {
@@ -265,6 +265,16 @@ impl TaskDetailView {
             .pt_3()
             .pb_6()
             .child(self.add_text.clone())
+            .child(
+                Button::new("task-add-image")
+                    .control(ids::task::ADD_IMAGE, "Add image")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Plus)
+                    .label("Add image")
+                    .tooltip("Add an image to the end of this page, or paste one anywhere on it")
+                    .on_click(cx.listener(|view, _, window, cx| view.pick_images(window, cx))),
+            )
             .child(comments)
             .into_any_element()
     }
@@ -304,10 +314,17 @@ impl Render for TaskDetailView {
             .size_full()
             .min_h_0()
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape" && !view.any_editing(cx) {
+            .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
+                let keys = &event.keystroke;
+                if keys.key == "escape" && !view.any_editing(cx) {
                     cx.emit(TaskDetailEvent::Back);
                     cx.stop_propagation();
+                } else if keys.key == "v" && keys.modifiers.secondary(cx) && !keys.modifiers.shift {
+                    // A text box takes its own paste before this; here the focus is on the page.
+                    let item = cx.read_from_clipboard();
+                    if item.is_some_and(|item| view.paste_item(&item, window, cx)) {
+                        cx.stop_propagation();
+                    }
                 }
             }))
             .child(
@@ -329,6 +346,22 @@ impl Render for TaskDetailView {
                             .text_color(muted)
                             .child(self.seed.project.clone()),
                     )
+                    .when_some(self.images.failure.clone(), |bar, failure| {
+                        bar.child(
+                            div()
+                                .text_role(TextRole::Meta, cx)
+                                .text_color(cx.theme().danger)
+                                .child(failure),
+                        )
+                    })
+                    .when(self.images.sending(), |bar| {
+                        bar.child(
+                            div()
+                                .text_role(TextRole::Meta, cx)
+                                .text_color(muted)
+                                .child("Adding picture…"),
+                        )
+                    })
                     .child(open),
             )
             .child(

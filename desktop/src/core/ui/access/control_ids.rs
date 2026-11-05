@@ -85,6 +85,7 @@ ids! {
     }
     task {
         BACK = "task.back",
+        ADD_IMAGE = "task.add_image",
         OPEN = "task.open",
     }
     tasks {

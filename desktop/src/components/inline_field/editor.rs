@@ -1,4 +1,4 @@
-use super::field::{FieldValue, InlineField};
+use super::field::{FieldValue, InlineField, PasteHandler};
 use super::kinds::TextShape;
 use crate::activity::{StatusChip, Tone};
 use crate::core::ui::access::Named as _;
@@ -217,6 +217,7 @@ impl Editor {
         disabled: bool,
         size: Size,
         field: WeakEntity<InlineField>,
+        pastes: Option<PasteHandler>,
     ) -> AnyElement {
         match self {
             Self::Chip { options } => {
@@ -242,6 +243,9 @@ impl Editor {
                 .with_size(size)
                 .w_full()
                 .disabled(disabled)
+                .when_some(pastes, |area, pastes| {
+                    area.on_paste(move |item, window, cx| pastes(item, window, cx))
+                })
                 .into_any_element(),
             Self::Date(state) => DatePicker::new(state)
                 .with_size(size)
