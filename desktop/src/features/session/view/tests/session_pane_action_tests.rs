@@ -551,9 +551,8 @@ fn answering_an_approval_live_lets_the_composer_go(cx: &mut TestAppContext) {
         row(seq, "ask", Some("ask:a1"), payload)
     };
     let (pane, client, cx) = opened(vec![user(1, "go"), ask(2, "open")], cx);
-    let locked = |cx: &mut VisualTestContext| {
-        cx.update(|_, cx| pane.read(cx).composer.read(cx).locked())
-    };
+    let locked =
+        |cx: &mut VisualTestContext| cx.update(|_, cx| pane.read(cx).composer.read(cx).locked());
     assert_eq!(locked(cx), Some(Lock::Approval));
     live(&client, ask(3, "answered"), cx);
     assert_eq!(locked(cx), None);
