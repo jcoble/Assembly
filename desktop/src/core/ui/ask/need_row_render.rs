@@ -1,6 +1,6 @@
 //! `NeedRow`'s render: the need's title, detail, answer controls and its working, failed or settled state.
 use super::*;
-use crate::core::ui::ask::answer_words::{answered_words, choice_words};
+use crate::core::ui::ask::answer_words::{answered_words, choice_words, picked_words};
 
 /// A gate is decided, not dismissed (the engine refuses it), so it gets no Dismiss.
 fn dismiss(allowed: bool, cx: &mut Context<NeedRow>) -> Option<impl IntoElement> {
@@ -91,6 +91,10 @@ impl Render for NeedRow {
                         .answer_text
                         .as_deref()
                         .map(answered_words)
+                        .or_else(|| {
+                            let options = &self.need.presentation.as_ref()?.options;
+                            picked_words(answer, options)
+                        })
                         .unwrap_or_else(|| {
                             AskForm::shown(
                                 self.need

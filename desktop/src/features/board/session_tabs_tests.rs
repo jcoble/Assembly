@@ -47,9 +47,9 @@ fn chip_prefers_question_count() {
     let running = session(json!({"state":"running"}));
     assert_eq!(
         row_chip(&running, 1, 0),
-        ("1 question".to_owned(), Tone::Warning)
+        ("1 needs you".to_owned(), Tone::Warning)
     );
-    assert_eq!(row_chip(&running, 2, 0).0, "2 questions");
+    assert_eq!(row_chip(&running, 2, 0).0, "2 need you");
     assert_eq!(row_chip(&running, 0, 0), ("Working".to_owned(), Tone::Info));
     assert_eq!(
         row_chip(&session(json!({"state":"lost"})), 0, 0),

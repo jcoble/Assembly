@@ -63,3 +63,10 @@ pub fn choice_words(option: &NeedOption) -> String {
 pub fn answered_words(answer: &str) -> String {
     id_words(answer).map_or_else(|| answer.to_owned(), str::to_owned)
 }
+
+/// A provider option's answer, `{ "optionId": .. }`, as the words of the option it picked.
+pub fn picked_words(answer: &serde_json::Value, options: &[NeedOption]) -> Option<String> {
+    let id = answer.get("optionId")?.as_str()?;
+    let option = options.iter().find(|option| option.id == id);
+    Some(option.map_or_else(|| answered_words(id), choice_words))
+}

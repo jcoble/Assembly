@@ -43,18 +43,10 @@ pub fn row_chip(
     open_owner_questions: usize,
     stopped_steps: usize,
 ) -> (String, Tone) {
-    if stopped_steps > 0 {
-        return (
-            super::board_sections::heading(open_owner_questions + stopped_steps),
-            Tone::Warning,
-        );
-    }
-    if open_owner_questions > 0 {
-        let plural = if open_owner_questions == 1 { "" } else { "s" };
-        return (
-            format!("{open_owner_questions} question{plural}"),
-            Tone::Warning,
-        );
+    // An approval is waiting too, so the chip doesn't call everything a question.
+    let needs = open_owner_questions + stopped_steps;
+    if needs > 0 {
+        return (super::board_sections::heading(needs), Tone::Warning);
     }
     match session.state.as_str() {
         "running" | "starting" => ("Working".into(), Tone::Info),
