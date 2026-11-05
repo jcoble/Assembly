@@ -346,3 +346,41 @@ async fn several_files_at_once_all_open(cx: &mut TestAppContext) {
     let paths: Vec<_> = h.opened().into_iter().map(|open| open.path).collect();
     assert_eq!(paths, ["one.cs", "two.cs", "three.cs"]);
 }
+
+#[gpui::test]
+async fn files_open_in_the_order_they_came_whatever_order_the_answers_come(
+    cx: &mut TestAppContext,
+) {
+    let mut h = harness(cx);
+    h.connect();
+    h.select("s1", None);
+    h.owner.lock().unwrap().hold = true;
+    h.link("/work/a/one.cs", None).await;
+    h.owner.lock().unwrap().hold = false;
+    h.link("/work/a/two.cs", None).await;
+    assert!(h.opened().is_empty(), "two waits for one");
+    h.flush("release").await;
+    h.flush("ping").await;
+    let paths: Vec<_> = h.opened().into_iter().map(|open| open.path).collect();
+    assert_eq!(paths, ["one.cs", "two.cs"]);
+}
+
+#[gpui::test]
+async fn a_changed_selection_drops_every_link_it_catches(cx: &mut TestAppContext) {
+    let mut h = harness(cx);
+    h.connect();
+    h.select("s1", None);
+    h.owner.lock().unwrap().hold = true;
+    h.link("/work/a/one.cs", None).await;
+    h.owner.lock().unwrap().hold = false;
+    h.link("/work/a/two.cs", None).await;
+    h.select("s2", None);
+    h.link("/work/a/three.cs", None).await;
+    h.flush("release").await;
+    h.flush("ping").await;
+    let opened = h.opened();
+    assert_eq!(opened.len(), 1);
+    assert_eq!(opened[0].session_id, "s2");
+    assert_eq!(opened[0].path, "three.cs");
+    assert_eq!(h.shown(), Vec::<String>::new());
+}

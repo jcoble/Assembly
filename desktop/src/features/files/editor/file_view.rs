@@ -533,5 +533,8 @@ fn key(session: &str, path: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "open_file_intent_tests.rs"]
+mod open_file_intent_tests;
+#[cfg(test)]
 #[path = "file_view_source_tests.rs"]
 mod source_tests;
