@@ -44,6 +44,18 @@ public sealed class MachineOfflineSinceTests
     }
 
     [Fact]
+    public void Editing_the_machines_profile_keeps_the_time()
+    {
+        var status = Status();
+        status.Unreachable("box", "down");
+        _time.Advance(TimeSpan.FromMinutes(5));
+        status.Profile(new SavedMachine("box", "box", 9797, "token"));
+        Assert.Equal(1000, Box(status).OfflineSinceMs);
+        status.Unreachable("box", "still down");
+        Assert.Equal(1000, Box(status).OfflineSinceMs);
+    }
+
+    [Fact]
     public void A_probe_scope_records_it_on_the_list_the_window_reads()
     {
         var status = Status();

@@ -128,7 +128,8 @@ public static partial class ReviewTransitions
             """, r => r.Text(0), new SqlArg("$run", target.Run), new("$target", c.EntityId));
         var previous = previousJson is null ? [] : Findings(s, JsonSerializer.Deserialize(previousJson, ReviewTransitionJson.Default.RedoApplied)!.FindingReceiptIds);
         var allowance = AdditionalRoundAllowance(s, target, c.EntityId, receipts, outputReceipt);
-        // The round limit stops a loop nobody is watching. An owner asking for another round is the one it would stop for.
+        // The round limit stops a loop nobody is watching. An owner asking for another round is the one it would stop for,
+        // and it doesn't spend the rounds a reviewer has.
         var ownerAsked = requests.Any(request => request.SourceKind == GateRevisionSource);
         if (!ownerAsked && allowance.Grant is null && ReviewRounds.ShouldPause(previous, current, target.Round, allowance.Max))
         {
@@ -145,11 +146,11 @@ public static partial class ReviewTransitions
         foreach (var row in affected)
         {
             s.Execute("""
-                UPDATE engine_step SET generation=generation+1,round=round+1,attempt_in_generation=0,state=CASE WHEN state='skipped' THEN 'skipped' ELSE 'pending' END,
+                UPDATE engine_step SET generation=generation+1,round=round+$rounds,attempt_in_generation=0,state=CASE WHEN state='skipped' THEN 'skipped' ELSE 'pending' END,
                   dispatch_state=CASE WHEN state='skipped' THEN 'settled' ELSE 'pending' END,
                   session_id=CASE WHEN kind='review' THEN NULL ELSE session_id END,receipt_id=NULL,outcome_reason=NULL,
                   ended_ms=NULL,version=version+1,updated_ms=$now WHERE id=$step;
-                """, new("$now", c.NowMs), new("$step", row.StepId));
+                """, new("$now", c.NowMs), new("$step", row.StepId), new("$rounds", ownerAsked ? 0 : 1));
         }
         History(s, c, target.Run, c.EntityId, null, target.Generation, "redo_applied",
             JsonSerializer.Serialize(new RedoApplied(c.EntityId, target.Generation, receipts, outputReceipt), ReviewTransitionJson.Default.RedoApplied));

@@ -76,7 +76,10 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes, T
     public void Profile(SavedMachine profile)
     {
         lock (_gate)
-            _items = [.. _items.Where(item => item.Name != profile.Name), MachineStore.Item(profile)];
+            _items = [.. _items.Where(item => item.Name != profile.Name), MachineStore.Item(profile) with
+            {
+                OfflineSinceMs = _items.FirstOrDefault(item => item.Name == profile.Name)?.OfflineSinceMs
+            }];
     }
     public void Remove(string name)
     {

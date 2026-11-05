@@ -11,18 +11,19 @@ internal sealed record WorkflowRedoTemplate(IReadOnlyList<string> Findings, stri
 
 public static partial class ReviewTransitions
 {
-    /// <summary>Projects the consumed immutable redo, including its originating target for downstream steps.</summary>
+    /// <summary>Projects the consumed immutable redo, including its originating target for downstream steps. It's the last
+    /// one over this step, however many generations a retry has moved it on since, as a redo always takes what's after it.</summary>
     internal static WorkflowRedoValues? RedoValues(IReadScope s, string runId, string stepId, int generation)
     {
-        if (generation <= 0) return null;
+        if (generation <= 0 || s.QueryFirst("SELECT generation FROM engine_step WHERE id=$step", r => r.Long(0), new SqlArg("$step", stepId)) < generation) return null;
         var json = s.QueryFirst("""
             WITH RECURSIVE ancestors(id) AS (
               SELECT $step UNION SELECT d.dependency_id FROM engine_step_dependency d JOIN ancestors a ON d.step_id=a.id
             ) SELECT h.safe_body_json FROM engine_workflow_history h
-            WHERE h.run_id=$run AND h.kind='redo_applied' AND h.generation=$previous
+            WHERE h.run_id=$run AND h.kind='redo_applied'
               AND json_extract(h.safe_body_json,'$.targetStepId') IN ancestors
             ORDER BY h.history_seq DESC LIMIT 1
-            """, r => r.Text(0), new SqlArg("$run", runId), new("$step", stepId), new("$previous", generation - 1));
+            """, r => r.Text(0), new SqlArg("$run", runId), new("$step", stepId));
         if (json is null) return null;
         var applied = JsonSerializer.Deserialize(json, ReviewTransitionJson.Default.RedoApplied)!;
         var findings = Findings(s, applied.FindingReceiptIds);

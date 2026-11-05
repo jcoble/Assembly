@@ -11,6 +11,7 @@ use super::{EngineFeed, EngineScope, EngineWatch};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply};
+use crate::core::socket::outcome::Outcome;
 use crate::core::socket::test_wait::until;
 
 pub const MACHINE: &str = "owner";
@@ -81,15 +82,19 @@ fn answer(state: &mut Seeded, frame: &Value) -> Vec<Reply> {
             }
         }
         (Some("call"), Some("engine"), Some("entities")) => {
-            let wanted = frame["args"].to_string();
+            let wanted = frame["args"]["refs"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
             let items = (state.items.iter())
-                .filter(|item| item["id"].as_str().is_some_and(|id| wanted.contains(id)))
+                .filter(|item| wanted.iter().any(|reference| reference["id"] == item["id"]))
                 .cloned()
                 .collect::<Vec<_>>();
             result(json!({"items":items,"next":null}))
         }
         (Some("call"), Some("engine"), Some("usage")) => result(json!({"toolCalls":0})),
         (Some("call"), Some("workflow"), Some("run")) => result(state.run.clone()),
+        (Some("call"), Some("fixture"), Some("barrier")) => result(Value::Null),
         _ => vec![],
     }
 }
@@ -174,6 +179,16 @@ impl TestEngine {
             _watching: watching,
             _watches: watches,
         }
+    }
+
+    /// Answers once the backend has read everything already sent on the socket commands use.
+    pub async fn barrier(&self, cx: &mut gpui_kit::VisualTestContext) {
+        let call = cx.update(|_, cx| {
+            self._sockets[0]
+                .read(cx)
+                .call::<Value>("fixture", "barrier", json!({}), None)
+        });
+        assert!(matches!(call.await, Outcome::Ok(_)));
     }
 
     pub fn commands(&self) -> Vec<Value> {

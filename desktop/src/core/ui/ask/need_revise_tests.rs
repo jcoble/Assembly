@@ -137,12 +137,11 @@ async fn blank_words_send_nothing(cx: &mut TestAppContext) {
     assert!(row.shows("need-send-revision"));
 }
 
-#[gpui::test]
-async fn a_refused_revision_keeps_the_words(cx: &mut TestAppContext) {
+async fn refused(code: &'static str, words: &str, cx: &mut TestAppContext) -> String {
     let mut row = open(gate(&["approve", "revise", "deny"]), cx).await;
-    row.engine.state.lock().unwrap().refusal = Some("revision_target_undefined");
+    row.engine.state.lock().unwrap().refusal = Some(code);
     row.click("need-choice:revise");
-    row.type_text("Try again");
+    row.type_text(words);
     row.click("need-send-revision");
     row.sent(1).await;
     let (changed, held) = (row.engine.changed.clone(), row.row.clone());
@@ -155,16 +154,40 @@ async fn a_refused_revision_keeps_the_words(cx: &mut TestAppContext) {
     let cx = &mut *row.cx;
     until("the refusal", &mut row.engine.changes, &changed, || {
         draw(cx);
-        cx.read(|cx| !matches!(held.read(cx).state, NeedRowState::Sending))
+        cx.read(|cx| {
+            let row = held.read(cx);
+            row.reconciled && !matches!(row.state, NeedRowState::Sending)
+        })
     })
     .await;
-    let words = cx.read(|cx| held.read(cx).text.read(cx).value().to_string());
-    assert_eq!(words, "Try again");
+    assert_eq!(
+        cx.read(|cx| held.read(cx).text.read(cx).value().to_string()),
+        words
+    );
     assert_eq!(
         row.engine.commands().len(),
         1,
         "never sent again on its own"
     );
+    let line = cx.read(|cx| match &held.read(cx).state {
+        NeedRowState::Failed { message } => message.clone(),
+        other => panic!("{other:?}"),
+    });
+    row.click("need-review");
+    assert!(row.shows("need-send-revision"), "the field comes back");
+    line
+}
+
+#[gpui::test]
+async fn another_open_approval_is_said_plainly_and_keeps_the_words(cx: &mut TestAppContext) {
+    let line = refused("other_gate_open", "Try again", cx).await;
+    assert_eq!(line, "Answer the other open approval first.");
+}
+
+#[gpui::test]
+async fn nothing_earlier_to_send_it_to_is_said_plainly(cx: &mut TestAppContext) {
+    let line = refused("revision_target_undefined", "Try again", cx).await;
+    assert_eq!(line, "There's no earlier step to send this back to.");
 }
 
 #[gpui::test]

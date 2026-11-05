@@ -26,13 +26,12 @@ public static partial class ReviewTransitions
     {
         if (generation <= 0 || template.Contains("redo.findings", StringComparison.Ordinal)) return prompt;
         var text = s.QueryFirst("""
-            SELECT json_extract(asked.safe_body_json,'$.text') FROM engine_workflow_history applied
-            JOIN json_each(applied.safe_body_json,'$.findingReceiptIds') id
+            WITH last AS (SELECT safe_body_json FROM engine_workflow_history WHERE run_id=$run AND kind='redo_applied'
+              AND json_extract(safe_body_json,'$.targetStepId')=$step ORDER BY history_seq DESC LIMIT 1)
+            SELECT json_extract(asked.safe_body_json,'$.text') FROM last
+            JOIN json_each(last.safe_body_json,'$.findingReceiptIds') id
             JOIN engine_workflow_history asked ON asked.id=id.value AND asked.kind='gate_revised'
-            WHERE applied.run_id=$run AND applied.kind='redo_applied' AND applied.generation=$previous
-              AND json_extract(applied.safe_body_json,'$.targetStepId')=$step
-            ORDER BY applied.history_seq DESC LIMIT 1
-            """, r => r.Text(0), new SqlArg("$run", run), new("$previous", generation - 1), new("$step", step));
+            """, r => r.Text(0), new SqlArg("$run", run), new("$step", step));
         return text is null ? prompt : prompt + "\n\nThe owner reviewed this at an approval step and asked for a revision:\n" + text;
     }
 }

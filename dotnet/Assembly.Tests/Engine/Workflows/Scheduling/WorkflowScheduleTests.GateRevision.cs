@@ -34,7 +34,7 @@ public sealed partial class WorkflowScheduleTests
             s.Execute("""
                 UPDATE engine_session SET state='ended',provider_session_id='native',version=version+1 WHERE id=$session;
                 INSERT INTO engine_workflow_receipt(id,version,machine,created_ms,updated_ms,run_id,step_id,attempt,generation,session_id,epoch,hash,kind,body_json,state)
-                  VALUES($receipt,1,$machine,1000,1000,$run,$step,$attempt,$generation,$session,0,$receipt,'build','{}','accepted');
+                  VALUES($receipt,1,$machine,1000,1000,$run,$step,$attempt,$generation,$session,(SELECT epoch FROM engine_session WHERE id=$session),$receipt,'build','{}','accepted');
                 UPDATE engine_step_attempt SET state='succeeded',ended_ms=1000,receipt_id=$receipt WHERE step_id=$step AND attempt=$attempt;
                 UPDATE engine_step SET state='succeeded',dispatch_state='settled',receipt_id=$receipt,ended_ms=1000 WHERE id=$step;
                 UPDATE engine_outbox SET state='done';
@@ -105,6 +105,161 @@ public sealed partial class WorkflowScheduleTests
         Assert.NotEqual(need, reopened);
         var approved = Answer(f, reopened, "\"approve\""); Assert.True(approved.Applied, approved.Error);
         Assert.Equal("succeeded", f.Core.Text("SELECT state FROM engine_step WHERE id=$id", new SqlArg("$id", Gate(f))));
+    }
+
+    private const string TwoGatesFlow = """
+        name: Two gates
+        steps:
+          build:
+            agent: {provider: codex, model: selected-model}
+            prompt: prompt.md
+            result: build
+          first:
+            needs: [build]
+            gate: {prompt: First?}
+          second:
+            needs: [build]
+            gate: {prompt: Second?}
+        """;
+
+    private const string GatesInARowFlow = """
+        name: Gates in a row
+        steps:
+          build:
+            agent: {provider: codex, model: selected-model}
+            prompt: prompt.md
+            result: build
+          first:
+            needs: [build]
+            gate: {prompt: First?}
+          second:
+            needs: [first]
+            gate: {prompt: Second?}
+        """;
+
+    private static string NeedOf(Fixture f, string gate) =>
+        f.Core.Text("SELECT n.id FROM engine_needs_me n JOIN engine_step st ON st.id=n.step_id WHERE n.state='open' AND st.definition_key=$key", new SqlArg("$key", gate))!;
+
+    private static int Advance(Fixture f) => new WorkflowAdvancementPreparation(f.Core.Db, f.Commands, f.Core.Machine, f.Core.Time).AdvancePending(default);
+
+    [Fact]
+    public void A_revision_with_another_approval_open_is_refused_and_both_stay_open_until_that_one_is_answered()
+    {
+        using var f = new Fixture(prompt: "Work", yaml: TwoGatesFlow);
+        var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
+        OpenGate(f, 2);
+        var (revised, other) = (NeedOf(f, "first"), NeedOf(f, "second"));
+
+        Assert.Equal("other_gate_open", Answer(f, revised, RevisionOf("Smaller")).Error);
+        Assert.Equal(2, f.Core.Number("SELECT COUNT(*) FROM engine_needs_me WHERE state='open'"));
+        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind IN ('gate_revised','redo_requested')"));
+        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE dispatch_state='redo_pending'"));
+
+        Assert.True(Answer(f, other, "\"approve\"").Applied);
+        var answered = Answer(f, revised, RevisionOf("Smaller")); Assert.True(answered.Applied, answered.Error);
+        Assert.Equal(1, Advance(f));
+        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE state<>'pending'"));
+
+        var second = f.Apply(f.Prepare(3000)); Finish(f, second.SessionId!, 2, 1);
+        OpenGate(f, 2);
+        Assert.Equal(2, f.Core.Number("SELECT COUNT(*) FROM engine_needs_me WHERE state='open'"));
+    }
+
+    [Fact]
+    public void A_later_gate_not_reopened_yet_does_not_stall_a_revision()
+    {
+        using var f = new Fixture(prompt: "Work", yaml: GatesInARowFlow);
+        var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
+        Assert.True(Answer(f, OpenGate(f), "\"approve\"").Applied);
+        Assert.True(Answer(f, OpenGate(f), RevisionOf("One")).Applied);
+        Assert.Equal(1, Advance(f));
+        var second = f.Apply(f.Prepare(3000)); Finish(f, second.SessionId!, 2, 1);
+
+        var answered = Answer(f, OpenGate(f), RevisionOf("Two")); Assert.True(answered.Applied, answered.Error);
+        Assert.Equal(1, Advance(f));
+        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE state<>'pending'"));
+        Assert.Contains("Two", f.Prepare(4000).Body.Prompt);
+    }
+
+    /// <summary>The redone step's worker dies; the owner retries it, which starts another generation of that step alone.</summary>
+    private static void LoseWorkerAndRetry(Fixture f, string session, int attempt, int generation)
+    {
+        Finish(f, session, attempt, generation);
+        f.Core.Db.Writer.Write("test.lose-worker", s => s.Execute(
+            "UPDATE engine_step SET state='waiting',outcome_reason='session_lost',dispatch_state='lost',receipt_id=NULL,ended_ms=NULL WHERE id=$step",
+            new SqlArg("$step", f.Step)));
+        var retried = f.Core.Apply(new RetryWorkflowStep(f.Step), f.Run, f.Core.Number("SELECT version FROM engine_run"));
+        Assert.True(retried.Applied, retried.Error);
+    }
+
+    [Theory]
+    [InlineData("Work", "Work\n\nThe owner reviewed this at an approval step and asked for a revision:\nSmaller schema")]
+    [InlineData("Work ${{redo.findings}}", "Work [\"Smaller schema\"]")]
+    public void The_owners_words_survive_a_retry_of_the_redone_step(string prompt, string expected)
+    {
+        using var f = new Fixture(prompt: prompt, yaml: GatedFlow);
+        var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
+        Assert.True(Answer(f, OpenGate(f), RevisionOf("Smaller schema")).Applied);
+        Assert.Equal(1, Advance(f));
+        var second = f.Apply(f.Prepare(3000)); Assert.True(second.Result.Applied, second.Result.Error);
+
+        LoseWorkerAndRetry(f, second.SessionId!, 2, 1);
+        Assert.Equal(2, f.Core.Number("SELECT generation FROM engine_step WHERE id=$id", new SqlArg("$id", f.Step)));
+        Assert.Equal(expected, f.Prepare(4000).Body.Prompt);
+    }
+
+    [Fact]
+    public void A_failed_agent_step_runs_again_once_it_is_retried()
+    {
+        using var f = new Fixture(prompt: "Work", yaml: GatedFlow);
+        var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
+        f.Core.Db.Writer.Write("test.failed", s => s.Execute(
+            "UPDATE engine_step SET state='failed',dispatch_state='settled',receipt_id=NULL,max_attempts=3 WHERE id=$step",
+            new SqlArg("$step", f.Step)));
+        var retried = f.Core.Apply(new RetryWorkflowStep(f.Step), f.Run, f.Core.Number("SELECT version FROM engine_run"));
+        Assert.True(retried.Applied, retried.Error);
+        Assert.Equal("Work", f.Prepare(2000).Body.Prompt);
+    }
+
+    [Fact]
+    public void A_later_redo_without_the_owners_words_stops_repeating_them()
+    {
+        using var f = new Fixture(prompt: "Work", yaml: GatedFlow);
+        var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
+        Assert.True(Answer(f, OpenGate(f), RevisionOf("Smaller schema")).Applied);
+        Assert.Equal(1, Advance(f));
+        f.Core.Db.Writer.Write("test.later-redo", s => s.Execute("""
+            INSERT INTO engine_workflow_history(id,version,machine,created_ms,updated_ms,run_id,history_seq,step_id,attempt,generation,kind,at_ms,safe_body_json)
+            SELECT 'later',1,$machine,1000,1000,$run,MAX(history_seq)+1,$step,1,1,'redo_applied',1000,json_object('targetStepId',$step,'generation',1,'findingReceiptIds',json_array())
+            FROM engine_workflow_history WHERE run_id=$run;
+            UPDATE engine_step SET generation=2 WHERE id=$step;
+            """, new SqlArg("$machine", f.Core.Machine), new("$run", f.Run), new("$step", f.Step)));
+        Assert.Equal("Work", f.Prepare(3000).Body.Prompt);
+    }
+
+    [Fact]
+    public void An_owners_revision_does_not_use_up_the_reviewers_rounds()
+    {
+        using var f = new Fixture(prompt: "Work", yaml: GatedFlow);
+        var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
+        f.Core.Db.Writer.Write("test.one-round", s => s.Execute("UPDATE engine_run SET max_rounds=1"));
+        Assert.True(Answer(f, OpenGate(f), RevisionOf("One more")).Applied);
+        Assert.Equal(1, Advance(f));
+        Assert.Equal(0, f.Core.Number("SELECT MAX(round) FROM engine_step"));
+
+        // A reviewer's finding now: the one round it has is still there, and it counts.
+        f.Core.Db.Writer.Write("test.reviewer-finding", s => s.Execute("""
+            INSERT INTO engine_workflow_receipt(id,version,machine,created_ms,updated_ms,run_id,step_id,attempt,generation,session_id,epoch,hash,kind,body_json,state)
+              VALUES('found',1,$machine,1000,1000,$run,$step,1,1,NULL,0,'found','review','{"report":{"receipt":{"findings":[{"text":"A finding"}]}}}','accepted');
+            INSERT INTO engine_workflow_history(id,version,machine,created_ms,updated_ms,run_id,history_seq,step_id,attempt,generation,kind,at_ms,safe_body_json)
+              SELECT 'asked',1,$machine,1000,1000,$run,MAX(history_seq)+1,$step,1,1,'redo_requested',1000,
+                json_object('targetStepId',$step,'generation',1,'sourceStepId',$step,'receiptId','found','peerStepIds',json_array(),'sourceKind','review')
+              FROM engine_workflow_history WHERE run_id=$run;
+            UPDATE engine_step SET dispatch_state='redo_pending' WHERE id=$step;
+            """, new SqlArg("$machine", f.Core.Machine), new("$run", f.Run), new("$step", f.Step)));
+        Assert.Equal(1, Advance(f));
+        Assert.Equal(0, f.Core.Number("SELECT paused FROM engine_run"));
+        Assert.Equal(1, f.Core.Number("SELECT round FROM engine_step WHERE id=$id", new SqlArg("$id", f.Step)));
     }
 
     [Fact]

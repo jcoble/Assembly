@@ -187,7 +187,6 @@ pub fn refusal_line(outcome: &Result<CommandReceipt, EngineRefusal>) -> Option<S
             "The step is still stopping. Try again in a moment.".into()
         }
         "required_step" => "This step is required, so it can't be skipped.".into(),
-        "revision_target_undefined" => "There's no earlier step to send this back to.".into(),
         _ => message.unwrap_or_else(|| "The engine refused this.".into()),
     })
 }

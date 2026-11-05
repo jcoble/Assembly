@@ -72,6 +72,12 @@ pub(super) fn failure_state(error: &EngineRefusal) -> NeedRowState {
         "already_resolved" => NeedRowState::Refused {
             reason: error.message.clone(),
         },
+        "other_gate_open" => NeedRowState::Failed {
+            message: "Answer the other open approval first.".into(),
+        },
+        "revision_target_undefined" => NeedRowState::Failed {
+            message: "There's no earlier step to send this back to.".into(),
+        },
         _ => NeedRowState::Failed {
             message: error.message.clone(),
         },

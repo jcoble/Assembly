@@ -363,9 +363,13 @@ async fn an_offline_machine_says_since_when_and_its_rows_controls_send_nothing(
     .await;
     let line = cx.read(|cx| {
         let feed = feed.read(cx);
-        group_heading("Workbox Test", true, offline_since(MACHINE, feed, cx))
+        let since = offline_since(MACHINE, feed, cx);
+        group_heading("Workbox Test", true, since, since.unwrap() - 1)
     });
     assert_eq!(line, "Workbox Test · offline since 14:02");
     card.click("step-action:r:stuck:Retry");
+    // A command would have reached the same socket before this answers.
+    card.engine.barrier(card.cx).await;
     assert!(card.engine.commands().is_empty());
+    assert!(card.cx.read(|cx| card.card.read(cx).action.is_none()));
 }

@@ -26,6 +26,17 @@ public sealed class WorkflowStepRecoveryTests
     private static CommandResult Act(EngineFixture f, string action) => f.Apply(action == "retry"
         ? new RetryWorkflowStep("step") : new DecideWorkflowStep("step", action), "r", f.Number("SELECT version FROM engine_run"));
 
+    /// <summary>An optional step that can't start because the step before it is stuck.</summary>
+    private static EngineFixture BehindStuck(string state, string? reason)
+    {
+        var f = Step("pending", null, required: false);
+        f.SeedStep("before", state: state);
+        f.Db.Writer.Write("test.before", s => s.Execute(
+            "UPDATE engine_step SET kind='agent',outcome_reason=$reason WHERE id='before'; INSERT INTO engine_step_dependency(step_id,dependency_id,optional) VALUES('step','before',0)",
+            new SqlArg("$reason", reason)));
+        return f;
+    }
+
     private static readonly Dictionary<string, (Func<EngineFixture> Make, string[] Offered)> Scenarios = new()
     {
         ["failed with attempts left"] = (() => Step("failed", null, used: 1, max: 2), ["retry"]),
@@ -35,7 +46,8 @@ public sealed class WorkflowStepRecoveryTests
         ["timed out"] = (() => Step("waiting", "timed_out", used: 1), ["retry"]),
         ["waiting on its reviewers"] = (() => Step("waiting", "review_findings", used: 1), []),
         ["running"] = (() => Step("running", null, used: 1), []),
-        ["optional and not started"] = (() => Step("pending", null, required: false), ["skip"]),
+        ["optional behind a failed step"] = (() => BehindStuck("failed", null), ["skip"]),
+        ["optional behind a lost session"] = (() => BehindStuck("waiting", "session_lost"), ["skip"]),
         ["required and not started"] = (() => Step("pending", null), []),
         ["its condition was false"] = (() => Step("pending", "condition_false", skippable: true), ["skip"]),
         ["an optional gate"] = (() => Step("pending", null, kind: "gate", required: false), []),
@@ -58,6 +70,33 @@ public sealed class WorkflowStepRecoveryTests
             using var f = make();
             Assert.Equal(expected.Contains(action), Act(f, action).Applied);
         }
+    }
+
+    [Theory]
+    [InlineData("succeeded", null)]
+    [InlineData("running", null)]
+    [InlineData("waiting", "owner_gate")]
+    public void An_optional_step_with_nothing_stuck_before_it_offers_no_skip(string state, string? reason)
+    {
+        using var f = BehindStuck(state, reason);
+        Assert.Empty(Offered(f));
+    }
+
+    [Fact]
+    public void An_optional_step_is_not_offered_a_skip_just_for_not_having_started()
+    {
+        using var f = Step("pending", null, required: false);
+        Assert.Empty(Offered(f));
+        Assert.True(Act(f, "skip").Applied, "the engine's door stays open to whoever asks, as it always was");
+    }
+
+    [Fact]
+    public void An_optional_gate_is_refused_to_a_window_because_it_is_a_gate()
+    {
+        using var f = Step("pending", null, kind: "gate", required: false);
+        Assert.Empty(Offered(f));
+        Assert.Equal("already_resolved", Act(f, "skip").Error);
+        Assert.Equal("pending", f.State("engine_step", "step"));
     }
 
     [Fact]

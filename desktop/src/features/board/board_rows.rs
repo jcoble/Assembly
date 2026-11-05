@@ -112,6 +112,7 @@ impl BoardPanel {
                     &machine_label(&machine, feed, cx),
                     offline_reason(&machine, feed, cx).is_some(),
                     offline_since(&machine, feed, cx),
+                    super::local_midnight_ms(),
                 );
                 div()
                     .pt_2()

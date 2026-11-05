@@ -12,6 +12,7 @@ use super::board_queries::{
 use crate::core::engine::{EngineFeed, EngineKey};
 use crate::core::socket::client::SocketClient;
 use crate::core::state::machines::Machines;
+use crate::inline_field::DATE_TIME_SHOWN;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Section {
@@ -163,12 +164,16 @@ pub fn entries(sections: &[Section], tab: BoardTab, prefs: &BoardPrefs) -> Vec<E
 
 /// A machine's heading. Its rows stay listed while it's offline, and nothing about it is guessed: a machine that doesn't
 /// say since when is just offline.
-pub fn group_heading(name: &str, offline: bool, since_ms: Option<i64>) -> String {
+pub fn group_heading(name: &str, offline: bool, since_ms: Option<i64>, midnight_ms: i64) -> String {
     if !offline {
         return name.to_owned();
     }
-    match since_ms.and_then(|ms| Local.timestamp_millis_opt(ms).single()) {
-        Some(since) => format!("{name} · offline since {}", since.format("%H:%M")),
+    let since = since_ms.and_then(|ms| Local.timestamp_millis_opt(ms).single().map(|at| (ms, at)));
+    match since {
+        Some((ms, at)) if ms >= midnight_ms => {
+            format!("{name} · offline since {}", at.format("%H:%M"))
+        }
+        Some((_, at)) => format!("{name} · offline since {}", at.format(DATE_TIME_SHOWN)),
         None => format!("{name} · offline"),
     }
 }

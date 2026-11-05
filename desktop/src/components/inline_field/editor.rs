@@ -13,6 +13,9 @@ use gpui_kit::component::{Disableable as _, IndexPath, Sizable as _, Size};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+/// How a date and time reads everywhere one is shown.
+pub const DATE_TIME_SHOWN: &str = "%b %-d, %Y %H:%M";
+
 #[derive(Clone, Debug)]
 pub struct ChoiceOption {
     pub value: String,
@@ -272,7 +275,7 @@ impl Editor {
             }),
             FieldValue::Date(value) => value.map(|date| date.format("%b %-d, %Y").to_string()),
             FieldValue::DateTime(value) => {
-                value.map(|date| date.format("%b %-d, %Y %H:%M").to_string())
+                value.map(|date| date.format(DATE_TIME_SHOWN).to_string())
             }
             FieldValue::Time(value) => Some(value.format("%H:%M:%S").to_string()),
             FieldValue::Choice(value) => match (self, value) {
