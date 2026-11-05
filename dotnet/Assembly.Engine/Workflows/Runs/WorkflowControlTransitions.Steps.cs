@@ -101,8 +101,9 @@ internal static partial class WorkflowControlTransitions
                 var text = ((DecideWorkflowStep)command).Reply!;
                 if (text.Length > 32768) return Refuse("bad_args");
                 // A gate nothing earlier can answer stays open rather than acknowledge and repeat the same question.
-                if (WorkflowGateRevision.Target(s, id!) is not { } target) return Refuse("revision_target_undefined");
-                return Revise(s, c, run, new(id!, step.Version, step.Attempt, step.Generation), new(need.Id, need.Version), target, text);
+                var targets = WorkflowGateRevision.Targets(s, id!);
+                if (targets.Count == 0) return Refuse("revision_target_undefined");
+                return Revise(s, c, run, new(id!, step.Version, step.Attempt, step.Generation), new(need.Id, need.Version), targets, text);
             }
         }
         else if (decision == "skip")
@@ -135,9 +136,9 @@ internal static partial class WorkflowControlTransitions
             UPDATE engine_step_attempt SET state=CASE WHEN $state='pending' THEN 'failed' ELSE $state END,
               reason=$reason,gate_state='settled',ended_ms=$now WHERE step_id=$step AND attempt=$attempt AND state IN ('running','waiting');
             """, new("$state", state), new("$recovery", recovery ? 1 : 0), new("$reason", decision == "skip" ? "condition_false" : decision), new("$now", c.NowMs), new("$step", id), new("$attempt", step.Attempt));
-        List<EventDraft> events = [StepEvent("step.changed", state)];
         if (decision == "retry" && WorkflowBlockedWords.StoppedByProvider(step.Reason))
             s.Execute("UPDATE engine_step SET dispatch_state=$recheck WHERE id=$step", new("$recheck", WorkflowBlockedWords.Recheck), new("$step", id));
+        List<EventDraft> events = [StepEvent("step.changed", state)];
         if (need is not null && decision is "approve" or "deny" or "retry")
         {
             s.Execute("""

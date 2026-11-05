@@ -30,7 +30,7 @@ public static class WorkflowGates
             var c = new CommandContext(Guid.NewGuid(), machine, new(ActorKind.System, "engine.worker"), row.Step, row.Version, row.Epoch, now);
             var id = row.Step + "/gate/" + row.Attempt;
             var text = row.Text.Length > 4096 ? row.Text[..4096] : row.Text;
-            string[] options = WorkflowGateRevision.Target(s, row.Step) is null ? ["approve", "deny"] : ["approve", "revise", "deny"];
+            string[] options = WorkflowGateRevision.Targets(s, row.Step).Count == 0 ? ["approve", "deny"] : ["approve", "revise", "deny"];
             var presentation = NeedPresentationInputs.Normalize(new(row.Owner, row.Run, row.Step, "workflow_gate", text, options, null, null, null));
             var number = NeedPresentationInputs.AllocateNumber(s);
             s.Execute("""

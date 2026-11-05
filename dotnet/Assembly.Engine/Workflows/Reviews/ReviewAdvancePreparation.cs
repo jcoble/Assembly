@@ -35,7 +35,8 @@ public static partial class ReviewTransitions
                 """, r => JsonSerializer.Deserialize(r.Text(0), ReviewTransitionJson.Default.RedoRequest)!,
                 new SqlArg("$run", target.Run), new("$generation", target.Generation), new("$target", c.EntityId));
             if (requests.Count == 0) return Refuse("redo_evidence_missing");
-            var peers = requests.SelectMany(request => request.PeerStepIds).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            // A gate settled itself when it was answered, and another worker's redo may already have reset it: only reviewers are waited for.
+            var peers = requests.Where(request => request.SourceKind != GateRevisionSource).SelectMany(request => request.PeerStepIds).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
             var peerJson = JsonSerializer.Serialize(peers, EngineJson.Default.IReadOnlyListString);
             if (s.QueryFirst("""
                 SELECT COUNT(*) FROM engine_step st WHERE st.id IN (SELECT value FROM json_each($peers))

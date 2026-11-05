@@ -6,7 +6,7 @@ namespace Assembly.Engine.Workflows.Runs;
 
 internal sealed record OpenApproval(string Need, long Version, string Step, int Attempt, int Generation, string Kind);
 
-/// <summary>Who a revision at an approval gate goes to: the nearest earlier step that did the work being approved.</summary>
+/// <summary>Who a revision at an approval gate goes to: the nearest earlier steps that did the work being approved.</summary>
 internal static class WorkflowGateRevision
 {
     /// <summary>The gate's approve or deny as a plain word, or a revision as <c>{"choice":"revise","text":"…"}</c>.</summary>
@@ -24,22 +24,22 @@ internal static class WorkflowGateRevision
         return true;
     }
 
-    /// <summary>The step id a revision of this gate redoes, or null when nothing before it can act on one.</summary>
-    internal static string? Target(IReadScope s, string gateStep)
+    /// <summary>The step ids a revision of this gate redoes, empty when nothing before it can act on one.</summary>
+    internal static IReadOnlyList<string> Targets(IReadScope s, string gateStep)
     {
         var row = s.QueryFirst("""
             SELECT st.run_id,st.definition_key,snap.snapshot_json FROM engine_step st
             JOIN engine_workflow_snapshot snap ON snap.run_id=st.run_id WHERE st.id=$step
             """, r => (Run: r.Text(0), Key: r.IsNull(1) ? null : r.Text(1), Snapshot: r.Text(2)), new SqlArg("$step", gateStep));
-        if (row.Snapshot is null || row.Key is null) return null;
+        if (row.Snapshot is null || row.Key is null) return [];
         var steps = JsonSerializer.Deserialize(row.Snapshot, WorkflowPreparationJson.Default.WorkflowStartBody)?.Snapshot?.Definition?.Steps;
-        if (steps is null) return null;
+        if (steps is null) return [];
         var live = s.Query("SELECT definition_key,id FROM engine_step WHERE run_id=$run AND definition_key IS NOT NULL AND state<>'skipped'",
             r => (Key: r.Text(0), Id: r.Text(1)), new SqlArg("$run", row.Run)).ToDictionary(step => step.Key, step => step.Id);
-        return Nearest(steps, row.Key, live.ContainsKey) is { } key ? live[key] : null;
+        return Workers(steps, row.Key, live.ContainsKey).Select(key => live[key]).ToArray();
     }
 
-    /// <summary>Redoing the target takes everything after it, so an approval still open there no longer asks about the
+    /// <summary>Redoing a target takes everything after it, so an approval still open there no longer asks about the
     /// work it would be approving. These are closed with the revision, and the rerun asks them again.</summary>
     internal static IReadOnlyList<OpenApproval> OpenApprovalsAfter(IReadScope s, string gateStep, string target) => s.Query("""
         WITH RECURSIVE affected(id) AS (
@@ -50,25 +50,34 @@ internal static class WorkflowGateRevision
         """, r => new OpenApproval(r.Text(0), r.Long(1), r.Text(2), checked((int)r.Long(3)), checked((int)r.Long(4)), r.Text(5)),
         new SqlArg("$target", target), new("$gate", gateStep));
 
-    /// <summary>Walks back level by level. Of two steps at one level the later-declared wins, and a review or a failed
-    /// check's own target stands in for it, since those judge the work rather than do it.</summary>
-    internal static string? Nearest(IReadOnlyDictionary<string, WorkflowStepSpec> steps, string gate, Func<string, bool> usable)
+    /// <summary>Walks back along every path into the gate to the first step that did work; a review or a failed check's own
+    /// target stands in for it, since those judge the work rather than do it. A worker that another found worker builds on
+    /// is left out: that one is nearer, and the same as on a single path.</summary>
+    internal static IReadOnlyList<string> Workers(IReadOnlyDictionary<string, WorkflowStepSpec> steps, string gate, Func<string, bool> usable)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        IEnumerable<string> level = Earlier(steps, gate);
-        while (level.Any())
+        var found = new SortedSet<string>(StringComparer.Ordinal);
+        var path = new Stack<string>(Earlier(steps, gate));
+        while (path.TryPop(out var key))
         {
-            List<string> next = [];
-            foreach (var key in level)
-            {
-                if (!seen.Add(key) || !steps.TryGetValue(key, out var spec)) continue;
-                var worker = spec.Kind switch { "agent" => key, "review" => spec.RedoTarget, "command" => spec.OnFail, _ => null };
-                if (worker is not null && usable(worker)) return worker;
-                next.AddRange(Earlier(steps, key));
-            }
-            level = next;
+            if (!seen.Add(key) || !steps.TryGetValue(key, out var spec)) continue;
+            var worker = spec.Kind switch { "agent" => key, "review" => spec.RedoTarget, "command" => spec.OnFail, _ => null };
+            if (worker is not null && usable(worker)) found.Add(worker);
+            else foreach (var earlier in Earlier(steps, key)) path.Push(earlier);
         }
-        return null;
+        return found.Where(worker => !found.Any(other => other != worker && BuildsOn(steps, other, worker))).ToArray();
+    }
+
+    private static bool BuildsOn(IReadOnlyDictionary<string, WorkflowStepSpec> steps, string later, string earlier)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var path = new Stack<string>(Earlier(steps, later));
+        while (path.TryPop(out var key))
+        {
+            if (key == earlier) return true;
+            if (seen.Add(key)) foreach (var next in Earlier(steps, key)) path.Push(next);
+        }
+        return false;
     }
 
     private static IEnumerable<string> Earlier(IReadOnlyDictionary<string, WorkflowStepSpec> steps, string key) =>
