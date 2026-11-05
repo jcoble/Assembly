@@ -138,7 +138,7 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
     private static void Validate(RemoteReleaseRecord record, Asset archive, string version)
     {
         if (record.SchemaVersion != 1 || record.Version != version || record.Target != Target || record.ArchiveFile != archive.Name ||
-            record.Bytes != archive.Size || record.Bytes <= 0 || record.Bytes > MaxArchive || !RemoteInstallPackage.Hex(record.Sha256, 64))
+            record.Bytes != archive.Size || record.Bytes <= 0 || record.Bytes > MaxArchive || !Hex(record.Sha256, 64))
             throw Failure("Signed backend download record does not match this release.", "release_invalid");
         var client = SocketConnection.Protocol;
         if (record.ProtocolVersion < client)
@@ -146,6 +146,8 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
         if (record.ProtocolVersion > client)
             throw Failure($"The latest backend ({record.Version}) requires protocol {record.ProtocolVersion}, but this Assembly uses {client}. Update Assembly before installing this backend.", "protocol_newer");
     }
+
+    internal static bool Hex(string? value, int length) => value?.Length == length && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     private static Asset? Find(Asset[] assets, string name) => assets.FirstOrDefault(asset => asset.Name == name);
 

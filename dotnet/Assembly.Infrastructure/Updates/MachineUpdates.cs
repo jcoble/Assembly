@@ -17,11 +17,36 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     private int _updating;
     private readonly HashSet<string> _started = [];
 
-    public void Register(ICallRegistry calls) => calls.Read("updates", "start", UpdatesJson.Default.InstalledArgs, UpdatesJson.Default.UpdateStarted, (_, call) =>
+    public void Register(ICallRegistry calls)
     {
-        if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
-        return Task.FromResult(new UpdateStarted(Start()));
-    });
+        calls.Read("updates", "start", UpdatesJson.Default.InstalledArgs, UpdatesJson.Default.UpdateStarted, (_, call) =>
+        {
+            if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
+            return Task.FromResult(new UpdateStarted(Start()));
+        });
+        calls.Read("updates", "install", UpdatesJson.Default.InstallArgs, UpdatesJson.Default.UpdateStarted, (args, call) =>
+        {
+            if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
+            return Task.FromResult(new UpdateStarted(Install(args.Machine)));
+        });
+        calls.Read("updates", "check", UpdatesJson.Default.InstallArgs, UpdatesJson.Default.UpdateChecked, async (args, call) =>
+        {
+            if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
+            await CheckNowAsync(args.Machine, call.Cancellation);
+            return new UpdateChecked(true);
+        });
+    }
+
+    /// <summary>
+    /// The same check, because someone asked: it reads the release again rather than what was kept, and an old failure gives
+    /// way to the answer. It installs nothing itself; a remote on an older version updates by itself, as after any check.
+    /// </summary>
+    internal async Task CheckNowAsync(string machine, CancellationToken stop)
+    {
+        if (status.Items.All(item => item.Name != machine)) throw new CallFailed("Unknown remote machine.", "unknown_machine");
+        await CheckAsync(machine, stop, fresh: true);
+        if (Volatile.Read(ref _updating) == 0) status.Updating(machine, false, null);
+    }
 
     /// <summary>The first check, and every remote's check from here on.</summary>
     internal void Begin()
@@ -44,13 +69,13 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         await CheckAsync(machine, stop);
     });
 
-    internal async Task CheckAsync(string? machine, CancellationToken stop)
+    internal async Task CheckAsync(string? machine, CancellationToken stop, bool fresh = false)
     {
-        var wanted = await source.WantedAsync(stop);
+        var wanted = await source.WantedAsync(stop, fresh);
         if (machine is null) { status.Updates(null, UpdateCheck.Local(BackendBuild.Version, await TryRead(async () => await local.ReadAsync(stop)), wanted)); return; }
         var items = UpdateCheck.Remote(status.Items.FirstOrDefault(item => item.Name == machine)?.Backend, await TryRead(() => remote(machine, stop)), wanted);
         status.Updates(machine, items);
-        if (source.StartsRemoteUpdates && items.Any(item => item.Kind == "backend" && item.State == UpdateItem.Behind)) StartBy(machine);
+        if (source.StartsRemoteUpdates(machine) && items.Any(item => item.Kind == "backend" && item.State == UpdateItem.Behind)) StartBy(machine);
     }
 
     // A check that arrives during an update starts nothing: the end of that update checks every machine again.
@@ -68,6 +93,33 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         try { return await read(); }
         catch (Exception error) when (error is CallFailed or IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         { log.WriteLine($"update check: {error.Message}"); return null; }
+    }
+
+    /// <summary>
+    /// A saved machine with no remote gets one, and then it's in the normal rule: its hello is checked like any other's.
+    /// Takes the same one-at-a-time place as an update.
+    /// </summary>
+    internal bool Install(string machine)
+    {
+        if (status.Items.All(item => item.Name != machine)) throw new CallFailed("Unknown remote machine.", "unknown_machine");
+        if (Interlocked.CompareExchange(ref _updating, 1, 0) != 0) return false;
+        work.Start("remote install", async stop =>
+        {
+            string? ending = null;
+            try
+            {
+                status.Updating(machine, true, null);
+                await source.InstallAsync(machine, note => status.Updating(machine, true, note), stop);
+            }
+            catch (CallFailed error) { ending = "Install failed: " + error.Message; }
+            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Install failed: " + error.Message; }
+            finally
+            {
+                Volatile.Write(ref _updating, 0);
+                status.Updating(machine, false, ending);
+            }
+        });
+        return true;
     }
 
     /// <summary>False when an update is already running: it's the same one, so the button joins it.</summary>

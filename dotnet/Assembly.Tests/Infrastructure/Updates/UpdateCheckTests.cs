@@ -122,9 +122,10 @@ public sealed class UpdateCheckTests
 
     private sealed class FakeSource(Func<Action<string>, CancellationToken, Task> update, bool starts = false) : IUpdateSource
     {
-        public Task<UpdateWanted> WantedAsync(CancellationToken ct) => Task.FromResult(Dev());
-        public bool StartsRemoteUpdates => starts;
+        public Task<UpdateWanted> WantedAsync(CancellationToken ct, bool fresh = false) => Task.FromResult(Dev());
+        public bool StartsRemoteUpdates(string machine) => starts;
         public int Automatic;
+        public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct) => update(progress, ct);
         public Task UpdateAsync(IReadOnlyList<MachineBehind> machines, bool automatic, Action<string> progress, CancellationToken ct)
         {
             if (automatic) Interlocked.Increment(ref Automatic);
@@ -238,14 +239,17 @@ public sealed class UpdateCheckTests
         {
             Directory.CreateDirectory(Path.Combine(root, "scripts"));
             File.WriteAllText(Path.Combine(root, "scripts/update-machines.ts"), """
+                import { writeFileSync } from 'node:fs';
+                writeFileSync(new URL('args', import.meta.url), process.argv.slice(2).join(' '));
                 console.log('ASSEMBLY_REMOTE_SYNC ' + JSON.stringify({ reason: 'Waiting.' }));
                 console.error('Workbox Test sync: nope');
                 process.exitCode = 1;
                 """);
             var notes = new List<string>();
-            var source = UpdateSources.ForHost(new HttpClient(), TimeProvider.System, checkout: root);
-            var failed = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync([], false, notes.Add, CancellationToken.None));
+            var source = UpdateSources.ForHost(new HttpClient(), TimeProvider.System, checkout: root, home: root);
+            var failed = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync([new(null, [Item("adapter", "codex-acp")])], false, notes.Add, CancellationToken.None));
             Assert.Equal(["Waiting."], notes);
+            Assert.Equal($"--this-machine --home {root}", File.ReadAllText(Path.Combine(root, "scripts/args")));
             Assert.Equal("Workbox Test sync: nope", failed.Message);
         }
         finally { Directory.Delete(root, true); }
@@ -417,5 +421,78 @@ public sealed class UpdateCheckTests
         Assert.Equal(UpdateItem.Behind, welcome.Status.Items[1].Updates![0].State);
         Assert.Equal(0, source.Automatic);
         Assert.False(welcome.Status.Items[1].Updating);
+    }
+
+    [Fact]
+    public async Task A_dev_button_updates_this_apps_own_home_and_only_the_machines_in_its_settings()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "scripts"));
+            File.WriteAllText(Path.Combine(root, "scripts/update-machines.ts"), """
+                import { appendFileSync } from 'node:fs';
+                appendFileSync(new URL('args', import.meta.url), process.argv.slice(2).join(' ') + '\n');
+                """);
+            var release = new FakeRelease();
+            var source = UpdateSources.ForHost(new HttpClient(), TimeProvider.System, release, root, Path.Combine(root, "app-home"));
+            await source.UpdateAsync([new(null, [Item("cli", "codex")]), new("box", [Item("backend")]), new("current", [])], false, _ => { }, default);
+            Assert.Equal($"--this-machine --home {Path.Combine(root, "app-home")}\n", File.ReadAllText(Path.Combine(root, "scripts/args")));
+            Assert.Equal(["box"], release.Installed);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task An_install_takes_the_one_update_place_says_how_it_goes_and_a_failure_is_said()
+    {
+        var status = new MachineStatus(new Topics(), ["box"]);
+        await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
+        var finish = new TaskCompletionSource();
+        var updates = Updates(new FakeSource(async (progress, _) => { progress("Sending."); await finish.Task; throw new CallFailed("Port 9797 on box is in use by x."); }), status, work);
+        Assert.Throws<CallFailed>(() => updates.Install("nowhere"));
+        Assert.True(updates.Install("box"));
+        await Until(() => status.Items[1].UpdateNote == "Sending.");
+        Assert.False(updates.Install("box"));
+        Assert.False(updates.Start());
+        finish.SetResult();
+        await Until(() => !status.Items[1].Updating);
+        Assert.Equal("Install failed: Port 9797 on box is in use by x.", status.Items[1].UpdateNote);
+    }
+
+    [Fact]
+    public async Task Check_for_updates_answers_on_the_card_gives_way_to_nothing_old_and_installs_nothing()
+    {
+        var status = new MachineStatus(new Topics(), ["box"]);
+        await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
+        var runs = 0;
+        var updates = Updates(new FakeSource((_, _) => { runs++; return Task.CompletedTask; }), status, work);
+        status.Updating("box", false, "Update failed: an old failure.");
+
+        await updates.CheckNowAsync("box", default);
+
+        Assert.NotNull(status.Items[1].Updates);
+        Assert.Null(status.Items[1].UpdateNote);
+        Assert.Equal(0, runs);
+        await Assert.ThrowsAsync<CallFailed>(() => updates.CheckNowAsync("nowhere", default));
+    }
+
+    [Fact]
+    public async Task Check_for_updates_reads_the_release_again_where_other_checks_use_what_was_kept()
+    {
+        var release = new FakeRelease { Published = new("1.0.0", null, null) };
+        var source = Delivered(release);
+        await source.WantedAsync(default);
+        await source.WantedAsync(default);
+        Assert.Equal(1, release.Reads);
+        await source.WantedAsync(default, fresh: true);
+        Assert.Equal(2, release.Reads);
+    }
+
+    [Fact]
+    public async Task No_published_release_says_so_when_a_delivered_app_is_asked_to_install()
+    {
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => new ReleaseUpdateSource(new CliReleaseSource(new HttpClient(new NoNetwork()), TimeProvider.System), null, TimeProvider.System).InstallAsync("box", _ => { }, default));
+        Assert.Equal("No signed release is published yet, so there's nothing to install.", failed.Message);
     }
 }

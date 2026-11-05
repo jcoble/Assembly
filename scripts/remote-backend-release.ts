@@ -27,6 +27,8 @@ export type RemoteBackendManifest = {
 };
 
 export type RemoteBackendPackageInput = {
+  /** Scripts beyond the adapter tools, for a development package that installs its tools from them. */
+  extraTools?: string[];
   binaryPath: string;
   outputDirectory: string;
   sourceDirectory: string;
@@ -42,7 +44,7 @@ export type RemoteBackendPackageInput = {
 export const REMOTE_BACKEND_INSTALL_SCRIPT = `#!/bin/sh
 set -eu
 
-root=$HOME/assembly-dotnet
+root=$HOME/assembly-host
 PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 export PATH
 mode=install
@@ -50,9 +52,9 @@ keep=
 
 # Everything in the service's control group besides the host is a running session: an adapter, its CLI, a terminal.
 running() {
-  [ "$(systemctl --user is-active assembly-dotnet.service || true)" = active ] || return 0
-  main=$(systemctl --user show assembly-dotnet.service -p MainPID --value)
-  group=$(systemctl --user show assembly-dotnet.service -p ControlGroup --value)
+  [ "$(systemctl --user is-active assembly-host.service || true)" = active ] || return 0
+  main=$(systemctl --user show assembly-host.service -p MainPID --value)
+  group=$(systemctl --user show assembly-host.service -p ControlGroup --value)
   if [ -z "$group" ] || [ ! -d "/sys/fs/cgroup$group" ]; then
     echo "Can't tell whether sessions are running on this machine, so nothing was stopped" >&2
     exit 1
@@ -75,9 +77,14 @@ case "\${1:-}" in
       pidwait -F "$file" || [ "$?" -eq 1 ]
       rm -f "$file"
     done ;;
-  --adapters) mode=adapters; shift ;;
-  --keep-adapters) keep=1; shift ;;
 esac
+while :; do
+  case "\${1:-}" in
+    --adapters) mode=adapters; shift ;;
+    --keep-adapters) keep=1; shift ;;
+    *) break ;;
+  esac
+done
 
 port=$1
 case "$2" in /*) token_file=$2 ;; *) token_file=$HOME/$2 ;; esac
@@ -99,14 +106,16 @@ refuse_if_running() {
 
 sha256sum -c SHA256SUMS
 install -d "$root/bin" "$root/serve" "$HOME/.config/systemd/user"
+# The host makes the token itself on its first start, in the file the saved machine names.
+(umask 077; mkdir -p "$(dirname "$token_file")")
 [ -n "$keep" ] || ASSEMBLY_ADAPTER_TAG=$3 ASSEMBLY_ADAPTER_MANIFEST_SHA256=$4 bash payload/dotnet/scripts/agents-file.sh "$root/adapters" "$root/serve/agents.json"
 refuse_if_running
 if [ "$mode" = install ]; then
-systemctl --user stop assembly-dotnet.service >/dev/null 2>&1 || true
+systemctl --user stop assembly-host.service >/dev/null 2>&1 || true
 install -m 755 payload/assembly-remote-server "$root/bin/.assembly-remote-server.new"
 mv "$root/bin/.assembly-remote-server.new" "$root/bin/assembly-remote-server"
 
-cat >"$HOME/.config/systemd/user/.assembly-dotnet.service.new" <<EOF
+cat >"$HOME/.config/systemd/user/.assembly-host.service.new" <<EOF
 [Unit]
 Description=Assembly Remote Service
 After=network.target
@@ -114,7 +123,7 @@ After=network.target
 [Service]
 Type=simple
 Environment=PATH=$PATH
-EnvironmentFile=-$HOME/.config/assembly-dotnet/phone.env
+EnvironmentFile=-$HOME/.config/assembly-host/phone.env
 UMask=0077
 WorkingDirectory=$root/serve
 ExecStart=$root/bin/assembly-remote-server serve --port $port --home $root/serve --agents $root/serve/agents.json --token-file $token_file
@@ -124,21 +133,21 @@ RestartSec=2
 [Install]
 WantedBy=default.target
 EOF
-mv "$HOME/.config/systemd/user/.assembly-dotnet.service.new" "$HOME/.config/systemd/user/assembly-dotnet.service"
+mv "$HOME/.config/systemd/user/.assembly-host.service.new" "$HOME/.config/systemd/user/assembly-host.service"
 systemctl --user daemon-reload
-systemctl --user enable assembly-dotnet.service
+systemctl --user enable assembly-host.service
 fi
-systemctl --user restart assembly-dotnet.service
+systemctl --user restart assembly-host.service
 
 # The first start after an update can migrate stored data, so wait while the service is still
 # starting (systemd reports a restart in progress as activating), and stop at once if it exits.
 waited=0
 while :; do
-  state=$(systemctl --user is-active assembly-dotnet.service || true)
+  state=$(systemctl --user is-active assembly-host.service || true)
   case "$state" in
     active|activating) ;;
     *)
-      systemctl --user status assembly-dotnet.service --no-pager --lines=20 >&2 || true
+      systemctl --user status assembly-host.service --no-pager --lines=20 >&2 || true
       echo "Assembly remote backend stopped after $waited seconds while starting" >&2
       exit 1 ;;
   esac
@@ -156,7 +165,7 @@ while :; do
   waited=$((waited + 1))
   sleep 1
 done
-systemctl --user status assembly-dotnet.service --no-pager --lines=20 >&2 || true
+systemctl --user status assembly-host.service --no-pager --lines=20 >&2 || true
 echo "Assembly remote backend did not start listening on 127.0.0.1:$port within $waited seconds" >&2
 exit 1
 `;
@@ -194,7 +203,7 @@ export async function writeRemoteBackendPackage(input: RemoteBackendPackageInput
     await copyFile(input.binaryPath, path.join(staging, 'payload/assembly-remote-server'));
     await writeFile(path.join(staging, 'install.sh'), REMOTE_BACKEND_INSTALL_SCRIPT, { mode: 0o755 });
     const placed: Array<[string, '0755' | '0644']> = [['payload/assembly-remote-server', '0755'], ['install.sh', '0755']];
-    for (const tool of ADAPTER_TOOLS) {
+    for (const tool of new Set([...ADAPTER_TOOLS, ...(input.extraTools ?? [])])) {
       const destination = path.join(staging, 'payload', tool);
       await mkdir(path.dirname(destination), { recursive: true });
       await copyFile(path.join(input.sourceDirectory, tool), destination);

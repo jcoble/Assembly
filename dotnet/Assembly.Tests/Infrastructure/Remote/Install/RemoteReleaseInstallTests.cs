@@ -25,7 +25,7 @@ public sealed partial class RemoteReleaseInstallTests : IDisposable
     private string Home => Path.Combine(_root, "home");
     private string Github => Path.Combine(_root, "github");
     private string Bin => Path.Combine(Home, ".local/bin");
-    private string Installed => Path.Combine(Home, "assembly-dotnet");
+    private string Installed => Path.Combine(Home, "assembly-host");
 
     public void Dispose() => Directory.Delete(_root, recursive: true);
 
@@ -44,6 +44,8 @@ public sealed partial class RemoteReleaseInstallTests : IDisposable
                 ["PATH"] = SearchPath
             }, line, ct);
         }
+        internal override Task UploadAsync(string target, string localPath, string remotePath, CancellationToken ct) =>
+            RunAsync(target, $"cp {RemoteReleaseInstall.Quote(localPath)} {RemoteReleaseInstall.Quote(remotePath)}", null, ct);
     }
 
     private static string Repository()
@@ -98,7 +100,7 @@ urllib.request.urlopen = fake
 #!/bin/sh
 echo "$*" >>"$HOME/systemctl.log"
 case "$*" in
-  *restart*) : >"$HOME/assembly-dotnet/serve/assembly.db"; exit "${RESTART_FAILS:-0}" ;;
+  *restart*) : >"$HOME/assembly-host/serve/assembly.db"; exit "${RESTART_FAILS:-0}" ;;
   *is-active*--quiet*|*--quiet*is-active*) exit 0 ;;
   *is-active*) echo active ;;
   *ControlGroup*) echo "/../../..$HOME/cgroup" ;;
@@ -109,7 +111,8 @@ exit 0
         // The control group is read at /sys/fs/cgroup + the service's group: that path climbs back out to this folder.
         Directory.CreateDirectory(Path.Combine(Home, "cgroup"));
         File.WriteAllText(Path.Combine(Home, "cgroup/cgroup.procs"), "1\n");
-        Script("ss", "#!/bin/sh\nprintf 'LISTEN 0 128 127.0.0.1:9797 0.0.0.0:*\\n'\n");
+        // Only the host this install started is listening, and it's the service's own process.
+        Script("ss", "#!/bin/sh\n[ -e \"$HOME/assembly-host/serve/assembly.db\" ] || exit 0\nfor asked; do :; done\nprintf 'LISTEN 0 128 127.0.0.1:%s 0.0.0.0:* users:((\"assembly\",pid=1,fd=5))\\n' \"${asked##*:}\"\n");
         // agents-file.sh reads the adapter release the desktop named through curl: only its two assets.
         Script("curl", """
 #!/bin/sh
@@ -207,8 +210,8 @@ cp "$GITHUB_FIXTURE/$(basename "$url")" "$out"
         Assert.DoesNotContain(handler.Asked, url => url.EndsWith(".tar.gz", StringComparison.Ordinal));
         Assert.All(shell.Targets, target => Assert.Equal("fixture-host", target));
 
-        var unit = File.ReadAllText(Path.Combine(Home, ".config/systemd/user/assembly-dotnet.service"));
-        Assert.Contains($"ExecStart={Installed}/bin/assembly-remote-server serve --port 9797 --home {Installed}/serve --agents {Installed}/serve/agents.json --token-file {Home}/.config/assembly-dotnet/env", unit, StringComparison.Ordinal);
+        var unit = File.ReadAllText(Path.Combine(Home, ".config/systemd/user/assembly-host.service"));
+        Assert.Contains($"ExecStart={Installed}/bin/assembly-remote-server serve --port 9797 --home {Installed}/serve --agents {Installed}/serve/agents.json --token-file {Home}/.config/assembly-host/env", unit, StringComparison.Ordinal);
         using var agents = JsonDocument.Parse(File.ReadAllText(Path.Combine(Installed, "serve/agents.json")));
         Assert.Contains("assembly-providers-7-1", agents.RootElement[0].GetProperty("args")[0].GetString(), StringComparison.Ordinal);
         using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(Installed, "serve/backend-manifest.json")));
@@ -273,8 +276,8 @@ cp "$GITHUB_FIXTURE/$(basename "$url")" "$out"
     }
 
     [Theory]
-    [InlineData("-oProxyCommand=evil", 9797, ".config/assembly-dotnet/env")]
-    [InlineData("box", 0, ".config/assembly-dotnet/env")]
+    [InlineData("-oProxyCommand=evil", 9797, ".config/assembly-host/env")]
+    [InlineData("box", 0, ".config/assembly-host/env")]
     [InlineData("box", 9797, "../outside/env")]
     [InlineData("box", 9797, "a b; rm -rf /")]
     public async Task Refuses_an_unsafe_saved_machine_before_any_command(string ssh, int port, string tokenFile)

@@ -21,7 +21,7 @@ use crate::core::state::machines::Machines;
 
 /// What the form shows in a blank port or token file: the backend's defaults (SavedMachine.cs), which it fills in.
 const DEFAULT_PORT: &str = "9797";
-const DEFAULT_TOKEN_FILE: &str = ".config/assembly-dotnet/env";
+const DEFAULT_TOKEN_FILE: &str = ".config/assembly-host/env";
 
 impl SettingsPage {
     /// The form's name, SSH destination, port and token file.
@@ -123,6 +123,24 @@ impl SettingsPage {
                     )
                 }))
         });
+        let install = install_offered(&machine).then(|| {
+            let name = machine.name.clone().unwrap_or_default();
+            self.machine_button(format!("install-{name}").into(), INSTALL)
+                .primary()
+                .loading(machine.updating)
+                .disabled(machine.updating || self.machine_call.is_some())
+                .on_click(cx.listener(move |page, _, window, cx| {
+                    page.machine_call(
+                        Some(name.clone()),
+                        "updates",
+                        "install",
+                        json!({ "machine": name }),
+                        "Couldn't install",
+                        window,
+                        cx,
+                    )
+                }))
+        });
         let actions = machine
             .name
             .is_some()
@@ -137,6 +155,7 @@ impl SettingsPage {
                     .justify_between()
                     .child(label)
                     .children(update)
+                    .children(install)
                     .children(actions),
             )
             .children(failure)
@@ -162,6 +181,22 @@ impl SettingsPage {
                 "Couldn't connect",
             )
         };
+        let check_name = name.clone();
+        let check = self
+            .machine_button(format!("check-{name}").into(), CHECK)
+            .outline()
+            .disabled(machine.updating || self.machine_call.is_some())
+            .on_click(cx.listener(move |page, _, window, cx| {
+                page.machine_call(
+                    Some(check_name.clone()),
+                    "updates",
+                    "check",
+                    json!({ "machine": check_name }),
+                    "Couldn't check for updates",
+                    window,
+                    cx,
+                )
+            }));
         let about = Some(name.clone());
         let connection = self
             .machine_button(format!("{method}-{name}").into(), label)
@@ -187,6 +222,7 @@ impl SettingsPage {
         h_flex()
             .gap_1()
             .flex_none()
+            .child(check)
             .child(connection)
             .child(edit)
             .child(remove)
@@ -234,9 +270,20 @@ impl SettingsPage {
                     .child(title),
             )
             .when(editing.is_none(), |form| {
-                form.child(field("Machine name", name, saving, cx))
+                form.child(self.ssh_picker.select())
+                    .child(field("Machine name", name, saving, cx))
             })
             .child(field("SSH destination", ssh, saving, cx))
+            .children(
+                self.ssh_picker
+                    .words(&ssh.read(cx).value())
+                    .map(|words| {
+                        div()
+                            .text_role(TextRole::Meta, cx)
+                            .text_color(theme.muted_foreground)
+                            .child(words)
+                    }),
+            )
             .child(
                 h_flex()
                     .gap_3()
@@ -252,7 +299,7 @@ impl SettingsPage {
                 div()
                     .text_role(TextRole::Meta, cx)
                     .text_color(theme.muted_foreground)
-                    .child("A port or token file left empty takes the default shown."),
+                    .child("Port is the one Assembly listens on. A port or token file left empty takes the default shown."),
             )
             .children(failure)
             .child(h_flex().justify_end().gap_2().children(cancel).child(save))
@@ -300,6 +347,8 @@ impl SettingsPage {
         for field in &self.machine_fields {
             field.update(cx, |field, cx| field.set_value("", window, cx));
         }
+        self.ssh_picker.target = None;
+        self.ssh_picker.failure = None;
         cx.notify();
     }
 
@@ -433,11 +482,44 @@ mod tests;
 /// from a release: where it comes from is the backend's to decide.
 const UPDATE: &str = "Update everything";
 
+/// On each remote: runs the one check now and installs nothing. Its answer is on the card, from the machines topic.
+const CHECK: &str = "Check for updates";
+
+/// The button on a saved machine with no backend answering: it puts one there, and connects.
+const INSTALL: &str = "Install Assembly here";
+
+pub(crate) fn install_offered(machine: &Machine) -> bool {
+    machine.name.is_some() && machine.didnt_answer()
+}
+
+/// What a check with nothing behind found. "Nothing is behind" is only said when every piece was read: one that wasn't
+/// isn't known to be current. No check yet says nothing.
+fn checked_words(machine: &Machine) -> Option<String> {
+    if machine.updates.is_empty() {
+        return None;
+    }
+    let unread: Vec<&str> = (machine.updates.iter())
+        .filter(|item| item.state == "unknown")
+        .map(|item| item.name.as_str())
+        .collect();
+    Some(if unread.is_empty() {
+        "Nothing is behind".to_string()
+    } else {
+        format!("Couldn't read {}", unread.join(", "))
+    })
+}
+
 /// Where the machine is, how it answered, then its backend and what's behind, all as information.
 pub(crate) fn row_status(machine: &Machine, reached: &str, status: &str) -> String {
     let mut parts = vec![reached.to_string(), status.to_string()];
     parts.extend(machine.backend_note());
-    let behind = machine.behind().count();
+    parts.extend(
+        machine
+            .updates
+            .iter()
+            .filter_map(crate::features::remote_install::updates::newer_words),
+    );
+    let behind: Vec<&str> = machine.behind().map(|item| item.name.as_str()).collect();
     if machine.updating {
         parts.push(
             machine
@@ -447,8 +529,10 @@ pub(crate) fn row_status(machine: &Machine, reached: &str, status: &str) -> Stri
         );
     } else if let Some(note) = &machine.update_note {
         parts.push(note.clone());
-    } else if behind > 0 {
-        parts.push(format!("{behind} behind"));
+    } else if !behind.is_empty() {
+        parts.push(format!("{} behind", behind.join(", ")));
+    } else {
+        parts.extend(checked_words(machine));
     }
     parts.join(" · ")
 }

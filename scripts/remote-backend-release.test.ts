@@ -113,7 +113,7 @@ async function runStartupWait(scenario: { readyAt?: number; address?: string; ex
   try {
     const bin = path.join(home, 'bin');
     await mkdir(bin);
-    await mkdir(path.join(home, 'assembly-dotnet', 'serve'), { recursive: true });
+    await mkdir(path.join(home, 'assembly-host', 'serve'), { recursive: true });
     await writeFile(path.join(home, 'manifest.json'), '{}\n');
     await writeFile(path.join(home, 'seconds'), '0');
     await writeFile(path.join(bin, 'sleep'), '#!/bin/sh\necho $(( $(cat "$HOME/seconds") + 1 )) >"$HOME/seconds"\n', { mode: 0o755 });
@@ -134,7 +134,7 @@ if [ -n "\${READY_AT:-}" ] && [ "$t" -ge "$READY_AT" ] && { [ -z "\${RESTART_AT:
   printf 'LISTEN 0 128 %s 0.0.0.0:*\\n' "$LISTEN_ADDRESS"
 fi
 `, { mode: 0o755 });
-    const start = REMOTE_BACKEND_INSTALL_SCRIPT.indexOf('systemctl --user restart assembly-dotnet.service');
+    const start = REMOTE_BACKEND_INSTALL_SCRIPT.indexOf('systemctl --user restart assembly-host.service');
     assert.ok(start > 0, 'restart step exists');
     const env: Record<string, string> = { HOME: home, PATH: `${bin}:/usr/bin:/bin`, LISTEN_ADDRESS: scenario.address ?? '127.0.0.1:9797' };
     if (scenario.readyAt !== undefined) env.READY_AT = String(scenario.readyAt);
@@ -143,13 +143,13 @@ fi
     let code = 0;
     let stderr = '';
     try {
-      await execFileAsync('sh', ['-c', `set -eu\nmode=install\nport=9797\nroot=$HOME/assembly-dotnet\n${REMOTE_BACKEND_INSTALL_SCRIPT.slice(start)}`], { cwd: home, env });
+      await execFileAsync('sh', ['-c', `set -eu\nmode=install\nport=9797\nroot=$HOME/assembly-host\n${REMOTE_BACKEND_INSTALL_SCRIPT.slice(start)}`], { cwd: home, env });
     } catch (error) {
       const failure = error as { code: number; stderr: string };
       code = failure.code;
       stderr = failure.stderr;
     }
-    const manifest = await stat(path.join(home, 'assembly-dotnet', 'serve', 'backend-manifest.json')).then(() => true, () => false);
+    const manifest = await stat(path.join(home, 'assembly-host', 'serve', 'backend-manifest.json')).then(() => true, () => false);
     return { code, stderr, seconds: Number(await readFile(path.join(home, 'seconds'), 'utf8')), manifest };
   } finally {
     await rm(home, { recursive: true, force: true });

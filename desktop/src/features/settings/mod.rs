@@ -12,6 +12,7 @@ mod search;
 mod section;
 mod settings_page;
 pub mod sign_in_panel;
+mod ssh_picker;
 
 use gpui_kit::*;
 

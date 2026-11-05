@@ -46,6 +46,7 @@ pub struct SettingsPage {
     pub(super) code_fonts: Vec<SharedString>,
     /// The Connections form's name, SSH destination, port and token file.
     pub(super) machine_fields: [Entity<InputState>; 4],
+    pub(super) ssh_picker: super::ssh_picker::SshPicker,
     pub(super) machine_edits: MachineEdits,
     /// The button whose machine call is running, and the call; dropping it stops waiting. One call at a time.
     pub(super) machine_call: Option<(SharedString, Task<()>)>,
@@ -166,6 +167,7 @@ impl SettingsPage {
             ui_fonts,
             code_fonts,
             machine_fields: Self::machine_fields(window, cx),
+            ssh_picker: super::ssh_picker::SshPicker::new(window, cx),
             machine_edits: MachineEdits::default(),
             machine_call: None,
             _subscriptions: subscriptions,
@@ -340,9 +342,14 @@ impl SettingsPage {
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let query = self.search.read(cx).value().to_string();
         let shown = search::shown(&query, self.chosen);
+        self.follow_ssh_hosts(
+            shown.is_some_and(|section| section.id == "connections"),
+            window,
+            cx,
+        );
         h_flex()
             .size_full()
             .items_start()

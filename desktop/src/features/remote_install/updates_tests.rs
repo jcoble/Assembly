@@ -1,4 +1,4 @@
-use super::{Machine, behind_notice, behind_words, item_words};
+use super::{Machine, behind_notice, behind_words, newer_words};
 use crate::core::state::machine::UpdateItem;
 use crate::features::settings::connections::row_status;
 use serde_json::json;
@@ -52,12 +52,12 @@ fn what_is_ahead_says_so_and_a_backend_says_this_app_is_lower() {
         state: "newer".into(),
     };
     assert_eq!(
-        item_words(&item("backend", "Backend", "0.2.0", "0.1.0")),
-        "Backend 0.2.0, newer than this app's 0.1.0"
+        newer_words(&item("backend", "Backend", "0.2.0", "0.1.0")).as_deref(),
+        Some("Backend 0.2.0, newer than this app's 0.1.0")
     );
     assert_eq!(
-        item_words(&item("adapter", "codex-acp", "2.0.0", "1.0.0")),
-        "codex-acp 2.0.0, newer than 1.0.0"
+        newer_words(&item("adapter", "codex-acp", "2.0.0", "1.0.0")).as_deref(),
+        Some("codex-acp 2.0.0, newer than 1.0.0")
     );
 }
 
@@ -68,15 +68,31 @@ fn the_notice_points_at_the_button_a_delivered_app_has() {
         text,
         "Behind on box: codex-acp. Use Update everything in Settings to update them."
     );
-    assert!(!text.contains(crate::features::remote_install::TITLE));
 }
 
 #[test]
-fn each_piece_says_where_it_is_and_where_it_should_be() {
-    let items = with_updates().updates;
-    assert_eq!(item_words(&items[1]), "codex-acp 1.0.0 → 1.1.0");
-    assert_eq!(item_words(&items[2]), "codex 2.0.0");
-    assert_eq!(item_words(&items[3]), "claude");
+fn a_check_says_nothing_is_behind_only_when_every_piece_was_read() {
+    let checked = |updates: serde_json::Value| {
+        machine(
+            json!({"name":"box","kind":"remote","reachable":true,"reason":null,"checked":true,"updates":updates}),
+        )
+    };
+    let current =
+        json!({"kind":"cli","name":"codex","current":"2.0.0","wanted":"2.0.0","state":"current"});
+    let unread =
+        json!({"kind":"cli","name":"claude","current":null,"wanted":null,"state":"unknown"});
+    assert_eq!(
+        row_status(&checked(json!([current])), "host", "Connected"),
+        "host · Connected · Nothing is behind"
+    );
+    assert_eq!(
+        row_status(&checked(json!([current, unread])), "host", "Connected"),
+        "host · Connected · Couldn't read claude"
+    );
+    assert_eq!(
+        row_status(&checked(json!([])), "host", "Connected"),
+        "host · Connected"
+    );
 }
 
 #[test]
@@ -84,7 +100,7 @@ fn the_row_shows_the_commit_and_what_is_behind_as_information() {
     let shown = with_updates();
     assert_eq!(
         row_status(&shown, "host", "Connected"),
-        "host · Connected · Backend a1b2c3d, differs from this app's f6e5d4c · 2 behind"
+        "host · Connected · Backend a1b2c3d, differs from this app's f6e5d4c · Backend, codex-acp behind"
     );
     let same = machine(
         json!({"name":"box","kind":"remote","reachable":true,"reason":null,"checked":true,

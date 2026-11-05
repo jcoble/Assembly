@@ -22,6 +22,12 @@ internal class RemoteReleaseShell
         return await RunProcessAsync(started, null, line, ct);
     }
 
+    /// <summary>Sends a local file to a path on the machine, over the same kind of connection.</summary>
+    internal virtual Task UploadAsync(string target, string file, string remotePath, CancellationToken ct) =>
+        RunProcessAsync(new AgentCommand("sh", ["-c", "f=$1; shift; exec \"$@\" <\"$f\"", "sh", file, "ssh",
+            "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ControlMaster=no", "-o", "ControlPath=none", "--", target, $"umask 077; cat > {RemoteReleaseInstall.Quote(remotePath)}"],
+            Directory.GetCurrentDirectory()), null, null, ct);
+
     protected static async Task<string> RunProcessAsync(AgentCommand command, IReadOnlyDictionary<string, string>? environment, Action<string>? line, CancellationToken ct)
     {
         var start = new ProcessStartInfo(command.FileName)

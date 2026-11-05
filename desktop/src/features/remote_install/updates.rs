@@ -1,40 +1,27 @@
 //! What the update check found, from the `machines` topic, and the one button that updates it. Nothing here checks or
 //! polls: the backend checks at start and at each remote's hello, and pushes the answer.
 
-use crate::activity::{StatusChip, Tone};
 use crate::core::state::machine::{Machine, UpdateItem};
 use crate::core::state::machines::Machines;
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
-
-use super::deploy_form::DeployForm;
 
 fn machine_name(machine: &Machine) -> &str {
     machine.name.as_deref().unwrap_or("This machine")
 }
 
-fn item_words(item: &UpdateItem) -> String {
-    if let ("newer", Some(current), Some(wanted)) =
-        (item.state.as_str(), &item.current, &item.wanted)
-    {
+/// What's ahead of what this app wants, which nothing here downgrades.
+pub(crate) fn newer_words(item: &UpdateItem) -> Option<String> {
+    let (current, wanted) = (item.current.as_ref()?, item.wanted.as_ref()?);
+    (item.state == "newer").then(|| {
         let side = if item.kind == "backend" {
             "this app's "
         } else {
             ""
         };
-        return format!("{} {current}, newer than {side}{wanted}", item.name);
-    }
-    match (&item.current, &item.wanted) {
-        (Some(current), Some(wanted)) if current != wanted => {
-            format!("{} {current} → {wanted}", item.name)
-        }
-        (Some(current), _) => format!("{} {current}", item.name),
-        (None, Some(wanted)) => format!("{} → {wanted}", item.name),
-        (None, None) => item.name.clone(),
-    }
+        format!("{} {current}, newer than {side}{wanted}", item.name)
+    })
 }
 
 /// One sentence for the notice at app start, or `None` when nothing is behind.
@@ -85,78 +72,6 @@ struct BehindNotice {
 }
 
 impl Global for BehindNotice {}
-
-impl DeployForm {
-    fn machine_updates(&self, machine: &Machine, cx: &App) -> Div {
-        let chips = machine.updates.iter().map(|item| {
-            let tone = match item.state.as_str() {
-                "behind" => Tone::Warning,
-                "current" => Tone::Success,
-                _ => Tone::Neutral,
-            };
-            StatusChip::new(item_words(item), tone)
-        });
-        v_flex()
-            .gap_1()
-            .child(
-                div()
-                    .text_role(TextRole::Body, cx)
-                    .child(machine_name(machine).to_string()),
-            )
-            .child(h_flex().flex_wrap().gap_1().children(chips))
-            .children(machine.update_note.clone().map(|note| {
-                div()
-                    .text_role(TextRole::Meta, cx)
-                    .text_color(cx.theme().muted_foreground)
-                    .child(note)
-            }))
-    }
-
-    pub(super) fn updates_section(&self, cx: &mut Context<Self>) -> Div {
-        let machines: Vec<Machine> = Machines::try_global(cx)
-            .map(|machines| machines.read(cx).machines().cloned().collect())
-            .unwrap_or_default();
-        let updating = machines.iter().any(|machine| machine.updating);
-        let behind = machines
-            .iter()
-            .any(|machine| machine.behind().next().is_some());
-        let label = if updating {
-            "Updating…"
-        } else if behind {
-            "Update everything behind"
-        } else {
-            "Nothing is behind"
-        };
-        v_flex()
-            .gap_2()
-            .child(
-                div()
-                    .text_role(TextRole::Body, cx)
-                    .font_weight(FontWeight::MEDIUM)
-                    .child("What each machine has"),
-            )
-            .children(
-                machines
-                    .iter()
-                    .map(|machine| self.machine_updates(machine, cx)),
-            )
-            .children(self.update_error.clone().map(|error| {
-                div()
-                    .text_role(TextRole::Body, cx)
-                    .text_color(cx.theme().danger)
-                    .child(error)
-            }))
-            .child(
-                h_flex().child(
-                    Button::new("remote-install:update-everything")
-                        .primary()
-                        .label(label)
-                        .disabled(updating || !behind)
-                        .on_click(cx.listener(|form, _, _, cx| form.update_everything(cx))),
-                ),
-            )
-    }
-}
 
 #[cfg(test)]
 #[path = "updates_tests.rs"]

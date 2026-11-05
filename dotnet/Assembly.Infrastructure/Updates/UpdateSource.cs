@@ -10,9 +10,13 @@ namespace Assembly.Infrastructure.Updates;
 /// <summary>Where wanted versions come from and how an update is carried out: the only thing development and production do differently.</summary>
 internal interface IUpdateSource
 {
-    Task<UpdateWanted> WantedAsync(CancellationToken ct);
-    /// <summary>True when a remote on an older version is this app's to update. app-dev starts that itself, before the desktop is built.</summary>
-    bool StartsRemoteUpdates { get; }
+    /// <param name="ct">Stops the reads.</param>
+    /// <param name="fresh">Someone asked, so nothing kept from an earlier read answers for the release.</param>
+    Task<UpdateWanted> WantedAsync(CancellationToken ct, bool fresh = false);
+    /// <summary>True when a remote on an older version is this app's to update. app-dev starts its own lane's itself, before the desktop is built.</summary>
+    bool StartsRemoteUpdates(string machine);
+    /// <summary>Puts a backend on a saved machine, from wherever this source's files come from, and connects.</summary>
+    Task InstallAsync(string machine, Action<string> progress, CancellationToken ct);
     /// <summary>
     /// Updates everything behind, reporting what it's doing. <paramref name="automatic"/> is when no one pressed the button.
     /// Throws <see cref="CallFailed"/> with the reason when it can't.
@@ -44,9 +48,34 @@ internal sealed record ToolsBehind(bool Adapters, IReadOnlyList<CliBehind> Clis)
 internal static class UpdateSources
 {
     /// <summary>app-dev names its checkout; anything else is a delivered app.</summary>
-    internal static IUpdateSource ForHost(HttpClient http, TimeProvider time, IReleaseInstall? release = null, string? checkout = null) =>
-        (checkout ?? Environment.GetEnvironmentVariable("ASSEMBLY_DEV_CHECKOUT")) is { Length: > 0 } root
-            ? new CheckoutUpdateSource(root, new(http, time)) : new ReleaseUpdateSource(new(http, time), release, time);
+    internal static string? Checkout => Environment.GetEnvironmentVariable("ASSEMBLY_DEV_CHECKOUT") is { Length: > 0 } root ? root : null;
+
+    internal static IUpdateSource ForHost(HttpClient http, TimeProvider time, IReleaseInstall? release = null, string? checkout = null, string? home = null) =>
+        (checkout ?? Checkout) is { Length: > 0 } root
+            ? new CheckoutUpdateSource(root, new(http, time), release, home) : new ReleaseUpdateSource(new(http, time), release, time);
+
+    /// <summary>
+    /// Each remote's share of the one update, the same from a checkout or a release. One that can't be reached doesn't hold
+    /// up the rest; the failures come back together.
+    /// </summary>
+    internal static async Task RemotesAsync(IReleaseInstall release, IEnumerable<MachineBehind> machines, Action<string> progress, List<string> failures, CancellationToken ct)
+    {
+        foreach (var machine in machines)
+        {
+            void Note(string note) => progress(machine.Name is null ? note : $"{machine.Name}: {note}");
+            async Task Try(Func<Task> step)
+            {
+                try { await step(); }
+                catch (CallFailed failed) { failures.Add(failed.Message); }
+            }
+            var backend = machine.Name is not null && machine.Behind.Any(item => item.Kind == "backend");
+            if (backend) await Try(() => release.InstallAsync(machine.Name!, Note, ct, machine.AdaptersNewer));
+            // The backend's install brings its adapters; a CLI is separate either way.
+            var tools = ToolsBehind.Of(machine.Behind);
+            if (backend) tools = tools with { Adapters = false };
+            if (tools.Any) await Try(() => release.UpdateToolsAsync(machine.Name, tools, Note, ct));
+        }
+    }
 
     internal static async Task<IReadOnlyDictionary<string, string?>> LatestAsync(IEnumerable<string> names, Func<string, string> package, CliReleaseSource npm, CancellationToken ct)
     {
@@ -64,18 +93,41 @@ internal static class UpdateSources
         LatestAsync(CliReleaseSource.Families, CliReleaseSource.PackageOf, npm, ct);
 }
 
-/// <summary>Development: the update builds this checkout. app-dev starts it on launch when a remote's number is lower, without waiting on the desktop.</summary>
-internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm) : IUpdateSource
+/// <summary>
+/// Development: this checkout's files, and the machines in this app's Settings and no others. This computer's tools are
+/// updated in this app's own home. A lane's own remote is the one app-dev keeps current: it starts that on launch when the
+/// number is lower, without waiting on the desktop, and the button runs the same thing for it.
+/// </summary>
+internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm, IReleaseInstall? release = null, string? home = null) : IUpdateSource
 {
-    public async Task<UpdateWanted> WantedAsync(CancellationToken ct) => new(BackendBuild.Version, BackendBuild.Version,
+    public async Task<UpdateWanted> WantedAsync(CancellationToken ct, bool fresh = false) => new(BackendBuild.Version, BackendBuild.Version,
         await UpdateSources.LatestAsync(UpdateSources.AdapterNames, UpdateSources.AdapterPackage, npm, ct), BackendBuild.AdapterSources,
         await UpdateSources.CliVersionsAsync(npm, ct));
 
-    public bool StartsRemoteUpdates => false;
+    public bool StartsRemoteUpdates(string machine) => !Lane(machine);
+
+    private static bool Lane(string? machine) => machine == DevRemoteSyncStatus.Machine && Environment.GetEnvironmentVariable(DevRemoteSyncStatus.Variable) is { Length: > 0 };
+
+    public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct) =>
+        (release ?? throw new CallFailed("This app can't install on a remote machine.", "no_release")).InstallAsync(machine, progress, ct);
 
     public async Task UpdateAsync(IReadOnlyList<MachineBehind> machines, bool automatic, Action<string> progress, CancellationToken ct)
     {
-        var start = new ProcessStartInfo("node", [Path.Combine(root, "scripts/update-machines.ts")])
+        var failures = new List<string>();
+        var here = machines.FirstOrDefault(machine => machine.Name is null);
+        if (home is not null && here is not null && ToolsBehind.Of(here.Behind).Any)
+            await Script(["--this-machine", "--home", home], progress, failures, ct);
+        if (machines.Any(machine => Lane(machine.Name) && machine.Behind.Count > 0))
+            await Script(["--lane-remote"], progress, failures, ct);
+        var others = machines.Where(machine => machine.Name is not null && !Lane(machine.Name) && machine.Behind.Count > 0).ToArray();
+        if (others.Length > 0)
+            await UpdateSources.RemotesAsync(release ?? throw new CallFailed("This app can't update a remote machine.", "no_release"), others, progress, failures, ct);
+        if (failures.Count > 0) throw new CallFailed(string.Join(" ", failures), "update_failed");
+    }
+
+    private async Task Script(string[] arguments, Action<string> progress, List<string> failures, CancellationToken ct)
+    {
+        var start = new ProcessStartInfo("node", [Path.Combine(root, "scripts/update-machines.ts"), .. arguments])
         { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         using var process = new Process { StartInfo = start };
         string? last = null;
@@ -95,7 +147,7 @@ internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm) : 
         await using var stop = ct.Register(() => { try { if (!process.HasExited) _ = Kill(process.Id, 15); } catch (InvalidOperationException) { } });
         await process.WaitForExitAsync(CancellationToken.None);
         ct.ThrowIfCancellationRequested();
-        if (process.ExitCode != 0) throw new CallFailed(last ?? $"The update exited {process.ExitCode}.", "update_failed");
+        if (process.ExitCode != 0) failures.Add(last ?? $"The update exited {process.ExitCode}.");
     }
 
     private const string Marker = "ASSEMBLY_REMOTE_SYNC ";
@@ -124,20 +176,23 @@ internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall?
     private static readonly TimeSpan PublishedLasts = TimeSpan.FromMinutes(10);
     private (PublishedVersions Read, DateTimeOffset At)? _published;
 
-    public bool StartsRemoteUpdates => true;
+    public bool StartsRemoteUpdates(string machine) => true;
 
-    public async Task<UpdateWanted> WantedAsync(CancellationToken ct)
+    public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct) =>
+        (release ?? throw new CallFailed("No signed release is published yet, so there's nothing to install.", "no_release")).InstallAsync(machine, progress, ct);
+
+    public async Task<UpdateWanted> WantedAsync(CancellationToken ct, bool fresh = false)
     {
-        var published = await PublishedAsync(ct);
+        var published = await PublishedAsync(ct, fresh);
         return new(published.App, BackendBuild.Version,
             UpdateSources.AdapterNames.ToDictionary(name => name, name => published.Adapters?.GetValueOrDefault(name), StringComparer.Ordinal),
             published.Packaging, await UpdateSources.CliVersionsAsync(npm, ct));
     }
 
-    private async Task<PublishedVersions> PublishedAsync(CancellationToken ct)
+    private async Task<PublishedVersions> PublishedAsync(CancellationToken ct, bool fresh)
     {
         if (release is null) return new(null, null, null);
-        if (_published is { } kept && time.GetUtcNow() - kept.At < PublishedLasts) return kept.Read;
+        if (!fresh && _published is { } kept && time.GetUtcNow() - kept.At < PublishedLasts) return kept.Read;
         var read = await release.PublishedAsync(ct);
         if (read.App is not null || read.Adapters is not null) _published = (read, time.GetUtcNow());
         return read;
@@ -147,22 +202,7 @@ internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall?
     {
         if (release is null) throw new CallFailed("No signed release is published yet, so there's nothing to update from.", "no_release");
         var failures = new List<string>();
-        // One machine that can't be reached doesn't hold up the rest; the card says what didn't happen.
-        async Task Try(Func<Task> step)
-        {
-            try { await step(); }
-            catch (CallFailed failed) { failures.Add(failed.Message); }
-        }
-        foreach (var machine in machines)
-        {
-            void Note(string note) => progress(machine.Name is null ? note : $"{machine.Name}: {note}");
-            var backend = machine.Name is not null && machine.Behind.Any(item => item.Kind == "backend");
-            if (backend) await Try(() => release.InstallAsync(machine.Name!, Note, ct, machine.AdaptersNewer));
-            // The backend's install brings its adapters; a CLI is separate either way.
-            var tools = ToolsBehind.Of(machine.Behind);
-            if (backend) tools = tools with { Adapters = false };
-            if (tools.Any) await Try(() => release.UpdateToolsAsync(machine.Name, tools, Note, ct));
-        }
+        await UpdateSources.RemotesAsync(release, machines, progress, failures, ct);
         // Installing the app itself isn't built yet (Step 19.09). The button says so rather than appearing to have done it.
         var app = machines.FirstOrDefault(machine => machine.Name is null)?.Behind.FirstOrDefault(item => item.Kind == "desktop");
         if (app is not null && !automatic) failures.Add($"Assembly {app.Wanted} is out, and this app can't install it yet: install it from the release page.");

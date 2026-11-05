@@ -28,13 +28,14 @@ public sealed partial class RemoteReleaseInstallTests
     {
         if (!OperatingSystem.IsLinux()) return;
         var (install, _, _, _) = Fixture();
-        Directory.CreateDirectory(Path.Combine(Installed, "bin"));
-        File.WriteAllText(Path.Combine(Installed, "bin/assembly-remote-server"), "current-backend");
+        AlreadyInstalled();
+        var manifest = File.ReadAllText(Path.Combine(Installed, "serve/backend-manifest.json"));
+        var unit = File.ReadAllText(UnitFile);
         await install.UpdateToolsAsync(Machine, new(true, []), _ => { }, default);
 
         Assert.Equal("current-backend", File.ReadAllText(Path.Combine(Installed, "bin/assembly-remote-server")));
-        Assert.False(File.Exists(Path.Combine(Installed, "serve/backend-manifest.json")));
-        Assert.False(File.Exists(Path.Combine(Home, ".config/systemd/user/assembly-dotnet.service")));
+        Assert.Equal(manifest, File.ReadAllText(Path.Combine(Installed, "serve/backend-manifest.json")));
+        Assert.Equal(unit, File.ReadAllText(UnitFile));
         Assert.Contains("restart", SystemctlLog, StringComparison.Ordinal);
         Assert.Contains("claude-launcher.ts", File.ReadAllText(AgentsFile), StringComparison.Ordinal);
     }
@@ -44,7 +45,7 @@ public sealed partial class RemoteReleaseInstallTests
     {
         if (!OperatingSystem.IsLinux()) return;
         var (install, _, _, serverSha) = Fixture();
-        Directory.CreateDirectory(Path.GetDirectoryName(AgentsFile)!);
+        AlreadyInstalled();
         File.WriteAllText(AgentsFile, "[\"newer adapters\"]");
         await install.InstallLatestAsync(Machine, _ => { }, default, keepAdapters: true);
 
@@ -59,7 +60,7 @@ public sealed partial class RemoteReleaseInstallTests
         if (!OperatingSystem.IsLinux()) return;
         var (install, _, _, _) = Fixture();
         FakeCli("claude", "1.0.0", "2.0.0");
-        Directory.CreateDirectory(Path.GetDirectoryName(AgentsFile)!);
+        AlreadyInstalled();
         File.WriteAllText(AgentsFile, "[]");
         using var session = RunningSession();
         Session(session.Id);
@@ -84,7 +85,7 @@ public sealed partial class RemoteReleaseInstallTests
         if (!OperatingSystem.IsLinux()) return;
         var (install, _, _, _) = Fixture();
         FakeCli("claude", "1.0.0", "1.0.0");
-        Directory.CreateDirectory(Path.GetDirectoryName(AgentsFile)!);
+        AlreadyInstalled();
         File.WriteAllText(AgentsFile, "[]");
         var failed = await Assert.ThrowsAsync<CallFailed>(() => install.UpdateToolsAsync(Machine, new(false, [new("claude", "2.0.0")]), _ => { }, default));
         Assert.Equal("version_readback_mismatch", failed.Reason);
@@ -101,7 +102,7 @@ public sealed partial class RemoteReleaseInstallTests
         File.WriteAllText(Path.Combine(other, "claude"), "#!/bin/sh\ncase \"$1\" in --version) cat \"$0.version\" ;; update) echo '2.0.0 (Claude Code)' >\"$0.version\" ;; esac\n");
         File.SetUnixFileMode(Path.Combine(other, "claude"), (UnixFileMode)0b111_101_101);
         File.WriteAllText(Path.Combine(other, "claude.version"), "1.0.0 (Claude Code)");
-        Directory.CreateDirectory(Path.GetDirectoryName(AgentsFile)!);
+        AlreadyInstalled();
         File.WriteAllText(AgentsFile, "[{\"id\":\"claude\",\"vendorFamily\":\"claude\",\"cli\":\"" + Path.Combine(other, "claude") + "\"}]");
         await install.UpdateToolsAsync(Machine, new(false, [new("claude", "2.0.0")]), _ => { }, default);
         Assert.Equal("2.0.0 (Claude Code)", File.ReadAllText(Path.Combine(other, "claude.version")).Trim());
