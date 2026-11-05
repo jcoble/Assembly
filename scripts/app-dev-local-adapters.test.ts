@@ -27,6 +27,7 @@ function checkout(installer: string, extra: NodeJS.ProcessEnv = {}) {
   for (const folder of ['scripts', 'desktop', 'dotnet/scripts', 'bin']) mkdirSync(join(root, folder), { recursive: true });
   copyFileSync(new URL('./app-dev.ts', import.meta.url), join(root, 'scripts/app-dev.ts'));
   copyFileSync(new URL('./seed-dev.ts', import.meta.url), join(root, 'scripts/seed-dev.ts'));
+  copyFileSync(new URL('./app-dev-remote.ts', import.meta.url), join(root, 'scripts/app-dev-remote.ts'));
   writeFileSync(join(root, 'scripts/package-adapters.ts'), packager);
   writeFileSync(join(root, 'scripts/lane-env.sh'), 'DATA="$PWD/data"\nDESKTOP_PORT=18887\nTOKEN_FILE=test\nBOX_PORT=9887\nBOX_TOKEN_FILE=test\n');
   writeFileSync(join(root, 'dotnet/scripts/agents-file.sh'), installer);

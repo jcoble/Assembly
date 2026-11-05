@@ -37,7 +37,7 @@ try {
   const probe = JSON.parse(await command('ssh', [...sshOptions, 'workbox-test', read], { signal: owner.signal })) as Probe;
   if (mode === 'check') {
     const version = await committedVersion(root, commit, owner.signal);
-    if (!probe.missing && probe.version === version && (!managed || probe.seedCohort === managed.cohort))
+    if (!probe.missing && probe.version === version)
       console.log(`Workbox Test ${target.unit} is on version ${version} (host commit ${probe.commit}); nothing to do`);
     else {
       console.log(`Workbox Test ${target.unit} is on version ${probe.missing ? 'none, not installed' : probe.version ?? 'unknown'}; this checkout is on ${version}`);
@@ -49,7 +49,7 @@ try {
   const wanted = identity;
   identityCheck();
   const adaptersCurrent = probe.adapterOK && probe.launcherSha === launcher && (managed ? probe.toolsKey === toolKey(managed.versions, sources, 'linux-x64') : probe.adapterSources === sources);
-  if (actual === wanted && adaptersCurrent && (!managed || probe.seedCohort === managed.cohort)) {
+  if (actual === wanted && adaptersCurrent) {
     console.log(`Workbox Test ${target.unit} already matches ${wanted} (host commit ${probe.commit}); no deploy`);
   } else {
     if (managed?.adopted) throw Error('adopted/shared lane needs its creator to update the remote; no deployment performed');

@@ -66,15 +66,10 @@ try {
   const before = await probe();
   const identity = await backendIdentity(process.cwd(), request.commit, owner.signal);
   if (identity !== request.identity) throw Error('source identity differs after transfer');
-  const seedTools = request.managed ? await import('./dev-seed-cohort.ts') : undefined;
-  const seedChanged = Boolean(request.managed && !await seedTools!.seedCurrent(join(root, 'serve'), request.managed.cohort));
-  const seedManifest = request.managed && (request.managed.seedManifest ?? seedTools!.trackedManifest(process.cwd()));
-  if (request.managed && await seedTools!.seedCohort(seedManifest) !== request.managed.cohort)
-    throw Error('remote seed manifest differs from the local safe-backup cohort');
   const desiredTools = request.managed ? toolKey(request.managed.versions, request.sources, 'linux-x64') : undefined;
   const adaptersCurrent = before.adapterOK && before.launcherSha === request.launcher && (request.managed ? before.toolsKey === desiredTools : before.adapterSources === request.sources);
   const current = before.backendIdentity === identity;
-  if (current && adaptersCurrent && !seedChanged) {
+  if (current && adaptersCurrent) {
     console.log(`Workbox Test ${target.unit} already matches after acquiring the lane lock; no deploy`);
   } else {
     if (!before.missing) await idle(before.pid);
@@ -89,7 +84,7 @@ try {
       throw Error('lane ACP 2 adapter bundle still differs from this checkout launcher after updating it');
     if (!before.missing) await idle(before.pid);
     // A running host read its adapters when it started, so new ones need the restart; an idle host loses nothing.
-    if (current && !seedChanged && !toolsChanged) {
+    if (current && !toolsChanged) {
       console.log('Workbox Test remote is right; toolchain checked, no backend build or restart');
     } else {
     const previous = before.missing ? undefined : await installedRelease(before.dll);
@@ -98,7 +93,7 @@ try {
     const destination = prepared.directory;
     const candidateManifest = JSON.parse(await fs.readFile(join(destination, 'manifest.json'), 'utf8'));
     const previousManifest = previous?.manifest;
-    if (previousManifest && sameBackendFiles(previousManifest.files, candidateManifest.files) && !seedChanged && !toolsChanged) {
+    if (previousManifest && sameBackendFiles(previousManifest.files, candidateManifest.files) && !toolsChanged) {
       console.log('Workbox Test compiled backend files are unchanged; no restart');
     } else {
       const latest = await probe();
@@ -130,12 +125,6 @@ TimeoutStopSec=30
         await run('systemctl', ['--user', 'stop', target.unit]);
         stopped = true;
       }
-      if (seedChanged) {
-        const seeder = await import('./seed-dev.ts');
-        await seeder.main(['--worktree', process.cwd(), '--manifest', seedManifest, '--lane-remote', target.name, String(target.number)]);
-        owner.signal.throwIfAborted();
-        await seedTools!.recordSeed(join(root, 'serve'), request.managed.cohort);
-      }
       await fs.mkdir(join(process.env.HOME!, '.config/systemd/user'), { recursive: true });
       await atomic(unitFile, updated);
       await run('systemctl', ['--user', 'daemon-reload']);
@@ -147,7 +136,7 @@ TimeoutStopSec=30
       const answerTime = stage('answer');
       await ready(pid);
       const after = await probe();
-      if (after.backendIdentity !== prepared.identity || after.commit !== prepared.commit || (!before.missing && after.engine !== before.engine) || after.dll !== dll || request.managed && (after.toolsKey !== desiredTools || after.seedCohort !== request.managed.cohort)) throw Error('new host identity could not be verified; inspect lane host before retrying');
+      if (after.backendIdentity !== prepared.identity || after.commit !== prepared.commit || (!before.missing && after.engine !== before.engine) || after.dll !== dll || request.managed && after.toolsKey !== desiredTools) throw Error('new host identity could not be verified; inspect lane host before retrying');
       answerTime();
       // Disk only: a failed cleanup never fails a host that is already verified.
       await pruneReleases(root, [destination, ...(previous ? [previous.directory] : [])])

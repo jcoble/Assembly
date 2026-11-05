@@ -380,10 +380,10 @@ for (const [name, state, matches] of [
 for (const adopted of [false, true]) test(`managed ${adopted ? 'adopted' : 'creator'} lane with current backend, tools and seed skips transfer/build/deploy`, async () => {
   const { toolKey, packages } = await import('./dev-toolchain.ts');
   const versions = Object.fromEntries(packages.map(name => [name, '1.2.3']));
-  const cohort = 'd'.repeat(64), key = toolKey(versions as any, sources, 'linux-x64');
-  const f = fixture({ toolsKey: key, seedCohort: cohort });
+  const key = toolKey(versions as any, sources, 'linux-x64');
+  const f = fixture({ toolsKey: key });
   try {
-    f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, versions, cohort, adopted });
+    f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, versions, adopted });
     f.env.ASSEMBLY_DEV_REMOTE_SYNC = '1';
     const result = f.run();
     assert.equal(result.status, 0, result.stderr);
@@ -398,7 +398,7 @@ test('a copied managed identity refuses before SSH and an adopted outdated lane 
     f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'another', number: 9 } });
     let result = f.run(); assert.equal(result.status, 1); assert.match(result.stderr, /lane identity differ/);
     assert.equal(f.calls().filter(call => call[0] === 'ssh').length, 0);
-    f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, versions: {}, cohort: 'needs-seed', adopted: true });
+    f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, versions: {}, adopted: true });
     result = f.run(); assert.equal(result.status, 1); assert.match(result.stderr, /creator to update/);
     assert.equal(f.calls().filter(call => call[0] === 'git' && call[1] === 'push').length, 0);
   } finally { f.close(); }

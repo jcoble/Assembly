@@ -5,18 +5,19 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export function parseArgs(args: string[]): { worktree: string; manifest: string; dryRun: boolean } {
-  let worktree = ''; let manifest = ''; let dryRun = false;
+const checkout = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '');
+
+export function parseArgs(args: string[]): { worktree: string; profile: string; ifEmpty: boolean } {
+  let worktree = ''; let profile = ''; let ifEmpty = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if ((arg === '--worktree' || arg === '--manifest') && args[i + 1] && !args[i + 1].startsWith('--')) {
+    if ((arg === '--worktree' || arg === '--profile') && args[i + 1] && !args[i + 1].startsWith('--')) {
       if (arg === '--worktree') { if (worktree) throw new Error('Duplicate --worktree.'); worktree = args[++i]; }
-      else { if (manifest) throw new Error('Duplicate --manifest.'); manifest = args[++i]; }
-    } else if (arg === '--dry-run' && !dryRun) dryRun = true;
+      else { if (profile) throw new Error('Duplicate --profile.'); profile = args[++i]; }
+    } else if (arg === '--if-empty' && !ifEmpty) ifEmpty = true;
     else throw new Error(`Unknown or incomplete argument: ${arg}`);
   }
-  if (!worktree || !manifest) throw new Error('--worktree and --manifest are required.');
-  return { worktree, manifest, dryRun };
+  return { worktree: worktree || checkout, profile, ifEmpty };
 }
 export function safePath(input: string, mustExist = true): string {
   if (!isAbsolute(input) || input.split(sep).some(part => part === '.' || part === '..')) throw new Error('Expected absolute path without traversal.');
@@ -61,34 +62,26 @@ export function waitForOwnedClose(owned: ReturnType<typeof spawn>): Promise<numb
     owned.once('close', code => failure ? reject(failure) : done(code ?? 1));
   });
 }
-const help = `Usage: node scripts/seed-dev.ts --worktree PATH --manifest PATH [--dry-run]
-Import explicitly listed ACP captures, rowFormat-4 normalized rows with complete detail sidecars,
-or a compatible closed current-format safe database backup. Sources stay private and read-only.
-Destination: ~/assembly-dev/worktrees/<worktree-name>-<sha256(canonical-path)[0:16]>/assembly.db
-Stop the isolated app first. Existing sessions, drafts, settings and files are preserved; divergent
-replicas are refused. No provider resumes, remote connections, owner clones, app launch or overwrite.
-Output reports unique real/synthetic sessions, rows/tools/details/files/attachments and limitations.
-Dry run validates without destination writes. Never publish private manifests or source recordings.`;
+const help = `Usage: npm run seed:dev [-- --worktree PATH] [--profile PATH] [--if-empty]
+Resets this checkout's dev profile to the same synthetic state: sessions on every provider, projects with real
+small Git repos and worktrees, workflows, Board questions and a saved test machine that is offline.
+Destination: ~/assembly-dev/worktrees/<worktree-name>-<sha256(canonical-path)[0:16]>. Any other --profile is refused.
+Stop the app on that profile first. Installed adapters and agents.json are kept; everything else there is replaced.
+--if-empty does nothing to a profile that already has work or was seeded before. app:dev runs that on each launch.
+It reads no database or backup, uses no network, and signs in to nothing.`;
+export const seedMarker = (home: string) => join(home, 'dev-seed.json');
+// What app:dev calls: a profile already decided on costs a stat, with no build.
+export async function seedIfEmpty(root: string, launcherOwned = false): Promise<void> {
+  if (!existsSync(seedMarker(profileFor(root).home))) await main(['--worktree', root, '--if-empty'], launcherOwned);
+}
 export async function main(args: string[], launcherOwned = false): Promise<void> {
   if (args.length === 1 && args[0] === '--help') { console.log(help); return; }
-  const remoteIndex = args.indexOf('--lane-remote');
-  let remoteLane: { name: string; number: number } | undefined;
-  let remoteData: string | undefined;
-  if (remoteIndex >= 0) {
-    const [name, rawNumber] = args.slice(remoteIndex + 1, remoteIndex + 3);
-    remoteData = (await import('./dev-remote-identity.ts')).lane(name, Number(rawNumber)).data; remoteLane = { name, number: Number(rawNumber) };
-    args = [...args.slice(0, remoteIndex), ...args.slice(remoteIndex + 3)];
-  }
-  const options = parseArgs(args); const profile = profileFor(options.worktree); const root = profile.root;
-  const home = remoteLane ? safePath(join(homedir(), remoteData!, 'serve'), false) : profile.home;
-  if (remoteLane && root !== join(homedir(), remoteData!, 'checkouts/build')) throw Error('remote seed checkout is not lane-owned');
+  const options = parseArgs(args); const { root, home } = profileFor(options.worktree);
+  if (options.profile && options.profile !== home) throw new Error(`The seed only writes to ${home}, not ${options.profile}.`);
   if (launcherOwned && JSON.parse(readFileSync(join(home, 'launcher.lock'), 'utf8')).launcher !== process.pid)
     throw Error('seed requires the calling launcher lock');
-  const manifestPath = safePath(options.manifest);
-  const info = lstatSync(manifestPath);
-  if (!info.isFile() || info.nlink !== 1) throw new Error('Manifest must be a regular file without hardlink aliases.');
-  console.log(`Worktree: ${root}\nLocal database: ${join(home, 'assembly.db')}`);
-  const release = options.dryRun || launcherOwned ? () => {} : takeLauncherLock(home);
+  console.log(`Dev profile: ${home}`);
+  const release = launcherOwned ? () => {} : takeLauncherLock(home);
   const environment = { ...process.env, MSBUILDDISABLENODEREUSE: '1', DOTNET_CLI_TELEMETRY_OPTOUT: '1', DOTNET_NOLOGO: '1' };
   delete environment.ASSEMBLY_REMOTE;
   let child: ReturnType<typeof spawn> | undefined;
@@ -107,7 +100,7 @@ export async function main(args: string[], launcherOwned = false): Promise<void>
   };
   try {
     const output = join(root, 'dotnet/Assembly.DevSeed/bin/dev-seed-cli');
-    child = spawn('dotnet', ['build', join(root, 'dotnet/Assembly.DevSeed'), '--configuration', 'Debug', '--output', output, '-m:1', '-nr:false', '-p:UseSharedCompilation=false'], { cwd: root, env: environment, stdio: ['ignore', 'inherit', 'inherit'] });
+    child = spawn('dotnet', ['build', join(root, 'dotnet/Assembly.DevSeed'), '--configuration', 'Debug', '--output', output, '-v', 'q', '-m:1', '-nr:false', '-p:UseSharedCompilation=false'], { cwd: root, env: environment, stdio: ['ignore', 'inherit', 'inherit'] });
     const built = await waitForOwnedClose(child);
     checkCancellation();
     if (built !== 0) throw new Error(`Development seed helper build failed (${built}).`);
@@ -115,12 +108,11 @@ export async function main(args: string[], launcherOwned = false): Promise<void>
     child = spawn('dotnet', [join(output, 'Assembly.DevSeed.dll')], { cwd: root, env: environment, stdio: ['pipe', 'inherit', 'inherit'] });
     const applied = waitForOwnedClose(child);
     child.stdin!.on('error', () => {});
-    child.stdin!.end(JSON.stringify({ version: 1, canonicalWorktree: root, computedHome: home, manifestPath, dryRun: options.dryRun, remoteLane }));
+    child.stdin!.end(JSON.stringify({ canonicalWorktree: root, computedHome: home, mode: options.ifEmpty ? 'if-empty' : 'reset', nowMs: Date.now() }));
     const code = await applied;
     checkCancellation();
     if (code !== 0) throw new Error(`Development seed companion failed (${code}).`);
   } finally { process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', terminate); release(); }
-
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main(process.argv.slice(2)).catch(error => { console.error(error.message); process.exitCode = error.exitCode ?? 1; });

@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { test } from 'node:test';
 import { ensureBuild } from './dev-build-cache.ts';
-import { seedCohort, seedCurrent, recordSeed, trackedManifest } from './dev-seed-cohort.ts';
 import { fileURLToPath } from 'node:url';
 
 function fixture() {
