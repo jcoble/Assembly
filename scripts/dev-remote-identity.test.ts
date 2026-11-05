@@ -22,7 +22,7 @@ for (const [file, onList] of [
   ['dotnet/Assembly.Desktop/Serve/DesktopBackend.cs', false],
   ['dotnet/Assembly.Tests/Socket/SocketTests.cs', false],
   ['dotnet/Assembly.Infrastructure/Remote/RemoteMachine.cs', false],
-  ['dotnet/Assembly.Infrastructure/Remote/Install/RemoteInstallJobs.cs', false],
+  ['dotnet/Assembly.Infrastructure/Remote/Install/RemoteReleaseJobs.cs', false],
   ['dotnet/Assembly.Infrastructure/Notion/NotionCalls.cs', false],
   ['dotnet/Assembly.Application/Features/Notion/NotionCache.cs', false],
   ['dotnet/Assembly.Application/Features/Workspaces/WorkspaceStore.cs', false],

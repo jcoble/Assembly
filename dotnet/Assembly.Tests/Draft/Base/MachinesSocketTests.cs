@@ -65,7 +65,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
         _work = new BackgroundWork(_time, TextWriter.Null);
         _clock = new BackendClock(topics, _time, _work);
-        _db.Writer.Write("test.profile", scope => scope.Execute("CREATE TABLE IF NOT EXISTS saved_machines(name TEXT PRIMARY KEY, ssh TEXT NOT NULL, port INTEGER NOT NULL, token_file TEXT NOT NULL); INSERT INTO saved_machines VALUES ('box', 'box', 9797, '.config/assembly-dotnet/env');"));
+        _db.Writer.Write("test.profile", scope => scope.Execute("CREATE TABLE IF NOT EXISTS saved_machines(name TEXT PRIMARY KEY, ssh TEXT NOT NULL, port INTEGER NOT NULL, token_file TEXT NOT NULL); INSERT INTO saved_machines VALUES ('box', 'box', 9797, '.config/assembly-host/env');"));
         var profiles = new MachineStore(_db);
         var feature = _feature = new MachinesFeature(machines, status, _clock.Start, _time, store: profiles,
             connection: (name, connect, cancel) => _connections.ConnectionAsync(name, connect, cancel));
@@ -449,7 +449,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
 
     // Pins: sessions-list#11 (checked is false only before the first probe answers or fails)
     private static string Box(bool reachable, string? reason) =>
-        $$"""{"name":"box","kind":"remote","reachable":{{(reachable ? "true" : "false")}},"reason":{{(reason is null ? "null" : $"\"{reason}\"")}},"checked":{{(reason == "not checked yet" ? "false" : "true")}},"ssh":"box","port":9797,"tokenFile":".config/assembly-dotnet/env"{{(!reachable && reason != "not checked yet" ? $",\"offlineSinceMs\":{OfflineSince}" : "")}}}""";
+        $$"""{"name":"box","kind":"remote","reachable":{{(reachable ? "true" : "false")}},"reason":{{(reason is null ? "null" : $"\"{reason}\"")}},"checked":{{(reason == "not checked yet" ? "false" : "true")}},"ssh":"box","port":9797,"tokenFile":".config/assembly-host/env"{{(!reachable && reason != "not checked yet" ? $",\"offlineSinceMs\":{OfflineSince}" : "")}}}""";
 
     private static string List(long sub, string box) =>
         $$$"""{"t":"state","sub":{{{sub}}},"items":[{"key":"local","item":{{{Local}}}},{"key":"box","item":{{{box}}}}]}""";

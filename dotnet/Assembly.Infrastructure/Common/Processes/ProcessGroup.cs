@@ -54,26 +54,37 @@ internal static partial class ProcessGroup
         _ = kill(-groupId, SigKill);
     }
 
+    /// <summary>Everything the process started that is still attached to it, found by parent pid. Never by name.</summary>
+    public static List<int> Descendants(int pid)
+    {
+        var processes = Snapshot();
+        var found = new HashSet<int> { pid };
+        Grow(processes, found);
+        found.Remove(pid);
+        return [.. found];
+    }
+
+    /// <summary>Whether the pid is still listed, a killed process not yet cleared by its parent included.</summary>
+    public static bool Listed(int pid) => kill(pid, 0) == 0;
+
     private static HashSet<int> DescendantGroups(int groupId)
     {
         var processes = Snapshot();
-        var found = processes.Where(process => process.Group == groupId).Select(process => process.Pid).ToHashSet();
-        var groups = new HashSet<int>();
+        var members = processes.Where(process => process.Group == groupId).Select(process => process.Pid).ToHashSet();
+        var found = members.ToHashSet();
+        Grow(processes, found);
+        return processes.Where(process => found.Contains(process.Pid) && !members.Contains(process.Pid) && process.Group != groupId)
+            .Select(process => process.Group).ToHashSet();
+    }
+
+    private static void Grow(List<(int Pid, int Parent, int Group)> processes, HashSet<int> found)
+    {
         for (var grew = true; grew;)
         {
             grew = false;
             foreach (var process in processes)
-            {
-                if (found.Contains(process.Parent) && found.Add(process.Pid))
-                {
-                    grew = true;
-                    if (process.Group != groupId)
-                        groups.Add(process.Group);
-                }
-            }
+                grew |= found.Contains(process.Parent) && found.Add(process.Pid);
         }
-
-        return groups;
     }
 
     private static List<(int Pid, int Parent, int Group)> Snapshot()

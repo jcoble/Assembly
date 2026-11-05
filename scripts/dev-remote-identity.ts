@@ -67,7 +67,21 @@ const hardContracts = new RegExp([
 export function hardContract(file: string) {
   return hardContracts.test(file) && !/\.md$/.test(file) || adapterInput(file);
 }
-// What a check-only run exits with when the remote's number differs.
+// Whichever side has the lower number updates, and nothing older ever goes over something newer. No number at all is a
+// host from before there were numbers, so it's older; a number that can't be compared decides nothing.
+const stable = /^(\d+)\.(\d+)\.(\d+)(\+[0-9A-Za-z.-]+)?$/;
+export function versionOrder(have: unknown, want: string): 'older' | 'same' | 'newer' | 'unknown' {
+  if (have === want) return 'same';
+  if (have === null || have === undefined || have === 'none') return 'older';
+  const [left, right] = [stable.exec(String(have)), stable.exec(want)];
+  if (!left || !right) return 'unknown';
+  for (const part of [1, 2, 3]) {
+    const order = BigInt(left[part]) - BigInt(right[part]);
+    if (order !== 0n) return order < 0n ? 'older' : 'newer';
+  }
+  return 'same';
+}
+// What a check-only run exits with when the remote's number is lower.
 export const remoteBehindExit = 10;
 const path = (line: string) => line.split('\t')[1] ?? '';
 // The one version number: the package version desktop/Cargo.toml declares. Set by hand, in the source; a release only reads it.

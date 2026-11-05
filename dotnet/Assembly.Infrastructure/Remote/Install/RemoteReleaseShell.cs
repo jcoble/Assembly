@@ -11,6 +11,8 @@ namespace Assembly.Infrastructure.Remote.Install;
 internal class RemoteReleaseShell
 {
     private const int ErrorLimit = 16 * 1024;
+    // install.sh's answer when a session started after the wait for running sessions.
+    private const int Busy = 75;
 
     internal virtual async Task<string> RunAsync(string target, string command, Action<string>? line, CancellationToken ct)
     {
@@ -19,6 +21,12 @@ internal class RemoteReleaseShell
             Directory.GetCurrentDirectory()));
         return await RunProcessAsync(started, null, line, ct);
     }
+
+    /// <summary>Sends a local file to a path on the machine, over the same kind of connection.</summary>
+    internal virtual Task UploadAsync(string target, string file, string remotePath, CancellationToken ct) =>
+        RunProcessAsync(new AgentCommand("sh", ["-c", "f=$1; shift; exec \"$@\" <\"$f\"", "sh", file, "ssh",
+            "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ControlMaster=no", "-o", "ControlPath=none", "--", target, $"umask 077; cat > {RemoteReleaseInstall.Quote(remotePath)}"],
+            Directory.GetCurrentDirectory()), null, null, ct);
 
     protected static async Task<string> RunProcessAsync(AgentCommand command, IReadOnlyDictionary<string, string>? environment, Action<string>? line, CancellationToken ct)
     {
@@ -54,7 +62,7 @@ internal class RemoteReleaseShell
         {
             var detail = string.Join('\n', new[] { output.ToString().Trim(), errors.ToString().Trim() }.Where(part => part.Length > 0));
             throw new CallFailed(detail.Length == 0 ? "Remote backend command failed." : $"Remote backend command failed: {detail}",
-                process.ExitCode == 255 ? "ssh_unavailable" : "remote_command_failed");
+                process.ExitCode switch { 255 => "ssh_unavailable", Busy => "remote_busy", _ => "remote_command_failed" });
         }
         return output.ToString().Trim();
     }

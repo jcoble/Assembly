@@ -119,6 +119,9 @@ jobs:
         run: node --test scripts/hooks/*.test.ts
       - name: Agent runbook behavior
         run: node --test scripts/agent-runbook/runbook.test.ts
+      - name: Every scripts/*.test.ts passes
+        if: ${{ !cancelled() }}
+        run: node --test scripts/*.test.ts
       - name: Every scripts/*.test.sh passes
         run: |
           failed=0

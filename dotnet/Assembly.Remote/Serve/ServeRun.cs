@@ -72,6 +72,8 @@ public static class ServeRun
         Action<IProgramTerminals>? programTerminals = null)
     {
         Directory.CreateDirectory(options.Home);
+        var agents = launcher is null ? AgentsFile.OpenOrSay(options.AgentsFile, Console.Error) : null;
+        if (launcher is null && agents is null) return 1;
         // Before the database opens, so a second host on this home writes nothing into the live one's; disposed last.
         using var homeLock = HomeLock.Take(options.Home);
         var token = TokenFile.ReadOrCreate(options.TokenFile);
@@ -88,7 +90,6 @@ public static class ServeRun
         using var hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: sessionStore.PublishSummary);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
         AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
-        var agents = launcher is null ? new AgentsFile(options.AgentsFile) : null;
         launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions());
         var preferences = new PreferenceStore(db);
         var utility = new AcpUtilityModel(agents is not null ? agents : launcher.Agents, () => preferences.Read("utilityModel"), TimeProvider.System, Console.Out);

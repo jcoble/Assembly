@@ -423,7 +423,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         ApiTests.RunOfPrompt(await ApiTests.ReadRowsAsync(live, 2), sessionId, clientId);
         await ApiTests.MessageInsertedAsync(_backend, Token, $"prompt/{sessionId}/{clientId}");
         var before = Rows();
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => DesktopBackend.StartAsync(_home, Token, port: 0, _launcher, _log));
+        var error = await Assert.ThrowsAsync<Assembly.Infrastructure.Persistence.HomeInUseException>(() => DesktopBackend.StartAsync(_home, Token, port: 0, _launcher, _log));
 
         Assert.StartsWith("home in use by pid ", error.Message);
         Assert.Equal(before, Rows());
