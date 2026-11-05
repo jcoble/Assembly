@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Engine;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Engine;
@@ -37,6 +38,15 @@ public sealed class NativeResumeTests
         }
 
         internal string Folder => Db.Text("SELECT folder FROM engine_session WHERE id='s'")!;
+
+        /// <summary>The host lets the session go just after the agent closes; until then a move is truly busy.</summary>
+        internal async Task UntilSessionFreeAsync()
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            ISessionMaintenanceLease? lease;
+            while ((lease = Provider.Hosts.TryAcquire("s").Lease) is null) await Task.Delay(10, deadline.Token);
+            await lease.DisposeAsync();
+        }
 
         internal Effect Queue(ChangeCheckout request)
         {
@@ -259,6 +269,7 @@ public sealed class NativeResumeTests
         await agent.StartAsync();
         await agent.FinishAsync(await agent.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
+        await f.UntilSessionFreeAsync();
         var launch = f.Provider.Sessions.NativeLaunch("s")!;
         Assert.Equal((Native, f.First, f.Provider.Home, f.Provider.Account), (launch.AcpSessionId, launch.Folder, launch.ProviderHome, launch.AccountContext));
         // The account home changed after that open: this transcript no longer belongs to the launch.
