@@ -228,10 +228,15 @@ impl TerminalLink {
         async move { settle(resize?.await).map(|_| ()) }
     }
 
-    // The socket client owns completion; dropping this reply must not cancel the forwarded close.
+    /// Ends the shell. Not held back while the socket connects: the socket sends it once connected, so the shell
+    /// isn't left running. The socket client owns completion; dropping this reply must not cancel the forwarded close.
     pub fn close(&self, cx: &App) {
-        if let Ok(close) = start::<Value>(cx, "close", json!({ "terminal": self.id })) {
-            close.ignore_reply();
+        if let Some(client) = SocketClient::try_terminal(cx) {
+            let args = json!({ "terminal": self.id });
+            (client
+                .read(cx)
+                .call::<Value>("terminal", "close", args, None))
+            .ignore_reply();
         }
     }
 }

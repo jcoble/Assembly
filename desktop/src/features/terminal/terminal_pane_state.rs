@@ -278,6 +278,7 @@ impl TerminalPane {
         self.reopen.clear();
         (self._retry, self._follow) = (None, None);
         self.shown = Shown::Opening;
+        self.retried = true;
         self.open(cx);
         cx.notify();
     }
@@ -295,6 +296,8 @@ impl TerminalPane {
     /// The line under the grid, or in its place.
     pub(super) fn status(&self) -> Option<String> {
         match &self.shown {
+            // A retry says the connection is still being waited on.
+            Shown::Opening if self.retried => Some("Reconnecting…".into()),
             Shown::Opening => Some("Opening terminal…".into()),
             Shown::Reconnecting => Some("Reconnecting…".into()),
             Shown::Exited(code) => Some(format!("exited with {code}")),

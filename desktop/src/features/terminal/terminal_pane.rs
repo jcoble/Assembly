@@ -84,6 +84,8 @@ pub struct TerminalPane {
     writing: bool,
     /// The shell just opened: the pane takes the focus on its next draw.
     focus_wanted: bool,
+    /// The open under way is a retry, from the timer or a push, not from showing the tab or picking a session.
+    retried: bool,
     /// The blinking cursor's half of the blink; it stays shown while the pane hasn't the focus.
     cursor_on: bool,
     _selected: Subscription,
@@ -160,6 +162,7 @@ impl TerminalPane {
             typed: Vec::new(),
             writing: false,
             focus_wanted: false,
+            retried: false,
             cursor_on: true,
             _focused: focused,
             _preferences: Preferences::try_global(cx)
@@ -202,7 +205,7 @@ impl TerminalPane {
         (self._follow, self._replay, self._write) = (None, None, None);
         (self.link, self.held, self.writing) = (None, None, false);
         (self._resize, self.resize_wanted, self.size_unsent) = (None, None, false);
-        (self._retry, self.retries) = (None, 0);
+        (self._retry, self.retries, self.retried) = (None, 0, false);
         self.reopen.clear();
         self.typed.clear();
         self.grid = TerminalGrid::new(self.size.0, self.size.1);
@@ -422,12 +425,15 @@ impl Panel for TerminalPane {
 impl Render for TerminalPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // After the replay, so a program that asked for focus reports hears it has the focus.
-        if self.held.is_none() && mem::take(&mut self.focus_wanted) {
+        // A retried open takes the focus only when nothing else has it, so keys typed elsewhere stay there.
+        let free = !self.retried || window.focused(cx).is_none();
+        if self.held.is_none() && mem::take(&mut self.focus_wanted) && free {
             let focus = self.focus.clone();
             window.defer(cx, move |window, cx| window.focus(&focus, cx));
         }
         let muted = cx.theme().muted_foreground;
         let opening = self.shown == Shown::Opening;
+        let spinning = opening && !self.retried;
         let color = if self.error_note() {
             cx.theme().danger
         } else {
@@ -452,7 +458,7 @@ impl Render for TerminalPane {
                 .gap_1()
                 .p_2()
                 .text_color(color)
-                .when(opening, |note| {
+                .when(spinning, |note| {
                     note.child(Spinner::new().xsmall().color(muted))
                 })
                 .child(text)
