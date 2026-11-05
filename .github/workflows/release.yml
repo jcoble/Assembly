@@ -58,7 +58,7 @@ jobs:
 
       - name: Build the window and its backend
         run: |
-          cargo build --locked --release --manifest-path desktop/Cargo.toml --bin assembly-desktop
+          (cd desktop && cargo build --locked --release --bin assembly-desktop)
           dotnet publish dotnet/Assembly.Desktop -c Release -r osx-arm64 --self-contained \
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
             -p:NuGetLockFilePath=obj/release.packages.lock.json \
