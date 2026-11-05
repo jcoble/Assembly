@@ -12,9 +12,9 @@ internal sealed record RemoteReleaseReceipt(string Version, string Commit);
 /// Installs the latest signed backend on a saved machine. The desktop verifies the signed record; the remote downloads
 /// the archive and the adapters straight from GitHub, checks them, then installs, starts and is read back.
 /// </summary>
-internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, RemoteReleaseShell shell, TimeProvider time, string? version = null, IRemotePackages? packages = null)
+internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, RemoteReleaseShell shell, TimeProvider time, string? version = null, IRemotePackages? packages = null, UpdateProgress? updateProgress = null)
 {
-    private readonly IRemotePackages _packages = packages ?? new ReleasePackages(feed, shell, version);
+    private readonly IRemotePackages _packages = packages ?? new ReleasePackages(feed, shell, version, updateProgress);
 
     /// <summary>
     /// Puts the backend on the machine, with its adapters unless <paramref name="keepAdapters"/> says the machine's are
@@ -49,7 +49,8 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
         {
             if (await source.UpdateToolsAsync(target, quoted, tools, phase, ct) is not { } adapters) return;
             phase("Installing adapters and restarting the backend…");
-            await shell.RunAsync(target, $"set -eu; cd {quoted}; sh install.sh --adapters {Arguments(machine, adapters)}", null, ct);
+            try { await shell.RunAsync(target, $"set -eu; cd {quoted}; sh install.sh --adapters {Arguments(machine, adapters)}", null, ct); }
+            catch (CallFailed failed) { throw new CallFailed($"Adapters: {failed.Message}", failed.Reason); }
         }, ct), ct);
 
     private static string Arguments(SavedMachine machine, AdapterArguments adapters) =>
@@ -96,6 +97,7 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
         for (; ; )
         {
             await shell.RunAsync(target, $"set -eu; cd {quotedStage}; sh install.sh --wait-idle", _ => phase(WaitingWords), ct);
+            updateProgress?.Installing(target);
             try { await act(); return; }
             catch (CallFailed busy) when (busy.Reason == "remote_busy") { phase(WaitingWords); }
         }

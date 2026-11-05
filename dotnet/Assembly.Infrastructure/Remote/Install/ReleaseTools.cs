@@ -17,6 +17,13 @@ internal static class ReleaseCliUpdate
     /// </summary>
     internal static async Task RunAsync(RemoteReleaseShell shell, string target, CliBehind cli, string agentsFile, CancellationToken ct)
     {
+        try { await UpdateAsync(shell, target, cli, agentsFile, ct); }
+        catch (CallFailed failed) when (!failed.Message.Contains(cli.Family, StringComparison.Ordinal))
+        { throw new CallFailed($"{cli.Family}: {failed.Message}", failed.Reason); }
+    }
+
+    private static async Task UpdateAsync(RemoteReleaseShell shell, string target, CliBehind cli, string agentsFile, CancellationToken ct)
+    {
         var now = await shell.RunAsync(target, $"set -eu; PATH=$HOME/.local/bin:/usr/local/bin:$PATH; cli=$(node -e \"{Configured}\" {agentsFile} {cli.Family}); \"$cli\" --version || true", null, ct);
         if (CliCommand.ReadVersion(cli.Family, now.Split('\n')[^1].Trim()) is { } found && CliVersion.Compare(found, cli.Version) != "update_available") return;
         var said = await shell.RunAsync(target, Command(cli, agentsFile), null, ct);
@@ -54,19 +61,22 @@ internal sealed class ThisMachineShell(string? loginShell = null) : RemoteReleas
 /// This computer's adapters and CLIs in a delivered app. Adapters come from the same signed release through the same installer
 /// a remote runs, shipped in the app beside the backend. A new bundle goes beside the one a running session uses.
 /// </summary>
-internal sealed class LocalReleaseTools(RemoteReleaseFeed feed, RemoteReleaseShell shell, string agentsFile, string adapters, Func<bool> sessionRunning, string? installer = null)
+internal sealed class LocalReleaseTools(RemoteReleaseFeed feed, RemoteReleaseShell shell, string agentsFile, string adapters, Func<bool> sessionRunning, string? installer = null, UpdateProgress? updateProgress = null)
 {
     private const string RequireTools = "for tool in bash curl tar node python3 sha256sum; do command -v \"$tool\" >/dev/null || { echo \"Missing tool on this computer: $tool\" >&2; exit 1; }; done; " +
         "python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' || { echo 'Updating adapters requires Python 3.11 or newer on this computer' >&2; exit 1; }";
 
     internal async Task UpdateAsync(ToolsBehind tools, Action<string> progress, CancellationToken ct)
     {
+        updateProgress?.Installing(UpdateProgress.ThisMachine);
         if (tools.Adapters)
         {
             progress("Updating this computer's adapters…");
             var verified = await feed.AdaptersForAsync(Target(), ct);
             var script = installer ?? Path.Combine(AppContext.BaseDirectory, "agents-file.sh");
-            await shell.RunAsync("", $"set -eu; {RequireTools}; ASSEMBLY_ADAPTER_TAG={Quote(verified.Tag)} ASSEMBLY_ADAPTER_MANIFEST_SHA256={Quote(verified.ManifestSha256)} bash {Quote(script)} {Quote(adapters)} {Quote(agentsFile)}", null, ct);
+            try { await shell.RunAsync("", $"set -eu; {RequireTools}; ASSEMBLY_ADAPTER_TAG={Quote(verified.Tag)} ASSEMBLY_ADAPTER_MANIFEST_SHA256={Quote(verified.ManifestSha256)} bash {Quote(script)} {Quote(adapters)} {Quote(agentsFile)}", null, ct); }
+            catch (CallFailed failed) { throw new CallFailed($"Adapters: {failed.Message}", failed.Reason); }
+            updateProgress?.Piece(UpdateProgress.ThisMachine);
         }
         if (tools.Clis.Count == 0) return;
         // Replacing a CLI's files could break a turn it's in the middle of. There's no remote host to wait on here, and pressing the button again is cheap.
@@ -75,6 +85,7 @@ internal sealed class LocalReleaseTools(RemoteReleaseFeed feed, RemoteReleaseShe
         {
             progress($"Updating {cli.Family} on this computer…");
             await ReleaseCliUpdate.RunAsync(shell, "", cli, Quote(agentsFile), ct);
+            updateProgress?.Piece(UpdateProgress.ThisMachine);
         }
     }
 

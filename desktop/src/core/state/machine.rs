@@ -34,6 +34,12 @@ pub struct Machine {
     /// What the update is doing, or why it failed.
     #[serde(default)]
     pub update_note: Option<String>,
+    /// The one figure across everything in the run, while this machine is part of it.
+    #[serde(default)]
+    pub update_percent: Option<u8>,
+    /// Whether the run can still be called off: until an install starts.
+    #[serde(default)]
+    pub update_cancellable: bool,
     /// A new version of the app is ready and asks this window to quit.
     #[serde(default)]
     pub quit: bool,

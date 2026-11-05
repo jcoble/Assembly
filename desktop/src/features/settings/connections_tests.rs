@@ -73,6 +73,24 @@ fn backend() -> FakeBackend {
                 done,
             ],
             (Some("call"), Some("restart")) => vec![done],
+            (Some("call"), Some("downloading")) => vec![
+                Reply::Frame(json!({"t": "change", "sub": sub, "key": "local", "item":
+                    {"name": null, "kind": "local", "reachable": true, "reason": null, "checked": true, "updating": true,
+                     "updatePercent": 42, "updateCancellable": true}})),
+                done,
+            ],
+            (Some("call"), Some("installing")) => vec![
+                Reply::Frame(json!({"t": "change", "sub": sub, "key": "local", "item":
+                    {"name": null, "kind": "local", "reachable": true, "reason": null, "checked": true, "updating": true,
+                     "updatePercent": 60}})),
+                done,
+            ],
+            (Some("call"), Some("cancel")) => vec![
+                Reply::Frame(json!({"t": "change", "sub": sub, "key": "local", "item":
+                    {"name": null, "kind": "local", "reachable": true, "reason": null, "checked": true,
+                     "updates": [{"kind": "desktop", "name": "Desktop", "current": "1", "wanted": "2", "state": "behind"}]}})),
+                done,
+            ],
             (Some("call"), Some("flip")) => vec![change(boxed(false)), done],
             (Some("call"), Some("remove")) => vec![change(Value::Null), done],
             _ => Vec::new(),
@@ -364,6 +382,51 @@ async fn this_machines_card_has_restart_to_update_when_an_update_is_ready(cx: &m
             break;
         }
     }
+}
+
+// Pressing it stops the run and the button is back to ready; once an install starts there's no Cancel to press.
+#[gpui::test]
+async fn while_downloading_the_card_has_cancel_which_goes_back_to_ready(cx: &mut TestAppContext) {
+    let backend = backend();
+    let mut page = editing_box(cx, &backend).await;
+    let updating = |page: &mut Page<'_>, cancellable: bool| {
+        page.cx.update(|_, cx| {
+            Machines::try_global(cx).is_some_and(|machines| {
+                (machines.read(cx).machines())
+                    .any(|machine| machine.updating && machine.update_cancellable == cancellable)
+            })
+        })
+    };
+    page.backend_does("installing", "installing", |page| updating(page, false))
+        .await;
+    assert!(page.cx.debug_bounds("machine-cancel").is_none());
+    page.backend_does("downloading", "downloading", |page| updating(page, true))
+        .await;
+    let button = page.cx.debug_bounds("machine-cancel").expect("Cancel");
+    page.cx.simulate_click(button.center(), Modifiers::none());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let frame = backend.seen.recv_timeout(left).expect("the cancel call");
+        if frame["method"] == "cancel" {
+            assert_eq!(frame["feature"], "updates");
+            break;
+        }
+    }
+    let (mut changes, changed) = (
+        std::mem::replace(&mut page.changes, unbounded().1),
+        page.changed.clone(),
+    );
+    until("back to ready", &mut changes, &changed, || {
+        page.cx.update(|_, cx| {
+            Machines::try_global(cx).is_some_and(|machines| {
+                (machines.read(cx).machines()).all(|machine| !machine.updating)
+            })
+        })
+    })
+    .await;
+    draw(page.cx);
+    assert!(page.cx.debug_bounds("machine-cancel").is_none());
 }
 
 // Every button a saved machine can offer beside its words left them a letter wide on a real screen.

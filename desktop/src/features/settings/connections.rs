@@ -5,7 +5,6 @@
 //! the backend took it. A call that fails says why on its machine's row, or under the form.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use crate::features::remote_install::restart_button::WORDS as RESTART_WORDS;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _};
@@ -23,7 +22,7 @@ use crate::core::ui::access::control_ids::{
     machine_button as machine_button_id, machine_line, settings as ids,
 };
 use crate::core::ui::access::{Control as _, say};
-use crate::features::remote_install::updates::{row_status, update_offered};
+use crate::features::remote_install::updates::row_status;
 
 /// What the form shows in a blank port or token file: the backend's defaults (SavedMachine.cs), which it fills in.
 const DEFAULT_PORT: &str = "9797";
@@ -115,56 +114,7 @@ impl SettingsPage {
         // This machine's row has no name, but its update button still needs somewhere to say why it failed.
         let key = machine.name.clone().unwrap_or("local".to_string());
         let failure = self.failure_about(Some(&key), cx);
-        let update_key = key.clone();
-        let update = update_offered(&machine).then(|| {
-            let key = update_key;
-            self.machine_button(
-                format!("start-{key}").into(),
-                machine_button_id(&key, "update"),
-                UPDATE,
-            )
-            .primary()
-            .loading(machine.updating)
-            // A press of Restart holds this machine's one place, and would make this do nothing.
-            .disabled(machine.updating || machine.restarting || self.machine_call.is_some())
-            .on_click(cx.listener(move |page, _, window, cx| {
-                let about = Some(key.clone());
-                page.machine_call(
-                    about,
-                    "updates",
-                    "start",
-                    json!({}),
-                    "Couldn't update",
-                    window,
-                    cx,
-                )
-            }))
-        });
-        // Settings covers the top bar's button, and the words on this card say to press it.
-        let restart = (machine.name.is_none() && machine.restart_ready.is_some()).then(|| {
-            let about = key.clone();
-            div().debug_selector(|| "machine-restart".into()).child(
-                self.machine_button(
-                    format!("restart-{about}").into(),
-                    machine_button_id(&about, "restart"),
-                    RESTART_WORDS,
-                )
-                .primary()
-                .loading(machine.restarting)
-                .disabled(machine.restarting || machine.updating || self.machine_call.is_some())
-                .on_click(cx.listener(move |page, _, window, cx| {
-                    page.machine_call(
-                        Some(about.clone()),
-                        "updates",
-                        "restart",
-                        json!({}),
-                        "Couldn't restart",
-                        window,
-                        cx,
-                    )
-                })),
-            )
-        });
+        let updates = self.update_buttons(&machine, &key, cx);
         let install = install_offered(&machine).then(|| {
             let name = machine.name.clone().unwrap_or_default();
             self.machine_button(
@@ -192,14 +142,13 @@ impl SettingsPage {
             .is_some()
             .then(|| self.machine_actions(machine, cx));
         // On their own line: a note or a reason can be long, and all of them beside it left it a letter wide.
-        let any = update.is_some() || restart.is_some() || install.is_some() || actions.is_some();
+        let any = !updates.is_empty() || install.is_some() || actions.is_some();
         let buttons = any.then(|| {
             h_flex()
                 .flex_wrap()
                 .justify_end()
                 .gap_2()
-                .children(restart)
-                .children(update)
+                .children(updates)
                 .children(install)
                 .children(actions)
         });
@@ -388,7 +337,12 @@ impl SettingsPage {
     }
 
     /// A small button that shows its call running, and waits while any machine call runs.
-    fn machine_button(&self, id: SharedString, tree_id: String, label: &'static str) -> Button {
+    pub(super) fn machine_button(
+        &self,
+        id: SharedString,
+        tree_id: String,
+        label: &'static str,
+    ) -> Button {
         let running = self.machine_call.as_ref().map(|(running, _)| running);
         Button::new(id.clone())
             .control(tree_id, label)
@@ -477,7 +431,7 @@ impl SettingsPage {
     /// Sends `machines/<method>` for the row of machine `about`, or the form (`None`); the button that sent it is
     /// `<method>-<name>`, or the form's `set`. Once the backend takes the form's save, the form empties.
     #[allow(clippy::too_many_arguments)]
-    fn machine_call(
+    pub(super) fn machine_call(
         &mut self,
         about: Option<String>,
         feature: &'static str,
@@ -566,7 +520,6 @@ mod tests;
 
 /// The one button, on each card with something behind. It updates everything behind on every machine, in development and
 /// from a release: where it comes from is the backend's to decide.
-const UPDATE: &str = "Update everything";
 
 /// On each remote: runs the one check now and installs nothing. Its answer is on the card, from the machines topic.
 const CHECK: &str = "Check for updates";

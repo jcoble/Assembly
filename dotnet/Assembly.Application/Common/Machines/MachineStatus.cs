@@ -15,6 +15,8 @@ namespace Assembly.Application.Common.Machines;
 /// through later failures and cleared when it answers. <paramref name="Restarting"/> and <paramref name="RestartNote"/> are
 /// Restart to Update's own, apart from this machine's tools: what a press is doing or waiting for, or why it failed.
 /// <paramref name="CantUpdate"/> is why this app won't install or update anything on this machine.
+/// <paramref name="UpdatePercent"/> is the one figure across everything in the run, and <paramref name="UpdateCancellable"/>
+/// whether it can still be called off: only until an install starts.
 /// </summary>
 public sealed record MachineItem(string? Name, string Kind, bool Reachable, string? Reason, bool Checked, string? Ssh = null, int? Port = null, string? TokenFile = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] RemoteBackend? Backend = null,
@@ -26,7 +28,9 @@ public sealed record MachineItem(string? Name, string Kind, bool Reachable, stri
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? RestartReady = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Restarting = false,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? RestartNote = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? CantUpdate = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? CantUpdate = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int? UpdatePercent = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool UpdateCancellable = false);
 
 /// <summary>One piece the update check looked at: <paramref name="Kind"/> is desktop, backend, adapter or cli.</summary>
 public sealed record UpdateItem(string Kind, string Name, string? Current, string? Wanted, string State)
@@ -131,7 +135,12 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes, T
     }
 
     /// <summary>Whether the one update is running, and what it's doing or why it failed.</summary>
-    public void Updating(string? machine, bool updating, string? note) => Change(machine, item => item with { Updating = updating, UpdateNote = note });
+    public void Updating(string? machine, bool updating, string? note) => Change(machine, item => updating
+        ? item with { Updating = true, UpdateNote = note }
+        : item with { Updating = false, UpdateNote = note, UpdatePercent = null, UpdateCancellable = false });
+
+    /// <summary>The run's one figure on a machine that's part of it.</summary>
+    public void UpdateFigure(string? machine, int? percent, bool cancellable) => Change(machine, item => item with { UpdatePercent = percent, UpdateCancellable = cancellable });
 
     /// <summary>Which new version of the app is waiting for someone to press Restart to Update.</summary>
     public void RestartReady(string? version) => Change(null, item => item with { RestartReady = version });

@@ -47,7 +47,7 @@ internal sealed record AppLocation(string App, string Home, string Database, str
 /// comes after it. One helper at a time: whichever of the two starts it first.
 /// </summary>
 internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed feed, Func<CancellationToken, Task> idle, Func<bool> busy,
-    Func<string, string, CancellationToken, Task<Action>> startHelper, Func<int> windowPid, Action quit) : IAppInstall
+    Func<string, string, CancellationToken, Task<Action>> startHelper, Func<int> windowPid, Action quit, UpdateProgress? updateProgress = null) : IAppInstall
 {
     private const string Bundle = "Assembly.app", StagePrefix = ".assembly-update-";
     internal const string WaitingWords = "Waiting for running sessions to finish…";
@@ -94,7 +94,7 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
             var unpacked = Path.Combine(stage, "new");
             Directory.CreateDirectory(unpacked);
             var archive = Path.Combine(stage, "app.tar.gz");
-            await feed.DownloadAppAsync(release, archive, ct);
+            await feed.DownloadAppAsync(release, archive, ct, done => updateProgress?.Download(UpdateProgress.ThisMachine, "app", done, release.Bytes));
             progress($"Checking Assembly {version}…");
             await UnpackAsync(archive, unpacked, ct);
             File.Delete(archive);

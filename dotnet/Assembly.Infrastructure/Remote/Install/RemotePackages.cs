@@ -108,14 +108,14 @@ internal static class CheckoutBuild
 }
 
 /// <summary>A delivered app: the signed release. The remote downloads it itself, and the desktop checks what it says it got.</summary>
-internal sealed class ReleasePackages(RemoteReleaseFeed feed, RemoteReleaseShell shell, string? version) : IRemotePackages
+internal sealed class ReleasePackages(RemoteReleaseFeed feed, RemoteReleaseShell shell, string? version, UpdateProgress? updateProgress = null) : IRemotePackages
 {
     public async Task<IRemotePackage> PrepareAsync(CancellationToken ct) =>
-        new ReleasePackage(await (version is null ? feed.LatestAsync(ct) : feed.ForVersionAsync(version, ct)), shell);
+        new ReleasePackage(await (version is null ? feed.LatestAsync(ct) : feed.ForVersionAsync(version, ct)), shell, updateProgress);
 }
 
 /// <summary>One signed release, for one install.</summary>
-internal sealed class ReleasePackage(VerifiedRemoteRelease release, RemoteReleaseShell shell) : IRemotePackage
+internal sealed class ReleasePackage(VerifiedRemoteRelease release, RemoteReleaseShell shell, UpdateProgress? updateProgress = null) : IRemotePackage
 {
     public async Task<ReceivedPackage> ReceiveAsync(string target, string stage, Action<string> phase, CancellationToken ct)
     {
@@ -132,6 +132,7 @@ internal sealed class ReleasePackage(VerifiedRemoteRelease release, RemoteReleas
             {
                 if (!long.TryParse(line.AsSpan(2), NumberStyles.None, CultureInfo.InvariantCulture, out var bytes) || bytes > record.Bytes)
                     invalid ??= new("Backend download progress exceeds signed size.", "release_invalid");
+                else updateProgress?.Download(target, "backend", bytes, record.Bytes);
             }
             else if (line.StartsWith("V\t", StringComparison.Ordinal))
             {
@@ -155,6 +156,7 @@ internal sealed class ReleasePackage(VerifiedRemoteRelease release, RemoteReleas
         {
             phase($"Updating {cli.Family}…");
             await ReleaseCliUpdate.RunAsync(shell, target, cli, CheckoutPackages.Agents, ct);
+            updateProgress?.Piece(target);
         }
         if (!tools.Adapters) return null;
         return new(false, release.Adapters.Tag, release.Adapters.ManifestSha256);

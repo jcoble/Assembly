@@ -14,8 +14,9 @@ namespace Assembly.Infrastructure.Updates;
 /// way, and restarts only when someone says so. A machine this app can't update has nothing behind and no update of its own.
 /// </summary>
 internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status, InstalledCalls local,
-    Func<string, CancellationToken, Task<InstalledTools?>> remote, Action? reload, BackgroundWork work, TextWriter log) : IFeature
+    Func<string, CancellationToken, Task<InstalledTools?>> remote, Action? reload, BackgroundWork work, TextWriter log, UpdateProgress? progress = null) : IFeature
 {
+    private readonly UpdateProgress _progress = progress ?? new(status);
     private const string ThisApp = "";
     private readonly HashSet<string> _updating = [];
     private readonly HashSet<string> _started = [];
@@ -42,6 +43,11 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         {
             if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
             return Task.FromResult(new UpdateStarted(Start()));
+        });
+        calls.Read("updates", "cancel", UpdatesJson.Default.InstalledArgs, UpdatesJson.Default.UpdateStarted, (_, call) =>
+        {
+            if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
+            return Task.FromResult(new UpdateStarted(Cancel()));
         });
         calls.Read("updates", "install", UpdatesJson.Default.InstallArgs, UpdatesJson.Default.UpdateStarted, (args, call) =>
         {
@@ -77,6 +83,9 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         await CheckAsync(machine, stop, fresh: true);
         if (!Updating(machine)) status.Updating(machine, false, null);
     }
+
+    /// <summary>Calls off everything downloading in the run. False once an install has started, or with nothing to call off.</summary>
+    internal bool Cancel() => _progress.Cancel();
 
     /// <summary>The first check, and every remote's check from here on.</summary>
     internal void Begin()
@@ -249,21 +258,35 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     {
         var machine = item.Name;
         string? ending = null;
+        var cancelled = false;
+        var place = machine is null ? UpdateProgress.ThisMachine : item.Ssh ?? machine;
+        var downloaded = (item.Updates ?? []).Count(update => update.State == UpdateItem.Behind && update.Kind is "desktop" or "backend");
+        var pieces = (item.Updates ?? []).Count(update => update.State == UpdateItem.Behind) - downloaded;
+        status.Updating(machine, true, null);
+        var run = _progress.Begin(machine, place, pieces, downloaded > 0);
         try
         {
-            status.Updating(machine, true, null);
+            using var either = CancellationTokenSource.CreateLinkedTokenSource(stop, run);
             MachineBehind behind = new(machine, [.. (item.Updates ?? []).Where(update => update.State == UpdateItem.Behind)],
                 (item.Updates ?? []).Any(update => update.Kind == "adapter" && update.State == UpdateItem.Newer));
-            await source.UpdateAsync([behind], automatic, note => status.Updating(machine, true, note), stop);
+            await source.UpdateAsync([behind], automatic, note => status.Updating(machine, true, note), either.Token);
+        }
+        catch (OperationCanceledException) when (run.IsCancellationRequested)
+        {
+            // Someone called it off: a later check doesn't start it again, and the button can.
+            cancelled = true;
+            lock (_started) _started.Add(Slot(machine));
         }
         catch (CallFailed error) { ending = "Update failed: " + error.Message; }
         catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }
         finally
         {
+            _progress.End(place);
             Free(machine);
             if (machine is null) status.RestartReady(source.AppReady);
             status.Updating(machine, false, ending);
         }
+        if (cancelled) return;
         if (ending is null) Updated();
         else Check(machine);
     }

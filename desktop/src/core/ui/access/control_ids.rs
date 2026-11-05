@@ -162,7 +162,7 @@ pub fn settings_nav(section: &str) -> String {
 }
 
 /// A button on a remote machine's row in Settings > Connections: `settings.machine.workbox-test.connect`
-/// (`connect`, `disconnect`, `edit`, `remove`, `update`).
+/// (`connect`, `disconnect`, `edit`, `remove`, `update`, `cancel`, `restart`).
 pub fn machine_button(machine: &str, action: &str) -> String {
     format!("settings.machine.{}.{action}", slug(machine))
 }

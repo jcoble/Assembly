@@ -346,10 +346,11 @@ public sealed class DesktopBackend : IAsyncDisposable
             releaseHttp = new HttpClient(new SocketsHttpHandler { UseCookies = false });
             var releaseFeed = new RemoteReleaseFeed(releaseHttp);
             var remoteShell = new RemoteReleaseShell();
+            var updateProgress = new UpdateProgress(status);
             remoteReleases = new RemoteReleaseJobs(new RemoteReleaseInstall(releaseFeed, remoteShell, TimeProvider.System, Assembly.Infrastructure.Socket.BackendBuild.Version,
-                UpdateSources.Checkout is { } checkout ? new CheckoutPackages(remoteShell, CheckoutBuild.For(checkout, home)) : null),
+                UpdateSources.Checkout is { } checkout ? new CheckoutPackages(remoteShell, CheckoutBuild.For(checkout, home)) : null, updateProgress),
                 connections.SavedProfile, (name, ct) => connections.ConnectionAsync(name, true, ct), releaseFeed,
-                agentsFile is null ? null : new LocalReleaseTools(releaseFeed, new ThisMachineShell(), agentsFile.Path, Path.Combine(home, "adapters"), () => activity.Held));
+                agentsFile is null ? null : new LocalReleaseTools(releaseFeed, new ThisMachineShell(), agentsFile.Path, Path.Combine(home, "adapters"), () => activity.Held, updateProgress: updateProgress));
             connections.Start(savedRemote ?? (remote is null ? null : new SavedMachine(remote.Name, remote.Name)));
             // Direct test endpoints use the same owner; their callers historically expect routing ready on return.
             var startupName = savedRemote?.Name ?? remote?.Name;
@@ -399,10 +400,10 @@ public sealed class DesktopBackend : IAsyncDisposable
             notion = new Assembly.Infrastructure.Notion.NotionCalls(notionSettings, new Assembly.Infrastructure.Notion.NotionOAuth(cliHttp, notionSettings, TimeProvider.System), new Assembly.Infrastructure.Notion.NotionDetailReader(notionHttp), notionCache, new Assembly.Infrastructure.Notion.NotionRefresh(notionHttp, notionCache, notionSettings, TimeProvider.System), notionEdits, new Assembly.Infrastructure.Notion.NotionImageUpload(Path.Combine(home, "staging", "notion"), notionHttp, notionSettings, notionEdits));
             var appBundle = AppUpdate.BundleOf(AppContext.BaseDirectory);
             IAppInstall? appInstall = givenInstall ?? (appBundle is null || UpdateSources.Checkout is not null || Assembly.Infrastructure.Socket.BackendBuild.Version is not { } appVersion ? null : new AppUpdate(new(appBundle, home, database, appVersion),
-                new RemoteReleaseFeed(releaseHttp), activity.WhenIdleAsync, () => activity.Held, AppUpdate.StartHelperAsync, AppSwap.Window, status.QuitWindow));
+                new RemoteReleaseFeed(releaseHttp), activity.WhenIdleAsync, () => activity.Held, AppUpdate.StartHelperAsync, AppSwap.Window, status.QuitWindow, updateProgress));
             var updates = new MachineUpdates(UpdateSources.ForHost(cliHttp, TimeProvider.System, remoteReleases, home: home, app: appInstall), status, new InstalledCalls(launcher, TimeProvider.System),
                 async (machine, ct) => connections!.ByName(machine) is { } reached ? await reached.InstalledToolsAsync(ct) : null,
-                agentsFile is null ? null : () => agentsFile.Reload(), work, log);
+                agentsFile is null ? null : () => agentsFile.Reload(), work, log, updateProgress);
             var cliUpdates = new UpdateCalls(launcher, engine.Machine, cliHttp, TimeProvider.System, hostStop.Token,
                 (machine, ct) => connections.CliLocator(db, machine, ct), new RemoteCliClient(cliHttp, TimeProvider.System));
             var git = new GitCli();

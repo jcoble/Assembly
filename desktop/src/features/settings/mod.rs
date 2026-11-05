@@ -5,6 +5,7 @@
 pub(crate) mod connections;
 mod fonts;
 mod machine_edits;
+mod machine_update_buttons;
 mod page_content;
 pub mod preview;
 mod row;

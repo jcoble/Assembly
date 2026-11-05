@@ -90,7 +90,7 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
     }
 
     /// <summary>Downloads the app's archive to a file and checks it against the pinned key.</summary>
-    internal async Task DownloadAppAsync(AppRelease app, string file, CancellationToken ct)
+    internal async Task DownloadAppAsync(AppRelease app, string file, CancellationToken ct, Action<long>? received = null)
     {
         try
         {
@@ -109,6 +109,7 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
                     total += count;
                     if (total > app.Bytes) throw Failure($"The download of Assembly {app.Version} is larger than its release says.", "release_invalid");
                     await output.WriteAsync(buffer.AsMemory(0, count), ct);
+                    received?.Invoke(total);
                 }
             }
         }

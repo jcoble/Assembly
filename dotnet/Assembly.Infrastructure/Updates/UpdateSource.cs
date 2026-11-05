@@ -75,17 +75,17 @@ internal static class UpdateSources
         foreach (var machine in machines)
         {
             void Note(string note) => progress(machine.Name is null ? note : $"{machine.Name}: {note}");
-            async Task Try(Func<Task> step)
+            async Task Try(string? item, Func<Task> step)
             {
                 try { await step(); }
-                catch (CallFailed failed) { failures.Add(failed.Message); }
+                catch (CallFailed failed) { failures.Add(item is null ? failed.Message : $"{item}: {failed.Message}"); }
             }
             var backend = machine.Name is not null && machine.Behind.Any(item => item.Kind == "backend");
-            if (backend) await Try(() => release.InstallAsync(machine.Name!, Note, ct, machine.AdaptersNewer));
+            if (backend) await Try("Backend", () => release.InstallAsync(machine.Name!, Note, ct, machine.AdaptersNewer));
             // The backend's install brings its adapters; a CLI is separate either way.
             var tools = ToolsBehind.Of(machine.Behind);
             if (backend) tools = tools with { Adapters = false };
-            if (tools.Any) await Try(() => release.UpdateToolsAsync(machine.Name, tools, Note, ct));
+            if (tools.Any) await Try(null, () => release.UpdateToolsAsync(machine.Name, tools, Note, ct));
         }
     }
 

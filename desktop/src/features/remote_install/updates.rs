@@ -31,6 +31,13 @@ pub(crate) fn update_offered(machine: &Machine) -> bool {
     machine.offered().next().is_some() || machine.updating
 }
 
+/// What the one Update button says, or `None` when it says its usual words.
+pub(crate) fn update_figure(machine: &Machine) -> Option<String> {
+    (machine.update_percent)
+        .filter(|_| machine.updating)
+        .map(|percent| format!("Updating {percent}%"))
+}
+
 /// One sentence for the notice at app start, or `None` when nothing is behind.
 pub fn behind_words<'a>(machines: impl Iterator<Item = &'a Machine>) -> Option<String> {
     let found: Vec<String> = machines

@@ -1,5 +1,6 @@
 use super::{
-    Machine, behind_notice, behind_words, newer_words, notice_words, row_status, update_offered,
+    Machine, behind_notice, behind_words, newer_words, notice_words, row_status, update_figure,
+    update_offered,
 };
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
@@ -322,4 +323,20 @@ async fn the_ready_notice_replaces_the_behind_notice(cx: &mut gpui::TestAppConte
     .await;
     cx.run_until_parked();
     cx.update(|window, cx| assert_eq!(window.notifications(cx).len(), 1));
+}
+
+#[test]
+fn the_button_shows_the_runs_one_figure_only_while_updating() {
+    let running = machine(
+        json!({"name":null,"kind":"local","reachable":true,"reason":null,"checked":true,"updating":true,"updatePercent":42}),
+    );
+    assert_eq!(update_figure(&running).as_deref(), Some("Updating 42%"));
+    let waiting = machine(
+        json!({"name":null,"kind":"local","reachable":true,"reason":null,"checked":true,"updating":true}),
+    );
+    assert_eq!(update_figure(&waiting), None);
+    let done = machine(
+        json!({"name":null,"kind":"local","reachable":true,"reason":null,"checked":true,"updatePercent":42}),
+    );
+    assert_eq!(update_figure(&done), None);
 }
