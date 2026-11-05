@@ -8,7 +8,6 @@ use serde_json::{Value, json};
 
 use super::SessionPane;
 use crate::core::theme::grow::GROW;
-use crate::core::ui::ask::form::AskForm;
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::item::ItemKind;
@@ -72,9 +71,6 @@ impl SessionPane {
             && matches!(
                 &action,
                 SessionAction::RetryPrompt { .. }
-                    | SessionAction::Pick { .. }
-                    | SessionAction::Flag { .. }
-                    | SessionAction::SubmitAsk { .. }
                     | SessionAction::Answer { .. }
                     | SessionAction::StopTask { .. }
                     | SessionAction::StopNative { .. }
@@ -127,53 +123,6 @@ impl SessionPane {
                 self.kept.entry(key.clone()).or_default().all_diff = true;
                 if let Some(at) = self.view.items.iter().position(|item| item.key == key) {
                     self.refresh(Change::Updated(at), cx);
-                }
-            }
-            SessionAction::Pick {
-                ask_id,
-                field,
-                value,
-                many,
-            } => {
-                let Some(form) = self.forms.get_mut(&ask_id) else {
-                    return;
-                };
-                form.pick(field, value, many);
-                self.refresh_ask(&ask_id, cx);
-                cx.notify();
-            }
-            SessionAction::Flag { ask_id, field, on } => {
-                let Some(form) = self.forms.get_mut(&ask_id) else {
-                    return;
-                };
-                form.set_flag(field, on);
-                self.refresh_ask(&ask_id, cx);
-                cx.notify();
-            }
-            SessionAction::SubmitAsk { ask_id } => {
-                let Some(form) = self.forms.get(&ask_id) else {
-                    return;
-                };
-                let texts = form
-                    .texts
-                    .iter()
-                    .map(|(name, input)| (name.clone(), input.read(cx).value().to_string()))
-                    .collect::<Vec<_>>();
-                let asked = self.view.items.iter().find_map(|item| match &item.kind {
-                    ItemKind::Ask { ask_id: id, ask } if *id == ask_id => Some(ask),
-                    _ => None,
-                });
-                let Some(asked) = asked else {
-                    return;
-                };
-                match AskForm::answer(asked, &form.picked, texts) {
-                    Ok(answer) => {
-                        self.on_action(SessionAction::Answer { ask_id, answer }, window, cx)
-                    }
-                    Err(why) => {
-                        self.status = why.into();
-                        cx.notify();
-                    }
                 }
             }
             SessionAction::Answer { ask_id, answer } => {
@@ -376,16 +325,6 @@ impl SessionPane {
         if !self.growing.is_empty() {
             self.grow_asked = true;
             cx.on_next_frame(window, |pane, window, cx| pane.grow_frame(window, cx));
-        }
-    }
-
-    /// Draws an ask's card again.
-    fn refresh_ask(&mut self, ask_id: &str, cx: &mut Context<Self>) {
-        let at = self.view.items.iter().position(
-            |item| matches!(&item.kind, ItemKind::Ask { ask_id: id, .. } if id == ask_id),
-        );
-        if let Some(at) = at {
-            self.refresh(Change::Updated(at), cx);
         }
     }
 

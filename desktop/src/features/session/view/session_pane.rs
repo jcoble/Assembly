@@ -19,7 +19,7 @@ use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
 use crate::core::state::machines::GlobalMachines;
 use crate::core::theme::grow::{GROW, faded};
-use crate::core::ui::ask::form::AskForm;
+use crate::core::ui::ask::ask_questionnaire::AskQuestionnaire;
 use crate::core::ui::expand_row::ExpandRow;
 #[cfg(test)]
 use crate::features::session::client::session_client::RowsSink;
@@ -67,8 +67,8 @@ pub struct SessionPane {
     plan_open: bool,
     /// When each row that arrived live since the session opened came in, by item key, so it fades in once.
     fresh: HashMap<String, Instant>,
-    /// Each open question's form, by ask id, made when its card is first drawn.
-    forms: HashMap<String, AskForm>,
+    /// The form of the question above the composer, by ask id, so what's typed outlives each draw.
+    forms: HashMap<String, Entity<AskQuestionnaire>>,
     /// What each item keeps while off screen, by item key.
     kept: HashMap<String, Kept>,
     /// What each row's buttons call: this pane's `on_action`.

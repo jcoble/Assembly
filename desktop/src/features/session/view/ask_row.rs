@@ -16,6 +16,7 @@ use serde_json::Value;
 use super::grow::chevron;
 use super::session_action::{OnAction, SessionAction};
 use crate::core::ui::ask::answer_words::option_words;
+use crate::core::ui::ask::ask_questionnaire::OnAnswer;
 use crate::core::ui::ask::form::AskForm;
 use crate::core::ui::ask::payload::{AskOption, AskPayload};
 
@@ -23,8 +24,6 @@ use crate::core::ui::ask::payload::{AskOption, AskPayload};
 pub struct AskRow {
     pub ask_id: String,
     pub ask: AskPayload,
-    /// An open question's form; `None` for a permission or a settled card.
-    pub form: Option<AskForm>,
     pub on_action: OnAction,
 }
 
@@ -188,40 +187,20 @@ impl AskRow {
         controls::render(
             &self.ask_id,
             &self.ask,
-            self.form.as_ref(),
+            None,
             &choices,
-            self.on_control(),
+            self.on_answer(),
             cx,
         )
     }
 
-    /// What this ask's controls call, whichever surface draws them.
-    pub fn on_control(&self) -> crate::core::ui::ask::controls::OnControl {
-        use crate::core::ui::ask::controls::ControlAction;
+    /// What answering this ask calls, whichever surface draws it.
+    pub fn on_answer(&self) -> OnAnswer {
         let ask_id = self.ask_id.clone();
         let on_action = self.on_action.clone();
-        Rc::new(move |action, window, cx| {
-            let action = match action {
-                ControlAction::Answer(answer) => SessionAction::Answer {
-                    ask_id: ask_id.clone(),
-                    answer,
-                },
-                ControlAction::Pick { field, value, many } => SessionAction::Pick {
-                    ask_id: ask_id.clone(),
-                    field,
-                    value,
-                    many,
-                },
-                ControlAction::Flag { field, on } => SessionAction::Flag {
-                    ask_id: ask_id.clone(),
-                    field,
-                    on,
-                },
-                ControlAction::Submit => SessionAction::SubmitAsk {
-                    ask_id: ask_id.clone(),
-                },
-            };
-            on_action(action, window, cx);
+        Rc::new(move |answer, window, cx| {
+            let ask_id = ask_id.clone();
+            on_action(SessionAction::Answer { ask_id, answer }, window, cx);
         })
     }
 }

@@ -6,7 +6,8 @@ use crate::core::{
         engine_items::{NO_ANSWER_CONTROLS, NeedItem, WORK_REDONE},
     },
     ui::ask::{
-        controls::{self, ControlAction},
+        ask_questionnaire::{AskQuestionnaire, OnAnswer},
+        controls,
         form::AskForm,
     },
 };
@@ -159,7 +160,7 @@ pub struct NeedRow {
     state: NeedRowState,
     available: bool,
     text: Entity<TextareaState>,
-    form: Option<AskForm>,
+    form: Option<Entity<AskQuestionnaire>>,
     /// A gate's Revise is open, its words going in `text`.
     revising: bool,
     serial: u64,
@@ -306,6 +307,11 @@ impl NeedRow {
             return;
         }
         if self.form.is_none() {
+            let key = format!("need-{}-{}", self.key.machine, self.key.id);
+            let row = cx.weak_entity();
+            let on_answer: OnAnswer = Rc::new(move |answer, _, cx| {
+                let _ = row.update(cx, |row, cx| row.control(answer, cx));
+            });
             self.form = self
                 .need
                 .presentation
@@ -313,53 +319,17 @@ impl NeedRow {
                 .and_then(|presentation| {
                     presentation.provider_payload("open", self.need.text.clone(), None)
                 })
-                .and_then(|payload| AskForm::of(&payload, window, cx));
+                .and_then(|payload| AskQuestionnaire::of(key, &payload, on_answer, window, cx));
         }
         self.state = NeedRowState::Open;
         cx.notify();
     }
-    fn control(&mut self, action: ControlAction, cx: &mut Context<Self>) {
+    fn control(&mut self, answer: Value, cx: &mut Context<Self>) {
         self.refresh(cx);
         if matches!(self.state, NeedRowState::Sending) || !self.available || !self.reconciled {
             return;
         }
-        match action {
-            ControlAction::Pick { field, value, many } => {
-                if let Some(form) = self.form.as_mut() {
-                    form.pick(field, value, many);
-                    cx.notify();
-                }
-            }
-            ControlAction::Flag { field, on } => {
-                if let Some(form) = self.form.as_mut() {
-                    form.set_flag(field, on);
-                    cx.notify();
-                }
-            }
-            ControlAction::Submit => {
-                let Some(form) = &self.form else {
-                    return;
-                };
-                let Some(asked) = self.need.presentation.as_ref().and_then(|presentation| {
-                    presentation.provider_payload("open", self.need.text.clone(), None)
-                }) else {
-                    return;
-                };
-                let texts = form
-                    .texts
-                    .iter()
-                    .map(|(name, input)| (name.clone(), input.read(cx).value().to_string()))
-                    .collect();
-                match AskForm::answer(&asked, &form.picked, texts) {
-                    Ok(answer) => self.answer(NeedAnswer::Answer(answer), cx),
-                    Err(message) => {
-                        self.state = NeedRowState::Failed { message };
-                        cx.notify();
-                    }
-                }
-            }
-            ControlAction::Answer(answer) => self.answer(NeedAnswer::Answer(answer), cx),
-        }
+        self.answer(NeedAnswer::Answer(answer), cx);
     }
     fn answer(&mut self, answer: NeedAnswer, cx: &mut Context<Self>) {
         self.refresh(cx);

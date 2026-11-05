@@ -15,7 +15,7 @@ fn dismiss(allowed: bool, cx: &mut Context<NeedRow>) -> Option<impl IntoElement>
 }
 
 impl Render for NeedRow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let title = self
             .need
@@ -171,10 +171,10 @@ impl Render for NeedRow {
                 ),
             );
         }
-        let on_action: controls::OnControl = {
+        let on_answer: OnAnswer = {
             let row = cx.weak_entity();
-            Rc::new(move |action, _, cx| {
-                let _ = row.update(cx, |row, cx| row.control(action, cx));
+            Rc::new(move |answer, _, cx| {
+                let _ = row.update(cx, |row, cx| row.control(answer, cx));
             })
         };
         let mut answers = v_flex()
@@ -186,6 +186,9 @@ impl Render for NeedRow {
                 self.need.text.clone(),
                 self.need.answer.clone(),
             ) {
+                if let Some(form) = &self.form {
+                    form.update(cx, |form, cx| form.sync(&payload, window, cx));
+                }
                 if presentation.input_mode == "form" && self.form.is_none() {
                     answers = answers.child("This form's input controls are unavailable.");
                 } else {
@@ -202,7 +205,7 @@ impl Render for NeedRow {
                         &payload,
                         self.form.as_ref(),
                         &choices,
-                        on_action,
+                        on_answer,
                         cx,
                     ));
                 }

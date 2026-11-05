@@ -18,28 +18,7 @@ fn submit_sends_what_was_picked_and_typed_leaving_out_the_empty_fields() {
 }
 
 #[test]
-fn picking_form_values_preserves_actual_ids_and_multi_choice_order() {
-    let mut form = super::form::AskForm {
-        picked: serde_json::Map::new(),
-        texts: Vec::new(),
-    };
-    form.pick("actual-field".into(), "provider:z".into(), true);
-    form.pick("actual-field".into(), "provider:a".into(), true);
-    assert_eq!(
-        form.picked["actual-field"],
-        serde_json::json!(["provider:z", "provider:a"])
-    );
-    form.pick("actual-field".into(), "provider:z".into(), true);
-    assert_eq!(
-        form.picked["actual-field"],
-        serde_json::json!(["provider:a"])
-    );
-    form.pick("other-field".into(), "Exact supplied value".into(), false);
-    assert_eq!(form.picked["other-field"], "Exact supplied value");
-}
-
-#[test]
-fn a_required_choice_starts_on_its_first_and_an_empty_required_field_is_named() {
+fn an_empty_required_field_is_named_and_a_choices_free_text_fills_it() {
     use super::form::AskForm;
     use super::payload::AskPayload;
     let ask: AskPayload = serde_json::from_value(json!({
@@ -65,6 +44,8 @@ fn a_required_choice_starts_on_its_first_and_an_empty_required_field_is_named() 
         AskForm::missing(&ask, &picked, &typed).as_deref(),
         Some("zone")
     );
+    let other = vec![typed[0].clone(), ("zone_custom".into(), "north".into())];
+    assert_eq!(AskForm::missing(&ask, &picked, &other), None);
 }
 
 fn typed_ask() -> super::payload::AskPayload {
@@ -81,31 +62,6 @@ fn typed_ask() -> super::payload::AskPayload {
         } },
     }))
     .unwrap()
-}
-
-#[gpui::test]
-fn a_password_field_is_masked_and_a_check_box_starts_as_the_schema_says(
-    cx: &mut gpui::TestAppContext,
-) {
-    use super::form::AskForm;
-    cx.update(gpui_kit::init);
-    let ask = typed_ask();
-    let cx = cx.add_empty_window();
-    let form = cx
-        .update(|window, cx| AskForm::of(&ask, window, cx))
-        .unwrap();
-    cx.update(|_, cx| {
-        let masked = |name: &str| {
-            let (_, input) = form.texts.iter().find(|(text, _)| text == name).unwrap();
-            input.read(cx).presentation().is_masked()
-        };
-        assert!(masked("token"));
-        assert!(masked("pin"));
-        assert!(!masked("note"));
-        assert!(!masked("count"));
-    });
-    assert_eq!(form.picked["agree"], json!(false));
-    assert_eq!(form.picked["keep"], json!(true));
 }
 
 #[test]

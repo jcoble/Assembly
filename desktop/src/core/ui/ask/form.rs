@@ -1,83 +1,12 @@
-//! The shared question draft and canonical action/content payload, moved from chat.
+//! The canonical answer a question's form sends. `ask_questionnaire` holds the form itself.
 use super::payload::{AskField, AskInput, AskPayload, AskSchema};
-use gpui_kit::component::input::InputState;
-use gpui_kit::{App, AppContext as _, Entity, Window};
 use serde_json::{Map, Value, json};
 use std::str::FromStr as _;
 
-/// An open question's form: the choices picked, by field, and each text field's input.
-#[derive(Clone)]
-pub struct AskForm {
-    pub picked: Map<String, Value>,
-    pub texts: Vec<(String, Entity<InputState>)>,
-}
+pub struct AskForm;
 
 impl AskForm {
-    pub fn pick(&mut self, field: String, value: String, many: bool) {
-        if many {
-            let list = self
-                .picked
-                .entry(field)
-                .or_insert_with(|| Value::Array(Vec::new()));
-            if let Value::Array(list) = list {
-                match list.iter().position(|item| item.as_str() == Some(&value)) {
-                    Some(at) => drop(list.remove(at)),
-                    None => list.push(Value::String(value)),
-                }
-            }
-        } else {
-            self.picked.insert(field, Value::String(value));
-        }
-    }
-
-    pub fn set_flag(&mut self, field: String, on: bool) {
-        self.picked.insert(field, Value::Bool(on));
-    }
-
-    /// The form's inputs for an open question with fields; `None` for anything else.
-    pub fn of(ask: &AskPayload, window: &mut Window, cx: &mut App) -> Option<AskForm> {
-        let fields = ask.schema.as_ref().and_then(AskSchema::of)?;
-        // A field that must be answered starts on its first choice and a check box starts as the schema says or
-        // off, as the old form's did: an answer the box shows is an answer it sends.
-        let picked = (fields.properties.iter())
-            .filter_map(|(name, field)| match field.input() {
-                AskInput::One(choices) if fields.required.contains(name) => choices
-                    .first()
-                    .map(|choice| (name.clone(), Value::String(choice.value.clone()))),
-                AskInput::Flag => {
-                    let on = field
-                        .default
-                        .as_ref()
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
-                    Some((name.clone(), Value::Bool(on)))
-                }
-                _ => None,
-            })
-            .collect();
-        let texts = fields
-            .properties
-            .into_iter()
-            .filter(|(_, field)| matches!(field.input(), AskInput::Text | AskInput::Secret))
-            .map(|(name, field)| {
-                let other = if name.ends_with("_custom") {
-                    "Other"
-                } else {
-                    ""
-                };
-                let masked = field.input() == AskInput::Secret;
-                let input = cx.new(|cx| {
-                    InputState::new(window, cx)
-                        .masked(masked)
-                        .placeholder(other)
-                });
-                (name, input)
-            })
-            .collect();
-        Some(AskForm { picked, texts })
-    }
-
-    /// The first required field still empty, by its label. Continue waits for it, as the old form's did.
+    /// The first required field still empty, by its label. Continue waits for it; a choice's free-text answer fills it.
     pub fn missing(
         ask: &AskPayload,
         picked: &Map<String, Value>,
@@ -85,8 +14,9 @@ impl AskForm {
     ) -> Option<String> {
         let fields = ask.schema.as_ref().and_then(AskSchema::of)?;
         let filled = |name: &str, field: &AskField| {
+            let other = format!("{name}_custom");
             let typed = texts.iter().any(|(text, value)| {
-                text == name
+                (text == name || *text == other)
                     && match field.input() {
                         AskInput::Secret => !value.is_empty(),
                         _ => !value.trim().is_empty(),
@@ -145,7 +75,7 @@ impl AskForm {
         Ok(answer)
     }
 
-    fn number(text: &str, whole: bool) -> Option<Value> {
+    pub(super) fn number(text: &str, whole: bool) -> Option<Value> {
         if whole {
             return text.parse::<i64>().ok().map(Value::from);
         }

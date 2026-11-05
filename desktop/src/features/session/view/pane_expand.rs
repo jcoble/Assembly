@@ -63,7 +63,6 @@ impl SessionPane {
                 let row = AskRow {
                     ask_id: ask_id.clone(),
                     ask: ask.clone(),
-                    form: self.forms.get(ask_id).cloned(),
                     on_action: self.on_action.clone(),
                 };
                 let body = row.clone();

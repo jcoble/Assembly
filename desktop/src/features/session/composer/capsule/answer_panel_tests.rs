@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::{approval_words, legend};
+use super::approval_words;
 use crate::core::ui::ask::payload::AskPayload;
 
 fn ask(title: Option<&str>, message: Option<&str>) -> AskPayload {
@@ -32,10 +32,4 @@ fn the_action_takes_one_line_and_the_details_hold_what_it_leaves_out() {
         approval_words(&ask(None, Some("Run it?"))),
         ("Run it?".into(), None)
     );
-}
-
-#[test]
-fn a_field_that_can_be_left_out_says_so() {
-    assert_eq!(legend("Zone", true), "Zone");
-    assert_eq!(legend("Zone", false), "Zone (optional)");
 }

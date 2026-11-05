@@ -1,7 +1,8 @@
-//! Shared ask payload, schema and draft. The owning surface submits the checked answer.
+//! Shared ask payload, schema and form. The owning surface submits the checked answer.
 pub mod answer_words;
 #[cfg(test)]
 mod answer_words_tests;
+pub mod ask_questionnaire;
 pub mod form;
 #[cfg(test)]
 mod form_tests;
