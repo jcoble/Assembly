@@ -206,3 +206,39 @@ fn a_double_slash_link_is_never_a_file() {
         assert!(target.action(session, None).is_none(), "{session:?}");
     }
 }
+
+// Feature 28 parity item 4: a file link ending in `:N` or `#L?N` opens at that line, as the old
+// `splitConversationFileReference` did; anything else after the path stays part of it.
+#[test]
+fn a_file_link_s_line_suffix_opens_at_that_line() {
+    use crate::core::intents::open_file::OpenFile;
+    let at = |path: &str, line: Option<u32>| OpenFile {
+        session_id: "s".into(),
+        path: path.into(),
+        line,
+        column: None,
+        pinned: true,
+        expected_source: None,
+        outside: None,
+    };
+    for (link, path, line) in [
+        ("src/a.ts:71", "src/a.ts", Some(71)),
+        ("a.rs#L12", "a.rs", Some(12)),
+        ("a.rs#l12", "a.rs", Some(12)),
+        ("a.rs#12", "a.rs", Some(12)),
+        ("/work/a.rs:3", "/work/a.rs", Some(3)),
+        ("~/notes.md#L9", "~/notes.md", Some(9)),
+        ("a.rs:0", "a.rs:0", None),
+        ("a.rs:012", "a.rs:012", None),
+        ("a.rs:", "a.rs:", None),
+        ("a.rs:x", "a.rs:x", None),
+        ("a.rs:12:4", "a.rs:12", Some(4)),
+        ("a.rs#L", "a.rs#L", None),
+        ("a.rs:99999999999", "a.rs:99999999999", None),
+        ("src/main.rs", "src/main.rs", None),
+    ] {
+        let action = LinkTarget::File(link.into()).action(Some("s"), None);
+        let action = action.unwrap_or_else(|| panic!("{link} opens"));
+        assert!(action.partial_eq(&at(path, line)), "{link}");
+    }
+}
