@@ -12,10 +12,10 @@ use gpui_kit::component::dock::BasePanel;
 use gpui_kit::{Entity, VisualTestContext};
 use serde_json::{Value, json};
 
-use super::file_tree::Row;
-use super::file_view::FileView;
-use super::files_pane::FilesPane;
-use super::panel_message::PanelMessage;
+use super::super::file_tree::Row;
+use super::super::file_view::FileView;
+use super::super::files_pane::FilesPane;
+use super::super::panel_message::PanelMessage;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;

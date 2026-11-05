@@ -423,7 +423,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                         (args, call) => connections.ReadCreatedSessionAsync(db, projectStore, args, call), remoteFolders: localFolders),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(home, "staging", "attachments"), sessionSources),
-                    new FilesFeature(sessionStore, fileOwners, work, new FileRemoteRoutes(db, fileOwners, connections, work), sessionSources),
+                    new FilesFeature(sessionStore, fileOwners, work, new FileRemoteRoutes(db, fileOwners, connections, work), sessionSources, topics),
                     new Assembly.Application.Features.Workspaces.WorkspacesFeature(new Assembly.Application.Features.Workspaces.WorkspaceStore(db, TimeProvider.System)),
                     new WorktreesFeature(sessionStore),
                     gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes, branches),

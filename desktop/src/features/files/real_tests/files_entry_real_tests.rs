@@ -6,9 +6,9 @@ use std::path::Path;
 use gpui::TestAppContext;
 use gpui_kit::{Entity, VisualTestContext};
 
-use super::file_entry_bar::EntryKind;
+use super::super::file_entry_bar::EntryKind;
+use super::super::files_pane::FilesPane;
 use super::files_header_real_tests::make_read_only;
-use super::files_pane::FilesPane;
 use super::files_real_tests::{settled, shape};
 use super::files_reload_real_tests::shown_pane;
 
@@ -197,12 +197,12 @@ async fn read_only_folder_disables_writes_with_the_reason(cx: &mut TestAppContex
         assert!(pane.entry.is_none());
         assert_eq!(
             pane.action_error.as_deref(),
-            Some(super::panel_message::READ_ONLY)
+            Some(super::super::panel_message::READ_ONLY)
         );
         pane.delete_entry("a.md".into(), window, cx);
         assert_eq!(
             pane.write_block(cx).as_deref(),
-            Some(super::panel_message::READ_ONLY)
+            Some(super::super::panel_message::READ_ONLY)
         );
     });
     done(&pane, cx).await;

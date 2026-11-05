@@ -1,7 +1,7 @@
 //! The buttons above the tree, against the real backend.
+use super::super::panel_message::READ_ONLY;
 use super::files_real_tests::{settled, shape};
 use super::files_reload_real_tests::shown_pane;
-use super::panel_message::READ_ONLY;
 use crate::core::engine::SessionKey;
 use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::state::selected_session::SelectedSession;

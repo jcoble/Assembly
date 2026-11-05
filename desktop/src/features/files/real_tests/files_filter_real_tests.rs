@@ -5,8 +5,8 @@ use gpui_kit::component::dock::BasePanel;
 use gpui_kit::{Entity, VisualTestContext};
 use serde_json::{Value, json};
 
-use super::file_filter::FileFilter;
-use super::files_pane::FilesPane;
+use super::super::file_filter::FileFilter;
+use super::super::files_pane::FilesPane;
 use super::files_real_tests::{settled, shape};
 use super::files_reload_real_tests::shown_pane;
 use crate::core::socket::client::SocketClient;
@@ -139,7 +139,7 @@ async fn hiding_the_tab_drops_a_late_answer_and_releases_the_run(cx: &mut TestAp
         BasePanel::set_active(pane, false, window, cx)
     });
     cx.background_executor
-        .timer(super::file_filter::DEBOUNCE * 4)
+        .timer(super::super::file_filter::DEBOUNCE * 4)
         .await;
     cx.run_until_parked();
     filter.read_with(cx, |filter, _| {

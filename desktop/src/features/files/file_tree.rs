@@ -258,6 +258,21 @@ impl FileTree {
         RevealStep::Ready
     }
 
+    /// Whether `dir`'s entries are on screen: loaded, and it and every folder above it open.
+    pub fn shows(&self, dir: &str) -> bool {
+        if !self.loaded.contains_key(dir) {
+            return false;
+        }
+        let mut at = dir;
+        while !at.is_empty() {
+            if !self.open.contains(at) {
+                return false;
+            }
+            at = at.rsplit_once('/').map_or("", |(parent, _)| parent);
+        }
+        true
+    }
+
     pub fn root_loaded(&self) -> bool {
         self.loaded.contains_key("")
     }

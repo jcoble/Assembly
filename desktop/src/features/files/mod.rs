@@ -21,19 +21,7 @@ pub mod history_target;
 pub mod panel_message;
 
 #[cfg(test)]
-mod files_entry_real_tests;
-#[cfg(test)]
-mod files_filter_real_tests;
-#[cfg(test)]
-mod files_header_real_tests;
-#[cfg(test)]
-mod files_history_real_tests;
-#[cfg(test)]
-mod files_message_real_tests;
-#[cfg(test)]
-mod files_real_tests;
-#[cfg(test)]
-mod files_reload_real_tests;
+mod real_tests;
 
 #[path = "editor/file_comparison.rs"]
 mod file_comparison;

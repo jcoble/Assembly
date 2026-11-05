@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex};
 use gpui::TestAppContext;
 use gpui_kit::{Entity, VisualTestContext};
 
-use super::file_entry_bar::EntryKind;
-use super::file_history::{Body, FileHistoryList};
-use super::files_pane::FilesPane;
+use super::super::file_entry_bar::EntryKind;
+use super::super::file_history::{Body, FileHistoryList};
+use super::super::files_pane::FilesPane;
 use super::files_real_tests::settled;
 use super::files_reload_real_tests::shown_pane;
 use crate::core::intents::open_commit_diff::OpenCommitDiff;

@@ -1,5 +1,5 @@
 //! Reloads keep the tree: leaving the tab, a tool changing the folder, or a click during a reload never collapses it.
-use super::files_pane::FilesPane;
+use super::super::files_pane::FilesPane;
 use super::files_real_tests::{selected_session, settled, shape};
 use crate::core::socket::real_backend::RealBackend;
 use crate::core::state::folder_touched::FolderTouched;

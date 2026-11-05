@@ -12,6 +12,8 @@ use serde_json::json;
 
 #[path = "files_pane_actions.rs"]
 mod actions;
+#[path = "files_pane_disk.rs"]
+mod disk;
 #[path = "files_pane_entry.rs"]
 mod entry_bar;
 #[path = "files_pane_filter.rs"]
@@ -73,6 +75,11 @@ pub struct FilesPane {
     descending: bool,
     lease: Option<String>,
     observing: Option<Task<()>>,
+    /// Follows the lease's `filesChanged` while the lease is held.
+    watching: Option<Task<()>>,
+    /// How many `files/list` calls the pane has sent, for tests that a change it doesn't show reads nothing.
+    #[cfg(test)]
+    pub(super) listings: usize,
     pub(super) selected: Option<String>,
     /// A path to show in the tree, and whether it's a folder, which opens once shown.
     revealing: Option<(String, bool)>,
@@ -147,6 +154,9 @@ impl FilesPane {
             descending: false,
             lease: None,
             observing: None,
+            watching: None,
+            #[cfg(test)]
+            listings: 0,
             selected: None,
             revealing: None,
             workspace_key: None,
@@ -252,6 +262,7 @@ impl FilesPane {
                     match answer {
                         Outcome::Ok(observed) => {
                             pane.lease = Some(observed.lease);
+                            pane.watch_disk(cx);
                             pane.start(cx);
                         }
                         Outcome::Failed(error) => pane.fail_root(error, cx),
@@ -283,6 +294,7 @@ impl FilesPane {
 
     fn release_watch(&mut self, cx: &mut Context<Self>) {
         self.observing = None;
+        self.watching = None;
         if let (Some(lease), Some(socket)) = (self.lease.take(), SocketClient::try_global(cx)) {
             let call = socket.read(cx).call::<serde_json::Value>(
                 "files",
@@ -302,6 +314,10 @@ impl FilesPane {
         };
         if !self.shown {
             return;
+        }
+        #[cfg(test)]
+        {
+            self.listings += 1;
         }
         let generation = self.generation;
         let args = json!({ "session": session, "dir": dir, "includeExcluded": self.include_excluded, "descending": self.descending, "expectedSource": self.source, "expectedOwner": self.owner, "cursor": cursor });

@@ -1,10 +1,10 @@
 //! The panel says why instead of going blank: no session, no folder, a folder not made, or a workspace not committed.
-use super::file_view::FileView;
-use super::files_pane::FilesPane;
+use super::super::file_view::FileView;
+use super::super::files_pane::FilesPane;
+use super::super::panel_message::PanelMessage;
+use super::super::tree_codec::TreeSnapshot;
 use super::files_real_tests::{selected_session, settled, shape};
 use super::files_reload_real_tests::shown_pane;
-use super::panel_message::PanelMessage;
-use super::tree_codec::TreeSnapshot;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
