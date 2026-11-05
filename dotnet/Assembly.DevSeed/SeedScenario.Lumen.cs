@@ -93,7 +93,7 @@ public static partial class SeedScenario
             .Say("Yes. Three pages, three different headings, and nothing about them needs to differ.\n\n| Page | Today | After |\n|---|---|---|\n| usage | `h3` | `title` |\n| billing | `h2` | `title` |\n| team | `b` | `title` |\n\nI'd make it optional and render an `h3`.")
             .End();
 
-        yield return new SeedChat("lumen-storybook", "codex", "lumen-ui", "Storybook build broke").Ago(3100).Is(SeedStatus.Ended)
+        yield return new SeedChat("lumen-storybook", "codex", "lumen-ui", "Storybook build broke").Ago(20).Is(SeedStatus.Ended)
             .Turn("`npm run storybook` dies on startup after the last dependency bump.")
             .Run("npm run storybook", "ERR! Cannot find module '@storybook/react/preset'\n", failed: true)
             .Say("The bump moved the preset to `@storybook/react-vite`. I've pointed `.storybook/main.ts` at it.")

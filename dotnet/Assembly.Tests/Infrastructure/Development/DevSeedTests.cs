@@ -135,6 +135,28 @@ public sealed class DevSeedTests : IDisposable
     }
 
     [Fact]
+    public void A_session_s_checkout_is_the_folder_the_engine_says_it_runs_in()
+    {
+        Seed();
+        Assert.True(Number("SELECT COUNT(*) FROM engine_session e JOIN session_info s ON s.session_id=e.id WHERE s.machine IS NULL") >= 25);
+        Assert.Equal(0, Number("""
+            SELECT COUNT(*) FROM engine_session e JOIN session_info s ON s.session_id=e.id
+            WHERE s.machine IS NULL AND (s.checkout_root IS NOT e.folder OR s.working_folder IS NOT e.folder)
+            """));
+    }
+
+    [Fact]
+    public void The_Board_sessions_tab_has_a_live_session_and_one_that_ended_recently()
+    {
+        Seed();
+        Assert.True(Number("""
+            SELECT COUNT(*) FROM engine_session s JOIN engine_run r ON r.id=s.run_id
+            WHERE s.parent_id IS NULL AND s.state='idle' AND r.state NOT IN ('succeeded','failed','cancelled')
+            """) >= 1);
+        Assert.True(Number($"SELECT COUNT(*) FROM engine_session WHERE parent_id IS NULL AND state='ended' AND updated_ms >= {Now - 3_600_000}") >= 1);
+    }
+
+    [Fact]
     public void Sessions_read_as_working_ended_settled_and_waiting_on_approval()
     {
         Seed();

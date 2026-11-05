@@ -11,7 +11,7 @@ namespace Assembly.DevSeed;
 
 /// <param name="Steps">Each step's state by its key; a step not named stays pending.</param>
 public sealed record SeedRun(string Key, string OwnerChat, string Project, string Definition, string Title, string State, double MinutesAgo,
-    IReadOnlyDictionary<string, string> Steps, string? Reason = null, bool OpenGate = false);
+    IReadOnlyDictionary<string, string> Steps, string? Reason = null, bool OpenGate = false, string? WorkerChat = null);
 
 /// <summary>
 /// Runs started through the engine's own start, then moved to how they would have ended. No run is left with work the engine
@@ -37,6 +37,8 @@ public static class SeedWorkflows
             var ack = WorkflowStarts.Apply(scope, commands, context, WorkflowStarts.Prepare(context, request, snapshot, project));
             if (!ack.Result.Applied) throw new InvalidDataException($"Seed run {run.Key} was refused: {ack.Result.Error}.");
             Settle(scope, world, id, run, at);
+            if (run.WorkerChat is { } worker)
+                scope.Execute("UPDATE engine_session SET run_id=$run WHERE id=$id", new SqlArg("$run", id), new("$id", owners[worker]));
         }
         foreach (var run in runs.Where(run => run.OpenGate))
             scope.Execute("UPDATE engine_run SET paused=0 WHERE id=$id", new SqlArg("$id", RunId(run)));

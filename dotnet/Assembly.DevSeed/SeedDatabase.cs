@@ -72,7 +72,7 @@ public static class SeedDatabase
             VALUES($id,$agent,$repo,$title,$created,$updated,$machine,$cost,$parent,$helper,$read,$done,$settled,'prompt',$folder,$project,$root,$branch,$pinned)
             """, new SqlArg("$id", chat.Id), new("$agent", chat.Provider), new("$repo", root), new("$title", chat.Title), new("$created", created), new("$updated", updated),
             new("$machine", chat.Machine), new("$cost", chat.Cost), new("$parent", chat.Parent), new("$helper", chat.Parent is null ? 0 : 1), new("$read", read), new("$done", done), new("$settled", settled),
-            new("$folder", remote ? null : folder), new("$project", remote ? null : ProjectId(chat.Project)), new("$root", remote ? null : root), new("$branch", branch),
+            new("$folder", remote ? null : folder), new("$project", remote ? null : ProjectId(chat.Project)), new("$root", remote ? null : folder), new("$branch", branch),
             new("$pinned", chat.Pinned ? updated : null));
         scope.Execute("INSERT INTO sessions(session_id,next_seq) VALUES($id,$next)", new SqlArg("$id", chat.Id), new("$next", rows[^1].Seq + 1));
         foreach (var row in rows)
