@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -103,6 +103,21 @@ test('a file outside any repo is not guarded', () => {
     assert.equal(send({ file_path, old_string: '"a"', new_string: '"b"' }).status, 0);
   } finally { rmSync(base, { recursive: true, force: true }); }
 });
+
+test('line endings do not hide or invent a change', () => inRepo(write => {
+  const crlf = 'test("keeps", () => {\r\n  expect(a)\r\n    .toBe(1);\r\n});\r\n';
+  const file_path = write('scripts/reader.test.ts', crlf);
+  assert.equal(send({ file_path, old_string: 'expect(a)\n    .toBe(1);', new_string: 'expect(a)\n    .toBe(2);' }).status, 2);
+  assert.equal(send({ file_path, content: crlf.replaceAll('\r\n', '\n') }).status, 0);
+}));
+
+test('a hook command reached through a symlink still guards', () => inRepo(write => {
+  const file_path = write('desktop/src/view_tests.rs', rust);
+  const link = join(dirname(file_path), 'linked-guard.ts');
+  symlinkSync(guard, link);
+  const result = spawnSync(process.execPath, [link], { input: JSON.stringify({ tool_input: { file_path, old_string: '"a"', new_string: '"b"' } }), encoding: 'utf8' });
+  assert.equal(result.status, 2);
+}));
 
 test('input it cannot read is refused', () => {
   const result = spawnSync(process.execPath, [guard], { input: 'not json', encoding: 'utf8' });
