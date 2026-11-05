@@ -448,7 +448,7 @@ fn no_session(cx: &App) -> impl IntoElement {
 mod attachments_section;
 #[path = "files_touched.rs"]
 mod files_touched;
-use files_touched::{names, touched};
+use files_touched::touched;
 #[path = "listing.rs"]
 mod listing;
 #[path = "session_cards.rs"]

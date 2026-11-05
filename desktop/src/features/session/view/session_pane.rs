@@ -121,7 +121,7 @@ pub struct SessionPane {
     /// The newest seq told to the backend as read, for the open session.
     read_to: i64,
     /// The selected session, followed from construction so this pane publishes its live facts when its session is
-    /// picked and clears them when another is (pane_live.rs).
+    /// picked and clears them when another is (context/pane_live.rs).
     _selected: Option<Subscription>,
     /// Hears the machines list start, then follows it, for the open session's machine (pane_machine.rs).
     _machines_started: Subscription,
@@ -382,7 +382,7 @@ mod actions;
 mod construct;
 #[path = "pane_expand.rs"]
 mod expand;
-#[path = "pane_live.rs"]
+#[path = "../context/pane_live.rs"]
 mod live;
 #[path = "pane_machine.rs"]
 mod machine;

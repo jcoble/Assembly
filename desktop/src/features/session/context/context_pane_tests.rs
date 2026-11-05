@@ -8,8 +8,9 @@ use gpui_kit::component::dock::BasePanel as _;
 use gpui_kit::{AppContext as _, Entity, Modifiers, VisualTestContext};
 use serde_json::{Value, json};
 
+use super::files_touched::names;
 use super::listing::Listing;
-use super::{ContextPane, FileTouched, names};
+use super::{ContextPane, FileTouched};
 use crate::core::state::selected_session::SelectedSession;
 use crate::features::session::client::fake_client::FakeClient;
 use crate::features::session::client::session_client::CallError;
