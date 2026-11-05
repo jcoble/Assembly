@@ -7,7 +7,7 @@ use super::{OpenNeed, OwnerNotify, PREVIEW_CHARS, preview, tag};
 use crate::core::engine::{EngineFeed, EngineKey, EngineScope};
 
 fn need(machine: &str, id: &str, state: &str, extra: Value) -> Value {
-    let mut value = json!({"entityKind":"needs_me","machine":machine,"id":id,"version":1,"sessionId":"s","kind":"question","state":state,"text":format!("Question {id}")});
+    let mut value = json!({"entityKind":"needs_me","machine":machine,"id":id,"version":1,"sessionId":"s","forOwner":true,"kind":"question","state":state,"text":format!("Question {id}")});
     value
         .as_object_mut()
         .unwrap()
@@ -102,7 +102,7 @@ async fn a_question_for_a_parent_session_never_posts(cx: &mut TestAppContext) {
             "m",
             "child",
             "open",
-            json!({"addresseeSessionId":"parent"}),
+            json!({"addresseeSessionId":"parent","forOwner":false}),
         )],
         cx,
     );
@@ -142,9 +142,10 @@ async fn answering_takes_its_notification_away(cx: &mut TestAppContext) {
 async fn a_workflow_gate_reaches_the_owner_though_it_names_a_session(cx: &mut TestAppContext) {
     let (feed, _notify) = start(cx);
     cut(&feed, "m", vec![], cx);
-    let addressed = json!({"addresseeSessionId":"owner"});
+    let addressed = json!({"addresseeSessionId":"owner","forOwner":false});
     let mut gate = addressed.clone();
     gate["kind"] = json!("workflow_gate");
+    gate["forOwner"] = json!(true);
     cut(
         &feed,
         "m",

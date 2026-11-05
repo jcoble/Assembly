@@ -2,7 +2,7 @@
 use serde_json::{Value, json};
 
 use super::run_footer::{Footer, RunAction, footer, retryable};
-use super::run_steps::{Pill, card_steps, pill, visible_steps};
+use super::run_steps::{Pill, card_steps, pill, run_line, visible_steps};
 use crate::activity::{StepMark, StepRight, format_elapsed};
 use crate::core::engine::workflow_items::{RunItem, StepItem};
 
@@ -324,4 +324,26 @@ fn a_rows_controls_are_the_words_the_engine_sent() {
         step_recovery(&step("a", "failed", json!({}))).is_empty(),
         "an older engine sends none"
     );
+}
+
+#[test]
+fn the_line_under_a_run_says_more_than_its_pill() {
+    let run = run("needs_me", json!({}));
+    let failed = step("flaky", "failed", json!({"needsOwner": true}));
+    assert_eq!(run_line(&run, &[&failed], Pill::NeedsYou), "flaky failed");
+    let blocked = step(
+        "review",
+        "failed",
+        json!({"needsOwner": true, "explanation": "Model x isn't available."}),
+    );
+    assert_eq!(
+        run_line(&run, &[&blocked], Pill::NeedsYou),
+        "Model x isn't available."
+    );
+    let asking = step("checks", "waiting", json!({}));
+    assert_eq!(
+        run_line(&run, &[&asking], Pill::NeedsYou),
+        "Waiting on your answer"
+    );
+    assert_eq!(run_line(&run, &[], Pill::Working), "Working");
 }

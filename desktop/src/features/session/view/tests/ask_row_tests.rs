@@ -122,8 +122,8 @@ fn a_permission_offers_deny_then_allow() {
         permission_choices(&ask.options),
         words(&[
             ("no", "Deny"),
-            ("always", "Yes, and don't ask again"),
-            ("yes", "Allow")
+            ("always", "Always allow this session"),
+            ("yes", "Allow once")
         ])
     );
 }

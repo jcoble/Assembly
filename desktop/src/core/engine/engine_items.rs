@@ -40,6 +40,8 @@ pub struct NeedItem {
     pub step_id: Option<String>,
     pub addressee_session_id: Option<String>,
     pub addressee_machine: Option<String>,
+    /// The engine's word that the person answers this, not a session.
+    pub for_owner: bool,
     // The Engine's read model; nothing links a need to its chat row yet.
     #[allow(dead_code)]
     pub chat_row_id: Option<String>,
@@ -68,6 +70,8 @@ struct NeedFields {
     step_id: Option<String>,
     addressee_session_id: Option<String>,
     addressee_machine: Option<String>,
+    #[serde(default)]
+    for_owner: bool,
     chat_row_id: Option<String>,
     kind: String,
     text: Option<String>,
@@ -84,12 +88,6 @@ struct NeedFields {
     updated_ms: Option<i64>,
 }
 impl NeedItem {
-    /// Whether the person answers this. A session answers one addressed to it, except a workflow's gate: that's addressed
-    /// to the run's owning session, and the engine takes its answer only from the owner's window.
-    pub fn for_owner(&self) -> bool {
-        self.addressee_session_id.is_none() || self.kind == "workflow_gate"
-    }
-
     pub fn addressee(&self) -> Option<SessionKey> {
         let machine = self
             .addressee_machine
@@ -126,6 +124,7 @@ impl NeedItem {
             step_id: row.step_id,
             addressee_session_id: row.addressee_session_id,
             addressee_machine: row.addressee_machine,
+            for_owner: row.for_owner,
             chat_row_id: row.chat_row_id,
             kind: row.kind,
             text: row.text,

@@ -23,6 +23,7 @@ public sealed class WorkflowDispatchPreparation(IAppDatabase db, EngineCommands 
         using (var scope = db.OpenSnapshot(ct))
             ready = WorkflowSchedule.Ready(scope, machine, time.GetUtcNow().ToUnixTimeMilliseconds(), 100);
         List<PreparedWorkflowDispatch> prepared = [];
+        List<string> blocked = [];
         foreach (var step in ready)
         {
             ct.ThrowIfCancellationRequested();
@@ -36,7 +37,10 @@ public sealed class WorkflowDispatchPreparation(IAppDatabase db, EngineCommands 
             if (scope.QueryFirst("SELECT COUNT(*) FROM engine_step st JOIN engine_workflow_workspace w ON w.id=st.workspace_id WHERE st.id=$step AND w.id=$id AND w.version=$version AND w.path=$path", r => r.Long(0), new SqlArg("$step", step), new("$id", workspace.Id), new("$version", workspace.Version), new("$path", workspace.Path)) != 1) continue;
             var candidate = commands.PrepareWorkflowDispatch(scope, step, time.GetUtcNow().ToUnixTimeMilliseconds(), checkout.Head, checkout.Fingerprint);
             if (candidate is not null) prepared.Add(candidate);
+            else blocked.Add(step);
         }
+        foreach (var step in blocked)
+            db.Writer.Write("engine.workflow.blocked", scope => commands.BlockUnavailableStep(scope, step, time.GetUtcNow().ToUnixTimeMilliseconds()));
         return prepared;
     }
 

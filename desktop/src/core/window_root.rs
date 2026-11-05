@@ -3,9 +3,7 @@
 //! goes the fade from the old theme after a switch (theme/fade.rs). It puts the theme and faces Settings saved in
 //! force from the start, and as they change.
 
-use super::intents::open_file::OpenFile;
 use super::intents::reveal_file_folder::RevealFileFolder;
-use crate::features::files::file_view::FileView;
 use crate::features::files::files_pane::FilesPane;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
@@ -56,17 +54,6 @@ impl WindowRoot {
 impl Render for WindowRoot {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .on_action(|action: &OpenFile, window, cx| {
-                FileView::open_at(
-                    action.session_id.clone(),
-                    action.path.clone(),
-                    (action.line, action.column),
-                    action.pinned,
-                    action.expected_source.clone(),
-                    window,
-                    cx,
-                )
-            })
             .on_action(|action: &RevealFileFolder, window, cx| {
                 FilesPane::reveal_folder(
                     &action.session_id,

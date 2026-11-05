@@ -3,9 +3,12 @@ use super::{
     EngineRefusal,
     workflow_items::{RunPages, RunView},
 };
-use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::socket::{client::SocketClient, error_code::ErrorCode, outcome::Outcome};
 use gpui_kit::*;
 use serde_json::{Value, json};
+/// The machine didn't answer: a wait, not a failure of the read.
+pub const UNREACHABLE: &str = "unreachable";
+
 pub async fn run(machine: &str, run_id: &str, cx: &mut AsyncApp) -> Result<RunView, EngineRefusal> {
     let (socket, generation) = cx.update(|cx| {
         let socket = SocketClient::try_bulk(cx)
@@ -34,7 +37,15 @@ pub async fn run(machine: &str, run_id: &str, cx: &mut AsyncApp) -> Result<RunVi
         })?;
         let value = match call.await {
             Outcome::Ok(value) => value,
-            Outcome::Failed(error) => return Err(refused(&error.message)),
+            Outcome::Failed(error) => {
+                return Err(match error.code {
+                    ErrorCode::Unreachable { .. } => EngineRefusal {
+                        code: UNREACHABLE.into(),
+                        message: error.message,
+                    },
+                    _ => refused(&error.message),
+                });
+            }
             Outcome::Aborted => return Err(refused("The workflow read was cancelled.")),
         };
         if cx.update(|cx| {

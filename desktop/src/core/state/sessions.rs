@@ -123,6 +123,16 @@ impl Sessions {
         cx.set_global(GlobalSessions(state));
     }
 
+    /// Replaces a held list's items, for a view's tests.
+    #[cfg(test)]
+    pub fn change_holding(items: Vec<SessionItem>, cx: &mut App) {
+        let state = Self::try_global(cx).expect("a held list");
+        state.update(cx, |sessions, cx| {
+            sessions.items = items;
+            cx.notify();
+        });
+    }
+
     /// Loads the next older page, once at a time; nothing when there are no more.
     pub fn load_older(&mut self, cx: &mut Context<Self>) {
         let Some((before, before_id)) = &self.older else {

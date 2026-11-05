@@ -2,7 +2,7 @@
 //! against, an unknown Notion page stays a web page, and anything else that isn't http or https is refused.
 
 use super::task_export::NotionTaskRef;
-use crate::core::navigation::external_urls::canonical_notion_id;
+use crate::core::navigation::external_urls::{ExternalRoute, canonical_notion_id, parse_external};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskRoute {
@@ -33,6 +33,14 @@ pub enum RouteRefused {
 pub struct RouteContext {
     /// The connected data source.
     pub source: Option<String>,
+}
+
+/// Whether a link `route_url` refused is one to hand on to the app's link handling, and as what.
+pub fn passes_on(address: &str, refused: RouteRefused) -> Option<ExternalRoute> {
+    match (refused, parse_external(address)) {
+        (RouteRefused::NotConnected, _) | (_, ExternalRoute::Unsupported) => None,
+        (RouteRefused::Unsupported, route) => Some(route),
+    }
 }
 
 pub fn route_url(address: &str, context: &RouteContext) -> Result<TaskRoute, RouteRefused> {

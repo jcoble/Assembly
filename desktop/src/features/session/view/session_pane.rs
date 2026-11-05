@@ -19,7 +19,7 @@ use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
 use crate::core::state::machines::GlobalMachines;
 use crate::core::theme::grow::{GROW, faded};
-use crate::core::ui::ask::form::AskForm;
+use crate::core::ui::ask::ask_questionnaire::AskQuestionnaire;
 use crate::core::ui::expand_row::ExpandRow;
 #[cfg(test)]
 use crate::features::session::client::session_client::RowsSink;
@@ -43,6 +43,10 @@ pub struct SessionPane {
     open_serial: u64,
     pending_open: Option<opening::PendingOpen>,
     active_open_serial: Option<u64>,
+    /// The machine behind this session stopped answering; it opens again when the machine does.
+    source_lost: bool,
+    source_reopens: u8,
+    unheard: Option<SharedString>,
     active_reopen: Option<(
         crate::core::intents::session_open::SessionOpenRequest,
         AnyWindowHandle,
@@ -67,8 +71,8 @@ pub struct SessionPane {
     plan_open: bool,
     /// When each row that arrived live since the session opened came in, by item key, so it fades in once.
     fresh: HashMap<String, Instant>,
-    /// Each open question's form, by ask id, made when its card is first drawn.
-    forms: HashMap<String, AskForm>,
+    /// The form of the question above the composer, by ask id, so what's typed outlives each draw.
+    forms: HashMap<String, Entity<AskQuestionnaire>>,
     /// What each item keeps while off screen, by item key.
     kept: HashMap<String, Kept>,
     /// What each row's buttons call: this pane's `on_action`.
@@ -189,8 +193,11 @@ impl SessionPane {
     /// Takes a rows event: a `Jump` drops what's held and loads the page again; a row updates its item and the
     /// timeline measures only that one again.
     fn on_rows(&mut self, event: RowUpdate, cx: &mut Context<Self>) {
+        if !matches!(event, RowUpdate::Refused { .. } | RowUpdate::Jump { .. }) {
+            self.source_reopens = 0;
+        }
         match event {
-            RowUpdate::Refused { code: _, message } => {
+            RowUpdate::Refused { code, message } => {
                 self.composer
                     .update(cx, |composer, cx| composer.invalidate_source(cx));
                 self._page = None;
@@ -198,10 +205,17 @@ impl SessionPane {
                 self.held = None;
                 self._loads.clear();
                 self.loading = false;
-                self.status = message.into();
+                if code == "source_changed" && self.is_remote() {
+                    self.source_lost = true;
+                    self.status = SharedString::default();
+                    self.tell_offline(cx);
+                } else {
+                    self.status = message.into();
+                }
                 cx.notify();
             }
             RowUpdate::Jump { seq } => {
+                self.source_lost = false;
                 if !self.read_only {
                     self.composer
                         .update(cx, |composer, cx| composer.recover_pending(cx));
@@ -471,6 +485,9 @@ mod navigation_switch_tests;
 #[path = "navigation/test_navigation.rs"]
 pub(crate) mod test_navigation;
 
+#[cfg(test)]
+#[path = "navigation/deep_link_session_tests.rs"]
+mod deep_link_session_tests;
 #[path = "navigation/pane_reconnect.rs"]
 mod reconnect;
 #[cfg(test)]

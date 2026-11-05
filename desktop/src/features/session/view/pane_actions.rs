@@ -8,7 +8,6 @@ use serde_json::{Value, json};
 
 use super::SessionPane;
 use crate::core::theme::grow::GROW;
-use crate::core::ui::ask::form::AskForm;
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::item::ItemKind;
@@ -72,9 +71,6 @@ impl SessionPane {
             && matches!(
                 &action,
                 SessionAction::RetryPrompt { .. }
-                    | SessionAction::Pick { .. }
-                    | SessionAction::Flag { .. }
-                    | SessionAction::SubmitAsk { .. }
                     | SessionAction::Answer { .. }
                     | SessionAction::StopTask { .. }
                     | SessionAction::StopNative { .. }
@@ -127,53 +123,6 @@ impl SessionPane {
                 self.kept.entry(key.clone()).or_default().all_diff = true;
                 if let Some(at) = self.view.items.iter().position(|item| item.key == key) {
                     self.refresh(Change::Updated(at), cx);
-                }
-            }
-            SessionAction::Pick {
-                ask_id,
-                field,
-                value,
-                many,
-            } => {
-                let Some(form) = self.forms.get_mut(&ask_id) else {
-                    return;
-                };
-                form.pick(field, value, many);
-                self.refresh_ask(&ask_id, cx);
-                cx.notify();
-            }
-            SessionAction::Flag { ask_id, field, on } => {
-                let Some(form) = self.forms.get_mut(&ask_id) else {
-                    return;
-                };
-                form.set_flag(field, on);
-                self.refresh_ask(&ask_id, cx);
-                cx.notify();
-            }
-            SessionAction::SubmitAsk { ask_id } => {
-                let Some(form) = self.forms.get(&ask_id) else {
-                    return;
-                };
-                let texts = form
-                    .texts
-                    .iter()
-                    .map(|(name, input)| (name.clone(), input.read(cx).value().to_string()))
-                    .collect::<Vec<_>>();
-                let asked = self.view.items.iter().find_map(|item| match &item.kind {
-                    ItemKind::Ask { ask_id: id, ask } if *id == ask_id => Some(ask),
-                    _ => None,
-                });
-                let Some(asked) = asked else {
-                    return;
-                };
-                match AskForm::answer(asked, &form.picked, texts) {
-                    Ok(answer) => {
-                        self.on_action(SessionAction::Answer { ask_id, answer }, window, cx)
-                    }
-                    Err(why) => {
-                        self.status = why.into();
-                        cx.notify();
-                    }
                 }
             }
             SessionAction::Answer { ask_id, answer } => {
@@ -379,16 +328,6 @@ impl SessionPane {
         }
     }
 
-    /// Draws an ask's card again.
-    fn refresh_ask(&mut self, ask_id: &str, cx: &mut Context<Self>) {
-        let at = self.view.items.iter().position(
-            |item| matches!(&item.kind, ItemKind::Ask { ask_id: id, .. } if id == ask_id),
-        );
-        if let Some(at) = at {
-            self.refresh(Change::Updated(at), cx);
-        }
-    }
-
     /// One of the `send` feature's calls, `task` naming what it's for; a failure says why under the timeline.
     fn send(
         &mut self,
@@ -411,22 +350,67 @@ impl SessionPane {
                     Ok(_) | Err(CallError::Aborted) => {}
                     // Said only where it was sent from: the reader may have switched away since.
                     Err(_) if pane.session != session || pane.row_source != source => {}
-                    Err(error) => {
-                        if matches!(&error,CallError::Refused{code,..} if code=="source_changed") {
-                            pane._rows = None;
-                            pane.active_source_cut = None;
-                            pane.composer
-                                .update(cx, |composer, cx| composer.invalidate_source(cx));
-                        }
-                        pane.say_failed("That didn't go through", error, cx);
-                    }
+                    Err(error) => pane.send_refused(error, cx),
                 })
                 .ok();
             }),
         );
     }
 
-    fn say_failed(&mut self, what: &str, error: CallError, cx: &mut Context<Self>) {
+    pub(super) fn send_refused(&mut self, error: CallError, cx: &mut Context<Self>) {
+        let moved = matches!(&error,CallError::Refused{code,..} if code=="source_changed");
+        if let Some(machine) = (self.row_source.as_ref())
+            .and_then(|source| source.route_machine.clone())
+            .filter(|_| moved)
+        {
+            self.remote_went_away(&error, cx);
+            let unheard: SharedString = format!("That didn't reach {machine}. Try again.").into();
+            self.status = unheard.clone();
+            self.unheard = Some(unheard);
+            return;
+        }
+        if moved {
+            self._rows = None;
+            self.active_source_cut = None;
+            self.composer
+                .update(cx, |composer, cx| composer.invalidate_source(cx));
+        }
+        self.say_failed("That didn't go through", error, cx);
+    }
+
+    /// A remote machine going away or coming back takes reads with it. That's no error; the session reopens.
+    fn remote_went_away(&mut self, error: &CallError, cx: &mut Context<Self>) -> bool {
+        if !self.is_remote() {
+            return false;
+        }
+        match error {
+            CallError::Unreachable { .. } => true,
+            CallError::Refused { code, message } if code == "source_changed" => {
+                self.on_rows(
+                    crate::features::session::client::session_client::RowUpdate::Refused {
+                        code: code.clone(),
+                        message: message.clone(),
+                    },
+                    cx,
+                );
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn read_refused(&mut self, error: CallError, cx: &mut Context<Self>) {
+        if self.remote_went_away(&error, cx) {
+            return;
+        }
+        self.status = format!("Could not mark this journal read: {}", error.reason()).into();
+        cx.notify();
+    }
+
+    pub(super) fn say_failed(&mut self, what: &str, error: CallError, cx: &mut Context<Self>) {
+        if self.remote_went_away(&error, cx) {
+            return;
+        }
         self.status = match error {
             CallError::Aborted => return,
             CallError::Unreachable { machine } => format!("{machine} is offline").into(),
