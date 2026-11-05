@@ -15,6 +15,7 @@ impl ComponentGallery {
             attempt: None,
             scope: None,
             closed: false,
+            actions: Vec::new(),
         };
         vec![
             StepView {
@@ -34,6 +35,12 @@ impl ComponentGallery {
             StepView {
                 attempt: Some((2, 3)),
                 detail: Some("Exit code 101".into()),
+                actions: vec![StepAction {
+                    label: "Retry".into(),
+                    disabled: false,
+                    reason: None,
+                    on_click: std::rc::Rc::new(|_| {}),
+                }],
                 ..step("failed", StepMark::Failed, "Failed to push", StepRight::Elapsed(format_elapsed(320)))
             },
             step("upcoming", StepMark::Upcoming, "Open the PR", StepRight::None),

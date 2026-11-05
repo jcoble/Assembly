@@ -45,6 +45,15 @@ fn a_number_or_short_title_shows_only_when_recorded() {
 }
 
 #[test]
+fn a_question_closed_by_a_revision_says_why_on_the_board() {
+    let closed = need(json!({"state":"superseded","text":"Ship it?"}));
+    assert!(matches!(
+        card_state(&closed),
+        NeedsState::Answered { summary, delivery: None } if summary.as_ref() == "Closed: the work it follows is being redone"
+    ));
+}
+
+#[test]
 fn age_reads_minutes_hours_then_the_stale_cue() {
     assert_eq!(age(0, 30_000), ("just now".to_owned(), false));
     assert_eq!(age(0, 240_000), ("4m ago".to_owned(), false));

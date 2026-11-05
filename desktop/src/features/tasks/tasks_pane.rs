@@ -157,7 +157,7 @@ impl TasksPane {
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search tasks"));
-        let pills = cx.new(|cx| FilterPills::new(Vec::new(), cx));
+        let pills = cx.new(|cx| FilterPills::new("tasks", Vec::new(), cx));
         let setup = cx.new(|cx| NotionSetup::new(window, cx));
         let mut heard = vec![
             cx.subscribe_in(

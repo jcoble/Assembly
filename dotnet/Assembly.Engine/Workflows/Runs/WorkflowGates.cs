@@ -15,7 +15,7 @@ public static class WorkflowGates
     {
         var ready = s.Query($"""
             SELECT st.id,st.version,st.attempt,st.generation,st.run_id,r.owner_session_id,owner.epoch,
-              json_extract(snap.snapshot_json,'$.snapshot.definition.steps.' || st.definition_key || '.gate')
+              json_extract(snap.snapshot_json,'$.snapshot.definition.steps.' || st.definition_key || '.gate.prompt')
             FROM engine_step st JOIN engine_run r ON r.id=st.run_id JOIN engine_session owner ON owner.id=r.owner_session_id
             JOIN engine_workflow_snapshot snap ON snap.run_id=r.id
             WHERE r.machine=$machine AND r.state IN ('queued','running','needs_me') AND r.paused=0 AND r.setup_state='ready'
@@ -30,7 +30,8 @@ public static class WorkflowGates
             var c = new CommandContext(Guid.NewGuid(), machine, new(ActorKind.System, "engine.worker"), row.Step, row.Version, row.Epoch, now);
             var id = row.Step + "/gate/" + row.Attempt;
             var text = row.Text.Length > 4096 ? row.Text[..4096] : row.Text;
-            var presentation = NeedPresentationInputs.Normalize(new(row.Owner, row.Run, row.Step, "workflow_gate", text, ["approve", "deny"], null, null, null));
+            string[] options = WorkflowGateRevision.Target(s, row.Step) is null ? ["approve", "deny"] : ["approve", "revise", "deny"];
+            var presentation = NeedPresentationInputs.Normalize(new(row.Owner, row.Run, row.Step, "workflow_gate", text, options, null, null, null));
             var number = NeedPresentationInputs.AllocateNumber(s);
             s.Execute("""
                 UPDATE engine_step SET state='waiting',dispatch_state='gate',attempt=$attempt,attempt_in_generation=attempt_in_generation+1,
@@ -39,9 +40,9 @@ public static class WorkflowGates
                   SELECT id,attempt,'waiting',$now,0,generation,attempt_in_generation,$epoch,'waiting',$machine FROM engine_step WHERE id=$step;
                 INSERT INTO engine_needs_me(id,version,machine,created_ms,updated_ms,session_id,run_id,step_id,kind,text,options_json,state,
                   addressee_session_id,source_kind,presentation_json,display_number)
-                VALUES($id,1,$machine,$now,$now,$owner,$run,$step,'workflow_gate',$text,'["approve","deny"]','open',$owner,'workflow_gate',$presentation,$number);
+                VALUES($id,1,$machine,$now,$now,$owner,$run,$step,'workflow_gate',$text,$options,'open',$owner,'workflow_gate',$presentation,$number);
                 """, new("$attempt", row.Attempt), new("$now", now), new("$step", row.Step), new("$epoch", row.Epoch), new("$machine", machine),
-                new("$id", id), new("$owner", row.Owner), new("$run", row.Run), new("$text", text), new("$presentation", JsonSerializer.Serialize(presentation, EngineJson.Default.NeedPresentation)), new("$number", number));
+                new("$id", id), new("$options", JsonSerializer.Serialize(options, EngineJson.Default.IReadOnlyListString)), new("$owner", row.Owner), new("$run", row.Run), new("$text", text), new("$presentation", JsonSerializer.Serialize(presentation, EngineJson.Default.NeedPresentation)), new("$number", number));
             List<EventDraft> events = [new("step.changed","step",row.Step,row.Version+1,false,new(null,row.Run,row.Step,null,"waiting",row.Epoch)),
                 new("needs_me.opened","needs_me",id,1,false,new(row.Owner,row.Run,row.Step,row.Owner,"open",row.Epoch))];
             events.AddRange(RunTransitions.Recompute(s, c, row.Run));

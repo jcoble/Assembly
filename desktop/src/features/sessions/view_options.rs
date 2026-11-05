@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
 use super::sessions_pane::header_button;
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::sessions as ids;
 
 pub const VIEW_KEY: &str = "rail.view";
 
@@ -99,6 +101,7 @@ pub fn view_options(view: View, on_view: OnView, cx: &App) -> impl IntoElement {
         .anchor(Anchor::TopRight)
         .trigger(
             header_button(Button::new("rail-view-button"), cx)
+                .control(ids::VIEW_OPTIONS, "View options")
                 .icon(gpui_kit::assets::IconName::ListFilter)
                 .tooltip("View options"),
         )

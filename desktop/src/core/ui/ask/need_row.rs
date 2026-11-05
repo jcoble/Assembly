@@ -3,7 +3,7 @@ use crate::core::{
     engine::{
         EngineChanged, EngineFeed, EngineKey, EngineRefusal, EngineScope, SessionKey,
         commands::NeedAnswer,
-        engine_items::{NO_ANSWER_CONTROLS, NeedItem},
+        engine_items::{NO_ANSWER_CONTROLS, NeedItem, WORK_REDONE},
     },
     ui::ask::{
         controls::{self, ControlAction},
@@ -44,6 +44,11 @@ pub enum NeedRowState {
     Failed { message: String },
 }
 pub(super) fn settled_state(need: &NeedItem, here: bool) -> NeedRowState {
+    if need.state == "superseded" {
+        return NeedRowState::Closed {
+            state: WORK_REDONE.into(),
+        };
+    }
     if need.state != "answered" {
         return NeedRowState::Closed {
             state: need.state.clone().into(),
@@ -72,6 +77,9 @@ pub(super) fn failure_state(error: &EngineRefusal) -> NeedRowState {
         "already_resolved" => NeedRowState::Refused {
             reason: error.message.clone(),
         },
+        "revision_target_undefined" => NeedRowState::Failed {
+            message: "There's no earlier step to send this back to.".into(),
+        },
         _ => NeedRowState::Failed {
             message: error.message.clone(),
         },
@@ -92,6 +100,15 @@ pub(super) fn typed_answer(need: &NeedItem, answer: Value) -> Result<Value, Stri
             if answer
                 .as_str()
                 .is_some_and(|id| presentation.options.iter().any(|option| option.id == id)) =>
+        {
+            Ok(answer)
+        }
+        "choice"
+            if answer["choice"] == "revise"
+                && (presentation.options.iter()).any(|option| option.id == "revise")
+                && answer["text"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty()) =>
         {
             Ok(answer)
         }
@@ -143,6 +160,8 @@ pub struct NeedRow {
     available: bool,
     text: Entity<TextareaState>,
     form: Option<AskForm>,
+    /// A gate's Revise is open, its words going in `text`.
+    revising: bool,
     serial: u64,
     accepted_here: bool,
     reconciled: bool,
@@ -243,6 +262,7 @@ impl NeedRow {
             available: true,
             text,
             form: None,
+            revising: false,
             serial: 0,
             accepted_here: false,
             reconciled: true,
@@ -445,3 +465,7 @@ mod interaction_tests;
 #[cfg(test)]
 #[path = "need_notice_tests.rs"]
 mod notice_tests;
+
+#[cfg(test)]
+#[path = "need_revise_tests.rs"]
+mod revise_tests;

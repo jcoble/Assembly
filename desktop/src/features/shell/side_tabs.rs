@@ -1,6 +1,8 @@
 //! The sessions column uses the kit's outline tabs. Selection and pane drag/drop stay owned by the dock.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::side_tab;
 use gpui_kit::component::dock::{DragPanel, TabGroupContext};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
@@ -36,6 +38,7 @@ fn tab(group: &TabGroupContext, ix: usize, name: &'static str, cx: &App) -> Tab 
     let (select, drop) = (group.clone(), group.clone());
     Tab::new()
         .label(name)
+        .control(side_tab(name), name)
         .debug_selector(move || format!("side-tab-{name}"))
         .on_click(move |_, window, cx| {
             select.select_tab(ix,window,cx);

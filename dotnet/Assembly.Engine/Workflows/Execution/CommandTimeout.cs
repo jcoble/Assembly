@@ -93,8 +93,8 @@ public static partial class CommandStepTransitions
               AND h.step_id=json_extract(o.payload_json,'$.stepId') AND h.generation=json_extract(o.payload_json,'$.generation')
               AND h.attempt=json_extract(o.payload_json,'$.attempt'))
             OR o.executor_json IS NULL AND EXISTS(SELECT 1 FROM engine_workflow_policy p WHERE p.run_id=o.run_id
-              AND p.step_id=json_extract(o.payload_json,'$.stepId') AND p.decision='deny'
-              AND o.last_error='policy_denied' AND EXISTS(SELECT 1 FROM engine_needs_me n WHERE n.id=p.need_id
+              AND p.step_id=json_extract(o.payload_json,'$.stepId')
+              AND (p.decision='closed' OR p.decision='deny' AND o.last_error='policy_denied') AND EXISTS(SELECT 1 FROM engine_needs_me n WHERE n.id=p.need_id
                 AND json_extract(n.execution_json,'$.effectId')=o.id))),0)
         """;
 }

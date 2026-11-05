@@ -1,9 +1,12 @@
 //! A workflow's steps. A step with more to say drops down into it, one at a time.
+use std::rc::Rc;
+
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::label::Label;
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::progress::Progress;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -29,6 +32,25 @@ pub enum StepRight {
     Elapsed(SharedString),
 }
 
+/// A control on a step's own row. The feature decides what it does and when it's there.
+#[derive(Clone)]
+pub struct StepAction {
+    pub label: SharedString,
+    pub disabled: bool,
+    /// Why it's disabled, when there's something to say.
+    pub reason: Option<SharedString>,
+    pub on_click: Rc<dyn Fn(&mut App)>,
+}
+
+impl std::fmt::Debug for StepAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StepAction")
+            .field("label", &self.label)
+            .field("disabled", &self.disabled)
+            .finish()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StepView {
     /// Unique in its list.
@@ -45,6 +67,7 @@ pub struct StepView {
     /// The scope it needs and whether it's been granted.
     pub scope: Option<(SharedString, bool)>,
     pub closed: bool,
+    pub actions: Vec<StepAction>,
 }
 
 impl StepView {
@@ -108,6 +131,28 @@ fn right(key: &SharedString, right: StepRight, cx: &App) -> Option<AnyElement> {
                 .into_any_element(),
         ),
     }
+}
+
+fn action_button(key: &SharedString, action: StepAction) -> impl IntoElement {
+    let id = SharedString::from(format!("step-action:{key}:{}", action.label));
+    let on_click = action.on_click;
+    let button = Button::new(id.clone())
+        .outline()
+        .xsmall()
+        .label(action.label)
+        .disabled(action.disabled)
+        .on_click(move |_, _, cx| {
+            // The row opens on a click.
+            cx.stop_propagation();
+            on_click(cx);
+        });
+    div()
+        .flex_none()
+        .debug_selector(move || id.to_string())
+        .child(match action.reason {
+            Some(reason) => button.tooltip(reason),
+            None => button,
+        })
 }
 
 /// The step's whole text, at full length.
@@ -202,6 +247,12 @@ fn step_row(
             |row, _| row.child(StatusChip::new("Needs scope", Tone::Warning)),
         )
         .children(right(&key, step.right.clone(), cx))
+        .children(
+            step.actions
+                .iter()
+                .cloned()
+                .map(|action| action_button(&key, action)),
+        )
         .when(has_more, |row| {
             row.child(
                 Icon::new(if open {

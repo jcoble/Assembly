@@ -137,7 +137,7 @@ public sealed class WorkflowWorkspaceTests
         Assert.Equal(new string('b', 40), ready.Workspace!.Intent.BaseHead);
         Assert.Equal(2, f.Core.Number("SELECT version FROM engine_step WHERE definition_key='checks'"));
         Assert.Equal(1000, f.Core.Number("SELECT updated_ms FROM engine_step WHERE definition_key='checks'"));
-        Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_event WHERE kind='step.changed' AND entity_id='" + step + "'"));
+        Assert.Equal(2, f.Core.Number("SELECT COUNT(*) FROM engine_event WHERE kind='step.changed' AND entity_id='" + step + "'")); // Created, then given its workspace.
     }
 
     private static EffectReceipt Receipt(WorkspacePrepared value) => new(EffectDisposition.Confirmed,

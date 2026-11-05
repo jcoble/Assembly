@@ -31,6 +31,7 @@ namespace Assembly.Tests.Draft.Base;
 public sealed partial class MachinesSocketTests : IAsyncLifetime
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
+    private const long OfflineSince = 1000;
     private const string Local = """{"name":null,"kind":"local","reachable":true,"reason":null,"checked":true,"ssh":null,"port":null,"tokenFile":null}""";
     private static readonly DateTimeOffset Start = new(2026, 10, 27, 12, 0, 0, TimeSpan.Zero);
 
@@ -57,7 +58,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _hub = new LiveHub(RowStore.Open(_db), topics: topics);
         _sessions = SessionStore.Open(_db, TimeProvider.System, "checkouts");
         Assembly.Engine.Persistence.EngineSchema.Open(_db, Start.ToUnixTimeMilliseconds());
-        var status = _status = new MachineStatus(topics, ["box"]);
+        var status = _status = new MachineStatus(topics, ["box"], new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.FromUnixTimeMilliseconds(OfflineSince)));
         _box = new RemoteMachine("box", _stub.Address, "box-token", _hub, _sessions, TextWriter.Null, status);
         status.Profile(new SavedMachine("box", "box"));
         var machines = new MachineSet(new FakeMachine(null, _sessions), _box);
@@ -447,7 +448,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
 
     // Pins: sessions-list#11 (checked is false only before the first probe answers or fails)
     private static string Box(bool reachable, string? reason) =>
-        $$"""{"name":"box","kind":"remote","reachable":{{(reachable ? "true" : "false")}},"reason":{{(reason is null ? "null" : $"\"{reason}\"")}},"checked":{{(reason == "not checked yet" ? "false" : "true")}},"ssh":"box","port":9797,"tokenFile":".config/assembly-host/env"}""";
+        $$"""{"name":"box","kind":"remote","reachable":{{(reachable ? "true" : "false")}},"reason":{{(reason is null ? "null" : $"\"{reason}\"")}},"checked":{{(reason == "not checked yet" ? "false" : "true")}},"ssh":"box","port":9797,"tokenFile":".config/assembly-host/env"{{(!reachable && reason != "not checked yet" ? $",\"offlineSinceMs\":{OfflineSince}" : "")}}}""";
 
     private static string List(long sub, string box) =>
         $$$"""{"t":"state","sub":{{{sub}}},"items":[{"key":"local","item":{{{Local}}}},{"key":"box","item":{{{box}}}}]}""";

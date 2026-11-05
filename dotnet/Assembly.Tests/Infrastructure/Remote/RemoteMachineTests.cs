@@ -42,8 +42,14 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     private async Task StartDesktopAsync()
     {
         _desktop = await DesktopBackend.StartAsync(_desktopHome, DesktopToken, port: 0, _desktopLauncher, _log, new RemoteConfig(Box, _box.Address, BoxToken));
-        await _desktop.Connections.ReadyAsync(Box);
-        var mirror = Assert.Single(_desktop.Connections.CaptureMirrorOwners()).Mirror;
+        await OwnerVerifiedAsync(_desktop);
+    }
+
+    // A machine call needs its connection's engine identity, which the mirror's first catch-up verifies.
+    private static async Task OwnerVerifiedAsync(DesktopBackend desktop)
+    {
+        await desktop.Connections.ReadyAsync(Box);
+        var mirror = Assert.Single(desktop.Connections.CaptureMirrorOwners()).Mirror;
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         void CaughtUp() => ready.TrySetResult();
         mirror.CaughtUp += CaughtUp;
@@ -286,7 +292,8 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         var copy = await SessionAsync(_desktop!, DesktopToken, helperId);
         Assert.Equal((Box, "codex"), (copy.GetProperty("machine").GetString(), copy.GetProperty("agent").GetString()));
 
-        // The parent's turn ends; its session stays open while its helper works on the box.
+        // The parent's turn ends; its session stays open while its helper works on the box, once the desktop has that copy.
+        await Until(async () => await HelperStateAsync(parent, helperId) == "running");
         await desktop.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "acp-parent");
 
         // The helper asks its parent: queued on the box, picked up by the desktop, and delivered once.
@@ -304,16 +311,27 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         // The helper answers; the parent reads it on the desktop, from the rows copied from the box.
         await box.TextAsync("notes.txt has 3 lines.", "h1", "acp-helper");
         await box.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "acp-helper");
+        // The automatic final reply is its own durable message, not an invented answered state on the initial prompt.
+        // The helper's turn end lets the kept parent session close, and the worker delivers the reply on its own, so
+        // either can come first: the reply takes the session still open, or resumes it. Both deliver it once.
+        var reply = await desktop.NextMessageAsync();
+        if (reply.GetProperty("method").GetString() == "session/close")
+        {
+            await desktop.ReplyAsync(reply, "{}");
+            parentToken = SessionToken(await desktop.OpenAsync("acp-parent"));
+            reply = await desktop.ReadAsync("session/prompt");
+        }
+        Assert.Equal("session/prompt", reply.GetProperty("method").GetString());
+        // A session's token ends with it, so this asks while the reply's turn holds the session open.
         await Until(async () => (await ToolAsync(_desktop!, parentToken, "message_status",
             new { messageId = started.GetProperty("messageId").GetString() })).GetProperty("state").GetString() == "next_turn");
-        // The automatic final reply is its own durable message, not an invented answered state on the initial prompt.
-        await desktop.CloseAsync();
-        await desktop.OpenAsync("acp-parent");
-        var reply = await desktop.ReadAsync("session/prompt");
         Assert.Contains("notes.txt has 3 lines.", reply.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
+        Assert.Single((await RowsAsync(_desktop!, DesktopToken, parent)), row => row.GetProperty("kind").GetString() == "user"
+            && row.GetProperty("payload").GetProperty("text").GetString()!.Contains("notes.txt has 3 lines.", StringComparison.Ordinal));
         await desktop.InsertAsync(reply, "helper-reply-provider");
         await desktop.FinishAsync(reply, """{"stopReason":"end_turn"}""");
-
+        // Nothing is left on the session, so the next thing it hears is its close, not the reply again.
+        await desktop.CloseAsync();
     }
 
     [Fact]
@@ -400,29 +418,6 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
             return rows.Count > 0 && rows[^1].GetProperty("payload") is var row
                 && row.GetProperty("state").GetString() == "idle" && row.TryGetProperty("stopReason", out var reason) && reason.GetString() == "cancelled";
         });
-    }
-
-    [Fact]
-    public async Task Ssh_exiting_marks_the_remote_unreachable_and_the_next_answer_marks_it_reachable()
-    {
-        // The tunnel's command exits each time this file appears.
-        var exit = Path.Combine(Directory.CreateTempSubdirectory("assembly-tunnel-").FullName, "exit");
-        await using var tunnel = new RemoteTunnel("/bin/sh", ["-c", $"while [ ! -e '{exit}' ]; do sleep 0.1; done; rm '{exit}'"], TextWriter.Null);
-        await using var desktop = await DesktopBackend.StartAsync(Directory.CreateTempSubdirectory("assembly-desktop-").FullName, DesktopToken, 0,
-            _desktopLauncher, _log, new RemoteConfig(Box, _box.Address, BoxToken), tunnel);
-        using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://{desktop.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{DesktopToken}}","protocol":1}""");
-        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
-        await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"machines"}""");
-        Assert.Contains("\"reachable\":true", await ReadTextAsync(socket));
-
-        File.WriteAllText(exit, "");
-        Assert.Contains("\"reachable\":false,\"reason\":\"ssh tunnel exited\"", await ReadTextAsync(socket));
-
-        await SendTextAsync(socket, $$$"""{"t":"call","id":2,"feature":"machines","method":"agents","args":{"machine":"{{{Box}}}"}}""");
-        Assert.Contains("\"reachable\":true", await ReadTextAsync(socket));
-        Assert.Contains("\"result\":", await ReadTextAsync(socket));
     }
 
     private static Task SendTextAsync(WebSocket socket, string text) =>

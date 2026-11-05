@@ -1,5 +1,7 @@
 //! The one header row: the branch menu at the left, how many files changed, and the more-actions menu at the right.
 use super::SourceControlPane;
+use crate::core::ui::access::control_ids as ids;
+use crate::core::ui::access::{Control as _, Named as _};
 use crate::core::ui::reasoned_item::reasoned_item;
 use crate::features::source_control::actions_menu::{MenuAction, PublishRow, READ_ONLY_SCOPE};
 use crate::features::source_control::git_status::GitStatus;
@@ -53,6 +55,7 @@ impl SourceControlPane {
             .trigger_style(StyleRefinement::default().flex_1().min_w_0())
             .trigger(
                 Button::new("git-branch")
+                    .named(format!("Branch: {}", status.branch_title()))
                     .ghost()
                     .compact()
                     .w_full()
@@ -99,6 +102,7 @@ impl SourceControlPane {
     fn actions_button(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let pane = cx.entity().downgrade();
         Button::new("git-actions")
+            .control(ids::git::ACTIONS, "More source-control actions")
             .ghost()
             .compact()
             .rounded(px(999.))

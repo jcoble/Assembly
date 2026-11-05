@@ -64,6 +64,8 @@ public sealed partial class EngineForwardTests
             await Send(bulk, WorkflowReadCall(1, "receipt", new { receiptId = seeded.Receipt, machine = h.Remote.Fixture.Machine }));
             await entered.Task.WaitAsync(Wait);
             h.Remote.Endpoint.DropAll();
+            h.Remote.Commit(1);
+            await h.Reached(h.Remote.Through); // Same Engine ID, positively verified on a different live socket.
             release.TrySetResult();
             var result = await Read(bulk);
             Assert.Equal("error", result.GetProperty("t").GetString());
@@ -71,6 +73,34 @@ public sealed partial class EngineForwardTests
             Assert.False(result.TryGetProperty("result", out _));
         }
         finally { release.TrySetResult(); h.Remote.OpeningBulk = null; }
+    }
+
+    [Fact]
+    public async Task A_bulk_read_waiting_on_its_answer_when_the_owner_connection_drops_is_unreachable()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var h = WorkflowHosts();
+        var workflow = h.Remote.AdditionalFeatures!;
+        h.Remote.AdditionalFeatures = calls =>
+        {
+            workflow(calls);
+            calls.Read("test", "hold", Assembly.Infrastructure.Engine.Workflows.WorkflowReadCallsJson.Default.JsonElement, Assembly.Infrastructure.Engine.Workflows.WorkflowReadCallsJson.Default.JsonElement, async (args, call) =>
+            {
+                entered.TrySetResult();
+                await release.Task.WaitAsync(call.Cancellation);
+                return args;
+            }, bulk: true);
+        };
+        await h.Start(); await h.StartMirror();
+        var held = h.Mac.Forwarder!.CallAsync(h.Remote.Fixture.Machine, "test", "hold", JsonSerializer.SerializeToElement(new { }), true, default);
+        try
+        {
+            await entered.Task.WaitAsync(Wait);
+            h.Remote.Endpoint.DropAll();
+            await Assert.ThrowsAsync<Assembly.Application.Common.Machines.MachineUnreachable>(() => held.WaitAsync(Wait));
+        }
+        finally { release.TrySetResult(); }
     }
 
     private static TwoHosts WorkflowHosts()

@@ -111,9 +111,18 @@ impl Focusable for BoardPanel {
 }
 
 impl BoardPanel {
-    /// Adds the panel's intent to the palette. The top bar owns its anchored popover.
+    /// Adds the panel's intent to the palette and its key. The top bar owns its anchored popover.
     pub fn register(cx: &mut App) {
         CommandRegistry::add("Build Board", Box::new(ToggleBoard), cx);
+        let toggle = KeyBinding::load(
+            "secondary-shift-b",
+            Box::new(ToggleBoard),
+            None,
+            false,
+            None,
+            cx,
+        );
+        cx.bind_keys([toggle.expect("the Board's key binding parses")]);
     }
 
     pub fn new(memory: BoardMemory, cx: &mut Context<Self>) -> Self {
@@ -559,3 +568,7 @@ mod board_rows;
 #[cfg(test)]
 #[path = "board_panel_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "board_top_bar_tests.rs"]
+mod top_bar_tests;

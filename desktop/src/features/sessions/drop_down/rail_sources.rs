@@ -26,6 +26,7 @@ impl SessionsPane {
         let Some(generation) = socket.read(cx).connection_generation() else {
             self.source_pass = None;
             self.source_cut = None;
+            self.source_connection = None;
             self.engine_watches.clear();
             return;
         };
@@ -37,7 +38,13 @@ impl SessionsPane {
             return;
         }
         self.source_pass = None;
-        self.engine_watches.clear();
+        let connection = (socket.clone(), generation);
+        if self.source_connection.as_ref() == Some(&connection) {
+            self.keep_saved_sources(cx);
+        } else {
+            self.engine_watches.clear();
+            self.source_connection = Some(connection);
+        }
         let Some(serial) = self.source_serial.checked_add(1) else {
             self.source_cut = None;
             return;
@@ -96,8 +103,31 @@ impl SessionsPane {
             }
         }));
     }
+    /// A saved machine that stops answering keeps its watches: the backend still serves its last rows, the Board
+    /// shows them as offline, and an offline route can't be resolved again. Only a machine taken off the list goes.
+    fn keep_saved_sources(&mut self, cx: &mut Context<Self>) {
+        let feed = EngineFeed::global(cx);
+        let machines = Machines::try_global(cx);
+        let (feed, machines) = (feed.read(cx), machines.as_ref().map(|held| held.read(cx)));
+        self.engine_watches
+            .retain(|scope, _| match feed.machine_name(&scope.machine) {
+                None => true,
+                Some(name) => machines.is_some_and(|machines| {
+                    machines
+                        .machines()
+                        .any(|held| held.name.as_deref() == Some(name))
+                }),
+            });
+    }
     fn hold_source(&mut self, source: ExpectedRowSource, cx: &mut Context<Self>) {
         let feed = EngineFeed::global(cx);
+        // A route that comes back as another engine leaves the old engine's rows behind.
+        let route = source.route_machine.as_deref();
+        self.engine_watches.retain(|scope, _| {
+            scope.machine == source.machine
+                || route.is_none()
+                || feed.read(cx).machine_name(&scope.machine) != route
+        });
         feed.update(cx, |feed, _| {
             feed.name_machine(source.machine.clone(), source.route_machine.clone())
         });

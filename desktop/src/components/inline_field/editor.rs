@@ -1,6 +1,7 @@
 use super::field::{FieldValue, InlineField};
 use super::kinds::TextShape;
 use crate::activity::{StatusChip, Tone};
+use crate::core::ui::access::Named as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::calendar::Date;
 use gpui_kit::component::date_picker::{DatePicker, DatePickerState, DateTime};
@@ -12,6 +13,9 @@ use gpui_kit::component::time_field::{TimeField, TimeFieldState, TimePrecision};
 use gpui_kit::component::{Disableable as _, IndexPath, Sizable as _, Size};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+
+/// How a date and time reads everywhere one is shown.
+pub const DATE_TIME_SHOWN: &str = "%b %-d, %Y %H:%M";
 
 #[derive(Clone, Debug)]
 pub struct ChoiceOption {
@@ -80,6 +84,7 @@ fn chip_menu(
     let (label, tone) = ChoiceOption::shown(options, value);
     let (options, current) = (options.to_vec(), value.map(str::to_owned));
     Button::new("inline-chip")
+        .named(label.clone())
         .ghost()
         .xsmall()
         .child(StatusChip::new(label, tone))
@@ -272,7 +277,7 @@ impl Editor {
             }),
             FieldValue::Date(value) => value.map(|date| date.format("%b %-d, %Y").to_string()),
             FieldValue::DateTime(value) => {
-                value.map(|date| date.format("%b %-d, %Y %H:%M").to_string())
+                value.map(|date| date.format(DATE_TIME_SHOWN).to_string())
             }
             FieldValue::Time(value) => Some(value.format("%H:%M:%S").to_string()),
             FieldValue::Choice(value) => match (self, value) {

@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::core::engine::EngineRefusal;
 use crate::core::engine::commands::{CommandReceipt, WindowCommand};
-use crate::core::engine::workflow_items::RunItem;
+use crate::core::engine::workflow_items::{RunItem, StepItem};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum BoardRunAction {
@@ -17,6 +17,26 @@ pub enum BoardRunAction {
     Keep,
     Undo { token: String },
     Grant { step_id: String, scope: String },
+    RetryStep { step_id: String },
+    SkipStep { step_id: String },
+    ContinueStep { step_id: String },
+}
+
+/// The controls a step's row carries, from what the engine says it would accept. A word this build doesn't know draws nothing.
+pub fn step_recovery(step: &StepItem) -> Vec<(&'static str, BoardRunAction)> {
+    let step_id = || step.id.clone();
+    step.recovery
+        .iter()
+        .filter_map(|word| match word.as_str() {
+            "retry" => Some(("Retry", BoardRunAction::RetryStep { step_id: step_id() })),
+            "skip" => Some(("Skip", BoardRunAction::SkipStep { step_id: step_id() })),
+            "continue" => Some((
+                "Continue",
+                BoardRunAction::ContinueStep { step_id: step_id() },
+            )),
+            _ => None,
+        })
+        .collect()
 }
 
 impl BoardRunAction {
@@ -113,6 +133,15 @@ pub fn run_command(
         BoardRunAction::Grant { step_id, scope } => {
             json!({"kind": "grant_scope", "stepId": step_id, "scope": scope})
         }
+        BoardRunAction::RetryStep { step_id } => {
+            json!({"kind": "retry_workflow_step", "stepId": step_id})
+        }
+        BoardRunAction::SkipStep { step_id } => {
+            json!({"kind": "decide_workflow_step", "stepId": step_id, "decision": "skip"})
+        }
+        BoardRunAction::ContinueStep { step_id } => {
+            json!({"kind": "decide_workflow_step", "stepId": step_id, "decision": "continue"})
+        }
     };
     same_run_command(source, command, command_id)
 }
@@ -153,6 +182,11 @@ pub fn refusal_line(outcome: &Result<CommandReceipt, EngineRefusal>) -> Option<S
         "already_resolved" => "Already answered elsewhere.".into(),
         "invalid_transition" => "The run can't do that now.".into(),
         "wrong_machine" | "unavailable" => "That machine isn't available.".into(),
+        "attempts_exhausted" => "This step has used all its attempts.".into(),
+        "executor_quiescence_required" => {
+            "The step is still stopping. Try again in a moment.".into()
+        }
+        "required_step" => "This step is required, so it can't be skipped.".into(),
         _ => message.unwrap_or_else(|| "The engine refused this.".into()),
     })
 }

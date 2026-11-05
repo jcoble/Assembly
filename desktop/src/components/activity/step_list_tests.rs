@@ -25,6 +25,7 @@ fn only_a_step_with_more_to_say_opens() {
         attempt: None,
         scope: None,
         closed: false,
+        actions: Vec::new(),
     };
     assert!(!plain.has_more());
     assert!(

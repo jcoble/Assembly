@@ -71,11 +71,12 @@ public static class NeedTransitions
             : c.Actor.Kind == ActorKind.System ? AnswerOrigin.ProviderFact : AnswerOrigin.Raw;
         if (s.QueryFirst("SELECT source_kind FROM engine_needs_me WHERE id=$id", r => r.Text(0), new SqlArg("$id", need.Id)) == "workflow_gate")
         {
-            if (owner is null || c.Origin?.Channel == "phone" || command is not ResolveNeed { State: "answered", Answer: { ValueKind: JsonValueKind.String } answer })
+            if (owner is null || c.Origin?.Channel == "phone" || command is not ResolveNeed { State: "answered", Answer: { } answer } ||
+                !Workflows.Runs.WorkflowGateRevision.TryReadAnswer(answer, out var decision, out var reply))
                 return Refused(c, "forbidden", need);
             var runVersion = s.QueryFirst("SELECT version FROM engine_run WHERE id=$run", r => r.Long(0), new SqlArg("$run", need.RunId));
             var result = Workflows.Runs.WorkflowControlTransitions.Apply(s, c with { EntityId = need.RunId!, ExpectedVersion = runVersion },
-                new Workflows.Runs.DecideWorkflowStep(need.StepId!, answer.GetString()!));
+                new Workflows.Runs.DecideWorkflowStep(need.StepId!, decision!, reply));
             return result.Applied ? result with { Version = need.Version + 1 } : result;
         }
         if (WorkflowExecutionNeeds.IsWorkflow(s, need.Id))

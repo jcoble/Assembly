@@ -138,6 +138,7 @@ pub fn card_steps(run: &RunItem, steps: &[&StepItem], now_ms: i64) -> Vec<StepVi
             attempt: None,
             scope: None,
             closed: false,
+            actions: Vec::new(),
         });
     }
     rows

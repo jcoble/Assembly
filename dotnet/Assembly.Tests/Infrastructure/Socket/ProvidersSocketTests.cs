@@ -171,9 +171,11 @@ public sealed class ProvidersSocketTests : IAsyncLifetime
         return socket;
     }
 
+    private static long _callId;
+
     private static async Task<JsonElement> Call(ClientWebSocket socket, string method, object args)
     {
-        await Send(socket, new { t = "call", id = 1, feature = "providers", method, args });
+        await Send(socket, new { t = "call", id = Interlocked.Increment(ref _callId), feature = "providers", method, args });
         return await Read(socket);
     }
     private static Task Send(ClientWebSocket socket, object value) => socket.SendAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value)), WebSocketMessageType.Text, true, CancellationToken.None);

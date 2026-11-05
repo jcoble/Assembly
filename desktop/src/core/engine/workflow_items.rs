@@ -79,6 +79,9 @@ pub struct StepItem {
     pub explanation: Option<String>,
     pub progress: Option<f64>,
     pub badges: Vec<Value>,
+    /// What the engine would accept for this step now: retry, skip or continue.
+    #[serde(default)]
+    pub recovery: Vec<String>,
     pub required_scope: Option<String>,
     pub scope_granted: bool,
     pub closed: bool,

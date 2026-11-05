@@ -8,6 +8,8 @@ use super::super::{
 use super::*;
 use crate::core::intents::open_url::OpenUrl;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids as ids;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::input::Input;
@@ -262,6 +264,7 @@ impl PrPane {
                     )
                     .child(
                         Button::new("pr-queue-refresh")
+                            .control(ids::pr::QUEUE_REFRESH, "Refresh pull requests")
                             .ghost()
                             .small()
                             .icon(IconName::RefreshCw)

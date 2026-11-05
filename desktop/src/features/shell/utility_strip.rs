@@ -10,6 +10,8 @@ use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex};
 use gpui_kit::*;
 
 use crate::core::intents::open_settings::OpenSettings;
+use crate::core::ui::access::control_ids::utility as ids;
+use crate::core::ui::access::{Control as _, say};
 
 pub struct UtilityStrip;
 
@@ -19,6 +21,7 @@ impl Render for UtilityStrip {
         let pill = theme.radius_full();
         // The mock's foot: a 22 px settings button with 6 px corners, then its figures.
         let settings = Button::new("Settings")
+            .control(ids::SETTINGS, "Settings")
             .ghost()
             .with_size(px(17.))
             .size(px(22.))
@@ -42,35 +45,40 @@ impl Render for UtilityStrip {
             .child(figure(
                 "resources",
                 Button::new("Resources")
+                    .control(ids::RESOURCES, "Resources")
                     .ghost()
                     .compact()
                     .rounded(pill)
                     .label("Resources"),
-                "No resource figures yet.",
+                (ids::RESOURCES_EMPTY, "No resource figures yet."),
             ))
             .child(figure(
                 "usage",
                 Button::new("Usage")
+                    .control(ids::USAGE, "Usage")
                     .ghost()
                     .compact()
                     .rounded(pill)
                     .label("Usage"),
-                "No usage figures yet.",
+                (ids::USAGE_EMPTY, "No usage figures yet."),
             ))
     }
 }
 
 /// A strip button whose popover opens above it. The body is only built while the popover is open.
-fn figure(id: &'static str, trigger: Button, body: &'static str) -> impl IntoElement {
+fn figure(
+    id: &'static str,
+    trigger: Button,
+    (body_id, body): (&'static str, &'static str),
+) -> impl IntoElement {
     div().debug_selector(move || format!("{id}-button")).child(
         Popover::new(id)
             .anchor(Anchor::BottomLeft)
             .trigger(trigger)
             .content(move |_, _, _| {
-                div()
+                say(body_id, body)
                     .debug_selector(move || format!("{id}-body"))
                     .p_2()
-                    .child(body)
             }),
     )
 }

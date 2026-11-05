@@ -83,6 +83,18 @@ public sealed class WorkflowToolTests
         var start = await h.Call(h.Start, Start[..^1] + suffix + "}"); Assert.False(start.IsError);
     }
 
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("root")]
+    public async Task A_project_the_desktop_added_on_this_machine_starts_a_workflow(string selector)
+    {
+        await using var h = new Harness();
+        h.Fixture.Db.Writer.Write("test.desktop-project", s => s.Execute("UPDATE projects SET machine='local'"));
+        var start = await h.Call(h.Start, selector == "root" ? Start[..^1] + ",\"project\":" + JsonSerializer.Serialize(h.Root) + "}" : Start);
+        Assert.False(start.IsError, start.Content[0].ToString());
+        Assert.Equal(1, h.Fixture.Count("engine_run"));
+    }
+
     [Fact]
     public async Task Ambiguous_title_and_missing_association_do_not_guess_a_project()
     {

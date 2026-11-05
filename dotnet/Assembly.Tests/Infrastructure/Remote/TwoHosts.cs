@@ -273,7 +273,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         if (forwardCommands) Mac.Forwarder = new(machine => _connections!.ByEngineMachine(Mac.Fixture.Db, machine));
     }
     public EngineMirror Mirror { get; private set; } = null!;
-    public StringWriter MirrorLog { get; } = new();
+    public SharedLog MirrorLog { get; } = new();
     private RemoteMachine? _machine;
     private LiveHub? _hub;
     public async Task Start() { await Remote.Start(); await Mac.Start(); Remote.Fixture.SeedSession(); }

@@ -16,7 +16,8 @@ public sealed class WorkflowMuteReadTests
         Assert.Equal(1, reader.WorkflowSettings(default).GetProperty("version").GetInt64());
         Assert.Equal(10000, reader.Entity("workflow_settings", "workflow-settings", default)!.Value.GetProperty("mutedUntil").GetInt64());
         using (var snapshot = reader.Snapshot("runs", null, default))
-            Assert.Contains(snapshot.ReadNext().Items, item => item.GetProperty("id").GetString() == "workflow-settings");
+            Assert.Contains(snapshot.ReadNext().Items, item => item.GetProperty("id").GetString() == "workflow-settings"
+                && item.GetProperty("machine").GetString() == f.Machine); // A client refuses a whole cut with a row from no machine.
         Assert.Equal(10000, f.Number("SELECT muted_until FROM engine_workflow_settings"));
         Assert.True(f.Apply(WorkflowControlTests.Command("{\"kind\":\"set_mute\",\"untilMs\":null}"), "workflow-settings", 1).Applied);
         Assert.Null(f.Text("SELECT muted_until FROM engine_workflow_settings"));

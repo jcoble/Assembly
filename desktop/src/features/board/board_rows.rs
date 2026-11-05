@@ -11,7 +11,9 @@ use crate::core::engine::{EngineKey, SessionKey};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::activity::run_view::now_ms;
 use crate::features::board::board_queries::is_terminal;
-use crate::features::board::board_sections::{Entry, group_heading, machine_label, offline_reason};
+use crate::features::board::board_sections::{
+    Entry, group_heading, machine_label, offline_reason, offline_since,
+};
 use crate::features::board::question_row::{card_key, need_card};
 use crate::features::board::run_steps::pill;
 use crate::features::board::session_tabs::{session_entry, task_label};
@@ -109,6 +111,8 @@ impl BoardPanel {
                 let line = group_heading(
                     &machine_label(&machine, feed, cx),
                     offline_reason(&machine, feed, cx).is_some(),
+                    offline_since(&machine, feed, cx),
+                    super::local_midnight_ms(),
                 );
                 div()
                     .pt_2()

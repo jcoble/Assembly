@@ -12,6 +12,10 @@ use serde_json::json;
 use super::settings_page::SettingsPage;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
+use crate::core::ui::access::control_ids::{machine_host, settings};
+use crate::core::ui::access::{ExposedElement as _, say};
+
+const SEARCH: &str = "Search your SSH hosts";
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +40,9 @@ impl SearchableListItem for HostChoice {
     }
     fn value(&self) -> &String {
         &self.host
+    }
+    fn render(&self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        say(machine_host(&self.host), self.words())
     }
 }
 
@@ -130,11 +137,17 @@ impl SshPicker {
         })
     }
 
-    pub(super) fn select(&self) -> Select<SearchableVec<HostChoice>> {
-        Select::new(&self.state)
-            .w_full()
-            .placeholder("Search your SSH hosts")
-            .search_placeholder("Search your SSH hosts")
+    pub(super) fn select(&self) -> impl IntoElement {
+        div()
+            .id(settings::MACHINE_HOST_SEARCH)
+            .exposed(Role::Group, settings::MACHINE_HOST_SEARCH, SEARCH)
+            .child(
+                Select::new(&self.state)
+                    .w_full()
+                    .accessibility_label(SEARCH)
+                    .placeholder(SEARCH)
+                    .search_placeholder(SEARCH),
+            )
     }
 }
 

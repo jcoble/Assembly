@@ -242,23 +242,81 @@ impl Render for NeedRow {
                     } else {
                         option.label.clone()
                     };
-                    let button = Button::new(SharedString::from(format!("need-choice:{id}")))
-                        .label(label)
-                        .on_click(cx.listener(move |row, _, _, cx| {
+                    let selector = format!("need-choice:{id}");
+                    let button = Button::new(SharedString::from(selector.clone())).label(label);
+                    let button = if gate && id == "revise" {
+                        button.outline().on_click(cx.listener(|row, _, window, cx| {
+                            row.revising = !row.revising;
+                            if row.revising {
+                                row.text.update(cx, |text, cx| text.focus(window, cx));
+                            }
+                            cx.notify();
+                        }))
+                    } else {
+                        let deny = gate && id == "deny";
+                        let button = button.on_click(cx.listener(move |row, _, _, cx| {
                             row.answer(NeedAnswer::Answer(json!(id)), cx)
                         }));
-                    choices = choices.child(if index == 0 {
-                        button.primary()
-                    } else {
-                        button.secondary()
-                    });
+                        match index {
+                            0 => button.primary(),
+                            _ if deny => button.text().danger(),
+                            _ => button.secondary(),
+                        }
+                    };
+                    choices = choices.child(div().debug_selector(move || selector).child(button));
                 }
                 answers = answers.child(choices);
+                if self.revising {
+                    answers = answers.child(revise_field(&self.text, cx));
+                }
             }
         }
         column
             .child(answers)
             .children(dismiss(self.need().kind != "workflow_gate", cx))
+    }
+}
+
+/// Where a gate's revision is typed. The words stay if it's refused or closed.
+fn revise_field(text: &Entity<TextareaState>, cx: &mut Context<NeedRow>) -> impl IntoElement {
+    v_flex()
+        .gap_2()
+        .child(
+            div()
+                .capture_key_down(cx.listener(|row, event: &KeyDownEvent, _, cx| {
+                    if event.keystroke.key == "enter"
+                        && !event.keystroke.modifiers.shift
+                        && !event.is_held
+                    {
+                        row.send_revision(cx);
+                        cx.stop_propagation();
+                    } else if event.keystroke.key == "escape" {
+                        row.revising = false;
+                        cx.notify();
+                        cx.stop_propagation();
+                    }
+                }))
+                .child(Textarea::new(text)),
+        )
+        .child(
+            div().debug_selector(|| "need-send-revision".into()).child(
+                Button::new("send-revision")
+                    .primary()
+                    .label("Send")
+                    .on_click(cx.listener(|row, _, _, cx| row.send_revision(cx))),
+            ),
+        )
+}
+
+impl NeedRow {
+    fn send_revision(&mut self, cx: &mut Context<Self>) {
+        let text = self.text.read(cx).value().to_string();
+        if !text.trim().is_empty() {
+            self.answer(
+                NeedAnswer::Answer(json!({"choice": "revise", "text": text})),
+                cx,
+            );
+        }
     }
 }
 

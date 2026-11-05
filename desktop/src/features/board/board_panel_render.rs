@@ -1,5 +1,7 @@
 //! The board's tabs and list.
 use super::*;
+use crate::core::ui::access::control_ids::{board as ids, board_tab};
+use crate::core::ui::access::{Control as _, say};
 
 impl Render for BoardPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -24,12 +26,11 @@ impl Render for BoardPanel {
                 v_flex()
                     .flex_1()
                     .min_w_0()
-                    .child(div().text_role(TextRole::Title, cx).child(heading(open)))
+                    .child(say(ids::HEADING, heading(open)).text_role(TextRole::Title, cx))
                     .child(
-                        div()
+                        say(ids::SUMMARY, summary(counts))
                             .text_role(TextRole::Meta, cx)
-                            .text_color(muted)
-                            .child(summary(counts)),
+                            .text_color(muted),
                     )
                     .children(note.map(|note| {
                         div()
@@ -44,14 +45,15 @@ impl Render for BoardPanel {
             .with_size(Size::Small)
             .selected_index(tab_index(self.tab))
             .children(BoardTab::ALL.into_iter().map(|tab| {
-                let label = match tab {
-                    BoardTab::Needs if open > 0 => format!("Needs you · {open}"),
-                    BoardTab::Needs => "Needs you".to_owned(),
-                    BoardTab::Workflows => "Workflows".to_owned(),
-                    BoardTab::Sessions => "Sessions".to_owned(),
+                let (name, label) = match tab {
+                    BoardTab::Needs if open > 0 => ("needs-you", format!("Needs you · {open}")),
+                    BoardTab::Needs => ("needs-you", "Needs you".to_owned()),
+                    BoardTab::Workflows => ("workflows", "Workflows".to_owned()),
+                    BoardTab::Sessions => ("sessions", "Sessions".to_owned()),
                 };
                 Tab::new()
-                    .label(label)
+                    .label(label.clone())
+                    .control(board_tab(name), label)
                     .on_click(cx.listener(move |panel, _, _, cx| panel.show_tab(tab, cx)))
             }));
         let this = cx.weak_entity();
@@ -74,11 +76,10 @@ impl Render for BoardPanel {
             .child(header)
             .child(div().px_3().child(bar))
             .children(self.open_failed.clone().map(|line| {
-                div()
+                say(ids::OPEN_FAILED, line)
                     .px_3()
                     .text_role(TextRole::Meta, cx)
                     .text_color(cx.theme().danger)
-                    .child(line)
             }))
             .child(
                 div()

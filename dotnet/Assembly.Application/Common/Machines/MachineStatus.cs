@@ -11,14 +11,16 @@ namespace Assembly.Application.Common.Machines;
 /// <paramref name="Reason"/> describes connection warnings, and <paramref name="Checked"/> is false for a remote until its
 /// first probe answers or fails (until then it's neither up nor down). <paramref name="Backend"/> is what a remote's
 /// last welcome said it runs. <paramref name="Updates"/> is the update check's last answer; the one update's progress or
-/// failure is <paramref name="UpdateNote"/>.
+/// failure is <paramref name="UpdateNote"/>. <paramref name="OfflineSinceMs"/> is when a remote stopped answering, kept
+/// through later failures and cleared when it answers.
 /// </summary>
 public sealed record MachineItem(string? Name, string Kind, bool Reachable, string? Reason, bool Checked, string? Ssh = null, int? Port = null, string? TokenFile = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] RemoteBackend? Backend = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] IReadOnlyList<UpdateItem>? Updates = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Updating = false,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? UpdateNote = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Quit = false);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Quit = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] long? OfflineSinceMs = null);
 
 /// <summary>One piece the update check looked at: <paramref name="Kind"/> is desktop, backend, adapter or cli.</summary>
 public sealed record UpdateItem(string Kind, string Name, string? Current, string? Wanted, string State)
@@ -41,7 +43,7 @@ public sealed record RemoteBackend(string? Commit, string? LocalCommit, bool Dif
 /// <c>RemoteMachine</c> records each answer and each failure. Writers swap the snapshot and publish the changed item
 /// under the lock (status, then Topics); readers take the snapshot with none.
 /// </summary>
-public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
+public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes, TimeProvider? time = null)
 {
     private readonly Lock _gate = new();
     private volatile MachineItem[] _items =
@@ -58,7 +60,7 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
         lock (_gate)
         {
             Retire(name);
-            return _scopes[name] = new(topics, []) { _parent = this };
+            return _scopes[name] = new(topics, [], time) { _parent = this };
         }
     }
     public MachineStatus ForProbe(string name)
@@ -75,7 +77,10 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
     public void Profile(SavedMachine profile)
     {
         lock (_gate)
-            _items = [.. _items.Where(item => item.Name != profile.Name), MachineStore.Item(profile)];
+            _items = [.. _items.Where(item => item.Name != profile.Name), MachineStore.Item(profile) with
+            {
+                OfflineSinceMs = _items.FirstOrDefault(item => item.Name == profile.Name)?.OfflineSinceMs
+            }];
     }
     public void Remove(string name)
     {
@@ -161,7 +166,13 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
             if (index < 0 || (items[index].Checked == checkedState && items[index].Reachable == reachable && items[index].Reason == reason))
                 return;
             var next = (MachineItem[])items.Clone();
-            next[index] = items[index] with { Reachable = reachable, Checked = checkedState, Reason = reason };
+            next[index] = items[index] with
+            {
+                Reachable = reachable,
+                Checked = checkedState,
+                Reason = reason,
+                OfflineSinceMs = reachable ? null : items[index].OfflineSinceMs ?? (time ?? TimeProvider.System).GetUtcNow().ToUnixTimeMilliseconds()
+            };
             _items = next;
             topics.Publish(MachinesFeature.Topic, machine, JsonSerializer.Serialize(next[index], SessionsJson.Default.MachineItem));
         }

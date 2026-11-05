@@ -95,9 +95,14 @@ internal static partial class WorkflowControlTransitions
         {
             if (step.State != "waiting" || need is null) return Refuse("already_resolved");
             if (decision == "revise" && (command is not DecideWorkflowStep { Reply: { Length: > 0 } reply } || string.IsNullOrWhiteSpace(reply))) return Refuse("reply_required");
-            // Neither the snapshot contract nor the old gate handler defines a revision target.
-            // Keep the original gate open rather than acknowledge and repeat the same question.
-            if (decision == "revise") return Refuse("revision_target_undefined");
+            if (decision == "revise")
+            {
+                var text = ((DecideWorkflowStep)command).Reply!;
+                if (text.Length > 32768) return Refuse("bad_args");
+                // A gate nothing earlier can answer stays open rather than acknowledge and repeat the same question.
+                if (WorkflowGateRevision.Target(s, id!) is not { } target) return Refuse("revision_target_undefined");
+                return Revise(s, c, run, new(id!, step.Version, step.Attempt, step.Generation), new(need.Id, need.Version), target, text);
+            }
         }
         else if (decision == "skip")
         {
@@ -119,6 +124,8 @@ internal static partial class WorkflowControlTransitions
               attempt_in_generation=CASE WHEN $recovery=1 THEN 0 ELSE attempt_in_generation END,
               scope_granted=CASE WHEN $state='pending' THEN 0 ELSE scope_granted END,
               session_id=CASE WHEN $state='pending' THEN NULL ELSE session_id END,
+              authority_session_id=CASE WHEN $state='pending' THEN NULL ELSE authority_session_id END,
+              authority_epoch=CASE WHEN $state='pending' THEN NULL ELSE authority_epoch END,
               receipt_id=CASE WHEN $state='pending' THEN NULL ELSE receipt_id END,
               proof_json=CASE WHEN $state='pending' THEN NULL ELSE proof_json END,
               outcome_reason=$reason,ended_ms=CASE WHEN $state='pending' THEN NULL ELSE $now END,deadline_ms=NULL,
