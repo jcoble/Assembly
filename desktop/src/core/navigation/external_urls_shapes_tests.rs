@@ -185,3 +185,59 @@ fn a_copied_link_parses_back_to_the_same_session_and_machine() {
         assert_eq!(parse_external(&link), session(id, machine), "{link}");
     }
 }
+
+#[test]
+fn the_shape_is_read_from_the_links_own_text_not_a_cleaned_up_copy() {
+    for url in [
+        // Dot segments, plain and encoded.
+        "assembly://session/x/../a",
+        "assembly://session/x/%2e%2e/a",
+        "assembly://session/.",
+        "assembly://session/..",
+        "assembly://open/x/..?url=https%3A%2F%2Fa.test",
+        "assembly://open/.?url=https%3A%2F%2Fa.test",
+        "assembly://file/x/..?path=%2Fa",
+        // Anything in the authority.
+        "assembly://session:/a",
+        "assembly://session:80/a",
+        "assembly://@session/a",
+        "assembly://:@session/a",
+        "ASSEMBLY://session/a",
+        // A query with anything spare, or a key spelled in escapes.
+        "assembly://session/a?profile=b&",
+        "assembly://session/a?&profile=b",
+        "assembly://session/a?",
+        "assembly://session/a?pro%66ile=b",
+        "assembly://file?%70ath=%2Fa",
+        // Bytes that aren't text.
+        "assembly://session/a?profile=%FF",
+        "assembly://file?path=%2Fa%FF",
+        "assembly://session/a%FF",
+    ] {
+        assert_eq!(parse_external(url), ExternalRoute::Unsupported, "{url}");
+    }
+    for url in [
+        "file:///a/../b",
+        "file:///a/%2e%2e/b",
+        "file:///a\\..\\b",
+        "file:///work\\a.cs",
+        "file:///a%2Fb",
+        "file:////work/a.cs",
+        "FILE:///a",
+        "file:///a%FF",
+    ] {
+        assert_eq!(parse_incoming(url), ExternalRoute::Unsupported, "{url}");
+    }
+}
+
+#[test]
+fn a_plus_in_a_value_is_a_plus() {
+    assert_eq!(
+        parse_external("assembly://file?path=%2Fa+b.cs"),
+        file("/a+b.cs", None)
+    );
+    assert_eq!(
+        parse_external("assembly://session/a?profile=b+c"),
+        session("a", Some("b+c"))
+    );
+}
