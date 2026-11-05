@@ -281,7 +281,8 @@ async fn the_input_method_sees_its_composition_and_the_cursor_cell(cx: &mut Test
         assert_eq!(pane.marked_text_range(window, cx), Some(0..2));
         let mut adjusted = None;
         assert_eq!(
-            pane.text_for_range(1..5, &mut adjusted, window, cx).as_deref(),
+            pane.text_for_range(1..5, &mut adjusted, window, cx)
+                .as_deref(),
             Some("a")
         );
         assert_eq!(adjusted, Some(1..2));

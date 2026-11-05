@@ -128,7 +128,10 @@ async fn after_exit_a_mouse_program_left_on_holds_no_mouse(cx: &mut TestAppConte
     open.cx.simulate_keystrokes("down enter");
     open.cx.run_until_parked();
     assert_eq!(clipboard(&mut open).as_deref(), Some("hello"));
-    assert!(written(&open).is_empty(), "the ended program heard the mouse");
+    assert!(
+        written(&open).is_empty(),
+        "the ended program heard the mouse"
+    );
 }
 
 #[gpui::test]
