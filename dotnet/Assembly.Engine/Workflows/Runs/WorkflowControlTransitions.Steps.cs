@@ -95,9 +95,14 @@ internal static partial class WorkflowControlTransitions
         {
             if (step.State != "waiting" || need is null) return Refuse("already_resolved");
             if (decision == "revise" && (command is not DecideWorkflowStep { Reply: { Length: > 0 } reply } || string.IsNullOrWhiteSpace(reply))) return Refuse("reply_required");
-            // Neither the snapshot contract nor the old gate handler defines a revision target.
-            // Keep the original gate open rather than acknowledge and repeat the same question.
-            if (decision == "revise") return Refuse("revision_target_undefined");
+            if (decision == "revise")
+            {
+                var text = ((DecideWorkflowStep)command).Reply!;
+                if (text.Length > 32768) return Refuse("bad_args");
+                // A gate nothing earlier can answer stays open rather than acknowledge and repeat the same question.
+                if (WorkflowGateRevision.Target(s, id!) is not { } target) return Refuse("revision_target_undefined");
+                return Revise(s, c, run, new(id!, step.Version, step.Attempt, step.Generation), new(need.Id, need.Version), target, text);
+            }
         }
         else if (decision == "skip")
         {

@@ -13,7 +13,7 @@ using Assembly.Infrastructure.Git;
 
 namespace Assembly.Tests.Engine.Workflows.Scheduling;
 
-public sealed class WorkflowScheduleTests
+public sealed partial class WorkflowScheduleTests
 {
     [Fact]
     public void Worker_is_direct_child_with_definition_provider_model_and_full_prompt()

@@ -128,7 +128,9 @@ public static partial class ReviewTransitions
             """, r => r.Text(0), new SqlArg("$run", target.Run), new("$target", c.EntityId));
         var previous = previousJson is null ? [] : Findings(s, JsonSerializer.Deserialize(previousJson, ReviewTransitionJson.Default.RedoApplied)!.FindingReceiptIds);
         var allowance = AdditionalRoundAllowance(s, target, c.EntityId, receipts, outputReceipt);
-        if (allowance.Grant is null && ReviewRounds.ShouldPause(previous, current, target.Round, allowance.Max))
+        // The round limit stops a loop nobody is watching. An owner asking for another round is the one it would stop for.
+        var ownerAsked = requests.Any(request => request.SourceKind == GateRevisionSource);
+        if (!ownerAsked && allowance.Grant is null && ReviewRounds.ShouldPause(previous, current, target.Round, allowance.Max))
         {
             s.Execute("UPDATE engine_run SET paused=1,version=version+1,updated_ms=$now WHERE id=$run", new("$now", c.NowMs), new("$run", target.Run));
             History(s, c, target.Run, c.EntityId, null, target.Generation, "redo_stopped",
@@ -165,6 +167,7 @@ public static partial class ReviewTransitions
             SELECT h.id FROM engine_workflow_history h JOIN roots r ON r.step_id=h.step_id AND r.generation=h.generation AND r.attempt=h.attempt
             WHERE h.kind='command_ended' AND (json_extract(h.safe_body_json,'$.exitCode')!=0 OR json_extract(h.safe_body_json,'$.error') IS NOT NULL)
             UNION ALL SELECT id FROM engine_workflow_receipt WHERE id IN (SELECT value FROM json_each($ids)) AND state='accepted'
+            UNION ALL SELECT id FROM engine_workflow_history WHERE id IN (SELECT value FROM json_each($ids)) AND kind='gate_revised'
             """, r => r.Text(0), new SqlArg("$ids", roots)).Distinct(StringComparer.Ordinal).ToArray();
     }
 
@@ -180,6 +183,9 @@ public static partial class ReviewTransitions
           JOIN roots r ON r.step_id=h.step_id AND r.generation=h.generation AND r.attempt=h.attempt
           JOIN engine_outbox o ON o.id=json_extract(h.safe_body_json,'$.effectId')
           WHERE h.kind='command_ended' AND (json_extract(h.safe_body_json,'$.exitCode')!=0 OR json_extract(h.safe_body_json,'$.error') IS NOT NULL)
+          UNION ALL
+          SELECT json_extract(h.safe_body_json,'$.text'),h.at_ms,h.id,h.history_seq FROM engine_workflow_history h
+          WHERE h.id IN (SELECT value FROM json_each($ids)) AND h.kind='gate_revised'
         ) SELECT text FROM findings ORDER BY ordinal1,ordinal2,ordinal3
         """, r => r.Text(0), new SqlArg("$ids", JsonSerializer.Serialize(receiptIds, EngineJson.Default.IReadOnlyListString)));
     private static void History(IWriteScope s, CommandContext c, string run, string step, int? attempt, int generation, string kind, string json) => s.Execute("""

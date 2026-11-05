@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Engine.Workflows.Runs;
 using System.Text.Json.Serialization;
 
 namespace Assembly.Engine.Workflows.Reading;
@@ -42,6 +43,7 @@ internal static class WorkflowReadModels
               json_each(snap.snapshot_json,'$.snapshot.definition.steps') spec WHERE snap.run_id=t.run_id AND spec.key=t.definition_key),
               CASE t.kind WHEN 'agent' THEN t.result WHEN 'command' THEN 'check' WHEN 'review' THEN 'review' WHEN 'gate' THEN 'needs_you' END),
             'badges',json(t.badges_json),
+            """ + WorkflowStepRecovery.Field + ",\n" + """
             'needsMeIds',json((SELECT json_group_array(id) FROM (
               SELECT id FROM engine_needs_me WHERE step_id=t.id AND run_id=t.run_id AND state='open' ORDER BY id))),
             'dependencies',json((SELECT json_group_array(json_object('id',dependency_id,'optional',json(CASE optional WHEN 1 THEN 'true' ELSE 'false' END)))
