@@ -77,3 +77,41 @@ fn a_selection_made_while_scrolled_back_reads_the_earlier_lines() {
     grid.select_to(2, 0, true);
     assert_eq!(grid.selection_text().as_deref(), Some("one"));
 }
+
+fn first_cell(bytes: &[u8]) -> super::GridCell {
+    let mut grid = TerminalGrid::new(10, 3);
+    grid.feed(bytes);
+    grid.cells().into_iter().next().unwrap()
+}
+
+#[test]
+fn each_style_reaches_a_cell() {
+    assert!(first_cell(b"\x1b[3mx").italic);
+    assert!(first_cell(b"\x1b[4mx").underline);
+    assert!(first_cell(b"\x1b[9mx").strike);
+    assert!(first_cell(b"\x1b[2mx").dim);
+    assert!(first_cell(b"\x1b[8mx").hidden);
+    let plain = first_cell(b"x");
+    assert!(!plain.italic && !plain.underline && !plain.strike && !plain.dim && !plain.hidden);
+}
+
+#[test]
+fn a_double_underline_is_an_underline() {
+    assert!(first_cell(b"\x1b[21mx").underline);
+}
+
+#[test]
+fn a_combining_mark_stays_with_its_cell() {
+    let mut grid = TerminalGrid::new(10, 3);
+    grid.feed("e\u{301}x".as_bytes());
+    let cells = grid.cells();
+    assert_eq!(
+        (cells[0].text, cells[0].marks.clone()),
+        ('e', vec!['\u{301}'])
+    );
+    assert_eq!(
+        (cells[1].column, cells[1].text),
+        (1, 'x'),
+        "it takes no column"
+    );
+}

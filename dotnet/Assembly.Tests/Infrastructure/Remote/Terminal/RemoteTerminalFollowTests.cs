@@ -188,6 +188,51 @@ public sealed class RemoteTerminalFollowTests
         f.Hosts.Remote.Topics.Unsubscribed -= Removed;
     }
 
+    [Fact]
+    public async Task A_connection_failure_carries_the_connection_lost_code()
+    {
+        await using var f = await Fixture.Start();
+        using var viewer = f.Hosts.Mac.Topics.Subscribe("terminal", f.Id, _ => { }, (_, _) => { });
+        await f.Routed.ReadAsync(f.Id, 0, default);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.OwnerCalls.Reading = async ct =>
+        {
+            entered.TrySetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+        };
+        var pending = f.Routed.ReadAsync(f.Id, 0, default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        f.Hosts.Remote.TerminalEndpoint.DropAll();
+
+        var failure = await Assert.ThrowsAsync<CallFailed>(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal("connection_lost", failure.Reason);
+    }
+
+    [Fact]
+    public async Task A_changed_source_tells_followers_and_fails_later_calls()
+    {
+        await using var f = await Fixture.Start();
+        var rows = new System.Collections.Concurrent.ConcurrentQueue<TerminalUnavailable>();
+        var decided = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var viewer = f.Hosts.Mac.Topics.Subscribe("terminal", f.Id, _ => { }, (_, json) =>
+        {
+            if (JsonSerializer.Deserialize(json, TerminalJson.Default.OutputRow)!.Unavailable is not { } unavailable) return;
+            rows.Enqueue(unavailable);
+            // The drop itself is a lost connection; the refused reconnect after it is what's being pinned.
+            if (rows.Count == 2) decided.TrySetResult();
+        });
+        await f.Routed.ReadAsync(f.Id, 0, default);
+
+        f.Hosts.Remote.TerminalIdentity = "another-engine";
+        f.Hosts.Remote.TerminalEndpoint.DropAll();
+        await decided.Task.WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.Equal([TerminalUnavailable.ConnectionLost, TerminalUnavailable.SourceChanged], rows.ToArray());
+        var failure = await Assert.ThrowsAsync<CallFailed>(() => f.Routed.ReadAsync(f.Id, 0, default).WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal("source_changed", failure.Reason);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         internal readonly TwoHosts Hosts = new();

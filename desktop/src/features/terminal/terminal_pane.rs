@@ -17,7 +17,7 @@ use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
 
 use super::terminal_draw::draw;
-use super::terminal_grid::TerminalGrid;
+use super::terminal_grid::{HoveredLink, TerminalGrid};
 use super::terminal_keys::{key_bytes, pasted};
 use super::terminal_link::{Output, TerminalLink};
 use super::terminal_palette::palette;
@@ -49,6 +49,12 @@ pub enum Shown {
     Exited(i32),
     /// Why there's no terminal: the backend refused.
     Said(String),
+    /// The connection is down. Stub until Task 3.
+    #[allow(dead_code)]
+    Reconnecting,
+    /// The shell isn't there any more. Stub until Task 3.
+    #[allow(dead_code)]
+    Gone,
 }
 
 pub struct TerminalPane {
@@ -90,6 +96,24 @@ pub struct TerminalPane {
     _write: Option<Task<()>>,
     /// Blinks the cursor while the pane has the focus; dropping it stops the timer.
     _blink: Option<Task<()>>,
+    /// Scrolls during a drag near the edge. Stub until Task 6.
+    #[allow(dead_code)]
+    _autoscroll: Option<Task<()>>,
+    /// The scrollbar's opacity, from 0 to 1. Stub until Task 7.
+    #[allow(dead_code)]
+    scrollbar_opacity: f32,
+    /// A drag of the scrollbar's thumb: where it started and the offset then. Stub until Task 7.
+    #[allow(dead_code)]
+    dragging_bar: Option<(Pixels, usize)>,
+    /// Fades the scrollbar in and out. Stub until Task 7.
+    #[allow(dead_code)]
+    _scrollbar: Option<Task<()>>,
+    /// The link under the mouse. Stub until Task 8.
+    #[allow(dead_code)]
+    hovered: Option<HoveredLink>,
+    /// The composition in progress. Stub until Task 9.
+    #[allow(dead_code)]
+    marked: Option<String>,
 }
 
 impl TerminalPane {
@@ -132,6 +156,12 @@ impl TerminalPane {
             _replay: None,
             _write: None,
             _blink: None,
+            _autoscroll: None,
+            scrollbar_opacity: 0.,
+            dragging_bar: None,
+            _scrollbar: None,
+            hovered: None,
+            marked: None,
         }
     }
 
@@ -263,7 +293,7 @@ impl TerminalPane {
                 match output {
                     Some(Output::Bytes(bytes)) => self.grid.feed(&bytes),
                     Some(Output::Exit(code)) => self.shown = Shown::Exited(code),
-                    None => {}
+                    Some(Output::Unavailable(_) | Output::Caught) | None => {}
                 }
                 cx.notify();
             }
@@ -399,6 +429,22 @@ impl TerminalPane {
         self.held.is_some()
     }
 
+    /// Whether the note uses the error color. Stub until Task 3.
+    #[allow(dead_code)]
+    fn error_note(&self) -> bool {
+        false
+    }
+
+    /// Whether typing and Paste are on. Stub until Task 6.
+    #[allow(dead_code)]
+    fn typing(&self) -> bool {
+        false
+    }
+
+    /// Sends the clipboard's text to the shell. Stub until Task 6.
+    #[allow(dead_code)]
+    fn paste(&mut self, _cx: &mut Context<Self>) {}
+
     /// The line under the grid, or in its place.
     fn status(&self) -> Option<String> {
         match &self.shown {
@@ -513,6 +559,9 @@ impl Render for TerminalPane {
 
 #[path = "terminal_pane_mouse.rs"]
 mod mouse;
+
+#[path = "terminal_pane_ime.rs"]
+mod ime;
 
 #[cfg(test)]
 #[path = "terminal_pane_tests.rs"]

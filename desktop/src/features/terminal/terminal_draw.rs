@@ -109,6 +109,17 @@ struct Run {
     bold: bool,
     cursor: bool,
     selected: bool,
+    /// Stubs until Task 5.
+    #[allow(dead_code)]
+    italic: bool,
+    #[allow(dead_code)]
+    underline: bool,
+    #[allow(dead_code)]
+    strike: bool,
+    #[allow(dead_code)]
+    dim: bool,
+    #[allow(dead_code)]
+    hidden: bool,
 }
 
 /// A line's cells as runs, with a blank for each column before a cell that isn't there and the cursor's cell on its
@@ -124,6 +135,12 @@ fn runs(line: Vec<GridCell>, cursor: Option<usize>) -> Vec<Run> {
         bold: false,
         wide: false,
         selected: false,
+        italic: false,
+        underline: false,
+        strike: false,
+        dim: false,
+        hidden: false,
+        marks: Vec::new(),
     };
     let last = line.last().map_or(0, |cell| cell.column + 1);
     let end = last.max(cursor.map_or(0, |column| column + 1));
@@ -155,6 +172,11 @@ fn runs(line: Vec<GridCell>, cursor: Option<usize>) -> Vec<Run> {
                 bold: cell.bold,
                 cursor: at_cursor,
                 selected: cell.selected,
+                italic: false,
+                underline: false,
+                strike: false,
+                dim: false,
+                hidden: false,
             }),
         }
     }

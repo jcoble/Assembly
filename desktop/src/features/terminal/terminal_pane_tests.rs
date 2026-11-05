@@ -1,226 +1,20 @@
 //! The Terminal tab on the socket client against `FakeBackend`, which plays the backend's `terminal` feature
 //! (TerminalFeature.cs): when it starts, reuses, writes to, resizes and reads its session's shell, and what it shows.
 
-use std::sync::{Arc, Mutex};
-
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::TestAppContext;
-use gpui_kit::component::dock::BasePanel as _;
-use gpui_kit::{Entity, Subscription, VisualTestContext, px};
+use gpui_kit::{Subscription, px};
 use serde_json::{Value, json};
 
-use super::{Shown, TerminalPane};
+use super::Shown;
 use crate::core::socket::client::SocketClient;
-use crate::core::socket::endpoint::Endpoint;
-use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
 use crate::core::socket::test_wait::until;
 use crate::core::socket::update::Update;
-use crate::core::state::selected_session::SelectedSession;
-use crate::core::state::session_item::SessionItem;
-use crate::core::state::sessions::Sessions;
 
-/// The fake backend's terminals and what it saw.
-#[derive(Default)]
-struct Terminals {
-    /// Each call and sub, as (method or "sub", args or the sub frame), in order.
-    seen: Vec<(String, Value)>,
-    /// The running terminals: (id, owner).
-    running: Vec<(String, String)>,
-    /// The output `terminal/read` answers, for every terminal.
-    kept: Vec<u8>,
-    /// A paged producer that adds output on each read, for bounded replay tests.
-    read_limit: Option<usize>,
-    grow_reads: usize,
-    /// The rows each `sub` is answered with, after its state.
-    rows: Vec<Value>,
-    /// A shell that ended: (id, owner, its output), which `list` shows with its exit code.
-    ended: Option<(String, String, Vec<u8>)>,
-    /// `write` fails with this message.
-    refuse_writes: Option<&'static str>,
-}
-
-impl Terminals {
-    fn of(&self, method: &str) -> Vec<Value> {
-        (self.seen.iter())
-            .filter(|(seen, _)| seen == method)
-            .map(|(_, args)| args.clone())
-            .collect()
-    }
-}
-
-fn backend(terminals: Arc<Mutex<Terminals>>, heard: UnboundedSender<()>) -> FakeBackend {
-    FakeBackend::start(move |frame| {
-        if let Some(replies) = hello(frame) {
-            return replies;
-        }
-        let mut terminals = terminals.lock().unwrap();
-        let id = frame["id"].clone();
-        let args = &frame["args"];
-        let result = |result: Value| {
-            vec![Reply::Frame(
-                json!({"t": "result", "id": id, "result": result}),
-            )]
-        };
-        let replies = match (frame["t"].as_str(), frame["method"].as_str()) {
-            (Some("sub"), _) => {
-                terminals.seen.push(("sub".into(), frame.clone()));
-                let mut replies = vec![Reply::Frame(json!({"t": "state", "sub": id, "items": []}))];
-                for row in &terminals.rows {
-                    replies.push(Reply::Frame(json!({"t": "change", "sub": id, "op": "upsert", "key": frame["key"], "item": row})));
-                }
-                replies
-            }
-            (Some("call"), Some(method)) => {
-                terminals.seen.push((method.into(), args.clone()));
-                match method {
-                    "write" if terminals.refuse_writes.is_some() => vec![Reply::Frame(
-                        json!({"t": "error", "id": id, "code": "failed", "message": terminals.refuse_writes}),
-                    )],
-                    "list" => {
-                        let mut list: Vec<Value> = (terminals.running.iter())
-                            .map(|(id, owner)| info(id, owner, &json!(96), &json!(28)))
-                            .collect();
-                        if let Some((id, owner, _)) = &terminals.ended {
-                            let mut ended = info(id, owner, &json!(96), &json!(28));
-                            ended["exitCode"] = json!(1);
-                            list.push(ended);
-                        }
-                        result(Value::Array(list))
-                    }
-                    "start" => {
-                        let (terminal, owner) = (
-                            format!("term-{}", terminals.running.len() + 1),
-                            args["owner"].as_str().unwrap_or_default().to_string(),
-                        );
-                        terminals.running.push((terminal.clone(), owner.clone()));
-                        result(info(&terminal, &owner, &args["cols"], &args["rows"]))
-                    }
-                    "read" => {
-                        if terminals.grow_reads > 0 {
-                            terminals.kept.extend_from_slice(b"xyz");
-                            terminals.grow_reads -= 1;
-                        }
-                        let offset = args["offset"].as_u64().unwrap_or_default() as usize;
-                        let kept = match &terminals.ended {
-                            Some((id, _, kept)) if args["terminal"] == id.as_str() => kept,
-                            _ => &terminals.kept,
-                        };
-                        let start = offset.min(kept.len());
-                        let end =
-                            (start + terminals.read_limit.unwrap_or(kept.len())).min(kept.len());
-                        let data = STANDARD.encode(&kept[start..end]);
-                        result(json!({"offset": offset, "end": kept.len(), "data": data}))
-                    }
-                    _ => result(json!({})),
-                }
-            }
-            _ => Vec::new(),
-        };
-        drop(terminals);
-        _ = heard.unbounded_send(());
-        replies
-    })
-}
-
-/// A terminal as the backend lists it; a new one has the size it was started at.
-fn info(id: &str, owner: &str, cols: &Value, rows: &Value) -> Value {
-    json!({"id": id, "cwd": "/home/me", "shell": "/bin/bash", "cols": cols, "rows": rows, "pid": 7,
-        "owner": owner, "startedAt": "2026-10-29T00:00:00Z"})
-}
-
-fn session(id: &str, machine: Option<&str>) -> SessionItem {
-    serde_json::from_value(
-        json!({"sessionId": id, "agent": "claude", "repoUrl": "/repo", "machine": machine,
-        "updatedAt": 0}),
-    )
-    .unwrap()
-}
-
-struct Open<'a> {
-    pane: Entity<TerminalPane>,
-    terminals: Arc<Mutex<Terminals>>,
-    changes: UnboundedReceiver<()>,
-    changed: UnboundedSender<()>,
-    cx: &'a mut VisualTestContext,
-    _heard: Subscription,
-    _backend: FakeBackend,
-}
-
-/// The pane on a fake backend whose terminals start as `terminals`, with sessions a and b (b on another machine
-/// when `remote`), and the tab shown on session a.
-async fn open(cx: &mut TestAppContext, terminals: Terminals, remote: bool) -> Open<'_> {
-    let terminals = Arc::new(Mutex::new(terminals));
-    let (changed, mut changes) = unbounded();
-    let backend = backend(terminals.clone(), changed.clone());
-    cx.executor().allow_parking();
-    cx.update(|cx| {
-        gpui_kit::init(cx);
-        SelectedSession::init(cx);
-        let b = session("b", remote.then_some("Workbox Test"));
-        Sessions::start_holding(vec![session("a", None), b], false, false, cx);
-        SocketClient::start(
-            Endpoint {
-                port: backend.port,
-                token: "secret".into(),
-            },
-            cx,
-        );
-        SocketClient::start_terminal(
-            Endpoint {
-                port: backend.port,
-                token: "secret".into(),
-            },
-            cx,
-        );
-    });
-    let (pane, cx) = cx.add_window_view(TerminalPane::new);
-    let tell = changed.clone();
-    let heard = cx.update(|_, cx| cx.observe(&pane, move |_, _| _ = tell.unbounded_send(())));
-    pick("a", cx);
-    pane.update_in(cx, |pane, window, cx| pane.set_active(true, window, cx));
-    let mut open = Open {
-        pane,
-        terminals,
-        changes: unbounded().1,
-        changed,
-        cx,
-        _heard: heard,
-        _backend: backend,
-    };
-    std::mem::swap(&mut open.changes, &mut changes);
-    open
-}
-
-fn pick(session: &str, cx: &mut VisualTestContext) {
-    let session = Some(session.to_string());
-    cx.update(|_, cx| {
-        SelectedSession::global(cx).update(cx, |selected, cx| selected.select(session, cx))
-    });
-}
-
-impl Open<'_> {
-    async fn until(&mut self, what: &str, mut done: impl FnMut(&Terminals, &TerminalPane) -> bool) {
-        let (terminals, pane, cx) = (self.terminals.clone(), self.pane.clone(), &mut *self.cx);
-        until(what, &mut self.changes, &self.changed, || {
-            cx.run_until_parked();
-            let terminals = terminals.lock().unwrap();
-            cx.update(|_, cx| done(&terminals, pane.read(cx)))
-        })
-        .await;
-    }
-
-    fn shown(&mut self, active: bool) {
-        (self.pane).update_in(self.cx, |pane, window, cx| {
-            pane.set_active(active, window, cx)
-        });
-    }
-}
-
-fn following(pane: &TerminalPane) -> bool {
-    pane.shown == Shown::Open && !pane.catching_up()
-}
+#[path = "terminal_pane_fixture.rs"]
+mod fixture;
+use fixture::*;
 
 // Pins: terminal#1, terminal#9
 #[gpui::test]
@@ -575,8 +369,20 @@ mod input;
 #[path = "terminal_pane_mouse_tests.rs"]
 mod mouse;
 
+#[path = "terminal_pane_select_tests.rs"]
+mod select;
+
 #[path = "terminal_pane_dock_tests.rs"]
 mod dock;
 
 #[path = "terminal_replay_tests.rs"]
 mod replay;
+
+#[path = "terminal_pane_state_tests.rs"]
+mod state;
+
+#[path = "terminal_scrollbar_tests.rs"]
+mod scrollbar;
+
+#[path = "terminal_pane_links_tests.rs"]
+mod links;

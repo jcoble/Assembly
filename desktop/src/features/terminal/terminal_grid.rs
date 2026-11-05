@@ -28,6 +28,21 @@ pub struct GridCell {
     pub wide: bool,
     /// Inside the mouse selection.
     pub selected: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strike: bool,
+    pub dim: bool,
+    pub hidden: bool,
+    /// Combining marks that stay with this cell's character.
+    pub marks: Vec<char>,
+}
+
+/// A link under the mouse: where it shows, as (screen line, start column, end column), and where it goes. Stub until
+/// Task 8.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HoveredLink {
+    pub line_spans: Vec<(usize, usize, usize)>,
+    pub url: String,
 }
 
 /// The lines kept above the screen to scroll back to, as the old app's terminal kept.
@@ -104,6 +119,38 @@ impl TerminalGrid {
         }
     }
 
+    /// Selects the word at a cell of the screen as shown, and says whether there was one. Stub until Task 6.
+    #[allow(dead_code)]
+    pub fn select_word(&mut self, _column: usize, _line: usize) -> bool {
+        false
+    }
+
+    /// Stub until Task 6.
+    #[allow(dead_code)]
+    pub fn clear_selection(&mut self) {}
+
+    /// The lines kept above the screen. Stub until Task 7.
+    #[allow(dead_code)]
+    pub fn history_size(&self) -> usize {
+        0
+    }
+
+    /// How many lines back the view is. Stub until Task 7.
+    #[allow(dead_code)]
+    pub fn display_offset(&self) -> usize {
+        0
+    }
+
+    /// Stub until Task 7.
+    #[allow(dead_code)]
+    pub fn scroll_to_offset(&mut self, _offset: usize) {}
+
+    /// The link at a cell of the screen as shown. Stub until Task 8.
+    #[allow(dead_code)]
+    pub fn link_at(&self, _column: usize, _line: usize) -> Option<HoveredLink> {
+        None
+    }
+
     /// The selected text, lines joined by line breaks; none when nothing is selected.
     pub fn selection_text(&self) -> Option<String> {
         self.term
@@ -151,6 +198,12 @@ impl TerminalGrid {
                     bold: cell.flags.contains(Flags::BOLD),
                     wide: cell.flags.contains(Flags::WIDE_CHAR),
                     selected: selection.is_some_and(|range| range.contains(cell.point)),
+                    italic: false,
+                    underline: false,
+                    strike: false,
+                    dim: false,
+                    hidden: false,
+                    marks: Vec::new(),
                 }
             })
             .collect()

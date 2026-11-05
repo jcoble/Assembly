@@ -116,7 +116,7 @@ impl Machines {
             .and_then(|held| held.offline_since_ms)
     }
 
-    fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
+    pub(crate) fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
         match update {
             Update::State(items) => {
                 replace(&mut self.machines, items);

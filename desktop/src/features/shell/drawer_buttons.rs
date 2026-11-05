@@ -185,7 +185,11 @@ impl RenderOnce for DrawerButtons {
                     .children(panes),
             )
             .child(div().flex_1())
-            .child(menu)
+            .child(
+                div()
+                    .debug_selector(|| "drawer-overflow".into())
+                    .child(menu),
+            )
             .child(close)
     }
 }

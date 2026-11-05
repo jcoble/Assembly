@@ -189,3 +189,12 @@ fn interface_leading_keeps_its_half_tenth_in_the_slider_label() {
     assert_eq!(UI_LINE_HEIGHT.label(1.45), "1.45×");
     assert_eq!(TERMINAL_LINE_HEIGHT.label(1.2), "1.2×");
 }
+
+#[test]
+fn cursor_blink_reads_true_by_default_and_a_saved_false() {
+    assert!(Appearance::default().terminal_cursor_blink());
+    assert!(!saved(&[(TERMINAL_CURSOR_BLINK, json!(false))]).terminal_cursor_blink());
+    assert!(saved(&[(TERMINAL_CURSOR_BLINK, json!(true))]).terminal_cursor_blink());
+    // A reset value reads as its default.
+    assert!(saved(&[(TERMINAL_CURSOR_BLINK, Value::Null)]).terminal_cursor_blink());
+}

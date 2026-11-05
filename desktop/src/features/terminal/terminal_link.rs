@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+use crate::core::socket::call_failure::CallFailure;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::socket::pending_call::PendingCall;
@@ -57,10 +58,38 @@ struct OutputRow {
     exit: Option<i32>,
 }
 
+/// Why a terminal's rows have stopped, as a row's `unavailable` says (OutputRow.cs).
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Availability {
+    ConnectionLost,
+    TerminalMissing,
+    SourceChanged,
+}
+
 /// What the link hands the pane.
+#[derive(Debug, PartialEq)]
 pub enum Output {
     Bytes(Vec<u8>),
     Exit(i32),
+    /// Stub until Task 2: the link doesn't hand these on yet.
+    #[allow(dead_code)]
+    Unavailable(Availability),
+    /// A row with offsets that adds no bytes: the connection is back and nothing was missed.
+    #[allow(dead_code)]
+    Caught,
+}
+
+/// Whether a call failed because the connection is down. Stub until Task 2.
+#[allow(dead_code)]
+pub fn connection_down(_failure: &CallFailure) -> bool {
+    false
+}
+
+/// Whether a call failed because the terminal's source changed. Stub until Task 2.
+#[allow(dead_code)]
+pub fn source_changed(_failure: &CallFailure) -> bool {
+    false
 }
 
 impl TerminalLink {
@@ -218,3 +247,7 @@ fn settle<T>(outcome: Outcome<T>) -> Result<T, String> {
 fn decode(data: &str) -> Result<Vec<u8>, String> {
     STANDARD.decode(data).map_err(|error| error.to_string())
 }
+
+#[cfg(test)]
+#[path = "terminal_link_tests.rs"]
+mod tests;
