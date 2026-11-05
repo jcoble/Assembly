@@ -44,7 +44,7 @@ internal sealed partial class AppSwapJson : JsonSerializerContext;
 /// launch saying it's up lets them go. A new version that exits or stays silent is stopped, by its own process id only, and the
 /// old bundle and database go back.
 /// It holds the home lock whenever nothing else should have the database, so a reopened backend stops with home in use.
-/// Only the latest copy and the latest failed database are kept.
+/// The copy goes once the new window is up. Each failed version's database is kept, in one file named for that version.
 /// </summary>
 internal static partial class AppSwap
 {
@@ -146,7 +146,7 @@ internal static partial class AppSwap
             if (started)
             {
                 File.Delete(address);
-                if (plan.Check is null) Remove(plan.Stage);
+                if (plan.Check is null) Finished(plan);
                 else WriteMark(plan);
                 return 0;
             }
@@ -212,8 +212,7 @@ internal static partial class AppSwap
         File.Delete(address);
         if (!File.Exists(mark))
         {
-            foreach (var suffix in KeptFiles) File.Delete(plan.Backup + suffix);
-            Remove(plan.Stage);
+            Finished(plan);
             return 0;
         }
         await StopSameAsync(plan.WindowPid, plan.WindowStart);
@@ -226,6 +225,13 @@ internal static partial class AppSwap
         }
         File.Delete(mark);
         await using (home) return await WentBackAsync(plan, home);
+    }
+
+    // The new window is up: nothing can go back now, so the old app and the whole copy of the database go.
+    private static void Finished(AppSwapPlan plan)
+    {
+        foreach (var suffix in KeptFiles) File.Delete(plan.Backup + suffix);
+        Remove(plan.Stage);
     }
 
     private static void WriteMark(AppSwapPlan plan)
@@ -358,8 +364,9 @@ internal static partial class AppSwap
     /// <summary>The new version's backend says its window is up. With no update waiting there's nobody to tell.</summary>
     internal static void Acknowledge(string folder, string version)
     {
+        // Only the version that was installed counts: an old window still open must not stop a going back.
         var mark = Path.Combine(folder, InstalledMark);
-        if (File.Exists(mark)) File.Delete(mark);
+        if (MarkedVersion(mark) == version) File.Delete(mark);
         var address = Path.Combine(folder, Socket);
         if (!File.Exists(address)) return;
         try
@@ -369,6 +376,12 @@ internal static partial class AppSwap
             caller.Send(Encoding.UTF8.GetBytes(version));
         }
         catch (SocketException) { }
+    }
+
+    private static string? MarkedVersion(string mark)
+    {
+        try { return File.Exists(mark) ? JsonSerializer.Deserialize(File.ReadAllBytes(mark), AppSwapJson.Default.AppSwapPlan)?.Version : null; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { return null; }
     }
 
     private static async Task StopAsync(Process child)
@@ -407,13 +420,22 @@ internal static partial class AppSwap
         foreach (var suffix in KeptFiles)
             if (File.Exists(plan.Backup + suffix)) File.Copy(plan.Backup + suffix, whole + suffix, overwrite: true);
         if (File.Exists(whole + "-wal")) Fold(whole);
-        var name = Path.GetFileName(plan.Database);
-        foreach (var old in Directory.EnumerateFiles(Path.GetDirectoryName(plan.Database)!, name + "*.failed-*")) File.Delete(old);
-        if (File.Exists(plan.Database)) File.Copy(plan.Database, $"{plan.Database}.failed-{plan.Version}", overwrite: true);
-        // A log can't stay beside a database it isn't from. With it gone what's at the path is still whole, as of its last checkpoint.
-        foreach (var suffix in new[] { "-wal", "-shm" })
-            if (File.Exists(plan.Database + suffix)) File.Move(plan.Database + suffix, $"{plan.Database}{suffix}.failed-{plan.Version}", overwrite: true);
+        if (File.Exists(plan.Database)) Keep(plan);
+        // A log can't stay beside a database it isn't from, and the kept copy has all of it.
+        foreach (var suffix in new[] { "-wal", "-shm" }) File.Delete(plan.Database + suffix);
         File.Move(whole, plan.Database, overwrite: true);
+    }
+
+    // What the new version wrote, log and all, in the one file the note names, so it opens alone. Each version's stays.
+    private static void Keep(AppSwapPlan plan)
+    {
+        var kept = $"{plan.Database}.failed-{plan.Version}";
+        var partial = kept + ".partial";
+        foreach (var suffix in new[] { "-wal", "-shm" }) File.Delete(partial + suffix);
+        foreach (var suffix in KeptFiles)
+            if (File.Exists(plan.Database + suffix)) File.Copy(plan.Database + suffix, partial + suffix, overwrite: true);
+        if (File.Exists(partial + "-wal")) Fold(partial);
+        File.Move(partial, kept, overwrite: true);
     }
 
     // Whether the database is no longer what was copied before the update, byte for byte, log included. One that can't be

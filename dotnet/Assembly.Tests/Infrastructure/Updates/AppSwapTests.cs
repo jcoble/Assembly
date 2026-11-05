@@ -120,6 +120,7 @@ public sealed class AppSwapTests : IDisposable
         Assert.False(Directory.Exists(Stage));
         Assert.False(File.Exists(Path.Combine(Folder, "failed.json")));
         Assert.Equal("original", File.ReadAllText(Database));
+        Assert.Empty(Directory.GetFiles(Folder, AppSwap.BackupPrefix + "*"));
     }
 
     [Fact]
@@ -140,7 +141,7 @@ public sealed class AppSwapTests : IDisposable
     }
 
     [Fact]
-    public async Task Going_back_loses_nothing_written_right_up_to_the_quit_and_keeps_one_of_each_leftover()
+    public async Task Going_back_loses_nothing_written_right_up_to_the_quit_and_keeps_every_versions_kept_writes()
     {
         if (!OperatingSystem.IsLinux()) return;
         var (plan, window, backend) = Prepared($"echo migrated > '{Database}'\nrm -f '{Database}-wal'\nexit 3");
@@ -154,7 +155,7 @@ public sealed class AppSwapTests : IDisposable
 
         Assert.Equal("written late", File.ReadAllText(Database));
         Assert.Equal([Path.GetFileName(Backup)], Directory.GetFiles(Folder, "assembly-before-*").Select(Path.GetFileName).Order(StringComparer.Ordinal));
-        Assert.False(File.Exists(Database + ".failed-1.5.0"));
+        Assert.Equal("an older failure", File.ReadAllText(Database + ".failed-1.5.0"));
         Assert.True(File.Exists(Database + ".failed-2.0.0"));
     }
 
@@ -194,6 +195,39 @@ public sealed class AppSwapTests : IDisposable
         Assert.Equal(499500L, Scalar(opened, "select sum(n) from turns"));
         Assert.Equal(0L, Scalar(opened, "select count(*) from sqlite_master where name = 'migrated'"));
         Assert.Equal("ok", Scalar(opened, "PRAGMA integrity_check"));
+    }
+
+    [Fact]
+    public async Task The_kept_database_the_note_names_holds_the_new_versions_writes_on_its_own()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        // The new version writes and dies with its rows only in the log, the way a stopped backend leaves them.
+        var writes = $"python3 -c \"import os, sqlite3; d=sqlite3.connect('{Database}'); d.execute('PRAGMA wal_autocheckpoint=0'); d.execute('create table after_update(n)'); d.executemany('insert into after_update values (?)', [(n,) for n in range(250)]); d.commit(); os._exit(0)\"\nexit 3";
+        var (plan, window, backend) = Prepared(writes);
+        File.Delete(Database);
+        Python($$"""
+            import sqlite3
+            d = sqlite3.connect(r'{{Database}}')
+            d.execute('PRAGMA journal_mode=WAL')
+            d.execute('create table turns(n)')
+            d.executemany('insert into turns values (?)', [(n,) for n in range(1000)])
+            d.commit()
+            d.close()
+            """);
+        End(window); End(backend);
+
+        Assert.Equal(1, await AppSwap.RunAsync(plan).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        var kept = Database + ".failed-2.0.0";
+        Assert.Equal(WentBackKeepingLaterWrites, SaidNote());
+        Assert.Equal([kept], Directory.GetFiles(Home, "*.failed-*"));
+        Assert.False(File.Exists(kept + "-wal"));
+        var alone = Path.Combine(Directory.CreateTempSubdirectory("kept-").FullName, "kept.db");
+        File.Copy(kept, alone);
+        using var opened = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={alone};Pooling=False");
+        opened.Open();
+        Assert.Equal(250L, Scalar(opened, "select count(*) from after_update"));
+        Assert.Equal(1000L, Scalar(opened, "select count(*) from turns"));
     }
 
     private static object? Scalar(Microsoft.Data.Sqlite.SqliteConnection connection, string sql)
@@ -469,6 +503,18 @@ public sealed class AppSwapTests : IDisposable
 
         Assert.Equal("new", Running("new"));
         Assert.False(Directory.Exists(Stage));
+    }
+
+    [Fact]
+    public async Task An_old_window_saying_it_is_up_does_not_count_for_the_new_version()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var watch = await InstalledOnQuit(acknowledge: 1);
+        AppSwap.Acknowledge(Folder, "1.0.0");
+
+        Assert.True(File.Exists(Mark));
+        Assert.Equal(1, await AppSwap.RunAsync(watch).WaitAsync(TimeSpan.FromSeconds(60)));
+        Assert.Equal("old", Running("old"));
     }
 
     [Fact]
