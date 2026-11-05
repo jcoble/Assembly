@@ -31,23 +31,25 @@ public static class DesktopServe
         }
     }
 
-    public static async Task<int> MainAsync(IReadOnlyList<string> args)
+    /// <param name="errors">Where the refusals go; standard error when not given.</param>
+    public static async Task<int> MainAsync(IReadOnlyList<string> args, TextWriter? errors = null)
     {
+        errors ??= Console.Error;
         if (DesktopOptions.Parse(args) is not { } options)
         {
-            Console.Error.WriteLine(DesktopOptions.Usage);
+            errors.WriteLine(DesktopOptions.Usage);
             return 2;
         }
         if (options.Remote == "local")
         {
-            Console.Error.WriteLine("a remote can't be named local, the key for this computer");
+            errors.WriteLine("a remote can't be named local, the key for this computer");
             return 2;
         }
 
         try { return await ServeAsync(options); }
         catch (Assembly.Infrastructure.Persistence.HomeInUseException refused)
         {
-            Console.Error.WriteLine($"Assembly can't open {options.Home}: {refused.Message}");
+            errors.WriteLine($"Assembly can't open {options.Home}: {refused.Message}");
             return refused.Update ? HomeInUseExit : 1;
         }
     }
