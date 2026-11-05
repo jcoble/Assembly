@@ -13,7 +13,6 @@ use gpui_kit::*;
 use std::path::Path;
 
 use crate::core::intents::open_file::OpenFile;
-use crate::core::navigation::file_link::names_its_own_place;
 use crate::core::socket::row_source::ExpectedRowSource;
 
 use super::session_action::{OnAction, SessionAction};
@@ -81,6 +80,9 @@ pub fn short_path(path: &str) -> String {
 
 /// What a tool line shows after its title: its summary, else its path; a path as its last two parts.
 pub fn line_summary(tool: &ToolPayload) -> Option<String> {
+    if let Some(path) = shown_path(tool) {
+        return Some(short_path(path));
+    }
     match (&tool.summary, &tool.path) {
         (Some(summary), Some(path)) if summary != path => Some(summary.clone()),
         (_, Some(path)) => Some(short_path(path)),
@@ -88,15 +90,19 @@ pub fn line_summary(tool: &ToolPayload) -> Option<String> {
     }
 }
 
-/// The path a tool line's summary shows, which opens as a file: the summary is the path, or the path as the call gave it
-/// before the backend joined it onto the call's folder.
+/// The file a tool line's summary names, which opens as a link: a file call's summary that is its path, or the path as
+/// the call gave it before the backend joined it onto the call's folder. A folder or a search pattern isn't one.
 pub fn shown_path(tool: &ToolPayload) -> Option<&str> {
     let path = tool.path.as_deref()?;
-    match tool.summary.as_deref() {
-        None => Some(path),
-        Some(summary) if summary == path || Path::new(path).ends_with(summary) => Some(path),
-        Some(_) => None,
-    }
+    let summary = tool
+        .summary
+        .as_deref()
+        .filter(|summary| !summary.is_empty())?;
+    let file_kind = matches!(
+        tool.kind.as_deref(),
+        Some("read" | "edit" | "delete" | "move")
+    );
+    (file_kind && (summary == path || Path::new(path).ends_with(summary))).then_some(path)
 }
 
 /// A run that failed (not one the user denied, which didn't run): its line reads "Failed to run" and it opens to its
@@ -179,23 +185,15 @@ impl ToolRow {
     }
 
     /// Opening the file its line shows, through the `OpenFile` listener, which sends an absolute or `~` path to the one
-    /// resolver. A relative path needs the session to open in.
+    /// resolver.
     fn path_link(&self) -> Option<Box<dyn Action>> {
-        let path = shown_path(&self.tool)?;
-        let session = match &self.session {
-            Some(session) => session.clone(),
-            None if names_its_own_place(path) => String::new(),
-            None => return None,
-        };
-        Some(Box::new(OpenFile {
-            session_id: session,
-            path: path.to_string(),
-            line: None,
-            column: None,
-            pinned: true,
-            expected_source: self.expected_source.clone(),
-            outside: None,
-        }))
+        let session = self.session.as_deref().unwrap_or_default();
+        let open = OpenFile::link(
+            session,
+            shown_path(&self.tool)?,
+            self.expected_source.clone(),
+        )?;
+        Some(Box::new(open))
     }
 
     /// What it shows open: its detail once read, nothing before.

@@ -9,7 +9,6 @@
 //! links, whose calls are cancelled. A dropped connection answers every call at once; a call the backend never answers
 //! while the connection stays up has no event at all, so each link has a deadline, which cancels it.
 
-use std::path::Path;
 use std::time::Duration;
 
 use gpui_kit::*;
@@ -17,7 +16,7 @@ use serde_json::json;
 
 use super::deep_links::show_notice;
 use crate::core::engine::SessionKey;
-use crate::core::intents::open_file::{OpenFile, OutsideFile};
+use crate::core::intents::open_file::{OpenFile, OutsideFile, names_its_own_place};
 use crate::core::socket::call_failure::CallFailure;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::error_code::ErrorCode;
@@ -41,11 +40,6 @@ impl Global for Asking {}
 
 /// The selected session as a link found it.
 type Selection = (Option<SessionKey>, Option<ExpectedRowSource>);
-
-/// Whether a path goes to the backend as a path target rather than opening relative to a session.
-pub(crate) fn names_its_own_place(path: &str) -> bool {
-    Path::new(path).is_absolute() || path.starts_with('~')
-}
 
 /// A line and column to open at.
 pub type Jump = (Option<u32>, Option<u32>);

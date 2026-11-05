@@ -169,13 +169,18 @@ fn cancelled_tool_line_is_neutral_with_and_without_activity_timing(cx: &mut gpui
     });
 }
 
-/// A finished read of `path`, with `summary` as the backend sent it, in `session`.
-fn read_row(path: &str, summary: Option<&str>, session: Option<&str>) -> super::ToolRow {
+/// A finished call of `kind` on `path`, with `summary` as the backend sent it, in `session`.
+fn call_row(
+    kind: &str,
+    path: &str,
+    summary: Option<&str>,
+    session: Option<&str>,
+) -> super::ToolRow {
     use crate::core::socket::row_source::ExpectedRowSource;
     super::ToolRow {
         key: "R".into(),
         tool: serde_json::from_value(json!({
-            "name": "Read", "state": "completed", "hasDetail": true, "kind": "read",
+            "name": "Tool", "state": "completed", "hasDetail": true, "kind": kind,
             "path": path, "summary": summary,
         }))
         .unwrap(),
@@ -192,50 +197,73 @@ fn read_row(path: &str, summary: Option<&str>, session: Option<&str>) -> super::
     }
 }
 
+/// A finished read of `path` whose summary is `summary`.
+fn read_row(path: &str, summary: &str, session: Option<&str>) -> super::ToolRow {
+    call_row("read", path, Some(summary), session)
+}
+
 fn opens(row: &super::ToolRow, cx: &gpui_kit::App) -> Option<Box<dyn gpui_kit::Action>> {
     row.line(None, cx).summary_action
 }
 
+fn opening(session: &str, path: &str) -> crate::core::intents::open_file::OpenFile {
+    crate::core::intents::open_file::OpenFile {
+        session_id: session.into(),
+        path: path.into(),
+        line: None,
+        column: None,
+        pinned: true,
+        expected_source: read_row("/x", "/x", None).expected_source,
+        outside: None,
+    }
+}
+
 #[gpui::test]
 fn a_tool_row_path_is_a_file_link_for_its_session(cx: &mut gpui::TestAppContext) {
-    use crate::core::intents::open_file::OpenFile;
     cx.update(|cx| {
         gpui_kit::init(cx);
-        // An absolute path, and a relative one the backend joined onto the call's folder (its summary stays as sent).
-        for summary in [None, Some("/work/src/a.rs"), Some("src/a.rs")] {
-            let row = read_row("/work/src/a.rs", summary, Some("S"));
-            let action = opens(&row, cx).expect("the path is a link");
-            assert!(action.partial_eq(&OpenFile {
-                session_id: "S".into(),
-                path: "/work/src/a.rs".into(),
-                line: None,
-                column: None,
-                pinned: true,
-                expected_source: row.expected_source.clone(),
-                outside: None,
-            }));
+        // An absolute path, and a relative one the backend joined onto the call's folder (its summary stays as sent),
+        // on every file kind.
+        for kind in ["read", "edit", "delete", "move"] {
+            for summary in ["/work/src/a.rs", "src/a.rs"] {
+                let row = call_row(kind, "/work/src/a.rs", Some(summary), Some("S"));
+                let action = opens(&row, cx).expect("the path is a link");
+                assert!(
+                    action.partial_eq(&opening("S", "/work/src/a.rs")),
+                    "{kind} {summary}"
+                );
+            }
         }
         // With no session an absolute path still goes to the resolver; a relative one has nowhere to open.
-        let alone = opens(&read_row("/work/src/a.rs", None, None), cx).expect("absolute opens");
-        assert!(alone.partial_eq(&OpenFile {
-            session_id: String::new(),
-            path: "/work/src/a.rs".into(),
-            line: None,
-            column: None,
-            pinned: true,
-            expected_source: read_row("/x", None, None).expected_source,
-            outside: None,
-        }));
-        assert!(opens(&read_row("src/a.rs", None, None), cx).is_none());
-        assert!(opens(&read_row("src/a.rs", None, Some("S")), cx).is_some());
-        // A line that shows something other than the path isn't a link.
+        let alone = opens(&read_row("/work/src/a.rs", "/work/src/a.rs", None), cx);
         assert!(
-            opens(
-                &read_row("/work/src/a.rs", Some("reads the file"), Some("S")),
-                cx
-            )
-            .is_none()
+            alone
+                .expect("absolute opens")
+                .partial_eq(&opening("", "/work/src/a.rs"))
         );
+        assert!(opens(&read_row("src/a.rs", "src/a.rs", None), cx).is_none());
+        assert!(opens(&read_row("src/a.rs", "src/a.rs", Some("S")), cx).is_some());
+        // A line that shows something other than the path isn't a link, nor one with no summary of its own.
+        assert!(opens(&read_row("/work/src/a.rs", "reads the file", Some("S")), cx).is_none());
+        assert!(opens(&call_row("read", "/work/src/a.rs", None, Some("S")), cx).is_none());
+        assert!(opens(&read_row("/work/src/a.rs", "", Some("S")), cx).is_none());
+        // `//host/...` is never a file path.
+        assert!(opens(&read_row("//host/a.rs", "//host/a.rs", Some("S")), cx).is_none());
+    });
+}
+
+#[gpui::test]
+fn a_folder_or_a_search_pattern_is_not_a_file_link(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        // An LS of a folder, and a Grep whose pattern happens to end its path.
+        let ls = call_row("search", "/repo/src", Some("/repo/src"), Some("S"));
+        assert!(opens(&ls, cx).is_none());
+        let grep = call_row("search", "/repo/foo", Some("foo"), Some("S"));
+        assert!(opens(&grep, cx).is_none());
+        assert_eq!(grep.line(None, cx).summary.as_deref(), Some("foo"));
+        let other = call_row("other", "/repo/src", Some("/repo/src"), Some("S"));
+        assert!(opens(&other, cx).is_none());
     });
 }
 
@@ -243,10 +271,17 @@ fn a_tool_row_path_is_a_file_link_for_its_session(cx: &mut gpui::TestAppContext)
 fn the_tool_row_still_shows_the_short_path(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        let line = read_row("/work/src/a.rs", None, Some("S")).line(None, cx);
-        assert_eq!(line.summary.as_deref(), Some("src/a.rs"));
-        let line = read_row("/work/src/a.rs", Some("/work/src/a.rs"), Some("S")).line(None, cx);
-        assert_eq!(line.summary.as_deref(), Some("src/a.rs"));
+        let summary = |row: super::ToolRow| row.line(None, cx).summary.map(|s| s.to_string());
+        let full = "/work/desktop/src/core/ui/markdown/view.rs";
+        assert_eq!(
+            summary(read_row(full, full, Some("S"))).as_deref(),
+            Some("markdown/view.rs")
+        );
+        // A relative path the backend joined onto the call's folder shows its last two parts too.
+        let joined = read_row(full, "desktop/src/core/ui/markdown/view.rs", Some("S"));
+        assert_eq!(summary(joined).as_deref(), Some("markdown/view.rs"));
+        let bare = call_row("read", full, None, Some("S"));
+        assert_eq!(summary(bare).as_deref(), Some("markdown/view.rs"));
     });
 }
 
@@ -278,7 +313,7 @@ fn clicking_the_tool_path_does_not_toggle_the_row(cx: &mut gpui::TestAppContext)
         gpui_kit::init(cx);
         cx.on_action(move |intent: &OpenFile, _| heard.borrow_mut().push(intent.clone()));
     });
-    let row = read_row("/work/src/a.rs", None, Some("S"));
+    let row = read_row("/work/src/a.rs", "/work/src/a.rs", Some("S"));
     let (host, cx) = cx.add_window_view(move |_, cx| {
         let expand = cx.new(|_| {
             ExpandRow::new(

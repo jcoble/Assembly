@@ -153,8 +153,14 @@ fn an_absolute_file_link_with_no_session_still_opens() {
     use crate::core::intents::open_file::OpenFile;
     for path in ["/etc/hosts", "~/notes/plan.md"] {
         let target = LinkTarget::File(path.into());
-        assert!(target.opens(None), "{path} is clickable with no session");
-        let action = target.action(None, None).expect("an absolute link opens");
+        // A session pane with no session selected renders its replies with an empty session.
+        assert!(
+            target.opens(Some("")),
+            "{path} is clickable with no session"
+        );
+        let action = target
+            .action(Some(""), None)
+            .expect("an absolute link opens");
         // An empty session sends it to the one resolver, which opens it by machine and path.
         assert!(action.partial_eq(&OpenFile {
             session_id: String::new(),
@@ -171,8 +177,32 @@ fn an_absolute_file_link_with_no_session_still_opens() {
 #[test]
 fn a_relative_file_link_with_no_session_is_still_dropped() {
     let target = LinkTarget::File("src/main.rs".into());
-    assert!(!target.opens(None));
-    assert!(target.action(None, None).is_none());
+    assert!(!target.opens(Some("")));
+    assert!(target.action(Some(""), None).is_none());
     assert!(target.opens(Some("actual-session")));
+}
+
+#[test]
+fn content_from_outside_a_session_has_no_file_links() {
+    // Pull request bodies and comments: GitHub's site-relative links would look clickable and always fail.
+    for path in [
+        "/jcoble/Assembly/pull/12",
+        "/docs/setup.md",
+        "~/notes.md",
+        "src/main.rs",
+    ] {
+        let target = LinkTarget::File(path.into());
+        assert!(!target.opens(None), "{path}");
+        assert!(target.action(None, None).is_none(), "{path}");
+    }
     assert!(LinkTarget::Url("https://example.com".into()).opens(None));
+}
+
+#[test]
+fn a_double_slash_link_is_never_a_file() {
+    let target = LinkTarget::File("//host/share/a.txt".into());
+    for session in [Some("actual-session"), Some(""), None] {
+        assert!(!target.opens(session), "{session:?}");
+        assert!(target.action(session, None).is_none(), "{session:?}");
+    }
 }

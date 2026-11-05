@@ -28,7 +28,7 @@ mod saving;
 mod workspace;
 use super::file_text::FileText;
 use crate::core::engine::SessionKey;
-use crate::core::intents::open_file::OpenFile;
+use crate::core::intents::open_file::{OpenFile, names_its_own_place};
 use crate::core::navigation::file_link;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
@@ -134,7 +134,7 @@ impl FileView {
         cx.on_action(|intent: &OpenFile, cx| {
             let intent = intent.clone();
             // An absolute or `~` path goes to the one resolver, which opens it as a session file or an outside one.
-            if intent.outside.is_none() && file_link::names_its_own_place(&intent.path) {
+            if intent.outside.is_none() && names_its_own_place(&intent.path) {
                 let machine = (intent.expected_source.as_ref())
                     .and_then(|source| source.route_machine.clone());
                 let from = (intent.expected_source.clone())
