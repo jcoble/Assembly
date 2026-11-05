@@ -106,11 +106,22 @@ restore() {
     put_back assembly-host.service "$unit" &&
     put_back backend-manifest.json "$root/serve/backend-manifest.json" || return 1
   if [ -e "$before/assembly.db" ]; then
-    rm -f "$root/serve/assembly.db" "$root/serve/assembly.db-wal" "$root/serve/assembly.db-shm" &&
-      put_back assembly.db-wal "$root/serve/assembly.db-wal" &&
-      put_back assembly.db "$root/serve/assembly.db" || return 1
+    # From here it's decided: a run after a kill finishes this rather than reading these files as newer writes. A log can't
+    # stay beside a database it isn't from. The database is replaced by rename, so there's always one at its path.
+    : >"$before/restoring" &&
+      rm -f "$root/serve/assembly.db-wal" "$root/serve/assembly.db-shm" &&
+      put_back assembly.db "$root/serve/assembly.db" &&
+      put_back assembly.db-wal "$root/serve/assembly.db-wal" || return 1
   fi
   rm -f "$before/complete"
+}
+
+# With the host stopped these files are the whole database, so the same bytes mean nothing was written after the copy.
+same_as_kept() {
+  [ "$({ sha256sum <"$1"; } 2>/dev/null)" = "$({ sha256sum <"$2"; } 2>/dev/null)" ]
+}
+database_unchanged() {
+  same_as_kept "$before/assembly.db" "$root/serve/assembly.db" && same_as_kept "$before/assembly.db-wal" "$root/serve/assembly.db-wal"
 }
 
 refuse_if_running() {
@@ -126,18 +137,27 @@ refuse_if_running() {
 if [ -e "$before/complete" ]; then
   # The backend it left may have come up and been connected to. A session in it isn't ended for this; the mark waits.
   refuse_if_running
-  echo "An earlier install stopped partway, so what it replaced is being put back" >&2
   systemctl --user stop assembly-host.service >/dev/null 2>&1 || true
-  restore || { echo "What an earlier install replaced couldn't be put back, and it's kept in $before" >&2; exit 1; }
-  if [ -e "$before/first-install" ]; then
-    systemctl --user disable assembly-host.service >/dev/null 2>&1 || true
-    rm -f "$unit" "$root/bin/assembly-remote-server"
-    rm -rf "$before"
+  if [ ! -e "$before/restoring" ] && ! database_unchanged; then
+    # Its backend started and wrote, and a migration looks the same as a person's work. Going back could lose that work.
+    rm -rf "$before.kept"
+    mv "$before" "$before.kept"
+    echo "An earlier install stopped partway, and this machine's database has changed since its copy was made, so nothing was put back and the database stays as it is. The older copy is in $before.kept" >&2
     systemctl --user daemon-reload
+    systemctl --user restart assembly-host.service || true
   else
-    rm -rf "$before"
-    systemctl --user daemon-reload
-    systemctl --user restart assembly-host.service
+    echo "An earlier install stopped partway, so what it replaced is being put back" >&2
+    restore || { echo "What an earlier install replaced couldn't be put back, and it's kept in $before" >&2; exit 1; }
+    if [ -e "$before/first-install" ]; then
+      systemctl --user disable assembly-host.service >/dev/null 2>&1 || true
+      rm -f "$unit" "$root/bin/assembly-remote-server"
+      rm -rf "$before"
+      systemctl --user daemon-reload
+    else
+      rm -rf "$before"
+      systemctl --user daemon-reload
+      systemctl --user restart assembly-host.service
+    fi
   fi
 fi
 

@@ -222,6 +222,10 @@ for last; do :; done
 if [ -n "\${CP_FAILS_ON:-}" ]; then case "$*" in *"$CP_FAILS_ON"*) printf partial >"$last"; exit 1 ;; esac; fi
 exec /bin/cp "$@"
 `, { mode: 0o755 });
+    await writeFile(path.join(bin, 'rm'), `#!/bin/sh
+[ -z "\${RM_LOG:-}" ] || echo "$*" >>"$RM_LOG"
+exec /bin/rm "$@"
+`, { mode: 0o755 });
     for (const tool of ['curl', 'tar', 'python3', 'node', 'pidwait', 'sleep']) await writeFile(path.join(bin, tool), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     await writeFile(path.join(home, 'state'), 'inactive\n');
     await mkdir(path.join(home, 'cgroup'));
@@ -236,7 +240,8 @@ case "$*" in
     if grep -q exits "$server"; then echo failed >"$HOME/state"; else echo active >"$HOME/state"; fi ;;
   *stop*)
     echo inactive >"$HOME/state"
-    [ ! -e "$HOME/term-on-stop" ] || { rm "$HOME/term-on-stop"; kill -TERM $PPID; } ;;
+    [ ! -e "$HOME/term-on-stop" ] || { rm "$HOME/term-on-stop"; kill -TERM $PPID; }
+    if [ -e "$HOME/term-on-undo-stop" ] && [ -e "$HOME/assembly-host/before-update/complete" ]; then rm "$HOME/term-on-undo-stop"; kill -TERM $PPID; fi ;;
   *ControlGroup*) echo "/../../..$HOME/cgroup" ;;
   *) exit 0 ;;
 esac
@@ -402,9 +407,9 @@ test('an install killed with things replaced is undone by the next run before an
   await withMachine(async (run, home) => {
     const old = await installedWithData(run, home);
     await writeFile(path.join(home, 'kill-on-restart'), '');
-    const killed = await run('exits migrates', '2.0.0', ['--keep-adapters', '9802', '', '']);
+    const killed = await run('exits', '2.0.0', ['--keep-adapters', '9802', '', '']);
     assert.notEqual(killed.code, 0);
-    assert.equal((await installed(home)).binary, 'exits migrates');
+    assert.equal((await installed(home)).binary, 'exits');
     assert.equal((await installed(home)).before, true);
 
     // Even an older package than the one left behind gets a fair reading: it's compared with what was really installed.
@@ -463,9 +468,11 @@ test('a session in what a killed install left is not ended: the next run refuses
     const next = await run('good two', '3.0.0', ['--keep-adapters', '9801', '', '']);
     assert.equal(next.code, 0, next.stderr);
     assert.match(next.stderr, /stopped partway/);
+    assert.match(next.stderr, /changed since/);
     const after = await installed(home);
     assert.equal(after.binary, 'good two');
-    assert.equal(after.database, old.database);
+    assert.equal(after.database, 'migrated\n');
+    assert.notEqual(after.database, old.database);
   });
 });
 
@@ -484,5 +491,101 @@ test('a setting saved during the adapters is never overwritten: the update refus
     const again = await run('good two', '2.0.0', ['9801', 'new-tag', 'x']);
     assert.equal(again.code, 0, again.stderr);
     assert.equal((await installed(home)).agents, 'new-tag');
+  });
+});
+
+test('a killed install whose backend was used keeps the database as it is, says so, and the older copy stays', async () => {
+  await withMachine(async (run, home) => {
+    const old = await installedWithData(run, home);
+    await writeFile(path.join(home, 'kill-on-restart'), '');
+    assert.notEqual((await run('good two', '2.0.0', ['--keep-adapters', '9802', '', ''])).code, 0);
+    const serve = path.join(home, 'assembly-host/serve');
+    await writeFile(path.join(serve, 'assembly.db'), 'a later write');
+    await rm(path.join(serve, 'assembly.db-wal'));
+
+    const next = await run('good three', '3.0.0', ['--keep-adapters', '9802', '', '']);
+
+    assert.equal(next.code, 0, next.stderr);
+    assert.match(next.stderr, /database has changed since/);
+    assert.doesNotMatch(next.stderr, /being put back/);
+    const after = await installed(home);
+    assert.equal(after.binary, 'good three');
+    assert.equal(after.database, 'a later write');
+    assert.equal(after.wal, null);
+    const kept = path.join(home, 'assembly-host/before-update.kept');
+    assert.equal(await readFile(path.join(kept, 'assembly.db'), 'utf8'), old.database);
+    assert.equal(await readFile(path.join(kept, 'assembly.db-wal'), 'utf8'), old.wal);
+  });
+});
+
+test('a killed install whose database appeared after it, with none kept, is never replaced', async () => {
+  await withMachine(async (run, home) => {
+    await writeFile(path.join(home, 'kill-on-restart'), '');
+    assert.notEqual((await run('good one', '1.0.0', ['--keep-adapters', '9801', '', ''])).code, 0);
+    await writeFile(path.join(home, 'assembly-host/serve/assembly.db'), 'the first writes');
+
+    const next = await run('good two', '2.0.0', ['--keep-adapters', '9801', '', '']);
+
+    assert.equal(next.code, 0, next.stderr);
+    assert.match(next.stderr, /database has changed since/);
+    const after = await installed(home);
+    assert.equal(after.binary, 'good two');
+    assert.equal(after.database, 'the first writes');
+  });
+});
+
+test('a put-back that was itself killed partway finishes on the next run', async () => {
+  await withMachine(async (run, home) => {
+    const old = await installedWithData(run, home);
+    await writeFile(path.join(home, 'kill-on-restart'), '');
+    assert.notEqual((await run('migrates', '2.0.0', ['--keep-adapters', '9802', '', ''])).code, 0);
+    // Stopped between the database and its log: the old database with no log yet, which is why the check can't run again.
+    const root = path.join(home, 'assembly-host');
+    await writeFile(path.join(root, 'before-update/restoring'), '');
+    await writeFile(path.join(root, 'serve/assembly.db'), old.database!);
+    await rm(path.join(root, 'serve/assembly.db-wal'));
+
+    const next = await run('good two', '2.0.0', ['--keep-adapters', '9801', '', '']);
+
+    assert.equal(next.code, 0, next.stderr);
+    assert.doesNotMatch(next.stderr, /changed since/);
+    const after = await installed(home);
+    assert.equal(after.database, old.database);
+    assert.equal(after.wal, old.wal);
+  });
+});
+
+test('a database is there at every step of a put-back: it is replaced by rename, never removed first', async () => {
+  await withMachine(async (run, home) => {
+    await installedWithData(run, home);
+    const failed = await run('exits migrates', '2.0.0', ['--keep-adapters', '9802', '', ''], { RM_LOG: path.join(home, 'rm.log') });
+    assert.equal(failed.code, 1);
+    const removed = await readFile(path.join(home, 'rm.log'), 'utf8');
+    assert.match(removed, /assembly\.db-wal/);
+    assert.doesNotMatch(removed.replaceAll('assembly.db-wal', '').replaceAll('assembly.db-shm', ''), /assembly\.db/);
+  });
+});
+
+test('further signals during the undo\'s own stop do not cut it short', async () => {
+  await withMachine(async (run, home) => {
+    const old = await installedWithData(run, home);
+    await writeFile(path.join(home, 'term-on-undo-stop'), '');
+    const failed = await run('exits migrates', '2.0.0', ['--keep-adapters', '9802', '', '']);
+    assert.equal(failed.code, 1);
+    assert.match(failed.stderr, /previous backend is running again on port 9801/);
+    assert.equal(await stat(path.join(home, 'term-on-undo-stop')).then(() => true, () => false), false);
+    assert.deepEqual(await installed(home), old);
+  });
+});
+
+test('a running session stops a tools-kept install before anything is stopped', async () => {
+  await withMachine(async (run, home) => {
+    const old = await installedWithData(run, home);
+    await writeFile(path.join(home, 'cgroup/cgroup.procs'), `${process.pid}\n`);
+    const refused = await run('good two', '2.0.0', ['--keep-adapters', '9801', '', '']);
+    assert.equal(refused.code, 75);
+    assert.match(refused.stderr, /A session started/);
+    assert.deepEqual(await installed(home), old);
+    assert.equal(old.state, 'active\n');
   });
 });
