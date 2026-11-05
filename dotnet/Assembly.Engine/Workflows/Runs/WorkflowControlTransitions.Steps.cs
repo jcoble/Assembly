@@ -58,7 +58,7 @@ internal static partial class WorkflowControlTransitions
         }
         var decision = command is RetryWorkflowStep ? "retry" : ((DecideWorkflowStep)command).Decision;
         if (decision is not ("approve" or "revise" or "deny" or "retry" or "skip" or "continue" or "cancel")) return Refuse("bad_args");
-        if (step.Kind == "gate" && c.Actor.Kind != ActorKind.Window || step.Kind == "gate" && c.Origin?.Channel == "phone") return Refuse("forbidden");
+        if (step.Kind == "gate" && c.Actor.Kind != ActorKind.Window) return Refuse("forbidden");
         if (command is DecideWorkflowStep && step.Kind == "gate" && (need is null || step.State != "waiting")) return Refuse("already_resolved");
         if (need is not null && need.Source == "workflow" && step.Kind == "command" && decision is "approve" or "deny" or "cancel")
         {

@@ -274,9 +274,11 @@ public sealed class CommandStepTests
             gate: {prompt: Ship it?}
         """;
 
+    internal static Fixture ApprovalBesideCommand() => new([], "allow", flow: ApprovalBesideCommandFlow, first: "build");
+
     /// <summary>The command has asked the owner, and the gate beside it is open too. With <paramref name="settled"/> false
     /// the executor's "waiting on policy" is still on its way back when the revision lands.</summary>
-    private static async Task<(string CommandNeed, string GateNeed, Effect Effect, EffectReceipt Blocked)> BothAsking(Fixture f, bool settled)
+    internal static async Task<(string CommandNeed, string GateNeed, Effect Effect, EffectReceipt Blocked)> BothAsking(Fixture f, bool settled)
     {
         foreach (var key in new[] { "build", "test" })
         {

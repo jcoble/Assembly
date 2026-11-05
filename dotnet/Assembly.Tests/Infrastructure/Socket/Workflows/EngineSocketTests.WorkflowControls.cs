@@ -71,15 +71,15 @@ public sealed partial class EngineSocketTests
         Assert.Equal("redo_pending", _f.Text("SELECT dispatch_state FROM engine_step WHERE id='work'"));
     }
     [Fact]
-    public async Task A_phone_cannot_revise_a_gate()
+    public async Task A_phone_revises_a_gate_through_resolve_need()
     {
         SeedGateWithWorkBefore();
         _overrideTitlePeer = true; _titlePeer = new PhonePeer("controls-phone");
         using var socket = await Open();
         var answer = JsonSerializer.SerializeToElement(new { choice = "revise", text = "From the phone" });
         var result = await Command(socket, new Assembly.Engine.NeedsMe.ResolveNeed("answered", answer), _f.Text("SELECT id FROM engine_needs_me")!, 1);
-        Assert.Equal("forbidden", result.Error);
-        Assert.Equal("open", _f.Text("SELECT state FROM engine_needs_me"));
+        Assert.True(result.Applied, result.Error);
+        Assert.Equal("From the phone", _f.Text("SELECT json_extract(safe_body_json,'$.text') FROM engine_workflow_history WHERE kind='gate_revised'"));
     }
     [Fact]
     public async Task Phone_cannot_submit_system_checks_or_gate_decisions_but_can_pause_resume_and_mute()

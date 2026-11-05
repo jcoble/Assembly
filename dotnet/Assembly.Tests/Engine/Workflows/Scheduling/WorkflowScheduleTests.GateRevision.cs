@@ -384,11 +384,12 @@ public sealed partial class WorkflowScheduleTests
     }
 
     [Fact]
-    public void A_phone_cannot_send_a_revision()
+    public void A_phone_sends_a_revision_as_a_window_does()
     {
         using var f = new Fixture(prompt: "Work", yaml: GatedFlow);
         var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
-        Assert.Equal("forbidden", Answer(f, OpenGate(f), RevisionOf("From the phone"), "phone").Error);
+        var answered = Answer(f, OpenGate(f), RevisionOf("From the phone"), "phone");
+        Assert.True(answered.Applied, answered.Error);
     }
 
     [Theory]
