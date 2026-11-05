@@ -207,7 +207,7 @@ impl FilesPane {
 }
 
 impl Render for FilesPane {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let message = self.message();
         let pane = v_flex()
             .track_focus(&self.focus)
@@ -217,40 +217,46 @@ impl Render for FilesPane {
             return pane.child(self.message_view(message, cx));
         }
         let count = self.tree.row_count();
-        pane.when(has_header(message.as_ref()), |pane| {
-            pane.child(self.header(cx))
-        })
-        .children(self.action_error.clone().map(|error| {
-            div()
-                .px_2()
-                .text_role(TextRole::Body, cx)
-                .text_color(cx.theme().danger)
-                .child(error)
-        }))
-        .when_some(message.clone(), |pane, message| {
-            pane.child(self.message_view(message, cx))
-        })
-        .when(message.is_none(), |pane| {
-            pane.child(
-                uniform_list(
-                    "files",
-                    count,
-                    cx.processor(|pane, range: std::ops::Range<usize>, _window, cx| {
-                        let pane = &*pane;
-                        let start = range.start;
-                        pane.tree
-                            .visible(range)
-                            .into_iter()
-                            .enumerate()
-                            .map(|(at, row)| pane.row(row, start + at, cx))
-                            .collect()
-                    }),
+        let filtering = self.filter.read(cx).active();
+        let header = has_header(message.as_ref()) || filtering;
+        let field = header.then(|| self.filter_field(window, cx));
+        let results = filtering.then(|| self.filter_results(cx));
+        pane.when(header, |pane| pane.child(self.header(cx)))
+            .children(field)
+            .children(self.action_error.clone().map(|error| {
+                div()
+                    .px_2()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(cx.theme().danger)
+                    .child(error)
+            }))
+            .children(results)
+            .when(!filtering, |pane| {
+                pane.when_some(message.clone(), |pane, message| {
+                    pane.child(self.message_view(message, cx))
+                })
+            })
+            .when(!filtering && message.is_none(), |pane| {
+                pane.child(
+                    uniform_list(
+                        "files",
+                        count,
+                        cx.processor(|pane, range: std::ops::Range<usize>, _window, cx| {
+                            let pane = &*pane;
+                            let start = range.start;
+                            pane.tree
+                                .visible(range)
+                                .into_iter()
+                                .enumerate()
+                                .map(|(at, row)| pane.row(row, start + at, cx))
+                                .collect()
+                        }),
+                    )
+                    .track_scroll(&self.list)
+                    .flex_1()
+                    .px_1()
+                    .py_1(),
                 )
-                .track_scroll(&self.list)
-                .flex_1()
-                .px_1()
-                .py_1(),
-            )
-        })
+            })
     }
 }

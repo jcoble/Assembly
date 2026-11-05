@@ -6,11 +6,14 @@
 use std::collections::HashMap;
 
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
+use gpui_kit::component::input::InputState;
 use gpui_kit::*;
 use serde_json::json;
 
 #[path = "files_pane_actions.rs"]
 mod actions;
+#[path = "files_pane_filter.rs"]
+mod filter;
 #[path = "files_pane_header.rs"]
 mod header;
 #[path = "files_pane_render.rs"]
@@ -65,7 +68,8 @@ pub struct FilesPane {
     lease: Option<String>,
     observing: Option<Task<()>>,
     pub(super) selected: Option<String>,
-    revealing: Option<String>,
+    /// A path to show in the tree, and whether it's a folder, which opens once shown.
+    revealing: Option<(String, bool)>,
     workspace_key: Option<crate::core::state::workspace_panes::WorkspaceKey>,
     workspace_checked: bool,
     restoring_tree: Option<workspace::TreeRestore>,
@@ -75,7 +79,13 @@ pub struct FilesPane {
     action_event: Option<Subscription>,
     action_loading: Option<Task<()>>,
     action_error: Option<String>,
-    _heard: [Subscription; 3],
+    pub(super) filter: Entity<super::file_filter::FileFilter>,
+    /// The filter's field and what it heard, made on the first draw, which has the window.
+    filter_input: Option<(Entity<InputState>, Subscription)>,
+    /// The field empties on the next draw: another folder starts with no filter.
+    clear_filter_input: bool,
+    filter_list: UniformListScrollHandle,
+    _heard: [Subscription; 4],
 }
 
 impl FilesPane {
@@ -98,6 +108,8 @@ impl FilesPane {
                 pane.reload_kept(cx);
             }
         });
+        let filter = cx.new(|_| super::file_filter::FileFilter::default());
+        let heard_filter = cx.observe(&filter, |_, _, cx| cx.notify());
         let mut pane = FilesPane {
             focus: cx.focus_handle(),
             session: None,
@@ -126,7 +138,11 @@ impl FilesPane {
             action_event: None,
             action_loading: None,
             action_error: None,
-            _heard: [heard, heard_viewed, heard_touched],
+            filter,
+            filter_input: None,
+            clear_filter_input: false,
+            filter_list: UniformListScrollHandle::new(),
+            _heard: [heard, heard_viewed, heard_touched, heard_filter],
         };
         pane.follow(cx);
         pane
@@ -167,6 +183,8 @@ impl FilesPane {
         self.selected = None;
         self.revealing = None;
         self.started = false;
+        self.clear_filter(cx);
+        self.sync_filter(cx);
         self.start(cx);
         cx.notify();
     }
@@ -291,75 +309,20 @@ impl FilesPane {
         self.loads.insert(dir, task);
     }
 
-    pub fn reveal_folder(
-        session: &str,
-        path: &str,
-        source: Option<&crate::core::socket::row_source::ExpectedRowSource>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        use crate::core::ui::center_panes::CenterPanes;
-        use gpui_kit::component::dock::{DockPlacement, PaneRef, PanelHandle};
-        if crate::core::state::viewed_project::ViewedProject::subject(cx)
-            .is_none_or(|(subject, _)| subject != session)
-        {
-            return;
-        }
-        let Some(dock) = CenterPanes::dock(cx) else {
-            return;
-        };
-        let mut found = None;
-        for placement in [
-            DockPlacement::Left,
-            DockPlacement::Center,
-            DockPlacement::Right,
-            DockPlacement::Bottom,
-        ] {
-            if let Some(tree) = dock.read(cx).layout(placement) {
-                tree.root().walk(&mut |node| {
-                    if let PaneRef::Tabs { panels, .. } = node.kind() {
-                        for id in panels {
-                            if let Some(panel) = dock.read(cx).panel(*id)
-                                && let Some(handle) = PanelHandle::of(panel)
-                                && let Ok(view) = handle.view().downcast::<Self>()
-                            {
-                                found = Some((*id, placement, view));
-                            }
-                        }
-                    }
-                });
-            }
-        }
-        let Some((id, placement, view)) = found else {
-            return;
-        };
-        view.update(cx, |pane, cx| {
-            if pane.source.as_ref() != source {
-                pane.action_error =
-                    Some("The search result belongs to an earlier file source.".into());
-                cx.notify();
-                return;
-            }
-            pane.revealing = Some(path.to_string());
-            pane.continue_reveal(cx);
-        });
-        dock.update(cx, |dock, cx| {
-            dock.select_panel(id, window, cx);
-            if placement != DockPlacement::Center && !dock.is_dock_open(placement) {
-                dock.toggle_dock(placement, window, cx);
-            }
-        });
-    }
-
     fn continue_reveal(&mut self, cx: &mut Context<Self>) {
         use super::file_tree::RevealStep;
-        let Some(path) = self.revealing.clone() else {
+        let Some((path, folder)) = self.revealing.clone() else {
             return;
         };
         if !self.shown || !self.started || self.building.is_some() {
             return;
         }
-        match self.tree.reveal(&path) {
+        let step = if folder {
+            self.tree.reveal(&path)
+        } else {
+            self.tree.reveal_entry(&path)
+        };
+        match step {
             RevealStep::Load { dir, cursor } => self.load(dir, cursor, cx),
             RevealStep::Waiting => {}
             RevealStep::Ready => {
@@ -490,6 +453,8 @@ impl BasePanel for FilesPane {
     /// Shown, it loads the session's root if it hasn't yet, or if that failed; hidden, it keeps what it has.
     fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
         self.shown = active;
+        self.filter
+            .update(cx, |filter, cx| filter.set_shown(active, cx));
         if !active {
             self.workspace_checked = false;
             self.generation = self.generation.wrapping_add(1);

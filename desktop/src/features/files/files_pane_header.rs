@@ -48,6 +48,7 @@ impl FilesPane {
 
     pub(in crate::features::files) fn toggle_excluded(&mut self, cx: &mut Context<Self>) {
         self.include_excluded = !self.include_excluded;
+        self.sync_filter(cx);
         self.reload_kept(cx);
     }
 

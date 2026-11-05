@@ -98,7 +98,7 @@ impl LayoutStore {
         };
         match serde_json::from_value::<DockAreaState>(value) {
             Ok(mut state) if state.version == Some(LAYOUT_VERSION) => {
-                super::retired_board::remove_saved_panel(&mut state);
+                super::retired_panels::remove_saved_panel(&mut state);
                 state
             }
             Ok(state) => {

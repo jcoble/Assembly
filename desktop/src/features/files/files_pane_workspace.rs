@@ -210,7 +210,7 @@ impl FilesPane {
                 pane.observing=None;
                 match answer {
                     Outcome::Ok(owner) if key.as_ref().is_none_or(|key|owner.machine==key.machine&&owner.checkout_root==key.checkout_root) => {
-                        pane.owner=Some(owner);pane.workspace_checked=true;pane.start(cx);
+                        pane.owner=Some(owner);pane.sync_filter(cx);pane.workspace_checked=true;pane.start(cx);
                     }
                     Outcome::Failed(error)=>pane.fail_root(error,cx),
                     _=>pane.fail_root(plain_failure("The owning checkout is unavailable or changed. The saved tree remains unchanged."),cx),

@@ -16,7 +16,6 @@ use super::file_tree::Row;
 use super::file_view::FileView;
 use super::files_pane::FilesPane;
 use super::panel_message::PanelMessage;
-use super::search_pane::{DEBOUNCE, SearchPane};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
@@ -206,35 +205,6 @@ async fn the_tree_loads_when_shown_and_opens_folders_one_at_a_time(cx: &mut Test
             ["src/ v", "  lib/", "  main.rs", ".gitignore", "readme.md"]
         );
         assert_eq!(pane.selected.as_deref(), Some("src"));
-    });
-}
-
-// Pins: files#7, files#8
-#[gpui::test]
-async fn search_finds_names_and_a_newer_search_replaces_the_older(cx: &mut TestAppContext) {
-    let (_backend, _) = selected_session(
-        cx,
-        &["src/main.rs", "src/lib.rs", "target/main.o", "docs/Main.md"],
-    )
-    .await;
-    let (pane, cx) = cx.add_window_view(SearchPane::new);
-    pane.update_in(cx, |pane, window, cx| {
-        BasePanel::set_active(pane, true, window, cx)
-    });
-    pane.update(cx, |pane, cx| {
-        pane.search("lib".into(), DEBOUNCE, cx);
-        pane.search("MAIN".into(), Duration::ZERO, cx);
-    });
-    settled(&pane, cx, |pane| pane.searching.is_none()).await;
-    pane.read_with(cx, |pane, _| {
-        let mut found: Vec<_> = pane
-            .matches
-            .iter()
-            .map(|found| found.relative_path.as_str())
-            .collect();
-        found.sort();
-        assert_eq!(found, ["docs/Main.md", "src/main.rs"]);
-        assert!(pane.error.is_none());
     });
 }
 
