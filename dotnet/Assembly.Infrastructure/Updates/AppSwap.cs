@@ -44,7 +44,8 @@ internal sealed partial class AppSwapJson : JsonSerializerContext;
 /// launch saying it's up lets them go. A new version that exits or stays silent is stopped, by its own process id only, and the
 /// old bundle and database go back.
 /// It holds the home lock whenever nothing else should have the database, so a reopened backend stops with home in use.
-/// The copy goes once the new window is up. Each failed version's database is kept, in one file named for that version.
+/// The copy goes once a window is up: the new one, or after a going back the old one. Each failed version's database is kept,
+/// in one file named for that version.
 /// </summary>
 internal static partial class AppSwap
 {
@@ -367,6 +368,9 @@ internal static partial class AppSwap
         // Only the version that was installed counts: an old window still open must not stop a going back.
         var mark = Path.Combine(folder, InstalledMark);
         if (MarkedVersion(mark) == version) File.Delete(mark);
+        // After a going back, the old version up again means the copy that put it back has done its job.
+        if (FailedVersion(folder) is { } failed && failed != version)
+            foreach (var suffix in KeptFiles) File.Delete(Path.Combine(folder, $"{BackupPrefix}{failed}.db{suffix}"));
         var address = Path.Combine(folder, Socket);
         if (!File.Exists(address)) return;
         try
@@ -376,6 +380,13 @@ internal static partial class AppSwap
             caller.Send(Encoding.UTF8.GetBytes(version));
         }
         catch (SocketException) { }
+    }
+
+    private static string? FailedVersion(string folder)
+    {
+        var file = Path.Combine(folder, "failed.json");
+        try { return File.Exists(file) ? JsonSerializer.Deserialize(File.ReadAllBytes(file), AppSwapJson.Default.AppSwapResult)?.Version : null; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { return null; }
     }
 
     private static string? MarkedVersion(string mark)

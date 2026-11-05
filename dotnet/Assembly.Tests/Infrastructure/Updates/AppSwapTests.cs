@@ -6,7 +6,7 @@ using Assembly.Infrastructure.Updates;
 namespace Assembly.Tests.Infrastructure.Updates;
 
 /// <summary>The helper on real processes and a real rename, with shell scripts as the two versions of the app.</summary>
-public sealed class AppSwapTests : IDisposable
+public sealed partial class AppSwapTests : IDisposable
 {
     private const string Silent = "sleep 300 & echo $! > \"$HOME_DIR/backend.lock.pid\"; echo $! > \"$HOME_DIR/its-backend.pid\"; exec sleep 300";
     private readonly string _root = Directory.CreateTempSubdirectory("appswap-").FullName;
