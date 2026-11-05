@@ -110,6 +110,7 @@ impl WorkspaceCoordinator {
             status: None,
         });
         cx.set_global(Current(view.clone()));
+        WorkspacePanes::expect_key(cx);
         view
     }
     pub fn try_global(cx: &App) -> Option<Entity<Self>> {

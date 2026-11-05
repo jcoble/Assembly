@@ -216,12 +216,9 @@ impl FileView {
     }
 
     fn load_owner(&mut self, cx: &mut Context<Self>) {
-        if crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::try_global(cx)
-            .is_some()
-            && crate::core::state::workspace_panes::WorkspacePanes::key(cx).is_none()
-        {
+        if crate::core::state::workspace_panes::WorkspacePanes::awaiting_key(cx) {
             self.text
-                .failed("This transcript has no recorded checkout to open files from.".into());
+                .failed("This session's workspace is still opening.".into());
             return;
         }
         let Some(socket) = SocketClient::try_global(cx) else {
@@ -301,6 +298,7 @@ impl FileView {
         // A restore runs inside the coordinator's own update, for the checkout it has already validated; its current
         // target is still the session being left, so only a person's open asks it.
         if !crate::core::state::workspace_panes::WorkspacePanes::is_restoring(cx)
+            && !crate::features::files::files_pane::FilesPane::lists(&session, cx)
             && let Some(coordinator) =
                 crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::try_global(
                     cx,

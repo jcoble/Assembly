@@ -13,12 +13,16 @@ use serde_json::json;
 mod actions;
 #[path = "files_pane_render.rs"]
 mod render;
+#[path = "files_pane_root.rs"]
+mod root;
 #[path = "files_pane_workspace.rs"]
 mod workspace;
 
+use self::root::plain_failure;
 use super::entry::{FileListing, ObservedRoot, PageCursor};
 use super::file_tree::{FileTree, Row};
 use super::file_view::FileView;
+use crate::core::socket::call_failure::CallFailure;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::selected_session::SelectedSession;
@@ -27,6 +31,11 @@ use crate::core::ui::pane_names::FILES;
 pub const TREE_LINE: Pixels = px(26.);
 /// How far each level of the tree steps in.
 const INDENT: Pixels = px(14.);
+
+type Subject = (
+    Option<String>,
+    Option<crate::core::socket::row_source::ExpectedRowSource>,
+);
 
 pub struct FilesPane {
     focus: FocusHandle,
@@ -41,6 +50,10 @@ pub struct FilesPane {
     reload_again: bool,
     /// Showing the pane again reloads what it kept, once its owner and lease are back.
     reload_when_ready: bool,
+    /// Why the root can't be listed, with its code, which the rows' text alone wouldn't carry.
+    root_failure: Option<CallFailure>,
+    /// Held only while waiting for a folder its first message will make.
+    first_message: Option<Subscription>,
     /// Whether the tree has asked for this session's root yet: only once the pane is shown.
     started: bool,
     shown: bool,
@@ -92,6 +105,8 @@ impl FilesPane {
             building: None,
             reload_again: false,
             reload_when_ready: false,
+            root_failure: None,
+            first_message: None,
             started: false,
             shown: false,
             generation: 0,
@@ -117,14 +132,22 @@ impl FilesPane {
 
     /// Takes the selected session: a new one drops the old tree and its loads, and loads its root if the pane is shown.
     fn follow(&mut self, cx: &mut Context<Self>) {
-        let (session, source) = match crate::core::state::viewed_project::ViewedProject::subject(cx)
-        {
-            Some((session, source)) => (Some(session), source),
-            None => (None, None),
-        };
-        if session == self.session && source == self.source {
+        let subject = Self::subject(cx);
+        if subject.0 == self.session && subject.1 == self.source {
             return;
         }
+        self.take_subject(subject, cx);
+    }
+
+    fn subject(cx: &App) -> Subject {
+        match crate::core::state::viewed_project::ViewedProject::subject(cx) {
+            Some((session, source)) => (Some(session), source),
+            None => (None, None),
+        }
+    }
+
+    /// Starts over on this session: the old tree, its loads and its lease go.
+    fn take_subject(&mut self, (session, source): Subject, cx: &mut Context<Self>) {
         self.release_watch(cx);
         self.action_loading = None;
         self.action_error = None;
@@ -136,6 +159,7 @@ impl FilesPane {
         self.workspace_checked = false;
         self.restoring_tree = None;
         self.drop_reload();
+        self.clear_root_failure();
         self.tree = FileTree::default();
         self.loads.clear();
         self.selected = None;
@@ -149,10 +173,7 @@ impl FilesPane {
         if !self.shown || self.session.is_none() {
             return;
         }
-        if crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::try_global(cx)
-            .is_some()
-            && crate::core::state::workspace_panes::WorkspacePanes::key(cx).is_none()
-        {
+        if crate::core::state::workspace_panes::WorkspacePanes::awaiting_key(cx) {
             return;
         }
         if !self.validate_workspace_owner(cx) {
@@ -185,17 +206,11 @@ impl FilesPane {
                             pane.lease = Some(observed.lease);
                             pane.start(cx);
                         }
-                        Outcome::Failed(error) => {
-                            pane.tree.start();
-                            pane.tree.loaded("", Err(error.message));
-                        }
-                        Outcome::Aborted => {
-                            pane.tree.start();
-                            pane.tree.loaded(
-                                "",
-                                Err("The connection dropped; retry this folder.".into()),
-                            );
-                        }
+                        Outcome::Failed(error) => pane.fail_root(error, cx),
+                        Outcome::Aborted => pane.fail_root(
+                            plain_failure("The connection dropped; retry this folder."),
+                            cx,
+                        ),
                     }
                     cx.notify();
                 });
@@ -204,6 +219,7 @@ impl FilesPane {
         }
         if !self.started || self.tree.root_failed() {
             self.started = true;
+            self.clear_root_failure();
             if std::mem::take(&mut self.reload_when_ready) && self.tree.root_loaded() {
                 self.reload_kept(cx);
                 return;
@@ -213,11 +229,12 @@ impl FilesPane {
         }
     }
 
-    fn refresh(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn refresh(&mut self, cx: &mut Context<Self>) {
         self.generation = self.generation.wrapping_add(1);
         self.loads.clear();
         self.observing = None;
         self.drop_reload();
+        self.clear_root_failure();
         self.tree = FileTree::default();
         self.started = false;
         self.start(cx);
@@ -245,8 +262,7 @@ impl FilesPane {
     pub(super) fn load(&mut self, dir: String, cursor: Option<PageCursor>, cx: &mut Context<Self>) {
         let (Some(session), Some(socket)) = (self.session.clone(), SocketClient::try_global(cx))
         else {
-            self.walked_tree()
-                .loaded(&dir, Err("The backend isn't running.".into()));
+            self.fail_folder(&dir, plain_failure("The backend isn't running."), cx);
             return;
         };
         if !self.shown {
@@ -265,18 +281,19 @@ impl FilesPane {
                     return;
                 }
                 pane.loads.remove(&at);
-                let answer = match outcome {
-                    Outcome::Ok(listing) => Ok(listing),
+                match outcome {
+                    Outcome::Ok(listing) => pane.walked_tree().loaded(&at, Ok(listing)),
                     Outcome::Failed(failure) if failure.message.contains("cursor_changed") => {
                         pane.restart_reload(cx);
                         return;
                     }
-                    Outcome::Failed(failure) => Err(failure.message),
-                    Outcome::Aborted => {
-                        Err("The connection dropped; open it again to retry.".into())
-                    }
-                };
-                pane.walked_tree().loaded(&at, answer);
+                    Outcome::Failed(failure) => pane.fail_folder(&at, failure, cx),
+                    Outcome::Aborted => pane.fail_folder(
+                        &at,
+                        plain_failure("The connection dropped; open it again to retry."),
+                        cx,
+                    ),
+                }
                 pane.continue_reveal(cx);
                 pane.continue_workspace_tree(cx);
                 cx.notify();

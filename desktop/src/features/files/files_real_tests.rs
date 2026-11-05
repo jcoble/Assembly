@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use super::file_tree::Row;
 use super::file_view::FileView;
 use super::files_pane::FilesPane;
+use super::panel_message::PanelMessage;
 use super::search_pane::{DEBOUNCE, SearchPane};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
@@ -246,10 +247,7 @@ async fn a_folder_made_after_the_tab_was_shown_loads_when_shown_again(cx: &mut T
     });
     settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
-        assert_eq!(
-            shape(pane),
-            ["! this session's folder is made on its first message"]
-        );
+        assert_eq!(pane.message(), Some(PanelMessage::FolderNotMade));
     });
     fs::rename(&away, &root).unwrap();
     pane.update_in(cx, |pane, window, cx| {

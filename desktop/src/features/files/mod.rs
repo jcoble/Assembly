@@ -17,8 +17,11 @@ pub mod file_tree;
 #[path = "editor/file_view.rs"]
 pub mod file_view;
 pub mod files_pane;
+pub mod panel_message;
 pub mod search_pane;
 
+#[cfg(test)]
+mod files_message_real_tests;
 #[cfg(test)]
 mod files_real_tests;
 #[cfg(test)]

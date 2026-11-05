@@ -5,6 +5,8 @@
 #[path = "components/activity/mod.rs"]
 mod activity;
 mod core;
+#[path = "components/empty_state/mod.rs"]
+mod empty_state_component;
 mod features;
 #[allow(dead_code)]
 #[path = "components/inline_field/mod.rs"]

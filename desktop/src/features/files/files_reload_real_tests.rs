@@ -11,7 +11,7 @@ use std::fs;
 use std::path::Path;
 
 /// A pane on a session holding `files`, shown and settled, with its root and session id.
-async fn shown_pane<'a>(
+pub(super) async fn shown_pane<'a>(
     cx: &'a mut TestAppContext,
     files: &[&str],
 ) -> (

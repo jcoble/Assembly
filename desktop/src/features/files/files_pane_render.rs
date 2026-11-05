@@ -1,6 +1,8 @@
 //! Native tree rows and controls borrow the pane's owned lazy model and action state.
 use super::{FileView, FilesPane, INDENT, Row, TREE_LINE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::empty_state_component::empty_state;
+use crate::features::files::panel_message::PanelMessage;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::ContextMenuExt as _;
@@ -138,22 +140,72 @@ impl FilesPane {
     }
 }
 
+impl FilesPane {
+    fn message_view(&self, message: PanelMessage, cx: &mut Context<Self>) -> AnyElement {
+        let actions = match message {
+            PanelMessage::Failed(_) => Some(
+                Button::new("files-try-again")
+                    .ghost()
+                    .label("Try again")
+                    .on_click(cx.listener(|pane, _, _, cx| pane.refresh(cx)))
+                    .into_any_element(),
+            ),
+            PanelMessage::EmptyFolder => Some(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new("files-empty-new-file")
+                            .ghost()
+                            .label("New file")
+                            .on_click(cx.listener(|pane, _, window, cx| {
+                                pane.open_action(
+                                    "createFile",
+                                    String::new(),
+                                    None,
+                                    None,
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    )
+                    .child(
+                        Button::new("files-empty-new-folder")
+                            .ghost()
+                            .label("New folder")
+                            .on_click(cx.listener(|pane, _, window, cx| {
+                                pane.open_action(
+                                    "createFolder",
+                                    String::new(),
+                                    None,
+                                    None,
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    )
+                    .into_any_element(),
+            ),
+            _ => None,
+        };
+        empty_state(
+            IconName::Folder,
+            message.title(),
+            message.body(),
+            actions,
+            cx,
+        )
+    }
+}
+
 impl Render for FilesPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let muted = cx.theme().muted_foreground;
+        let message = self.message();
         let pane = v_flex()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
             .size_full();
-        if self.session.is_none() {
-            return pane.child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .text_role(TextRole::Body, cx)
-                    .text_color(muted)
-                    .child("Pick a session to see its files."),
-            );
+        if let Some(message @ PanelMessage::NoSession) = message {
+            return pane.child(self.message_view(message, cx));
         }
         let count = self.tree.row_count();
         pane.child(
@@ -205,25 +257,30 @@ impl Render for FilesPane {
                 .text_color(cx.theme().danger)
                 .child(error)
         }))
-        .child(
-            uniform_list(
-                "files",
-                count,
-                cx.processor(|pane, range: std::ops::Range<usize>, _window, cx| {
-                    let pane = &*pane;
-                    let start = range.start;
-                    pane.tree
-                        .visible(range)
-                        .into_iter()
-                        .enumerate()
-                        .map(|(at, row)| pane.row(row, start + at, cx))
-                        .collect()
-                }),
+        .when_some(message.clone(), |pane, message| {
+            pane.child(self.message_view(message, cx))
+        })
+        .when(message.is_none(), |pane| {
+            pane.child(
+                uniform_list(
+                    "files",
+                    count,
+                    cx.processor(|pane, range: std::ops::Range<usize>, _window, cx| {
+                        let pane = &*pane;
+                        let start = range.start;
+                        pane.tree
+                            .visible(range)
+                            .into_iter()
+                            .enumerate()
+                            .map(|(at, row)| pane.row(row, start + at, cx))
+                            .collect()
+                    }),
+                )
+                .track_scroll(&self.list)
+                .flex_1()
+                .px_1()
+                .py_1(),
             )
-            .track_scroll(&self.list)
-            .flex_1()
-            .px_1()
-            .py_1(),
-        )
+        })
     }
 }
