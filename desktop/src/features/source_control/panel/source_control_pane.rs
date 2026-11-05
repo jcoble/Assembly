@@ -183,6 +183,7 @@ impl SourceControlPane {
         let writes = GitWrites::new(cx);
         let branch_menu = cx.new(|cx| BranchMenu::new(window, cx));
         let handle = window.window_handle();
+        let viewed = ViewedProject::global(cx);
         let heard = vec![
             cx.observe_window_activation(window, |pane: &mut Self, window, cx| {
                 let active = window.is_window_active();
@@ -193,6 +194,7 @@ impl SourceControlPane {
                 }
             }),
             cx.observe(&read, |pane: &mut Self, _, cx| pane.read_changed(cx)),
+            cx.observe(&viewed, |_, _, cx| cx.notify()),
             cx.observe(&writes.action, |pane: &mut Self, _, cx| {
                 pane.action_changed(cx)
             }),

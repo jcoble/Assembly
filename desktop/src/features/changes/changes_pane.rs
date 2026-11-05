@@ -218,9 +218,11 @@ impl ChangesPane {
             read
         });
         let inspected = InspectedCheckout::global(cx);
+        let viewed = ViewedProject::global(cx);
         let mut heard = vec![
             cx.observe(&status, |pane, _, cx| pane.status_changed(cx)),
             cx.observe(&inspected, |pane, _, cx| pane.sync_inspected(true, cx)),
+            cx.observe(&viewed, |_, _, cx| cx.notify()),
         ];
         heard.extend(
             Preferences::try_global(cx)

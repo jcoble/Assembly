@@ -84,7 +84,7 @@ public sealed partial class GitCheckoutScopeTests
             catch { await f.DisposeAsync(); throw; }
         }
         internal void AddEngineSession(string folder, string title, string state, string activity) =>
-            Hosts.Mac.Fixture.Db.Writer.Write("fixture.session", scope => scope.Execute("""
+            Owner.Fixture.Db.Writer.Write("fixture.session", scope => scope.Execute("""
                 INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,folder,title,state,activity_state,holder,epoch,cancel_requested)
                 SELECT $id,0,machine_id,0,0,'claude',$folder,$title,$state,$activity,'local',0,0 FROM engine_meta WHERE singleton=1
                 """, new SqlArg("$id", Guid.NewGuid().ToString()), new SqlArg("$folder", folder), new SqlArg("$title", title),

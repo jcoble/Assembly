@@ -5,9 +5,12 @@
 
 use gpui_kit::*;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use super::selected_session::SelectedSession;
 use super::sessions::Sessions;
+use crate::core::socket::client::SocketClient;
+use crate::core::socket::outcome::Outcome;
 use crate::core::socket::row_source::ExpectedRowSource;
 
 /// The registry's name for this machine.
@@ -40,19 +43,23 @@ pub fn is_view(session: &str) -> bool {
     session.starts_with("view:")
 }
 
-/// Whether a session in `session` is working in `folder`: the same folder, or one inside the other.
-pub fn overlaps(session: &str, folder: &str) -> bool {
-    let trim = |path: &'_ str| path.trim_end_matches('/').to_string();
-    let (session, folder) = (trim(session), trim(folder));
-    session == folder
-        || session.starts_with(&format!("{folder}/"))
-        || folder.starts_with(&format!("{session}/"))
-}
-
 #[derive(Default)]
 pub struct ViewedProject {
     /// The session it was opened under; another session's selection doesn't see it.
     current: Option<(String, Viewed)>,
+    /// The title of the session the backend says works in the viewed folder. Only the backend can say: the folder and
+    /// the session's may be the same one through a symlink or a differently cased path, on either machine.
+    in_use: Option<String>,
+    /// The active sessions when the backend was last asked.
+    asked_for: Vec<(String, String)>,
+    _asking: Option<Task<()>>,
+    /// Held only while a folder is viewed, so nothing runs otherwise.
+    _sessions: Option<Subscription>,
+}
+
+#[derive(Deserialize)]
+struct FolderInUse {
+    session: Option<String>,
 }
 
 struct Holder(Entity<ViewedProject>);
@@ -96,33 +103,85 @@ impl ViewedProject {
         Self::global(cx).update(cx, |this, cx| {
             if this.current != current {
                 this.current = current;
+                this.in_use = None;
+                this.follow_sessions(cx);
                 cx.notify();
             }
         });
     }
 
-    /// The one-line reason, naming the session, when a running session works in the viewed folder.
+    fn follow_sessions(&mut self, cx: &mut Context<Self>) {
+        self._asking = None;
+        self._sessions = None;
+        if self.current.is_none() {
+            return;
+        }
+        if let Some(sessions) = Sessions::try_global(cx) {
+            self._sessions = Some(cx.observe(&sessions, |this, _, cx| {
+                if this.asked_for != Self::active_sessions(cx) {
+                    this.ask(cx);
+                }
+            }));
+        }
+        self.ask(cx);
+    }
+
+    /// Who is working anywhere, which is all that can change the backend's answer.
+    fn active_sessions(cx: &App) -> Vec<(String, String)> {
+        let Some(sessions) = Sessions::try_global(cx) else {
+            return Vec::new();
+        };
+        let mut active: Vec<_> = sessions
+            .read(cx)
+            .items()
+            .iter()
+            .filter(|item| matches!(item.state.as_str(), "running" | "waiting"))
+            .map(|item| (item.session_id.clone(), item.state.clone()))
+            .collect();
+        active.sort();
+        active
+    }
+
+    fn ask(&mut self, cx: &mut Context<Self>) {
+        self.asked_for = Self::active_sessions(cx);
+        let (Some((_, viewed)), Some(socket)) = (&self.current, SocketClient::try_global(cx))
+        else {
+            return;
+        };
+        // Keyed, so a newer question cancels this one.
+        let call = socket.read(cx).call::<FolderInUse>(
+            "git",
+            "inUse",
+            json!({ "session": viewed.id() }),
+            Some("git/inUse"),
+        );
+        self._asking = Some(cx.spawn(async move |this, cx| {
+            let answer = call.await;
+            _ = this.update(cx, |this, cx| {
+                // Not knowing draws as writable; the backend still refuses a write it must.
+                let in_use = match answer {
+                    Outcome::Ok(answer) => answer.session,
+                    Outcome::Failed(_) | Outcome::Aborted => None,
+                };
+                if this.in_use != in_use {
+                    this.in_use = in_use;
+                    cx.notify();
+                }
+            });
+        }));
+    }
+
+    /// The one-line reason, naming the session, when the backend says a session works in the viewed folder.
     pub fn read_only_reason(cx: &App) -> Option<String> {
-        let viewed = Self::viewed(cx)?;
-        let sessions = Sessions::try_global(cx)?;
-        let sessions = sessions.read(cx);
-        let working = sessions.items().iter().find(|item| {
-            matches!(item.state.as_str(), "running" | "waiting")
-                && item
-                    .machine
-                    .as_deref()
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or(LOCAL_MACHINE)
-                    == viewed.machine
-                && item
-                    .checkout_root
-                    .as_deref()
-                    .or(item.root.as_deref())
-                    .is_some_and(|folder| overlaps(folder, &viewed.folder))
-        })?;
+        Self::viewed(cx)?;
+        let title = cx.try_global::<Holder>()?.0.read(cx).in_use.clone()?;
+        let who = if title.trim().is_empty() {
+            "Another session".to_string()
+        } else {
+            format!("\"{title}\"")
+        };
         Some(format!(
-            "\"{}\" is working in this folder, so it is read-only here.",
-            working.title()
+            "{who} is working in this folder, so it is read-only here."
         ))
     }
 }

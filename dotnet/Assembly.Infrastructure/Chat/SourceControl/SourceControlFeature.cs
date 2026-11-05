@@ -25,6 +25,10 @@ internal sealed partial class SourceControlFeature(SessionStore sessions, IAppDa
         calls.Read("git", "status", SourceControlJson.Default.Args, SourceControlJson.Default.GitStatus, (args, call) =>
             ReadCheckoutAsync(args.Session, args.CheckoutPath, args.ExpectedCheckoutRoot, call,
                 root => new GitStatusReader(git).ReadAsync(root, call.Cancellation)));
+        calls.Read("git", "inUse", SourceControlJson.Default.Args, SourceControlJson.Default.FolderInUse, (args, call) =>
+            Task.FromResult(FolderView.IsView(args.Session)
+                ? new FolderInUse(views.WorkingIn(FolderView.Parse(args.Session).LocalFolder(), call.Cancellation))
+                : throw new CallBadArguments("Only a viewed folder is asked who works in it.")));
         calls.Read("git", "diff", SourceControlJson.Default.DiffArgs, SourceControlJson.Default.GitFileDiff, (args, call) =>
             ReadCheckoutAsync(args.Session, args.CheckoutPath, args.ExpectedCheckoutRoot, call, async root =>
         {
@@ -66,6 +70,8 @@ internal sealed partial class SourceControlFeature(SessionStore sessions, IAppDa
     internal sealed record CommitDiffArgs([property: JsonRequired] string Session, [property: JsonRequired] string Sha, [property: JsonRequired] string Path, ExpectedSource? ExpectedSource = null, string? CheckoutPath = null, string? ExpectedCheckoutRoot = null);
     internal sealed record DiffArgs([property: JsonRequired] string Session, [property: JsonRequired] string Path, string? OriginalPath, ExpectedSource? ExpectedSource = null, string? CheckoutPath = null, string? ExpectedCheckoutRoot = null);
     internal sealed record Args([property: JsonRequired] string Session, ExpectedSource? ExpectedSource = null, string? CheckoutPath = null, string? ExpectedCheckoutRoot = null);
+    /// <summary>The title of the session working in a viewed folder, judged as a write would be, or null.</summary>
+    internal sealed record FolderInUse(string? Session);
 }
 
 /// <summary>The arguments and answers for the session's git status, file diff and branch diff reads.</summary>
@@ -73,6 +79,7 @@ internal sealed partial class SourceControlFeature(SessionStore sessions, IAppDa
 [JsonSerializable(typeof(SourceControlFeature.Checkouts))]
 [JsonSerializable(typeof(SourceControlFeature.Args))]
 [JsonSerializable(typeof(GitStatus))]
+[JsonSerializable(typeof(SourceControlFeature.FolderInUse))]
 [JsonSerializable(typeof(SourceControlFeature.DiffArgs))]
 [JsonSerializable(typeof(GitFileDiff))]
 [JsonSerializable(typeof(GitBranchDiff))]

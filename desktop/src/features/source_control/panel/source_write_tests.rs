@@ -29,6 +29,8 @@ fn session_row(version: i64, checkout: &str, operation: &str) -> Value {
 }
 #[derive(Default)]
 struct Seen {
+    /// The title the backend gives for who works in a viewed folder.
+    working: Option<&'static str>,
     commits: Vec<Value>,
     switches: Vec<Value>,
     branch_reads: Vec<Value>,
@@ -75,6 +77,8 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
                     "totalFiles":1,"totalStaged":1,"fingerprint":"f"}),
                 )]
             }
+            // The backend decides who works in a viewed folder.
+            (Some("call"), Some("inUse")) => vec![result(json!({"session": seen.working}))],
             (Some("call"), Some("branches")) => {
                 seen.branch_reads.push(frame["args"].clone());
                 vec![result(json!({"remotes":[]}))]
@@ -378,6 +382,7 @@ async fn a_read_only_viewed_folder_still_reads_its_own_branches(cx: &mut TestApp
     use crate::core::state::viewed_project::{Viewed, ViewedProject};
 
     let mut open = open(cx).await;
+    open.seen.lock().unwrap().working = Some("Busy");
     open.cx.update(|_, cx| {
         let working: SessionItem = serde_json::from_value(json!({
             "sessionId":"s2","agent":"fixture","repoUrl":"/other","updatedAt":0,

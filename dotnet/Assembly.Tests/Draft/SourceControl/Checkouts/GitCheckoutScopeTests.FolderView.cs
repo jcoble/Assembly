@@ -1,5 +1,6 @@
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
+using System.Text.Json;
 using Assembly.Infrastructure.Chat;
 
 namespace Assembly.Tests.Draft.SourceControl;
@@ -181,5 +182,49 @@ public sealed partial class GitCheckoutScopeTests
         using var client = await f.Open();
         Assert.Equal("error", (await f.Call(client, "status", Status(FolderView.Id("p1", "relative/path")))).GetProperty("t").GetString());
         AssertCode(await f.Call(client, "status", Status(FolderView.Id("p1", Path.Combine(f.Home, "absent")))), "checkout_unavailable");
+    }
+}
+
+public sealed partial class GitCheckoutScopeTests
+{
+    private static string? InUse(JsonElement frame)
+    {
+        Assert.Equal("result", frame.GetProperty("t").GetString());
+        var session = frame.GetProperty("result").GetProperty("session");
+        return session.ValueKind == JsonValueKind.Null ? null : session.GetString();
+    }
+
+    [Fact]
+    public async Task A_viewed_folder_names_the_session_working_in_it_however_its_path_is_written()
+    {
+        await using var f = await Fixture.Start();
+        var link = Path.Combine(f.Home, "link-to-linked");
+        Directory.CreateSymbolicLink(link, f.Linked);
+        f.Projects["p1"] = ("local", f.Root);
+        using var client = await f.Open();
+        var view = FolderView.Id("p1", link);
+        Assert.Null(InUse(await f.Call(client, "inUse", new { session = view })));
+        f.AddEngineSession(f.Linked, "Idle session", state: "idle", activity: "idle");
+        Assert.Null(InUse(await f.Call(client, "inUse", new { session = view })));
+        f.AddEngineSession(f.Linked, "Busy session", state: "running", activity: "running");
+        Assert.Equal("Busy session", InUse(await f.Call(client, "inUse", new { session = view })));
+    }
+
+    [Fact]
+    public async Task Only_a_viewed_folder_is_asked_who_works_in_it()
+    {
+        await using var f = await Fixture.Start();
+        using var client = await f.Open();
+        AssertCode(await f.Call(client, "inUse", new { session = f.Session, expectedSource = f.Source }), "bad_args");
+    }
+
+    [Fact]
+    public async Task A_remote_viewed_folder_is_asked_on_its_own_machine()
+    {
+        await using var f = await Fixture.Start(remote: true);
+        f.Projects["p1"] = ("workbox-test", f.Root);
+        f.AddEngineSession(f.Linked, "Remote session", state: "needs_me", activity: "idle");
+        using var client = await f.Open();
+        Assert.Equal("Remote session", InUse(await f.Call(client, "inUse", new { session = FolderView.Id("p1", f.Linked) })));
     }
 }
