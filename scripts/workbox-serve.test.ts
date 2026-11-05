@@ -51,8 +51,8 @@ const host=+process.env.TEST_HOST;
 const end=()=>{watcher.close();clearInterval(alive);process.exit(1)};
 const finish=()=>{if(fs.existsSync(${JSON.stringify(release)})){watcher.close();clearInterval(alive);${done}}else if(!fs.existsSync(${JSON.stringify(root)}))end()};
 const watcher=fs.watch(${JSON.stringify(root)},finish);
-const alive=setInterval(()=>{try{process.kill(host,0)}catch{end()}},200);
-fs.writeFileSync(${JSON.stringify(started)},String(process.pid));finish();
+const alive=setInterval(()=>{if(!fs.existsSync(${JSON.stringify(root)}))end();try{process.kill(host,0)}catch{end()}},200);
+fs.writeFileSync(${JSON.stringify(started)}+'.new',String(process.pid));fs.renameSync(${JSON.stringify(started)}+'.new',${JSON.stringify(started)});finish();
 `;
 function fixture(state: object = {}) {
   const root = mkdtempSync(join(tmpdir(), 'assembly-devsync-'));
