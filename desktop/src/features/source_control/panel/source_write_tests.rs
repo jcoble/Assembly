@@ -403,6 +403,12 @@ async fn a_read_only_viewed_folder_still_reads_its_own_branches(cx: &mut TestApp
         })
     })
     .await;
+    // The commit box stays, turned off, as in the old app.
+    open.until("the commit box", |_, cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("git-commit-box").is_some()
+    })
+    .await;
     let pane = open.pane.clone();
     pane.update_in(open.cx, |pane, _, cx| pane.set_branch_open(true, cx));
     let seen = open.seen.clone();

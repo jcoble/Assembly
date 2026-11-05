@@ -105,8 +105,10 @@ impl SourceControlPane {
     /// The kit's textarea with a grip under it, the kit having no drag to resize: it grows with its text until dragged.
     fn commit_box(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let height = self.commit_height;
+        let read_only = self.read_only(cx);
         v_flex()
             .id("commit-box")
+            .debug_selector(|| "git-commit-box".into())
             .w_full()
             .on_drag_move(
                 cx.listener(|pane, event: &DragMoveEvent<CommitBoxDrag>, _, cx| {
@@ -119,6 +121,7 @@ impl SourceControlPane {
             .child(
                 Textarea::new(&self.message)
                     .small()
+                    .disabled(read_only)
                     .when_some(height, |area, height| area.h(height)),
             )
             .child(
@@ -225,12 +228,11 @@ impl SourceControlPane {
     fn repository_body(&mut self, status: GitStatus, cx: &mut Context<Self>) -> AnyElement {
         let busy = self.busy(cx);
         let read_only = self.read_only(cx);
-        let change_area = (!read_only).then(|| {
-            [
-                self.commit_box(cx).into_any_element(),
-                self.commit_row(&status, busy, cx).into_any_element(),
-            ]
-        });
+        let change_area = [
+            self.commit_box(cx).into_any_element(),
+            self.commit_row(&status, busy || read_only, cx)
+                .into_any_element(),
+        ];
         let running = self.running_line(cx);
         let result = self.result_element(cx);
         let sections = self.render_sections(&status, busy || read_only, cx);
@@ -254,7 +256,7 @@ impl SourceControlPane {
                         v_flex()
                             .p_2()
                             .gap_1()
-                            .children(change_area.into_iter().flatten())
+                            .children(change_area)
                             .children(running)
                             .children(result)
                             .children(status.more_line().map(|line| {
@@ -304,6 +306,7 @@ impl SourceControlPane {
                     .small()
                     .label("Amend")
                     .checked(self.amend)
+                    .disabled(self.read_only(cx))
                     .tooltip(AMEND_TIP)
                     .on_click(cx.listener(|pane, checked: &bool, _, cx| {
                         pane.amend = *checked;
