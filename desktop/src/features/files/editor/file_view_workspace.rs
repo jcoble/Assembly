@@ -48,8 +48,9 @@ impl FileView {
         self.tab_key()
     }
     pub(crate) fn restored_workspace_path(&self, key: &WorkspaceKey) -> Option<&str> {
-        (self.outside.is_none() && self.owning_workspace().as_ref() == Some(key)
-            || self.expected_workspace.as_ref() == Some(key))
+        (self.outside.is_none()
+            && (self.owning_workspace().as_ref() == Some(key)
+                || self.expected_workspace.as_ref() == Some(key)))
         .then_some(self.path.as_str())
     }
     pub(crate) fn workspace_path(&self, key: &WorkspaceKey) -> Result<&str, String> {
@@ -252,11 +253,7 @@ impl FileView {
                 file.source = Self::workspace_source(&workspace, cx);
                 file.expected_workspace = Some(workspace.clone());
                 file.restored_view = view;
-                let document = DocumentKey {
-                    machine: workspace.machine.clone(),
-                    checkout_root: workspace.checkout_root.clone(),
-                    path,
-                };
+                let document = workspace_document(&workspace, &path);
                 if cx
                     .try_global::<DocumentStore>()
                     .is_some_and(|docs| docs.version(&document).is_some())
@@ -269,17 +266,8 @@ impl FileView {
         }) && let Some(file) = Self::panel(id, cx)
             && let Some(document) = file.read(cx).document.clone()
         {
-            let claim = format!(
-                "document:{}",
-                serde_json::to_string(&(
-                    &document.machine,
-                    &document.checkout_root,
-                    &document.path
-                ))
-                .expect("document identity")
-            );
             CenterPanes::claim_file(
-                claim,
+                document.identity(),
                 super::key(&key.session_id, &document.path),
                 PanelId::from(file.entity_id()),
                 cx,
@@ -289,7 +277,7 @@ impl FileView {
 }
 
 /// The draft key of the session file at `path` in `key`'s checkout.
-fn workspace_document(key: &WorkspaceKey, path: &str) -> DocumentKey {
+pub(crate) fn workspace_document(key: &WorkspaceKey, path: &str) -> DocumentKey {
     DocumentKey {
         machine: key.machine.clone(),
         checkout_root: key.checkout_root.clone(),

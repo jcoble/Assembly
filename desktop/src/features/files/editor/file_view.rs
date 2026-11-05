@@ -34,6 +34,7 @@ use crate::core::state::preferences::Preferences;
 use crate::core::ui::center_panes::CenterPanes;
 pub(crate) use outside::{outside_document, saved_alias};
 pub use workspace::LegacyFileCapture;
+pub(crate) use workspace::{WorkspaceTab, workspace_document};
 
 #[cfg(test)]
 #[path = "file_view_tests.rs"]
@@ -432,14 +433,11 @@ impl FileView {
     pub(crate) fn renamed_keys(&self, source: &str, destination: &str) -> (String, String) {
         let key = self.document.as_ref().expect("matching document");
         let path = format!("{}{}", destination, &self.path[source.len()..]);
-        (
-            self::key(&self.session, &path),
-            format!(
-                "document:{}",
-                serde_json::to_string(&(&key.machine, &key.checkout_root, &path))
-                    .expect("document key")
-            ),
-        )
+        let renamed = DocumentKey {
+            path: path.clone(),
+            ..key.clone()
+        };
+        (self::key(&self.session, &path), renamed.identity())
     }
 
     pub(crate) fn renamed(
@@ -459,11 +457,7 @@ impl FileView {
         self.path = format!("{}{}", destination, &self.path[source.len()..]);
         let key = self.document.as_mut().expect("matching document");
         key.path = self.path.clone();
-        let real = format!(
-            "document:{}",
-            serde_json::to_string(&(&key.machine, &key.checkout_root, &key.path))
-                .expect("document key")
-        );
+        let real = key.identity();
         let snapshot = cx
             .global::<DocumentStore>()
             .snapshot(key)

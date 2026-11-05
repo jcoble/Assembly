@@ -1,10 +1,10 @@
 use super::{
-    Candidate, DocumentStore, Entry, FilesCodec, WorkspaceKey, document_key, parse, retained_clean,
-    select,
+    Candidate, DocumentStore, Entry, FilesCodec, SavedOutside, WorkspaceKey, parse, retained_clean,
+    select, workspace_document,
 };
 use crate::core::state::workspace_panes::PaneCodec;
 use gpui_kit::{Context, IntoElement, Render, Window, div};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::HashSet;
 fn key() -> WorkspaceKey {
     WorkspaceKey {
@@ -74,7 +74,7 @@ fn restore_budget_is_refused_during_read_only_preflight_without_mutating_live_do
     cx: &mut gpui::TestAppContext,
 ) {
     cx.update(|cx| {
-        let key=key(); let document=document_key(&key,"live.rs"); let mut docs=DocumentStore::default();
+        let key=key(); let document=workspace_document(&key,"live.rs"); let mut docs=DocumentStore::default();
         docs.open(document.clone(),"disk-revision".into(),"disk".into()).unwrap();docs.replace(&document,0,"newer live draft".into()).unwrap();cx.set_global(docs);
         let files=(0..8).map(|index|json!({"path":format!("stored-{index}.rs"),"baseRevision":"actual-base","draft":"stored draft"})).collect::<Vec<_>>();
         assert!(FilesCodec.validate(&json!({"files":files}),&key,&json!({"version":1}),cx).is_err());
@@ -192,4 +192,63 @@ fn a_missing_workspace_identity_cannot_be_captured_as_an_empty_snapshot(
                 .contains("identity")
         )
     });
+}
+
+fn outside(machine: Option<&str>, engine: &str) -> Value {
+    json!({"machine": machine, "engine": engine})
+}
+#[test]
+fn outside_files_with_one_name_in_two_folders_or_on_two_engines_stay_separate() {
+    let draft = |path: &str, outside: Value| json!({"path": path, "baseRevision": "r", "draft": path, "outside": outside});
+    let value = json!({"files": [
+        draft("/a/x.txt", outside(None, "e1")),
+        draft("/b/x.txt", outside(None, "e1")),
+        draft("/a/x.txt", outside(Some("box"), "e2")),
+    ]});
+    let parsed = parse(&value, &key()).unwrap();
+    let keys: Vec<_> = parsed
+        .drafts(&key())
+        .into_iter()
+        .map(|draft| (draft.key.machine, draft.key.checkout_root, draft.key.path))
+        .collect();
+    let owned =
+        |machine: &str, root: &str| (machine.to_string(), root.to_string(), "x.txt".to_string());
+    assert_eq!(
+        keys,
+        [owned("e1", "/a"), owned("e1", "/b"), owned("e2", "/a")]
+    );
+}
+#[test]
+fn an_outside_draft_and_a_session_draft_on_one_document_are_saved_once() {
+    let document = workspace_document(&key(), "README.md");
+    let entry = |path: &str, outside: Option<SavedOutside>| Entry {
+        path: path.into(),
+        base_revision: Some("base".into()),
+        draft: Some("draft".into()),
+        view_state: None,
+        outside,
+    };
+    let tab = Candidate {
+        entry: entry(
+            "/checkout/README.md",
+            Some(SavedOutside {
+                machine: None,
+                engine: key().machine,
+            }),
+        ),
+        identity: document.identity(),
+        active: true,
+        recent: 1,
+    };
+    let snapshot = select(
+        vec![tab],
+        vec![(entry("README.md", None), document.identity())],
+    );
+    let paths: Vec<_> = snapshot
+        .files
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect();
+    assert_eq!(paths, ["/checkout/README.md"]);
+    assert!(parse(&serde_json::to_value(&snapshot).unwrap(), &key()).is_ok());
 }

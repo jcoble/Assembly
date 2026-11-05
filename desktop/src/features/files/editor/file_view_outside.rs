@@ -79,6 +79,8 @@ impl FileView {
     /// locked.
     pub(super) fn from_saved(saved: &Value, cx: &mut App) -> (Entity<Self>, String) {
         let text = |key: &str| saved[key].as_str().unwrap_or_default().to_string();
+        // Nothing saves an outside pane into the dock's layout: `layout_to_save` prunes it with its workspace or strips
+        // it with none. This branch is for the dock's own rebuild of a pane from its dump, which keeps it locked.
         if saved["outside"] == Value::Bool(true) {
             let file = OutsideFile {
                 machine: saved["machine"].as_str().map(str::to_owned),
@@ -111,6 +113,18 @@ impl FileView {
     #[cfg(test)]
     pub(crate) fn is_locked(&self) -> bool {
         self.locked
+    }
+
+    /// The file an outside tab names, for tests that check what came back.
+    #[cfg(test)]
+    pub(crate) fn outside_file(&self) -> Option<&OutsideFile> {
+        self.outside.as_ref().map(|outside| &outside.file)
+    }
+
+    /// Says the read's refusal, for tests.
+    #[cfg(test)]
+    pub(crate) fn text_error(&self) -> Option<&str> {
+        self.text.error.as_deref()
     }
 
     /// Puts the file's read text in its editor, as drawing its tab does; says whether it's there.

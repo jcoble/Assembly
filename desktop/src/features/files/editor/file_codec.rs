@@ -2,7 +2,7 @@
 use super::document_store::{
     DocumentKey, DocumentStore, DocumentView, RestoredDraft, validate_key,
 };
-use super::file_view::{FileView, outside_document};
+use super::file_view::{FileView, WorkspaceTab, outside_document, workspace_document};
 use crate::core::intents::open_file::OutsideFile;
 use crate::core::state::workspace_panes::{PaneCodec, WorkspaceKey, WorkspacePanes};
 use crate::core::ui::center_panes::CenterPanes;
@@ -66,19 +66,17 @@ impl PaneCodec for FilesCodec {
         if views.iter().any(|view| !view.read(cx).rename_ready()) {
             return Err("Finish the current file operation before switching workspaces.".into());
         }
-        let candidates = views
-            .iter()
-            .filter_map(|view| {
-                let view = view.read(cx);
-                let tab = view.workspace_tab(key, cx)?;
+        let candidates = workspace_tabs(key, cx)
+            .into_iter()
+            .map(|tab| {
                 let mut entry = capture_entry(tab.path, Some(&tab.document), tab.view, cx);
                 entry.outside = tab.outside;
-                Some(Candidate {
+                Candidate {
                     active: tab.active,
                     recent: tab.recent,
                     identity: tab.document.identity(),
                     entry,
-                })
+                }
             })
             .collect();
         let drafts = cx
@@ -317,7 +315,7 @@ pub(super) fn legacy_entry(
 fn entry_document(key: &WorkspaceKey, entry: &Entry) -> Option<DocumentKey> {
     match &entry.outside {
         Some(outside) => outside_document(&outside.engine, &entry.path),
-        None => Some(document_key(key, &entry.path)),
+        None => Some(workspace_document(key, &entry.path)),
     }
 }
 /// The document identities the saved Files snapshot lists, which its center tabs may name.
@@ -331,13 +329,6 @@ pub(crate) fn saved_identities(snapshot: &Value, key: &WorkspaceKey) -> HashSet<
     .filter_map(|entry| entry_document(key, &entry))
     .map(|document| document.identity())
     .collect()
-}
-fn document_key(key: &WorkspaceKey, path: &str) -> DocumentKey {
-    DocumentKey {
-        machine: key.machine.clone(),
-        checkout_root: key.checkout_root.clone(),
-        path: path.into(),
-    }
 }
 fn view_state(view: DocumentView) -> ViewState {
     ViewState {
@@ -368,12 +359,30 @@ fn retained_clean<'a>(
         .map(|(path, _, _, _)| path)
         .collect()
 }
+/// The workspace's file tabs, one per document: the first tab open on a document stands for it, as `claim_file`
+/// keeps it, shown and recent when any tab on that document is. Two tabs can share one until the later is claimed,
+/// such as an outside tab whose read failed on a session file's document.
+fn workspace_tabs(key: &WorkspaceKey, cx: &App) -> Vec<WorkspaceTab> {
+    let mut tabs: Vec<WorkspaceTab> = Vec::new();
+    for tab in CenterPanes::file_views(cx)
+        .iter()
+        .filter_map(|view| view.read(cx).workspace_tab(key, cx))
+    {
+        match tabs.iter_mut().find(|kept| kept.document == tab.document) {
+            Some(kept) => {
+                kept.active |= tab.active;
+                kept.recent = kept.recent.max(tab.recent);
+            }
+            None => tabs.push(tab),
+        }
+    }
+    tabs
+}
 /// The center order uses the same retention decision without cloning genuine draft payloads a second time.
 pub(crate) fn captured_identities(key: &WorkspaceKey, cx: &App) -> HashSet<String> {
     let docs = cx.try_global::<DocumentStore>();
-    let tabs: Vec<_> = CenterPanes::file_views(cx)
-        .iter()
-        .filter_map(|view| view.read(cx).workspace_tab(key, cx))
+    let tabs: Vec<_> = workspace_tabs(key, cx)
+        .into_iter()
         .map(|tab| {
             let dirty = docs.is_some_and(|docs| docs.is_dirty(&tab.document));
             (tab.document.identity(), tab.active, tab.recent, dirty)

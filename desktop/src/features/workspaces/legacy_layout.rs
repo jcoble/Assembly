@@ -21,26 +21,28 @@ pub(super) fn prune_refs(state: &DockAreaState, refs: &[String]) -> Result<DockA
         return Err("Duplicate file references prevent layout migration.".into());
     }
     let mut seen = HashSet::new();
-    rebuild(state, &mut |state| {
-        confirmed_file(state, &confirmed, &mut seen)
-    })
+    rebuild(
+        state,
+        &mut |state| confirmed_file(state, &confirmed, &mut seen),
+        "An old File occupies a dock root; its metadata was preserved.",
+    )
 }
 /// Drops the outside File panes, which belong to no workspace when none is open, so they aren't saved.
 pub(super) fn strip_outside(state: &DockAreaState) -> Result<DockAreaState, String> {
-    rebuild(state, &mut |state| {
-        Ok(matches!(&state.info, PanelInfo::Panel(info) if info["outside"] == true))
-    })
+    rebuild(
+        state,
+        &mut |state| Ok(matches!(&state.info, PanelInfo::Panel(info) if info["outside"] == true)),
+        "An outside file fills a whole dock, so the layout wasn't saved.",
+    )
 }
 /// The layout without the File panes `drop` says to drop. `drop` sees every File pane.
 fn rebuild(
     state: &DockAreaState,
     drop: &mut dyn FnMut(&PanelState) -> Result<bool, String>,
+    at_root: &str,
 ) -> Result<DockAreaState, String> {
-    let mut panel = |state: &PanelState| {
-        prune_panel(state, drop)?.ok_or_else(|| {
-            "An old File occupies a dock root; its metadata was preserved.".to_string()
-        })
-    };
+    let mut panel =
+        |state: &PanelState| prune_panel(state, drop)?.ok_or_else(|| at_root.to_string());
     let center = panel(&state.center)?;
     let mut dock = |state: &Option<DockState>| -> Result<Option<DockState>, String> {
         state

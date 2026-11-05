@@ -1,5 +1,6 @@
 //! Pure center-tab metadata over actual File document identities and the existing E2 registered leaf codecs.
 use crate::core::state::workspace_panes::WorkspaceKey;
+use crate::features::files::document_store::DocumentKey;
 use crate::features::{
     changes::changes_pane::ChangesPane,
     source_control::{
@@ -138,10 +139,12 @@ pub(super) fn parse(
         };
         let (machine, root, path): (String, String, String) = serde_json::from_str(document)
             .map_err(|_| "Invalid saved file document identity.".to_string())?;
-        let actual = format!(
-            "document:{}",
-            serde_json::to_string(&(&machine, &root, &path)).expect("file document identity")
-        );
+        let actual = DocumentKey {
+            machine,
+            checkout_root: root,
+            path,
+        }
+        .identity();
         if &actual != tab || !files.contains(tab) {
             return Err("A saved tab refers to a file outside the sole Files snapshot or a noncanonical alias.".into());
         }

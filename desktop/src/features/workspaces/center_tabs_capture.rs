@@ -33,9 +33,14 @@ pub(super) fn capture(key: &WorkspaceKey, window: &Window, cx: &App) -> Result<T
                         .and_then(|panel| panel.view().downcast::<FileView>().ok());
                     match file {
                         Some(file) => match file.read(cx).workspace_identity(key) {
-                            Ok(Some(identity)) if retained.contains(&identity) => Some(identity),
-                            // A clean file excluded by the sole Files retention limit, or an outside file that
-                            // belongs to no workspace.
+                            // A second tab on one document waits for its claim; the first stands for it.
+                            Ok(Some(identity))
+                                if retained.contains(&identity) && !order.contains(&identity) =>
+                            {
+                                Some(identity)
+                            }
+                            // A clean file excluded by the sole Files retention limit, a second tab on one document,
+                            // or an outside file that belongs to no workspace.
                             Ok(_) => None,
                             Err(error) => {
                                 failure = Some(error);
