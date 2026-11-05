@@ -512,7 +512,10 @@ async fn a_link_to_a_machine_missing_from_the_loaded_list_fails_at_once(cx: &mut
     hold_machines(true, true, cx);
     link("s2", Some("Nowhere"), cx);
     cx.run_until_parked();
-    assert!(opens.borrow().is_empty(), "nothing to open on a machine the app doesn't have");
+    assert!(
+        opens.borrow().is_empty(),
+        "nothing to open on a machine the app doesn't have"
+    );
     assert_eq!(
         shown(cx),
         ["That session is on Nowhere, which this app isn't connected to."]

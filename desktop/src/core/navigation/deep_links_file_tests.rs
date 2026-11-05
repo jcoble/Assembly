@@ -415,7 +415,8 @@ async fn an_unanswered_file_call_ends_with_a_notice_and_the_next_link_opens(
     h.owner.lock().unwrap().hold = false;
     h.link("/work/a/two.cs", None).await;
     assert!(h.opened().is_empty(), "two still waits for one");
-    h.cx.executor().advance_clock(std::time::Duration::from_secs(31));
+    h.cx.executor()
+        .advance_clock(std::time::Duration::from_secs(31));
     h.flush("ping").await;
     let paths: Vec<_> = h.opened().into_iter().map(|open| open.path).collect();
     assert_eq!(paths, ["two.cs"]);
@@ -440,5 +441,8 @@ async fn a_link_for_a_newly_selected_session_never_waits_behind_the_old_one(
     let opened = h.opened();
     assert_eq!(opened.len(), 1, "two opens without waiting for s1's call");
     assert_eq!(opened[0].session_id, "s2");
-    assert!(h.shown().is_empty(), "s1's link ends quietly: the person moved on");
+    assert!(
+        h.shown().is_empty(),
+        "s1's link ends quietly: the person moved on"
+    );
 }
