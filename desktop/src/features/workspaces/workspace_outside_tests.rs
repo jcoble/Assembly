@@ -39,6 +39,14 @@ fn key() -> WorkspaceKey {
     }
 }
 const HOSTS: &str = r#"document:["engine-1","/etc","hosts"]"#;
+/// The document an outside /etc/hosts opens as.
+pub(super) fn hosts_document() -> DocumentKey {
+    DocumentKey {
+        machine: "engine-1".into(),
+        checkout_root: "/etc".into(),
+        path: "hosts".into(),
+    }
+}
 const README: &str = "/checkout/README.md";
 /// Whether a tab is ready to look at, which a test waits for.
 type Ready = fn(&mut FileView, &mut Window, &mut Context<FileView>) -> bool;
@@ -49,16 +57,16 @@ fn in_editor(view: &mut FileView, window: &mut Window, cx: &mut Context<FileView
 /// Every workspace snapshot saved, in order.
 type Saves = Arc<Mutex<Vec<Value>>>;
 
-struct Stage<'a> {
-    cx: &'a mut VisualTestContext,
-    coordinator: Entity<WorkspaceCoordinator>,
+pub(super) struct Stage<'a> {
+    pub(super) cx: &'a mut VisualTestContext,
+    pub(super) coordinator: Entity<WorkspaceCoordinator>,
     saves: Saves,
     dock: Entity<DockArea>,
-    _refused: Subscription,
+    pub(super) _refused: Subscription,
     _backend: FakeBackend,
 }
 
-fn stage(cx: &mut TestAppContext) -> Stage<'_> {
+pub(super) fn stage(cx: &mut TestAppContext) -> Stage<'_> {
     let saves = Saves::default();
     let saved = saves.clone();
     let backend = FakeBackend::start(move |frame| {
@@ -158,7 +166,7 @@ impl Stage<'_> {
     }
 
     /// Opens /etc/hosts as an outside file and waits until it's read and in its editor.
-    async fn open_hosts(&mut self, machine: Option<&str>) -> Entity<FileView> {
+    pub(super) async fn open_hosts(&mut self, machine: Option<&str>) -> Entity<FileView> {
         let file = OutsideFile {
             machine: machine.map(str::to_owned),
             path: "/etc/hosts".into(),

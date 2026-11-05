@@ -1,4 +1,4 @@
-use super::{DocumentStore, WorkspaceKey, run};
+use super::{DocumentStore, Drafts, WorkspaceKey, run};
 use crate::features::files::document_store::DocumentKey;
 use gpui::TestAppContext;
 use gpui_kit::{Context, IntoElement, Render, Window, div};
@@ -35,7 +35,7 @@ fn setup(cx: &mut TestAppContext) -> (WorkspaceKey, DocumentKey) {
 async fn cancelling_the_workspace_guard_preserves_the_dirty_draft(cx: &mut TestAppContext) {
     let (key, document) = setup(cx);
     let (_, cx) = cx.add_window_view(|_, _| Host);
-    let task = cx.update(|window, cx| run(key, window, cx));
+    let task = cx.update(|window, cx| run(Drafts::Checkout(key.clone()), window, cx));
     cx.run_until_parked();
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
@@ -55,7 +55,7 @@ async fn cancelling_the_workspace_guard_preserves_the_dirty_draft(cx: &mut TestA
 async fn a_newer_draft_during_confirmation_is_not_discarded(cx: &mut TestAppContext) {
     let (key, document) = setup(cx);
     let (_, cx) = cx.add_window_view(|_, _| Host);
-    let task = cx.update(|window, cx| run(key, window, cx));
+    let task = cx.update(|window, cx| run(Drafts::Checkout(key.clone()), window, cx));
     cx.run_until_parked();
     cx.update(|_, cx| {
         cx.global_mut::<DocumentStore>()

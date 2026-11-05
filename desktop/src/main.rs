@@ -104,6 +104,7 @@ fn main() {
             };
             gpui_kit::open_window(options, cx, |window, cx| {
                 theme::set(ThemeId::DEFAULT, window, cx);
+                features::workspaces::drafts_guard::guard_close(window, cx);
                 let frame = cx.new(|cx| Frame::new(read_layout, write_layout, window, cx));
                 cx.new(|cx| WindowRoot::new(frame, window, cx))
             })

@@ -1,4 +1,5 @@
 //! One revision-fenced workspace transition. The navigator supplies an already validated owning checkout key.
+use super::drafts_guard::Drafts;
 use crate::core::socket::{client::SocketClient, outcome::Outcome, update::Update};
 pub use crate::core::state::workspace_panes::WorkspaceKey;
 use crate::core::state::workspace_panes::WorkspacePanes;
@@ -273,6 +274,10 @@ impl WorkspaceCoordinator {
         if !self.active_request {
             return;
         }
+        // Outside tabs opened with no workspace close when one opens, so a draft in one is asked about first.
+        if self.current.is_none() && !Drafts::Unowned.keys(cx).is_empty() {
+            return self.guard(Drafts::Unowned, window, cx);
+        }
         if self.current.is_none() && !self.migrate_legacy(window, cx) {
             return;
         }
@@ -282,13 +287,8 @@ impl WorkspaceCoordinator {
         let Some(current) = &self.current else {
             return;
         };
-        if cx
-            .try_global::<crate::features::files::document_store::DocumentStore>()
-            .is_none_or(|docs| {
-                docs.dirty_keys(&current.key.machine, &current.key.checkout_root)
-                    .is_empty()
-            })
-        {
+        let drafts = Drafts::Checkout(current.key.clone());
+        if drafts.keys(cx).is_empty() {
             self.refuse(
                 self.status
                     .clone()
@@ -297,8 +297,12 @@ impl WorkspaceCoordinator {
             );
             return;
         }
+        self.guard(drafts, window, cx);
+    }
+    /// Asks about `drafts`, then carries on with the transition, or refuses it on Cancel.
+    fn guard(&mut self, drafts: Drafts, window: &mut Window, cx: &mut Context<Self>) {
         let generation = self.generation;
-        let guard = super::drafts_guard::run(current.key.clone(), window, cx);
+        let guard = super::drafts_guard::run(drafts, window, cx);
         let handle = window.window_handle();
         self.guarding = Some(cx.spawn(async move |view, cx| {
             let safe = guard.await;
@@ -482,3 +486,7 @@ mod layout_tests;
 #[cfg(test)]
 #[path = "workspace_outside_tests.rs"]
 mod outside_tests;
+
+#[cfg(test)]
+#[path = "workspace_outside_drafts_tests.rs"]
+mod outside_drafts_tests;
