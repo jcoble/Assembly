@@ -70,6 +70,7 @@ impl LinkTarget {
                 column: None,
                 pinned: true,
                 expected_source: expected_source.cloned(),
+                outside: None,
             })),
         }
     }

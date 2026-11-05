@@ -10,6 +10,8 @@ pub mod external_urls;
 mod external_urls_shapes_tests;
 #[cfg(test)]
 mod external_urls_tests;
-mod file_link;
+pub(crate) mod file_link;
+#[cfg(test)]
+mod file_link_resolve_tests;
 pub mod open_url_handler;
 mod waiting_session_link;

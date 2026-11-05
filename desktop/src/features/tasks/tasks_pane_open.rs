@@ -209,6 +209,7 @@ impl TasksPane {
                 column: None,
                 pinned: true,
                 expected_source,
+                outside: None,
             }),
             cx,
         );

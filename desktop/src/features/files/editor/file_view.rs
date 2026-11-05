@@ -23,7 +23,9 @@ mod saving;
 #[path = "file_view_workspace.rs"]
 mod workspace;
 use super::file_text::FileText;
+use crate::core::engine::SessionKey;
 use crate::core::intents::open_file::OpenFile;
+use crate::core::navigation::file_link;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::preferences::Preferences;
@@ -123,6 +125,21 @@ impl FileView {
         // Global, so a link is heard wherever focus is and with no window active. It's the intent's only listener.
         cx.on_action(|intent: &OpenFile, cx| {
             let intent = intent.clone();
+            // An absolute or `~` path goes to the one resolver, which opens it as a session file or an outside one.
+            if intent.outside.is_none() && file_link::names_its_own_place(&intent.path) {
+                let machine = (intent.expected_source.as_ref())
+                    .and_then(|source| source.route_machine.clone());
+                let from = (intent.expected_source.clone())
+                    .filter(|_| !intent.session_id.is_empty())
+                    .map(|source| {
+                        let key = SessionKey {
+                            machine: source.machine.clone(),
+                            id: intent.session_id.clone(),
+                        };
+                        (key, source)
+                    });
+                return file_link::open(intent.path, machine, from, cx);
+            }
             let Some(handle) = cx
                 .active_window()
                 .or_else(|| cx.windows().into_iter().next())

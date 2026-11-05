@@ -107,7 +107,8 @@ fn file_links_require_an_actual_session_context_while_external_urls_do_not() {
         line: None,
         column: None,
         pinned: true,
-        expected_source: None
+        expected_source: None,
+        outside: None,
     }));
     let url = LinkTarget::Url("https://example.com/review".into());
     assert!(url.action(None, None).unwrap().partial_eq(&OpenUrl {
@@ -137,6 +138,7 @@ fn a_file_link_keeps_its_rendered_source_even_when_the_same_session_id_has_anoth
         column: None,
         pinned: true,
         expected_source: Some(source),
+        outside: None,
     };
     assert!(action.partial_eq(&expected));
     assert!(!action.partial_eq(&OpenFile {

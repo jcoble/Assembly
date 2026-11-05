@@ -91,6 +91,7 @@ impl Harness<'_> {
                     line: None,
                     column: None,
                     pinned: true,
+                    outside: None,
                 })
             })
         });
@@ -151,4 +152,60 @@ async fn it_opens_with_focus_inside_the_window_root(cx: &mut TestAppContext) {
     h.cx.update(|window, _| assert!(inside.is_focused(window)));
     h.open_file();
     h.assert_opened();
+}
+
+// Feature 28, ruling 15: an absolute or `~` path the intent doesn't place outside goes to the one resolver, with the
+// intent's session and its source's route machine, instead of opening as a session-relative path.
+#[gpui::test]
+async fn an_absolute_or_tilde_path_goes_to_the_resolver_instead_of_opening(
+    cx: &mut TestAppContext,
+) {
+    use crate::core::navigation::deep_links::notices;
+    use crate::core::socket::row_source::ExpectedRowSource;
+    use crate::core::state::machines::Machines;
+    let h = harness(cx);
+    h.cx.update(|_, cx| {
+        Machines::start_holding(
+            vec![(
+                "Box".into(),
+                serde_json::json!({"name": "Box", "kind": "remote", "reachable": true, "checked": true}),
+            )],
+            cx,
+        )
+    });
+    let send = |path: &str, route: Option<&str>| OpenFile {
+        session_id: "s1".into(),
+        path: path.into(),
+        expected_source: Some(ExpectedRowSource {
+            machine: "owner".into(),
+            generation: 0,
+            route_machine: route.map(String::from),
+        }),
+        line: None,
+        column: None,
+        pinned: true,
+        outside: None,
+    };
+    for intent in [
+        send("/etc/hosts", None),
+        send("~/notes.txt", Some("Nowhere")),
+    ] {
+        h.cx.update(|_, cx| cx.defer(move |cx| cx.dispatch_action(&intent)));
+        h.cx.run_until_parked();
+    }
+    let shown = h.cx.update(|_, cx| notices(cx));
+    assert_eq!(
+        shown,
+        [
+            "That file didn't open: The backend isn't running.",
+            "That file is on Nowhere, which this app isn't connected to.",
+        ]
+    );
+    let tabs = h.cx.update(|_, cx| {
+        [key("s1", "/etc/hosts"), key("s1", "~/notes.txt")]
+            .iter()
+            .filter(|tab| CenterPanes::find::<FileView>(tab, cx).is_some())
+            .count()
+    });
+    assert_eq!(tabs, 0, "neither opened as a session file");
 }
