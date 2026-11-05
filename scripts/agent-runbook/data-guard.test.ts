@@ -149,6 +149,29 @@ test('denies_rsync_that_runs_a_program_or_leaves_the_machine', () => {
     `rsync -a ${D}/ box:/tmp/copy/`, `rsync -a ${D}/ user@box:copy`, `rsync -a ${D}/ rsync://box/module/`, `rsync -a ${D}/ box::module`);
   allowed(`rsync -a ${D}/ ${out}/copy/`, `rsync -a /tmp/a box:/tmp/b`);
 });
+test('allows_reads_over_ssh', () => {
+  allowed(`ssh box 'ls -la ${D}'`, `ssh -o BatchMode=yes -o ConnectTimeout=10 box "cat ${D}/x"`, `ssh box 'du -sh /home/someone/assembly-dotnet'`,
+    `ssh box 'cat ${D}/x' > ${out}/x`, `ssh box 'cp ${D}/x /tmp/copy'`, `ssh box 'cd ${D} && ls'`, `ssh box ls ${D}`);
+});
+test('denies_writes_over_ssh_in_each_spelling_of_the_remote_home', () => {
+  for (const path of [D, '$HOME/assembly-dotnet', '/home/blackcolours/assembly-dotnet', '/root/assembly-dotnet', '/Users/someone/assembly-dotnet', '/home/someone/Assembly-Dotnet'])
+    denied(`ssh box 'rm -rf ${path}/x'`, `ssh box 'echo hi > ${path}/x'`, `ssh box 'cd ${path} && rm x'`, `ssh box 'cp /tmp/a ${path}/x'`, `ssh box rm ${path}/x`);
+});
+test('denies_ssh_it_cannot_read_fully', () => {
+  denied(`ssh box 'rm -rf ~/assembly*'`, `ssh box 'cd /home && rm -rf blackcolours/assembly-dotnet'`, `ssh box 'cd /home/u && cd assembly-dotnet && rm x'`);
+  allowed(`ssh box 'ls ~/assembly*'`, `ssh box 'rm -rf /home/u/assembly-dotnet-verify/x'`, `ssh box 'uptime'`);
+  denied(`ssh box ${D}`, `ssh "$HOST" 'cat ${D}/x'`, `ssh box "cat $(pwd)/assembly-dotnet/x"`, `ssh box 'bash -c "rm ${D}/x"'`,
+    `ssh -o ProxyCommand=/tmp/x box 'cat ${D}/x'`, `ssh -F /tmp/config box 'cat ${D}/x'`, `ssh -J jump box 'cat ${D}/x'`, `ssh box 'cat ${D}/x' > ${D}/y`, `ssh box 'cat ${D}/x' > $OUT`);
+});
+test('allows_any_command_inside_a_verifier_container', () => {
+  allowed(`docker exec verify-pr-12 rm -rf ${D}/x`, `docker exec -i -u verify -e A=1 -w /work verify-spike-run2 bash -c "mkdir -p ${D}/ui-check"`,
+    `ssh box 'docker exec verify-pr-12 rm ${D}/x'`, `ssh box 'docker exec verify-spike-run2 bash -c "mkdir -p \\$HOME/assembly-dotnet/ui-check; echo \\$(date)"'`);
+});
+test('denies_other_containers_and_host_side_effects_of_docker', () => {
+  denied(`docker exec assembly-test rm ${D}/x`, `docker exec hosted-edi cat ${D}/x`, `ssh box 'docker exec assembly-test rm ${D}/x'`, `docker exec "$NAME" rm ${D}/x`, `docker exec verify-$N rm ${D}/x`,
+    `docker run --name verify-x -v ${D}:/d debian rm /d/x`, `docker cp ${out}/a verify-pr-1:${D}`, `docker exec --env-file ${D}/x verify-pr-1 ls`, `docker exec verify-pr-1 ls > ${D}/x`,
+    `docker exec verify-pr-1 ls; rm ${D}/x`, `docker exec verify-pr-1 ls | tee ${D}/x`, `docker exec verify-pr-1 bash -c "$(cat ${D}/x)"`);
+});
 
 const flow = (t: any) => {
   const f = fixture(t);

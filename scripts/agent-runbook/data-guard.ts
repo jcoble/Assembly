@@ -10,7 +10,8 @@ const deny = () => ({ deny: DATA_DENY });
 type Word = { text: string; dynamic: boolean };
 type Redirect = { op: string; target?: Word; dup?: boolean };
 type Simple = { words: Word[]; redirects: Redirect[]; piped: boolean; stdin: string };
-type State = { dir: string; unknown: boolean; strict: boolean };
+// remote: running over ssh, where the home folder isn't known, so the folder is matched by name.
+type State = { dir: string; unknown: boolean; strict: boolean; remote: boolean };
 
 export function namesProtectedFolder(command: string) {
   return command.replace(/['"\\]/g, '').toLowerCase().includes(NAME);
@@ -182,8 +183,10 @@ function globReaches(text: string, start: string, strict: boolean) {
     return kind === 'inside' || (kind === 'ancestor' && globbed);
   });
 }
+const REMOTE_FOLDER = new RegExp('(?:^|[/:=])' + NAME + '(?=$|/)', 'i');
 // Does this word name a path inside the protected folder (or one a glob could reach)?
 function refers(word: Word, state: State) {
+  if (state.remote && REMOTE_FOLDER.test(word.text)) return true;
   const candidates = [word.text];
   const host = /^[A-Za-z0-9_.@-]+:(.+)$/.exec(word.text);
   if (host) candidates.push(host[1]);
@@ -208,6 +211,35 @@ const WRAPPERS = new Set(['command', 'builtin', 'env', 'nohup', 'time', 'exec', 
 const BLOCKED = /^(eval|xargs|source|\.|parallel|ba?sh|z?sh|dash|ksh|fish|c?sh|tcsh|python[\d.]*|node(js)?|perl|ruby|php|deno|bun|osascript)$/;
 const READ_ONLY = /^(ls|cat|head|tail|stat|du|file|wc|grep|rg|shasum|sha256sum|md5|md5sum)$/;
 const DECLARE = /^(export|declare|typeset|local|readonly)$/;
+const SSH_OPTION = /^(BatchMode|ConnectTimeout|StrictHostKeyChecking|ServerAlive\w+|LogLevel)=/i;
+// Throwaway verifier containers never mount the host's folder, so a path inside one is the container's own.
+const VERIFIER_CONTAINER = /^verify-[a-z0-9][a-z0-9-]*$/;
+
+// The command an ssh call runs remotely, or undefined when its options or words can't be read fully.
+function sshCommand(args: Word[]) {
+  let i = 0;
+  for (; i < args.length && args[i].text.startsWith('-'); i++) {
+    const text = args[i].text;
+    if (/^-[46nqTtv]+$/.test(text)) continue;
+    if (text === '-p' || text === '-l') { i++; continue; }
+    if (text === '-o' && SSH_OPTION.test(args[i + 1]?.text || '')) { i++; continue; }
+    if (text.startsWith('-o') && SSH_OPTION.test(text.slice(2))) continue;
+    return undefined;
+  }
+  const [host, ...command] = args.slice(i);
+  if (!host || host.dynamic || !command.length || command.some(word => word.dynamic)) return undefined;
+  return command.map(word => word.text).join(' ');
+}
+function execsInVerifierContainer(args: Word[], state: State) {
+  if (args[0]?.text !== 'exec') return false;
+  for (let i = 1; i < args.length; i++) {
+    const word = args[i];
+    if (!word.text.startsWith('-')) return !word.dynamic && VERIFIER_CONTAINER.test(word.text);
+    if (mentions(word, state)) return false;
+    if (/^(-[a-z]*[euw]|--env|--env-file|--user|--workdir|--detach-keys)$/.test(word.text) && args[i + 1] && mentions(args[++i], state)) return false;
+  }
+  return false;
+}
 
 function lead(cmd: Simple) {
   const assigns: Word[] = [];
@@ -382,11 +414,11 @@ export function checkDataCommand(command: string, cwd: string): { deny?: string 
   const probe = evaluate(globbed, cwd, false);
   return probe.result.deny || !probe.touched ? probe.result : evaluate(globbed, cwd, true).result;
 }
-function evaluate(command: string, cwd: string, strict: boolean): { result: { deny?: string }; touched: boolean } {
+function evaluate(command: string, cwd: string, strict: boolean, remote = false): { result: { deny?: string }; touched: boolean } {
   const blocked = { result: deny(), touched: true };
   const parsed = parse(command);
   if (strict && (parsed.malformed || parsed.substitution)) return blocked;
-  const state: State = { dir: cwd || process.cwd(), unknown: false, strict };
+  const state: State = { dir: cwd || process.cwd(), unknown: false, strict, remote };
   const leads = parsed.commands.map(lead);
   if (strict) for (const { rest } of leads) {
     if (rest.length && BLOCKED.test(basename(rest[0].text))) return blocked;
@@ -404,7 +436,8 @@ function evaluate(command: string, cwd: string, strict: boolean): { result: { de
       // A subshell's cd ends with the subshell, and a failed cd stays put, so neither proves the directory moved.
       if (strict && (parsed.subshell || insideFolder(state.dir))) { state.unknown = true; continue; }
       const target = args.find(a => !['-L', '-P', '-e', '-@', '--'].includes(a.text));
-      if (!target) { state.dir = homedir(); state.unknown = false; }
+      if (remote && target && REMOTE_FOLDER.test(target.text)) state.unknown = true;
+      else if (!target) { state.dir = homedir(); state.unknown = false; }
       else if (target.dynamic || target.text === '-') state.unknown = true;
       else if (isAbsolute(target.text)) { state.dir = target.text; state.unknown = false; }
       else if (!state.unknown) state.dir = resolve(state.dir, target.text);
@@ -412,6 +445,19 @@ function evaluate(command: string, cwd: string, strict: boolean): { result: { de
     }
     if (first.text === 'popd') { state.unknown = true; continue; }
     if (DECLARE.test(first.text) && args.some(a => ASSIGN.test(a.text) && namesProtectedFolder(a.text))) return blocked;
+    if (name === 'ssh') {
+      const remoteCommand = sshCommand(args);
+      if (remoteCommand !== undefined) {
+        const inner = evaluate(remoteCommand, homedir(), strict, true);
+        if (inner.result.deny) return blocked;
+        if (inner.touched) { touched = true; if (writes.some(r => r.target!.dynamic)) return blocked; }
+        continue;
+      }
+    }
+    if (name === 'docker' && execsInVerifierContainer(args, state)) {
+      if (writes.some(r => r.target!.dynamic)) return blocked;
+      continue;
+    }
     const redirectTargets = cmd.redirects.filter(r => r.target && !r.dup && !['<<', '<<-', '<<<'].includes(r.op)).map(r => r.target!);
     const touches = (strict && state.unknown) || insideFolder(state.dir) || rest.some(w => mentions(w, state)) || redirectTargets.some(w => mentions(w, state));
     if (!touches) continue;
