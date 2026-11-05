@@ -82,7 +82,6 @@ pub enum Output {
 }
 
 /// Whether a call failed because the connection is down: it comes back by itself.
-#[allow(dead_code)] // The pane classifies with it from Task 3.
 pub fn connection_down(failure: &CallFailure) -> bool {
     matches!(
         failure.code,
@@ -91,7 +90,6 @@ pub fn connection_down(failure: &CallFailure) -> bool {
 }
 
 /// Whether a call failed because the terminal's source changed.
-#[allow(dead_code)] // The pane classifies with it from Task 3.
 pub fn source_changed(failure: &CallFailure) -> bool {
     matches!(&failure.code, ErrorCode::Refused { code } if code == "source_changed")
 }
@@ -219,14 +217,18 @@ impl TerminalLink {
         async move { settle(write?.await).map(|_| ()) }
     }
 
-    // The socket client owns completion; dropping these replies must not cancel forwarded operations.
-    pub fn resize(&self, (cols, rows): (usize, usize), cx: &App) {
+    /// The program's new size. Dropping the answer cancels the resize, so the pane holds it.
+    pub fn resize(
+        &self,
+        (cols, rows): (usize, usize),
+        cx: &App,
+    ) -> impl Future<Output = Result<(), CallFailure>> + use<> {
         let args = json!({ "terminal": self.id, "cols": cols, "rows": rows });
-        if let Ok(resize) = start::<Value>(cx, "resize", args) {
-            resize.ignore_reply();
-        }
+        let resize = start::<Value>(cx, "resize", args);
+        async move { settle(resize?.await).map(|_| ()) }
     }
 
+    // The socket client owns completion; dropping this reply must not cancel the forwarded close.
     pub fn close(&self, cx: &App) {
         if let Ok(close) = start::<Value>(cx, "close", json!({ "terminal": self.id })) {
             close.ignore_reply();
@@ -234,9 +236,9 @@ impl TerminalLink {
     }
 }
 
-/// A call on the terminal socket. One made while that socket is down would fail as plain `failed`
-/// (client_thread.rs), so it fails here as the connection being down. While `Connecting` the thread is opening the
-/// socket and answers the call after that, so it goes through.
+/// A call on the terminal socket. One made while that socket isn't connected would fail as plain `failed` if the open
+/// under way fails (client_thread.rs), so it fails here as the connection being down, and the pane opens again on the
+/// socket's push.
 fn start<T: DeserializeOwned>(
     cx: &App,
     method: &str,
@@ -244,10 +246,7 @@ fn start<T: DeserializeOwned>(
 ) -> Result<PendingCall<T>, CallFailure> {
     let client = SocketClient::try_terminal(cx).ok_or_else(no_answer)?;
     let client = client.read(cx);
-    if matches!(
-        client.state(),
-        ConnectionState::Disconnected | ConnectionState::Refused { .. }
-    ) {
+    if !matches!(client.state(), ConnectionState::Connected { .. }) {
         return Err(CallFailure {
             code: ErrorCode::ConnectionLost,
             message: "the backend isn't connected".into(),

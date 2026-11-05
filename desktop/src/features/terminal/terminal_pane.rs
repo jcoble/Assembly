@@ -7,24 +7,27 @@
 //! where it got to (terminal#5). Hiding the tab or picking another session lets go of the view and closes nothing on
 //! the backend; the tab leaving the dock closes the shell (g0-host#9). What's typed goes out one write at a time,
 //! what's typed meanwhile in the next, in order (terminal#2). The backend routes remote sessions to their machine (terminal#12).
+//! What it does as the connection and the shell change, and what it says about them, is in terminal_pane_state.rs.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::mem;
 use std::time::Duration;
 
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
-use gpui_kit::component::{ActiveTheme as _, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::terminal_draw::draw;
 use super::terminal_grid::{HoveredLink, TerminalGrid};
 use super::terminal_keys::{key_bytes, pasted};
-use super::terminal_link::{Output, TerminalLink};
+use super::terminal_link::TerminalLink;
 use super::terminal_palette::palette;
 use crate::core::socket::update::Update;
 use crate::core::state::appearance::Appearance;
 use crate::core::state::preferences::Preferences;
 use crate::core::state::selected_session::SelectedSession;
+use crate::core::ui::spinner::Spinner;
 
 /// The layout's name for the tab (default_layout.rs).
 const TERMINAL: &str = "Terminal";
@@ -47,13 +50,11 @@ pub enum Shown {
     Open,
     /// The program ended with this code; its output stays (terminal#7).
     Exited(i32),
-    /// Why there's no terminal: the backend refused.
+    /// Why the terminal stopped, or why there's none: the backend's reason, in the error color.
     Said(String),
-    /// The connection is down. Stub until Task 3.
-    #[allow(dead_code)]
+    /// The connection is down; it comes back by itself, and any output stays.
     Reconnecting,
-    /// The shell isn't there any more. Stub until Task 3.
-    #[allow(dead_code)]
+    /// The shell isn't there any more; its output stays.
     Gone,
 }
 
@@ -94,6 +95,18 @@ pub struct TerminalPane {
     _follow: Option<Task<()>>,
     _replay: Option<Task<()>>,
     _write: Option<Task<()>>,
+    /// The resize on its way, one at a time; dropping it cancels the call.
+    _resize: Option<Task<()>>,
+    /// The size to send when that one is answered.
+    resize_wanted: Option<(usize, usize)>,
+    /// The connection came back: the next draw's size goes to the program.
+    size_unsent: bool,
+    /// While the open waits for the connection: the machines list and the socket, which can each say to try again.
+    reopen: Vec<Subscription>,
+    /// While no push can come: the wait before the next try to open.
+    _retry: Option<Task<()>>,
+    /// The tries to open on that timer so far, for its back-off.
+    retries: usize,
     /// Blinks the cursor while the pane has the focus; dropping it stops the timer.
     _blink: Option<Task<()>>,
     /// Scrolls during a drag near the edge. Stub until Task 6.
@@ -155,6 +168,12 @@ impl TerminalPane {
             _follow: None,
             _replay: None,
             _write: None,
+            _resize: None,
+            resize_wanted: None,
+            size_unsent: false,
+            reopen: Vec::new(),
+            _retry: None,
+            retries: 0,
             _blink: None,
             _autoscroll: None,
             scrollbar_opacity: 0.,
@@ -182,6 +201,9 @@ impl TerminalPane {
         }
         (self._follow, self._replay, self._write) = (None, None, None);
         (self.link, self.held, self.writing) = (None, None, false);
+        (self._resize, self.resize_wanted, self.size_unsent) = (None, None, false);
+        (self._retry, self.retries) = (None, 0);
+        self.reopen.clear();
         self.typed.clear();
         self.grid = TerminalGrid::new(self.size.0, self.size.1);
         self.session = wanted.clone();
@@ -205,30 +227,21 @@ impl TerminalPane {
         let size = self.size;
         self._follow = Some(cx.spawn(async move |pane, cx| {
             let opened = TerminalLink::open(&session, size, cx).await;
-            let subscription = pane.update(cx, |pane, cx| match opened {
-                Ok((link, started, before)) => {
+            let subscription = pane.update(cx, |pane, cx| {
+                let followed = opened.and_then(|(link, started, before)| {
                     pane.grid.feed(&before);
-                    let subscription = match link.follow(cx) {
-                        Ok(subscription) => subscription,
-                        Err(failure) => {
-                            pane.shown = Shown::Said(failure.message);
-                            cx.notify();
-                            return None;
-                        }
-                    };
+                    let subscription = link.follow(cx)?;
+                    pane.link = Some(link);
                     // A reused shell may have another size, and the pane may have measured itself meanwhile.
                     if started != pane.size {
-                        link.resize(pane.size, cx);
+                        pane.send_size(cx);
                     }
-                    pane.link = Some(link);
                     // The subscription state starts catch-up, so its arrival cannot cause a second initial read.
-                    Some(subscription)
-                }
-                Err(failure) => {
-                    pane.shown = Shown::Said(failure.message);
-                    cx.notify();
-                    None
-                }
+                    Ok(subscription)
+                });
+                followed
+                    .map_err(|failure| pane.call_failed(failure, cx))
+                    .ok()
             });
             let Ok(Some(mut subscription)) = subscription else {
                 return;
@@ -241,71 +254,6 @@ impl TerminalPane {
         }));
     }
 
-    /// Reads the kept output from where the grid got to, then hands on the rows held meanwhile.
-    fn catch_up(&mut self, cx: &mut Context<Self>) {
-        let Some(mut link) = self.link.clone() else {
-            return;
-        };
-        self.held = Some(Vec::new());
-        self._replay = Some(cx.spawn(async move |pane, cx| {
-            let kept = link.replay(cx).await;
-            pane.update(cx, |pane, cx| {
-                match kept {
-                    Ok(bytes) => {
-                        pane.grid.feed(&bytes);
-                        pane.link = Some(link);
-                    }
-                    Err(failure) => {
-                        eprintln!("terminal: its output didn't read: {}", failure.message)
-                    }
-                }
-                for update in pane.held.take().unwrap_or_default() {
-                    pane.output(update, cx);
-                }
-                cx.notify();
-            })
-            .ok();
-        }));
-    }
-
-    /// One update from the shell's rows: its bytes to the grid, or its exit. A state is a new subscription after a
-    /// reconnect, so output may have come meanwhile: the kept output is read again. A row past a gap waits for that
-    /// read and is handed on after it.
-    fn output(&mut self, update: Update, cx: &mut Context<Self>) {
-        if let Some(held) = &mut self.held {
-            // The read on its way covers what a state stands for.
-            if !matches!(update, Update::State(_)) {
-                held.push(update);
-            }
-            return;
-        }
-        let Some(link) = &mut self.link else {
-            return;
-        };
-        if matches!(update, Update::State(_)) {
-            if self.shown == Shown::Opening {
-                self.shown = Shown::Open;
-                self.focus_wanted = true;
-            }
-            self.catch_up(cx);
-            return;
-        }
-        match link.step(&update) {
-            Ok(output) => {
-                match output {
-                    Some(Output::Bytes(bytes)) => self.grid.feed(&bytes),
-                    Some(Output::Exit(code)) => self.shown = Shown::Exited(code),
-                    Some(Output::Unavailable(_) | Output::Caught) | None => {}
-                }
-                cx.notify();
-            }
-            Err(()) => {
-                self.catch_up(cx);
-                self.held.get_or_insert_default().push(update);
-            }
-        }
-    }
-
     /// The room the pane has changed: the grid and the program take the new size (terminal#4).
     pub fn resized(&mut self, (cols, rows): (usize, usize), cx: &mut Context<Self>) {
         let size = (cols.clamp(COLS.0, COLS.1), rows.clamp(ROWS.0, ROWS.1));
@@ -316,15 +264,15 @@ impl TerminalPane {
             self.open(cx);
             return;
         }
-        if size == self.size {
-            return;
+        if size != self.size {
+            self.size = size;
+            self.grid.resize(size.0, size.1);
+            self.size_unsent = true;
+            cx.notify();
         }
-        self.size = size;
-        self.grid.resize(size.0, size.1);
-        if let Some(link) = &self.link {
-            link.resize(size, cx);
+        if mem::take(&mut self.size_unsent) {
+            self.send_size(cx);
         }
-        cx.notify();
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -341,7 +289,7 @@ impl TerminalPane {
             }
             return;
         }
-        if self.shown != Shown::Open {
+        if !self.typing() {
             return;
         }
         let bytes = match shortcut("v") {
@@ -408,12 +356,7 @@ impl TerminalPane {
             pane.update(cx, |pane, cx| {
                 pane.writing = false;
                 if let Err(failure) = written {
-                    // As the old app: the keys went nowhere, so the terminal stops and says why.
-                    let why = failure.message;
-                    pane.shown = Shown::Said(format!("The terminal didn't take the keys: {why}"));
-                    (pane._follow, pane._replay) = (None, None);
-                    pane.typed.clear();
-                    cx.notify();
+                    pane.write_failed(failure, cx);
                     return;
                 }
                 pane.write(cx);
@@ -432,31 +375,9 @@ impl TerminalPane {
         self.held.is_some()
     }
 
-    /// Whether the note uses the error color. Stub until Task 3.
-    #[allow(dead_code)]
-    fn error_note(&self) -> bool {
-        false
-    }
-
-    /// Whether typing and Paste are on. Stub until Task 6.
-    #[allow(dead_code)]
-    fn typing(&self) -> bool {
-        false
-    }
-
     /// Sends the clipboard's text to the shell. Stub until Task 6.
     #[allow(dead_code)]
     fn paste(&mut self, _cx: &mut Context<Self>) {}
-
-    /// The line under the grid, or in its place.
-    fn status(&self) -> Option<String> {
-        match &self.shown {
-            Shown::Opening => Some("Opening terminal…".into()),
-            Shown::Exited(code) => Some(format!("exited with {code}")),
-            Shown::Said(why) => Some(why.clone()),
-            _ => None,
-        }
-    }
 }
 
 impl EventEmitter<PanelEvent> for TerminalPane {}
@@ -506,6 +427,12 @@ impl Render for TerminalPane {
             window.defer(cx, move |window, cx| window.focus(&focus, cx));
         }
         let muted = cx.theme().muted_foreground;
+        let opening = self.shown == Shown::Opening;
+        let color = if self.error_note() {
+            cx.theme().danger
+        } else {
+            muted
+        };
         let pane = v_flex()
             .id("terminal-pane")
             .track_focus(&self.focus)
@@ -520,11 +447,23 @@ impl Render for TerminalPane {
             .on_scroll(cx.listener(Self::wheel))
             .size_full()
             .text_role(TextRole::Body, cx);
-        let note = |text: SharedString| div().p_2().text_color(muted).child(text);
-        match &self.shown {
-            Shown::Nothing => pane.child(note("Pick a session to open its terminal.".into())),
-            Shown::Said(why) => pane.child(note(why.clone().into())),
-            _ => {
+        let note = |text: SharedString| {
+            h_flex()
+                .gap_1()
+                .p_2()
+                .text_color(color)
+                .when(opening, |note| {
+                    note.child(Spinner::new().xsmall().color(muted))
+                })
+                .child(text)
+        };
+        match (&self.shown, self.status()) {
+            (Shown::Nothing, _) => pane.child(note("Pick a session to open its terminal.".into())),
+            // Stopped with no shell: the note fills the pane.
+            (Shown::Said(_) | Shown::Gone, Some(status)) if self.link.is_none() => {
+                pane.child(note(status.into()))
+            }
+            (_, status) => {
                 let this = cx.entity().downgrade();
                 let fitted = move |(size, origin, cell), cx: &mut App| {
                     this.update(cx, |pane, cx| {
@@ -545,11 +484,11 @@ impl Render for TerminalPane {
                     window,
                     cx,
                 );
-                // While opening, the note lies over the grid, so the grid measures the room the shell will have.
-                let opening = self.shown == Shown::Opening;
+                // Until there's a shell, the note lies over the grid, so the grid measures the room the shell will have.
+                let over = opening || self.link.is_none();
                 let grid = div().relative().flex_1().min_h_0().p_1().child(grid);
-                match self.status() {
-                    Some(status) if opening => {
+                match status {
+                    Some(status) if over => {
                         pane.child(grid.child(note(status.into()).absolute().top_0().left_0()))
                     }
                     Some(status) => pane.child(grid).child(note(status.into())),
@@ -562,6 +501,9 @@ impl Render for TerminalPane {
 
 #[path = "terminal_pane_mouse.rs"]
 mod mouse;
+
+#[path = "terminal_pane_state.rs"]
+mod state;
 
 #[path = "terminal_pane_ime.rs"]
 mod ime;
