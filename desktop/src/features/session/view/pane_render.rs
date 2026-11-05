@@ -241,8 +241,7 @@ impl Render for SessionPane {
             return div().size_full().child(draft).into_any_element();
         }
         if self.reveal.is_some() && !self.frame_asked {
-            self.frame_asked = true;
-            cx.on_next_frame(window, |pane, window, cx| pane.reveal_frame(window, cx));
+            self.ask_reveal_tick(window, cx);
         }
         if !self.growing.is_empty() && !self.grow_asked {
             self.grow_asked = true;

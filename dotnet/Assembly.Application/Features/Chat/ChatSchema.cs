@@ -284,7 +284,7 @@ internal static class Schema
             OR ($anchor IS NOT NULL AND NOT EXISTS (SELECT 1 FROM candidates))
           ORDER BY n LIMIT $limit),
         engine_sessions AS (
-          SELECT e.id, e.machine, 0 AS generation, e.parent_id, e.model, r.worktree, e.activity_state
+          SELECT e.id, e.machine, 0 AS generation, e.parent_id, e.model, r.worktree, e.activity_state, e.state
           FROM engine_session e JOIN local_source local ON local.machine_id=e.machine
           JOIN page p ON p.kind='session' AND p.session_id=e.id AND p.source_machine=e.machine AND p.source_generation=0
           LEFT JOIN engine_run r ON r.id=e.run_id AND r.machine=e.machine
@@ -294,7 +294,8 @@ internal static class Schema
             CASE WHEN json_type(e.row_json,'$.parentId')='text' THEN json_extract(e.row_json,'$.parentId') END,
             CASE WHEN json_type(e.row_json,'$.model')='text' THEN json_extract(e.row_json,'$.model') END,
             CASE WHEN json_type(r.row_json,'$.worktree')='text' THEN json_extract(r.row_json,'$.worktree') END,
-            CASE WHEN json_type(e.row_json,'$.activityState')='text' THEN json_extract(e.row_json,'$.activityState') END
+            CASE WHEN json_type(e.row_json,'$.activityState')='text' THEN json_extract(e.row_json,'$.activityState') END,
+            CASE WHEN json_type(e.row_json,'$.state')='text' THEN json_extract(e.row_json,'$.state') END
           FROM engine_mirror_row e JOIN page p ON p.kind='session' AND p.session_id=e.entity_id
             AND p.source_machine=e.machine AND p.source_generation=e.generation
           JOIN engine_mirror m ON m.machine=e.machine AND m.generation=e.generation AND m.state='live'
@@ -328,7 +329,7 @@ internal static class Schema
         FROM (SELECT DISTINCT agent FROM rail_roster)
         UNION ALL
         SELECT 2, p.n, p.session_id, p.kind, p.section, p.agent, p.repo_url, p.group_label, p.count, p.machines, CAST(p.title AS BLOB),
-          p.machine, p.updated_at, p.completed_at, (e.activity_state IS 'running' OR p.turn IS 'started' OR p.busy), p.turn IS 'failed',
+          p.machine, p.updated_at, p.completed_at, (e.state IS NOT 'lost' AND e.state IS NOT 'ended' AND (e.activity_state IS 'running' OR p.turn IS 'started' OR p.busy)), p.turn IS 'failed',
           COALESCE((SELECT e.seq FROM rows e INDEXED BY rows_summary WHERE p.kind = 'session' AND e.session_id = p.facade_id
                     AND {SummaryKinds} AND e.kind = 'turn' AND json_extract(e.payload, '$.state') IN ('finished', 'failed', 'cancelled')
                     ORDER BY e.item_id DESC, e.seq DESC LIMIT 1), 0) > p.read_seq,
