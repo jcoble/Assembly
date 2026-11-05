@@ -230,7 +230,7 @@ fn registered_window(
         gpui_kit::init(cx);
         PaletteView::init(cx);
         PrPane::register(cx);
-        crate::core::intents::open_url::register(cx);
+        crate::core::navigation::open_url_handler::register(cx);
     });
     let dock = std::rc::Rc::new(std::cell::OnceCell::new());
     let holder = dock.clone();

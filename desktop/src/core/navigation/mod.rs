@@ -11,4 +11,5 @@ mod external_urls_shapes_tests;
 #[cfg(test)]
 mod external_urls_tests;
 mod file_link;
+pub mod open_url_handler;
 mod waiting_session_link;

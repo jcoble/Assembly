@@ -4,7 +4,8 @@ use gpui::TestAppContext;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{AppContext as _, EmptyView, VisualTestContext};
 
-use super::{OpenUrl, register};
+use super::register;
+use crate::core::intents::open_url::OpenUrl;
 use crate::core::state::selected_session::SelectedSession;
 
 fn window(cx: &mut TestAppContext) -> &mut VisualTestContext {

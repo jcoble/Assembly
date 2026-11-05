@@ -12,7 +12,7 @@ use super::external_urls::{ExternalRoute, ExternalUrls};
 fn window(cx: &mut TestAppContext) -> &mut VisualTestContext {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        crate::core::intents::open_url::register(cx);
+        crate::core::navigation::open_url_handler::register(cx);
     });
     let (_, cx) = cx.add_window_view(|window, cx| {
         let content = cx.new(|_| EmptyView);
