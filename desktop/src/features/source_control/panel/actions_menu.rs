@@ -5,9 +5,9 @@ use super::git_status::GitStatus;
 
 pub const STILL_RUNNING: &str = "Wait for the current source-control action to finish.";
 pub const UNCONFIRMED: &str = "Refresh the last action's outcome before starting another.";
-/// Why nothing can be changed while the panel is on another checkout.
+/// Why nothing can be changed while another session works in the folder shown.
 pub const READ_ONLY_SCOPE: &str =
-    "This folder is open for reading only — switch back to the session folder to change it.";
+    "Another session is working in this folder, so it is read-only here.";
 const NO_REPOSITORY: &str = "This panel is not pointed at a repository folder yet.";
 const NO_UPSTREAM: &str = "This branch has no upstream branch, so there is no matching remote branch to pull from or push to.";
 const READING_REMOTES: &str = "Reading this repository’s remotes…";

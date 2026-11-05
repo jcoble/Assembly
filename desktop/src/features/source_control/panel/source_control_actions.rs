@@ -245,7 +245,7 @@ impl SourceControlPane {
                             expected_source: target.source,
                             session_id: target.session,
                             path: None,
-                            checkout: self.selection(cx),
+                            checkout: None,
                         }),
                         cx,
                     );

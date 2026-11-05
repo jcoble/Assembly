@@ -13,5 +13,6 @@ pub mod session_page;
 pub mod session_read;
 pub mod sessions;
 pub mod sessions_settings;
+pub mod viewed_project;
 
 pub mod workspace_panes;

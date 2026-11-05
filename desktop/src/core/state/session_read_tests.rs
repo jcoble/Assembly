@@ -9,7 +9,6 @@ use gpui_kit::{AppContext as _, Entity};
 use serde_json::{Value, json};
 
 use super::{SessionRead, Shown};
-use crate::core::socket::checkout_selector::CheckoutSelector;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
@@ -358,31 +357,4 @@ async fn a_running_selected_turn_ending_refreshes_once_only_while_shown(cx: &mut
         open.seen.lock().unwrap().sessions(),
         vec!["s1", "s1", "s1", "s2"]
     );
-}
-// What was picked belongs to the session it was picked on.
-#[gpui::test]
-async fn another_checkout_is_read_until_the_session_changes(cx: &mut TestAppContext) {
-    let mut open = open(cx);
-    open.select(Some("s1"));
-    open.show(true);
-    open.until("s1 read", |seen, shown| {
-        seen.reads.len() == 1 && matches!(shown, Shown::Read(_))
-    })
-    .await;
-    let linked = CheckoutSelector {
-        path: "/linked".into(),
-        expected_root: "/own".into(),
-    };
-    open.read
-        .update(open.cx, |read, cx| read.set_checkout(Some(linked), cx));
-    open.until("the other checkout read", |seen, _| seen.reads.len() == 2)
-        .await;
-    open.select(Some("s2"));
-    open.until("s2 read", |seen, _| seen.reads.len() == 3).await;
-    assert_eq!(
-        open.seen.lock().unwrap().picked,
-        vec![Value::Null, json!("/linked"), Value::Null]
-    );
-    open.cx
-        .update(|cx| assert!(open.read.read(cx).checkout().is_none()));
 }

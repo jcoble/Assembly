@@ -3,7 +3,6 @@ use super::super::SourceControlPane;
 use super::SavedView;
 use crate::core::engine::SessionKey;
 use crate::core::socket::{
-    checkout_selector::CheckoutSelector,
     client::SocketClient,
     endpoint::Endpoint,
     fake_backend::{FakeBackend, Reply, hello},
@@ -15,7 +14,6 @@ use crate::core::state::session_read::Shown;
 use crate::core::state::workspace_panes::{WorkspaceKey, WorkspacePanes};
 use crate::core::ui::center_panes::CenterPanes;
 use crate::features::shell::{default_layout::default_state, placeholder_pane::PlaceholderPane};
-use crate::features::source_control::git_checkouts::CheckoutHint;
 use crate::features::source_control::git_status::Section;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::{TestAppContext, VisualTestContext};
@@ -27,7 +25,6 @@ use std::sync::{Arc, Mutex};
 
 const ONE: &str = "/one";
 const TWO: &str = "/two";
-const LINKED: &str = "/one-linked";
 
 fn key(root: &str) -> WorkspaceKey {
     in_session("s1", root)
@@ -44,14 +41,6 @@ fn source() -> ExpectedRowSource {
         machine: "owner".into(),
         generation: 0,
         route_machine: None,
-    }
-}
-fn hint() -> CheckoutHint {
-    CheckoutHint {
-        session: "s1".into(),
-        source: source(),
-        path: LINKED.into(),
-        expected_root: ONE.into(),
     }
 }
 /// A place far enough down a long open list that it only holds once the rows have been laid out.
@@ -177,9 +166,6 @@ async fn bench(cx: &mut TestAppContext, offered: Value) -> Bench<'_> {
     bench.select("s1");
     bench
 }
-fn linked() -> Value {
-    json!([{"path":LINKED,"branch":"feature"}])
-}
 impl Bench<'_> {
     /// The coordinator's order: the session is selected, and then its workspace restores.
     fn select(&mut self, session: &str) {
@@ -243,10 +229,6 @@ impl Bench<'_> {
             let waiting = pane.pending_place.map(|place| place.top);
             (waiting, f32::from(pane.scroll.offset().y))
         })
-    }
-    fn selection(&mut self) -> Option<CheckoutSelector> {
-        let pane = self.pane.clone();
-        self.cx.update(|_, cx| pane.read(cx).selection(cx))
     }
 }
 #[gpui::test]
@@ -314,66 +296,6 @@ async fn coming_back_to_the_same_root_still_waits_for_a_new_answer(cx: &mut Test
     assert_eq!(bench.spot(), (None, -40.));
 }
 #[gpui::test]
-async fn a_saved_checkout_is_read_only_after_a_fresh_list_and_then_proves_the_place(
-    cx: &mut TestAppContext,
-) {
-    let mut bench = bench(cx, linked()).await;
-    bench.seen.lock().unwrap().hold_list = true;
-    bench.show();
-    bench.answered(1).await;
-    bench.bind(
-        Some(key(ONE)),
-        SavedView {
-            checkout_hint: Some(hint()),
-            ..at(40.)
-        },
-    );
-    bench.answered(2).await;
-    assert_eq!(bench.selection(), None, "a hint alone reads nothing");
-    assert_eq!(
-        bench.spot().0,
-        Some(40.),
-        "the session's own folder isn't what was saved"
-    );
-    let own = bench.seen.lock().unwrap().statuses.clone();
-    assert!(own.iter().all(|args| args.get("checkoutPath").is_none()));
-    bench.seen.lock().unwrap().hold_list = false;
-    bench.refresh();
-    bench
-        .until("the saved checkout and its place", |pane, _, _| {
-            pane.pending_place.is_none()
-        })
-        .await;
-    assert_eq!(bench.selection(), Some(hint().selector()));
-    assert_eq!(bench.spot(), (None, -40.));
-}
-#[gpui::test]
-async fn a_saved_checkout_no_longer_offered_is_dropped_and_the_place_comes_back_on_the_session_folder(
-    cx: &mut TestAppContext,
-) {
-    let mut bench = bench(cx, json!([])).await;
-    bench.bind(
-        Some(key(ONE)),
-        SavedView {
-            checkout_hint: Some(hint()),
-            ..at(40.)
-        },
-    );
-    bench.show();
-    bench
-        .until("the dropped hint", |pane, _, _| {
-            pane.checkout_hint.is_none()
-        })
-        .await;
-    assert_eq!(bench.selection(), None);
-    assert_eq!(bench.spot(), (None, -40.));
-    let pane = bench.pane.clone();
-    assert!(
-        bench.cx.update(|_, cx| pane.read(cx).result.is_some()),
-        "and it says so"
-    );
-}
-#[gpui::test]
 async fn the_read_on_its_way_stops_before_the_next_workspace_is_bound(cx: &mut TestAppContext) {
     let mut bench = bench(cx, json!([])).await;
     bench.show();
@@ -396,13 +318,12 @@ async fn the_read_on_its_way_stops_before_the_next_workspace_is_bound(cx: &mut T
 }
 #[gpui::test]
 async fn a_hidden_pane_restores_without_reading_until_it_is_shown(cx: &mut TestAppContext) {
-    let mut bench = bench(cx, linked()).await;
+    let mut bench = bench(cx, json!([])).await;
     let open = HashSet::from([Section::Staged]);
     bench.bind(
         Some(key(ONE)),
         SavedView {
             open_sections: open.clone(),
-            checkout_hint: Some(hint()),
             ..at(40.)
         },
     );
@@ -415,40 +336,14 @@ async fn a_hidden_pane_restores_without_reading_until_it_is_shown(cx: &mut TestA
     let saved = bench.cx.update(|_, cx| pane.read(cx).saved_view(&key(ONE)));
     assert_eq!(saved["openSections"], json!(["Staged"]));
     assert_eq!(saved["scrollTop"], 40.);
-    assert_eq!(saved["checkoutHint"], serde_json::to_value(hint()).unwrap());
     bench.show();
     bench
         .until("the saved view", |pane, _, _| pane.pending_place.is_none())
         .await;
-    assert_eq!(bench.selection(), Some(hint().selector()));
     assert_eq!(
         bench.cx.update(|_, cx| pane.read(cx).open_sections.clone()),
         open
     );
-}
-#[gpui::test]
-async fn a_list_asked_for_under_the_last_workspace_is_not_kept(cx: &mut TestAppContext) {
-    let mut bench = bench(cx, linked()).await;
-    bench.seen.lock().unwrap().hold_list = true;
-    bench.show();
-    bench
-        .until("the list is on its way", |pane, _, seen| {
-            seen.lists == 1 && pane.checkouts_read.is_some()
-        })
-        .await;
-    bench.bind(Some(key(TWO)), SavedView::default());
-    let pane = bench.pane.clone();
-    bench.cx.update(|_, cx| {
-        let pane = pane.read(cx);
-        assert!(pane.checkouts_read.is_none() && pane.checkouts.is_none());
-    });
-    bench.seen.lock().unwrap().hold_list = false;
-    bench.refresh();
-    bench
-        .until("the next workspace's own list", |pane, _, _| {
-            pane.checkouts.is_some()
-        })
-        .await;
 }
 #[gpui::test]
 async fn the_read_following_the_session_keeps_the_view_its_workspace_restored(
@@ -494,49 +389,35 @@ async fn the_read_following_the_session_keeps_the_view_its_workspace_restored(
 }
 #[gpui::test]
 fn what_a_save_holds_is_checked_before_anything_restores(_: &mut TestAppContext) {
-    let good = |hint: Value| json!({"openSections":["Untracked","Staged"],"scrollTop":12.5,"checkoutHint":hint});
-    let view = SavedView::parse(&good(serde_json::to_value(hint()).unwrap()), &key(ONE)).unwrap();
+    let good = json!({"openSections":["Untracked","Staged"],"scrollTop":12.5});
+    let view = SavedView::parse(&good, &key(ONE)).unwrap();
     assert_eq!(
         view.open_sections,
         HashSet::from([Section::Staged, Section::Untracked])
     );
-    assert_eq!((view.scroll_top, view.checkout_hint), (12.5, Some(hint())));
+    assert_eq!(view.scroll_top, 12.5);
     assert_eq!(
         SavedView::parse(&Value::Null, &key(ONE)),
         Ok(SavedView::default())
     );
     for refused in [
         json!("Staged"),
-        json!({"openSections":[],"checkoutHint":null}),
-        json!({"openSections":[],"scrollTop":0,"checkoutHint":null,"extra":1}),
-        json!({"openSections":["Nope"],"scrollTop":0,"checkoutHint":null}),
-        json!({"openSections":["Staged","Staged"],"scrollTop":0,"checkoutHint":null}),
-        json!({"openSections":[],"scrollTop":-1,"checkoutHint":null}),
-        json!({"openSections":[],"scrollTop":1e300,"checkoutHint":null}),
-        json!({"openSections":[],"scrollTop":0,"checkoutHint":{"session":"s1"}}),
+        json!({"openSections":[]}),
+        json!({"openSections":[],"scrollTop":0,"extra":1}),
+        json!({"openSections":["Nope"],"scrollTop":0}),
+        json!({"openSections":["Staged","Staged"],"scrollTop":0}),
+        json!({"openSections":[],"scrollTop":-1}),
+        json!({"openSections":[],"scrollTop":1e300}),
     ] {
         assert!(SavedView::parse(&refused, &key(ONE)).is_err(), "{refused}");
     }
-    let mut extra = serde_json::to_value(hint()).unwrap();
-    extra["other"] = json!(1);
-    assert!(
-        SavedView::parse(&good(extra), &key(ONE)).is_err(),
-        "nested fields are checked too"
-    );
-    let hint_value = serde_json::to_value(hint()).unwrap();
-    for other in [
-        key(TWO),
-        in_session("s2", ONE),
-        WorkspaceKey {
-            machine: "else".into(),
-            ..key(ONE)
-        },
-    ] {
-        assert!(
-            SavedView::parse(&good(hint_value.clone()), &other).is_err(),
-            "{other:?}"
-        );
-    }
+}
+#[gpui::test]
+fn a_save_from_before_the_picker_went_still_restores(_: &mut TestAppContext) {
+    let older = json!({"openSections":["Staged"],"scrollTop":4,"checkoutHint":{"session":"s1"}});
+    let view = SavedView::parse(&older, &key(ONE)).unwrap();
+    assert_eq!(view.open_sections, HashSet::from([Section::Staged]));
+    assert_eq!(view.scroll_top, 4.);
 }
 #[gpui::test]
 fn a_workspace_round_trips_through_the_registry_and_only_under_its_own_key(
@@ -556,8 +437,7 @@ fn a_workspace_round_trips_through_the_registry_and_only_under_its_own_key(
         dock.update(cx, |dock, cx| {
             dock.load(default_state(), window, cx).unwrap()
         });
-        let saved = json!({"openSections":["Staged","Untracked"],"scrollTop":40.0,
-            "checkoutHint":serde_json::to_value(hint()).unwrap()});
+        let saved = json!({"openSections":["Staged","Untracked"],"scrollTop":40.0});
         WorkspacePanes::set_key(key(ONE), cx);
         WorkspacePanes::restore(&json!({"version":1,"sourceControl":saved}), window, cx).unwrap();
         assert_eq!(
@@ -571,16 +451,7 @@ fn a_workspace_round_trips_through_the_registry_and_only_under_its_own_key(
             "the pane is still on the last workspace"
         );
         WorkspacePanes::restore(&json!({"version":1}), window, cx).unwrap();
-        let defaults = json!({"openSections":[],"scrollTop":0.0,"checkoutHint":null});
-        assert_eq!(
-            WorkspacePanes::capture(window, cx).unwrap()["sourceControl"],
-            defaults
-        );
-        let refused = json!({"version":1,"sourceControl":saved});
-        assert!(
-            WorkspacePanes::restore(&refused, window, cx).is_err(),
-            "that hint isn't this workspace's"
-        );
+        let defaults = json!({"openSections":[],"scrollTop":0.0});
         assert_eq!(
             WorkspacePanes::capture(window, cx).unwrap()["sourceControl"],
             defaults

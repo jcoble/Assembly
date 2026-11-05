@@ -3,7 +3,6 @@
 //! ChangedFileRow.svelte and sourceControlFileMenu.ts.
 use super::SourceControlPane;
 use crate::core::intents::{open_diff::OpenDiff, open_file::OpenFile};
-use crate::core::socket::checkout_selector::CheckoutSelector;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Named as _;
 use crate::core::ui::file_icon::file_icon;
@@ -63,7 +62,7 @@ pub(super) struct FileReasons {
     pub copy_path: Option<&'static str>,
 }
 impl FileReasons {
-    /// On another checkout nothing changes and nothing opens for editing; a path can still be copied.
+    /// In a folder a session works in nothing changes and nothing opens for editing; a path can still be copied.
     fn read_only(self) -> Self {
         Self {
             stage: Some(READ_ONLY_SCOPE),
@@ -292,9 +291,9 @@ impl SourceControlPane {
         let selected = self.selected_file.as_ref() == Some(&key);
         let (name, folder) = split_path(&file.path);
         let muted = cx.theme().muted_foreground;
-        let checkout = self.selection(cx);
+        let read_only = self.read_only(cx);
         let reasons = file_reasons(file, root.is_some(), busy);
-        let reasons = if checkout.is_some() {
+        let reasons = if read_only {
             reasons.read_only()
         } else {
             reasons
@@ -347,7 +346,7 @@ impl SourceControlPane {
         };
         let tip = SharedString::from(file.label());
         let hover_key = key.clone();
-        let menu = self.file_menu(letter, file, target, checkout, root, busy, cx);
+        let menu = self.file_menu(letter, file, target, read_only, root, busy, cx);
         ListItem::new(SharedString::from(format!("git-file:{id}")))
             .selected(selected)
             .px_2()
@@ -456,7 +455,7 @@ impl SourceControlPane {
         letter: char,
         file: &ChangedFile,
         target: &GitTarget,
-        checkout: Option<CheckoutSelector>,
+        read_only: bool,
         root: Option<String>,
         busy: bool,
         cx: &mut Context<Self>,
@@ -473,7 +472,7 @@ impl SourceControlPane {
         move |menu, _, _| {
             let reasons = file_reasons(&file, root.is_some(), busy);
             let view_reason = reasons.open;
-            let reasons = if checkout.is_some() {
+            let reasons = if read_only {
                 reasons.read_only()
             } else {
                 reasons

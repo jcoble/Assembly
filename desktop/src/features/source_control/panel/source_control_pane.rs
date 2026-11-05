@@ -9,13 +9,13 @@ use super::commit_box::PLACEHOLDER;
 use super::commit_timeline::CommitTimeline;
 use super::git_action::GitWrites;
 use super::git_branches::GitBranchList;
-use super::git_checkouts::{CheckoutHint, GitCheckouts};
 use super::git_failure::{GitFailure, Recovery};
 use super::git_status::{GitStatus, Section};
 use super::git_target::GitTarget;
 use super::pull_requests::pr_section::PrSection;
 use super::result_line::PaneResult;
 use crate::core::state::session_read::{SessionRead, Shown};
+use crate::core::state::viewed_project::ViewedProject;
 use crate::core::state::workspace_panes::WorkspaceKey;
 use crate::core::ui::center_panes::CenterPanes;
 use gpui_kit::component::dock::{
@@ -38,8 +38,6 @@ mod header;
 mod outcomes;
 #[path = "render.rs"]
 mod rendering;
-#[path = "checkout_scope.rs"]
-mod scope;
 #[path = "change_sections.rs"]
 mod sections;
 
@@ -93,18 +91,8 @@ pub struct SourceControlPane {
     timeline_active: bool,
     seen_head: Option<String>,
     pull_requests: Option<(String, Entity<PrSection>)>,
-    /// The other checkouts the session's owner offers, for the session and source it was asked about.
-    checkouts: Option<GitCheckouts>,
-    checkouts_for: Option<(String, crate::core::socket::row_source::ExpectedRowSource)>,
-    checkouts_read: Option<Task<()>>,
     /// Asking where the session's folder is, to show a file in the file manager.
     reveal_read: Option<Task<()>>,
-    /// The status answer the list was last read beside; it's read again with each one.
-    checkouts_answers: u64,
-    /// The checkout last picked here, saved with the workspace. It stays through a visit to another session, and becomes a
-    /// read again only when a fresh list still offers it.
-    checkout_hint: Option<CheckoutHint>,
-    scope_open: bool,
     scroll: ScrollHandle,
     _heard: Vec<Subscription>,
 }
@@ -176,6 +164,7 @@ impl SourceControlPane {
         let read = cx.new(|cx| {
             let mut read = SessionRead::new("git", "status", cx);
             read.refresh_on_settle(cx);
+            read.following_view(cx);
             read
         });
         let message = cx.new(|cx| {
@@ -268,18 +257,16 @@ impl SourceControlPane {
             timeline_active: false,
             seen_head: None,
             pull_requests: None,
-            checkouts: None,
-            checkouts_for: None,
-            checkouts_read: None,
             reveal_read: None,
-            checkouts_answers: 0,
-            checkout_hint: None,
-            scope_open: false,
             scroll: ScrollHandle::new(),
             _heard: heard,
         }
     }
 
+    /// A viewed folder a running session works in is only read, so its checkout is never disturbed.
+    pub(super) fn read_only(&self, cx: &App) -> bool {
+        ViewedProject::read_only_reason(cx).is_some()
+    }
     /// One write at a time, whichever door it came through.
     fn busy(&self, cx: &App) -> bool {
         self.writes.busy(cx) || self.checkout.is_some()
@@ -295,14 +282,14 @@ impl SourceControlPane {
             WriteState::Idle
         }
     }
-    /// What a write goes to, which is what the pane is showing, sent back unchanged. Another checkout takes none.
+    /// What a write goes to, which is what the pane is showing, sent back unchanged. A read-only folder takes none.
     fn target(&self, cx: &App) -> Option<GitTarget> {
         if self.read_only(cx) {
             return None;
         }
         self.shown_target(cx)
     }
-    /// The session and source what's shown was read through, whichever of its checkouts that was.
+    /// The session and source what's shown was read through.
     fn shown_target(&self, cx: &App) -> Option<GitTarget> {
         let read = self.read.read(cx);
         Some(GitTarget {
@@ -380,9 +367,6 @@ impl BasePanel for SourceControlPane {
     fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
         self.active = active;
         self.read.update(cx, |read, cx| read.set_active(active, cx));
-        if !active {
-            self.checkouts_read = None;
-        }
         if let Some((_, section)) = &self.pull_requests {
             section.update(cx, |section, cx| section.set_active(active, cx));
         }
@@ -406,9 +390,6 @@ mod checkout_real_tests;
 #[cfg(test)]
 #[path = "source_refresh_tests.rs"]
 mod refresh_tests;
-#[cfg(test)]
-#[path = "checkout_scope_tests.rs"]
-mod scope_tests;
 #[cfg(test)]
 #[path = "source_stale_tests.rs"]
 mod stale_tests;

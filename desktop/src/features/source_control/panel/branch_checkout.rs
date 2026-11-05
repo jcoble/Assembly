@@ -317,13 +317,8 @@ impl SourceControlPane {
                 });
             });
         }
-        // The session now lives where the pane may have been looking, so its own folder is what's shown next.
-        if self.read_only(cx) {
-            self.back_to_session_folder(cx);
-        } else {
-            self.read.update(cx, |read, cx| read.refresh(cx));
-            self.read_branches(cx);
-        }
+        self.read.update(cx, |read, cx| read.refresh(cx));
+        self.read_branches(cx);
         self.result_answers = self.read.read(cx).answers() + 1;
         cx.notify();
     }

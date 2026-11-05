@@ -5,7 +5,7 @@ use super::{
     branch_diff::BranchDiff,
     file_diff::{CUT, FileDiff},
 };
-use crate::core::socket::{checkout_selector::CheckoutSelector, row_source::ExpectedRowSource};
+use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::ui::changed_tree::tree_order;
 use crate::core::ui::diff::{SuppliedPatch, supplied_patch};
 use crate::features::source_control::git_status::GitStatus;
@@ -43,12 +43,11 @@ impl Scope {
         }
     }
 }
-/// What every read of a round is pinned to: the status answer's session, source and checkout.
+/// What every read of a round is pinned to: the status answer's session and source.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Selection {
     pub session: String,
     pub source: Option<ExpectedRowSource>,
-    pub checkout: Option<CheckoutSelector>,
 }
 impl Selection {
     pub fn args(&self, extra: Value) -> Value {
@@ -56,7 +55,7 @@ impl Selection {
         if let (Some(args), Some(extra)) = (args.as_object_mut(), extra.as_object()) {
             args.extend(extra.clone());
         }
-        CheckoutSelector::applied(self.checkout.as_ref(), args)
+        args
     }
 }
 #[derive(Clone, Debug, PartialEq)]

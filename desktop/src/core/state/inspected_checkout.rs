@@ -1,14 +1,12 @@
-//! Which checkout Source control has actually read for the selected session. It publishes this only from an accepted
-//! status answer, so a layout's hint or a pick still on its way never reaches the Changes tab.
-use crate::core::socket::{checkout_selector::CheckoutSelector, row_source::ExpectedRowSource};
+//! What Source control last read for the selected session, from an accepted status answer, so the Changes tab reads
+//! its files again when they've moved.
+use crate::core::socket::row_source::ExpectedRowSource;
 use gpui_kit::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Inspected {
     pub session: String,
     pub source: Option<ExpectedRowSource>,
-    /// `None` is the session's own folder.
-    pub checkout: Option<CheckoutSelector>,
     pub fingerprint: String,
     /// Counts Source control's answers: the fingerprint alone misses further edits to a file already changed.
     pub answers: u64,

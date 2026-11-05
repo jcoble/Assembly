@@ -5,8 +5,8 @@ use super::working_copy::{CombinedPatch, Scope, Selection, WorkingCopy};
 use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_diff::OpenDiff};
 use crate::core::socket::{checkout_selector::CheckoutSelector, row_source::ExpectedRowSource};
 use crate::core::state::{
-    inspected_checkout::InspectedCheckout, preferences::Preferences,
-    selected_session::SelectedSession, session_read::SessionRead,
+    inspected_checkout::InspectedCheckout, preferences::Preferences, session_read::SessionRead,
+    viewed_project::ViewedProject,
 };
 use crate::core::ui::{center_panes::CenterPanes, changed_tree::ChangedTree};
 use crate::features::source_control::git_status::GitStatus;
@@ -164,10 +164,7 @@ impl ChangesPane {
             panel_handle(pane)
         });
         cx.on_action(|intent: &OpenDiff, cx| {
-            let selected = SelectedSession::global(cx)
-                .read(cx)
-                .session_id()
-                .map(String::from);
+            let selected = ViewedProject::subject(cx).map(|(session, _)| session);
             if selected.as_deref() == Some(intent.session_id.as_str()) {
                 Self::open_later(Picked::File(intent.path.clone()), cx);
             }
@@ -212,6 +209,7 @@ impl ChangesPane {
     fn new(picked: Option<Picked>, cx: &mut Context<Self>) -> Self {
         let status = cx.new(|cx| {
             let mut read = SessionRead::new("git", "status", cx).keyed("changes/git/status");
+            read.following_view(cx);
             read.refresh_on_settle(cx);
             read
         });
@@ -320,16 +318,7 @@ impl ChangesPane {
                 let mut saved = json!({
                     "session": session, "expectedSource": source, "scope": self.scope.saved(),
                 });
-                let own_folder = self
-                    .selection
-                    .as_ref()
-                    .is_none_or(|selection| selection.checkout.is_none());
-                if let Some(path) = self
-                    .focus_path
-                    .as_ref()
-                    .or(self.active_file.as_ref())
-                    .filter(|_| own_folder)
-                {
+                if let Some(path) = self.focus_path.as_ref().or(self.active_file.as_ref()) {
                     saved["path"] = json!(path);
                 }
                 saved

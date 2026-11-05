@@ -52,7 +52,6 @@ impl SourceControlPane {
             self.session_changed(session.clone(), cx);
         }
         self.publish_inspected(cx);
-        self.sync_checkouts(cx);
         self.settle_place(cx);
         if matches!(self.result, Some(PaneResult::Done(_))) && answers != self.result_answers {
             self.result = None;
@@ -69,14 +68,13 @@ impl SourceControlPane {
         self.push_branch_menu(cx);
         cx.notify();
     }
-    /// Tells the Changes tab what this panel has actually read. A pick or a saved hint on its way isn't that.
+    /// Tells the Changes tab what this panel has actually read.
     fn publish_inspected(&self, cx: &mut Context<Self>) {
         let read = self.read.read(cx);
         if let (Shown::Read(status), Some(session)) = (read.shown(), read.session()) {
             let inspected = Inspected {
                 session: session.to_string(),
                 source: read.source().cloned(),
-                checkout: read.checkout().cloned(),
                 fingerprint: status.fingerprint.clone(),
                 answers: read.answers(),
             };
@@ -115,7 +113,6 @@ impl SourceControlPane {
         let target = self.target(cx);
         let shown = self.shown_target(cx);
         let source = shown.as_ref().and_then(|shown| shown.source.clone());
-        let checkout = self.selection(cx);
         let head = self.shown_status(cx).and_then(|status| status.head);
         let is_repository = matches!(self.read.read(cx).shown(), Shown::Read(_));
         if self.pull_requests.as_ref().map(|(key, _)| key) != session.as_ref() {
@@ -154,7 +151,6 @@ impl SourceControlPane {
             self.timeline_active = wanted;
             self.seen_head = head;
             timeline.update(cx, |timeline, cx| {
-                timeline.set_checkout(checkout, cx);
                 timeline.set_target(None, source, cx);
                 timeline.set_active(wanted, cx)
             });
@@ -162,7 +158,6 @@ impl SourceControlPane {
             let moved = head.is_some() && head != self.seen_head;
             self.seen_head = head;
             timeline.update(cx, |timeline, cx| {
-                timeline.set_checkout(checkout, cx);
                 timeline.set_target(None, source, cx);
                 if moved {
                     timeline.refresh(cx);
