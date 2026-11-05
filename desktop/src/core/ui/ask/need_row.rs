@@ -69,6 +69,13 @@ pub(super) fn settled_state(need: &NeedItem, here: bool) -> NeedRowState {
         by: by.into(),
     }
 }
+/// A receipt that says no carries only a code; the words shown are the fixed ones in `failure_state`.
+pub(super) fn refused_receipt(code: Option<String>) -> EngineRefusal {
+    EngineRefusal {
+        code: code.unwrap_or_else(|| "refused".into()),
+        message: "The answer was refused.".into(),
+    }
+}
 pub(super) fn failure_state(error: &EngineRefusal) -> NeedRowState {
     match error.code.as_str() {
         "version_conflict" => NeedRowState::Open,
@@ -77,6 +84,9 @@ pub(super) fn failure_state(error: &EngineRefusal) -> NeedRowState {
         },
         "already_resolved" => NeedRowState::Refused {
             reason: error.message.clone(),
+        },
+        "stale_attempt" => NeedRowState::Refused {
+            reason: "This question no longer applies.".into(),
         },
         "revision_target_undefined" => NeedRowState::Failed {
             message: "There's no earlier step to send this back to.".into(),
@@ -368,14 +378,7 @@ impl NeedRow {
                 }
                 match result {
                     Ok(receipt) if receipt.applied => row.accepted_here = true,
-                    Ok(receipt) => {
-                        row.state = failure_state(&EngineRefusal {
-                            code: receipt.error.clone().unwrap_or_else(|| "refused".into()),
-                            message: receipt
-                                .error
-                                .unwrap_or_else(|| "The answer was refused.".into()),
-                        })
-                    }
+                    Ok(receipt) => row.state = failure_state(&refused_receipt(receipt.error)),
                     Err(error) => row.state = failure_state(&error),
                 }
                 row.reconcile(serial, cx);

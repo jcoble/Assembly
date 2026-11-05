@@ -80,6 +80,22 @@ public sealed class OwnerAttentionTests
     }
 
     [Fact]
+    public async Task A_run_that_fails_closes_the_questions_nobody_can_answer_any_more()
+    {
+        using var f = new Fixture([], "allow", first: "asks", flow: "name: Flow\npolicy:\n  default: allow\n  commands:\n    ask: ['printf*']\nsteps:\n  asks:\n    run: [\"printf asked\"]\n  fails:\n    run: [\"exit 3\"]\n");
+        var asked = f.StartStep("asks");
+        Assert.True(f.Complete(asked, await f.Host().ExecuteAsync(asked, default)).Applied);
+        var need = f.Core.Text("SELECT id FROM engine_needs_me WHERE state='open'")!;
+        Assert.Contains(need, Inbox(f));
+        var failing = f.StartStep("fails");
+        Assert.True(f.Complete(failing, await f.Host().ExecuteAsync(failing, default)).Applied);
+        Assert.Equal("failed", f.Core.Text("SELECT state FROM engine_run"));
+        Assert.Equal("cancelled", Row(f, "needs_me", need).GetProperty("state").GetString());
+        Assert.DoesNotContain(need, Inbox(f));
+        Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_event WHERE kind='needs_me.cancelled' AND entity_id=$id", new SqlArg("$id", need)));
+    }
+
+    [Fact]
     public async Task A_failed_step_with_no_attempts_left_ends_the_run_and_asks_for_nothing()
     {
         using var f = await FailedWith(attempts: 1);

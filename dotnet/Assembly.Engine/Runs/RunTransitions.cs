@@ -214,7 +214,11 @@ public static class RunTransitions
             WHERE id=$id
             """, new("$state", next), new("$now", c.NowMs), new("$id", runId));
         events.Add(Changed(runId, run.Version + 1, run.Owner, next));
-        if (next is "succeeded" or "failed" or "cancelled") events.AddRange(ResendStopped(s, c, runId, run.Owner));
+        if (next is "succeeded" or "failed" or "cancelled")
+        {
+            events.AddRange(ResendStopped(s, c, runId, run.Owner));
+            events.AddRange(CloseWorkflowNeeds(s, c, runId, run.Owner, run.Epoch));
+        }
         return events;
     }
 
@@ -236,6 +240,7 @@ public static class RunTransitions
         s.Execute("UPDATE engine_run SET state='failed',version=version+1,updated_ms=$now,ended_ms=$now WHERE id=$id", new("$now", c.NowMs), new("$id", runId));
         List<EventDraft> events = [Changed(runId, run.Version + 1, run.Owner, "failed")];
         events.AddRange(ResendStopped(s, c, runId, run.Owner));
+        events.AddRange(CloseWorkflowNeeds(s, c, runId, run.Owner, run.Epoch));
         List<EffectDraft> effects = [];
         if (run.Workflow)
         {
@@ -293,6 +298,13 @@ public static class RunTransitions
         RETURNING id,version,session_id,state
         """, r => new EventDraft("step.changed", "step", r.Text(0), r.Long(1), false,
             new(r.IsNull(2) ? null : r.Text(2), runId, r.Text(0), owner, r.Text(3), null)), new("$now", c.NowMs), new("$id", runId));
+
+    /// <summary>A run that has ended can't act on its own workflow's questions, so none stay open counting against the owner.</summary>
+    private static IEnumerable<EventDraft> CloseWorkflowNeeds(IWriteScope s, CommandContext c, string runId, string owner, long epoch) => s.Query("""
+        UPDATE engine_needs_me SET state='cancelled',version=version+1,updated_ms=$now
+        WHERE run_id=$id AND source_kind IN ('workflow','workflow_gate') AND state='open' RETURNING id,version,step_id
+        """, r => new EventDraft("needs_me.cancelled", "needs_me", r.Text(0), r.Long(1), false,
+            new(owner, runId, r.IsNull(2) ? null : r.Text(2), owner, "cancelled", epoch)), new SqlArg("$id", runId), new("$now", c.NowMs));
 
     private static EventDraft StepCancelled(string id, long version, string? session, string run, string owner) =>
         new("step.changed", "step", id, version, false, new(session, run, id, owner, "cancelled", null));

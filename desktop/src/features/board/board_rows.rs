@@ -15,7 +15,7 @@ use crate::features::board::board_sections::{
     Entry, group_heading, machine_label, offline_reason, offline_since,
 };
 use crate::features::board::question_row::{card_key, need_card};
-use crate::features::board::run_steps::pill;
+use crate::features::board::run_steps::{pill, run_line};
 use crate::features::board::session_tabs::{session_entry, task_label};
 
 fn row_machine(entry: &Entry) -> Option<&str> {
@@ -30,20 +30,7 @@ impl BoardPanel {
         let steps = self.data.steps_of(run);
         let open_need = self.data.run_needs_owner(run);
         let state = pill(run, &steps, open_need);
-        let running = steps
-            .iter()
-            .find(|step| step.state == "running")
-            .map(|step| step.label_present.clone());
-        let stopped = steps
-            .iter()
-            .find(|step| step.needs_owner)
-            .and_then(|step| step.explanation.clone());
-        let line = run
-            .display_prerequisite
-            .clone()
-            .or(stopped)
-            .or(running)
-            .unwrap_or_else(|| state.label().to_owned());
+        let line = run_line(run, &steps, state);
         RunRow {
             key: card_key(&run.key()),
             title: run.title.clone().unwrap_or_else(|| run.id.clone()).into(),

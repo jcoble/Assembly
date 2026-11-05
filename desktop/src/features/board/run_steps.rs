@@ -56,6 +56,27 @@ pub fn pill(run: &RunItem, steps: &[&StepItem], open_need: bool) -> Pill {
     }
 }
 
+/// The line under a run's title, which never just repeats the pill beside it.
+pub fn run_line(run: &RunItem, steps: &[&StepItem], state: Pill) -> String {
+    let stopped = steps.iter().find(|step| step.needs_owner).map(|step| {
+        step.explanation
+            .clone()
+            .unwrap_or_else(|| format!("{} failed", step.name))
+    });
+    let running = steps
+        .iter()
+        .find(|step| step.state == "running")
+        .map(|step| step.label_present.clone());
+    run.display_prerequisite
+        .clone()
+        .or(stopped)
+        .or(running)
+        .unwrap_or_else(|| match state {
+            Pill::NeedsYou => "Waiting on your answer".to_owned(),
+            other => other.label().to_owned(),
+        })
+}
+
 fn is_upcoming(step: &StepItem) -> bool {
     !matches!(
         step.state.as_str(),
