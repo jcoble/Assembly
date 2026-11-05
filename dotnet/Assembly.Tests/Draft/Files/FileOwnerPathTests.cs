@@ -162,12 +162,39 @@ public sealed class FileOwnerPathTests : IDisposable
         Assert.Null(missing.Reason);
         Assert.Equal("that file isn't there", missing.Message);
         Assert.Null(Refused(Path.Combine(_folder, "no-folder", "a.txt")).Reason);
-        if (OperatingSystem.IsWindows() || Environment.UserName == "root") return; // Root reads a mode-000 file, so this half needs a normal user.
+        if (OperatingSystem.IsWindows()) return;
         var locked = Write("locked.txt");
         File.SetUnixFileMode(locked, UnixFileMode.None);
+        if (Opens(locked)) return; // Root reads a mode-000 file, so this half needs a user it applies to.
         var unreadable = Refused(locked);
         Assert.Null(unreadable.Reason);
         Assert.Equal("that file can't be read", unreadable.Message);
+    }
+
+    [Fact]
+    public void A_file_under_a_folder_with_no_search_permission_says_it_can_t_be_read()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var file = Write("sealed/a.txt");
+        var folder = Path.GetDirectoryName(file)!;
+        var mode = File.GetUnixFileMode(folder);
+        File.SetUnixFileMode(folder, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        try
+        {
+            if (Opens(file)) return; // Root searches any folder, so this needs a user it applies to.
+            var failure = Refused(file);
+            Assert.Null(failure.Reason);
+            Assert.Equal("that file can't be read", failure.Message);
+        }
+        finally { File.SetUnixFileMode(folder, mode); }
+    }
+
+    [Fact]
+    public void A_path_of_exactly_the_limit_is_not_refused_for_its_length()
+    {
+        var path = "/" + new string('a', 4095);
+        Assert.Equal(4096, path.Length);
+        Assert.NotEqual("not_a_path", Refused(path).Reason);
     }
 
     [Fact]
@@ -250,6 +277,16 @@ public sealed class FileOwnerPathTests : IDisposable
         _owner.ResolvePath(new PathTarget(path, InsideOf: insideOf), CancellationToken.None);
 
     private CallFailed Refused(string path) => Assert.Throws<CallFailed>(() => Resolve(path));
+
+    private static bool Opens(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return true;
+        }
+        catch (UnauthorizedAccessException) { return false; }
+    }
 
     private string Write(string relative)
     {

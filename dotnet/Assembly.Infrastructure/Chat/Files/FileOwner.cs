@@ -124,7 +124,6 @@ internal sealed class FileOwner(SessionStore sessions, IAppDatabase db)
     private static void RequireRegular(string real)
     {
         if (Directory.Exists(real)) throw NotRegular();
-        if (!File.Exists(real)) throw new CallFailed("that file isn't there");
         var fd = open(real, OperatingSystem.IsMacOS() ? MacReadNonBlocking : LinuxReadNonBlocking);
         if (fd < 0)
             throw Marshal.GetLastPInvokeError() switch
