@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
 use gpui_kit::component::dock::{DockPlacement, PaneRef};
+use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::{App, Entity, Modifiers, Task, VisualTestContext, Window, px, size};
 use serde_json::{Value, json};
 
@@ -16,7 +17,7 @@ use super::frame::Frame;
 use super::frame_tests::{dump, open};
 use super::layout_store::WriteLayout;
 use super::placeholder_pane::PlaceholderPane;
-use super::terminal_toggle::{TerminalPress, press_terminal, terminal_showing};
+use super::terminal_toggle::{TerminalPress, menu_item, press_terminal, terminal_showing};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
@@ -433,4 +434,30 @@ fn the_layout_stays_as_it_was(cx: &mut TestAppContext) {
     .map(|pane| pane["panel_name"].clone())
     .collect();
     assert_eq!(names, [json!(PROBLEMS), json!(TERMINAL)]);
+}
+
+/// What the "..." menu's Terminal item gives the kit: whether it has an icon, and its check.
+fn menu_item_given(frame: &Entity<Frame>, cx: &mut VisualTestContext) -> (bool, bool) {
+    cx.update(|_, cx| match menu_item(frame.read(cx).dock().clone(), cx) {
+        PopupMenuItem::Item { icon, checked, .. } => (icon.is_some(), checked),
+        _ => panic!("the Terminal item is a plain menu item"),
+    })
+}
+
+#[gpui::test]
+fn the_menu_item_draws_its_check_mark_while_the_terminal_shows(cx: &mut TestAppContext) {
+    let (frame, _, cx) = open(None, cx);
+    // The kit draws an item's icon in place of its check mark, so the item carries no icon and the check is drawn.
+    assert_eq!(
+        menu_item_given(&frame, cx),
+        (false, false),
+        "shut: no check"
+    );
+    press_button(cx);
+    assert!(showing(&frame, cx));
+    assert_eq!(
+        menu_item_given(&frame, cx),
+        (false, true),
+        "showing: checked, with no icon drawn over the check"
+    );
 }

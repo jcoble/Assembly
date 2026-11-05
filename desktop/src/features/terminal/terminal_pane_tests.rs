@@ -395,3 +395,6 @@ mod file_links;
 
 #[path = "terminal_pane_lost_release_tests.rs"]
 mod lost_release;
+
+#[path = "terminal_pane_window_blink_tests.rs"]
+mod window_blink;
