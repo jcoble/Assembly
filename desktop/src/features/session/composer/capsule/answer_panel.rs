@@ -14,9 +14,10 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
+use crate::core::ui::ask::answer_words::{is_deny, option_words};
 use crate::core::ui::ask::controls::{ControlAction, OnControl};
 use crate::core::ui::ask::form::AskForm;
-use crate::core::ui::ask::payload::{AskChoice, AskInput, AskOption, AskPayload, AskSchema};
+use crate::core::ui::ask::payload::{AskChoice, AskInput, AskPayload, AskSchema};
 use crate::features::session::view::ask_row::one_line;
 
 #[derive(Clone, IntoElement)]
@@ -28,44 +29,6 @@ pub struct AnswerPanel {
     /// How many asks of this kind are waiting, this one included.
     pub count: usize,
     pub on_action: OnControl,
-}
-
-fn refuses(kind: &str) -> bool {
-    ["reject", "deny", "decline"]
-        .iter()
-        .any(|word| kind.contains(word))
-}
-
-/// An option's words. A refusal that lasts keeps the agent's own words, so it never reads as an allow.
-pub fn option_label(option: &AskOption) -> String {
-    let kind = option.kind.to_ascii_lowercase();
-    let named = |fallback: &str| {
-        if option.name.is_empty() {
-            fallback.to_string()
-        } else {
-            option.name.clone()
-        }
-    };
-    if refuses(&kind) {
-        return if kind.contains("always") {
-            named("Decline")
-        } else {
-            "Decline".to_string()
-        };
-    }
-    if kind.contains("always") || kind.contains("session") {
-        "Always allow this session".to_string()
-    } else if kind.contains("allow") || kind.contains("accept") {
-        "Approve once".to_string()
-    } else {
-        named("Continue")
-    }
-}
-
-/// Whether an option turns the action down, which reads in the danger color.
-pub fn is_deny(option: &AskOption) -> bool {
-    let label = option_label(option).to_ascii_lowercase();
-    refuses(&option.kind.to_ascii_lowercase()) || label.contains("cancel")
 }
 
 /// The action on one line, and the details box's text: the agent's message, or all of a title too long for the line.
@@ -164,7 +127,7 @@ impl AnswerPanel {
             };
             let button = pill(
                 format!("answer:{}:{}", self.ask_id, option.option_id),
-                option_label(option),
+                option_words(option),
                 color,
                 ControlAction::Answer(json!({ "optionId": option.option_id })),
                 &self.on_action,
