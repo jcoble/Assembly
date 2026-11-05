@@ -7,6 +7,8 @@
 //! ten-second idle close is dropped: the window keeps no timers.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::ExposedElement as _;
+use crate::core::ui::access::control_ids::{filter_back, filter_clear, filter_group, filter_value};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -90,14 +92,17 @@ impl EventEmitter<FilterPillsChanged> for FilterPills {}
 
 pub struct FilterPills {
     pub state: Pills,
+    /// The list these pills filter (`sessions`, `tasks`), which starts their ids in the accessibility tree.
+    area: &'static str,
     /// The row's, so Escape closes the open group while focus is in it.
     focus: FocusHandle,
 }
 
 impl FilterPills {
-    pub fn new(groups: Vec<FilterGroup>, cx: &mut Context<Self>) -> Self {
+    pub fn new(area: &'static str, groups: Vec<FilterGroup>, cx: &mut Context<Self>) -> Self {
         FilterPills {
             state: Pills { groups, open: None },
+            area,
             focus: cx.focus_handle(),
         }
     }
@@ -164,6 +169,7 @@ impl Render for FilterPills {
         let Some(open) = self.state.open else {
             let picked = (self.state.groups.iter()).any(|group| !group.picked.is_empty());
             let clear = pill("filter-pills-clear", false, cx)
+                .exposed(Role::Button, filter_clear(self.area), "Clear filters")
                 .w(px(26.))
                 .px_0()
                 .justify_center()
@@ -171,8 +177,14 @@ impl Render for FilterPills {
                 .on_click(cx.listener(|pills, _, _, cx| pills.pick(Pills::clear, cx)));
             return row.when(picked, |row| row.child(clear)).children(
                 (self.state.groups.iter().enumerate()).map(|(at, group)| {
+                    let words = self.state.label(at);
                     pill(("filter-group", at), !group.picked.is_empty(), cx)
-                        .child(self.state.label(at))
+                        .exposed(
+                            Role::Button,
+                            filter_group(self.area, &group.label),
+                            format!("{} filter: {words}", group.label),
+                        )
+                        .child(words)
                         .on_click(cx.listener(move |pills, _, window, cx| {
                             window.focus(&pills.focus, cx);
                             pills.state.open(at);
@@ -183,20 +195,23 @@ impl Render for FilterPills {
         };
         let group = &self.state.groups[open];
         let back = pill("filter-back", false, cx)
+            .exposed(Role::Button, filter_back(self.area), "Back to the filters")
             .child("← Back")
             .on_click(cx.listener(|pills, _, _, cx| pills.close(cx)));
         row.child(back)
             .children(group.options.iter().enumerate().map(|(at, option)| {
                 let value = option.value.clone();
-                pill(
-                    ("filter-value", at),
-                    group.picked.contains(&option.value),
-                    cx,
-                )
-                .child(option.label.clone())
-                .on_click(cx.listener(move |pills, _, _, cx| {
-                    pills.pick(|state| state.toggle(open, &value), cx)
-                }))
+                let picked = group.picked.contains(&option.value);
+                pill(("filter-value", at), picked, cx)
+                    .toggle_in_tree(
+                        filter_value(self.area, &group.label, &option.value),
+                        option.label.clone(),
+                        picked,
+                    )
+                    .child(option.label.clone())
+                    .on_click(cx.listener(move |pills, _, _, cx| {
+                        pills.pick(|state| state.toggle(open, &value), cx)
+                    }))
             }))
     }
 }

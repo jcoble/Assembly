@@ -5,6 +5,7 @@ use super::SourceControlPane;
 use crate::core::intents::{open_diff::OpenDiff, open_file::OpenFile};
 use crate::core::socket::checkout_selector::CheckoutSelector;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Named as _;
 use crate::core::ui::file_icon::file_icon;
 use crate::core::ui::reasoned_item::reasoned_item;
 use crate::features::source_control::actions_menu::{READ_ONLY_SCOPE, STILL_RUNNING};
@@ -125,6 +126,7 @@ fn icon_button(
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Button {
     Button::new(id)
+        .named(tooltip.clone())
         .ghost()
         .compact()
         .icon(Icon::new(icon).size(px(14.)))

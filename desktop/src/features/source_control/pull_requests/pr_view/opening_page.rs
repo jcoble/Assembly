@@ -4,6 +4,8 @@ use super::super::pr_parts::{PrHeading, loading_line};
 use super::{PrPane, Selected};
 use crate::core::intents::open_url::OpenUrl;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::control_ids as ids;
+use crate::core::ui::access::{Control as _, Named as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonRounded, ButtonVariants as _};
 use gpui_kit::component::{
@@ -53,6 +55,7 @@ impl PrPane {
             .border_color(cx.theme().border)
             .child(
                 Button::new("pr-back")
+                    .control(ids::pr::BACK, "All pull requests")
                     .ghost()
                     .small()
                     .icon(IconName::ChevronLeft)
@@ -83,6 +86,11 @@ impl PrPane {
             .child(div().flex_1())
             .child(
                 Button::new("pr-copy-link")
+                    .named(if self.copied.is_some() {
+                        "Link copied"
+                    } else {
+                        "Copy link"
+                    })
                     .ghost()
                     .small()
                     .icon(IconName::Link)
@@ -100,6 +108,7 @@ impl PrPane {
             )
             .child(
                 Button::new("pr-refresh")
+                    .control(ids::pr::REFRESH, "Refresh this pull request")
                     .ghost()
                     .small()
                     .icon(IconName::RefreshCw)
@@ -109,6 +118,7 @@ impl PrPane {
             )
             .child(
                 Button::new("pr-open-web")
+                    .control(ids::pr::OPEN_WEB, "Open on GitHub")
                     .ghost()
                     .small()
                     .icon(IconName::ExternalLink)

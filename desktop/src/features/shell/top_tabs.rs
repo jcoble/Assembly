@@ -13,6 +13,9 @@ use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::content_tab;
+
 struct ContentTab {
     panel: Arc<dyn BasePanelView>,
     node: NodeId,
@@ -65,7 +68,7 @@ pub(super) fn tabs(dock: Entity<DockArea>, window: &mut Window, cx: &mut App) ->
             let panel = tab.panel.clone();
             let chip = Tab::new()
                 .debug_selector(move || format!("top-tab-{name}"))
-                .aria_label(name)
+                .control(content_tab(name), name)
                 .prefix(Icon::new(icon(name)).size(px(16.)))
                 .child(title)
                 .on_click(move |_, window, cx| {

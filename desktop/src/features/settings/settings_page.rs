@@ -5,6 +5,8 @@
 //! SettingsHost.svelte.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::control_ids::{settings as ids, settings_nav};
+use crate::core::ui::access::{Control as _, ExposedElement as _};
 use std::cell::Cell;
 
 use gpui_kit::assets::IconName;
@@ -259,6 +261,7 @@ impl SettingsPage {
             .child(
                 div().w(SEARCH_WIDTH).child(
                     Input::new(search)
+                        .control(ids::SEARCH, "Search settings")
                         .small()
                         .prefix(Icon::new(IconName::Search).small())
                         .cleanable(true),
@@ -294,6 +297,7 @@ impl SettingsPage {
             list = list.child(
                 h_flex()
                     .id(id)
+                    .selected_in_tree(Role::Tab, settings_nav(id), section.label, active)
                     .h(px(30.))
                     .px_2()
                     .gap_2()
@@ -329,6 +333,7 @@ impl SettingsPage {
                     .border_color(theme.sidebar_border)
                     .child(
                         Button::new("back-to-app")
+                            .control(ids::BACK, "Back to app")
                             .ghost()
                             .small()
                             .icon(IconName::ArrowLeft)

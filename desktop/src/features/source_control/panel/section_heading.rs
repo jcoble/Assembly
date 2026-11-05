@@ -1,6 +1,7 @@
 //! The one section heading in Source control: a muted uppercase name with its count, a chevron when it folds, and the
 //! section's actions at the right edge.
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Named as _;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::tag::Tag;
@@ -47,6 +48,7 @@ pub fn section_heading(
         .gap_1()
         .child(
             Button::new(ElementId::Name(id))
+                .named(title)
                 .ghost()
                 .compact()
                 .on_click(on_toggle)

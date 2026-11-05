@@ -1,5 +1,6 @@
 //! Pieces of interface every feature shares.
 
+pub mod access;
 pub mod center_panes;
 pub mod changed_tree;
 pub mod diff;

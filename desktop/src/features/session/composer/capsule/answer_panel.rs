@@ -4,6 +4,7 @@
 //! ComposerPendingUserInputPanel.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Named as _;
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
@@ -111,6 +112,7 @@ fn pill(
 ) -> Button {
     let on_action = on_action.clone();
     Button::new(SharedString::from(id))
+        .named(label.clone())
         .compact()
         .h(px(28.))
         .px(px(11.))

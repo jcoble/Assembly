@@ -2,6 +2,8 @@
 //! gauge, the settings pills, the mic that isn't available yet and one Send or Stop.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::composer as ids;
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName as Glyph;
@@ -36,11 +38,14 @@ impl Composer {
                     .small()
                     .disabled(self.start_busy())
                     .icon(if open { Glyph::X } else { Glyph::Plus })
-                    .accessibility_label(if open {
-                        "Close the add menu"
-                    } else {
-                        "Add to this message"
-                    })
+                    .control(
+                        ids::ATTACH,
+                        if open {
+                            "Close the add menu"
+                        } else {
+                            "Add to this message"
+                        },
+                    )
                     .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
                         let opener = opener.clone();
                         menu.max_w(px(320.)).item(
@@ -142,7 +147,7 @@ impl Composer {
                 .with_size(SEND_SIZE)
                 .disabled(offline)
                 .tooltip("Stop generation")
-                .accessibility_label("Stop generation")
+                .control(ids::STOP, "Stop generation")
                 .child(
                     div()
                         .size(px(11.))
@@ -170,7 +175,7 @@ impl Composer {
                     .with_size(SEND_SIZE)
                     .disabled(disabled)
                     .tooltip(words)
-                    .accessibility_label(words)
+                    .control(ids::SEND, words)
                     .on_click(cx.listener(|composer, _, window, cx| composer.send(window, cx)))
                     .into_any_element()
             }
@@ -210,7 +215,7 @@ impl Composer {
                     .icon(Glyph::Mic)
                     .disabled(true)
                     .tooltip("Voice input is not available yet")
-                    .accessibility_label("Voice input, not available yet"),
+                    .control(ids::MIC, "Voice input, not available yet"),
             )
             .child(self.send_or_stop(content, cx))
     }

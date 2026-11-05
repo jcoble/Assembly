@@ -16,6 +16,8 @@ use gpui_kit::*;
 
 use crate::core::state::preferences::Preferences;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::row;
 
 /// Above and below a row's three lines.
 const ROW_PADDING: Pixels = px(7.);
@@ -78,8 +80,17 @@ impl ThreeLineRow {
         let theme = cx.theme();
         let (muted, accent, radius) = (theme.muted_foreground, theme.caret, theme.radius);
         let key = self.key;
+        let spoken = format!("{}, {}", self.title, self.spelled_out);
         let arrow = self.arrow.map(|arrow| {
             Button::new(SharedString::from(format!("details:{key}")))
+                .control(
+                    format!("{}.details", row(&key)),
+                    if arrow.open {
+                        "Hide details"
+                    } else {
+                        "Show details"
+                    },
+                )
                 .ghost()
                 .xsmall()
                 .icon(if arrow.open {
@@ -150,6 +161,7 @@ impl ThreeLineRow {
                 .bg(accent)
         });
         ListItem::new(key.clone())
+            .control(row(&key), spoken)
             .w_full()
             .px_3()
             .py(ROW_PADDING)

@@ -4,6 +4,8 @@ use crate::core::intents::open_file::OpenFile;
 use crate::core::socket::{error_code::ErrorCode, row_source::ExpectedRowSource};
 use crate::core::state::{preferences::Preferences, session_read::Shown};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::control_ids as ids;
+use crate::core::ui::access::{Control as _, Named as _};
 use crate::core::ui::{
     changed_tree::{TREE_WIDTH, TreeHandler},
     diff_header::{file_heading, part_heading, viewed_button},
@@ -68,6 +70,7 @@ fn open_line(
 fn file_menu(path: &str, target: LineTarget) -> impl IntoElement + use<> {
     let (opened, copied) = (path.to_string(), path.to_string());
     Button::new(SharedString::from(format!("changes-file-menu:{path}")))
+        .named("More file actions")
         .ghost()
         .small()
         .icon(IconName::Ellipsis)
@@ -271,6 +274,7 @@ impl ChangesPane {
             )
             .children(stack.then(|| {
                 Button::new("changes-refresh")
+                    .control(ids::changes::REFRESH, "Refresh changes")
                     .ghost()
                     .small()
                     .icon(IconName::RefreshCw)

@@ -1,5 +1,6 @@
 use super::{DraftEvent, NewSessionForm};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Named as _;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
@@ -71,6 +72,7 @@ impl NewSessionForm {
             .as_ref()
             .map_or_else(|| "No project".to_string(), |project| project.title.clone());
         Button::new("new:project-choice")
+            .named(format!("Project: {name}"))
             .ghost()
             .compact()
             .h_auto()
@@ -124,6 +126,7 @@ impl NewSessionForm {
                     .child("Your conversation starts when you send.")
                     .child(
                         Button::new("new:discard")
+                            .named("Discard this draft")
                             .ghost()
                             .small()
                             .icon(IconName::X)
