@@ -1,13 +1,20 @@
 //! `ToolRow` draws a tool call: its step line (`StepRow`: sign, title, summary, line counts), and, opened as an
 //! `ExpandRow` (pane_expand.rs), the command it ran, its output tail and diff from `rows/tool`. The detail is read
 //! when it opens and again only when the call's state changes (an edit's diff once the edit finishes). A long diff
-//! shows its first lines until shown in full. Replaces chat/Tool.svelte and chat/tools/tool.ts.
+//! shows its first lines until shown in full. The path its line shows is a link that opens the file. Replaces
+//! chat/Tool.svelte and chat/tools/tool.ts.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+
+use std::path::Path;
+
+use crate::core::intents::open_file::OpenFile;
+use crate::core::navigation::file_link::names_its_own_place;
+use crate::core::socket::row_source::ExpectedRowSource;
 
 use super::session_action::{OnAction, SessionAction};
 use super::step_row::{StepRow, StepState};
@@ -32,6 +39,9 @@ pub struct ToolRow {
     /// The user denied it: it didn't run, so it isn't drawn as failed.
     pub denied: bool,
     pub on_action: OnAction,
+    /// The session its file path opens in, and the source it was read from; `None` with no session.
+    pub session: Option<String>,
+    pub expected_source: Option<ExpectedRowSource>,
 }
 
 /// The diff's lines to show, and how many are hidden.
@@ -60,7 +70,7 @@ pub fn command_of(input: &str) -> Option<String> {
         .map(|parts| parts.join(" "))
 }
 
-/// A path's last two parts ("notes/plan.md"), for a tool line: the call doesn't say what folder it ran in.
+/// A path's last two parts ("notes/plan.md"), for a tool line.
 pub fn short_path(path: &str) -> String {
     let parts: Vec<&str> = path
         .split(['/', '\\'])
@@ -75,6 +85,17 @@ pub fn line_summary(tool: &ToolPayload) -> Option<String> {
         (Some(summary), Some(path)) if summary != path => Some(summary.clone()),
         (_, Some(path)) => Some(short_path(path)),
         (summary, None) => summary.clone(),
+    }
+}
+
+/// The path a tool line's summary shows, which opens as a file: the summary is the path, or the path as the call gave it
+/// before the backend joined it onto the call's folder.
+pub fn shown_path(tool: &ToolPayload) -> Option<&str> {
+    let path = tool.path.as_deref()?;
+    match tool.summary.as_deref() {
+        None => Some(path),
+        Some(summary) if summary == path || Path::new(path).ends_with(summary) => Some(path),
+        Some(_) => None,
     }
 }
 
@@ -150,10 +171,31 @@ impl ToolRow {
                 .then(|| glyph(self.tool.kind.as_deref())),
             title: title.into(),
             summary: summary.map(Into::into),
+            summary_action: self.path_link(),
             tags,
             took_ms: self.took_ms,
             chevron,
         }
+    }
+
+    /// Opening the file its line shows, through the `OpenFile` listener, which sends an absolute or `~` path to the one
+    /// resolver. A relative path needs the session to open in.
+    fn path_link(&self) -> Option<Box<dyn Action>> {
+        let path = shown_path(&self.tool)?;
+        let session = match &self.session {
+            Some(session) => session.clone(),
+            None if names_its_own_place(path) => String::new(),
+            None => return None,
+        };
+        Some(Box::new(OpenFile {
+            session_id: session,
+            path: path.to_string(),
+            line: None,
+            column: None,
+            pinned: true,
+            expected_source: self.expected_source.clone(),
+            outside: None,
+        }))
     }
 
     /// What it shows open: its detail once read, nothing before.

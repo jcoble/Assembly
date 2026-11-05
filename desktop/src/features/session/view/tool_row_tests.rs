@@ -161,8 +161,156 @@ fn cancelled_tool_line_is_neutral_with_and_without_activity_timing(cx: &mut gpui
                 took_ms: timed.then_some(3000),
                 denied,
                 on_action: std::rc::Rc::new(|_, _, _| {}),
+                session: None,
+                expected_source: None,
             };
             assert_eq!(row.line(None, cx).state, expected);
         }
     });
+}
+
+/// A finished read of `path`, with `summary` as the backend sent it, in `session`.
+fn read_row(path: &str, summary: Option<&str>, session: Option<&str>) -> super::ToolRow {
+    use crate::core::socket::row_source::ExpectedRowSource;
+    super::ToolRow {
+        key: "R".into(),
+        tool: serde_json::from_value(json!({
+            "name": "Read", "state": "completed", "hasDetail": true, "kind": "read",
+            "path": path, "summary": summary,
+        }))
+        .unwrap(),
+        kept: crate::features::session::model::kept::Kept::default(),
+        took_ms: None,
+        denied: false,
+        on_action: std::rc::Rc::new(|_, _, _| {}),
+        session: session.map(Into::into),
+        expected_source: Some(ExpectedRowSource {
+            machine: "owner-a".into(),
+            generation: 3,
+            route_machine: Some("route-a".into()),
+        }),
+    }
+}
+
+fn opens(row: &super::ToolRow, cx: &gpui_kit::App) -> Option<Box<dyn gpui_kit::Action>> {
+    row.line(None, cx).summary_action
+}
+
+#[gpui::test]
+fn a_tool_row_path_is_a_file_link_for_its_session(cx: &mut gpui::TestAppContext) {
+    use crate::core::intents::open_file::OpenFile;
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        // An absolute path, and a relative one the backend joined onto the call's folder (its summary stays as sent).
+        for summary in [None, Some("/work/src/a.rs"), Some("src/a.rs")] {
+            let row = read_row("/work/src/a.rs", summary, Some("S"));
+            let action = opens(&row, cx).expect("the path is a link");
+            assert!(action.partial_eq(&OpenFile {
+                session_id: "S".into(),
+                path: "/work/src/a.rs".into(),
+                line: None,
+                column: None,
+                pinned: true,
+                expected_source: row.expected_source.clone(),
+                outside: None,
+            }));
+        }
+        // With no session an absolute path still goes to the resolver; a relative one has nowhere to open.
+        let alone = opens(&read_row("/work/src/a.rs", None, None), cx).expect("absolute opens");
+        assert!(alone.partial_eq(&OpenFile {
+            session_id: String::new(),
+            path: "/work/src/a.rs".into(),
+            line: None,
+            column: None,
+            pinned: true,
+            expected_source: read_row("/x", None, None).expected_source,
+            outside: None,
+        }));
+        assert!(opens(&read_row("src/a.rs", None, None), cx).is_none());
+        assert!(opens(&read_row("src/a.rs", None, Some("S")), cx).is_some());
+        // A line that shows something other than the path isn't a link.
+        assert!(
+            opens(
+                &read_row("/work/src/a.rs", Some("reads the file"), Some("S")),
+                cx
+            )
+            .is_none()
+        );
+    });
+}
+
+#[gpui::test]
+fn the_tool_row_still_shows_the_short_path(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        let line = read_row("/work/src/a.rs", None, Some("S")).line(None, cx);
+        assert_eq!(line.summary.as_deref(), Some("src/a.rs"));
+        let line = read_row("/work/src/a.rs", Some("/work/src/a.rs"), Some("S")).line(None, cx);
+        assert_eq!(line.summary.as_deref(), Some("src/a.rs"));
+    });
+}
+
+#[gpui::test]
+fn clicking_the_tool_path_does_not_toggle_the_row(cx: &mut gpui::TestAppContext) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use gpui_kit::{
+        AppContext as _, Context, Entity, IntoElement, Modifiers, ParentElement as _, Render,
+        Styled as _, Window,
+    };
+
+    use crate::core::intents::open_file::OpenFile;
+    use crate::core::ui::expand_row::ExpandRow;
+
+    struct Host(Entity<ExpandRow>);
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            gpui_kit::component::v_flex()
+                .size_full()
+                .child(self.0.clone())
+        }
+    }
+
+    let opened: Rc<RefCell<Vec<OpenFile>>> = Rc::default();
+    let heard = opened.clone();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.on_action(move |intent: &OpenFile, _| heard.borrow_mut().push(intent.clone()));
+    });
+    let row = read_row("/work/src/a.rs", None, Some("S"));
+    let (host, cx) = cx.add_window_view(move |_, cx| {
+        let expand = cx.new(|_| {
+            ExpandRow::new(
+                false,
+                move |grown, _, cx| row.line(Some(grown), cx).into_any_element(),
+                |_, _| gpui_kit::div().into_any_element(),
+            )
+        });
+        Host(expand)
+    });
+    cx.run_until_parked();
+    let expand = cx.update(|_, cx| host.read(cx).0.clone());
+    let at = |name: &'static str, cx: &mut gpui::VisualTestContext| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds(name).expect("drawn")
+    };
+    let path = at("R:line:summary", cx);
+    cx.simulate_click(path.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        !cx.update(|_, cx| expand.read(cx).is_open()),
+        "the row stays shut"
+    );
+    let opened_paths: Vec<_> = opened.borrow().iter().map(|o| o.path.clone()).collect();
+    assert_eq!(opened_paths, vec!["/work/src/a.rs".to_string()]);
+    // The rest of the line still opens it.
+    let line = at("R:line", cx);
+    cx.simulate_click(
+        gpui_kit::point(line.left() + gpui_kit::px(4.), line.center().y),
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| expand.read(cx).is_open()));
+    assert_eq!(opened.borrow().len(), 1);
 }

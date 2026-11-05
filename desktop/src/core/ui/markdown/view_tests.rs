@@ -147,3 +147,32 @@ fn a_file_link_keeps_its_rendered_source_even_when_the_same_session_id_has_anoth
     }));
     assert!(target.action(None, None).is_none());
 }
+
+#[test]
+fn an_absolute_file_link_with_no_session_still_opens() {
+    use crate::core::intents::open_file::OpenFile;
+    for path in ["/etc/hosts", "~/notes/plan.md"] {
+        let target = LinkTarget::File(path.into());
+        assert!(target.opens(None), "{path} is clickable with no session");
+        let action = target.action(None, None).expect("an absolute link opens");
+        // An empty session sends it to the one resolver, which opens it by machine and path.
+        assert!(action.partial_eq(&OpenFile {
+            session_id: String::new(),
+            path: path.into(),
+            line: None,
+            column: None,
+            pinned: true,
+            expected_source: None,
+            outside: None,
+        }));
+    }
+}
+
+#[test]
+fn a_relative_file_link_with_no_session_is_still_dropped() {
+    let target = LinkTarget::File("src/main.rs".into());
+    assert!(!target.opens(None));
+    assert!(target.action(None, None).is_none());
+    assert!(target.opens(Some("actual-session")));
+    assert!(LinkTarget::Url("https://example.com".into()).opens(None));
+}

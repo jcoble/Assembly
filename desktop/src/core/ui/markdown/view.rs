@@ -11,6 +11,7 @@ use gpui_kit::*;
 
 use crate::core::intents::open_file::OpenFile;
 use crate::core::intents::open_url::OpenUrl;
+use crate::core::navigation::file_link::names_its_own_place;
 use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::ui::markdown::payload::{Block, Inline};
 
@@ -19,7 +20,7 @@ pub struct MarkdownView {
     /// The item's key: its links' element ids start with it.
     pub id: SharedString,
     pub blocks: Vec<Block>,
-    /// Actual session context for file links; absent for untrusted global content.
+    /// Actual session context for file links; absent for global content, whose only file links are absolute or `~`.
     pub session: Option<SharedString>,
     /// Source captured with this content; never refreshed from the current selection at click time.
     pub expected_source: Option<ExpectedRowSource>,
@@ -56,6 +57,15 @@ pub enum LinkTarget {
 }
 
 impl LinkTarget {
+    /// Whether it can open from content with `session` (or none): a file link with no session only when its path names
+    /// its own place, which the one resolver opens by machine and path.
+    pub fn opens(&self, session: Option<&str>) -> bool {
+        match self {
+            Self::Url(_) => true,
+            Self::File(path) => session.is_some() || names_its_own_place(path),
+        }
+    }
+
     fn action(
         &self,
         session: Option<&str>,
@@ -63,15 +73,17 @@ impl LinkTarget {
     ) -> Option<Box<dyn Action>> {
         match self {
             Self::Url(url) => Some(Box::new(OpenUrl { url: url.clone() })),
-            Self::File(path) => Some(Box::new(OpenFile {
-                session_id: session?.to_string(),
-                path: path.clone(),
-                line: None,
-                column: None,
-                pinned: true,
-                expected_source: expected_source.cloned(),
-                outside: None,
-            })),
+            Self::File(path) => self.opens(session).then(|| -> Box<dyn Action> {
+                Box::new(OpenFile {
+                    session_id: session.unwrap_or_default().to_string(),
+                    path: path.clone(),
+                    line: None,
+                    column: None,
+                    pinned: true,
+                    expected_source: expected_source.cloned(),
+                    outside: None,
+                })
+            }),
         }
     }
 }
@@ -299,7 +311,7 @@ impl Draw<'_> {
         } = Runs::of(parts);
         let links: Vec<_> = links
             .into_iter()
-            .filter(|(_, target)| self.session.is_some() || !matches!(target, LinkTarget::File(_)))
+            .filter(|(_, target)| target.opens(self.session))
             .collect();
         let theme = self.cx.theme();
         let highlights = marked
