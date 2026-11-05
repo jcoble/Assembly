@@ -10,13 +10,13 @@ import { fileURLToPath } from 'node:url';
 
 const repository = fileURLToPath(new URL('../', import.meta.url));
 
-// Paths under the user's home, where the packaged app keeps main's data and reaches main's remote.
+// Paths under the user's home, where the packaged app keeps main's data and reaches its installed remote.
 export const PACKAGED_CONFIG = {
   port: 18797,
   home: 'assembly-dotnet/mac',
   tokenFile: '.config/assembly-dotnet/env',
   remotePort: 9797,
-  remoteTokenFile: '.config/assembly-dotnet/env'
+  remoteTokenFile: '.config/assembly-host/env'
 };
 
 export function desktopVersion(source = repository): string {

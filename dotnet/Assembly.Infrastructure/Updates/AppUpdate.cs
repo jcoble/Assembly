@@ -5,7 +5,6 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Assembly.Application.Common.Calls;
 using Assembly.Infrastructure.Remote.Install;
-using Microsoft.Data.Sqlite;
 
 namespace Assembly.Infrastructure.Updates;
 
@@ -20,7 +19,7 @@ internal interface IAppInstall
     string? Ready { get; }
     /// <summary>Gets it ready and goes no further: the app never restarts by itself.</summary>
     Task StageAsync(string version, Action<string> progress, CancellationToken ct);
-    /// <summary>The press: waits for running sessions, then hands over and asks the window to quit.</summary>
+    /// <summary>The press: waits for running sessions, then hands over and asks the window to quit. A turn that starts meanwhile sends it back to waiting.</summary>
     Task RestartAsync(Action<string> progress, CancellationToken ct);
     /// <summary>The window is up: an update waiting to hear that can finish.</summary>
     void Started();
@@ -39,12 +38,13 @@ internal sealed record AppLocation(string App, string Home, string Database, str
 /// <summary>
 /// Everything before the swap. The stage sits beside the bundle so the swap stays on one volume. It's made and checked with
 /// nothing stopped, and waits there: only Restart to Update goes on, to the wait for sessions and the quit. The helper does
-/// the rest once this app has gone.
+/// the rest once this app has gone, starting with the copy of the database, so no write comes after it.
 /// </summary>
-internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed feed, Func<CancellationToken, Task> idle, Action<string> backup,
-    Func<string, string, CancellationToken, Task> startHelper, Func<int> windowPid, Action quit) : IAppInstall
+internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed feed, Func<CancellationToken, Task> idle, Func<bool> busy,
+    Func<string, string, CancellationToken, Task<Action>> startHelper, Func<int> windowPid, Action quit) : IAppInstall
 {
     private const string Bundle = "Assembly.app", StagePrefix = ".assembly-update-";
+    internal const string WaitingWords = "Waiting for running sessions to finish…";
     private sealed record Staged(string Version, string Stage, string Fresh, string Program);
     private volatile Staged? _staged;
 
@@ -109,21 +109,27 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
         var staged = _staged ?? throw new CallFailed("No update is ready to restart into.", "no_update");
         try
         {
-            progress(RemoteReleaseInstall.WaitingWords);
-            await idle(ct);
             Directory.CreateDirectory(location.Folder);
-            progress("Backing up this app's database…");
-            var copy = Path.Combine(location.Folder, $"assembly-before-{staged.Version}.db");
-            File.Delete(copy);
-            backup(copy);
             File.Delete(location.Failed);
-            var plan = AppSwapPlan.For(location, staged.Fresh, staged.Program, staged.Stage, staged.Version, copy, windowPid());
+            var copy = Path.Combine(location.Folder, $"{AppSwap.BackupPrefix}{staged.Version}.db");
             var planFile = Path.Combine(staged.Stage, "plan.json");
-            await File.WriteAllBytesAsync(planFile, JsonSerializer.SerializeToUtf8Bytes(plan, AppSwapJson.Default.AppSwapPlan), ct);
             var helper = Path.Combine(staged.Fresh, "Contents/Resources/backend", Path.GetFileName(Environment.ProcessPath ?? "assembly"));
-            await startHelper(helper, planFile, ct);
-            progress($"Restarting into Assembly {staged.Version}…");
-            quit();
+            while (true)
+            {
+                progress(WaitingWords);
+                await idle(ct);
+                var plan = AppSwapPlan.For(location, staged.Fresh, staged.Program, staged.Stage, staged.Version, copy, windowPid());
+                await File.WriteAllBytesAsync(planFile, JsonSerializer.SerializeToUtf8Bytes(plan, AppSwapJson.Default.AppSwapPlan), ct);
+                var callOff = await startHelper(helper, planFile, ct);
+                // Starting the helper can take seconds, and a turn can start in them. Quitting now would kill it.
+                if (!busy())
+                {
+                    progress($"Restarting into Assembly {staged.Version}…");
+                    quit();
+                    return;
+                }
+                callOff();
+            }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -155,38 +161,31 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
         if (process.ExitCode != 0) throw new CallFailed($"The download couldn't be unpacked: {(await said).Trim()}", "release_invalid");
     }
 
-    /// <summary>A consistent copy, for going back to if a new version's migration has to be undone.</summary>
-    internal static void CopyDatabase(string database, string copy)
-    {
-        using var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = database, Pooling = false }.ToString());
-        db.Open();
-        var partial = copy + ".partial";
-        File.Delete(partial);
-        using var command = db.CreateCommand();
-        command.CommandText = "VACUUM INTO $copy;";
-        command.Parameters.AddWithValue("$copy", partial);
-        command.ExecuteNonQuery();
-        using (var written = new FileStream(partial, FileMode.Open, FileAccess.ReadWrite))
-            written.Flush(flushToDisk: true);
-        File.Move(partial, copy);
-    }
-
     /// <summary>
     /// Starts the helper and waits for it to say it has left this process's group. It runs from a copy in the stage: a
-    /// single-file program keeps loading from its own path, and the swap moves the bundle it came from.
+    /// single-file program keeps loading from its own path, and the swap moves the bundle it came from. What comes back calls
+    /// it off: until this app quits it's only waiting, and nothing has been touched.
     /// </summary>
-    internal static async Task StartHelperAsync(string helper, string plan, CancellationToken ct)
+    internal static async Task<Action> StartHelperAsync(string helper, string plan, CancellationToken ct)
     {
         var copy = Path.Combine(Path.GetDirectoryName(plan)!, "finish-update");
         File.Copy(helper, copy, overwrite: true);
         var start = new ProcessStartInfo(copy, ["finish-update", plan]) { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        using var process = Process.Start(start) ?? throw new CallFailed("The update helper could not start.", "app_update_failed");
+        var process = Process.Start(start) ?? throw new CallFailed("The update helper could not start.", "app_update_failed");
+        void CallOff()
+        {
+            try { process.Kill(); process.WaitForExit(TimeSpan.FromSeconds(5)); }
+            catch (InvalidOperationException) { }
+            process.Dispose();
+        }
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
         string? said;
         try { said = await process.StandardOutput.ReadLineAsync(deadline.Token); }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { said = null; }
-        if (said != AppSwap.Ready) throw new CallFailed("The update helper didn't start.", "app_update_failed");
+        if (said == AppSwap.Ready) return CallOff;
+        CallOff();
+        throw new CallFailed("The update helper didn't start.", "app_update_failed");
     }
 
     [GeneratedRegex(@"<key>CFBundleExecutable</key>\s*<string>([^<]*)</string>")]

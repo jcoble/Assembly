@@ -30,12 +30,15 @@ internal sealed partial class AppSwapJson : JsonSerializerContext;
 
 /// <summary>
 /// The helper, run from the new bundle after leaving the old app's process group. It waits for exactly the old window and
-/// backend to exit, swaps the bundles in one rename, starts the new one, and waits to hear from it. A new version that exits
-/// or stays silent is stopped, by its own process id only, and the old bundle and database go back.
+/// backend to exit, copies the database they left, swaps the bundles in one rename, starts the new one, and waits to hear from
+/// it. A new version that exits or stays silent is stopped, by its own process id only, and the old bundle and database go back.
+/// Only the latest copy and the latest failed database are kept.
 /// </summary>
 internal static partial class AppSwap
 {
     internal const string Ready = "ready";
+    internal const string BackupPrefix = "assembly-before-";
+    private static readonly string[] DatabaseFiles = ["", "-wal", "-shm"];
     private const string Socket = "ack.sock";
     private static readonly TimeSpan StartTolerance = TimeSpan.FromSeconds(1);
 
@@ -75,8 +78,12 @@ internal static partial class AppSwap
         using var listener = new System.Net.Sockets.Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         listener.Bind(new UnixDomainSocketEndPoint(address));
         listener.Listen(1);
-        try { Exchange(plan.Fresh, plan.App); }
-        catch (IOException)
+        try
+        {
+            CopyDatabase(plan);
+            Exchange(plan.Fresh, plan.App);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             Say(plan, $"Assembly {plan.Version} couldn't be put in place, so this app stayed on {plan.Previous}.");
             File.Delete(address);
@@ -98,12 +105,42 @@ internal static partial class AppSwap
         catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception or InvalidOperationException) { }
         if (child is not null) await StopAsync(child);
         await StopBackendAsync(plan, swapped);
-        Exchange(plan.Fresh, plan.App);
-        Restore(plan);
+        if (await GoBackAsync(plan) is { } stuck)
+        {
+            // The stage may hold the old app now, so it stays, and whatever is in place opens with the reason on it.
+            Say(plan, stuck);
+            File.Delete(address);
+            try { using (Launch(plan)) { } }
+            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception or InvalidOperationException) { }
+            return 1;
+        }
         Say(plan, $"Assembly {plan.Version} didn't start, so this app went back to {plan.Previous}.");
         File.Delete(address);
         Relaunch(plan);
         return 1;
+    }
+
+    // Null when all of it went back; otherwise what's still wrong.
+    private static async Task<string?> GoBackAsync(AppSwapPlan plan)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try { Exchange(plan.Fresh, plan.App); break; }
+            catch (IOException) when (attempt < SwapAttempts) { await Task.Delay(TimeSpan.FromSeconds(1)); }
+            catch (IOException) { return $"Assembly {plan.Version} didn't start, and {plan.Previous} couldn't be put back. It's kept in {plan.Fresh}."; }
+        }
+        try { Restore(plan); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { return $"Assembly {plan.Version} didn't start. This app went back to {plan.Previous}, but its database couldn't be put back. The copy is {plan.Backup}."; }
+        return null;
+    }
+
+    // Every process that wrote it has gone, so its files are the whole of it, right up to the last write.
+    private static void CopyDatabase(AppSwapPlan plan)
+    {
+        foreach (var old in Directory.EnumerateFiles(plan.Folder, BackupPrefix + "*")) File.Delete(old);
+        foreach (var suffix in DatabaseFiles)
+            if (File.Exists(plan.Database + suffix)) File.Copy(plan.Database + suffix, plan.Backup + suffix);
     }
 
     private static void Relaunch(AppSwapPlan plan)
@@ -200,11 +237,17 @@ internal static partial class AppSwap
     private static void Restore(AppSwapPlan plan)
     {
         if (!File.Exists(plan.Backup)) return;
-        foreach (var suffix in new[] { "", "-wal", "-shm" })
+        var name = Path.GetFileName(plan.Database);
+        foreach (var old in Directory.EnumerateFiles(Path.GetDirectoryName(plan.Database)!, name + "*.failed-*")) File.Delete(old);
+        foreach (var suffix in DatabaseFiles)
             if (File.Exists(plan.Database + suffix)) File.Move(plan.Database + suffix, $"{plan.Database}{suffix}.failed-{plan.Version}", overwrite: true);
-        var partial = plan.Database + ".partial";
-        File.Copy(plan.Backup, partial, overwrite: true);
-        File.Move(partial, plan.Database);
+        foreach (var suffix in DatabaseFiles)
+        {
+            if (!File.Exists(plan.Backup + suffix)) continue;
+            var partial = plan.Database + suffix + ".partial";
+            File.Copy(plan.Backup + suffix, partial, overwrite: true);
+            File.Move(partial, plan.Database + suffix);
+        }
     }
 
     private static void Say(AppSwapPlan plan, string note)
@@ -233,6 +276,7 @@ internal static partial class AppSwap
 
     private const int AtWorkingFolderLinux = -100, AtWorkingFolderMac = -2;
     private const uint ExchangeFlag = 2;
+    private const int SwapAttempts = 3;
     private const int Terminate = 15, ForceKill = 9;
 
     [DllImport("libc", EntryPoint = "renameatx_np", SetLastError = true)]

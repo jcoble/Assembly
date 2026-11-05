@@ -278,14 +278,33 @@ cp "$GITHUB_FIXTURE/$(basename "$url")" "$out"
     [Theory]
     [InlineData("-oProxyCommand=evil", 9797, ".config/assembly-host/env")]
     [InlineData("box", 0, ".config/assembly-host/env")]
-    [InlineData("box", 9797, "../outside/env")]
-    [InlineData("box", 9797, "a b; rm -rf /")]
     public async Task Refuses_an_unsafe_saved_machine_before_any_command(string ssh, int port, string tokenFile)
     {
         var shell = new LocalShell(Home, Github, _root, Bin);
         var install = new RemoteReleaseInstall(new RemoteReleaseFeed(new HttpClient(new RemoteReleaseFeedTests.Handler([]))), shell, TimeProvider.System);
         var failed = await Assert.ThrowsAsync<CallFailed>(() => install.InstallLatestAsync(new("box", ssh, port, tokenFile), _ => { }, default));
         Assert.Equal("bad_args", failed.Reason);
+        Assert.Empty(shell.Targets);
+    }
+
+    // Saved before the new default, by another lane's setup, or by hand. The saved value is left alone: it still connects to what it reaches.
+    [Theory]
+    [InlineData(".config/assembly-dotnet/env")]
+    [InlineData(".config/assembly-" + "dotnet-settings2/env")]
+    [InlineData("/home/someone/.config/assembly-" + "dotnet/env")]
+    [InlineData(".config/assembly-host/../assembly-" + "dotnet/env")]
+    [InlineData("../outside/env")]
+    [InlineData("a b; rm -rf /")]
+    public async Task A_machine_saved_with_any_other_token_file_gets_no_install_and_no_command_runs(string tokenFile)
+    {
+        var shell = new LocalShell(Home, Github, _root, Bin);
+        var install = new RemoteReleaseInstall(new RemoteReleaseFeed(new HttpClient(new RemoteReleaseFeedTests.Handler([]))), shell, TimeProvider.System);
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => install.InstallLatestAsync(new("box", "box-host", 9797, tokenFile), _ => { }, default));
+        Assert.Equal("token_file_not_ours", failed.Reason);
+        Assert.Contains("Clear the token file in Settings", failed.Message, StringComparison.Ordinal);
+        Assert.Empty(shell.Targets);
+        var tools = await Assert.ThrowsAsync<CallFailed>(() => install.UpdateToolsAsync(new("box", "box-host", 9797, tokenFile), new(true, []), _ => { }, default));
+        Assert.Equal("token_file_not_ours", tools.Reason);
         Assert.Empty(shell.Targets);
     }
 

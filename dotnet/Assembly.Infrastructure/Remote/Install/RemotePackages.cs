@@ -71,7 +71,19 @@ internal sealed class CheckoutPackages(RemoteReleaseShell shell, Func<Cancellati
 /// <summary>Builds this checkout's package with its own script, on this machine, once per build inputs.</summary>
 internal static class CheckoutBuild
 {
-    internal static Func<CancellationToken, Task<string>> For(string root, string home) => async ct =>
+    internal static Func<CancellationToken, Task<string>> For(string root, string home)
+    {
+        // Machines update side by side, and the build's folder is one.
+        var one = new SemaphoreSlim(1, 1);
+        return async ct =>
+        {
+            await one.WaitAsync(ct);
+            try { return await BuildAsync(root, home, ct); }
+            finally { one.Release(); }
+        };
+    }
+
+    private static async Task<string> BuildAsync(string root, string home, CancellationToken ct)
     {
         var start = new ProcessStartInfo("node", [Path.Combine(root, "scripts/package-checkout.ts"), Path.Combine(home, "staging", "checkout-package")])
         { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
@@ -87,7 +99,7 @@ internal static class CheckoutBuild
         }
         if (process.ExitCode != 0) throw new CallFailed("This checkout didn't build: " + string.Join(' ', (await errors).Split('\n', StringSplitOptions.RemoveEmptyEntries).TakeLast(3)), "build_failed");
         return (await output).Trim().Split('\n')[^1];
-    };
+    }
 }
 
 /// <summary>A delivered app: the signed release. The remote downloads it itself, and the desktop checks what it says it got.</summary>

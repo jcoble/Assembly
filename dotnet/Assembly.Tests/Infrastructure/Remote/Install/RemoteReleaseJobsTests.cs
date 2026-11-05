@@ -28,7 +28,7 @@ public sealed class RemoteReleaseJobsTests : IAsyncLifetime
 
     private RemoteReleaseJobs Jobs(HttpMessageHandler handler, List<string>? connected = null) =>
         new(new RemoteReleaseInstall(new RemoteReleaseFeed(new HttpClient(handler)), new RemoteReleaseShell(), TimeProvider.System), _work, _topics,
-            (name, _) => name == "box" ? new SavedMachine("box", "box-host") : null,
+            (name, _) => name is "box" or "second" ? new SavedMachine(name, name + "-host") : null,
             (name, _) => { connected?.Add(name); return Task.CompletedTask; });
 
     private static async Task<RemoteReleaseJob> Settled(RemoteReleaseJobs jobs, Guid id)
@@ -81,6 +81,17 @@ public sealed class RemoteReleaseJobsTests : IAsyncLifetime
         Assert.Equal("install_busy", busy.Reason);
         gate.Open.SetResult();
         await Assert.ThrowsAsync<CallFailed>(() => running);
+    }
+
+    [Fact]
+    public async Task A_machine_waiting_for_its_turn_holds_up_no_other_machine()
+    {
+        var gate = new Gate();
+        await using var jobs = Jobs(gate);
+        var (box, second) = (jobs.InstallAsync("box", _ => { }, CancellationToken.None), jobs.InstallAsync("second", _ => { }, CancellationToken.None));
+        gate.Open.SetResult();
+        Assert.Equal("release_unavailable", (await Assert.ThrowsAsync<CallFailed>(() => box)).Reason);
+        Assert.Equal("release_unavailable", (await Assert.ThrowsAsync<CallFailed>(() => second)).Reason);
     }
 
     [Fact]

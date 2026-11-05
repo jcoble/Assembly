@@ -245,6 +245,7 @@ public sealed partial class RemoteReleaseInstallTests
         var source = UpdateSources.ForHost(new HttpClient(new RemoteReleaseFeedTests.Handler([])), TimeProvider.System, jobs, "");
         var updates = new MachineUpdates(source, status, new InstalledCalls(new AgentsOnlyLauncher(() => []), TimeProvider.System),
             (_, _) => Task.FromResult<InstalledTools?>(null), null, work, TextWriter.Null);
+        status.Reachable("box");
         status.Backend("box", new("a", "a", false, "999.0.0", BackendBuild.Version));
         await updates.CheckAsync("box", default);
         status.Backend("box", new("a", "a", false, BackendBuild.Version, BackendBuild.Version));
@@ -252,6 +253,39 @@ public sealed partial class RemoteReleaseInstallTests
         Assert.False(status.Items[1].Updating);
         Assert.DoesNotContain(status.Items[1].Updates!, item => item.State == UpdateItem.Behind);
         Assert.False(File.Exists(Path.Combine(Installed, "bin/assembly-remote-server")));
+    }
+
+    private sealed class Answers(string version) : RemoteReleaseShell
+    {
+        internal readonly List<string> Commands = [];
+        internal override Task<string> RunAsync(string target, string command, Action<string>? line, CancellationToken ct)
+        {
+            Commands.Add(command);
+            return Task.FromResult(version);
+        }
+    }
+
+    [Fact]
+    public async Task A_cli_found_newer_than_wanted_is_left_alone_when_the_check_was_old()
+    {
+        var newer = new Answers("codex-cli 9.0.0");
+        await ReleaseCliUpdate.RunAsync(newer, "box", new("codex", "1.2.3"), "agents.json", default);
+        Assert.Single(newer.Commands);
+        Assert.DoesNotContain("npm install", newer.Commands[0], StringComparison.Ordinal);
+
+        var older = new Answers("codex-cli 1.0.0");
+        await Assert.ThrowsAsync<CallFailed>(() => ReleaseCliUpdate.RunAsync(older, "box", new("codex", "1.2.3"), "agents.json", default));
+        Assert.Contains("npm install", older.Commands[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Commands_on_this_computer_work_under_a_login_shell_that_does_not_read_posix()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var fish = Path.Combine(_root, "fish");
+        File.WriteAllText(fish, "#!/bin/sh\ncase \"$2\" in *'$('*|*'||'*|*'&&'*|*';'*) echo 'fish: Unsupported use' >&2; exit 127;; esac\nexec /bin/sh -c \"$2\"\n");
+        File.SetUnixFileMode(fish, (UnixFileMode)0b111_101_101);
+        Assert.Equal("ok", await new ThisMachineShell(fish).RunAsync("", "x=$(printf ok) && printf '%s' \"$x\"; true", null, default));
     }
 
     private static async Task Until(Func<bool> done)

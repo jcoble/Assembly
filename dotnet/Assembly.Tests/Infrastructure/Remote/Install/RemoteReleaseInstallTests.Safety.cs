@@ -47,15 +47,15 @@ public sealed partial class RemoteReleaseInstallTests
         if (!OperatingSystem.IsLinux()) return;
         var (install, _, _, _) = Fixture();
         var phases = new List<string>();
-        await install.InstallLatestAsync(new("box", "fixture-host", 9798, ".config/mine/token"), phases.Add, default);
+        await install.InstallLatestAsync(new("box", "fixture-host", 9798), phases.Add, default);
 
         Assert.Contains("Checking what's on the remote machine…", phases);
-        Assert.Contains($"--port 9798 --home {Installed}/serve --agents {Installed}/serve/agents.json --token-file {Home}/.config/mine/token", File.ReadAllText(UnitFile), StringComparison.Ordinal);
+        Assert.Contains($"--port 9798 --home {Installed}/serve --agents {Installed}/serve/agents.json --token-file {Home}/.config/assembly-host/env", File.ReadAllText(UnitFile), StringComparison.Ordinal);
         // The host makes the token itself on first start, in a folder only this account can read.
-        if (!OperatingSystem.IsWindows()) Assert.Equal((UnixFileMode)0b111_000_000, File.GetUnixFileMode(Path.Combine(Home, ".config/mine")));
+        if (!OperatingSystem.IsWindows()) Assert.Equal((UnixFileMode)0b111_000_000, File.GetUnixFileMode(Path.Combine(Home, ".config/assembly-host")));
 
-        await install.InstallLatestAsync(new("box", "fixture-host", 9798, ".config/mine/token"), _ => { }, default);
-        await install.UpdateToolsAsync(new("box", "fixture-host", 9798, ".config/mine/token"), new(true, []), _ => { }, default);
+        await install.InstallLatestAsync(new("box", "fixture-host", 9798), _ => { }, default);
+        await install.UpdateToolsAsync(new("box", "fixture-host", 9798), new(true, []), _ => { }, default);
     }
 
     [Fact]

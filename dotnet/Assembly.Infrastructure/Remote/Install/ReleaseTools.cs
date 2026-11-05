@@ -11,9 +11,14 @@ internal static class ReleaseCliUpdate
     // Names the CLI the agents file really runs, which may not be the first one on PATH.
     private const string Configured = "const a=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).find(x=>x.vendorFamily===process.argv[2]);console.log(a&&a.cli||process.argv[2])";
 
-    /// <summary>Exit success with the old version still there is a failure: <c>version_readback_mismatch</c>.</summary>
+    /// <summary>
+    /// Exit success with the old version still there is a failure: <c>version_readback_mismatch</c>. The version is read first:
+    /// the check that said it's behind may be old by now, and a CLI newer than wanted stays.
+    /// </summary>
     internal static async Task RunAsync(RemoteReleaseShell shell, string target, CliBehind cli, string agentsFile, CancellationToken ct)
     {
+        var now = await shell.RunAsync(target, $"set -eu; PATH=$HOME/.local/bin:/usr/local/bin:$PATH; cli=$(node -e \"{Configured}\" {agentsFile} {cli.Family}); \"$cli\" --version || true", null, ct);
+        if (CliCommand.ReadVersion(cli.Family, now.Split('\n')[^1].Trim()) is { } found && CliVersion.Compare(found, cli.Version) != "update_available") return;
         var said = await shell.RunAsync(target, Command(cli, agentsFile), null, ct);
         var version = CliCommand.ReadVersion(cli.Family, said.Split('\n')[^1].Trim());
         if (version is null || CliVersion.Compare(version, cli.Version) == "update_available")
@@ -32,11 +37,17 @@ internal static class ReleaseCliUpdate
     }
 }
 
-/// <summary>Runs on this computer, through the account's login shell: an app opened from the Finder has almost no PATH.</summary>
-internal sealed class ThisMachineShell : RemoteReleaseShell
+/// <summary>
+/// Runs on this computer, through the account's login shell: an app opened from the Finder has almost no PATH. The commands
+/// are POSIX and the login shell may not be, so it only hands them to sh, in a form every shell reads the same.
+/// </summary>
+internal sealed class ThisMachineShell(string? loginShell = null) : RemoteReleaseShell
 {
+    private const string Command = "ASSEMBLY_POSIX_COMMAND";
+
     internal override Task<string> RunAsync(string target, string command, Action<string>? line, CancellationToken ct) =>
-        RunProcessAsync(new AgentCommand(Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } shell ? shell : "/bin/sh", ["-lc", command], Directory.GetCurrentDirectory()), null, line, ct);
+        RunProcessAsync(new AgentCommand(loginShell ?? (Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } shell ? shell : "/bin/sh"),
+            ["-lc", $"exec /bin/sh -c \"${Command}\""], Directory.GetCurrentDirectory()), new Dictionary<string, string> { [Command] = command }, line, ct);
 }
 
 /// <summary>

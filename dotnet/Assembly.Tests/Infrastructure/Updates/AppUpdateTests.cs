@@ -65,7 +65,7 @@ public sealed class AppUpdateTests : IDisposable
         return new(new HttpClient(new RemoteReleaseFeedTests.Handler(new() { [Listing] = listing, [Base + "latest.json"] = latest, [Base + Archive] = archive })), _signer.PublicKey);
     }
 
-    private AppUpdate Update(RemoteReleaseFeed feed, Func<CancellationToken, Task>? idle = null)
+    private AppUpdate Update(RemoteReleaseFeed feed, Func<CancellationToken, Task>? idle = null, Func<bool>? busy = null)
     {
         Directory.CreateDirectory(Path.Combine(App, "Contents"));
         File.WriteAllText(Path.Combine(App, "Contents/old"), "old");
@@ -73,8 +73,8 @@ public sealed class AppUpdateTests : IDisposable
         Directory.CreateDirectory(home);
         return new(new(App, home, Path.Combine(home, "assembly.db"), "1.0.0"), feed,
             async ct => { _steps.Add("idle"); if (idle is not null) await idle(ct); _steps.Add("idle done"); },
-            copy => { _steps.Add("backup"); File.WriteAllText(copy, "copy"); },
-            (_, plan, _) => { Assert.True(File.Exists(plan)); _steps.Add("helper"); return Task.CompletedTask; },
+            busy ?? (() => false),
+            (_, plan, _) => { Assert.True(File.Exists(plan)); _steps.Add("helper"); return Task.FromResult<Action>(() => _steps.Add("called off")); },
             () => Environment.ProcessId, () => _steps.Add("quit"));
     }
 
@@ -93,13 +93,37 @@ public sealed class AppUpdateTests : IDisposable
 
         await update.RestartAsync(notes.Add, default);
 
-        Assert.Equal(["idle", "idle done", "backup", "helper", "quit"], _steps);
+        Assert.Equal(["idle", "idle done", "helper", "quit"], _steps);
         Assert.Equal("old", File.ReadAllText(Path.Combine(App, "Contents/old")));
         Assert.True(File.Exists(Path.Combine(Stage, "new/Assembly.app/Contents/MacOS/assembly-desktop")));
         using var plan = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(Stage, "plan.json")));
         Assert.Equal("Contents/MacOS/assembly-desktop", plan.RootElement.GetProperty("program").GetString());
         Assert.Equal("1.0.0", plan.RootElement.GetProperty("previous").GetString());
-        Assert.Equal(["Downloading Assembly 2.0.0…", "Checking Assembly 2.0.0…", RemoteReleaseInstall.WaitingWords, "Backing up this app's database…", "Restarting into Assembly 2.0.0…"], notes);
+        Assert.Equal(["Downloading Assembly 2.0.0…", "Checking Assembly 2.0.0…", AppUpdate.WaitingWords, "Restarting into Assembly 2.0.0…"], notes);
+    }
+
+    [Fact]
+    public async Task A_turn_that_starts_as_the_helper_comes_up_calls_it_off_and_goes_back_to_waiting()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var answers = new Queue<bool>([true, false]);
+        var update = Update(Feed(Package("2.0.0")), busy: answers.Dequeue);
+        await update.StageAsync("2.0.0", _ => { }, default);
+
+        await update.RestartAsync(_ => { }, default);
+
+        Assert.Equal(["idle", "idle done", "helper", "called off", "idle", "idle done", "helper", "quit"], _steps);
+    }
+
+    [Fact]
+    public async Task A_download_larger_than_its_release_says_stops_as_it_passes_that_size()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var feed = Feed(Package("2.0.0"));
+        var file = Path.Combine(_root, "too-big");
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => feed.DownloadAppAsync(new("2.0.0", Base + Archive, 5, "signature"), file, default));
+        Assert.Equal("release_invalid", failed.Reason);
+        Assert.True(new FileInfo(file).Length <= 5);
     }
 
     [Fact]
@@ -197,12 +221,12 @@ public sealed class AppUpdateTests : IDisposable
         public Task RestartAsync(Action<string> progress, CancellationToken ct) { Restarts++; return Task.CompletedTask; }
     }
 
-    private sealed class FakeReleases : IReleaseInstall
+    private sealed class FakeReleases(List<string?>? tools = null) : IReleaseInstall
     {
         public readonly List<string> Remotes = [];
         public Task<PublishedVersions> PublishedAsync(CancellationToken ct) => Task.FromResult(new PublishedVersions(null, null, null));
         public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct, bool keepAdapters = false) { Remotes.Add(machine); return Task.CompletedTask; }
-        public Task UpdateToolsAsync(string? machine, ToolsBehind tools, Action<string> progress, CancellationToken ct) => Task.CompletedTask;
+        public Task UpdateToolsAsync(string? machine, ToolsBehind behind, Action<string> progress, CancellationToken ct) { tools?.Add(machine); return Task.CompletedTask; }
     }
 
     private static ReleaseUpdateSource Source(FakeReleases releases, IAppInstall app) =>
@@ -212,12 +236,26 @@ public sealed class AppUpdateTests : IDisposable
         [new(null, [new("desktop", "Desktop", "1.0.0", "2.0.0", UpdateItem.Behind)]), new("box", [new("backend", "Backend", "1.0.0", "1.0.1", UpdateItem.Behind)])];
 
     [Fact]
-    public async Task The_app_goes_first_and_the_remotes_wait_for_the_new_version()
+    public async Task By_itself_only_the_app_and_remotes_go_and_this_computers_tools_wait_for_a_press()
+    {
+        var tools = new List<string?>();
+        var (app, releases) = (new FakeApp(), new FakeReleases(tools));
+        MachineBehind[] here = [new(null, [new("desktop", "Desktop", "1.0.0", "2.0.0", UpdateItem.Behind), new("cli", "codex", "1.0.0", "2.0.0", UpdateItem.Behind)])];
+        var source = Source(releases, app);
+        await source.UpdateAsync(here, true, _ => { }, default);
+        Assert.Equal(["2.0.0"], app.Installed);
+        Assert.Empty(tools);
+        await source.UpdateAsync(here, false, _ => { }, default);
+        Assert.Equal([null], tools);
+    }
+
+    [Fact]
+    public async Task One_press_gets_the_app_ready_and_updates_everything_else_too()
     {
         var (app, releases) = (new FakeApp(), new FakeReleases());
         await Source(releases, app).UpdateAsync(AppAndRemote, false, _ => { }, default);
         Assert.Equal(["2.0.0"], app.Installed);
-        Assert.Empty(releases.Remotes);
+        Assert.Equal(["box"], releases.Remotes);
     }
 
     [Fact]
@@ -228,7 +266,8 @@ public sealed class AppUpdateTests : IDisposable
         await source.UpdateAsync(AppAndRemote, true, _ => { }, default);
         await source.UpdateAsync(AppAndRemote, false, _ => { }, default);
         Assert.Equal(["2.0.0"], app.Installed);
-        Assert.Empty(releases.Remotes);
+        // A press with the app already ready still does the rest.
+        Assert.Equal(["box", "box"], releases.Remotes);
         Assert.Equal(0, app.Restarts);
         Assert.Equal("2.0.0", source.AppReady);
         await source.RestartAppAsync(_ => { }, default);
@@ -321,26 +360,5 @@ public sealed class AppUpdateTests : IDisposable
         await Machines(source, status, work).CheckAsync(null, default);
         Assert.Equal(0, source.Automatic);
         Assert.Contains(status.Items[0].Updates!, item => item.Kind == "desktop" && item.State == UpdateItem.Behind);
-    }
-
-    [Fact]
-    public void The_backup_is_a_whole_readable_database()
-    {
-        var database = Path.Combine(_root, "assembly.db");
-        var copy = Path.Combine(_root, "copy.db");
-        using (var db = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={database};Pooling=False"))
-        {
-            db.Open();
-            using var write = db.CreateCommand();
-            write.CommandText = "PRAGMA journal_mode=WAL; CREATE TABLE t(v TEXT); INSERT INTO t VALUES ('kept');";
-            write.ExecuteNonQuery();
-            AppUpdate.CopyDatabase(database, copy);
-        }
-        using var read = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={copy};Pooling=False");
-        read.Open();
-        using var query = read.CreateCommand();
-        query.CommandText = "SELECT v FROM t";
-        Assert.Equal("kept", query.ExecuteScalar());
-        Assert.False(File.Exists(copy + ".partial"));
     }
 }

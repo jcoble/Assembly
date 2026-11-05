@@ -36,15 +36,20 @@ export type RemoteBackendPackageInput = {
   commit: string;
 };
 
-// $1 is the saved machine's port and $2 its token file under the remote's home: what a connection reads.
-// $3 and $4 are the adapter release and the manifest hash the desktop verified against the pinned key.
+// $1 is the saved machine's port. $2 and $3 are the adapter release and the manifest hash the desktop verified against the
+// pinned key. The token file isn't an argument: this install has one, so it can't be pointed at another install's.
 // --wait-idle only waits for running sessions to end; after it, the final check before the stop exits 75 when one started
-// anyway. --adapters installs adapters and restarts the same backend, for when only they are behind. --keep-adapters
-// installs the backend and leaves adapters alone, for when the machine's are newer than the release's.
+// anyway. --adapters installs adapters and restarts the same backend, for when only they are behind, on the port its unit
+// already has. --keep-adapters installs the backend and leaves adapters alone, for when the machine's are newer than the
+// release's. A backend older than the one installed is refused. From the stop until the new backend is listening,
+// everything it replaces is kept, and any failure puts it back and starts it again.
 export const REMOTE_BACKEND_INSTALL_SCRIPT = `#!/bin/sh
 set -eu
 
 root=$HOME/assembly-host
+unit=$HOME/.config/systemd/user/assembly-host.service
+before=$root/before-update
+token_file=$HOME/.config/assembly-host/env
 PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 export PATH
 mode=install
@@ -87,15 +92,19 @@ while :; do
 done
 
 port=$1
-case "$2" in /*) token_file=$2 ;; *) token_file=$HOME/$2 ;; esac
+if [ "$mode" = adapters ]; then
+  # The host keeps running on what its unit says, whatever the saved machine says now.
+  port=$(sed -n 's/^ExecStart=.* --port \\([0-9][0-9]*\\).*/\\1/p' "$unit")
+  [ -n "$port" ] || { echo "The installed service names no port, so nothing was changed" >&2; exit 1; }
+fi
 
 [ "$(uname -s)" = "Linux" ] || { echo "Assembly remote backend requires Linux" >&2; exit 1; }
 [ "$(uname -m)" = "x86_64" ] || { echo "Unsupported Linux architecture: $(uname -m)" >&2; exit 1; }
-for command in sha256sum systemctl install ss awk bash curl tar python3 node pidwait; do
+for command in sha256sum systemctl install ss awk bash curl tar python3 node pidwait sed sort; do
   command -v "$command" >/dev/null 2>&1 || { echo "Required command is missing: $command" >&2; exit 1; }
 done
 
-# Directly before anything stops: a session that started during the steps above sends the install back to waiting.
+# Directly before anything changes: a session that started during the steps above sends the install back to waiting.
 refuse_if_running() {
   pids=$(running)
   if [ -n "$pids" ]; then
@@ -104,14 +113,91 @@ refuse_if_running() {
   fi
 }
 
+version_of() { sed -n 's/^ *"version": *"\\([^"]*\\)".*/\\1/p' "$1" 2>/dev/null | head -n 1; }
+
 sha256sum -c SHA256SUMS
+if [ "$mode" = install ]; then
+  installed=$(version_of "$root/serve/backend-manifest.json")
+  offered=$(version_of manifest.json)
+  if [ -n "$installed" ] && [ "$installed" != "$offered" ] && [ "$(printf '%s\\n%s\\n' "$installed" "$offered" | sort -V | tail -n 1)" = "$installed" ]; then
+    echo "This machine's backend is $installed, newer than $offered, so nothing was changed" >&2
+    exit 1
+  fi
+fi
 install -d "$root/bin" "$root/serve" "$HOME/.config/systemd/user"
-# The host makes the token itself on its first start, in the file the saved machine names.
+# The host makes the token itself on its first start.
 (umask 077; mkdir -p "$(dirname "$token_file")")
-[ -n "$keep" ] || ASSEMBLY_ADAPTER_TAG=$3 ASSEMBLY_ADAPTER_MANIFEST_SHA256=$4 bash payload/dotnet/scripts/agents-file.sh "$root/adapters" "$root/serve/agents.json"
 refuse_if_running
+rm -rf "$before"
+mkdir -p "$before"
+if [ -z "$keep" ]; then
+  [ ! -e "$root/serve/agents.json" ] || cp -p "$root/serve/agents.json" "$before/agents.json"
+  # Bundles are never changed in place, and the old one stays until the install after this. A session in one is unaffected.
+  ASSEMBLY_ADAPTER_TAG=$2 ASSEMBLY_ADAPTER_MANIFEST_SHA256=$3 bash payload/dotnet/scripts/agents-file.sh "$root/adapters" "$root/serve/agents.json"
+  refuse_if_running
+fi
+
+listening() {
+  listeners=$(ss -ltnH "sport = :$1")
+  [ -n "$listeners" ] && printf '%s\\n' "$listeners" | awk -v want="127.0.0.1:$1" '$4 != want { exit 1 } END { if (NR == 0) exit 1 }'
+}
+
+# Any way out from here but success. The folder stays when the previous backend doesn't come back, as all that's left of it.
+undo() {
+  code=$?
+  trap - EXIT HUP INT TERM
+  set +e
+  systemctl --user stop assembly-host.service >/dev/null 2>&1
+  if [ "$mode" = install ] && [ ! -e "$before/assembly-remote-server" ]; then
+    systemctl --user disable assembly-host.service >/dev/null 2>&1
+    rm -f "$unit" "$root/bin/assembly-remote-server"
+    systemctl --user daemon-reload
+    rm -rf "$before"
+    echo "The install failed and there was no earlier one to go back to, so the service was removed" >&2
+    exit "$code"
+  fi
+  [ ! -e "$before/agents.json" ] || mv -f "$before/agents.json" "$root/serve/agents.json"
+  if [ "$mode" = install ]; then
+    mv -f "$before/assembly-remote-server" "$root/bin/assembly-remote-server"
+    [ ! -e "$before/assembly-host.service" ] || mv -f "$before/assembly-host.service" "$unit"
+    [ ! -e "$before/backend-manifest.json" ] || mv -f "$before/backend-manifest.json" "$root/serve/backend-manifest.json"
+    # Nothing can have connected to the new backend yet, so all it can have written is its own migration.
+    if [ -e "$before/assembly.db" ]; then
+      rm -f "$root/serve/assembly.db" "$root/serve/assembly.db-wal" "$root/serve/assembly.db-shm"
+      for file in assembly.db assembly.db-wal assembly.db-shm; do
+        [ ! -e "$before/$file" ] || mv -f "$before/$file" "$root/serve/$file"
+      done
+    fi
+  fi
+  systemctl --user daemon-reload
+  systemctl --user enable assembly-host.service >/dev/null 2>&1
+  systemctl --user restart assembly-host.service
+  old_port=$(sed -n 's/^ExecStart=.* --port \\([0-9][0-9]*\\).*/\\1/p' "$unit")
+  waited=0
+  while [ "$waited" -lt 120 ]; do
+    if [ "$(systemctl --user is-active assembly-host.service)" = active ] && listening "$old_port"; then
+      rm -rf "$before"
+      echo "The previous backend is running again on port $old_port" >&2
+      exit "$code"
+    fi
+    waited=$((waited + 1))
+    sleep 1
+  done
+  echo "The previous backend did not come back on port $old_port; what it needs is kept in $before" >&2
+  exit "$code"
+}
+trap undo EXIT
+trap 'exit 1' HUP INT TERM
+
 if [ "$mode" = install ]; then
 systemctl --user stop assembly-host.service >/dev/null 2>&1 || true
+[ ! -e "$root/bin/assembly-remote-server" ] || cp -p "$root/bin/assembly-remote-server" "$before/assembly-remote-server"
+[ ! -e "$unit" ] || cp -p "$unit" "$before/assembly-host.service"
+[ ! -e "$root/serve/backend-manifest.json" ] || cp -p "$root/serve/backend-manifest.json" "$before/backend-manifest.json"
+# Stopped, so these files are the whole database. The first start of a new version can migrate it.
+for file in assembly.db assembly.db-wal assembly.db-shm; do
+  [ ! -e "$root/serve/$file" ] || cp -p --reflink=auto "$root/serve/$file" "$before/$file"
+done
 install -m 755 payload/assembly-remote-server "$root/bin/.assembly-remote-server.new"
 mv "$root/bin/.assembly-remote-server.new" "$root/bin/assembly-remote-server"
 
@@ -133,14 +219,15 @@ RestartSec=2
 [Install]
 WantedBy=default.target
 EOF
-mv "$HOME/.config/systemd/user/.assembly-host.service.new" "$HOME/.config/systemd/user/assembly-host.service"
+mv "$HOME/.config/systemd/user/.assembly-host.service.new" "$unit"
 systemctl --user daemon-reload
 systemctl --user enable assembly-host.service
 fi
 systemctl --user restart assembly-host.service
 
 # The first start after an update can migrate stored data, so wait while the service is still
-# starting (systemd reports a restart in progress as activating), and stop at once if it exits.
+# starting (systemd reports a restart in progress as activating), and stop at once if it exits
+# or keeps exiting: a backend that dies on start would otherwise be restarted for the whole wait.
 waited=0
 while :; do
   state=$(systemctl --user is-active assembly-host.service || true)
@@ -151,14 +238,19 @@ while :; do
       echo "Assembly remote backend stopped after $waited seconds while starting" >&2
       exit 1 ;;
   esac
-  listeners=$(ss -ltnH "sport = :$port")
-  if [ "$state" = active ] \\
-    && [ -n "$listeners" ] \\
-    && printf '%s\\n' "$listeners" | awk -v want="127.0.0.1:$port" '$4 != want { exit 1 } END { if (NR == 0) exit 1 }'; then
+  restarts=$(systemctl --user show assembly-host.service -p NRestarts --value || true)
+  if [ "\${restarts:-0}" -ge 3 ]; then
+    systemctl --user status assembly-host.service --no-pager --lines=20 >&2 || true
+    echo "Assembly remote backend kept exiting while starting ($restarts restarts in $waited seconds)" >&2
+    exit 1
+  fi
+  if [ "$state" = active ] && listening "$port"; then
     if [ "$mode" = install ]; then
       install -m 644 manifest.json "$root/serve/.backend-manifest.new"
       mv "$root/serve/.backend-manifest.new" "$root/serve/backend-manifest.json"
     fi
+    trap - EXIT HUP INT TERM
+    rm -rf "$before"
     exit 0
   fi
   [ "$waited" -lt 120 ] || break

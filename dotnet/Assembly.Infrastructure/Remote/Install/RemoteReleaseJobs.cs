@@ -27,7 +27,7 @@ internal sealed record RemoteReleaseJob(Guid OperationId, long Version, string M
 [JsonSerializable(typeof(RemoteReleaseJob))]
 internal sealed partial class RemoteReleaseJson : JsonSerializerContext;
 
-/// <summary>The one install running at a time, its state pushed on the topic. Started and stopped with the backend.</summary>
+/// <summary>One install per machine at a time, its state pushed on the topic. Started and stopped with the backend.</summary>
 internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, BackgroundWork work, ITopics topics,
     Func<string, CancellationToken, SavedMachine?> profile, Func<string, CancellationToken, Task> connect,
     RemoteReleaseFeed? feed = null, LocalReleaseTools? local = null) : IReleaseInstall, IAsyncDisposable
@@ -56,7 +56,7 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, Background
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_entries.TryGetValue(request.OperationId, out var existing)) return existing.Job;
-            if (_entries.Values.Any(value => !value.Terminal)) throw new CallFailed("A remote install is already running.", "install_busy");
+            if (_entries.Values.Any(value => !value.Terminal && value.Job.Machine == request.Machine)) throw new CallFailed($"An install on {request.Machine} is already running.", "install_busy");
             accepted = new(request.OperationId, 1, request.Machine, "running", "Starting…", null, null, null);
         }
         scope.AfterCommit(() =>
@@ -74,7 +74,7 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, Background
         return accepted;
     }
 
-    /// <summary>The one update's way in: the same job and the same one-at-a-time rule as the call, waited for.</summary>
+    /// <summary>An update's way in: the same job and the same one-at-a-time rule as the call, waited for.</summary>
     public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct, bool keepAdapters = false) =>
         WaitedAsync(machine, progress, async (saved, phase, stop) => await install.InstallLatestAsync(saved, phase, stop, keepAdapters), ct);
 
@@ -95,7 +95,7 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, Background
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_entries.Values.Any(value => !value.Terminal)) throw new CallFailed("A remote install is already running.", "install_busy");
+            if (_entries.Values.Any(value => !value.Terminal && value.Job.Machine == machine)) throw new CallFailed($"An install on {machine} is already running.", "install_busy");
             entry = new(new(id, 1, machine, "running", "Starting…", null, null, null)) { Progress = progress };
             _entries.Add(id, entry);
         }

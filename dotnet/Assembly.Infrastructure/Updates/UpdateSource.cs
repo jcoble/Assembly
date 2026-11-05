@@ -218,15 +218,14 @@ internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall?
     {
         if (release is null) throw new CallFailed("No signed release is published yet, so there's nothing to update from.", "no_release");
         var failures = new List<string>();
-        // The app first: it's the side behind. The remotes wait for the new number, which comes with the restart.
+        // A new app waits for its restart, and what's behind on the rest needn't. By itself, only the app and remotes go.
         var behind = machines.FirstOrDefault(machine => machine.Name is null)?.Behind.FirstOrDefault(item => item.Kind == "desktop");
-        if (behind?.Wanted is { } wanted && app is not null)
+        if (behind?.Wanted is { } wanted && app is not null && app.Ready != wanted)
         {
-            if (app.Ready == wanted) return;
-            try { await app.StageAsync(wanted, progress, ct); return; }
+            try { await app.StageAsync(wanted, progress, ct); }
             catch (CallFailed failed) { failures.Add(failed.Message); }
         }
-        await UpdateSources.RemotesAsync(release, machines, progress, failures, ct);
+        await UpdateSources.RemotesAsync(release, automatic ? machines.Where(machine => machine.Name is not null) : machines, progress, failures, ct);
         if (behind is not null && app is null && !automatic) failures.Add($"Assembly {behind.Wanted} is out, and this app can't install it from here: install it from the release page.");
         if (failures.Count > 0) throw new CallFailed(string.Join(" ", failures), "update_failed");
     }

@@ -100,7 +100,17 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
             if (!response.IsSuccessStatusCode) throw Failure($"Could not download Assembly {app.Version}: HTTP {(int)response.StatusCode}.", "release_unavailable");
             await using (var output = File.Create(file))
             await using (var body = await response.Content.ReadAsStreamAsync(ct))
-                await body.CopyToAsync(output, ct);
+            {
+                var buffer = new byte[81920];
+                long total = 0;
+                int count;
+                while ((count = await body.ReadAsync(buffer, ct)) > 0)
+                {
+                    total += count;
+                    if (total > app.Bytes) throw Failure($"The download of Assembly {app.Version} is larger than its release says.", "release_invalid");
+                    await output.WriteAsync(buffer.AsMemory(0, count), ct);
+                }
+            }
         }
         catch (HttpRequestException error) { throw Failure($"Could not download Assembly {app.Version}: {error.Message}", "release_unavailable"); }
         if (new FileInfo(file).Length != app.Bytes) throw Failure($"The download of Assembly {app.Version} was incomplete.", "release_invalid");

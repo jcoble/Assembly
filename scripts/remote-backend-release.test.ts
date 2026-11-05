@@ -134,7 +134,9 @@ if [ -n "\${READY_AT:-}" ] && [ "$t" -ge "$READY_AT" ] && { [ -z "\${RESTART_AT:
   printf 'LISTEN 0 128 %s 0.0.0.0:*\\n' "$LISTEN_ADDRESS"
 fi
 `, { mode: 0o755 });
-    const start = REMOTE_BACKEND_INSTALL_SCRIPT.indexOf('systemctl --user restart assembly-host.service');
+    const script = REMOTE_BACKEND_INSTALL_SCRIPT;
+    const listening = script.slice(script.indexOf('listening() {'), script.indexOf('# Any way out from here'));
+    const start = script.lastIndexOf('systemctl --user restart assembly-host.service');
     assert.ok(start > 0, 'restart step exists');
     const env: Record<string, string> = { HOME: home, PATH: `${bin}:/usr/bin:/bin`, LISTEN_ADDRESS: scenario.address ?? '127.0.0.1:9797' };
     if (scenario.readyAt !== undefined) env.READY_AT = String(scenario.readyAt);
@@ -143,7 +145,7 @@ fi
     let code = 0;
     let stderr = '';
     try {
-      await execFileAsync('sh', ['-c', `set -eu\nmode=install\nport=9797\nroot=$HOME/assembly-host\n${REMOTE_BACKEND_INSTALL_SCRIPT.slice(start)}`], { cwd: home, env });
+      await execFileAsync('sh', ['-c', `set -eu\nmode=install\nport=9797\nroot=$HOME/assembly-host\nbefore=$root/before-update\n${listening}${script.slice(start)}`], { cwd: home, env });
     } catch (error) {
       const failure = error as { code: number; stderr: string };
       code = failure.code;
@@ -191,4 +193,155 @@ test('install keeps waiting through one restart while the backend starts', async
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.manifest, true);
   assert.equal(result.seconds, 20);
+});
+
+// The whole script against stand-ins that behave like the real thing: the service runs whatever binary is in place, and only
+// a binary whose contents say good ever listens, on the port its unit names.
+async function installed(home: string) {
+  const root = path.join(home, 'assembly-host');
+  const read = (file: string) => readFile(file, 'utf8').catch(() => null);
+  return {
+    binary: await read(path.join(root, 'bin/assembly-remote-server')),
+    unit: await read(path.join(home, '.config/systemd/user/assembly-host.service')),
+    manifest: await read(path.join(root, 'serve/backend-manifest.json')),
+    database: await read(path.join(root, 'serve/assembly.db')),
+    wal: await read(path.join(root, 'serve/assembly.db-wal')),
+    agents: await read(path.join(root, 'serve/agents.json')),
+    state: await read(path.join(home, 'state')),
+    before: await stat(path.join(root, 'before-update')).then(() => true, () => false)
+  };
+}
+
+async function withMachine(act: (run: (binary: string, version: string, args: string[]) => Promise<{ code: number; stderr: string }>, home: string) => Promise<void>) {
+  const home = await mkdtemp(path.join(tmpdir(), 'assembly-remote-undo-test-'));
+  try {
+    const bin = path.join(home, '.local/bin');
+    await mkdir(bin, { recursive: true });
+    for (const tool of ['curl', 'tar', 'python3', 'node', 'pidwait', 'sleep']) await writeFile(path.join(bin, tool), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    await writeFile(path.join(home, 'state'), 'inactive\n');
+    await mkdir(path.join(home, 'cgroup'));
+    await writeFile(path.join(bin, 'systemctl'), `#!/bin/sh
+server=$HOME/assembly-host/bin/assembly-remote-server
+case "$*" in
+  *is-active*) cat "$HOME/state"; [ "$(cat "$HOME/state")" = active ] ;;
+  *restart*)
+    if grep -q migrates "$server"; then echo migrated >"$HOME/assembly-host/serve/assembly.db"; echo migrated-wal >"$HOME/assembly-host/serve/assembly.db-wal"; fi
+    if grep -q exits "$server"; then echo failed >"$HOME/state"; else echo active >"$HOME/state"; fi ;;
+  *stop*) echo inactive >"$HOME/state" ;;
+  *ControlGroup*) echo "/../../..$HOME/cgroup" ;;
+  *) exit 0 ;;
+esac
+`, { mode: 0o755 });
+    await writeFile(path.join(bin, 'ss'), `#!/bin/sh
+[ "$(cat "$HOME/state")" = active ] || exit 0
+grep -q good "$HOME/assembly-host/bin/assembly-remote-server" || exit 0
+port=$(sed -n 's/^ExecStart=.* --port \\([0-9]*\\) .*/\\1/p' "$HOME/.config/systemd/user/assembly-host.service")
+case "$*" in *":$port"*) printf 'LISTEN 0 128 127.0.0.1:%s 0.0.0.0:*\\n' "$port" ;; esac
+`, { mode: 0o755 });
+    let run = 0;
+    await act(async (binary, version, args) => {
+      const stage = path.join(home, `stage-${run++}`);
+      await mkdir(path.join(stage, 'payload/dotnet/scripts'), { recursive: true });
+      await writeFile(path.join(stage, 'payload/assembly-remote-server'), binary);
+      await writeFile(path.join(stage, 'payload/dotnet/scripts/agents-file.sh'), 'printf "%s" "$ASSEMBLY_ADAPTER_TAG" >"$2"\n');
+      await writeFile(path.join(stage, 'install.sh'), REMOTE_BACKEND_INSTALL_SCRIPT);
+      await writeFile(path.join(stage, 'manifest.json'), JSON.stringify({ version }, null, 2));
+      const sum = createHash('sha256').update(binary).digest('hex');
+      await writeFile(path.join(stage, 'SHA256SUMS'), `${sum}  payload/assembly-remote-server\n`);
+      try {
+        await execFileAsync('sh', ['install.sh', ...args], { cwd: stage, env: { HOME: home, PATH: '/usr/bin:/bin' } });
+        return { code: 0, stderr: '' };
+      } catch (error) {
+        const failure = error as { code: number; stderr: string };
+        return { code: failure.code, stderr: failure.stderr };
+      }
+    }, home);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+test('a new backend that exits at once puts the old one back, running, with its unit and data', async () => {
+  await withMachine(async (run, home) => {
+    assert.equal((await run('good one', '1.0.0', ['--keep-adapters', '9801', '', ''])).code, 0);
+    const root = path.join(home, 'assembly-host');
+    await writeFile(path.join(root, 'serve/assembly.db'), 'written by the old backend');
+    await writeFile(path.join(root, 'serve/assembly.db-wal'), 'its wal');
+    const old = await installed(home);
+
+    const failed = await run('exits migrates', '2.0.0', ['--keep-adapters', '9802', '', '']);
+
+    assert.equal(failed.code, 1);
+    assert.match(failed.stderr, /previous backend is running again on port 9801/);
+    assert.deepEqual(await installed(home), old);
+    assert.equal(old.state, 'active\n');
+    assert.match(old.unit!, /--port 9801 /);
+    assert.equal(old.before, false);
+  });
+});
+
+test('a new backend that never listens is undone as well', async () => {
+  await withMachine(async (run, home) => {
+    assert.equal((await run('good one', '1.0.0', ['--keep-adapters', '9801', '', ''])).code, 0);
+    const old = await installed(home);
+    const failed = await run('silent', '2.0.0', ['--keep-adapters', '9801', '', '']);
+    assert.equal(failed.code, 1);
+    assert.match(failed.stderr, /within 120 seconds/);
+    assert.deepEqual(await installed(home), old);
+  });
+});
+
+test('adapters that came with a failed update go back too', async () => {
+  await withMachine(async (run, home) => {
+    assert.equal((await run('good one', '1.0.0', ['9801', 'old-tag', 'x'])).code, 0);
+    assert.equal((await installed(home)).agents, 'old-tag');
+    assert.equal((await run('exits', '2.0.0', ['9801', 'new-tag', 'x'])).code, 1);
+    assert.equal((await installed(home)).agents, 'old-tag');
+  });
+});
+
+test('a first install that fails leaves no service behind and can be pressed again', async () => {
+  await withMachine(async (run, home) => {
+    const failed = await run('exits', '1.0.0', ['--keep-adapters', '9801', '', '']);
+    assert.equal(failed.code, 1);
+    assert.match(failed.stderr, /no earlier one to go back to/);
+    const after = await installed(home);
+    assert.equal(after.unit, null);
+    assert.equal(after.binary, null);
+    assert.equal(after.state, 'inactive\n');
+    assert.equal((await run('good one', '1.0.0', ['--keep-adapters', '9801', '', ''])).code, 0);
+  });
+});
+
+test('an older backend is refused with nothing touched, and the same version can go on again', async () => {
+  await withMachine(async (run, home) => {
+    assert.equal((await run('good one', '1.10.0', ['--keep-adapters', '9801', '', ''])).code, 0);
+    const current = await installed(home);
+    const refused = await run('good older', '1.9.0', ['--keep-adapters', '9801', '', '']);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /backend is 1\.10\.0, newer than 1\.9\.0, so nothing was changed/);
+    assert.deepEqual(await installed(home), current);
+    assert.equal((await run('good same', '1.10.0', ['--keep-adapters', '9801', '', ''])).code, 0);
+    assert.equal((await run('good newer', '1.11.0', ['--keep-adapters', '9801', '', ''])).code, 0);
+  });
+});
+
+test('a tools-only update waits on the port the service has, not the one saved since', async () => {
+  await withMachine(async (run, home) => {
+    assert.equal((await run('good one', '1.0.0', ['--keep-adapters', '9801', '', ''])).code, 0);
+    const updated = await run('not this binary', '2.0.0', ['--adapters', '9999', 'tag', 'x']);
+    assert.equal(updated.code, 0, updated.stderr);
+    const after = await installed(home);
+    assert.match(after.unit!, /--port 9801 /);
+    assert.equal(after.binary, 'good one');
+    assert.equal(after.agents, 'tag');
+  });
+});
+
+test('the token file is the install\'s own and is no longer something to pass', async () => {
+  await withMachine(async (run, home) => {
+    assert.equal((await run('good one', '1.0.0', ['--keep-adapters', '9801', '', ''])).code, 0);
+    const after = await installed(home);
+    assert.match(after.unit!, new RegExp(`--token-file ${home}/\\.config/assembly-host/env\\n`));
+  });
 });

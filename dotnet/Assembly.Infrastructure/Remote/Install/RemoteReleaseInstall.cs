@@ -53,7 +53,7 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
         }, ct), ct);
 
     private static string Arguments(SavedMachine machine, AdapterArguments adapters) =>
-        $"{(adapters.Keep ? "--keep-adapters " : "")}{machine.Port.ToString(CultureInfo.InvariantCulture)} {Quote(machine.TokenFile)} {Quote(adapters.Tag)} {Quote(adapters.ManifestSha256)}";
+        $"{(adapters.Keep ? "--keep-adapters " : "")}{machine.Port.ToString(CultureInfo.InvariantCulture)} {Quote(adapters.Tag)} {Quote(adapters.ManifestSha256)}";
 
     // Everything that needs the signed package on the machine: the installer comes in it. The stage goes with the call.
     private async Task WithPackageAsync(SavedMachine machine, Action<string> phase, bool toolsOnly, Func<string, string, ReceivedPackage, Task> act, CancellationToken ct)
@@ -101,7 +101,7 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
         }
     }
 
-    internal const string WaitingWords = "Waiting for running sessions to finish…";
+    internal const string WaitingWords = "Waiting for running sessions and open terminals to finish…";
 
     private const string RequireToolsCommand = "set -eu; PATH=$HOME/.local/bin:$PATH; for tool in python3 sha256sum systemctl install ss awk grep bash curl tar node pidwait; do command -v \"$tool\" >/dev/null || { echo \"Missing remote install tool: $tool\" >&2; exit 1; }; done; python3 -c 'import ssl, tarfile, urllib.request, sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' || { echo 'Remote install requires Python 3.11 or newer with SSL support' >&2; exit 1; }";
 
@@ -120,15 +120,14 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
     {
         if (!SafeTarget().IsMatch(machine.Ssh)) throw new CallFailed("The machine's SSH target is invalid.", "bad_args");
         if (machine.Port is <= 0 or > 65535) throw new CallFailed("The machine's port is invalid.", "bad_args");
-        if (!SafeTokenFile().IsMatch(machine.TokenFile) || machine.TokenFile.Split('/').Contains(".."))
-            throw new CallFailed("The machine's token file is invalid.", "bad_args");
+        // The new install shares nothing with an old one, whose token file a machine saved earlier may still name. That
+        // machine keeps connecting to what it reaches now, and this says what to change before it can have an install.
+        if (machine.TokenFile != SavedMachine.InstalledTokenFile)
+            throw new CallFailed($"{machine.Name} is saved with the token file {machine.TokenFile}, and an install only uses its own, {SavedMachine.InstalledTokenFile}, so nothing was changed. Clear the token file in Settings and install again.", "token_file_not_ours");
     }
 
     internal static string Quote(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
 
     [GeneratedRegex(@"^[A-Za-z0-9_.@][A-Za-z0-9_.@:-]*$")]
     internal static partial Regex SafeTarget();
-
-    [GeneratedRegex(@"^[A-Za-z0-9_./-]+$")]
-    private static partial Regex SafeTokenFile();
 }

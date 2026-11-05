@@ -54,7 +54,6 @@ public sealed class AppSwapTests : IDisposable
         Bundle(App, "old", "exec sleep 300");
         Bundle(Fresh, "new", freshBody);
         File.WriteAllText(Database, "original");
-        File.WriteAllText(Backup, "original");
         var (window, backend) = (Sleeper(), Sleeper());
         return (new(App, Fresh, "Contents/MacOS/assembly-desktop", Stage, Folder, "2.0.0", "1.0.0", Database, Backup,
             window.Id, AppSwap.StartOf(window.Id), backend.Id, AppSwap.StartOf(backend.Id), quit, acknowledge), window, backend);
@@ -121,6 +120,44 @@ public sealed class AppSwapTests : IDisposable
         Assert.Equal("Assembly 2.0.0 didn't start, so this app went back to 1.0.0.", SaidNote());
         Assert.True(Alive(await Started("old")));
         Assert.False(Directory.Exists(Stage));
+    }
+
+    [Fact]
+    public async Task Going_back_loses_nothing_written_right_up_to_the_quit_and_keeps_one_of_each_leftover()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (plan, window, backend) = Prepared($"echo migrated > '{Database}'\nrm -f '{Database}-wal'\nexit 3");
+        File.WriteAllText(Path.Combine(Folder, "assembly-before-1.0.0.db"), "an older copy");
+        File.WriteAllText(Database + ".failed-1.5.0", "an older failure");
+        // A turn's last rows, in the database and still in its write-ahead log, after the plan was written.
+        File.WriteAllText(Database, "written late");
+        File.WriteAllText(Database + "-wal", "written later");
+        End(window); End(backend);
+
+        Assert.Equal(1, await AppSwap.RunAsync(plan).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        Assert.Equal("written late", File.ReadAllText(Database));
+        Assert.Equal("written later", File.ReadAllText(Database + "-wal"));
+        Assert.Equal([Path.GetFileName(Backup), Path.GetFileName(Backup) + "-wal"], Directory.GetFiles(Folder, "assembly-before-*").Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.False(File.Exists(Database + ".failed-1.5.0"));
+        Assert.True(File.Exists(Database + ".failed-2.0.0"));
+    }
+
+    [Fact]
+    public async Task A_way_back_that_is_stuck_says_where_the_old_app_is_opens_what_is_there_and_deletes_nothing()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var stuck = Path.Combine(Stage, "new/kept");
+        // The new version takes the path the old app was moved to, so the swap back can't happen.
+        var (plan, window, backend) = Prepared($"mv '{Fresh}' '{stuck}' 2>/dev/null\nexit 3");
+        End(window); End(backend);
+
+        Assert.Equal(1, await AppSwap.RunAsync(plan).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        Assert.Equal($"Assembly 2.0.0 didn't start, and 1.0.0 couldn't be put back. It's kept in {Fresh}.", SaidNote());
+        Assert.Equal("old", File.ReadAllText(Path.Combine(stuck, "version")));
+        Assert.Equal("new", Running("new"));
+        Assert.Equal("original", File.ReadAllText(Database));
     }
 
     [Fact]

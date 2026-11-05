@@ -391,7 +391,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             notion = new Assembly.Infrastructure.Notion.NotionCalls(notionSettings, new Assembly.Infrastructure.Notion.NotionOAuth(cliHttp, notionSettings, TimeProvider.System), new Assembly.Infrastructure.Notion.NotionDetailReader(notionHttp), notionCache, new Assembly.Infrastructure.Notion.NotionRefresh(notionHttp, notionCache, notionSettings, TimeProvider.System), notionEdits, new Assembly.Infrastructure.Notion.NotionImageUpload(Path.Combine(home, "staging", "notion"), notionHttp, notionSettings, notionEdits));
             var appBundle = AppUpdate.BundleOf(AppContext.BaseDirectory);
             IAppInstall? appInstall = appBundle is null || UpdateSources.Checkout is not null || Assembly.Infrastructure.Socket.BackendBuild.Version is not { } appVersion ? null : new AppUpdate(new(appBundle, home, database, appVersion),
-                new RemoteReleaseFeed(releaseHttp), activity.WhenIdleAsync, copy => AppUpdate.CopyDatabase(database, copy), AppUpdate.StartHelperAsync, AppSwap.Window, status.QuitWindow);
+                new RemoteReleaseFeed(releaseHttp), activity.WhenIdleAsync, () => activity.Held, AppUpdate.StartHelperAsync, AppSwap.Window, status.QuitWindow);
             var updates = new MachineUpdates(UpdateSources.ForHost(cliHttp, TimeProvider.System, remoteReleases, home: home, app: appInstall), status, new InstalledCalls(launcher, TimeProvider.System),
                 async (machine, ct) => connections!.ByName(machine) is { } reached ? await reached.InstalledToolsAsync(ct) : null,
                 agentsFile is null ? null : () => agentsFile.Reload(), work, log);

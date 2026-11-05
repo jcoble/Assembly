@@ -6,17 +6,25 @@ using Assembly.Infrastructure.Socket;
 namespace Assembly.Infrastructure.Updates;
 
 /// <summary>
-/// Owns the one check and the one update. The check runs when this app starts, each time a remote says hello, and after an
-/// update; there's no timer. Results go out on the machines topic. A failure to read shows as unknown, never as behind.
-/// A remote on an older version starts the update by itself, once per run of the app so a failure can't repeat forever; the
-/// button can always try again. An app that's behind gets ready the same way, and restarts only when someone says so.
+/// Owns the check and the updates. The check runs when this app starts, each time a remote says hello, and after an
+/// update; there's no timer. Results go out on the machines topic. A failure to read shows as unknown, never as behind, and a
+/// machine that isn't answering has nothing known about it. Each machine updates by itself, so one waiting on its sessions
+/// holds up nothing else, and says so on its own card. A remote on an older version starts its update by itself, once per run
+/// of the app so a failure can't repeat forever; the button can always try again. An app that's behind gets ready the same
+/// way, and restarts only when someone says so.
 /// </summary>
 internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status, InstalledCalls local,
     Func<string, CancellationToken, Task<InstalledTools?>> remote, Action? reload, BackgroundWork work, TextWriter log) : IFeature
 {
     private const string ThisApp = "";
-    private int _updating;
+    private readonly HashSet<string> _updating = [];
     private readonly HashSet<string> _started = [];
+
+    private static string Slot(string? machine) => machine ?? ThisApp;
+
+    private bool Take(string? machine) { lock (_updating) return _updating.Add(Slot(machine)); }
+    private void Free(string? machine) { lock (_updating) _updating.Remove(Slot(machine)); }
+    private bool Updating(string? machine) { lock (_updating) return _updating.Contains(Slot(machine)); }
 
     public void Register(ICallRegistry calls)
     {
@@ -57,13 +65,13 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     {
         if (status.Items.All(item => item.Name != machine)) throw new CallFailed("Unknown remote machine.", "unknown_machine");
         await CheckAsync(machine, stop, fresh: true);
-        if (Volatile.Read(ref _updating) == 0) status.Updating(machine, false, null);
+        if (!Updating(machine)) status.Updating(machine, false, null);
     }
 
     /// <summary>The first check, and every remote's check from here on.</summary>
     internal void Begin()
     {
-        status.Welcomed = machine => Check(machine);
+        status.Welcomed = machine => Check(machine, answered: true);
         if (source.AppNote is { } note) status.Updating(null, false, note);
         // app-dev runs the launch's update itself, so it can start before the desktop is built, and tells this app how it goes.
         if (Environment.GetEnvironmentVariable(DevRemoteSyncStatus.Variable) is { Length: > 0 } path) work.Start("launch update status", async stop =>
@@ -75,14 +83,18 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         foreach (var item in status.Items.Where(item => item.Name is not null && item.Backend is not null)) Check(item.Name);
     }
 
-    internal void Check(string? machine) => work.Start("update check", async stop =>
+    internal void Check(string? machine, bool answered = false) => work.Start("update check", async stop =>
     {
         // Welcomes arrive under the status lock, and the check reads the network.
         await Task.Yield();
-        await CheckAsync(machine, stop);
+        await CheckAsync(machine, stop, answered: answered);
     });
 
-    internal async Task CheckAsync(string? machine, CancellationToken stop, bool fresh = false)
+    /// <param name="machine">Null is this app.</param>
+    /// <param name="stop">Stops the reads.</param>
+    /// <param name="fresh">Someone asked, so nothing kept answers for the release.</param>
+    /// <param name="answered">It just said hello, which comes before its status says it's reachable.</param>
+    internal async Task CheckAsync(string? machine, CancellationToken stop, bool fresh = false, bool answered = false)
     {
         var wanted = await source.WantedAsync(stop, fresh);
         if (machine is null)
@@ -92,9 +104,12 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             if (here.Any(item => item.Kind == "desktop" && item.State == UpdateItem.Behind && item.Wanted is not null && source.StartsAppUpdate(item.Wanted))) StartBy(ThisApp);
             return;
         }
-        var items = UpdateCheck.Remote(status.Items.FirstOrDefault(item => item.Name == machine)?.Backend, await TryRead(() => remote(machine, stop)), wanted);
+        var saved = status.Items.FirstOrDefault(item => item.Name == machine);
+        // What an unreachable machine last said is old news: a decision from it could install over a newer backend.
+        var reachable = answered || saved?.Reachable == true;
+        var items = UpdateCheck.Remote(reachable ? saved?.Backend : null, await TryRead(() => remote(machine, stop)), wanted);
         status.Updates(machine, items);
-        if (source.StartsRemoteUpdates(machine) && items.Any(item => item.Kind == "backend" && item.State == UpdateItem.Behind)) StartBy(machine);
+        if (reachable && source.StartsRemoteUpdates(machine) && items.Any(item => item.Kind == "backend" && item.State == UpdateItem.Behind)) StartBy(machine);
     }
 
     // A check that arrives during an update starts nothing: the end of that update checks every machine again.
@@ -102,7 +117,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     {
         lock (_started)
         {
-            if (_started.Contains(machine) || !Begin(automatic: true)) return;
+            if (_started.Contains(machine) || status.Items.FirstOrDefault(item => item.Name == (machine == ThisApp ? null : machine)) is not { } item || !Begin(item, automatic: true)) return;
             _started.Add(machine);
         }
     }
@@ -116,12 +131,12 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
 
     /// <summary>
     /// A saved machine with no remote gets one, and then it's in the normal rule: its hello is checked like any other's.
-    /// Takes the same one-at-a-time place as an update.
+    /// Takes the same place as that machine's update.
     /// </summary>
     internal bool Install(string machine)
     {
         if (status.Items.All(item => item.Name != machine)) throw new CallFailed("Unknown remote machine.", "unknown_machine");
-        if (Interlocked.CompareExchange(ref _updating, 1, 0) != 0) return false;
+        if (!Take(machine)) return false;
         work.Start("remote install", async stop =>
         {
             string? ending = null;
@@ -134,7 +149,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Install failed: " + error.Message; }
             finally
             {
-                Volatile.Write(ref _updating, 0);
+                Free(machine);
                 status.Updating(machine, false, ending);
             }
         });
@@ -142,13 +157,13 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     }
 
     /// <summary>
-    /// The only thing that restarts this app. False when an update is already running. It waits for sessions like any
-    /// update; a failure leaves the update ready to press again.
+    /// The only thing that restarts this app. A remote waiting on its sessions doesn't hold it up. False only while this app
+    /// is already busy, which its button shows. It waits for this app's sessions; a failure leaves the update ready to press again.
     /// </summary>
     internal bool RestartApp()
     {
         if (source.AppReady is null) throw new CallFailed("No update is ready to restart into.", "no_update");
-        if (Interlocked.CompareExchange(ref _updating, 1, 0) != 0) return false;
+        if (!Take(null)) return false;
         work.Start("restart to update", async stop =>
         {
             string? ending = null;
@@ -161,45 +176,53 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }
             finally
             {
-                Volatile.Write(ref _updating, 0);
+                Free(null);
                 status.Updating(null, false, ending);
             }
         });
         return true;
     }
 
-    /// <summary>False when an update is already running: it's the same one, so the button joins it.</summary>
-    internal bool Start() => Begin(automatic: false);
-
-    private bool Begin(bool automatic)
+    /// <summary>
+    /// Everything behind on every machine that's answering. False when there was nothing to start: what's running already is
+    /// the same update, so the button joins it.
+    /// </summary>
+    internal bool Start()
     {
-        if (Interlocked.CompareExchange(ref _updating, 1, 0) != 0) return false;
-        work.Start("update", stop => RunAsync(automatic, stop));
+        var started = false;
+        foreach (var item in status.Items.Where(item => (item.Name is null || item.Reachable) && (item.Updates ?? []).Any(update => update.State == UpdateItem.Behind)))
+            started |= Begin(item, automatic: false);
+        return started;
+    }
+
+    private bool Begin(MachineItem item, bool automatic)
+    {
+        if (!Take(item.Name)) return false;
+        work.Start("update", stop => RunAsync(item, automatic, stop));
         return true;
     }
 
-    private async Task RunAsync(bool automatic, CancellationToken stop)
+    private async Task RunAsync(MachineItem item, bool automatic, CancellationToken stop)
     {
-        var machines = status.Items.Select(item => item.Name).ToArray();
-        void Show(bool updating, string? note) { foreach (var machine in machines) status.Updating(machine, updating, note); }
+        var machine = item.Name;
         string? ending = null;
         try
         {
-            Show(true, null);
-            MachineBehind[] behind = [.. status.Items.Select(item => new MachineBehind(item.Name, [.. (item.Updates ?? []).Where(update => update.State == UpdateItem.Behind)],
-                (item.Updates ?? []).Any(update => update.Kind == "adapter" && update.State == UpdateItem.Newer)))];
-            await source.UpdateAsync(behind, automatic, note => Show(true, note), stop);
+            status.Updating(machine, true, null);
+            MachineBehind behind = new(machine, [.. (item.Updates ?? []).Where(update => update.State == UpdateItem.Behind)],
+                (item.Updates ?? []).Any(update => update.Kind == "adapter" && update.State == UpdateItem.Newer));
+            await source.UpdateAsync([behind], automatic, note => status.Updating(machine, true, note), stop);
         }
         catch (CallFailed error) { ending = "Update failed: " + error.Message; }
         catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }
         finally
         {
-            Volatile.Write(ref _updating, 0);
-            status.RestartReady(source.AppReady);
-            Show(false, ending);
+            Free(machine);
+            if (machine is null) status.RestartReady(source.AppReady);
+            status.Updating(machine, false, ending);
         }
         if (ending is null) Updated();
-        else foreach (var machine in machines) Check(machine);
+        else Check(machine);
     }
 
     /// <summary>Adapters may be new: agents are read again, and every machine checked again.</summary>

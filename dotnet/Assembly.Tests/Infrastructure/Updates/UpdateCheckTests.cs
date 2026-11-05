@@ -151,10 +151,11 @@ public sealed class UpdateCheckTests
         var finish = new TaskCompletionSource();
         var runs = 0; var reloads = 0;
         var updates = Updates(new FakeSource(async (progress, _) => { runs++; progress("Waiting."); await finish.Task; }), status, work, () => reloads++);
+        Behind(status, "box");
         Assert.True(updates.Start());
         await Until(() => status.Items[1].UpdateNote == "Waiting.");
         Assert.False(updates.Start());
-        Assert.True(status.Items[0].Updating);
+        Assert.False(status.Items[0].Updating);
         finish.SetResult();
         await Until(() => !status.Items[1].Updating && status.Items.All(item => item.Updates is not null));
         Assert.Equal(1, runs);
@@ -170,9 +171,12 @@ public sealed class UpdateCheckTests
         var status = new MachineStatus(new Topics(), ["box"]);
         await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
         var updates = Updates(new FakeSource((_, _) => throw new CallFailed("compile error")), status, work);
+        Behind(status, "box");
         Assert.True(updates.Start());
         await Until(() => status.Items[1].UpdateNote is not null && !status.Items[1].Updating);
         Assert.Equal("Update failed: compile error", status.Items[1].UpdateNote);
+        await Until(() => status.Items[1].Updates is { } items && items.All(item => item.Kind != "backend" || item.Current is null));
+        Behind(status, "box");
         Assert.True(updates.Start());
     }
 
@@ -183,6 +187,80 @@ public sealed class UpdateCheckTests
         Assert.IsType<ReleaseUpdateSource>(source);
         var refused = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync([new("box", [Item("backend")])], false, _ => { }, CancellationToken.None));
         Assert.Equal("no_release", refused.Reason);
+    }
+
+    private static void Behind(MachineStatus status, string machine)
+    {
+        status.Reachable(machine);
+        status.Updates(machine, [Item("backend")]);
+    }
+
+    // One machine at a time as far as each is concerned, whichever others are held up.
+    private sealed class HeldMachines(params string?[] held) : IUpdateSource
+    {
+        internal readonly TaskCompletionSource Release = new();
+        internal readonly List<string?> Ran = [];
+        internal int Restarts;
+        public string? AppReady => "9.0.0";
+        public Task RestartAppAsync(Action<string> progress, CancellationToken ct) { Interlocked.Increment(ref Restarts); return Task.CompletedTask; }
+        public Task<UpdateWanted> WantedAsync(CancellationToken ct, bool fresh = false) => Task.FromResult(Dev());
+        public bool StartsRemoteUpdates(string machine) => false;
+        public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct) => Task.CompletedTask;
+        public async Task UpdateAsync(IReadOnlyList<MachineBehind> machines, bool automatic, Action<string> progress, CancellationToken ct)
+        {
+            var machine = Assert.Single(machines).Name;
+            lock (Ran) Ran.Add(machine);
+            if (!held.Contains(machine)) return;
+            progress(RemoteReleaseInstall.WaitingWords);
+            await Release.Task;
+        }
+    }
+
+    [Fact]
+    public async Task A_machine_waiting_on_its_sessions_says_so_and_holds_up_no_other_machine_or_the_restart()
+    {
+        var status = new MachineStatus(new Topics(), ["busy", "free"]);
+        await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
+        var source = new HeldMachines("busy");
+        var updates = Updates(source, status, work);
+        Behind(status, "busy");
+        Behind(status, "free");
+
+        Assert.True(updates.Start());
+        await Until(() => status.Items[1].UpdateNote == RemoteReleaseInstall.WaitingWords);
+        await Until(() => !status.Items[2].Updating);
+        Assert.True(status.Items[1].Updating);
+        Assert.Null(status.Items[2].UpdateNote);
+        lock (source.Ran) Assert.Contains("free", source.Ran);
+
+        Assert.True(updates.RestartApp());
+        await Until(() => source.Restarts == 1);
+        Assert.True(status.Items[1].Updating);
+
+        source.Release.SetResult();
+        await Until(() => !status.Items[1].Updating);
+    }
+
+    [Fact]
+    public async Task A_machine_that_is_not_answering_is_not_updated_from_what_it_last_said()
+    {
+        var status = new MachineStatus(new Topics(), ["box"]);
+        await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
+        var source = new FakeSource((_, _) => Task.CompletedTask, starts: true);
+        var updates = Updates(source, status, work);
+        status.Backend("box", new("a", "a", false, "0.0.1", "1.0.0"));
+        status.Reachable("box");
+        status.Unreachable("box", "gone");
+
+        await updates.CheckAsync("box", default);
+
+        Assert.Equal(0, source.Automatic);
+        Assert.False(status.Items[1].Updating);
+        Assert.DoesNotContain(status.Items[1].Updates!, item => item.Kind == "backend" && item.State == UpdateItem.Behind);
+
+        // Behind as of the last answer, then gone: the button leaves it out as well.
+        status.Updates("box", [Item("backend")]);
+        Assert.False(updates.Start());
     }
 
     private static UpdateItem Item(string kind, string name = "x", string wanted = "9.0.0") => new(kind, name, "1.0.0", wanted, UpdateItem.Behind);
@@ -348,7 +426,11 @@ public sealed class UpdateCheckTests
     private sealed class Welcome(string version)
     {
         internal readonly MachineStatus Status = new(new Topics(), ["box"]);
-        internal void Say() => Status.Backend("box", new("a", "a", false, version, "1.0.0"));
+        internal void Say()
+        {
+            Status.Backend("box", new("a", "a", false, version, "1.0.0"));
+            Status.Reachable("box");
+        }
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using System.Globalization;
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Agents;
 
 namespace Assembly.Desktop.Serve;
@@ -14,10 +15,10 @@ namespace Assembly.Desktop.Serve;
 /// backend when its stdin ends, as when the window that launched it quits or crashes.
 /// </summary>
 public sealed record DesktopOptions(int Port, string Home, string TokenFile, string AgentsFile, string? Remote = null, int RemotePort = 9797,
-    string RemoteTokenFile = ".config/assembly-dotnet/env", bool ExitOnStdinClose = false)
+    string RemoteTokenFile = SavedMachine.InstalledTokenFile, bool ExitOnStdinClose = false)
 {
     public const string Usage =
-        "usage: Assembly.Desktop serve [--port 18797] [--home ~/assembly-dotnet/mac] [--token-file ~/.config/assembly-dotnet/env] [--agents HOME/agents.json] [--remote workbox-test] [--remote-port 9797] [--remote-token-file .config/assembly-dotnet/env] [--exit-on-stdin-close]";
+        "usage: Assembly.Desktop serve [--port 18797] [--home ~/assembly-dotnet/mac] [--token-file ~/.config/assembly-dotnet/env] [--agents HOME/agents.json] [--remote workbox-test] [--remote-port 9797] [--remote-token-file .config/assembly-host/env] [--exit-on-stdin-close]";
 
     public string Checkouts => Path.Combine(Home, "sessions");
 
@@ -31,7 +32,7 @@ public sealed record DesktopOptions(int Port, string Home, string TokenFile, str
         string? remote = null;
         string? agents = null;
         var remotePort = 9797;
-        var remoteTokenFile = ".config/assembly-dotnet/env";
+        var remoteTokenFile = SavedMachine.InstalledTokenFile;
         var exitOnStdinClose = false;
 
         var i = 0;
