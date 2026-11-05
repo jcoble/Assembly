@@ -12,12 +12,28 @@ use std::{cell::RefCell, rc::Rc};
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Stash {
-    sha: String,
-    message: String,
+pub struct Stash {
+    pub sha: String,
+    pub message: String,
     branch: Option<String>,
     created_ms: i64,
     made_by_assembly: bool,
+}
+impl Stash {
+    /// What a person calls it. One made here is saved as `assembly <session> <time>: <text>`.
+    pub fn description(&self) -> &str {
+        let Some(rest) = self.message.strip_prefix("assembly ") else {
+            return &self.message;
+        };
+        let Some((made, text)) = rest.split_once(": ") else {
+            return &self.message;
+        };
+        if text.trim().is_empty() {
+            made.rsplit(' ').next().unwrap_or(made)
+        } else {
+            text
+        }
+    }
 }
 struct DropApproval {
     sha: String,

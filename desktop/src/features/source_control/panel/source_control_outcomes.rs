@@ -9,6 +9,7 @@ use crate::features::source_control::git_branches::GitBranchList;
 use crate::features::source_control::git_failure::{GitFailure, Recovery};
 use crate::features::source_control::git_status::GitStatus;
 use crate::features::source_control::pull_requests::pr_section::PrSection;
+use crate::features::source_control::stash_dialogs::Stash;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
@@ -344,6 +345,7 @@ impl SourceControlPane {
             return;
         };
         let args = target.read_args(json!({"session":target.session}));
+        let stash_args = args.clone();
         let call = socket
             .read(cx)
             .call::<GitBranchList>("git", "branches", args, None);
@@ -367,6 +369,20 @@ impl SourceControlPane {
                 cx.notify();
             });
         }));
+        let call = socket
+            .read(cx)
+            .call::<Vec<Stash>>("git", "stashes", stash_args, None);
+        self.stashes_read = Some(cx.spawn(async move |pane, cx| {
+            // Without the list the menu just offers no Pop; Stashes… says why when opened.
+            let answer = call.await;
+            _ = pane.update(cx, |pane, cx| {
+                pane.stashes = match answer {
+                    Outcome::Ok(items) => items,
+                    _ => Vec::new(),
+                };
+                pane.push_branch_menu(cx);
+            });
+        }));
         self.push_branch_menu(cx);
     }
     pub(super) fn push_branch_menu(&mut self, cx: &mut Context<Self>) {
@@ -377,11 +393,14 @@ impl SourceControlPane {
             .unwrap_or_default();
         let reading = self.branches_read.is_some();
         let failure = self.branches_failure.clone();
-        let busy = self.busy(cx);
+        // A read-only folder still opens the menu; only its rows are off.
+        let busy = self.busy(cx) || self.read_only(cx);
+        let stashes = self.stashes.clone();
         let has_changes = self
             .shown_status(cx)
             .is_some_and(|status| status.total_files > 0);
         self.branch_menu.update(cx, |menu, cx| {
+            menu.set_stashes(stashes, cx);
             menu.set_state(branches, reading, failure, busy, has_changes, cx)
         });
     }

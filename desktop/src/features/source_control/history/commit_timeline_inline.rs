@@ -8,6 +8,8 @@ use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_file::OpenFile
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids as ids;
+use crate::core::ui::file_icon::file_icon;
+use crate::core::ui::spinner::Spinner;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::list::ListItem;
@@ -86,6 +88,7 @@ pub(super) fn commit_file_menu(
         })
         .disabled(true),
     })
+    .separator()
     .item(
         PopupMenuItem::new("Copy path").on_click(move |_, _, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string(path.clone()))
@@ -144,27 +147,25 @@ impl CommitTimeline {
             .child(div().flex_1())
             .child(
                 Button::new("commits-refresh")
-                    .control(ids::commits::REFRESH, "Refresh the commit list")
+                    .control(ids::commits::REFRESH, "Read the commit history again")
                     .ghost()
                     .compact()
                     .icon(Icon::new(IconName::RefreshCw).size(px(14.)))
-                    .tooltip("Refresh the commit list")
+                    .tooltip("Read the commit history again")
                     .disabled(self.reading)
                     .on_click(cx.listener(|timeline, _, _, cx| timeline.refresh(cx))),
             );
         let body = if let Some(error) = self.error.clone().filter(|_| count == 0) {
             line(error, danger, cx).into_any_element()
+        } else if count == 0 && self.reading {
+            line("Reading the history…".to_string(), muted, cx)
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(Spinner::new().xsmall())
+                .into_any_element()
         } else if count == 0 {
-            line(
-                if self.reading {
-                    "Reading the history…".to_string()
-                } else {
-                    "This repository has no commits yet.".to_string()
-                },
-                muted,
-                cx,
-            )
-            .into_any_element()
+            line("This repository has no commits yet.".to_string(), muted, cx).into_any_element()
         } else {
             let rows: Vec<AnyElement> =
                 (0..count).map(|index| self.inline_row(index, cx)).collect();
@@ -188,6 +189,7 @@ impl CommitTimeline {
                         Button::new("commits-more")
                             .ghost()
                             .compact()
+                            .when(reading_more, |button| button.child(Spinner::new().xsmall()))
                             .label(if reading_more {
                                 "Reading older commits…"
                             } else {
@@ -355,7 +357,11 @@ impl CommitTimeline {
                                     .text_color(muted)
                                     .child(file.letter.to_string()),
                             )
-                            .child(Icon::new(IconName::File).size(px(14.)).text_color(muted))
+                            .child(file_icon(
+                                format!("commit-file-icon:{}", file.path),
+                                &file.path,
+                                cx,
+                            ))
                             .child(
                                 h_flex()
                                     .flex_1()

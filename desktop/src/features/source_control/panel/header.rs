@@ -10,7 +10,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::tag::Tag;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::*;
 
 impl SourceControlPane {
@@ -33,8 +33,6 @@ impl SourceControlPane {
                 .rounded_full()
                 .child(status.total_files.to_string())
         }))
-        // Removed at feature acceptance; this checkpoint is shown while the panel is still being finished.
-        .child(Tag::warning().xsmall().rounded_full().child("Unfinished"))
         .child(self.actions_button(cx))
     }
     fn branch_trigger(
@@ -64,7 +62,6 @@ impl SourceControlPane {
                     } else {
                         status.branch_title()
                     })
-                    .disabled(read_only)
                     .child(
                         h_flex()
                             .w_full()

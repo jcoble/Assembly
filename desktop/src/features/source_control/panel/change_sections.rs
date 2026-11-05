@@ -3,6 +3,8 @@
 //! ChangedFileRow.svelte and sourceControlFileMenu.ts.
 use super::SourceControlPane;
 use crate::core::intents::{open_diff::OpenDiff, open_file::OpenFile};
+use crate::core::socket::{client::SocketClient, row_source::ExpectedRowSource};
+use crate::core::state::viewed_project::{LOCAL_MACHINE, ViewedProject};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Named as _;
 use crate::core::ui::file_icon::file_icon;
@@ -22,6 +24,7 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, h_flex, v_fl
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+const NOT_IN_FINDER: &str = "This file is on a remote machine, so Finder cannot show it.";
 const NO_ROOT: &str = "This panel is not pointed at a repository folder yet.";
 const DELETED: &str = "This file was deleted, so there is nothing on disk to open.";
 const ALL_STAGED: &str = "Everything in this file is already staged.";
@@ -72,6 +75,18 @@ impl FileReasons {
             copy_path: self.copy_path,
         }
     }
+}
+/// Whether what the panel shows lives on another machine, out of this desktop's reach.
+fn on_another_machine(source: Option<&ExpectedRowSource>, cx: &App) -> bool {
+    if let Some(viewed) = ViewedProject::viewed(cx) {
+        return viewed.machine != LOCAL_MACHINE;
+    }
+    source.is_some_and(|source| {
+        source.route_machine.is_some()
+            || SocketClient::try_global(cx).is_some_and(|socket| {
+                socket.read(cx).engine_machine().as_deref() != Some(source.machine.as_str())
+            })
+    })
 }
 pub(super) fn file_reasons(file: &ChangedFile, has_root: bool, busy: bool) -> FileReasons {
     let write = |reason: Option<&'static str>| if busy { Some(STILL_RUNNING) } else { reason };
@@ -344,7 +359,7 @@ impl SourceControlPane {
             session_id: target.session.clone(),
             path: file.path.clone(),
         };
-        let tip = SharedString::from(file.label());
+        let tip = SharedString::from(file.tip());
         let hover_key = key.clone();
         let menu = self.file_menu(letter, file, target, read_only, root, busy, cx);
         ListItem::new(SharedString::from(format!("git-file:{id}")))
@@ -436,7 +451,7 @@ impl SourceControlPane {
         };
         let open = icon_button(
             button("open"),
-            IconName::ExternalLink,
+            IconName::FileSymlink,
             tip("Open in editor", reasons.open),
             reasons.open.is_some(),
             move |window, cx| window.dispatch_action(Box::new(open_file.clone()), cx),
@@ -469,6 +484,7 @@ impl SourceControlPane {
         let pane = cx.entity().downgrade();
         let file = file.clone();
         let target = target.clone();
+        let remote = on_another_machine(target.source.as_ref(), cx);
         move |menu, _, _| {
             let reasons = file_reasons(&file, root.is_some(), busy);
             let view_reason = reasons.open;
@@ -553,7 +569,7 @@ impl SourceControlPane {
                 ))
                 .item(reasoned_item(
                     "Reveal in Finder",
-                    reason(reasons.open),
+                    reason(remote.then_some(NOT_IN_FINDER).or(reasons.open)),
                     move |_, cx| {
                         _ = reveal_pane
                             .update(cx, |pane, cx| pane.reveal_file(reveal_path.clone(), cx));

@@ -71,6 +71,15 @@ impl Render for SourceControlPane {
             .child(body)
     }
 }
+/// The bounds a person can drag the commit box between.
+const COMMIT_BOX_HEIGHTS: (Pixels, Pixels) = (px(72.), px(320.));
+#[derive(Clone)]
+struct CommitBoxDrag;
+impl Render for CommitBoxDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
 /// Pull requests stay with the session's branch, whichever project the rest of the panel is showing.
 const PR_SCOPE: &str = "Pull requests below are for the session folder, not this project.";
 impl SourceControlPane {
@@ -91,6 +100,30 @@ impl SourceControlPane {
             Shown::Failed(message) => self.failure_body(message, cx),
             Shown::Read(status) => self.repository_body(status, cx),
         }
+    }
+    /// The kit's textarea with a grip under it, the kit having no drag to resize: it grows with its text until dragged.
+    fn commit_box(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let height = self.commit_height;
+        v_flex()
+            .id("commit-box")
+            .w_full()
+            .on_drag_move(
+                cx.listener(|pane, event: &DragMoveEvent<CommitBoxDrag>, _, cx| {
+                    let (least, most) = COMMIT_BOX_HEIGHTS;
+                    let height = event.event.position.y - event.bounds.top();
+                    pane.commit_height = Some(height.clamp(least, most));
+                    cx.notify();
+                }),
+            )
+            .child(Textarea::new(&self.message).when_some(height, |area, height| area.h(height)))
+            .child(
+                div()
+                    .id("commit-box-grip")
+                    .w_full()
+                    .h(px(6.))
+                    .cursor_row_resize()
+                    .on_drag(CommitBoxDrag, |drag, _, _, cx| cx.new(|_| drag.clone())),
+            )
     }
     fn try_again(&self, cx: &mut Context<Self>) -> Button {
         Button::new("source-control-retry")
@@ -189,7 +222,7 @@ impl SourceControlPane {
         let read_only = self.read_only(cx);
         let change_area = (!read_only).then(|| {
             [
-                Textarea::new(&self.message).into_any_element(),
+                self.commit_box(cx).into_any_element(),
                 self.commit_row(&status, busy, cx).into_any_element(),
             ]
         });

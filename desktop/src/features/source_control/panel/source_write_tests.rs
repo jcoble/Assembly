@@ -28,6 +28,7 @@ fn session_row(version: i64, checkout: &str, operation: &str) -> Value {
 #[derive(Default)]
 struct Seen {
     commits: Vec<Value>,
+    switches: Vec<Value>,
     commands: Vec<Value>,
     statuses: usize,
     subscriptions: Vec<Value>,
@@ -72,6 +73,10 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
                 )]
             }
             (Some("call"), Some("branches")) => vec![result(json!({"remotes":[]}))],
+            (Some("call"), Some("switchBranch")) => {
+                seen.switches.push(frame["args"].clone());
+                vec![result(json!({}))]
+            }
             (Some("call"), Some("commit")) => {
                 seen.commits.push(frame["args"].clone());
                 vec![result(json!({}))]
@@ -319,4 +324,44 @@ async fn a_row_still_moving_after_that_says_so_in_words(cx: &mut TestAppContext)
         }
         _ => panic!("the refusal is shown"),
     });
+}
+
+/// A viewed folder has no session behind it, so its branch never goes through the Engine.
+#[gpui::test]
+async fn a_viewed_folders_branch_is_switched_there_and_no_session_moves(cx: &mut TestAppContext) {
+    use crate::core::state::viewed_project::{Viewed, ViewedProject};
+
+    let mut open = open(cx).await;
+    open.cx.update(|_, cx| {
+        let viewed = Viewed {
+            project_id: "p".into(),
+            machine: "local".into(),
+            folder: "/other".into(),
+            title: "other".into(),
+        };
+        ViewedProject::set(Some("s1".into()), Some(viewed), cx);
+    });
+    let id = "view:70:2f6f74686572";
+    open.until("the viewed status", |pane, cx| {
+        pane.read_with(cx, |pane, cx| {
+            pane.target(cx).is_some_and(|target| target.session == id)
+                && pane.shown_status(cx).is_some()
+        })
+    })
+    .await;
+    let pane = open.pane.clone();
+    pane.update_in(open.cx, |pane, window, cx| {
+        pane.branch_picked(BranchPicked::Create("made".into()), window, cx)
+    });
+    let seen = open.seen.clone();
+    open.until("the switch", |_, _| {
+        !seen.lock().unwrap().switches.is_empty()
+    })
+    .await;
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.switches[0]["session"], id);
+    assert_eq!(seen.switches[0]["name"], "made");
+    assert_eq!(seen.switches[0]["create"], true);
+    assert_eq!(seen.switches[0]["expectedHead"], HEAD);
+    assert!(seen.commands.is_empty(), "the session's checkout stays put");
 }

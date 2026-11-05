@@ -61,7 +61,7 @@ impl SourceControlPane {
             });
         }));
     }
-    fn write_to(
+    pub(super) fn write_to(
         &mut self,
         target: GitTarget,
         method: &'static str,
@@ -254,7 +254,7 @@ impl SourceControlPane {
         }
     }
     pub(super) fn set_branch_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        self.branch_open = open && !self.read_only(cx);
+        self.branch_open = open;
         if self.branch_open {
             self.read_branches(cx);
         }
@@ -275,7 +275,20 @@ impl SourceControlPane {
         match picked {
             BranchPicked::Switch(name) => self.switch_branch(name, cx),
             BranchPicked::MoveToFolder(folder) => self.move_to_folder(folder, cx),
-            BranchPicked::Create(name) => self.create_branch(name, cx),
+            BranchPicked::Create(name) => {
+                if self.viewing(cx) {
+                    self.branch_open = false;
+                    self.branch_menu
+                        .update(cx, |menu, cx| menu.clear(window, cx));
+                }
+                self.create_branch(name, cx);
+            }
+            BranchPicked::PopStash(sha) => {
+                if let Some(target) = self.target(cx) {
+                    let args = json!({"session":target.session,"sha":sha});
+                    self.write_to(target, "applyStash", args, cx);
+                }
+            }
             BranchPicked::Stash => {
                 if let Some(target) = self.target(cx) {
                     let args =

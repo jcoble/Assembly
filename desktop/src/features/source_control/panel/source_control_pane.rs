@@ -15,6 +15,7 @@ use super::git_target::GitTarget;
 use super::open_another_project::OpenAnotherProject;
 use super::pull_requests::pr_section::PrSection;
 use super::result_line::PaneResult;
+use super::stash_dialogs::Stash;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::session_read::{SessionRead, Shown};
 use crate::core::state::sessions::Sessions;
@@ -64,6 +65,7 @@ pub struct SourceControlPane {
     writes: GitWrites,
     message: Entity<TextareaState>,
     amend: bool,
+    commit_height: Option<Pixels>,
     edit_revision: u64,
     submitted_revision: Option<u64>,
     action_revision: u64,
@@ -77,6 +79,8 @@ pub struct SourceControlPane {
     branches_failure: Option<String>,
     branches_target: Option<GitTarget>,
     branches_read: Option<Task<()>>,
+    stashes: Vec<Stash>,
+    stashes_read: Option<Task<()>>,
     branch_menu: Entity<BranchMenu>,
     branch_open: bool,
     checkout: Option<checkout::PendingCheckout>,
@@ -234,6 +238,7 @@ impl SourceControlPane {
             writes,
             message,
             amend: false,
+            commit_height: None,
             edit_revision: 0,
             submitted_revision: None,
             action_revision: 0,
@@ -247,6 +252,8 @@ impl SourceControlPane {
             branches_failure: None,
             branches_target: None,
             branches_read: None,
+            stashes: Vec::new(),
+            stashes_read: None,
             branch_menu,
             branch_open: false,
             checkout: None,

@@ -79,6 +79,17 @@ impl ChangedFile {
     }
 
     /// Its path, with where it came from when it was renamed.
+    /// A row's tip: where it is, then what each side of git says about it.
+    pub fn tip(&self) -> String {
+        let mut tip = self.label();
+        if !matches!(self.index.as_str(), "." | "?") {
+            tip.push_str(&format!("\nStaged: {}", self.index));
+        }
+        if !matches!(self.worktree.as_str(), "." | "?") {
+            tip.push_str(&format!("\nOn disk: {}", self.worktree));
+        }
+        tip
+    }
     pub fn label(&self) -> String {
         match &self.original_path {
             Some(from) => format!("{from} → {}", self.path),

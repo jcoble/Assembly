@@ -35,6 +35,11 @@ fn hex(text: &str) -> String {
     text.bytes().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Whether a read or write target's session field names a viewed folder rather than a session.
+pub fn is_view(session: &str) -> bool {
+    session.starts_with("view:")
+}
+
 /// Whether a session in `session` is working in `folder`: the same folder, or one inside the other.
 pub fn overlaps(session: &str, folder: &str) -> bool {
     let trim = |path: &'_ str| path.trim_end_matches('/').to_string();

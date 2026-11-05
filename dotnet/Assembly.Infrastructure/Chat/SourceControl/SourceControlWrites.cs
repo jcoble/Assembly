@@ -44,7 +44,7 @@ internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, Check
         // A session's branch is the Engine's to change; a viewed folder has no session to tell.
         calls.Write("git", "switchBranch", GitWritesJson.Default.BranchArgs, GitWritesJson.Default.GitWriteResult,
             (args, call) => FolderView.IsView(args.Session)
-                ? Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitBranches(cli).SwitchAsync(root, args.Name, call.Cancellation))
+                ? Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitBranches(cli).SwitchAsync(root, args.Name, args.Create, args.ExpectedHead, call.Cancellation))
                 : throw new CallFailed("forbidden"), args => args.Session);
         calls.Write("git", "stash", GitWritesJson.Default.StashArgs, GitWritesJson.Default.GitWriteResult,
             (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitStashes(cli, time).StashAsync(root, args.Session, args.Message, args.IncludeUntracked, call.Cancellation)), args => args.Session);
@@ -87,7 +87,7 @@ internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, Check
         return relative == "." ? throw new CallBadArguments("Choose files to change.") : relative;
     }).Distinct(StringComparer.Ordinal).ToArray();
     private static string RequireFingerprint(string? fingerprint) => fingerprint ?? throw new CallBadArguments("Refresh Source Control before changing all files.");
-    internal sealed record BranchArgs([property: JsonRequired] string Session, [property: JsonRequired] string Name, string? ExpectedHead, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
+    internal sealed record BranchArgs([property: JsonRequired] string Session, [property: JsonRequired] string Name, string? ExpectedHead, bool Create = false, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
     internal sealed record StashArgs([property: JsonRequired] string Session, [property: JsonRequired] string Message, bool IncludeUntracked, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
     internal sealed record StashShaArgs([property: JsonRequired] string Session, [property: JsonRequired] string Sha, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
     internal sealed record SessionArgs([property: JsonRequired] string Session, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);

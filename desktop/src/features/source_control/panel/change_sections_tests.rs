@@ -101,3 +101,16 @@ fn stage_all_leaves_conflicts_for_a_person() {
         vec!["new".to_string()]
     );
 }
+
+#[test]
+fn a_row_tip_gives_the_path_then_what_each_side_of_git_says() {
+    let file = |index: &str, worktree: &str| ChangedFile {
+        path: "src/a.rs".into(),
+        original_path: None,
+        index: index.into(),
+        worktree: worktree.into(),
+    };
+    assert_eq!(file("M", "D").tip(), "src/a.rs\nStaged: M\nOn disk: D");
+    assert_eq!(file(".", "M").tip(), "src/a.rs\nOn disk: M");
+    assert_eq!(file("?", "?").tip(), "src/a.rs");
+}

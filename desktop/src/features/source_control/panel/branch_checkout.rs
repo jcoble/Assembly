@@ -7,7 +7,10 @@ use crate::core::engine::engine_items::SessionItem;
 use crate::core::engine::{
     EngineChanged, EngineFeed, EngineItem, EngineKey, EngineScope, EngineWatch, SessionKey,
 };
+use crate::core::state::selected_session::SelectedSession;
+use crate::core::state::viewed_project::{Viewed, ViewedProject, is_view};
 use crate::features::source_control::git_failure::{GitFailure, Recovery};
+use crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
@@ -83,7 +86,29 @@ pub(super) fn checkout_sentence(reason: &str) -> String {
     .to_string()
 }
 impl SourceControlPane {
+    /// Whether the pane is on a viewed folder, whose branch has no session or Engine to tell.
+    pub(super) fn viewing(&self, cx: &App) -> bool {
+        self.target(cx)
+            .is_some_and(|target| is_view(&target.session))
+    }
+    fn switch_in_view(
+        &mut self,
+        name: String,
+        create: bool,
+        head: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(target) = self.target(cx) {
+            let args =
+                json!({"session":target.session,"name":name,"create":create,"expectedHead":head});
+            self.write_to(target, "switchBranch", args, cx);
+        }
+    }
     pub(super) fn switch_branch(&mut self, name: String, cx: &mut Context<Self>) {
+        if self.viewing(cx) {
+            self.switch_in_view(name, false, None, cx);
+            return;
+        }
         let Some(head) = self.shown_status(cx).and_then(|status| status.head) else {
             self.fail(
                 "This branch has no commits yet, so there is nothing to switch from.",
@@ -102,11 +127,34 @@ impl SourceControlPane {
                 .update(cx, |menu, cx| menu.set_refused(Some(sentence), cx));
             return;
         };
+        if self.viewing(cx) {
+            self.switch_in_view(name, true, Some(head), cx);
+            return;
+        }
         let done = format!("Created and switched to {name}.");
         let wire = branch_wire(&name, true, &head);
         self.change_checkout(wire, Some(name), done, cx);
     }
     pub(super) fn move_to_folder(&mut self, folder: String, cx: &mut Context<Self>) {
+        // A viewed project's branch held in another worktree: look at that worktree instead.
+        if let Some(viewed) = ViewedProject::viewed(cx) {
+            let title = folder.rsplit('/').next().unwrap_or(&folder).to_string();
+            let session = SelectedSession::global(cx)
+                .read(cx)
+                .session_id()
+                .map(String::from);
+            ViewedProject::set(
+                session,
+                Some(Viewed {
+                    folder,
+                    title,
+                    ..viewed
+                }),
+                cx,
+            );
+            WorkspaceCoordinator::changed(cx);
+            return;
+        }
         let done = format!("Moved to {folder}.");
         let wire = folder_wire(&folder);
         self.change_checkout(wire, None, done, cx);
