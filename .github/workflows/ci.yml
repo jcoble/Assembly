@@ -122,6 +122,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: PR verifier behavior
+        run: node --test scripts/verify-pr/*.test.ts
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
