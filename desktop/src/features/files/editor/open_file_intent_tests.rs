@@ -81,12 +81,18 @@ fn harness(cx: &mut TestAppContext) -> Harness<'_> {
 impl Harness<'_> {
     /// As a link does: outside any window update, and with the window drawn.
     fn open_file(&mut self) {
+        self.open_path("src/main.rs");
+    }
+
+    /// As `open_file`, for `path` in session s1, as a changes list sends it.
+    fn open_path(&mut self, path: &str) {
+        let path = path.to_string();
         self.cx.update(|window, cx| window.draw(cx).clear(cx));
         self.cx.update(|_, cx| {
-            cx.defer(|cx| {
+            cx.defer(move |cx| {
                 cx.dispatch_action(&OpenFile {
                     session_id: "s1".into(),
-                    path: "src/main.rs".into(),
+                    path,
                     expected_source: None,
                     line: None,
                     column: None,
@@ -208,4 +214,33 @@ async fn an_absolute_or_tilde_path_goes_to_the_resolver_instead_of_opening(
             .count()
     });
     assert_eq!(tabs, 0, "neither opened as a session file");
+}
+
+// Brief item 1: only `~` and `~/...` name a home folder, as the backend's `FileOwner.ExpandHome` reads them. A session
+// file whose own name starts with `~`, such as `~notes.md` or an Office lock file, still opens as that session's file.
+#[gpui::test]
+async fn a_session_file_whose_name_starts_with_a_tilde_opens_as_a_session_file(
+    cx: &mut TestAppContext,
+) {
+    let mut h = harness(cx);
+    for path in ["~notes.md", "~$plan.docx"] {
+        h.open_path(path);
+        let opened = h.cx.update(|_, cx| {
+            let view = CenterPanes::find::<FileView>(&key("s1", path), cx)?;
+            let view = view.read(cx);
+            Some((view.session.clone(), view.path.clone(), view.is_outside()))
+        });
+        assert_eq!(opened, Some(("s1".into(), path.into(), false)), "{path}");
+    }
+}
+
+// Brief item 4: an absolute path with a session and no source keeps that session, so it never resolves on a guessed
+// machine. One the sessions list doesn't hold has no known machine, so the person is asked to select a session.
+#[gpui::test]
+async fn an_absolute_path_with_a_session_and_no_source_keeps_its_session(cx: &mut TestAppContext) {
+    use crate::core::navigation::deep_links::notices;
+    let mut h = harness(cx);
+    h.open_path("/etc/hosts");
+    let shown = h.cx.update(|_, cx| notices(cx));
+    assert_eq!(shown, ["Select a session to open this file."]);
 }

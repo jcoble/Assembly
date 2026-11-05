@@ -118,15 +118,19 @@ fn a_github_pull_request_goes_to_the_pull_requests_tab() {
     );
 }
 
+// Brief item 5: a `file:` link isn't the task page's own; it's handed on as the same link from the system is.
 #[test]
-fn a_file_link_is_a_file() {
+fn a_file_link_is_handed_on_as_a_file() {
+    use crate::core::navigation::external_urls::ExternalRoute;
+    assert_eq!(route_url("file:///tmp/a%20b.rs", &context()), None);
     assert_eq!(
-        route_url("file:///tmp/a%20b.rs", &context()),
-        Some(TaskRoute::File {
-            path: "/tmp/a b.rs".into()
+        passes_on("file:///tmp/a%20b.rs"),
+        Some(ExternalRoute::File {
+            path: "/tmp/a b.rs".into(),
+            machine: None
         })
     );
-    assert_eq!(route_url("file://elsewhere/tmp/a.rs", &context()), None);
+    assert_eq!(passes_on("file://elsewhere/tmp/a.rs"), None);
 }
 
 #[test]
@@ -184,5 +188,4 @@ fn a_task_page_hands_on_nothing_else_so_a_task_link_can_not_loop() {
         None
     );
     assert_eq!(passes_on("assembly://nothing"), None);
-    assert_eq!(passes_on("file:///etc/passwd"), None);
 }

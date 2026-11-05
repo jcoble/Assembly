@@ -172,6 +172,15 @@ public sealed class FileOwnerPathTests : IDisposable
     }
 
     [Fact]
+    public void A_path_through_a_file_as_if_it_were_a_folder_says_the_file_isn_t_there()
+    {
+        var file = Write("a.txt");
+        var failure = Refused(Path.Combine(file, "x"));
+        Assert.Null(failure.Reason);
+        Assert.Equal("that file isn't there", failure.Message);
+    }
+
+    [Fact]
     public void A_file_under_a_folder_with_no_search_permission_says_it_can_t_be_read()
     {
         if (OperatingSystem.IsWindows()) return;

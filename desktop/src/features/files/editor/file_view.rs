@@ -133,20 +133,24 @@ impl FileView {
         // Global, so a link is heard wherever focus is and with no window active. It's the intent's only listener.
         cx.on_action(|intent: &OpenFile, cx| {
             let intent = intent.clone();
-            // An absolute or `~` path goes to the one resolver, which opens it as a session file or an outside one.
+            // An absolute or `~` path goes to the one resolver, which opens it as a session file or an outside one. A
+            // session that came with no source keeps its session, and the resolver finds its machine.
             if intent.outside.is_none() && names_its_own_place(&intent.path) {
-                let machine = (intent.expected_source.as_ref())
-                    .and_then(|source| source.route_machine.clone());
-                let from = (intent.expected_source.clone())
-                    .filter(|_| !intent.session_id.is_empty())
-                    .map(|source| {
-                        let key = SessionKey {
-                            machine: source.machine.clone(),
-                            id: intent.session_id.clone(),
-                        };
-                        (key, source)
-                    });
                 let jump = (intent.line, intent.column);
+                let Some(source) = intent.expected_source else {
+                    if intent.session_id.is_empty() {
+                        return file_link::open(intent.path, None, None, jump, cx);
+                    }
+                    return file_link::open_unsourced(intent.path, intent.session_id, jump, cx);
+                };
+                let machine = source.route_machine.clone();
+                let from = (!intent.session_id.is_empty()).then(|| {
+                    let key = SessionKey {
+                        machine: source.machine.clone(),
+                        id: intent.session_id.clone(),
+                    };
+                    (key, source)
+                });
                 return file_link::open(intent.path, machine, from, jump, cx);
             }
             let Some(handle) = cx

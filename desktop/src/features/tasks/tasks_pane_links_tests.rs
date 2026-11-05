@@ -362,3 +362,38 @@ async fn a_page_that_reads_as_a_task_comes_forward_and_is_read_once(cx: &mut Tes
     assert_eq!(opened_task(&pane, cx).as_deref(), Some(ID));
     assert_eq!(asked.lock().unwrap().len(), 1, "read once");
 }
+
+// Brief item 5: an absolute `file:` link on a task page goes the way the same link from the system goes, through the
+// one file resolver, with or without a session selected. Here there's no backend, so the resolver says so; it never
+// asks for a session.
+#[gpui::test]
+fn a_file_link_on_a_task_page_goes_to_the_file_resolver(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::inline_field::init(cx);
+        crate::core::navigation::open_url_handler::register(cx);
+        crate::core::state::selected_session::SelectedSession::init(cx);
+    });
+    // In the kit's root, which a notice needs.
+    let held = std::rc::Rc::new(std::cell::OnceCell::new());
+    let holder = held.clone();
+    let (_, cx) = cx.add_window_view(move |window, cx| {
+        let pane = cx.new(|cx| TasksPane::new(window, cx));
+        let _ = holder.set(pane.clone());
+        gpui_kit::base::Root::new(pane, window, cx)
+    });
+    let pane = held.get().expect("the tab").clone();
+    cx.update(|window, cx| {
+        window.activate_window();
+        pane.update(cx, |pane, cx| pane.settings_pushed(settings(true), cx));
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        pane.update(cx, |pane, cx| {
+            pane.open_link("file:///etc/hosts", window, cx)
+        })
+    });
+    cx.run_until_parked();
+    let shown = cx.update(|_, cx| crate::core::navigation::deep_links::notices(cx));
+    assert_eq!(shown, ["That file didn't open: The backend isn't running."]);
+}

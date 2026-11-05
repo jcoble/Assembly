@@ -43,7 +43,7 @@ public sealed class FileSaveUploads
                 using var stream = new FileStream(stage, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                 if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(stage, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             }
-            catch (UnauthorizedAccessException)
+            catch (Exception e) when (Unwritable(e))
             {
                 throw new CallFailed("That folder can't be written, so the file wasn't saved.", "not_writable");
             }
@@ -51,6 +51,12 @@ public sealed class FileSaveUploads
         }
         return Task.FromResult(new BegunSave(id));
     }
+
+    /// <summary>A stage the folder refused: no permission, or a read-only file system (EROFS, which .NET raises as an
+    /// <see cref="IOException"/> carrying the errno; 30 on Linux and macOS).</summary>
+    internal static bool Unwritable(Exception e) => e is UnauthorizedAccessException or IOException { HResult: ReadOnlyFileSystem };
+
+    private const int ReadOnlyFileSystem = 30;
 
     public async Task AppendAsync(SaveChunk args, string connection, CancellationToken ct)
     {

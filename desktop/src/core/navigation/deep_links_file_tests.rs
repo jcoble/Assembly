@@ -135,6 +135,17 @@ impl Harness<'_> {
                         vec![Reply::Frame(reply)]
                     }
                 }
+                // A session's machine as `sessions/resolve_source` answers it: this machine's engine, or "box-engine".
+                (Some("call"), Some("sessions"), Some("resolve_source")) => {
+                    let route = frame["args"]["routeMachine"].clone();
+                    let source = match route.is_null() {
+                        true => json!({"machine": "owner", "generation": 0, "routeMachine": null}),
+                        false => {
+                            json!({"machine": "box-engine", "generation": 2, "routeMachine": route})
+                        }
+                    };
+                    vec![result(source)]
+                }
                 (Some("call"), Some("fixture"), Some("release")) => {
                     let held = state.held.take().expect("a held answer");
                     vec![Reply::Frame(held), result(Value::Null)]
@@ -192,10 +203,12 @@ impl Harness<'_> {
         self.settle().await;
     }
 
-    /// Two round trips: a link's session question, then its path question, have been answered and their effects run.
+    /// Three round trips: a link's session source and session questions, then its path question, have been answered
+    /// and their effects run.
     pub(super) async fn settle(&mut self) {
         self.cx.run_until_parked();
         if self.client.is_some() {
+            self.flush("ping").await;
             self.flush("ping").await;
             self.flush("ping").await;
         }
@@ -275,7 +288,13 @@ async fn a_file_on_another_machine_says_which(cx: &mut TestAppContext) {
     h.link("x.cs", None).await;
     assert_eq!(
         h.shown().last().map(String::as_str),
-        Some("That file is on this Mac.")
+        Some(
+            format!(
+                "That file is on {}.",
+                super::file_link_resolve_tests::this_computer()
+            )
+            .as_str()
+        )
     );
     h.link("x.cs", Some("Other")).await;
     assert_eq!(

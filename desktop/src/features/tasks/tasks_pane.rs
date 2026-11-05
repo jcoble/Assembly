@@ -11,7 +11,6 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 
-use crate::core::engine::SessionKey;
 use crate::core::intents::open_task::{OpenTask, OpenTaskLink};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::update::Update;
@@ -56,8 +55,6 @@ pub struct TasksPane {
     /// The one link that came before the tab knew whether Notion is connected, asking the backend; a newer link
     /// replaces it, and dropping it cancels the question.
     waiting_link: Option<Task<()>>,
-    /// The session a task was opened from.
-    task_session: Option<SessionKey>,
     refreshing: bool,
     /// Asked Notion once for a brand new connection's list.
     first_refresh_done: bool,
@@ -85,7 +82,6 @@ impl TasksPane {
         cx.on_action(|intent: &OpenTask, cx| {
             let intent = intent.clone();
             Self::in_window(cx, move |pane, window, cx| {
-                pane.task_session = intent.session.clone();
                 pane.open_task(intent.source.clone(), None, window, cx);
             });
         });
@@ -208,7 +204,6 @@ impl TasksPane {
             detail: None,
             page_fallback: None,
             waiting_link: None,
-            task_session: None,
             refreshing: false,
             first_refresh_done: false,
             started: false,
@@ -332,7 +327,6 @@ fn open_here_or_in_browser(link: String, page: String, cx: &mut App) {
 const ROW_HEIGHT: f32 = 64.;
 const NO_TAB: &str = "The Tasks tab isn't open in this window.";
 pub(crate) const NOT_OPENABLE: &str = "Assembly can't open that link.";
-const NO_SESSION: &str = "Select a session to open this file.";
 
 impl EventEmitter<PanelEvent> for TasksPane {}
 

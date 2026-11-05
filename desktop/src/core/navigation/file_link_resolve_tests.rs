@@ -25,6 +25,15 @@ fn session(id: &str, route: Option<&str>) -> (SessionKey, ExpectedRowSource) {
     (key, source)
 }
 
+/// What a notice calls this machine: "this Mac" on a Mac, "this computer" anywhere else.
+pub(super) fn this_computer() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "this Mac"
+    } else {
+        "this computer"
+    }
+}
+
 fn outside(machine: Option<&str>, path: &str) -> OpenFile {
     OpenFile {
         session_id: String::new(),
@@ -197,7 +206,8 @@ async fn each_refusal_code_shows_its_words(cx: &mut TestAppContext) {
         ("not_full_path", "dots"),
         ("not_regular", "fifo"),
         ("remote_older", older),
-        ("failed", "that file isn't there."),
+        ("failed", "that file isn't there"),
+        ("failed", "it moved."),
     ] {
         h.owner.lock().unwrap().refuse = Some((code, message));
         h.link("/work/a/x.cs", None).await;
@@ -209,7 +219,8 @@ async fn each_refusal_code_shows_its_words(cx: &mut TestAppContext) {
             "That file link isn't a full path.",
             "That isn't a regular file, so it can't open.",
             older,
-            "That file didn't open: that file isn't there.",
+            "That file didn't open: That file isn't there.",
+            "That file didn't open: It moved.",
         ]
     );
     assert!(h.opened().is_empty());
@@ -315,7 +326,7 @@ async fn a_relative_path_for_another_machine_says_which(cx: &mut TestAppContext)
         h.shown(),
         [
             "That file is on Box.",
-            "That file is on this Mac.",
+            &format!("That file is on {}.", this_computer()),
             "That file is on Other.",
         ]
     );
@@ -330,4 +341,109 @@ async fn an_outside_file_at_the_root_folder_has_one_slash(cx: &mut TestAppContex
     h.connect();
     h.open("/hosts", None, None).await;
     assert!(h.opened() == [outside(None, "/hosts")]);
+}
+
+// Brief item 6: a machine that's listed but disconnected answers `unreachable`, which reads as the not-connected words.
+#[gpui::test]
+async fn a_listed_machine_that_is_not_connected_says_so(cx: &mut TestAppContext) {
+    let mut h = harness(cx);
+    h.connect();
+    h.owner.lock().unwrap().refuse = Some(("unreachable", "Box: machine socket is disconnected"));
+    h.link("/srv/y.cs", Some("Box")).await;
+    assert_eq!(
+        h.shown(),
+        ["That file is on Box, which this app isn't connected to."]
+    );
+    assert!(h.opened().is_empty());
+}
+
+/// A session in the sessions list on `route` (`None` is this machine), as the list holds it.
+fn listed(id: &str, route: Option<&str>) -> crate::core::state::session_item::SessionItem {
+    serde_json::from_value(json!({
+        "sessionId": id, "agent": "claude", "repoUrl": "", "root": null, "checkoutRoot": null,
+        "title": null, "machine": route, "parentSessionId": null, "acpSessionId": null,
+        "updatedAt": 1, "activeRunId": null,
+    }))
+    .unwrap()
+}
+
+impl Harness<'_> {
+    /// Hands a path to the resolver as an open with a session and no source does.
+    async fn open_unsourced(&mut self, path: &str, session: &str) {
+        let (path, session) = (path.to_string(), session.to_string());
+        self.cx.update(|_, cx| {
+            cx.defer(move |cx| file_link::open_unsourced(path, session, (None, None), cx))
+        });
+        self.settle().await;
+    }
+
+    fn list(&mut self, items: Vec<crate::core::state::session_item::SessionItem>) {
+        self.cx.update(|_, cx| {
+            crate::core::state::sessions::Sessions::start_holding(items, false, false, cx)
+        });
+    }
+}
+
+// Brief item 4: an open with a session but no source (a read-only transcript, or a task's session that isn't the
+// selected one) keeps its session and its machine. The machine comes from the sessions list and its source from that
+// machine, so a remote session's file resolves there, with the session's own id on that machine as the inside hint.
+#[gpui::test]
+async fn a_remote_session_with_no_source_resolves_its_file_on_that_machine(
+    cx: &mut TestAppContext,
+) {
+    let mut h = harness(cx);
+    h.connect();
+    h.list(vec![listed("t1", Some("Box"))]);
+    h.open_unsourced(&format!("{ROOT}/src/a.txt"), "t1").await;
+    let source = ExpectedRowSource {
+        machine: "box-engine".into(),
+        generation: 2,
+        route_machine: Some("Box".into()),
+    };
+    let asked = h.asked();
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    assert_eq!(asked[0]["session"], "t1");
+    assert_eq!(asked[0]["expectedSource"], json!(source));
+    assert_eq!(
+        asked[1]["target"],
+        json!({"path": format!("{ROOT}/src/a.txt"), "machine": "Box", "insideOf": "r"})
+    );
+    let expected = OpenFile {
+        session_id: "t1".into(),
+        path: "src/a.txt".into(),
+        expected_source: Some(source),
+        line: None,
+        column: None,
+        pinned: true,
+        outside: None,
+    };
+    assert!(h.opened() == [expected], "{:?}", h.opened().len());
+    assert_eq!(h.shown(), Vec::<String>::new());
+}
+
+#[gpui::test]
+async fn a_local_session_with_no_source_resolves_its_file_here(cx: &mut TestAppContext) {
+    let mut h = harness(cx);
+    h.connect();
+    h.list(vec![listed("t1", None)]);
+    h.open_unsourced("/etc/hosts", "t1").await;
+    let asked = h.asked();
+    assert_eq!(asked[0]["expectedSource"]["machine"], "owner");
+    assert_eq!(
+        asked[1]["target"],
+        json!({"path": "/etc/hosts", "machine": null, "insideOf": "r"})
+    );
+    assert!(h.opened() == [outside(None, "/etc/hosts")]);
+}
+
+// No guess: a session the list doesn't hold has no known machine, so the file isn't opened on one.
+#[gpui::test]
+async fn a_session_with_no_source_that_the_list_lacks_asks_for_a_session(cx: &mut TestAppContext) {
+    let mut h = harness(cx);
+    h.connect();
+    h.list(vec![listed("other", Some("Box"))]);
+    h.open_unsourced("/etc/hosts", "t1").await;
+    assert_eq!(h.shown(), ["Select a session to open this file."]);
+    assert!(h.asked().is_empty());
+    assert!(h.opened().is_empty());
 }

@@ -128,7 +128,7 @@ internal sealed class FileOwner(SessionStore sessions, IAppDatabase db)
         if (fd < 0)
             throw Marshal.GetLastPInvokeError() switch
             {
-                NoSuchFile => new CallFailed("that file isn't there"),
+                NoSuchFile or NotAFolder => new CallFailed("that file isn't there"),
                 AccessDenied => new CallFailed("that file can't be read"),
                 _ => NotRegular(),
             };
@@ -142,6 +142,7 @@ internal sealed class FileOwner(SessionStore sessions, IAppDatabase db)
     private const int MaxPath = 4096;
     private const int MaxLinks = 40;
     private const int NoSuchFile = 2; // ENOENT, the same on Linux and macOS.
+    private const int NotAFolder = 20; // ENOTDIR: a file named as if it were a folder; the same on Linux and macOS.
     private const int AccessDenied = 13; // EACCES, the same on Linux and macOS.
     private const int LinuxReadNonBlocking = 0x800 | 0x80000; // O_RDONLY | O_NONBLOCK | O_CLOEXEC
     private const int MacReadNonBlocking = 0x4 | 0x1000000; // O_RDONLY | O_NONBLOCK | O_CLOEXEC

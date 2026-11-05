@@ -4,19 +4,17 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 
-use crate::core::intents::open_file::OpenFile;
 use crate::core::intents::open_pull_requests::OpenPullRequests;
 use crate::core::intents::open_url::OpenInBrowser;
 use crate::core::navigation::deep_links::handle_route;
 use crate::core::socket::client::SocketClient;
-use crate::core::state::selected_session::SelectedSession;
 use crate::features::tasks::notion_client::NotionClient;
 use crate::features::tasks::task_detail::{TaskDetailEvent, TaskDetailView, TaskSeed};
 use crate::features::tasks::task_export::*;
 use crate::features::tasks::task_navigation::{RouteContext, TaskRoute, passes_on, route_url};
 use crate::features::tasks::tasks_state::*;
 
-use super::{NO_SESSION, NOT_OPENABLE, TasksPane};
+use super::{NOT_OPENABLE, TasksPane};
 
 impl TasksPane {
     pub(super) fn open_row(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -27,7 +25,6 @@ impl TasksPane {
             data_source_id: row.source_id.clone(),
             page_id: row.page_id.clone(),
         };
-        self.task_session = None;
         self.open_task(source, None, window, cx);
     }
 
@@ -205,7 +202,6 @@ impl TasksPane {
                 }),
                 cx,
             ),
-            Some(TaskRoute::File { path }) => self.open_file(path, window, cx),
             // Neither a task nor a pull request, so only the browser is left, and it mustn't come back here.
             Some(TaskRoute::Web(url)) => {
                 window.dispatch_action(Box::new(OpenInBrowser { url }), cx)
@@ -219,40 +215,6 @@ impl TasksPane {
                 window.push_notification(Notification::warning(NOT_OPENABLE), cx);
             }
         }
-    }
-
-    /// Against the session the task was opened from, or the selected one. No session, no guess.
-    pub(super) fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
-        let selected = SelectedSession::try_global(cx);
-        let selected = selected.as_ref().map(|selected| selected.read(cx));
-        let session = self
-            .task_session
-            .as_ref()
-            .map(|key| key.id.clone())
-            .or_else(|| {
-                selected
-                    .as_ref()
-                    .and_then(|selected| selected.session_id().map(String::from))
-            });
-        let Some(session_id) = session else {
-            window.push_notification(Notification::warning(NO_SESSION), cx);
-            return;
-        };
-        let expected_source = selected
-            .filter(|selected| selected.session_id() == Some(session_id.as_str()))
-            .and_then(|selected| selected.source().cloned());
-        window.dispatch_action(
-            Box::new(OpenFile {
-                session_id,
-                path,
-                line: None,
-                column: None,
-                pinned: true,
-                expected_source,
-                outside: None,
-            }),
-            cx,
-        );
     }
 }
 

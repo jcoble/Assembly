@@ -18,9 +18,11 @@ pub struct OpenFile {
     pub outside: Option<OutsideFile>,
 }
 
-/// Whether a path goes to the backend as a path target rather than opening relative to a session.
+/// Whether a path goes to the backend as a path target rather than opening relative to a session: an absolute path,
+/// or `~` and `~/...`, the only home paths, as the backend's `FileOwner.ExpandHome` reads them. A session file named
+/// `~notes.md` or `~$plan.docx` stays the session's.
 pub fn names_its_own_place(path: &str) -> bool {
-    std::path::Path::new(path).is_absolute() || path.starts_with('~')
+    std::path::Path::new(path).is_absolute() || path == "~" || path.starts_with("~/")
 }
 
 impl OpenFile {

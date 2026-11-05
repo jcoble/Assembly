@@ -1,8 +1,9 @@
-//! Where a link on a task page goes, from the URL alone. Nothing is guessed: a file link needs a session to resolve
-//! against, a Notion page with no connection stays a web page, and anything else that isn't http or https is refused.
+//! Where a link on a task page goes, from the URL alone. Nothing is guessed: a Notion page with no connection stays a
+//! web page, a file link is handed on to the app's one file resolver as the same link from the system is, and anything
+//! else that isn't http or https is refused.
 
 use super::task_export::NotionTaskRef;
-use crate::core::navigation::external_urls::{ExternalRoute, canonical_notion_id, parse_external};
+use crate::core::navigation::external_urls::{ExternalRoute, canonical_notion_id, parse_incoming};
 use crate::core::navigation::web_links::{notion_page, notion_web_page, pull_request};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,9 +19,6 @@ pub enum TaskRoute {
         repo: String,
         number: u64,
     },
-    File {
-        path: String,
-    },
     Web(String),
 }
 
@@ -30,10 +28,10 @@ pub struct RouteContext {
     pub source: Option<String>,
 }
 
-/// Whether a link `route_url` refused is one to hand on to the app's link handling, and as what. A task link never is,
-/// so it can't come back here.
+/// Whether a link `route_url` refused is one to hand on to the app's link handling, and as what, read as a link from the
+/// system is, so a `file:` link is a file on this machine. A task link never is, so it can't come back here.
 pub fn passes_on(address: &str) -> Option<ExternalRoute> {
-    match parse_external(address) {
+    match parse_incoming(address) {
         ExternalRoute::Unsupported | ExternalRoute::Task { .. } => None,
         route => Some(route),
     }
@@ -58,12 +56,6 @@ pub fn route_url(address: &str, context: &RouteContext) -> Option<TaskRoute> {
                 data_source_id,
                 page_id,
             }))
-        }
-        "file" if url.host_str().is_none_or(str::is_empty) => {
-            let path = url.to_file_path().ok()?;
-            Some(TaskRoute::File {
-                path: path.to_string_lossy().into_owned(),
-            })
         }
         "http" | "https" => Some(web_route(&url, context)),
         _ => None,
