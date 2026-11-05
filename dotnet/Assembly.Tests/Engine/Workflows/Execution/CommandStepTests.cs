@@ -223,6 +223,24 @@ public sealed class CommandStepTests
         Assert.Equal(2, f.Core.Number("SELECT attempt FROM engine_step"));
     }
 
+    [Theory]
+    [InlineData("printf ok", "succeeded")]
+    [InlineData("exit 3", "failed")]
+    public async Task A_finished_run_says_when_it_started_and_ended(string script, string state)
+    {
+        using var f = new Fixture(script);
+        var row = () => new Assembly.Engine.Reading.EngineReader(f.Core.Db, f.Core.Machine).Entity("run", f.Run, default)!.Value;
+        Assert.Equal(JsonValueKind.Null, row().GetProperty("endedMs").ValueKind);
+        var started = f.Start(f.Prepare(1500));
+        Assert.True(started.Applied, started.Error);
+        Assert.Equal(1500, row().GetProperty("startedMs").GetInt64());
+        Assert.Equal(JsonValueKind.Null, row().GetProperty("endedMs").ValueKind);
+        var ran = f.Claim(); Assert.True(f.Complete(ran, await f.Host().ExecuteAsync(ran, default)).Applied);
+        Assert.Equal(state, row().GetProperty("state").GetString());
+        Assert.True(row().GetProperty("endedMs").GetInt64() >= 1500);
+        Assert.Equal(1500, row().GetProperty("startedMs").GetInt64());
+    }
+
     [Fact]
     public void Prepared_command_identity_ignores_clock_and_never_starts_twice()
     {

@@ -206,8 +206,12 @@ public static class RunTransitions
             """, r => r.Text(0), new SqlArg("$id", runId), new("$commandsDrained", commandsDrained ? 1 : 0),
                 new("$runCancelling", run.State == "cancelling" ? 1 : 0))!;
         if (next == run.State && !ownerChanged) return events;
-        s.Execute("UPDATE engine_run SET state=$state,version=version+1,updated_ms=$now WHERE id=$id",
-            new("$state", next), new("$now", c.NowMs), new("$id", runId));
+        s.Execute("""
+            UPDATE engine_run SET state=$state,version=version+1,updated_ms=$now,
+              started_ms=COALESCE(started_ms,CASE WHEN $state<>'queued' THEN $now END),
+              ended_ms=CASE WHEN $state IN ('succeeded','failed','cancelled') THEN $now ELSE ended_ms END
+            WHERE id=$id
+            """, new("$state", next), new("$now", c.NowMs), new("$id", runId));
         events.Add(Changed(runId, run.Version + 1, run.Owner, next));
         return events;
     }
@@ -227,7 +231,7 @@ public static class RunTransitions
               AND $now>=r.owner_lost_ms AND $now-r.owner_lost_ms>=r.owner_loss_limit_ms
             """, r => r.Long(0), new("$id", runId), new("$now", c.NowMs));
         if (expired == 0) return Refused(c, "owner_not_expired", run);
-        s.Execute("UPDATE engine_run SET state='failed',version=version+1,updated_ms=$now WHERE id=$id", new("$now", c.NowMs), new("$id", runId));
+        s.Execute("UPDATE engine_run SET state='failed',version=version+1,updated_ms=$now,ended_ms=$now WHERE id=$id", new("$now", c.NowMs), new("$id", runId));
         List<EventDraft> events = [Changed(runId, run.Version + 1, run.Owner, "failed")];
         List<EffectDraft> effects = [];
         if (run.Workflow)
