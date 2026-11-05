@@ -10,6 +10,24 @@ namespace Assembly.Desktop.Serve;
 /// <summary>Runs the desktop backend until Ctrl+C, with a remote machine when <c>--remote</c> names one.</summary>
 public static class DesktopServe
 {
+    /// <summary>
+    /// The update helper's check after an install on quit: this version runs and opens the database, migrating it, with no
+    /// window and nothing else started. Non-zero puts the old version back.
+    /// </summary>
+    public static int CheckStart(string database)
+    {
+        try
+        {
+            using var db = Assembly.Infrastructure.Persistence.AppDatabase.Open(database, TimeProvider.System, new Assembly.Infrastructure.Topics.Topics());
+            return 0;
+        }
+        catch (Exception error) when (error is Microsoft.Data.Sqlite.SqliteException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            Console.Error.WriteLine($"Assembly can't open {database}: {error.Message}");
+            return 1;
+        }
+    }
+
     public static async Task<int> MainAsync(IReadOnlyList<string> args)
     {
         if (DesktopOptions.Parse(args) is not { } options)

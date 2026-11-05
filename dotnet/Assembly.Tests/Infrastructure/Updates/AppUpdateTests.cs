@@ -103,6 +103,39 @@ public sealed class AppUpdateTests : IDisposable
     }
 
     [Fact]
+    public async Task A_quit_with_an_update_ready_hands_it_to_the_helper_to_install_and_check_with_the_window_left_closed()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var update = Update(Feed(Package("2.0.0")));
+        await update.InstallOnQuitAsync(default);
+        Assert.Empty(_steps);
+
+        await update.StageAsync("2.0.0", _ => { }, default);
+        await update.InstallOnQuitAsync(default);
+
+        Assert.Equal(["helper"], _steps);
+        using var plan = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(Stage, "plan.json")));
+        Assert.StartsWith("Contents/Resources/backend/", plan.RootElement.GetProperty("check").GetString(), StringComparison.Ordinal);
+        // Already handed over: neither a second quit nor a press starts another.
+        await update.InstallOnQuitAsync(default);
+        await update.RestartAsync(_ => { }, default);
+        Assert.Equal(["helper", "idle", "idle done"], _steps);
+    }
+
+    [Fact]
+    public async Task A_quit_with_a_turn_running_installs_nothing()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var update = Update(Feed(Package("2.0.0")), busy: () => true);
+        await update.StageAsync("2.0.0", _ => { }, default);
+
+        await update.InstallOnQuitAsync(default);
+
+        Assert.Empty(_steps);
+        Assert.False(File.Exists(Path.Combine(Stage, "plan.json")));
+    }
+
+    [Fact]
     public async Task A_turn_that_starts_as_the_helper_comes_up_calls_it_off_and_goes_back_to_waiting()
     {
         if (!OperatingSystem.IsLinux()) return;
@@ -219,6 +252,7 @@ public sealed class AppUpdateTests : IDisposable
             return Task.CompletedTask;
         }
         public Task RestartAsync(Action<string> progress, CancellationToken ct) { Restarts++; return Task.CompletedTask; }
+        public Task InstallOnQuitAsync(CancellationToken ct) => Task.CompletedTask;
     }
 
     private sealed class FakeReleases(List<string?>? tools = null) : IReleaseInstall

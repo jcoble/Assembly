@@ -80,6 +80,7 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly BackgroundWork _work;
     private readonly RemoteConnections _connections;
     private readonly WebApplication _app;
+    private System.Runtime.CompilerServices.StrongBox<bool> _windowGone = new();
     private readonly FileStream _homeLock;
     private readonly TurnActivity _activity;
     private readonly MachinesFeature _machinesFeature;
@@ -428,9 +429,21 @@ public sealed class DesktopBackend : IAsyncDisposable
                     new FoldersFeature(localFolders), new ProjectsFeature(projectStore,
                         name => name == "local" ? localFolders : new RemoteProjectFolders(connections, name), db)], board, Engine: engine), port, out _);
             app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });
+            // A quit installs an update that's ready, never a crash, which only ends stdin, and never with a turn running.
+            var windowGone = new System.Runtime.CompilerServices.StrongBox<bool>();
+            if (appInstall is not null)
+                app.Lifetime.ApplicationStopping.Register(() =>
+                {
+                    if (windowGone.Value) return;
+                    using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    try { appInstall.InstallOnQuitAsync(limit.Token).GetAwaiter().GetResult(); }
+                    catch (Exception error) when (error is CallFailed or IOException or UnauthorizedAccessException or OperationCanceledException or System.ComponentModel.Win32Exception)
+                    { log.WriteLine($"update on quit: {error.Message}"); }
+                });
             await app.StartAsync();
             var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, routedTerminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp, gitOperations, providerRuntimeSubscriptions, remoteReleases, releaseHttp, signInRelay, notion);
             backend._updates = updates;
+            backend._windowGone = windowGone;
             endpoint.Listening(backend.Address);
             relay.Start();
             return backend;
@@ -485,6 +498,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         while (await input.ReadAsync(buffer, stop).AsTask().WaitAsync(stop) > 0)
         {
         }
+        _windowGone.Value = true;
         _app.Lifetime.StopApplication();
     });
 

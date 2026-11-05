@@ -23,7 +23,7 @@ internal interface IUpdateSource
     string? AppNote => null;
     /// <summary>The version of this app waiting for its restart.</summary>
     string? AppReady => null;
-    /// <summary>Someone pressed Restart to Update.</summary>
+    /// <summary>Someone pressed Restart to Update. A ready update also installs on the next quit, without it.</summary>
     Task RestartAppAsync(Action<string> progress, CancellationToken ct) => throw new CallFailed("No update is ready to restart into.", "no_update");
     /// <summary>This app's window is up.</summary>
     void AppStarted() { }

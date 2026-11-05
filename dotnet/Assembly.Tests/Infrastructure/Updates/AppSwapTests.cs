@@ -212,6 +212,53 @@ public sealed class AppSwapTests : IDisposable
         Assert.Equal("original", File.ReadAllText(Database));
     }
 
+    private const string CheckProgram = "Contents/Resources/backend/check";
+
+    // The new version's check, beside its window program, which writes new.pid if anything opens it.
+    private void Checks(string body)
+    {
+        var program = Path.Combine(Fresh, CheckProgram);
+        Directory.CreateDirectory(Path.GetDirectoryName(program)!);
+        File.WriteAllText(program, $"#!/bin/sh\n[ \"$1\" = check-start ] && [ \"$2\" = '{Database}' ] || exit 9\n{body}\n");
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(program, (UnixFileMode)0b111_101_101);
+    }
+
+    [Fact]
+    public async Task After_a_quit_the_new_version_goes_in_its_check_passes_and_no_window_opens()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (plan, window, backend) = Prepared(Acknowledges);
+        Checks($"echo migrated > '{Database}'\nexit 0");
+        End(window); End(backend);
+
+        Assert.Equal(0, await AppSwap.RunAsync(plan with { Check = CheckProgram }).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        Assert.Equal("new", Running("new"));
+        Assert.False(File.Exists(Path.Combine(Home, "new.pid")));
+        Assert.False(File.Exists(Path.Combine(Home, "old.pid")));
+        Assert.Equal("migrated\n", File.ReadAllText(Database));
+        Assert.False(Directory.Exists(Stage));
+        Assert.False(File.Exists(Path.Combine(Folder, "failed.json")));
+    }
+
+    [Fact]
+    public async Task After_a_quit_a_check_that_fails_puts_the_old_app_and_database_back_and_opens_nothing()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (plan, window, backend) = Prepared(Acknowledges);
+        Checks($"echo migrated > '{Database}'\nexit 3");
+        End(window); End(backend);
+
+        Assert.Equal(1, await AppSwap.RunAsync(plan with { Check = CheckProgram }).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        Assert.Equal("old", Running("old"));
+        Assert.Equal("original", File.ReadAllText(Database));
+        Assert.Equal("Assembly 2.0.0 didn't start, so this app went back to 1.0.0.", SaidNote());
+        Assert.False(File.Exists(Path.Combine(Home, "new.pid")));
+        Assert.False(File.Exists(Path.Combine(Home, "old.pid")));
+        Assert.False(Directory.Exists(Stage));
+    }
+
     [Fact]
     public async Task A_new_version_that_never_answers_is_stopped_by_its_own_ids_and_the_old_app_comes_back()
     {

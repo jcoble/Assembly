@@ -163,7 +163,7 @@ fn a_ready_update_says_so_and_stops_counting_as_behind_on_this_machine() {
     );
     assert_eq!(
         row_status(&ready, "Local", "Connected"),
-        "Local · Connected · Assembly 2.0.0 is ready to restart into"
+        "Local · Connected · Assembly 2.0.0 installs when you quit, or now with Restart to Update"
     );
     assert_eq!(behind_words(std::iter::once(&ready)), None);
 }
@@ -178,7 +178,7 @@ fn with_an_update_ready_this_machines_tools_can_still_be_updated_from_its_card()
     assert!(update_offered(&tools));
     assert_eq!(
         row_status(&tools, "Local", "Connected"),
-        "Local · Connected · Assembly 2.0.0 is ready to restart into · codex behind"
+        "Local · Connected · Assembly 2.0.0 installs when you quit, or now with Restart to Update · codex behind"
     );
     assert_eq!(
         behind_words(std::iter::once(&tools)).as_deref(),
@@ -201,7 +201,7 @@ fn a_press_of_restart_shows_on_the_card_as_well() {
     );
     assert_eq!(
         row_status(&waiting, "Local", "Connected"),
-        "Local · Connected · Waiting for running sessions to finish… · Assembly 2.0.0 is ready to restart into"
+        "Local · Connected · Waiting for running sessions to finish… · Assembly 2.0.0 installs when you quit, or now with Restart to Update"
     );
 }
 

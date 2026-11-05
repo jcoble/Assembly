@@ -90,7 +90,9 @@ pub(crate) fn row_status(machine: &Machine, reached: &str, status: &str) -> Stri
     } else if let Some(note) = &machine.update_note {
         parts.push(note.clone());
     } else if let Some(version) = &machine.restart_ready {
-        parts.push(format!("Assembly {version} is ready to restart into"));
+        parts.push(format!(
+            "Assembly {version} installs when you quit, or now with Restart to Update"
+        ));
         if !behind.is_empty() {
             parts.push(format!("{} behind", behind.join(", ")));
         }

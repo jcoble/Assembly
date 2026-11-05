@@ -21,6 +21,8 @@ internal interface IAppInstall
     Task StageAsync(string version, Action<string> progress, CancellationToken ct);
     /// <summary>The press: waits for running sessions, then hands over and asks the window to quit. A turn that starts meanwhile sends it back to waiting.</summary>
     Task RestartAsync(Action<string> progress, CancellationToken ct);
+    /// <summary>The window is quitting: a ready update installs once it has gone, unless a turn is running. Nothing reopens it.</summary>
+    Task InstallOnQuitAsync(CancellationToken ct);
     /// <summary>The window is up: an update waiting to hear that can finish.</summary>
     void Started();
 }
@@ -37,8 +39,9 @@ internal sealed record AppLocation(string App, string Home, string Database, str
 
 /// <summary>
 /// Everything before the swap. The stage sits beside the bundle so the swap stays on one volume. It's made and checked with
-/// nothing stopped, and waits there: only Restart to Update goes on, to the wait for sessions and the quit. The helper does
-/// the rest once this app has gone, starting with the copy of the database, so no write comes after it.
+/// nothing stopped, and waits there: Restart to Update goes on, to the wait for sessions and the quit, and so does the next quit
+/// with no turn running. The helper does the rest once this app has gone, starting with the copy of the database, so no write
+/// comes after it. One helper at a time: whichever of the two starts it first.
 /// </summary>
 internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed feed, Func<CancellationToken, Task> idle, Func<bool> busy,
     Func<string, string, CancellationToken, Task<Action>> startHelper, Func<int> windowPid, Action quit) : IAppInstall
@@ -47,6 +50,7 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
     internal const string WaitingWords = "Waiting for running sessions to finish…";
     private sealed record Staged(string Version, string Stage, string Fresh, string Program);
     private volatile Staged? _staged;
+    private int _handedOver;
 
     /// <summary>The bundle a packaged backend runs inside; none from a checkout.</summary>
     internal static string? BundleOf(string backendFolder)
@@ -111,16 +115,13 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
         {
             Directory.CreateDirectory(location.Folder);
             File.Delete(location.Failed);
-            var copy = Path.Combine(location.Folder, $"{AppSwap.BackupPrefix}{staged.Version}.db");
-            var planFile = Path.Combine(staged.Stage, "plan.json");
-            var helper = Path.Combine(staged.Fresh, "Contents/Resources/backend", Path.GetFileName(Environment.ProcessPath ?? "assembly"));
             while (true)
             {
                 progress(WaitingWords);
                 await idle(ct);
-                var plan = AppSwapPlan.For(location, staged.Fresh, staged.Program, staged.Stage, staged.Version, copy, windowPid());
-                await File.WriteAllBytesAsync(planFile, JsonSerializer.SerializeToUtf8Bytes(plan, AppSwapJson.Default.AppSwapPlan), ct);
-                var callOff = await startHelper(helper, planFile, ct);
+                // The window is already quitting, and installs it.
+                if (Interlocked.CompareExchange(ref _handedOver, 1, 0) != 0) return;
+                var callOff = await HandOverAsync(staged, null, ct);
                 // Starting the helper can take seconds, and a turn can start in them. Quitting now would kill it.
                 if (!busy())
                 {
@@ -129,12 +130,34 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
                     return;
                 }
                 callOff();
+                Volatile.Write(ref _handedOver, 0);
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             throw new CallFailed($"Assembly can't replace itself in {Path.GetDirectoryName(location.App)}, so nothing was changed: {error.Message}", "app_update_failed");
         }
+    }
+
+    public async Task InstallOnQuitAsync(CancellationToken ct)
+    {
+        if (_staged is not { } staged || busy() || Interlocked.CompareExchange(ref _handedOver, 1, 0) != 0) return;
+        Directory.CreateDirectory(location.Folder);
+        File.Delete(location.Failed);
+        await HandOverAsync(staged, Path.Combine(BackendFolder, BackendName), ct);
+    }
+
+    private const string BackendFolder = "Contents/Resources/backend";
+    private static string BackendName => Path.GetFileName(Environment.ProcessPath ?? "assembly");
+
+    // From here the helper is waiting for this app to go; calling it off before then leaves everything as it was.
+    private async Task<Action> HandOverAsync(Staged staged, string? check, CancellationToken ct)
+    {
+        var copy = Path.Combine(location.Folder, $"{AppSwap.BackupPrefix}{staged.Version}.db");
+        var planFile = Path.Combine(staged.Stage, "plan.json");
+        var plan = AppSwapPlan.For(location, staged.Fresh, staged.Program, staged.Stage, staged.Version, copy, windowPid()) with { Check = check };
+        await File.WriteAllBytesAsync(planFile, JsonSerializer.SerializeToUtf8Bytes(plan, AppSwapJson.Default.AppSwapPlan), ct);
+        return await startHelper(Path.Combine(staged.Fresh, BackendFolder, BackendName), planFile, ct);
     }
 
     // A signed older archive must not pass as this version: that would be a downgrade.

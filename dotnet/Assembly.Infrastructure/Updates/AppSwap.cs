@@ -8,9 +8,13 @@ using System.Text.Json.Serialization;
 
 namespace Assembly.Infrastructure.Updates;
 
-/// <summary>What the helper needs, written by the old version and read by the new one.</summary>
+/// <summary>
+/// What the helper needs, written by the old version and read by the new one. <paramref name="Check"/> is set for an install
+/// on quit: the program in the new bundle that proves it starts, run in place of opening the window, which stays closed.
+/// </summary>
 internal sealed record AppSwapPlan(string App, string Fresh, string Program, string Stage, string Folder, string Version, string Previous,
-    string Database, string Backup, int WindowPid, long WindowStart, int BackendPid, long BackendStart, int QuitSeconds, int AcknowledgeSeconds)
+    string Database, string Backup, int WindowPid, long WindowStart, int BackendPid, long BackendStart, int QuitSeconds, int AcknowledgeSeconds,
+    string? Check = null)
 {
     internal static AppSwapPlan For(AppLocation location, string fresh, string program, string stage, string version, string backup, int window)
     {
@@ -31,7 +35,9 @@ internal sealed partial class AppSwapJson : JsonSerializerContext;
 /// <summary>
 /// The helper, run from the new bundle after leaving the old app's process group. It waits for exactly the old window and
 /// backend to exit, copies the database they left, swaps the bundles in one rename, starts the new one, and waits to hear from
-/// it. A new version that exits or stays silent is stopped, by its own process id only, and the old bundle and database go back.
+/// it. After a quit it doesn't open the new one: it runs the new version's check, which opens the database, and leaves the app
+/// closed either way. A new version that exits or stays silent is stopped, by its own process id only, and the old bundle and
+/// database go back.
 /// Only the latest copy and the latest failed database are kept.
 /// </summary>
 internal static partial class AppSwap
@@ -96,8 +102,8 @@ internal static partial class AppSwap
         Process? child = null;
         try
         {
-            child = Launch(plan);
-            if (await AcknowledgedAsync(listener, child, plan))
+            child = plan.Check is null ? Launch(plan) : Check(plan);
+            if (plan.Check is null ? await AcknowledgedAsync(listener, child, plan) : await CheckedAsync(child, plan))
             {
                 File.Delete(address);
                 Remove(plan.Stage);
@@ -112,6 +118,7 @@ internal static partial class AppSwap
             // The stage may hold the old app now, so it stays, and whatever is in place opens with the reason on it.
             Say(plan, stuck);
             File.Delete(address);
+            if (plan.Check is not null) return 1;
             try { using (Launch(plan)) { } }
             catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception or InvalidOperationException) { }
             return 1;
@@ -151,8 +158,10 @@ internal static partial class AppSwap
         }
     }
 
+    // After a quit the app stays closed, whatever happened.
     private static void Relaunch(AppSwapPlan plan)
     {
+        if (plan.Check is not null) { Remove(plan.Stage); return; }
         try { using (Launch(plan)) { } }
         catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception or InvalidOperationException) { }
         Remove(plan.Stage);
@@ -177,6 +186,21 @@ internal static partial class AppSwap
         var program = Path.Combine(plan.App, plan.Program);
         var start = new ProcessStartInfo("/bin/sh", ["-c", "exec \"$0\" </dev/null >/dev/null 2>&1", program]) { UseShellExecute = false };
         return Process.Start(start) ?? throw new InvalidOperationException("The app could not start.");
+    }
+
+    private static Process Check(AppSwapPlan plan)
+    {
+        var program = Path.Combine(plan.App, plan.Check!);
+        var start = new ProcessStartInfo("/bin/sh", ["-c", "exec \"$0\" check-start \"$1\" </dev/null >/dev/null 2>&1", program, plan.Database]) { UseShellExecute = false };
+        return Process.Start(start) ?? throw new InvalidOperationException("The new version could not start.");
+    }
+
+    private static async Task<bool> CheckedAsync(Process check, AppSwapPlan plan)
+    {
+        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(plan.AcknowledgeSeconds));
+        try { await check.WaitForExitAsync(limit.Token); }
+        catch (OperationCanceledException) { return false; }
+        return check.ExitCode == 0;
     }
 
     private static async Task<bool> AcknowledgedAsync(System.Net.Sockets.Socket listener, Process child, AppSwapPlan plan)
