@@ -11,6 +11,12 @@ internal sealed class CheckoutWrites
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Entry> _roots = new(StringComparer.Ordinal);
 
+    /// <summary>How many writes hold or wait for the root's lease.</summary>
+    internal int UsersOf(string canonicalRoot)
+    {
+        lock (_gate) return _roots.TryGetValue(canonicalRoot, out var entry) ? entry.Users : 0;
+    }
+
     public async Task<T> RunAsync<T>(string canonicalRoot, Func<Task<T>> work)
     {
         Entry entry;

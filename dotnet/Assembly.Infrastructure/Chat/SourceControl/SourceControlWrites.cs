@@ -63,6 +63,7 @@ internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, Check
             call.Cancellation.ThrowIfCancellationRequested();
             call.SourceGuard?.EnsureCurrent();
             if (RequireRoot(sessions, session, expectedRoot, expectedSource is not null || call.ExpectedSource is not null) != root) throw ChangedRoot();
+            routes.RequireViewWritable(session, call.Cancellation);
             return await execute(root);
         });
         return _ => result;

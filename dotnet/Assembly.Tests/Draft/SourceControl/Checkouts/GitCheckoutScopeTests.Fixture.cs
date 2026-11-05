@@ -9,6 +9,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Git;
 using Assembly.Application.Common.Projects;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Application.Features.Chat.SourceControl.PullRequests;
 using Assembly.Infrastructure.Chat.SourceControl;
 using Assembly.Infrastructure.Git;
 using Assembly.Infrastructure.Socket;
@@ -33,6 +34,7 @@ public sealed partial class GitCheckoutScopeTests
         internal readonly TwoHosts Hosts = new(forwardCommands: true);
         internal TwoHosts.Host Owner => Remote ? Hosts.Remote : Hosts.Mac;
         internal readonly CountingGit Git = new();
+        internal readonly CheckoutWrites LocalWrites = new();
         private readonly CountingGit _desktopGit = new();
         private readonly BackgroundWork _localWork = new(TimeProvider.System, TextWriter.Null), _remoteWork = new(TimeProvider.System, TextWriter.Null);
         private GitOperations _localOperations = null!, _remoteOperations = null!;
@@ -70,7 +72,7 @@ public sealed partial class GitCheckoutScopeTests
                 var localRoutes = new SourceControlFeature(f.Hosts.Mac.Sessions, f.Hosts.Mac.Fixture.Db, f._localOperations, f.Hosts.Mac.Forwarder,
                     f.Hosts.Connections, localGit, new StubProjects(f.Projects));
                 localRoutes.Register(new ReadRegistry(local, f));
-                new SourceControlWrites(f.Hosts.Mac.Sessions, localGit, new CheckoutWrites(), TimeProvider.System, localRoutes).Register(local);
+                new SourceControlWrites(f.Hosts.Mac.Sessions, localGit, f.LocalWrites, TimeProvider.System, localRoutes).Register(local);
                 f.Session = f.Owner.Sessions.Create("fixture", "", workingFolder: f.Root).SessionId;
                 if (remote) f.Hosts.Mac.Sessions.Add(f.Session, "fixture", "", "workbox-test", workingFolder: "/untrusted-desktop-copy");
                 f.Source = remote ? f.Hosts.Mac.Fixture.Db.QueryFirst(
@@ -80,6 +82,21 @@ public sealed partial class GitCheckoutScopeTests
                 f.Git.Reset(); return f;
             }
             catch { await f.DisposeAsync(); throw; }
+        }
+        internal void AddEngineSession(string folder, string title, string state, string activity) =>
+            Hosts.Mac.Fixture.Db.Writer.Write("fixture.session", scope => scope.Execute("""
+                INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,folder,title,state,activity_state,holder,epoch,cancel_requested)
+                SELECT $id,0,machine_id,0,0,'claude',$folder,$title,$state,$activity,'local',0,0 FROM engine_meta WHERE singleton=1
+                """, new SqlArg("$id", Guid.NewGuid().ToString()), new SqlArg("$folder", folder), new SqlArg("$title", title),
+                new SqlArg("$state", state), new SqlArg("$activity", activity)));
+        /// <summary>A prepared fetch, waiting for its turn on the folder's lease.</summary>
+        internal Func<CancellationToken, Task<JsonElement>> Operation(string session, string root)
+        {
+            var gh = new GhCli();
+            var reader = new PullRequestReader(Git, gh, Home, new GitTextPatch(Git));
+            var prepared = new GitSessionOperations(Hosts.Mac.Sessions, Git, new PullRequestWriter(Git, gh, reader), LocalWrites, _localOperations,
+                new(Git, new UnavailableUtility()), reader, Hosts.Mac.Fixture.Db);
+            return prepared.Prepare(new GitOperationStart("instance", Guid.NewGuid(), session, "fetch", default, ExpectedCheckoutRoot: root));
         }
         internal object Args(bool selected = false, string? checkout = null) => new
         {

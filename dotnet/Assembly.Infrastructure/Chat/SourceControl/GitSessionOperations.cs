@@ -38,6 +38,7 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
             SourceControlFeature.RequireLocalOwner(db, machine, session);
             if (SourceControlWrites.RequireRoot(sessions, session, request.ExpectedCheckoutRoot, request.ExpectedSource is not null) != root)
                 throw new CallFailed("The session's checkout changed. Refresh and try again.", "source_changed");
+            if (FolderView.IsView(session)) new FolderViews(db, null).RequireWritable(root, ct);
             try { return await execute(root, ct); }
             catch (Exception error) when (error is GhInterrupted or GhUnconfirmed)
             { throw new CallUncertain(machine, "This may have posted. Refresh before trying again."); }

@@ -81,6 +81,12 @@ internal sealed partial class SourceControlFeature
         return await Forward(method, resultType, json, target, session, call, kind);
     }
 
+    /// <summary>A write's turn can come after a session has started in the viewed folder it was admitted for.</summary>
+    internal void RequireViewWritable(string session, CancellationToken ct)
+    {
+        if (FolderView.IsView(session)) views.RequireWritable(FolderView.Parse(session).LocalFolder(), ct);
+    }
+
     /// <summary>A viewed folder runs on its project's machine, with no session behind it to check.</summary>
     private async Task<TResult> InvokeView<TResult>(string method, JsonTypeInfo<TResult> resultType, JsonElement json, FolderView view,
         string session, CallContext call, CallKind kind, Func<Task<TResult>> local)

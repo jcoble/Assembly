@@ -43,8 +43,12 @@ public sealed record FolderView(string ProjectId, string Folder)
 }
 
 /// <summary>Where a viewed folder lives, and whether it may be changed here.</summary>
-internal sealed class FolderViews(IAppDatabase db, IProjectRoots? projects)
+internal sealed class FolderViews(IAppDatabase db, IProjectRoots? projects, StringComparison? paths = null)
 {
+    /// <summary>macOS and Windows disks treat differently cased paths as one folder.</summary>
+    private readonly StringComparison _paths = paths ??
+        (OperatingSystem.IsMacOS() || OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
     /// <summary>The machine to forward to, or null for this one. A project this machine doesn't list was forwarded here.</summary>
     public string? RemoteMachine(FolderView view)
     {
@@ -54,13 +58,44 @@ internal sealed class FolderViews(IAppDatabase db, IProjectRoots? projects)
     }
 
     /// <summary>The title of a session this machine is running in the folder, or in one inside or around it.</summary>
-    public string? WorkingIn(string folder, CancellationToken ct) => db.QueryFirst("""
-        SELECT title FROM engine_session
-        WHERE machine=(SELECT machine_id FROM engine_meta WHERE singleton=1)
-          AND (state IN ('running','needs_me') OR activity_state='running')
-          AND (folder=$folder OR substr(folder,1,length($folder)+1)=$folder||'/' OR substr($folder,1,length(folder)+1)=folder||'/')
-        ORDER BY updated_ms DESC LIMIT 1
-        """, row => row.Text(0), ct, new SqlArg("$folder", folder));
+    public string? WorkingIn(string folder, CancellationToken ct)
+    {
+        // SQL picks the few active sessions; only the disk can say whether two paths are the same folder.
+        var active = db.Query("""
+            SELECT COALESCE(title,''),folder FROM engine_session
+            WHERE machine=(SELECT machine_id FROM engine_meta WHERE singleton=1)
+              AND (state IN ('running','needs_me') OR activity_state='running')
+            ORDER BY updated_ms DESC
+            """, row => (Title: row.Text(0), Folder: row.Text(1)), ct);
+        var wanted = Resolved(folder);
+        foreach (var session in active)
+            if (Overlap(wanted, Resolved(session.Folder), _paths)) return session.Title;
+        return null;
+    }
+
+    /// <summary>The path with every symlink along it followed; a part that isn't there yet stays as written.</summary>
+    private static string Resolved(string path)
+    {
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        try
+        {
+            var current = Path.GetPathRoot(full)!;
+            foreach (var part in full[current.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+            {
+                current = Path.Combine(current, part);
+                if (Path.Exists(current)) current = new DirectoryInfo(current).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? current;
+            }
+            return current;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return full;
+        }
+    }
+
+    /// <summary>Whether two folders are the same one, or one holds the other.</summary>
+    internal static bool Overlap(string a, string b, StringComparison paths) =>
+        string.Equals(a, b, paths) || a.StartsWith(b + '/', paths) || b.StartsWith(a + '/', paths);
 
     /// <summary>Nothing changes a folder a running session is working in, so its checkout is never disturbed.</summary>
     public void RequireWritable(string folder, CancellationToken ct, string consequence = "it is read-only here")
