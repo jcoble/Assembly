@@ -52,13 +52,13 @@ fn cell_size(font: &Font, font_size: Pixels, line_height: Pixels, window: &Windo
 }
 
 /// The grid's lines, filling the pane, and a measure of the space that calls `fitted` with the columns and rows that
-/// fit, where the grid starts in the window and each cell's size, on each paint.
+/// fit, the grid's bounds in the window and each cell's size, on each paint.
 pub fn draw(
     cells: Vec<GridCell>,
     (rows, cursor): (usize, Option<(usize, usize)>),
     text: (SharedString, Pixels, Pixels),
     palette: Option<&Palette>,
-    fitted: impl Fn(((usize, usize), Point<Pixels>, Size<Pixels>), &mut App) + 'static,
+    fitted: impl Fn(((usize, usize), Bounds<Pixels>, Size<Pixels>), &mut App) + 'static,
     window: &Window,
     cx: &App,
 ) -> impl IntoElement {
@@ -79,8 +79,7 @@ pub fn draw(
                 fit(bounds.size.width, cell.width),
                 fit(bounds.size.height, cell.height),
             );
-            let origin = bounds.origin;
-            cx.defer(move |cx| fitted((size, origin, cell), cx));
+            cx.defer(move |cx| fitted((size, bounds, cell), cx));
         },
         |_, _, _, _| {},
     )

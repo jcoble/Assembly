@@ -120,16 +120,21 @@ impl TerminalGrid {
     }
 
     /// Selects the word at a cell of the screen as shown, and says whether there was one; a blank clears the
-    /// selection. A word is letters, digits, `_` and `-`, on that row only, as the old renderer's `getWordAtCell`.
+    /// selection. A word is ASCII letters, digits, `_` and `-`, on that row only, as the old renderer's
+    /// `getWordAtCell` (`/[\w-]/`).
     pub fn select_word(&mut self, column: usize, line: usize) -> bool {
         let (point, _) = self.point(column, line, false);
         let row = &self.term.grid()[point.line];
+        let letter = |column: usize| {
+            let c = row[Column(column)].c;
+            c.is_ascii_alphanumeric() || c == '_' || c == '-'
+        };
+        // A wide character's spacer only continues a word character.
         let word = |column: usize| {
-            let cell = &row[Column(column)];
-            cell.c.is_alphanumeric()
-                || cell.c == '_'
-                || cell.c == '-'
-                || cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+            letter(column)
+                || (column > 0
+                    && row[Column(column)].flags.contains(Flags::WIDE_CHAR_SPACER)
+                    && letter(column - 1))
         };
         if column >= self.term.columns() || !word(column) {
             self.clear_selection();
@@ -155,21 +160,21 @@ impl TerminalGrid {
         self.term.selection.take().is_some()
     }
 
-    /// The lines kept above the screen. Stub until Task 7.
-    #[allow(dead_code)]
+    /// The lines kept above the screen.
     pub fn history_size(&self) -> usize {
-        0
+        self.term.grid().history_size()
     }
 
-    /// How many lines back the view is. Stub until Task 7.
-    #[allow(dead_code)]
+    /// How many lines back the view is.
     pub fn display_offset(&self) -> usize {
-        0
+        self.term.grid().display_offset()
     }
 
-    /// Stub until Task 7.
-    #[allow(dead_code)]
-    pub fn scroll_to_offset(&mut self, _offset: usize) {}
+    /// Moves the view to `offset` lines back, stopping at either end.
+    pub fn scroll_to_offset(&mut self, offset: usize) {
+        let by = offset as i32 - self.display_offset() as i32;
+        self.scroll(by);
+    }
 
     /// The link at a cell of the screen as shown. Stub until Task 8.
     #[allow(dead_code)]

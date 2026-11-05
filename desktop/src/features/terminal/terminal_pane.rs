@@ -69,8 +69,10 @@ pub struct TerminalPane {
     /// The columns and rows the pane has room for, once it has measured itself.
     size: (usize, usize),
     measured: bool,
-    /// Where the grid starts in the window and each cell's size, as last drawn: what the mouse points at.
+    /// Where the grid starts in the window, the room it has and each cell's size, as last drawn: what the mouse
+    /// points at.
     origin: Point<Pixels>,
+    bounds: Bounds<Pixels>,
     cell: Size<Pixels>,
     /// A left-button drag is selecting.
     selecting: bool,
@@ -115,14 +117,11 @@ pub struct TerminalPane {
     _blink: Option<Task<()>>,
     /// Scrolls during a drag near the edge or past it; dropping it stops the timer.
     _autoscroll: Option<Task<()>>,
-    /// The scrollbar's opacity, from 0 to 1. Stub until Task 7.
-    #[allow(dead_code)]
+    /// The scrollbar's opacity, from 0 to 1.
     scrollbar_opacity: f32,
-    /// A drag of the scrollbar's thumb: where it started and the offset then. Stub until Task 7.
-    #[allow(dead_code)]
+    /// The scrollbar's thumb is held: where the press was, from the grid's top, and the offset then.
     dragging_bar: Option<(Pixels, usize)>,
-    /// Fades the scrollbar in and out. Stub until Task 7.
-    #[allow(dead_code)]
+    /// Fades the scrollbar in, waits and fades it out; it ends once hidden.
     _scrollbar: Option<Task<()>>,
     /// The link under the mouse. Stub until Task 8.
     #[allow(dead_code)]
@@ -155,6 +154,7 @@ impl TerminalPane {
             size: FIRST_SIZE,
             measured: false,
             origin: Point::default(),
+            bounds: Bounds::default(),
             cell: Size::default(),
             selecting: false,
             dragged_to: Point::default(),
@@ -209,6 +209,7 @@ impl TerminalPane {
         (self._resize, self.resize_wanted, self.size_unsent) = (None, None, false);
         (self._retry, self.retries, self.retried) = (None, 0, false);
         (self._autoscroll, self.selecting) = (None, false);
+        (self._scrollbar, self.scrollbar_opacity, self.dragging_bar) = (None, 0., None);
         self.reopen.clear();
         self.typed.clear();
         self.grid = TerminalGrid::new(self.size.0, self.size.1);
@@ -457,7 +458,10 @@ impl Render for TerminalPane {
             .on_scroll(cx.listener(Self::wheel))
             .size_full()
             .text_role(TextRole::Body, cx)
-            .when(self.selecting, |pane| pane.child(self.drag_listeners(cx)));
+            .when(self.selecting, |pane| pane.child(self.drag_listeners(cx)))
+            .when(self.dragging_bar.is_some(), |pane| {
+                pane.child(self.bar_listeners(cx))
+            });
         let note = |text: SharedString| {
             h_flex()
                 .gap_1()
@@ -476,9 +480,9 @@ impl Render for TerminalPane {
             }
             (_, status) => {
                 let this = cx.entity().downgrade();
-                let fitted = move |(size, origin, cell), cx: &mut App| {
+                let fitted = move |(size, bounds, cell): (_, Bounds<Pixels>, _), cx: &mut App| {
                     this.update(cx, |pane, cx| {
-                        (pane.origin, pane.cell) = (origin, cell);
+                        (pane.origin, pane.bounds, pane.cell) = (bounds.origin, bounds, cell);
                         pane.resized(size, cx);
                     })
                     .ok();
@@ -497,6 +501,8 @@ impl Render for TerminalPane {
                 );
                 // Until there's a shell, the note lies over the grid, so the grid measures the room the shell will have.
                 let over = opening || self.link.is_none();
+                let grid = div().relative().size_full().child(grid);
+                let grid = grid.children(self.scrollbar(cx));
                 let grid = div().relative().flex_1().min_h_0().p_1().child(grid);
                 match status {
                     Some(status) if over => {
@@ -522,6 +528,9 @@ mod select;
 
 #[path = "terminal_pane_ime.rs"]
 mod ime;
+
+#[path = "terminal_pane_scrollbar.rs"]
+mod scrollbar;
 
 #[cfg(test)]
 #[path = "terminal_pane_tests.rs"]

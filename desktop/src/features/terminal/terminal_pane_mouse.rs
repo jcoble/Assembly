@@ -1,6 +1,6 @@
 //! The mouse on the Terminal tab: a drag selects (terminal_pane_select.rs follows it), a double-click selects a word,
-//! and the wheel scrolls back through the history, or reports the mouse in the tracking/encoding modes requested by the
-//! program.
+//! a press on the scrollbar takes it (terminal_pane_scrollbar.rs), and the wheel scrolls back through the history, or
+//! reports the mouse in the tracking/encoding modes requested by the program.
 
 use alacritty_terminal::term::TermMode;
 use gpui_kit::*;
@@ -16,6 +16,10 @@ impl TerminalPane {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus, cx);
+        if event.button == MouseButton::Left && self.press_bar(event.position, cx) {
+            cx.stop_propagation();
+            return;
+        }
         let Some((column, line, right)) = self.cell_at(event.position) else {
             return;
         };
@@ -156,7 +160,11 @@ impl TerminalPane {
             return;
         }
         if !self.grid.wheel_sends_arrows() {
+            let offset = self.grid.display_offset();
             self.grid.scroll(lines);
+            if self.grid.display_offset() != offset {
+                self.show_scrollbar(cx);
+            }
             cx.notify();
             return;
         }

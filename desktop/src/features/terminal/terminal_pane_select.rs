@@ -66,11 +66,9 @@ impl TerminalPane {
 
     /// Back into the history (1) near the top, forward (-1) near the bottom, else 0.
     fn scroll_direction(&self) -> i32 {
-        let top = self.origin.y;
-        let bottom = top + self.cell.height * self.size.1 as f32;
         match self.dragged_to.y {
-            y if y < top + EDGE => 1,
-            y if y > bottom - EDGE => -1,
+            y if y < self.bounds.top() + EDGE => 1,
+            y if y > self.bounds.bottom() - EDGE => -1,
             _ => 0,
         }
     }
