@@ -13,13 +13,15 @@ use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::*;
 use serde_json::json;
 
-use super::agent_config::AgentConfig;
+use super::agent_config::{AgentConfig, ConfigOption};
 use super::answer_panel::AnswerPanel;
 use super::attachment::{Attachment, AttachmentState};
+use super::config_labels::{approval_label, effort_label, model_label};
 use super::context_meter::ContextMeter;
 use super::shape::{Lock, hint};
 use crate::core::engine::EngineFeed;
 use crate::features::session::client::session_client::{CallError, SessionClient};
+use crate::features::session::context::live_facts::DraftImage;
 use crate::features::session::model::session_view::ContextReport;
 
 pub struct Composer {
@@ -386,6 +388,77 @@ impl Composer {
                 });
             }
         }));
+    }
+}
+
+/// What the Context tab shows of the composer (context/live_facts.rs).
+impl Composer {
+    /// The model, effort and access mode in the pills' words; one the agent doesn't offer, or has no value for, is
+    /// `None`.
+    pub fn live_config(&self) -> (Option<String>, Option<String>, Option<String>) {
+        let menus = self.menus();
+        let value = |pick: fn(&ConfigOption) -> bool, label: fn(&ConfigOption, &str) -> String| {
+            let (option, current) = menus.iter().find(|(option, _)| pick(option))?;
+            let shown = match *current {
+                "" => option.current_value.as_deref().unwrap_or_default(),
+                current => current,
+            };
+            (!shown.is_empty()).then(|| label(option, shown))
+        };
+        (
+            value(ConfigOption::model, model_label),
+            value(|option| !option.model() && option.effort(), effort_label),
+            value(
+                |option| !option.model() && !option.effort() && option.approval(),
+                |option, shown| approval_label(Some(option), shown),
+            ),
+        )
+    }
+
+    pub fn agent_name(&self) -> Option<SharedString> {
+        self.agent_name.clone()
+    }
+
+    /// The draft's images: the type the file was read as, else its name's; the saved path once uploaded.
+    pub fn draft_images(&self) -> Vec<DraftImage> {
+        (self.attachments.iter())
+            .map(|attachment| DraftImage {
+                id: attachment.id,
+                name: attachment.name.clone(),
+                mime: match &attachment.state {
+                    AttachmentState::Staged { mime, .. } => Some(*mime),
+                    _ => Attachment::mime_of(&attachment.name),
+                },
+                saved_path: match &attachment.state {
+                    AttachmentState::Saved { path } => Some(path.clone()),
+                    _ => None,
+                },
+                preview: attachment.shown_image(),
+            })
+            .collect()
+    }
+
+    /// Types into the draft as a key press would, for other features' tests.
+    #[cfg(test)]
+    pub fn type_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.draft.update(cx, |draft, cx| {
+            draft.set_value(text.to_string(), window, cx)
+        });
+        self.draft_changed(cx);
+    }
+
+    /// An image already saved at `path`, attached to the draft, for other features' tests.
+    #[cfg(test)]
+    pub fn attach_saved(&mut self, name: &str, path: &str, cx: &mut Context<Self>) {
+        self.attached += 1;
+        self.attachments.push(Attachment {
+            id: self.attached,
+            name: name.to_string().into(),
+            size: 1,
+            state: AttachmentState::Saved { path: path.into() },
+            preview: None,
+        });
+        cx.notify();
     }
 }
 

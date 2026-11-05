@@ -2,3 +2,4 @@
 //! card is the composer's ring (composer/context_meter.rs).
 
 pub mod context_pane;
+pub mod live_facts;

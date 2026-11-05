@@ -125,8 +125,10 @@ pub struct SessionPane {
     /// Hears the machines list start, then follows it, for the open session's machine (pane_machine.rs).
     _machines_started: Subscription,
     _machines: Option<Subscription>,
-    /// The composer's events and the timeline's scrolling.
-    _heard: [Subscription; 3],
+    /// The session whose live facts this pane last published (pane_live.rs), so it clears only its own.
+    live: Option<(String, Option<crate::core::engine::SessionKey>)>,
+    /// The composer's events and changes, the timeline's scrolling, the header and the pane's own release.
+    _heard: [Subscription; 5],
 }
 
 impl SessionPane {
@@ -356,6 +358,7 @@ impl SessionPane {
             composer.set_locked(lock, cx);
         });
         self.tell_read(running, cx);
+        self.publish_live(cx);
         cx.notify();
     }
 
@@ -380,6 +383,8 @@ mod actions;
 mod construct;
 #[path = "pane_expand.rs"]
 mod expand;
+#[path = "pane_live.rs"]
+mod live;
 #[path = "pane_machine.rs"]
 mod machine;
 #[path = "pane_pages.rs"]
@@ -413,6 +418,9 @@ mod action_tests;
 #[cfg(test)]
 #[path = "tests/session_pane_activity_tests.rs"]
 mod activity_tests;
+#[cfg(test)]
+#[path = "../context/live_facts_tests.rs"]
+mod live_facts_tests;
 #[cfg(test)]
 #[path = "tests/session_pane_real_switch_tests.rs"]
 mod real_switch_tests;

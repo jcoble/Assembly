@@ -52,6 +52,7 @@ fn main() {
         features::shell::workspace_preview::register(cx);
         features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
         SelectedSession::init(cx);
+        features::session::context::live_facts::LiveFacts::init(cx);
         Preferences::init(cx);
         features::session::view::session_pane::SessionPane::register(cx);
         features::sessions::sessions_pane::SessionsPane::register(cx);
