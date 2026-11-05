@@ -35,7 +35,7 @@ public sealed record FolderView(string ProjectId, string Folder)
         if (!Path.IsPathFullyQualified(Folder) || Folder.Split(Path.DirectorySeparatorChar).Any(part => part is "." or ".."))
             throw new CallBadArguments("That isn't a folder.");
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Folder));
-        return Directory.Exists(full) ? full : throw new CallFailed("That folder isn't there any more.", "checkout_unavailable");
+        return Directory.Exists(full) ? full : throw new CallFailed("Checkout/Worktree deleted.", "checkout_unavailable");
     }
 
     private static string Hex(string text) => Convert.ToHexString(Encoding.UTF8.GetBytes(text)).ToLowerInvariant();
