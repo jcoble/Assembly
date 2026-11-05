@@ -310,6 +310,7 @@ dependencies = [
  "futures-executor",
  "gpui-kit",
  "gpui-pre",
+ "image",
  "libc",
  "open",
  "serde",

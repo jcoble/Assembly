@@ -6,6 +6,7 @@
 //! already does, and nobody watches these lists while they change. The two cards above follow the session's live facts
 //! (live_facts.rs), which read nothing, except that a turn ending while shown reads the total again. The Attachments
 //! card lists the draft's images from the same facts, and a prompt sent while shown reads `rows/attachments` again.
+//! Its sent images get thumbnails (thumbnails.rs) while shown, when the pane was made with them.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
@@ -20,6 +21,7 @@ use crate::core::state::selected_session::SelectedSession;
 use crate::features::session::client::session_client::{CallError, SessionClient};
 use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::context::live_facts::LiveFacts;
+use crate::features::session::context::thumbnails::Thumbnails;
 use listing::Listing;
 
 /// The layout's name for the tab (default_layout.rs).
@@ -86,8 +88,12 @@ pub struct ContextPane {
     /// The newest prompt's seq when the attachments were read, so a prompt sent while shown reads them again. `None`
     /// until the session's facts are first seen after a read.
     prompt_read: Option<Option<i64>>,
-    /// Counts the attachments' reads, so only the newest one's answer is kept.
+    /// Counts the attachments' reads, so an older answer never replaces a newer one.
     attachments_serial: u64,
+    /// The read whose answer the attachments list holds.
+    attachments_shown: u64,
+    /// The sent images' thumbnails; `None` reads none, as in `new`.
+    pub(super) thumbnails: Option<Thumbnails>,
     _selected: Subscription,
     /// Follows the selected session's live facts, where they've been set up.
     _facts: Option<Subscription>,
@@ -105,8 +111,18 @@ impl ContextPane {
     /// Registers the tab under the layout's Context name, after the placeholders, since the last registration wins.
     pub fn register(cx: &mut App) {
         register_panel(cx, CONTEXT, |_, _, cx| {
-            panel_handle(cx.new(|cx| ContextPane::new(Rc::new(SocketSessionClient), cx)))
+            panel_handle(
+                cx.new(|cx| ContextPane::with_thumbnails(Rc::new(SocketSessionClient), cx)),
+            )
         });
+    }
+
+    /// The pane with thumbnails of the sent images, read through `client`.
+    pub fn with_thumbnails(client: Rc<dyn SessionClient>, cx: &mut Context<Self>) -> Self {
+        Self {
+            thumbnails: Some(Thumbnails::new(client.clone())),
+            ..Self::new(client, cx)
+        }
     }
 
     pub fn new(client: Rc<dyn SessionClient>, cx: &mut Context<Self>) -> Self {
@@ -125,6 +141,8 @@ impl ContextPane {
             ended_read: None,
             prompt_read: None,
             attachments_serial: 0,
+            attachments_shown: 0,
+            thumbnails: None,
             _selected: cx.observe(&SelectedSession::global(cx), |pane, _, cx| pane.read(cx)),
             _facts: LiveFacts::try_global(cx)
                 .map(|facts| cx.observe(&facts, |pane, _, cx| pane.facts_changed(cx))),
@@ -136,8 +154,11 @@ impl ContextPane {
     }
 
     /// Reads the selected session's files and attachments, if the tab is shown. A hidden tab drops the last session's
-    /// lists, so the frame before it's shown again never draws them.
+    /// lists, so the frame before it's shown again never draws them. Another session's thumbnails are released.
     fn read(&mut self, cx: &mut Context<Self>) {
+        if let Some(thumbnails) = self.thumbnails.as_mut() {
+            thumbnails.clear(None, cx);
+        }
         self.read_serial += 1;
         let serial = self.read_serial;
         self.context_scope = None;
@@ -203,10 +224,7 @@ impl ContextPane {
                     pane.refuse_source(&scope, cx);
                 }
                 pane.files = touched(files);
-                // A prompt sent since asked for the attachments again, and that newer answer wins.
-                if pane.attachments_serial == attachments_serial {
-                    pane.take_attachments(attachments);
-                }
+                pane.take_attachments(attachments_serial, attachments, false, cx);
                 cx.notify();
             })
             .ok();
@@ -239,6 +257,37 @@ impl ContextPane {
                 cx,
             );
         }
+    }
+
+    /// Asks for the sent images' thumbnails, newest first, while the source is valid. A remote session's images need
+    /// its captured source, or they can't be read.
+    pub(super) fn want_thumbnails(&mut self, cx: &mut Context<Self>) {
+        let Some(scope) = self.context_scope.clone().filter(|scope| scope.valid) else {
+            return;
+        };
+        let Listing::Read(images) = &self.attachments else {
+            return;
+        };
+        if self.thumbnails.is_none() || (self.machine.is_some() && scope.source.is_none()) {
+            return;
+        }
+        let mut paths: Vec<String> = Vec::new();
+        for (path, _) in images {
+            if !paths.contains(path) {
+                paths.push(path.clone());
+            }
+        }
+        if let Some(thumbnails) = self.thumbnails.as_mut() {
+            thumbnails.want(scope.session, scope.source, paths, cx);
+        }
+    }
+
+    /// A thumbnail's read was refused because the owner was replaced: the queue has stopped, and nothing more is read.
+    pub(super) fn thumbnail_source_changed(&mut self, cx: &mut Context<Self>) {
+        if let Some(scope) = self.context_scope.clone() {
+            self.refuse_source(&scope, cx);
+        }
+        cx.notify();
     }
 
     /// Reads the session's total in its own task. Any failure, an older remote's not found included, reads as
@@ -316,7 +365,7 @@ impl BasePanel for ContextPane {
     }
 
     /// The kit tells the tab when it's shown (its pill picked, or the drawer opened on it) and when it's hidden.
-    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
+    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.active = active;
         match active {
             true => self.read(cx),
@@ -327,6 +376,9 @@ impl BasePanel for ContextPane {
                 self._attachments = None;
                 self.context_scope = None;
                 self.read_serial += 1;
+                if let Some(thumbnails) = self.thumbnails.as_mut() {
+                    thumbnails.clear(Some(window), cx);
+                }
             }
         }
     }

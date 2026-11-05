@@ -380,3 +380,78 @@ fn a_refused_re_read_marks_the_source_invalid(cx: &mut TestAppContext) {
         Some(false)
     );
 }
+
+#[gpui::test]
+fn the_count_chip_counts_a_draft_and_a_sent_image(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    shown_on_s1(
+        json!([]),
+        prompts(&["look\nAttached image: /h/attachments/s1/9f.png (shot.png)"]),
+        &pane,
+        &client,
+        cx,
+    );
+    publish(
+        facts(&pane, "s1", 2, vec![draft(7, "new.png", None, None)]),
+        cx,
+    );
+
+    assert!(cx.debug_bounds("card-count-Attachments-2").is_some());
+    assert!(cx.debug_bounds("card-count-Attachments-1").is_none());
+}
+
+#[gpui::test]
+fn a_failed_re_read_keeps_the_images_shown(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    let one = "look\nAttached image: /h/attachments/s1/9f.png (shot.png)";
+    shown_on_s1(json!([]), prompts(&[one]), &pane, &client, cx);
+    publish(facts(&pane, "s1", 2, Vec::new()), cx);
+
+    client.queue_answer(Err(CallError::Failed("offline".into())));
+    publish(facts(&pane, "s1", 4, Vec::new()), cx);
+
+    assert_eq!(calls_of(&client, "rows/attachments").len(), 2);
+    assert_eq!(
+        images(&pane, cx),
+        Listing::Read(vec![("/h/attachments/s1/9f.png".into(), "shot.png".into())])
+    );
+    assert!(cx.debug_bounds("attachments-note-failed").is_none());
+    assert!(
+        cx.debug_bounds("attachment-/h/attachments/s1/9f.png")
+            .is_some()
+    );
+}
+
+#[gpui::test]
+fn a_failed_re_read_leaves_the_first_reads_answer_to_fill_the_list(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    publish(facts(&pane, "s1", 2, Vec::new()), cx);
+    client.queue_answer(Ok(json!([])));
+    let first = client.queue_pending();
+    client.queue_answer(Ok(json!({})));
+    cx.update(|_, cx| {
+        SelectedSession::global(cx)
+            .update(cx, |selected, cx| selected.select(Some("s1".into()), cx))
+    });
+    pane.update_in(cx, |pane, window, cx| pane.set_active(true, window, cx));
+    cx.run_until_parked();
+
+    client.queue_answer(Err(CallError::Failed("offline".into())));
+    publish(facts(&pane, "s1", 4, Vec::new()), cx);
+    assert_eq!(calls_of(&client, "rows/attachments").len(), 2);
+    assert_eq!(
+        images(&pane, cx),
+        Listing::Reading,
+        "the first read is still going"
+    );
+
+    let one = "look\nAttached image: /h/attachments/s1/9f.png (shot.png)";
+    first
+        .send(Ok(prompts(&[one])))
+        .expect("the first read is waiting");
+    cx.run_until_parked();
+    assert_eq!(
+        images(&pane, cx),
+        Listing::Read(vec![("/h/attachments/s1/9f.png".into(), "shot.png".into())])
+    );
+}

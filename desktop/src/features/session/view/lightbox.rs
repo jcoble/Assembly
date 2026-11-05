@@ -13,13 +13,13 @@ use serde_json::json;
 use crate::features::session::client::session_client::{CallError, SessionClient};
 
 /// Reads a session's attached image piece by piece (`attachments/read`), by its file name in the store. Chat's chips
-/// and the Context tab both open images this way.
+/// and the Context tab open images this way, and the Context tab's thumbnails read them the same way, with no window.
 pub async fn read_image(
     client: Rc<dyn SessionClient>,
     session: String,
     file: String,
     expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
-    cx: &mut AsyncWindowContext,
+    cx: &mut AsyncApp,
 ) -> Result<Arc<Image>, CallError> {
     let mut bytes: Vec<u8> = Vec::new();
     let mime = loop {
@@ -27,9 +27,7 @@ pub async fn read_image(
         if let Some(source) = &expected_source {
             args["expectedSource"] = json!(source);
         }
-        let call = cx
-            .update(|_, cx| client.call("attachments", "read", args, None, cx))
-            .map_err(|_| CallError::Aborted)?;
+        let call = cx.update(|cx| client.call("attachments", "read", args, None, cx));
         let piece = call.await?;
         let data = piece["data"].as_str().unwrap_or_default().to_string();
         let decoded = cx

@@ -1,10 +1,9 @@
 //! The Context tab's Attachments card: the draft's images first, from the composer's own pictures, then the images
 //! the session's prompts carried, newest prompt first. Each row has a thumbnail slot, the name it was attached with and
-//! its type. A click opens one full size, as Chat's chips do. A remote session's images stay on its machine; only a
+//! its type; a sent image's slot shows its thumbnail once made (thumbnails.rs). A click opens one full size, as Chat's
+//! chips do. A remote session's images stay on its machine; only a
 //! captured, validated source permits opening those bytes. A prompt sent while the tab shows reads the sent images
 //! again, so a sent draft moves down to them.
-
-use std::sync::Arc;
 
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -35,13 +34,13 @@ impl ContextPane {
                 .child(text)
         };
         let (drafts, sent) = self.listed(cx);
-        let count = Some(sent.len()).filter(|count| *count > 0);
+        let any_sent = !sent.is_empty();
         let draft_rows = drafts.into_iter().map(|draft| {
             let selector = format!("attachment-draft-{}", draft.id);
             let row = row(
                 ("attachment-draft", draft.id),
                 selector,
-                draft.preview.clone(),
+                draft.preview.clone().map(ImageSource::from),
                 draft.name.clone(),
                 draft.mime,
                 cx,
@@ -72,10 +71,13 @@ impl ContextPane {
             Listing::Read(images) => {
                 v_flex().children(images.iter().enumerate().map(|(index, (path, name))| {
                     let selector = format!("attachment-{path}");
+                    let thumbnail = (self.thumbnails.as_ref())
+                        .and_then(|thumbnails| thumbnails.get(path))
+                        .map(ImageSource::from);
                     let row = row(
                         ("attachment", index),
                         selector,
-                        None,
+                        thumbnail,
                         name.clone().into(),
                         sent_type(path, name),
                         cx,
@@ -107,7 +109,7 @@ impl ContextPane {
             .child(body)
             .when_some(
                 remote.filter(|_| {
-                    count.is_some()
+                    any_sent
                         && self
                             .context_scope
                             .as_ref()
@@ -121,7 +123,7 @@ impl ContextPane {
                     ))
                 },
             )
-            .when(self.more && count.is_some(), |section| {
+            .when(self.more && any_sent, |section| {
                 section.child(note(
                     "attachments-note-more",
                     "Only images from this session's newest 50 prompts are listed.".into(),
@@ -150,7 +152,8 @@ impl ContextPane {
     }
 
     /// Reads the sent images again in their own task, after a prompt was sent while the tab shows. The files list and
-    /// the images shown stay until the answer arrives; a changed source is refused as `read` does.
+    /// the images shown stay until the answer arrives, and stay if it fails; a changed source is refused as `read`
+    /// does.
     pub(super) fn reread_attachments(&mut self, cx: &mut Context<Self>) {
         let Some(scope) = self.context_scope.clone().filter(|scope| scope.valid) else {
             return;
@@ -167,25 +170,38 @@ impl ContextPane {
         self._attachments = Some(cx.spawn(async move |pane, cx| {
             let answer = answer.await;
             pane.update(cx, |pane, cx| {
-                if !pane.current(serial, &scope) || pane.attachments_serial != attachments_serial {
+                if !pane.current(serial, &scope) {
                     return;
                 }
                 if matches!(&answer, Err(CallError::Refused { code, .. }) if code == "source_changed") {
                     pane.refuse_source(&scope, cx);
                 }
-                pane.take_attachments(answer);
+                pane.take_attachments(attachments_serial, answer, true, cx);
                 cx.notify();
             })
             .ok();
         }));
     }
 
-    /// Keeps `rows/attachments`' answer, or why it couldn't be read.
-    pub(super) fn take_attachments(&mut self, answer: Result<Value, CallError>) {
+    /// Keeps the answer of attachments read `serial`, or why it couldn't be read, unless the list already holds a newer
+    /// read's answer. A failed re-read (`keep_on_failure`) leaves the list as it is, and an earlier read still going
+    /// can still fill it. A kept answer asks for its thumbnails.
+    pub(super) fn take_attachments(
+        &mut self,
+        serial: u64,
+        answer: Result<Value, CallError>,
+        keep_on_failure: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if serial < self.attachments_shown || (keep_on_failure && answer.is_err()) {
+            return;
+        }
+        self.attachments_shown = serial;
         (self.attachments, self.machine, self.more) = match answer {
             Ok(answer) => attached(&answer),
             Err(error) => (Listing::Failed(error.reason()), None, false),
         };
+        self.want_thumbnails(cx);
     }
 
     /// Reads an attached image by its file name in the store (the end of its path) and opens it full size.
@@ -277,13 +293,22 @@ pub(super) fn type_words(mime: Option<&str>) -> SharedString {
 fn row(
     id: impl Into<ElementId>,
     selector: String,
-    preview: Option<Arc<Image>>,
+    preview: Option<ImageSource>,
     name: SharedString,
     mime: Option<&'static str>,
     cx: &App,
 ) -> Stateful<Div> {
     let theme = cx.theme();
+    let slot = format!(
+        "{selector}-{}",
+        if preview.is_some() {
+            "picture"
+        } else {
+            "placeholder"
+        }
+    );
     let thumbnail = div()
+        .debug_selector(move || slot)
         .flex_none()
         .size(px(40.))
         .flex()

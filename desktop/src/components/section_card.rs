@@ -52,11 +52,18 @@ impl RenderOnce for SectionCard {
                     .truncate()
                     .text_role(TextRole::Title, cx)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(self.title),
+                    .child(self.title.clone()),
             )
             .child(div().flex_1())
             .when_some(self.count.filter(|count| *count > 0), |heading, count| {
-                heading.child(StatusChip::new(count.to_string(), Tone::Neutral))
+                // The selector names the card and the number, so a test can read what the chip shows.
+                let selector = format!("card-count-{}-{count}", self.title);
+                heading.child(
+                    div()
+                        .flex_none()
+                        .debug_selector(move || selector)
+                        .child(StatusChip::new(count.to_string(), Tone::Neutral)),
+                )
             });
         v_flex()
             .w_full()

@@ -3,4 +3,5 @@
 
 pub mod context_pane;
 pub mod live_facts;
+pub mod thumbnails;
 pub mod usage_model;
