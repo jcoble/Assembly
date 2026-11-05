@@ -34,9 +34,14 @@ impl BoardPanel {
             .iter()
             .find(|step| step.state == "running")
             .map(|step| step.label_present.clone());
+        let stopped = steps
+            .iter()
+            .find(|step| step.needs_owner)
+            .and_then(|step| step.explanation.clone());
         let line = run
             .display_prerequisite
             .clone()
+            .or(stopped)
             .or(running)
             .unwrap_or_else(|| state.label().to_owned());
         RunRow {

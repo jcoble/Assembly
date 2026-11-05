@@ -18,7 +18,7 @@ internal static class PhoneStoppedSteps
 
     internal static IReadOnlyList<PhoneNeedsRoutes.Item> Read(IReadScope scope, string machine, string? stepId = null) => scope.Query($"""
         SELECT t.id,CAST(s.title AS TEXT),t.run_id,COALESCE(t.definition_key,t.name),t.state,t.outcome_reason,
-            t.attempt_in_generation,t.max_attempts,t.updated_ms,r.version,s.epoch
+            t.attempt_in_generation,t.max_attempts,t.updated_ms,r.version,s.epoch,t.explanation
         FROM engine_run r JOIN engine_step t ON t.run_id=r.id JOIN engine_session s ON s.id=r.owner_session_id
         WHERE r.state IN ('queued','running','needs_me') AND r.machine=$machine AND ($step IS NULL OR t.id=$step)
             AND s.machine=$machine AND s.holder='local' AND s.reserved_epoch IS NULL
@@ -30,6 +30,7 @@ internal static class PhoneStoppedSteps
         var retryable = state == "failed" || reason != "scope_required";
         var (title, detail) = (state, reason) switch
         {
+            ("failed", _) when !row.IsNull(11) => ($"{name} can't run", row.Text(11)),
             ("failed", _) => ($"{name} failed", $"Attempt {row.Long(6)} of {row.Long(7)} failed. Retry runs it again."),
             (_, "timed_out") => ($"{name} timed out", "Retry runs it again."),
             (_, "scope_required") => ($"{name} is ready to continue", "Continue it from a desktop."),

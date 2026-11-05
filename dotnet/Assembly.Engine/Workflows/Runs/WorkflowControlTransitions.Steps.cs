@@ -128,6 +128,7 @@ internal static partial class WorkflowControlTransitions
               authority_epoch=CASE WHEN $state='pending' THEN NULL ELSE authority_epoch END,
               receipt_id=CASE WHEN $state='pending' THEN NULL ELSE receipt_id END,
               proof_json=CASE WHEN $state='pending' THEN NULL ELSE proof_json END,
+              explanation=CASE WHEN $state='pending' THEN NULL ELSE explanation END,
               outcome_reason=$reason,ended_ms=CASE WHEN $state='pending' THEN NULL ELSE $now END,deadline_ms=NULL,
               version=version+1,updated_ms=$now WHERE id=$step;
             UPDATE engine_step_attempt SET state=CASE WHEN $state='pending' THEN 'failed' ELSE $state END,
