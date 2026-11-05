@@ -43,8 +43,8 @@ impl ContextPane {
                     .into(),
             ),
             Listing::Read(files) => {
-                v_flex().children(files.iter().zip(names(files)).enumerate().map(
-                    |(index, (file, (name, folder)))| {
+                v_flex().children(files.iter().zip(row_looks(files, cx)).enumerate().map(
+                    |(index, (file, look))| {
                         let selector = format!("touched-file-{}", file.path);
                         let chip = format!("touched-count-{}", file.path);
                         let clicked = file.clone();
@@ -63,7 +63,8 @@ impl ContextPane {
                                 div()
                                     .min_w_0()
                                     .truncate()
-                                    .child(file.name.clone().unwrap_or_else(|| name.to_string())),
+                                    .text_color(look.name_color)
+                                    .child(look.name),
                             )
                             .child(
                                 div()
@@ -72,8 +73,8 @@ impl ContextPane {
                                     .truncate()
                                     // A path's end says more than its start.
                                     .text_ellipsis_start()
-                                    .text_color(muted)
-                                    .child(folder.to_string()),
+                                    .text_color(look.folder_color)
+                                    .child(look.folder),
                             )
                             .when(file.count > 1, |row| {
                                 row.child(
@@ -138,6 +139,30 @@ impl ContextPane {
     }
 }
 
+/// What a row says and how: its name (an attached image's name when it has one), its folder, and their colours. Every
+/// row looks alike, a file outside the session's folder included.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct RowLook {
+    pub name: String,
+    pub name_color: Hsla,
+    pub folder: String,
+    pub folder_color: Hsla,
+}
+
+pub(super) fn row_looks(files: &[FileTouched], cx: &App) -> Vec<RowLook> {
+    let theme = cx.theme();
+    files
+        .iter()
+        .zip(names(files))
+        .map(|(file, (name, folder))| RowLook {
+            name: file.name.clone().unwrap_or_else(|| name.to_string()),
+            name_color: theme.foreground,
+            folder: folder.to_string(),
+            folder_color: theme.muted_foreground,
+        })
+        .collect()
+}
+
 /// `rows/files`' answer, or why it couldn't be read.
 pub(super) fn touched(answer: Result<serde_json::Value, CallError>) -> Listing<FileTouched> {
     match answer.and_then(|list| {
@@ -168,7 +193,11 @@ pub(super) fn names(files: &[FileTouched]) -> Vec<(&str, &str)> {
     files
         .iter()
         .map(|file| {
-            let rest = file.path[shared.len()..].trim_start_matches('/');
+            // With no folder shared, a whole path keeps its leading `/` or `~/`, so it doesn't read as relative.
+            let rest = match shared {
+                "" => file.path.as_str(),
+                _ => &file.path[shared.len() + 1..],
+            };
             let (folder, name) = rest.rsplit_once('/').unwrap_or(("", rest));
             (name, folder)
         })

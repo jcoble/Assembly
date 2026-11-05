@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::TestAppContext;
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::dock::BasePanel as _;
 use gpui_kit::{AppContext as _, Entity, Modifiers, VisualTestContext};
@@ -11,7 +12,7 @@ use serde_json::{Value, json};
 
 use super::super::listing::Listing;
 use super::super::{ContextPane, FileTouched};
-use super::touched;
+use super::{RowLook, names, row_looks, touched};
 use crate::core::engine::SessionKey;
 use crate::core::intents::open_file::OpenFile;
 use crate::core::socket::row_source::ExpectedRowSource;
@@ -87,6 +88,24 @@ fn click(selector: &'static str, cx: &mut VisualTestContext) {
     draw(cx);
 }
 
+/// How the shown list's rows are drawn.
+fn shown_looks(pane: &Entity<ContextPane>, cx: &mut VisualTestContext) -> Vec<RowLook> {
+    let Listing::Read(files) = pane.read_with(cx, |pane, _| pane.files.clone()) else {
+        panic!("the list is read");
+    };
+    cx.update(|_, cx| row_looks(&files, cx))
+}
+
+fn file(path: &str) -> FileTouched {
+    FileTouched {
+        path: path.into(),
+        added: 0,
+        removed: 0,
+        count: 1,
+        name: None,
+    }
+}
+
 fn opening(path: &str) -> OpenFile {
     OpenFile {
         session_id: "s1".into(),
@@ -153,6 +172,14 @@ fn a_file_outside_the_folder_is_a_normal_row_and_opens_by_its_whole_path(cx: &mu
         .debug_bounds("touched-file-src/a.rs")
         .expect("it has a row");
     assert_eq!(outside.size, inside.size, "the same row as any other");
+    let looks = shown_looks(&pane, cx);
+    let muted = cx.update(|_, cx| cx.theme().muted_foreground);
+    assert_eq!(
+        (looks[0].name_color, looks[0].folder_color),
+        (looks[1].name_color, looks[1].folder_color),
+        "drawn in the same colours as a file inside the folder"
+    );
+    assert_ne!(looks[0].name_color, muted, "its name isn't muted");
     click("touched-file-/home/x/.codex/AGENTS.md", cx);
     assert!(*opened.borrow() == [opening("/home/x/.codex/AGENTS.md")]);
 }
@@ -229,4 +256,42 @@ fn an_unavailable_source_reads_the_total_as_answered_with_none(cx: &mut TestAppC
     assert!(matches!(files, Listing::Failed(_)));
     assert_eq!(total, Some(None), "not \"Reading…\" for good");
     assert!(client.calls().is_empty(), "nothing is read");
+}
+
+#[gpui::test]
+fn an_attached_row_shows_the_name_it_was_attached_with(cx: &mut TestAppContext) {
+    let (pane, client, _, cx) = open(cx);
+    shown_with(
+        json!([
+            { "path": "/h/attachments/s1/9f.png", "added": 0, "removed": 0, "count": 1, "lastSeq": 2, "name": "shot.png" },
+            { "path": "/h/attachments/s1/a.rs", "added": 0, "removed": 0, "count": 1, "lastSeq": 1 },
+        ]),
+        &pane,
+        &client,
+        cx,
+    );
+    let names: Vec<String> = shown_looks(&pane, cx)
+        .into_iter()
+        .map(|look| look.name)
+        .collect();
+    assert_eq!(
+        names,
+        ["shot.png", "a.rs"],
+        "not the stored file name 9f.png"
+    );
+}
+
+#[test]
+fn a_whole_path_outside_the_shared_folder_keeps_its_leading_slash() {
+    let files = [file("/home/x/.codex/AGENTS.md"), file("src/a.rs")];
+    assert_eq!(
+        names(&files),
+        [("AGENTS.md", "/home/x/.codex"), ("a.rs", "src")]
+    );
+}
+
+#[test]
+fn a_home_path_outside_the_shared_folder_keeps_its_leading_tilde() {
+    let files = [file("~/.codex/AGENTS.md"), file("src/a.rs")];
+    assert_eq!(names(&files), [("AGENTS.md", "~/.codex"), ("a.rs", "src")]);
 }
