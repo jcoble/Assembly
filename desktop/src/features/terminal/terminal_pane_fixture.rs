@@ -47,6 +47,8 @@ pub(super) struct Terminals {
     pub(super) refuse_hello: bool,
     /// The `machines` topic's state, as its items.
     pub(super) machines: Vec<Value>,
+    /// Calls answered with this result: (method, result).
+    pub(super) answers: Vec<(String, Value)>,
 }
 
 impl Terminals {
@@ -102,6 +104,7 @@ pub(super) fn backend(terminals: Arc<Mutex<Terminals>>, heard: UnboundedSender<(
             (Some("call"), Some(method)) => {
                 terminals.seen.push((method.into(), args.clone()));
                 let refused = (terminals.refused.iter()).find(|(refused, _, _)| refused == method);
+                let answer = (terminals.answers.iter()).find(|(answered, _)| answered == method);
                 match method {
                     method if terminals.drop_on.as_deref() == Some(method) => {
                         terminals.drop_on = None;
@@ -112,6 +115,7 @@ pub(super) fn backend(terminals: Arc<Mutex<Terminals>>, heard: UnboundedSender<(
                         vec![Reply::Frame(json!({"t": "error", "id": id, "code": code,
                             "message": message, "machine": "Workbox Test"}))]
                     }
+                    _ if answer.is_some() => result(answer.unwrap().1.clone()),
                     "write" if terminals.refuse_writes.is_some() => vec![Reply::Frame(
                         json!({"t": "error", "id": id, "code": "failed", "message": terminals.refuse_writes}),
                     )],

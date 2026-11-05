@@ -389,3 +389,6 @@ mod scrollbar;
 
 #[path = "terminal_pane_links_tests.rs"]
 mod links;
+
+#[path = "terminal_pane_file_links_tests.rs"]
+mod file_links;

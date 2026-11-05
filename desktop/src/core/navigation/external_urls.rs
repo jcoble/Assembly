@@ -125,6 +125,16 @@ pub fn session_link(id: &str, machine: Option<&str>) -> String {
     }
 }
 
+/// The link that opens this file through its session.
+pub fn file_address(_path: &str, _machine: Option<&str>) -> String {
+    String::new()
+}
+
+/// The app link for a `file:` URL, whatever host it names, on `machine`.
+pub fn file_url_address(_url: &str, _machine: Option<&str>) -> Option<String> {
+    None
+}
+
 /// The session, open and file shapes, read from the link's own text: `url::Url` cleans up dot segments, ports, empty
 /// credentials, case and spare separators, so what it hands back isn't what the link says.
 fn exact_link(address: &str) -> Option<ExternalRoute> {
