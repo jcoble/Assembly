@@ -5,8 +5,10 @@ use super::working_copy::{CombinedPatch, Scope, Selection, WorkingCopy};
 use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_diff::OpenDiff};
 use crate::core::socket::{checkout_selector::CheckoutSelector, row_source::ExpectedRowSource};
 use crate::core::state::{
-    inspected_checkout::InspectedCheckout, preferences::Preferences, session_read::SessionRead,
-    viewed_project::ViewedProject,
+    inspected_checkout::InspectedCheckout,
+    preferences::Preferences,
+    session_read::SessionRead,
+    viewed_project::{ViewedProject, is_view},
 };
 use crate::core::ui::{center_panes::CenterPanes, changed_tree::ChangedTree};
 use crate::features::source_control::git_status::GitStatus;
@@ -110,7 +112,9 @@ impl ChangesPane {
         if info.is_null() {
             return Ok(CHANGES.into());
         }
-        if !info.is_object() || info["session"].as_str() != Some(session) {
+        // A diff opened from a viewed project is saved under that view's folder, not the workspace's session.
+        let owned = |owner: &str| owner == session || is_view(owner);
+        if !info.is_object() || !info["session"].as_str().is_some_and(owned) {
             return Err(invalid());
         }
         for field in ["path", "originalPath"] {

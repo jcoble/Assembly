@@ -55,6 +55,19 @@ impl Section {
     }
 }
 
+/// What git's porcelain letter means, in a person's word; none for unchanged or untracked.
+fn status_word(letter: &str) -> Option<&'static str> {
+    Some(match letter {
+        "M" | "T" => "modified",
+        "A" => "added",
+        "D" => "deleted",
+        "R" => "renamed",
+        "C" => "copied",
+        "U" => "unmerged",
+        _ => return None,
+    })
+}
+
 impl ChangedFile {
     pub fn untracked(&self) -> bool {
         self.index == "?"
@@ -82,11 +95,11 @@ impl ChangedFile {
     /// A row's tip: where it is, then what each side of git says about it.
     pub fn tip(&self) -> String {
         let mut tip = self.label();
-        if !matches!(self.index.as_str(), "." | "?") {
-            tip.push_str(&format!("\nStaged: {}", self.index));
+        if let Some(word) = status_word(&self.index) {
+            tip.push_str(&format!("\nStaged: {word}"));
         }
-        if !matches!(self.worktree.as_str(), "." | "?") {
-            tip.push_str(&format!("\nOn disk: {}", self.worktree));
+        if let Some(word) = status_word(&self.worktree) {
+            tip.push_str(&format!("\nOn disk: {word}"));
         }
         tip
     }

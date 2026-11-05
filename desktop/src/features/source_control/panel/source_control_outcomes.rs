@@ -114,7 +114,13 @@ impl SourceControlPane {
         let target = self.target(cx);
         let shown = self.shown_target(cx);
         let source = shown.as_ref().and_then(|shown| shown.source.clone());
-        let head = self.shown_status(cx).and_then(|status| status.head);
+        // The commit list's labels change on a switch to a branch at the same commit, too.
+        let head = self.shown_status(cx).and_then(|status| {
+            status
+                .head
+                .as_ref()
+                .map(|head| format!("{head} {}", status.branch_name()))
+        });
         let is_repository = matches!(self.read.read(cx).shown(), Shown::Read(_));
         // Pull requests stay on the session's folder while a project is viewed.
         let own = self.session_target(cx);

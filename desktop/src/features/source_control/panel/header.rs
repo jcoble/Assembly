@@ -5,12 +5,12 @@ use crate::core::ui::access::{Control as _, Named as _};
 use crate::core::ui::reasoned_item::reasoned_item;
 use crate::features::source_control::actions_menu::{MenuAction, PublishRow, READ_ONLY_SCOPE};
 use crate::features::source_control::git_status::GitStatus;
+use crate::features::source_control::section_heading::count_chip;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::tag::Tag;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
 use gpui_kit::*;
 
 impl SourceControlPane {
@@ -25,15 +25,11 @@ impl SourceControlPane {
             .gap_1();
         row = match &status {
             Some(status) => row.child(self.branch_trigger(status, cx)),
-            None => row.child(div().flex_1()),
+            None => row,
         };
-        row.children(status.map(|status| {
-            Tag::secondary()
-                .xsmall()
-                .rounded_full()
-                .child(status.total_files.to_string())
-        }))
-        .child(self.actions_button(cx))
+        row.child(div().flex_1())
+            .children(status.map(|status| count_chip(status.total_files.to_string(), cx)))
+            .child(self.actions_button(cx))
     }
     fn branch_trigger(
         &self,
@@ -50,13 +46,12 @@ impl SourceControlPane {
             .p_0()
             .open(self.branch_open)
             .on_open_change(cx.listener(|pane, open: &bool, _, cx| pane.set_branch_open(*open, cx)))
-            .trigger_style(StyleRefinement::default().flex_1().min_w_0())
+            .trigger_style(StyleRefinement::default().min_w_0())
             .trigger(
                 Button::new("git-branch")
                     .named(format!("Branch: {}", status.branch_title()))
                     .ghost()
                     .compact()
-                    .w_full()
                     .tooltip(if read_only {
                         READ_ONLY_SCOPE.to_string()
                     } else {
@@ -64,7 +59,6 @@ impl SourceControlPane {
                     })
                     .child(
                         h_flex()
-                            .w_full()
                             .min_w_0()
                             .gap_1()
                             .child(
@@ -72,13 +66,7 @@ impl SourceControlPane {
                                     .size(px(12.))
                                     .text_color(muted),
                             )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .child(status.branch_name()),
-                            )
+                            .child(div().min_w_0().truncate().child(status.branch_name()))
                             .children(
                                 (behind > 0)
                                     .then(|| div().text_color(warning).child(format!("↓{behind}"))),
@@ -110,7 +98,8 @@ impl SourceControlPane {
                     return menu;
                 };
                 let (rows, publish) = entity.read(cx).menu_rows(cx);
-                let mut menu = menu.min_w(px(260.)).max_w(px(288.));
+                // The kit opens a submenu leftward only when this width wouldn't fit to the right, so it is wider than any row.
+                let mut menu = menu.min_w(px(260.)).max_w(px(420.));
                 for row in rows {
                     if row.separated {
                         menu = menu.separator();

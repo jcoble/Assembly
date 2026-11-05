@@ -32,5 +32,12 @@ fn a_stash_is_called_by_its_words_or_when_it_was_made_never_by_its_session() {
         stash("assembly s1 2026-11-05T09:15: ").description(),
         "2026-11-05T09:15"
     );
+    assert_eq!(
+        stash("assembly view 2026-11-05T09:15:").description(),
+        "2026-11-05T09:15"
+    );
     assert_eq!(stash("on the side").description(), "on the side");
+    let mut listed = stash("second idea");
+    listed.branch = Some("trunk".into());
+    assert_eq!(listed.description(), "On trunk: second idea");
 }

@@ -47,7 +47,7 @@ internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, Check
                 ? Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitBranches(cli).SwitchAsync(root, args.Name, args.Create, args.ExpectedHead, call.Cancellation))
                 : throw new CallFailed("forbidden"), args => args.Session);
         calls.Write("git", "stash", GitWritesJson.Default.StashArgs, GitWritesJson.Default.GitWriteResult,
-            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitStashes(cli, time).StashAsync(root, args.Session, args.Message, args.IncludeUntracked, call.Cancellation)), args => args.Session);
+            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitStashes(cli, time).StashAsync(root, FolderView.IsView(args.Session) ? "view" : args.Session, args.Message, args.IncludeUntracked, call.Cancellation)), args => args.Session);
         calls.Write("git", "applyStash", GitWritesJson.Default.StashShaArgs, GitWritesJson.Default.GitWriteResult,
             (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitStashes(cli, time).ApplyAsync(root, args.Sha, call.Cancellation)), args => args.Session);
         calls.Write("git", "dropStash", GitWritesJson.Default.StashShaArgs, GitWritesJson.Default.GitWriteResult,

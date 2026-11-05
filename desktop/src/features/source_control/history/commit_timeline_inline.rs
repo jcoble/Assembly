@@ -2,7 +2,7 @@
 //! ref pills, opening onto its files, and more only on Load more. The history tab keeps the graph.
 use super::super::git_history::GitCommit;
 use super::super::git_labels::{RefKind, commit_age, ref_pills, split_path};
-use super::super::section_heading::heading_label;
+use super::super::section_heading::{CHIP_HEIGHT, heading_label};
 use super::{CommitFiles, CommitTimeline};
 use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_file::OpenFile};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
@@ -206,7 +206,7 @@ impl CommitTimeline {
         let commit = self.history.commits[index].clone();
         let expanded = self.expanded.contains(&commit.sha);
         let theme = cx.theme();
-        let muted = theme.muted_foreground;
+        let (muted, success, warning) = (theme.muted_foreground, theme.success, theme.warning);
         let age = commit_age(&commit.committed_at);
         let byline = if age.is_empty() {
             commit.author.clone()
@@ -219,6 +219,8 @@ impl CommitTimeline {
         let menu_copy = commit.sha.clone();
         let view = cx.entity().downgrade();
         let row = ListItem::new(SharedString::from(format!("commit:{}", commit.sha)))
+            .py_0()
+            .min_h(px(28.))
             .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
             .on_click(
                 cx.listener(move |timeline, _, _, cx| timeline.toggle_commit(toggled.clone(), cx)),
@@ -242,12 +244,17 @@ impl CommitTimeline {
                             .into_iter()
                             .filter(|pill| pill.kind != RefKind::Remote)
                             .map(|pill| {
+                                let tint = |color: Hsla| {
+                                    Tag::custom(color.opacity(0.12), color, color.opacity(0.))
+                                };
                                 let tag = match pill.kind {
-                                    RefKind::Head => Tag::success(),
-                                    RefKind::Tag => Tag::warning(),
+                                    RefKind::Head => tint(success),
+                                    RefKind::Tag => tint(warning),
                                     RefKind::Branch | RefKind::Remote => Tag::secondary(),
                                 };
-                                tag.xsmall()
+                                tag.small()
+                                    .h(CHIP_HEIGHT)
+                                    .text_role(TextRole::Body, cx)
                                     .rounded_full()
                                     .max_w(relative(0.4))
                                     .truncate()
@@ -259,6 +266,7 @@ impl CommitTimeline {
                             .flex_1()
                             .min_w_0()
                             .truncate()
+                            .text_role(TextRole::Body, cx)
                             .child(commit.subject.clone()),
                     )
                     .child(

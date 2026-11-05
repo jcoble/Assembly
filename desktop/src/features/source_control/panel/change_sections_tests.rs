@@ -110,7 +110,10 @@ fn a_row_tip_gives_the_path_then_what_each_side_of_git_says() {
         index: index.into(),
         worktree: worktree.into(),
     };
-    assert_eq!(file("M", "D").tip(), "src/a.rs\nStaged: M\nOn disk: D");
-    assert_eq!(file(".", "M").tip(), "src/a.rs\nOn disk: M");
+    assert_eq!(
+        file("M", "D").tip(),
+        "src/a.rs\nStaged: modified\nOn disk: deleted"
+    );
+    assert_eq!(file(".", "M").tip(), "src/a.rs\nOn disk: modified");
     assert_eq!(file("?", "?").tip(), "src/a.rs");
 }

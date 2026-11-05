@@ -66,6 +66,7 @@ impl Render for SourceControlPane {
         v_flex()
             .track_focus(&self.focus)
             .size_full()
+            .text_role(TextRole::Body, cx)
             .child(self.open_project.clone())
             .child(header)
             .child(body)
@@ -115,7 +116,11 @@ impl SourceControlPane {
                     cx.notify();
                 }),
             )
-            .child(Textarea::new(&self.message).when_some(height, |area, height| area.h(height)))
+            .child(
+                Textarea::new(&self.message)
+                    .small()
+                    .when_some(height, |area, height| area.h(height)),
+            )
             .child(
                 div()
                     .id("commit-box-grip")
@@ -248,7 +253,7 @@ impl SourceControlPane {
                     .child(
                         v_flex()
                             .p_2()
-                            .gap_2()
+                            .gap_1()
                             .children(change_area.into_iter().flatten())
                             .children(running)
                             .children(result)
@@ -293,7 +298,7 @@ impl SourceControlPane {
             commit.secondary()
         };
         h_flex()
-            .gap_2()
+            .gap_1()
             .child(
                 Switch::new("git-amend")
                     .small()

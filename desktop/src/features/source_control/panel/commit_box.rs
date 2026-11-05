@@ -2,7 +2,8 @@
 //! first. The panel draws them.
 use super::git_status::{GitStatus, Section};
 
-pub const PLACEHOLDER: &str = "Message. Press Command-Enter to commit.";
+/// Broken by hand: the kit draws a placeholder without wrapping it, and this one is wider than the drawer.
+pub const PLACEHOLDER: &str = "Message. Press Command-Enter to\ncommit.";
 const STILL_RUNNING: &str = "Wait for the current source-control action to finish.";
 
 pub fn commit_label(amend: bool) -> &'static str {
