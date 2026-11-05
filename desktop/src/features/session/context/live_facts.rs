@@ -26,8 +26,9 @@ pub struct LiveFacts {
     pub effort: Option<String>,
     pub access: Option<String>,
     pub newest_prompt_seq: Option<i64>,
-    /// How many turns have ended, so a change re-reads the session's total.
-    pub turns_ended: usize,
+    /// The run of the newest turn that has ended, by start time, so a turn ending re-reads the session's total and an
+    /// older page loading, which only adds older turns, doesn't.
+    pub newest_ended_run: Option<String>,
     pub drafts: Vec<DraftImage>,
 }
 

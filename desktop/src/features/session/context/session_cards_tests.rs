@@ -72,6 +72,7 @@ fn facts(
     pane: &Entity<ContextPane>,
     session: &str,
     key: Option<SessionKey>,
+    // The newest ended turn is run "rN", none at 0.
     turns_ended: usize,
 ) -> LiveFacts {
     LiveFacts {
@@ -92,7 +93,7 @@ fn facts(
         effort: Some("High".into()),
         access: Some("Ask when needed".into()),
         newest_prompt_seq: Some(2),
-        turns_ended,
+        newest_ended_run: (turns_ended > 0).then(|| format!("r{turns_ended}")),
         drafts: Vec::new(),
     }
 }
@@ -357,5 +358,82 @@ fn facts_for_another_owner_of_the_same_id_read_as_not_reported(cx: &mut TestAppC
     assert!(
         pane.read_with(cx, |pane, cx| pane.live(cx)).is_some(),
         "its own owner's facts show"
+    );
+}
+
+#[gpui::test]
+fn the_total_reads_as_reading_until_rows_tokens_answers(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    pick(Some("s1"), cx);
+    publish(facts(&pane, "s1", None, 1), cx);
+    let (live, total) = pane.read_with(cx, |pane, cx| (pane.live(cx), pane.total));
+    assert_eq!(total, None, "nothing has answered");
+    let (_, words) = usage_words(live.as_ref(), total);
+    assert_eq!(
+        texts(&words[2..3]),
+        [("Reading…", false)],
+        "not a figure nobody sent"
+    );
+
+    shown_on_s1(Ok(json!({})), &pane, &client, cx);
+    let (live, total) = pane.read_with(cx, |pane, cx| (pane.live(cx), pane.total));
+    let (_, words) = usage_words(live.as_ref(), total);
+    assert_eq!(
+        texts(&words[2..3]),
+        [("not reported by Claude", false)],
+        "answered with none"
+    );
+}
+
+#[gpui::test]
+fn a_refused_total_marks_the_source_changed_and_keeps_the_lists(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    let key = SessionKey {
+        machine: "a".into(),
+        id: "s1".into(),
+    };
+    let source = ExpectedRowSource {
+        machine: "a".into(),
+        generation: 0,
+        route_machine: None,
+    };
+    cx.update(|_, cx| {
+        SelectedSession::global(cx).update(cx, |selected, cx| {
+            selected.commit_open(key.clone(), source, true, cx)
+        })
+    });
+    client.queue_answer(Ok(
+        json!([{ "path": "src/a.rs", "added": 1, "removed": 0, "lastSeq": 2 }]),
+    ));
+    client.queue_answer(Ok(json!({ "prompts": [] })));
+    client.queue_answer(Err(CallError::Refused {
+        code: "source_changed".into(),
+        message: "Owner replaced".into(),
+    }));
+    shown(&pane, true, cx);
+    publish(facts(&pane, "s1", Some(key.clone()), 1), cx);
+
+    let (files, total, valid) = pane.read_with(cx, |pane, _| {
+        (
+            pane.files.clone(),
+            pane.total,
+            pane.context_scope.as_ref().map(|scope| scope.valid),
+        )
+    });
+    assert_eq!(
+        files,
+        Listing::Read(vec![FileTouched {
+            path: "src/a.rs".into(),
+            added: 1,
+            removed: 0
+        }])
+    );
+    assert_eq!(total, Some(None));
+    assert_eq!(valid, Some(false), "the refused source is no longer used");
+    publish(facts(&pane, "s1", Some(key), 2), cx);
+    assert_eq!(
+        tokens_reads(&client),
+        1,
+        "a turn ending reads nothing from a refused source"
     );
 }

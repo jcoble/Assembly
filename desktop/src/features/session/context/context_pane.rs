@@ -76,8 +76,9 @@ pub struct ContextPane {
     open_failed: Option<String>,
     /// The session's total once `rows/tokens` has answered: `None` until then, `Some(None)` when it wasn't reported.
     total: Option<Option<i64>>,
-    /// The ended turns the total was read after, so a turn ending while shown reads it again.
-    turns_read: Option<usize>,
+    /// The newest ended turn's run when the total was read, so another turn ending while shown reads it again. `None`
+    /// until the session's facts are first seen after a read.
+    ended_read: Option<Option<String>>,
     _selected: Subscription,
     /// Follows the selected session's live facts, where they've been set up.
     _facts: Option<Subscription>,
@@ -110,7 +111,7 @@ impl ContextPane {
             more: false,
             open_failed: None,
             total: None,
-            turns_read: None,
+            ended_read: None,
             _selected: cx.observe(&SelectedSession::global(cx), |pane, _, cx| pane.read(cx)),
             _facts: LiveFacts::try_global(cx)
                 .map(|facts| cx.observe(&facts, |pane, _, cx| pane.facts_changed(cx))),
@@ -133,7 +134,7 @@ impl ContextPane {
             self.more,
             self.open_failed,
         ) = (Listing::Reading, Listing::Reading, None, false, None);
-        (self.total, self.turns_read) = (None, None);
+        (self.total, self.ended_read) = (None, None);
         (self._read, self._open, self._tokens) = (None, None, None);
         cx.notify();
         if !self.active {
@@ -192,7 +193,7 @@ impl ContextPane {
             })
             .ok();
         }));
-        self.turns_read = self.live(cx).map(|facts| facts.turns_ended);
+        self.ended_read = self.live(cx).map(|facts| facts.newest_ended_run);
         self.read_tokens(tokens_scope, cx);
     }
 
@@ -261,11 +262,11 @@ impl ContextPane {
         let Some(scope) = self.context_scope.clone().filter(|scope| scope.valid) else {
             return;
         };
-        let Some(turns) = self.live(cx).map(|facts| facts.turns_ended) else {
+        let Some(ended) = self.live(cx).map(|facts| facts.newest_ended_run) else {
             return;
         };
-        match self.turns_read.replace(turns) {
-            Some(read) if read != turns => self.read_tokens(scope, cx),
+        match self.ended_read.replace(ended.clone()) {
+            Some(read) if read != ended => self.read_tokens(scope, cx),
             _ => {}
         }
     }

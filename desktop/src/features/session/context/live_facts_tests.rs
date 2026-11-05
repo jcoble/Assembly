@@ -15,8 +15,10 @@ use crate::core::engine::SessionKey;
 use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::state::selected_session::SelectedSession;
 use crate::features::session::client::fake_client::FakeClient;
+use crate::features::session::context::context_pane::ContextPane;
 use crate::features::session::context::live_facts::LiveFacts;
 use crate::features::session::model::session_view::ContextReport;
+use gpui_kit::component::dock::BasePanel as _;
 
 fn open(cx: &mut TestAppContext) -> (Entity<SessionPane>, FakeClient, &mut VisualTestContext) {
     cx.update(|cx| {
@@ -113,8 +115,11 @@ fn the_selected_sessions_pane_publishes_its_report_and_stats(cx: &mut TestAppCon
     );
     assert_eq!(published.model.as_deref(), Some("opus"), "the turn's model");
     assert_eq!(
-        (published.newest_prompt_seq, published.turns_ended),
-        (Some(2), 1)
+        (
+            published.newest_prompt_seq,
+            published.newest_ended_run.as_deref()
+        ),
+        (Some(2), Some("r1"))
     );
     live(&client, user(5, "again"), cx);
     assert_eq!(facts(cx).unwrap().newest_prompt_seq, Some(5), "live");
@@ -129,7 +134,11 @@ fn a_newer_turn_with_zeros_keeps_the_earlier_figures(cx: &mut TestAppContext) {
         (published.input_tokens, published.output_tokens),
         (Some(40_000), Some(10_000))
     );
-    assert_eq!(published.turns_ended, 2, "the cancelled turn still ended");
+    assert_eq!(
+        published.newest_ended_run.as_deref(),
+        Some("r2"),
+        "the cancelled turn still ended"
+    );
 }
 
 #[gpui::test]
@@ -317,7 +326,7 @@ fn publishing_the_same_value_does_not_notify(cx: &mut TestAppContext) {
     cx.update(|_, cx| {
         LiveFacts::publish(
             LiveFacts {
-                turns_ended: 9,
+                newest_ended_run: Some("r9".into()),
                 ..same
             },
             cx,
@@ -341,4 +350,56 @@ fn typing_in_the_composer_leaves_the_value_alone(cx: &mut TestAppContext) {
     }
     assert_eq!(facts(cx), before);
     assert_eq!(count.get(), 0);
+}
+
+/// The Context tab beside the pane on the same fake client, shown on s1 with empty lists and a total.
+fn context_tab(client: &FakeClient, cx: &mut VisualTestContext) -> Entity<ContextPane> {
+    let fake = client.clone();
+    let tab = cx.update(|_, cx| cx.new(|cx| ContextPane::new(Rc::new(fake), cx)));
+    client.queue_answer(Ok(json!([])));
+    client.queue_answer(Ok(json!({ "prompts": [] })));
+    client.queue_answer(Ok(json!({ "total": 50_000 })));
+    tab.update_in(cx, |tab, window, cx| tab.set_active(true, window, cx));
+    cx.run_until_parked();
+    tab
+}
+
+fn tokens_reads(client: &FakeClient) -> usize {
+    (client.calls().iter())
+        .filter(|(call, _)| call == "rows/tokens")
+        .count()
+}
+
+#[gpui::test]
+fn an_older_page_reads_no_total_and_a_turn_ending_does(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    select("s1", cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(first_rows(), true, None)));
+    jump(&client, 4, cx);
+    let _tab = context_tab(&client, cx);
+    assert_eq!(tokens_reads(&client), 1);
+
+    // Scrolling back through Chat: an older page with an older ended turn.
+    client.queue_answer(Ok(page(vec![stats(1, "r0", 50, 7, 7)], false, None)));
+    pane.update(cx, |pane, cx| pane.load_older(cx));
+    cx.run_until_parked();
+    assert!(
+        pane.read_with(cx, |pane, _| pane.view.stats.contains_key("r0")),
+        "the page loaded"
+    );
+    assert_eq!(facts(cx).unwrap().newest_ended_run.as_deref(), Some("r1"));
+    assert_eq!(
+        tokens_reads(&client),
+        1,
+        "an older turn isn't a turn ending"
+    );
+
+    live(&client, stats(5, "r2", 200, 1, 1), cx);
+    assert_eq!(facts(cx).unwrap().newest_ended_run.as_deref(), Some("r2"));
+    assert_eq!(
+        tokens_reads(&client),
+        2,
+        "a new turn ending reads the total again"
+    );
 }

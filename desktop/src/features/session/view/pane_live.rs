@@ -61,7 +61,11 @@ impl SessionPane {
             .filter(|turn| turn.model.as_deref().is_some_and(|model| !model.is_empty()))
             .max_by_key(|turn| turn.started_at)
             .and_then(|turn| turn.model.clone());
-        let turns_ended = stats.filter(|turn| turn.status != "running").count();
+        // The newest by start, so an older page loading leaves it as it is.
+        let newest_ended_run = stats
+            .filter(|turn| turn.status != "running")
+            .max_by(|a, b| (a.started_at, &a.run_id).cmp(&(b.started_at, &b.run_id)))
+            .map(|turn| turn.run_id.clone());
         let composer = self.composer.read(cx);
         let (model, effort, access) = composer.live_config();
         let positive = |n: Option<i64>| n.filter(|n| *n > 0);
@@ -80,7 +84,7 @@ impl SessionPane {
             effort,
             access,
             newest_prompt_seq: self.view.newest_prompt,
-            turns_ended,
+            newest_ended_run,
             drafts: composer.draft_images(),
         }
     }

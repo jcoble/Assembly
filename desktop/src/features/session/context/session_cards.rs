@@ -53,7 +53,7 @@ pub(super) fn session_words(facts: Option<&LiveFacts>) -> [Words; 3] {
 }
 
 /// The Context usage card's percent, if it has one, and its used, window, total, in and out, in that order. `total`
-/// is `None` until `rows/tokens` has answered.
+/// is `None` until `rows/tokens` has answered, and the total reads "Reading…" until then.
 pub(super) fn usage_words(
     facts: Option<&LiveFacts>,
     total: Option<Option<i64>>,
@@ -82,11 +82,16 @@ pub(super) fn usage_words(
             "window size",
             &missing,
         ),
+        // Still reading isn't a figure nobody sent.
         words(
             "context-total",
             number(figures.total, |n| format!("{n} tokens")),
             "",
-            &missing,
+            if total.is_some() {
+                &missing
+            } else {
+                "Reading…"
+            },
         ),
         words(
             "context-in",
