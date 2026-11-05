@@ -323,9 +323,40 @@ public sealed class FilesTouchedTests : IDisposable
     public void A_cancelled_read_stops_between_files()
     {
         using var cancel = new CancellationTokenSource();
-        var rows = new[] { new TouchedRow("a", 0, 0, 1, 1, false, null) };
+        var probe = new CancellingProbe(cancel);
+        var rows = new[] { new TouchedRow("a", 0, 0, 1, 1, false, null), new TouchedRow("b", 0, 0, 1, 1, false, null) };
 
-        Assert.Throws<OperationCanceledException>(() => TouchedFiles.Read((_, _) => { cancel.Cancel(); return rows; }, null, null, cancel.Token));
+        Assert.Throws<OperationCanceledException>(() => TouchedFiles.Read((_, _) => rows, "/repo", probe, cancel.Token));
+        Assert.Equal(["/repo/a"], probe.Asked);
+    }
+
+    // A call written between two page reads moves paths in the order; the pages read up to the seq taken at the start.
+    [Fact]
+    public void A_row_written_between_page_reads_neither_repeats_nor_skips_a_path()
+    {
+        var names = Enumerable.Range(0, 250).Select(i => $"p{i:000}").ToArray();
+        Save(names.Select((name, i) => Call($"x{i}", "execute", more: Named(name))).ToArray());
+        var upto = _store.LastSeq("s");
+        var read = new List<string>();
+
+        TouchedFiles.Read((limit, offset) =>
+        {
+            var page = _store.FilesTouchedPage("s", Folder, null, upto, limit, offset, CancellationToken.None);
+            read.AddRange(page.Select(row => row.Path));
+            // The oldest path, on the second page, is named again, and a new one comes first.
+            if (offset == 0) Save(Call("y1", "execute", more: Named("p000")), Call("y2", "execute", more: Named("new")));
+            return page;
+        }, Folder, new AskedProbe(), CancellationToken.None);
+
+        Assert.Equal(names.OrderBy(name => name, StringComparer.Ordinal), read.Order(StringComparer.Ordinal));
+    }
+
+    private sealed class CancellingProbe(CancellationTokenSource cancel) : IPathProbe
+    {
+        public readonly List<string> Asked = [];
+        public bool IsFile(string path) => Ask(path);
+        public bool IsFolder(string path) => Ask(path);
+        private bool Ask(string path) { Asked.Add(path); cancel.Cancel(); return false; }
     }
 
     [Fact]

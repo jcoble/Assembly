@@ -361,21 +361,26 @@ public sealed partial class RowStore
     /// prompt text named must still exist, when a <paramref name="probe"/> and a <paramref name="folder"/> say which disk.
     /// A call's lines come from <c>files</c> when it has them, so its <c>path</c> then lists with none of its own.
     /// </summary>
-    public IReadOnlyList<FileTouched> FilesTouched(string sessionId, CancellationToken cancellationToken, string? folder = null, string? home = null, IPathProbe? probe = null) =>
-        TouchedFiles.Read((limit, offset) => FilesTouchedPage(sessionId, folder, home, limit, offset, cancellationToken), folder, probe, cancellationToken);
+    public IReadOnlyList<FileTouched> FilesTouched(string sessionId, CancellationToken cancellationToken, string? folder = null, string? home = null, IPathProbe? probe = null)
+    {
+        var upto = LastSeq(sessionId);
+        return TouchedFiles.Read((limit, offset) => FilesTouchedPage(sessionId, folder, home, upto, limit, offset, cancellationToken), folder, probe, cancellationToken);
+    }
 
-    // ~/ expands before the folder is stripped and before grouping, so ~/a, /home/x/a and a can be one file. substr, not
-    // LIKE, so a folder with _ or % in its name still matches.
-    private IReadOnlyList<TouchedRow> FilesTouchedPage(string sessionId, string? folder, string? home, int limit, int offset, CancellationToken cancellationToken) =>
+    // Every page reads rows up to the same seq, so a call written mid-read can't move a path between pages. ~/ expands
+    // before the folder is stripped and before grouping, so ~/a, /home/x/a and a can be one file. substr, not LIKE, so a
+    // folder with _ or % in its name still matches. calls is materialized so the tool rows are scanned once a page.
+    internal IReadOnlyList<TouchedRow> FilesTouchedPage(string sessionId, string? folder, string? home, long upto, int limit, int offset, CancellationToken cancellationToken) =>
         _db.Query(
             """
-            WITH calls AS (
+            WITH calls AS MATERIALIZED (
               SELECT r.seq, r.item_id, r.payload, json_extract(r.payload, '$.kind') AS kind,
                      json_extract(r.payload, '$.state') AS state
               FROM rows r
-              WHERE r.session_id = $session AND r.kind = 'tool'
+              WHERE r.session_id = $session AND r.kind = 'tool' AND r.seq <= $upto
                 AND json_extract(r.payload, '$.kind') IN ('read', 'edit', 'delete', 'move', 'execute')
-                AND NOT EXISTS (SELECT 1 FROM rows l WHERE l.session_id = r.session_id AND l.item_id = r.item_id AND l.kind = 'tool' AND l.seq > r.seq)),
+                AND NOT EXISTS (SELECT 1 FROM rows l WHERE l.session_id = r.session_id AND l.item_id = r.item_id AND l.kind = 'tool'
+                                AND l.seq > r.seq AND l.seq <= $upto)),
             mentions AS (
               SELECT c.seq, c.item_id AS call, json_extract(f.value, '$.path') AS path,
                      CASE WHEN c.state = 'failed' THEN 0 ELSE COALESCE(json_extract(f.value, '$.added'), 0) END AS added,
@@ -393,10 +398,10 @@ public sealed partial class RowStore
               FROM calls c, json_each(c.payload, '$.named') n
               UNION ALL
               SELECT u.seq, u.seq, n.value, 0, 0, 1, NULL
-              FROM rows u, json_each(u.payload, '$.named') n WHERE u.session_id = $session AND u.kind = 'user'
+              FROM rows u, json_each(u.payload, '$.named') n WHERE u.session_id = $session AND u.kind = 'user' AND u.seq <= $upto
               UNION ALL
               SELECT u.seq, u.seq, json_extract(a.value, '$.path'), 0, 0, 0, json_extract(a.value, '$.name')
-              FROM rows u, json_each(u.payload, '$.attached') a WHERE u.session_id = $session AND u.kind = 'user'),
+              FROM rows u, json_each(u.payload, '$.attached') a WHERE u.session_id = $session AND u.kind = 'user' AND u.seq <= $upto),
             homed AS (
               SELECT seq, call, added, removed, candidate, name,
                      CASE WHEN $home IS NOT NULL AND substr(path, 1, 2) = '~/' THEN $home || substr(path, 2) ELSE path END AS path
@@ -413,7 +418,7 @@ public sealed partial class RowStore
             """,
             reader => new TouchedRow(reader.Text(0), reader.Long(1), reader.Long(2), reader.Long(3), reader.Long(4), reader.Long(5) == 1, reader.IsNull(6) ? null : reader.Text(6)),
             cancellationToken, new SqlArg("$session", sessionId), new SqlArg("$folder", folder), new SqlArg("$home", home),
-            new SqlArg("$limit", limit), new SqlArg("$offset", offset));
+            new SqlArg("$upto", upto), new SqlArg("$limit", limit), new SqlArg("$offset", offset));
 
     /// <summary>
     /// The session's token total (<c>rows/tokens</c>): the sum of what each turn reported at its end, since a provider's
