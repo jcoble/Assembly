@@ -44,6 +44,16 @@ if (args.at(-1).startsWith('flock ')) {
 } else if(state.missing) console.log(JSON.stringify({missing:true}));
 else console.log(JSON.stringify({commit:'${previous}',backendIdentity:'${previousIdentity}',version:state.hostVersion===undefined?'none':state.hostVersion,engine:'test-engine',dll:'/lane/bin/old/backend/Assembly.Remote.dll',pid:'123',unitSha:'f'.repeat(64),adapterOK:true,launcherSha:'${launcher}',toolsKey:state.toolsKey,adapterSources:'${sources}',seedCohort:state.seedCohort}));
 `;
+/** A fake that waits until the test writes `release`, after writing its pid to `started`. It also ends, with 1, when
+ * the test removes `root` or the test host (`TEST_HOST`) is gone, so a failed or killed test leaves nothing running. */
+const waiter = (root: string, release: string, started: string, done = '') => `import fs from 'node:fs';
+const host=+process.env.TEST_HOST;
+const end=()=>{watcher.close();clearInterval(alive);process.exit(1)};
+const finish=()=>{if(fs.existsSync(${JSON.stringify(release)})){watcher.close();clearInterval(alive);${done}}else if(!fs.existsSync(${JSON.stringify(root)}))end()};
+const watcher=fs.watch(${JSON.stringify(root)},finish);
+const alive=setInterval(()=>{if(!fs.existsSync(${JSON.stringify(root)}))end();try{process.kill(host,0)}catch{end()}},200);
+fs.writeFileSync(${JSON.stringify(started)}+'.new',String(process.pid));fs.renameSync(${JSON.stringify(started)}+'.new',${JSON.stringify(started)});finish();
+`;
 function fixture(state: object = {}) {
   const root = mkdtempSync(join(tmpdir(), 'assembly-devsync-'));
   for (const dir of ['scripts', 'bin']) mkdirSync(join(root, dir));
@@ -55,8 +65,8 @@ function fixture(state: object = {}) {
   writeFileSync(join(root, 'bin/git'), fakeGit, { mode: 0o755 });
   writeFileSync(join(root, 'bin/ssh'), fakeSsh, { mode: 0o755 });
   const holder = join(root, 'holder.ts');
-  writeFileSync(holder, `import fs from 'node:fs';\nconst finish=()=>{if(fs.existsSync(${JSON.stringify(paths.release)})){watcher.close();console.log('deploy completed')}};const watcher=fs.watch(${JSON.stringify(root)},finish);fs.writeFileSync(${JSON.stringify(paths.marker)},String(process.pid));finish();`);
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH: join(root, 'bin') + ':' + process.env.PATH, STATE: paths.state, CALLS: paths.calls, LOCK: join(root, 'lock'), HOLDER: holder };
+  writeFileSync(holder, waiter(root, paths.release, paths.marker, "console.log('deploy completed')"));
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: join(root, 'bin') + ':' + process.env.PATH, STATE: paths.state, CALLS: paths.calls, LOCK: join(root, 'lock'), HOLDER: holder, TEST_HOST: String(process.pid) };
   const args = [join(root, 'scripts/workbox-serve.ts'), 'test-lane', '9'];
   return { root, paths, env, args, run: (extra: string[] = []) => spawnSync(process.execPath, extra.length ? [args[0], ...extra] : args, { cwd: root, env, encoding: 'utf8' }),
     calls: () => readFileSync(paths.calls, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as string[]),
@@ -176,6 +186,32 @@ test('manual main still requires a clean checkout of origin/main before SSH', ()
     assert.equal(f.calls().filter(call=>call[0]==='ssh').length,0);
   }finally{f.close()}
 });
+// A fake that waits for the test can't be left behind: it ends when the test removes its folder, and when the test
+// host is gone, even one killed before it could clean up.
+function holderExit(f: ReturnType<typeof fixture>, host: number) {
+  const holder = spawn(process.execPath, [f.env.HOLDER!], { cwd: f.root, env: { ...f.env, TEST_HOST: String(host) }, stdio: 'ignore' });
+  const exited = new Promise<number | null>(resolve => holder.on('exit', resolve));
+  return { started: untilFile(f.paths.marker), exited };
+}
+test('a waiting holder ends when the test removes its folder', { timeout: 10_000 }, async () => {
+  const f = fixture();
+  const run = holderExit(f, process.pid);
+  await run.started;
+  f.close();
+  assert.equal(await run.exited, 1);
+});
+test('a waiting holder ends when its test host is killed', { timeout: 10_000 }, async () => {
+  const f = fixture();
+  const host = spawn('sleep', ['60'], { stdio: 'ignore' });
+  const hostGone = new Promise(resolve => host.on('exit', resolve));
+  const run = holderExit(f, host.pid!);
+  try {
+    await run.started;
+    host.kill('SIGKILL');
+    await hostGone;
+    assert.equal(await run.exited, 1);
+  } finally { f.close(); }
+});
 function untilFile(file: string) {
   return new Promise<void>(resolve => {
     const watcher = watch(join(file, '..'), () => { if(existsSync(file)) { watcher.close(); resolve(); } });
@@ -217,7 +253,7 @@ export const ensureTools = async () => { fs.appendFileSync(process.env.CALLS, JS
   writeFileSync(join(f.root, 'bin/dotnet'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const desktop = join(f.root, 'desktop-opened');
   // The desktop build: it never ends until the test says so, so anything that finishes first didn't wait for it.
-  writeFileSync(join(f.root, 'bin/cargo'), `#!/usr/bin/env node\nimport fs from 'node:fs';\nconst finish=()=>{if(fs.existsSync(${JSON.stringify(f.paths.release)})){watcher.close()}};const watcher=fs.watch(${JSON.stringify(f.root)},finish);fs.writeFileSync(${JSON.stringify(desktop)},String(process.pid));finish();\n`, { mode: 0o755 });
+  writeFileSync(join(f.root, 'bin/cargo'), '#!/usr/bin/env node\n' + waiter(f.root, f.paths.release, desktop), { mode: 0o755 });
   const statusFile = join(f.root, 'profile/mac/remote-sync-state.json');
   const launch = () => {
     const opened = untilFile(desktop);

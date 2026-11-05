@@ -63,7 +63,7 @@ public sealed class GhCliTests
     [Fact]
     public async Task Cancellation_after_process_start_is_distinct_from_prestart_cancellation()
     {
-        using var executable = new Executable("mkfifo gate\nprintf ready > ready\ncat gate\n");
+        using var executable = new Executable(UntilHostGone);
         using var watcher = new FileSystemWatcher(executable.Root, "ready");
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         watcher.Created += (_, _) => ready.TrySetResult();
@@ -77,6 +77,24 @@ public sealed class GhCliTests
         var failure = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             new GhCli(executable.Path).RunAsync(executable.Root, [], null, TimeSpan.FromSeconds(30), before.Token));
         Assert.IsNotType<GhInterrupted>(failure);
+    }
+
+    /// <summary>A gh that runs until it's stopped: it says it's ready, then waits as long as whoever started it is
+    /// alive, so a test host killed mid-test can't leave it behind.</summary>
+    private const string UntilHostGone = "printf ready > ready\nwhile kill -0 $PPID 2>/dev/null; do sleep 0.1; done\nprintf gone > gone\n";
+
+    [Fact]
+    public async Task A_waiting_fixture_ends_once_whoever_started_it_is_gone()
+    {
+        using var executable = new Executable(UntilHostGone);
+        using var watcher = new FileSystemWatcher(executable.Root, "gone");
+        var gone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        watcher.Created += (_, _) => gone.TrySetResult();
+        watcher.EnableRaisingEvents = true;
+        using var host = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/bin/sh", ["-c", $"'{executable.Path}' &"])
+        { WorkingDirectory = executable.Root })!;
+        await host.WaitForExitAsync();
+        await gone.Task.WaitAsync(TimeSpan.FromSeconds(10)); // throws if the fixture still runs with its host gone
     }
 
     private sealed class Executable : IDisposable

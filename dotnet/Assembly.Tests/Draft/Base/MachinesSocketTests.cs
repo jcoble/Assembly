@@ -145,15 +145,16 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         // A change would be queued before the answer.
         await CallAsync(socket, 3, "machines", "agents", """{"machine":"box"}""");
         Assert.Contains("\"result\":", await ReadAsync(socket));
+        _stub.DropVersion = true; // Every later attempt is also down, so nothing can welcome it back during the checks below.
         _stub.Drop = true;
         await CallAsync(socket, 4, "machines", "agents", """{"machine":"box"}""");
         Assert.Equal(Change(1, Box(false, "machine socket closed")), await ReadAsync(socket));
         Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
-        _stub.DropVersion = true; // The next attempt is also down, before a new successful welcome.
-        await CallAsync(socket, 5, "machines", "agents", """{"machine":"box"}""");
+        // A call only waits while the machine reconnects; the socket's own next attempt is what fails, at the handshake.
         var handshakeFailure = System.Text.Json.JsonDocument.Parse(await ReadAsync(socket)).RootElement;
         Assert.Equal("change", handshakeFailure.GetProperty("t").GetString());
         Assert.False(handshakeFailure.GetProperty("item").GetProperty("reachable").GetBoolean());
+        await CallAsync(socket, 5, "machines", "agents", """{"machine":"box"}""");
         Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
         await CallAsync(socket, 6, "machines", "agents", """{"machine":"box"}""");
         Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));

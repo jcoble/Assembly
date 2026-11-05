@@ -86,6 +86,7 @@ pub struct SessionPane {
     revealed_at: Instant,
     /// A frame is asked for the reveal's next step.
     frame_asked: bool,
+    _reveal_tick: Option<Task<()>>,
     /// The backend clock's last second while a turn runs, which the "Working for" line counts by.
     now: Option<i64>,
     /// The run going now and when it started: its turn row's time, or when the pane first saw it, as the web does,
@@ -265,12 +266,13 @@ impl SessionPane {
         }
         match change {
             // A reply, tool or card changing in place in a run that isn't folded changes no entry: only its row
-            // draws again, so a streaming reply never rebuilds the timeline.
+            // draws again, so a streaming reply never rebuilds the timeline. An ask also holds or frees the composer.
             Change::Updated(at)
-                if self.view.items[at]
-                    .run_id
-                    .as_ref()
-                    .is_none_or(|run| !self.folds.contains_key(run)) =>
+                if !matches!(self.view.items[at].kind, ItemKind::Ask { .. })
+                    && self.view.items[at]
+                        .run_id
+                        .as_ref()
+                        .is_none_or(|run| !self.folds.contains_key(run)) =>
             {
                 self.redraw(at, cx)
             }
