@@ -28,7 +28,10 @@ use crate::core::state::selected_session::SelectedSession;
 
 /// A backend with one session selected, whose folder is a git repo holding `files` (a path ending in '/' is a folder)
 /// and a `.gitignore` that ignores `target/`.
-async fn selected_session(cx: &mut TestAppContext, files: &[&str]) -> (RealBackend, String) {
+pub(super) async fn selected_session(
+    cx: &mut TestAppContext,
+    files: &[&str],
+) -> (RealBackend, String) {
     // These fail rather than skip: build the backend first (`dotnet build` in dotnet/).
     let (backend, repo) = backend_with_stub().expect("the desktop backend isn't built");
     cx.executor().allow_parking();
@@ -119,7 +122,7 @@ fn fill(root: &Path, files: &[&str]) {
 }
 
 /// Waits for the view to change until `done` holds.
-async fn settled<T: 'static>(
+pub(super) async fn settled<T: 'static>(
     view: &Entity<T>,
     cx: &mut VisualTestContext,
     done: impl Fn(&T) -> bool,
@@ -134,7 +137,7 @@ async fn settled<T: 'static>(
 }
 
 /// The tree's lines as text: an open folder ends in "/ v", an excluded entry in " -".
-fn shape(pane: &FilesPane) -> Vec<String> {
+pub(super) fn shape(pane: &FilesPane) -> Vec<String> {
     pane.tree
         .visible(0..pane.tree.row_count())
         .iter()

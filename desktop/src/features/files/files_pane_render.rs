@@ -125,6 +125,9 @@ impl FilesPane {
                     .cursor_pointer()
                     .child("Load more")
                     .on_click(cx.listener(move |pane, _, _, cx| {
+                        if pane.building.is_some() {
+                            return;
+                        }
                         if let Some(cursor) = pane.tree.more(&dir) {
                             pane.load(dir.clone(), Some(cursor), cx);
                         }

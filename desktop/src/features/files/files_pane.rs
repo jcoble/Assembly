@@ -35,6 +35,12 @@ pub struct FilesPane {
     source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     owner: Option<super::entry::FileOwnership>,
     pub(super) tree: FileTree,
+    /// The next tree while a reload walks the folder; `tree` stays on screen until this is ready.
+    building: Option<FileTree>,
+    /// A reload was asked for while one was building.
+    reload_again: bool,
+    /// Showing the pane again reloads what it kept, once its owner and lease are back.
+    reload_when_ready: bool,
     /// Whether the tree has asked for this session's root yet: only once the pane is shown.
     started: bool,
     shown: bool,
@@ -83,6 +89,9 @@ impl FilesPane {
             source: None,
             owner: None,
             tree: FileTree::default(),
+            building: None,
+            reload_again: false,
+            reload_when_ready: false,
             started: false,
             shown: false,
             generation: 0,
@@ -126,6 +135,7 @@ impl FilesPane {
         self.workspace_key = None;
         self.workspace_checked = false;
         self.restoring_tree = None;
+        self.drop_reload();
         self.tree = FileTree::default();
         self.loads.clear();
         self.selected = None;
@@ -194,6 +204,10 @@ impl FilesPane {
         }
         if !self.started || self.tree.root_failed() {
             self.started = true;
+            if std::mem::take(&mut self.reload_when_ready) && self.tree.root_loaded() {
+                self.reload_kept(cx);
+                return;
+            }
             self.tree.start();
             self.load(String::new(), None, cx);
         }
@@ -203,6 +217,7 @@ impl FilesPane {
         self.generation = self.generation.wrapping_add(1);
         self.loads.clear();
         self.observing = None;
+        self.drop_reload();
         self.tree = FileTree::default();
         self.started = false;
         self.start(cx);
@@ -211,7 +226,7 @@ impl FilesPane {
 
     #[cfg(test)]
     pub(super) fn is_loading(&self) -> bool {
-        self.observing.is_some() || !self.loads.is_empty()
+        self.observing.is_some() || !self.loads.is_empty() || self.building.is_some()
     }
 
     fn release_watch(&mut self, cx: &mut Context<Self>) {
@@ -227,10 +242,10 @@ impl FilesPane {
         }
     }
 
-    fn load(&mut self, dir: String, cursor: Option<PageCursor>, cx: &mut Context<Self>) {
+    pub(super) fn load(&mut self, dir: String, cursor: Option<PageCursor>, cx: &mut Context<Self>) {
         let (Some(session), Some(socket)) = (self.session.clone(), SocketClient::try_global(cx))
         else {
-            self.tree
+            self.walked_tree()
                 .loaded(&dir, Err("The backend isn't running.".into()));
             return;
         };
@@ -253,9 +268,7 @@ impl FilesPane {
                 let answer = match outcome {
                     Outcome::Ok(listing) => Ok(listing),
                     Outcome::Failed(failure) if failure.message.contains("cursor_changed") => {
-                        pane.started = false;
-                        pane.loads.clear();
-                        pane.start(cx);
+                        pane.restart_reload(cx);
                         return;
                     }
                     Outcome::Failed(failure) => Err(failure.message),
@@ -263,7 +276,7 @@ impl FilesPane {
                         Err("The connection dropped; open it again to retry.".into())
                     }
                 };
-                pane.tree.loaded(&at, answer);
+                pane.walked_tree().loaded(&at, answer);
                 pane.continue_reveal(cx);
                 pane.continue_workspace_tree(cx);
                 cx.notify();
@@ -337,7 +350,7 @@ impl FilesPane {
         let Some(path) = self.revealing.clone() else {
             return;
         };
-        if !self.shown || !self.started {
+        if !self.shown || !self.started || self.building.is_some() {
             return;
         }
         match self.tree.reveal(&path) {
@@ -363,9 +376,23 @@ impl FilesPane {
 
     /// A click on a row selects it, and opens or closes a folder.
     pub(super) fn clicked(&mut self, path: String, folder: bool, cx: &mut Context<Self>) {
+        // A folder clicked during a reload joins it: the walk starts over from what the click left.
+        let rebuilding = folder && self.building.take().is_some();
+        if rebuilding {
+            self.generation = self.generation.wrapping_add(1);
+            self.loads.clear();
+            self.tree.cancel_loads();
+        }
+        if self.building.is_none() {
+            self.restoring_tree = None;
+        }
         if folder {
             match self.tree.toggle(&path) {
-                Some(dir) => self.load(dir, None, cx),
+                Some(dir) => {
+                    if !rebuilding {
+                        self.load(dir, None, cx)
+                    }
+                }
                 None => {
                     let prefix = path.clone() + "/";
                     self.loads
@@ -374,7 +401,9 @@ impl FilesPane {
             }
         }
         self.selected = Some(path);
-        self.restoring_tree = None;
+        if rebuilding {
+            self.reload_kept(cx);
+        }
         crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
         cx.notify();
     }
@@ -462,7 +491,13 @@ impl BasePanel for FilesPane {
             self.release_watch(cx);
             self.action_loading = None;
             self.started = false;
+            self.tree.cancel_loads();
+            if self.building.is_some() {
+                self.restoring_tree = None;
+            }
+            self.drop_reload();
         } else {
+            self.reload_when_ready = self.tree.root_loaded();
             self.start(cx);
             self.continue_reveal(cx);
         }

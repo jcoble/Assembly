@@ -258,6 +258,10 @@ impl FileTree {
         RevealStep::Ready
     }
 
+    pub fn root_loaded(&self) -> bool {
+        self.loaded.contains_key("")
+    }
+
     /// Whether the root's load failed, so showing the tree again retries it (its folder may exist by now).
     pub fn root_failed(&self) -> bool {
         self.failed.contains_key("")
