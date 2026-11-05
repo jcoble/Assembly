@@ -451,3 +451,46 @@ fn a_refused_total_marks_the_source_changed_and_keeps_the_lists(cx: &mut TestApp
         "a turn ending reads nothing from a refused source"
     );
 }
+
+// Pins: g0-shape#17
+#[gpui::test]
+fn an_older_remotes_bad_args_reads_as_not_reported_and_keeps_the_source(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    let key = SessionKey {
+        machine: "a".into(),
+        id: "s1".into(),
+    };
+    let source = ExpectedRowSource {
+        machine: "a".into(),
+        generation: 0,
+        route_machine: None,
+    };
+    cx.update(|_, cx| {
+        SelectedSession::global(cx).update(cx, |selected, cx| {
+            selected.commit_open(key.clone(), source, true, cx)
+        })
+    });
+    client.queue_answer(Ok(json!([])));
+    client.queue_answer(Ok(json!({ "prompts": [] })));
+    // An older remote checks `expectedSource` against its own allow-list, which has no `tokens`.
+    client.queue_answer(Err(CallError::BadArgs(
+        "expectedSource requires a supported session call.".into(),
+    )));
+    shown(&pane, true, cx);
+    publish(facts(&pane, "s1", Some(key), 1), cx);
+
+    let (total, valid) = pane.read_with(cx, |pane, _| {
+        (
+            pane.total,
+            pane.context_scope.as_ref().map(|scope| scope.valid),
+        )
+    });
+    assert_eq!(total, Some(None), "answered with nothing");
+    assert_eq!(valid, Some(true), "the source is still used");
+    let facts = facts(&pane, "s1", None, 1);
+    let (_, [_, _, words, _, _]) = usage_words(Some(&facts), total);
+    assert_eq!(
+        (words.text.as_str(), words.reported),
+        ("not reported by Claude", false)
+    );
+}

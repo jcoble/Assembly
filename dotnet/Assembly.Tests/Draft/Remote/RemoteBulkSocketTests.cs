@@ -66,7 +66,7 @@ public sealed class RemoteBulkSocketTests : IAsyncLifetime
         _ownerLocal = new FakeMachine(null, ownerSessions) { Attachments = _ownerImages };
         var ownerMachines = new MachineSet(_ownerLocal);
         var ownerCalls = new SocketDispatcher(_ownerDb.Writer, ownerTopics, TimeProvider.System, NullLogger.Instance);
-        new RowsFeature(_ownerHub, _ownerRows, ownerSessions, ownerMachines, new DiskPathProbe()).Register(new GatedRegistry(ownerCalls, _gate));
+        new RowsFeature(_ownerHub, _ownerRows, ownerSessions, ownerMachines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)).Register(new GatedRegistry(ownerCalls, _gate));
         new SessionsFeature(ownerSessions, ownerMachines).Register(ownerCalls);
         new AttachmentsFeature(ownerSessions, ownerMachines, Path.Combine(_ownerImageRoot.FullName, "staging")).Register(ownerCalls);
         _terminals = new TerminalHost(new FakePtyStarter(), ownerTopics, TimeProvider.System, ("/bin/sh", null));
@@ -87,7 +87,7 @@ public sealed class RemoteBulkSocketTests : IAsyncLifetime
             new MachineStatus(desktopTopics, ["box"]));
         var desktopMachines = new MachineSet(_desktopLocal = new FakeMachine(null, _desktopSessions) { Attachments = _desktopImages }, _machine);
         var desktopCalls = new SocketDispatcher(_desktopDb.Writer, desktopTopics, TimeProvider.System, NullLogger.Instance);
-        new RowsFeature(_desktopHub, RowStore.Open(_desktopDb), _desktopSessions, desktopMachines, new DiskPathProbe()).Register(desktopCalls);
+        new RowsFeature(_desktopHub, RowStore.Open(_desktopDb), _desktopSessions, desktopMachines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)).Register(desktopCalls);
         new AttachmentsFeature(_desktopSessions, desktopMachines, Path.Combine(_desktopImageRoot.FullName, "staging")).Register(desktopCalls);
         _desktopApp = CreateApp();
         Map(_desktopApp, desktopCalls, "/socket/bulk", bulk: true);

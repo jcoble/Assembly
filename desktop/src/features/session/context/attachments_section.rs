@@ -5,6 +5,7 @@
 //! captured, validated source permits opening those bytes. A prompt sent while the tab shows reads the sent images
 //! again, so a sent draft moves down to them.
 
+use gpui_kit::component::list::ListItem;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -25,7 +26,7 @@ impl ContextPane {
     pub(super) fn attachments_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let remote = self.machine.clone();
         let theme = cx.theme();
-        let (muted, hover, danger) = (theme.muted_foreground, theme.muted, theme.danger);
+        let (muted, danger) = (theme.muted_foreground, theme.danger);
         let note = |id: &'static str, text: SharedString| {
             div()
                 .debug_selector(move || id.into())
@@ -48,9 +49,9 @@ impl ContextPane {
             match draft.preview {
                 Some(image) => {
                     let name = draft.name;
-                    row.cursor_pointer().hover(|row| row.bg(hover)).on_click(
-                        move |_, window, cx| open_lightbox(image.clone(), name.clone(), window, cx),
-                    )
+                    row.cursor_pointer().on_click(move |_, window, cx| {
+                        open_lightbox(image.clone(), name.clone(), window, cx)
+                    })
                 }
                 None => row,
             }
@@ -89,15 +90,15 @@ impl ContextPane {
                                 .as_ref()
                                 .is_none_or(|scope| !scope.valid || scope.source.is_none()) =>
                         {
-                            row.text_color(muted)
+                            row.disabled(true)
                         }
                         _ => {
                             let (path, name) = (path.clone(), name.clone());
-                            row.cursor_pointer()
-                                .hover(|row| row.bg(hover))
-                                .on_click(cx.listener(move |pane, _, window, cx| {
+                            row.cursor_pointer().on_click(cx.listener(
+                                move |pane, _, window, cx| {
                                     pane.open(path.clone(), name.clone(), window, cx)
-                                }))
+                                },
+                            ))
                         }
                     }
                 }))
@@ -173,7 +174,7 @@ impl ContextPane {
                 if !pane.current(serial, &scope) {
                     return;
                 }
-                if matches!(&answer, Err(CallError::Refused { code, .. }) if code == "source_changed") {
+                if answer.as_ref().is_err_and(CallError::is_source_changed) {
                     pane.refuse_source(&scope, super::SOURCE_CHANGED.into(), cx);
                 }
                 pane.take_attachments(attachments_serial, answer, true, cx);
@@ -241,7 +242,7 @@ impl ContextPane {
                 match image {
                     Ok(image) => open_lightbox(image, name.into(), window, cx),
                     Err(error) => {
-                        if matches!(&error,CallError::Refused{code,..} if code=="source_changed") {
+                        if error.is_source_changed() {
                             pane.refuse_source(&scope, error.reason(), cx);
                         }
                         pane.open_failed = Some(error.reason());
@@ -305,7 +306,7 @@ fn row(
     name: SharedString,
     mime: Option<&'static str>,
     cx: &App,
-) -> Stateful<Div> {
+) -> ListItem {
     let theme = cx.theme();
     let slot = format!(
         "{selector}-{}",
@@ -318,7 +319,8 @@ fn row(
     let thumbnail = div()
         .debug_selector(move || slot)
         .flex_none()
-        .size(px(40.))
+        // 2.5 rem: 40 px at the window's 16 px rem, scaling with it.
+        .size_10()
         .flex()
         .items_center()
         .justify_center()
@@ -333,19 +335,19 @@ fn row(
                     .text_color(theme.muted_foreground),
             ),
         });
-    h_flex()
-        .id(id)
-        .debug_selector(move || selector)
-        .px_2()
-        .py_1()
-        .gap_2()
-        .child(thumbnail)
-        .child(div().flex_1().min_w_0().truncate().child(name))
-        .child(
-            div()
-                .flex_none()
-                .child(StatusChip::new(type_words(mime), Tone::Neutral)),
-        )
+    ListItem::new(id).debug_selector(move || selector).child(
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .gap_2()
+            .child(thumbnail)
+            .child(div().flex_1().min_w_0().truncate().child(name))
+            .child(
+                div()
+                    .flex_none()
+                    .child(StatusChip::new(type_words(mime), Tone::Neutral)),
+            ),
+    )
 }
 
 #[cfg(test)]

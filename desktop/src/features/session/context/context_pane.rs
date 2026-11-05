@@ -218,7 +218,9 @@ impl ContextPane {
         self._read = Some(cx.spawn(async move |pane, cx| {
             let files = files.await;
             let attachments = attachments.await;
-            let refused=matches!(&files,Err(CallError::Refused{code,..}) if code=="source_changed")||matches!(&attachments,Err(CallError::Refused{code,..}) if code=="source_changed");
+            let refused = [&files, &attachments]
+                .into_iter()
+                .any(|answer| answer.as_ref().is_err_and(CallError::is_source_changed));
             pane.update(cx, |pane, cx| {
                 if !pane.current(serial, &scope) {
                     return;
@@ -303,7 +305,7 @@ impl ContextPane {
         cx.notify();
     }
 
-    /// Reads the session's total in its own task. Any failure, an older remote's not found included, reads as
+    /// Reads the session's total in its own task. Any failure, an older remote's `bad_args` refusal included, reads as
     /// answered with nothing, so the card says it wasn't reported; a changed source is refused as `read` does.
     fn read_tokens(&mut self, scope: ContextScope, cx: &mut Context<Self>) {
         let serial = self.read_serial;
@@ -316,7 +318,7 @@ impl ContextPane {
                 if !pane.current(serial, &scope) {
                     return;
                 }
-                if matches!(&answer, Err(CallError::Refused { code, .. }) if code == "source_changed") {
+                if answer.as_ref().is_err_and(CallError::is_source_changed) {
                     pane.refuse_source(&scope, SOURCE_CHANGED.into(), cx);
                 }
                 pane.total = Some(answer.ok().and_then(|answer| answer["total"].as_i64()));

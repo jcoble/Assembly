@@ -183,7 +183,7 @@ public sealed class ChatExpectedSourceTests
     {
         new SendFeature(host.Sessions, installed.Machines, host.NeedHub, installed.Door).Register(calls);
         new ConfigFeature(host.Sessions, installed.Machines, installed.Door).Register(calls);
-        new RowsFeature(host.NeedHub, RowStore.Open(host.Fixture.Db), host.Sessions, installed.Machines, new DiskPathProbe(), installed.Sources).Register(calls);
+        new RowsFeature(host.NeedHub, RowStore.Open(host.Fixture.Db), host.Sessions, installed.Machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), installed.Sources).Register(calls);
     }
 
     private sealed class RemoteFixture : IAsyncDisposable

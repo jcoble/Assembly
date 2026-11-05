@@ -134,7 +134,7 @@ impl Thumbnails {
                 self.made.insert(path, Arc::new(image));
             }
             Ok(_) => {}
-            Err(CallError::Refused { code, .. }) if code == "source_changed" => {
+            Err(error) if error.is_source_changed() => {
                 self.reading = false;
                 return false;
             }

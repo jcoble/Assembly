@@ -68,7 +68,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         _remoteMachine = new FakeMachine(null, sessions);
         var machines = new MachineSet(_remoteMachine);
         var calls = new SocketDispatcher(_remoteDb.Writer, topics, TimeProvider.System, NullLogger.Instance);
-        new RowsFeature(_remoteHub, _remoteStore, sessions, machines, new DiskPathProbe()).Register(calls);
+        new RowsFeature(_remoteHub, _remoteStore, sessions, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)).Register(calls);
         var answers = new Assembly.Tests.Infrastructure.Socket.AnswerDoor
         {
             Owner = OwnerDoor(sessions, machines, topics),

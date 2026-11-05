@@ -156,7 +156,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         _app = ApiServer.Build(new ApiServices(_hub, _sessionStore, machines, attachments, Token,
             Writer: _database.Writer, Topics: _topics, Features: [new SessionsFeature(_sessionStore, machines, new SessionRowSources(_database, _sessionStore, machines),
                     owningMachine: _engine.Machine, owningHome: _work),
-                new SendFeature(_sessionStore, machines, _hub, new EngineDoor(_engine, _sessionStore, machines, attachments, TimeProvider.System, _answers)), new RowsFeature(_hub, store, _sessionStore, machines, new DiskPathProbe()),
+                new SendFeature(_sessionStore, machines, _hub, new EngineDoor(_engine, _sessionStore, machines, attachments, TimeProvider.System, _answers)), new RowsFeature(_hub, store, _sessionStore, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)),
                 new ConfigFeature(_sessionStore, machines), _machinesFeature,
                 new AttachmentsFeature(_sessionStore, machines, Path.Combine(_work, "staging"))]), port: 0, out _);
         await _app.StartAsync();

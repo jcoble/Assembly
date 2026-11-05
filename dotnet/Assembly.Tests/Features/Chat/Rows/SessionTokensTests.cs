@@ -124,7 +124,7 @@ public sealed class SessionTokensTests
         using var hub = new LiveHub(store, topics: topics);
         var machines = new MachineSet(new FakeMachine(null, sessions));
         var calls = new SocketDispatcher(f.Db.Writer, topics, TimeProvider.System, NullLogger.Instance);
-        new RowsFeature(hub, store, sessions, machines, new DiskPathProbe(), new SessionRowSources(f.Db, sessions, machines)).Register(calls);
+        new RowsFeature(hub, store, sessions, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), new SessionRowSources(f.Db, sessions, machines)).Register(calls);
         await using var app = await Start(calls, f.Machine);
         using var socket = await Connect(app);
         var expected = new ExpectedSource(f.Machine, 0, null);

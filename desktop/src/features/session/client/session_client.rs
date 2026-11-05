@@ -69,6 +69,12 @@ pub enum CallError {
 }
 
 impl CallError {
+    /// Whether the owner refused the call because the session's source changed, so its captured source is no longer
+    /// valid.
+    pub fn is_source_changed(&self) -> bool {
+        matches!(self, CallError::Refused { code, .. } if code == "source_changed")
+    }
+
     /// Why, in words, for a line under what failed.
     pub fn reason(&self) -> String {
         match self {

@@ -87,7 +87,7 @@ public sealed class BoardRemoteTests
             "board-test", sdk, source.Db.Writer, source.Topics,
             [new Assembly.Infrastructure.Engine.EngineCalls(runtime, source.Time, answers),
                 new Assembly.Infrastructure.Engine.MachineCalls(runtime, source.Time, launcher, checkouts, answers),
-                new WorkflowCalls(source.Queries, tools.AnswerAsync), new RowsFeature(hub, rows, sessions, machines, new DiskPathProbe()),
+                new WorkflowCalls(source.Queries, tools.AnswerAsync), new RowsFeature(hub, rows, sessions, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)),
                 new SessionsFeature(sessions, machines, owningMachine: runtime.Machine, owningHome: checkouts), new MachinesFeature(machines, new MachineStatus(source.Topics, []), () => { }, source.Time)], tools, Engine: runtime), 0, out _);
         app.Lifetime.ApplicationStopping.Register(endpoint.Stop);
         await app.StartAsync();

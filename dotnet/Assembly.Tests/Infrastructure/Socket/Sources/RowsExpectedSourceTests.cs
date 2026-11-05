@@ -41,7 +41,7 @@ public sealed class RowsExpectedSourceTests
         var session = sessions.Create("codex", "repo").SessionId; f.SeedSession(session);
         using var hub = new LiveHub(RowStore.Open(f.Db), topics: topics);
         var machines = new MachineSet(new FakeMachine(null, sessions));
-        await using var host = await SocketHost.Start(f, topics, new RowsFeature(hub, RowStore.Open(f.Db), sessions, machines, new DiskPathProbe()));
+        await using var host = await SocketHost.Start(f, topics, new RowsFeature(hub, RowStore.Open(f.Db), sessions, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)));
         var expected = new ExpectedSource(f.Machine, 0, null);
         using var control = await host.Open();
         await Subscribe(control, session, expected);
@@ -66,7 +66,7 @@ public sealed class RowsExpectedSourceTests
         Publish(hub, session, "LOCAL_OWNER");
         var machines = new MachineSet(new FakeMachine(null, sessions));
         await using var host = await SocketHost.Start(f, topics,
-            new RowsFeature(hub, store, sessions, machines, new DiskPathProbe(), new SessionRowSources(f.Db, sessions, machines)));
+            new RowsFeature(hub, store, sessions, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), new SessionRowSources(f.Db, sessions, machines)));
         var expected = new ExpectedSource(f.Machine, 0, null);
         using var bulk = await host.Open(bulk: true);
         await Call(bulk, 1, "page", session, expected);
@@ -429,7 +429,7 @@ public sealed class RowsExpectedSourceTests
                     var machines = new MachineSet(new FakeMachine(null, host.Sessions));
                     f.OwnerHub = new(store, topics: host.Topics); f._ownerHubs.Add(f.OwnerHub);
                     f.OwnerSources = new(new SessionRowSources(host.Fixture.Db, host.Sessions, machines));
-                    new RowsFeature(f.OwnerHub, store, host.Sessions, machines, new DiskPathProbe(), f.OwnerSources).Register(calls);
+                    new RowsFeature(f.OwnerHub, store, host.Sessions, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), f.OwnerSources).Register(calls);
                 };
                 await f.Hosts.Start();
                 f.Session = f.Hosts.Remote.Sessions.Create("codex", "repo").SessionId;
@@ -443,7 +443,7 @@ public sealed class RowsExpectedSourceTests
                 Publish(f._localHub, f.Session, "POISONED_COPY"); Child(f._localHub, f.Session, "poison-child");
                 var machines = new MachineSet(new FakeMachine(null, local.Sessions));
                 f.Sources = new(new SessionRowSources(local.Fixture.Db, local.Sessions, machines, f.Hosts.Connections));
-                f.Socket = await SocketHost.Start(local.Fixture, local.Topics, new RowsFeature(f._localHub, store, local.Sessions, machines, new DiskPathProbe(), f.Sources));
+                f.Socket = await SocketHost.Start(local.Fixture, local.Topics, new RowsFeature(f._localHub, store, local.Sessions, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), f.Sources));
                 f.Expected = f.CurrentSource();
                 return f;
             }

@@ -4,6 +4,7 @@
 //! image full size, as the Attachments card does.
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::list::ListItem;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -18,12 +19,7 @@ use crate::section_card::SectionCard;
 impl ContextPane {
     pub(super) fn files_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, success, danger, hover) = (
-            theme.muted_foreground,
-            theme.success,
-            theme.danger,
-            theme.muted,
-        );
+        let (muted, success, danger) = (theme.muted_foreground, theme.success, theme.danger);
         let note = |id: &'static str, text: SharedString| {
             div()
                 .debug_selector(move || id.into())
@@ -48,57 +44,56 @@ impl ContextPane {
                         let selector = format!("touched-file-{}", file.path);
                         let chip = format!("touched-count-{}", file.path);
                         let clicked = file.clone();
-                        h_flex()
-                            .id(("touched-file", index))
+                        let line =
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_color(look.name_color)
+                                        .child(look.name),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        // A path's end says more than its start.
+                                        .text_ellipsis_start()
+                                        .text_color(look.folder_color)
+                                        .child(look.folder),
+                                )
+                                .when(file.count > 1, |row| {
+                                    row.child(div().flex_none().debug_selector(move || chip).child(
+                                        StatusChip::new(file.count.to_string(), Tone::Neutral),
+                                    ))
+                                })
+                                .when(file.added > 0, |row| {
+                                    row.child(
+                                        div()
+                                            .flex_none()
+                                            .text_color(success)
+                                            .child(format!("+{}", file.added)),
+                                    )
+                                })
+                                .when(file.removed > 0, |row| {
+                                    row.child(
+                                        div()
+                                            .flex_none()
+                                            .text_color(danger)
+                                            .child(format!("-{}", file.removed)),
+                                    )
+                                });
+                        ListItem::new(("touched-file", index))
                             .debug_selector(move || selector)
-                            .h(px(28.))
-                            .px_2()
-                            .gap_2()
                             .cursor_pointer()
-                            .hover(|row| row.bg(hover))
                             .on_click(cx.listener(move |pane, _, window, cx| {
                                 pane.open_touched(&clicked, window, cx)
                             }))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_color(look.name_color)
-                                    .child(look.name),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    // A path's end says more than its start.
-                                    .text_ellipsis_start()
-                                    .text_color(look.folder_color)
-                                    .child(look.folder),
-                            )
-                            .when(file.count > 1, |row| {
-                                row.child(
-                                    div().flex_none().debug_selector(move || chip).child(
-                                        StatusChip::new(file.count.to_string(), Tone::Neutral),
-                                    ),
-                                )
-                            })
-                            .when(file.added > 0, |row| {
-                                row.child(
-                                    div()
-                                        .flex_none()
-                                        .text_color(success)
-                                        .child(format!("+{}", file.added)),
-                                )
-                            })
-                            .when(file.removed > 0, |row| {
-                                row.child(
-                                    div()
-                                        .flex_none()
-                                        .text_color(danger)
-                                        .child(format!("-{}", file.removed)),
-                                )
-                            })
+                            .child(line)
                     },
                 ))
             }

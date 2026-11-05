@@ -108,7 +108,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         new SessionsFeature(_sessions, machines, new SessionRowSources(_db, _sessions, machines), roots,
             _engine.Machine, _home.FullName, remoteCreate: PrepareRemoteCreate).Register(calls);
         new SendFeature(_sessions, machines, _hub, _answers).Register(calls);
-        new RowsFeature(_hub, rows, _sessions, machines, new DiskPathProbe()).Register(calls);
+        new RowsFeature(_hub, rows, _sessions, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)).Register(calls);
         new ConfigFeature(_sessions, machines).Register(calls);
         new MachinesFeature(machines, new MachineStatus(topics, ["box"]), () => { }, TimeProvider.System).Register(calls);
         new PreferencesFeature(_db).Register(calls);
