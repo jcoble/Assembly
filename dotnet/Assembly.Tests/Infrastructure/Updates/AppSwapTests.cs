@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Updates;
 
 namespace Assembly.Tests.Infrastructure.Updates;
@@ -7,7 +8,7 @@ namespace Assembly.Tests.Infrastructure.Updates;
 /// <summary>The helper on real processes and a real rename, with shell scripts as the two versions of the app.</summary>
 public sealed class AppSwapTests : IDisposable
 {
-    private const string Silent = "sleep 300 & echo $! > \"$HOME_DIR/backend.lock.pid\"; exec sleep 300";
+    private const string Silent = "sleep 300 & echo $! > \"$HOME_DIR/backend.lock.pid\"; echo $! > \"$HOME_DIR/its-backend.pid\"; exec sleep 300";
     private readonly string _root = Directory.CreateTempSubdirectory("appswap-").FullName;
     private readonly List<Process> _started = [];
     private string App => Path.Combine(_root, "Assembly.app");
@@ -21,7 +22,7 @@ public sealed class AppSwapTests : IDisposable
     public void Dispose()
     {
         foreach (var file in Directory.GetFiles(_root, "*.pid", SearchOption.AllDirectories))
-            if (int.TryParse(File.ReadAllText(file).Trim(), out var pid)) StopIfRunning(pid);
+            if (int.TryParse(File.ReadAllText(file).Trim(), out var pid) && pid != Environment.ProcessId) StopIfRunning(pid);
         foreach (var process in _started) { if (!process.HasExited) process.Kill(); process.Dispose(); }
         Directory.Delete(_root, recursive: true);
     }
@@ -129,16 +130,14 @@ public sealed class AppSwapTests : IDisposable
         var (plan, window, backend) = Prepared($"echo migrated > '{Database}'\nrm -f '{Database}-wal'\nexit 3");
         File.WriteAllText(Path.Combine(Folder, "assembly-before-1.0.0.db"), "an older copy");
         File.WriteAllText(Database + ".failed-1.5.0", "an older failure");
-        // A turn's last rows, in the database and still in its write-ahead log, after the plan was written.
+        // A turn's last rows, after the plan was written. The real database below has them in its log as well.
         File.WriteAllText(Database, "written late");
-        File.WriteAllText(Database + "-wal", "written later");
         End(window); End(backend);
 
         Assert.Equal(1, await AppSwap.RunAsync(plan).WaitAsync(TimeSpan.FromSeconds(30)));
 
         Assert.Equal("written late", File.ReadAllText(Database));
-        Assert.Equal("written later", File.ReadAllText(Database + "-wal"));
-        Assert.Equal([Path.GetFileName(Backup), Path.GetFileName(Backup) + "-wal"], Directory.GetFiles(Folder, "assembly-before-*").Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.Equal([Path.GetFileName(Backup)], Directory.GetFiles(Folder, "assembly-before-*").Select(Path.GetFileName).Order(StringComparer.Ordinal));
         Assert.False(File.Exists(Database + ".failed-1.5.0"));
         Assert.True(File.Exists(Database + ".failed-2.0.0"));
     }
@@ -213,6 +212,7 @@ public sealed class AppSwapTests : IDisposable
     }
 
     private const string CheckProgram = "Contents/Resources/backend/check";
+    private string Mark => Path.Combine(Folder, AppSwap.InstalledMark);
 
     // The new version's check, beside its window program, which writes new.pid if anything opens it.
     private void Checks(string body)
@@ -237,8 +237,11 @@ public sealed class AppSwapTests : IDisposable
         Assert.False(File.Exists(Path.Combine(Home, "new.pid")));
         Assert.False(File.Exists(Path.Combine(Home, "old.pid")));
         Assert.Equal("migrated\n", File.ReadAllText(Database));
-        Assert.False(Directory.Exists(Stage));
         Assert.False(File.Exists(Path.Combine(Folder, "failed.json")));
+        // Only the next launch saying its window is up lets these go.
+        Assert.Equal("old", File.ReadAllText(Path.Combine(Fresh, "version")));
+        Assert.Equal("original", File.ReadAllText(Backup));
+        Assert.True(File.Exists(Mark));
     }
 
     [Fact]
@@ -270,7 +273,7 @@ public sealed class AppSwapTests : IDisposable
 
         Assert.Equal("old", Running("old"));
         Assert.False(Alive(await Started("new")));
-        Assert.False(Alive(int.Parse(File.ReadAllText(Path.Combine(Home, "backend.lock.pid")).Trim())));
+        Assert.False(Alive(int.Parse(File.ReadAllText(Path.Combine(Home, "its-backend.pid")).Trim())));
         Assert.True(Alive(await Started("old")));
     }
 
@@ -318,5 +321,207 @@ public sealed class AppSwapTests : IDisposable
         Assert.Equal("old", Running("old"));
         Assert.Equal("Assembly 2.0.0 couldn't be put in place, so this app stayed on 1.0.0.", SaidNote());
         Assert.True(Alive(await Started("old")));
+    }
+
+    private async Task Appears(string name)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        while (!File.Exists(Path.Combine(Home, name))) await Task.Delay(20, deadline.Token);
+    }
+
+    [Fact]
+    public async Task While_the_helper_works_a_reopened_backend_stops_with_home_in_use()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (plan, window, backend) = Prepared(Acknowledges);
+        Checks($"touch '{Home}/checking'\nwhile [ ! -e '{Home}/go' ]; do sleep 0.05; done\nexit 0");
+        End(window); End(backend);
+
+        var running = AppSwap.RunAsync(plan with { Check = CheckProgram });
+        await Appears("checking");
+
+        Assert.Contains("home in use", Assert.Throws<InvalidOperationException>(() => HomeLock.Take(Home)).Message, StringComparison.Ordinal);
+        File.WriteAllText(Path.Combine(Home, "go"), "");
+        Assert.Equal(0, await running.WaitAsync(TimeSpan.FromSeconds(30)));
+        using var free = HomeLock.Take(Home);
+    }
+
+    [Fact]
+    public async Task A_helper_that_finds_the_app_reopened_touches_nothing_and_goes_away()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (plan, window, backend) = Prepared(Acknowledges);
+        Checks($"echo migrated > '{Database}'\nexit 0");
+        End(window); End(backend);
+        using var reopened = HomeLock.Take(Home);
+
+        Assert.Equal(1, await AppSwap.RunAsync(plan with { Check = CheckProgram }).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        Assert.Equal("old", Running("old"));
+        Assert.Equal("original", File.ReadAllText(Database));
+        Assert.False(File.Exists(Backup));
+        Assert.False(File.Exists(Mark));
+        Assert.False(File.Exists(Path.Combine(Folder, "failed.json")));
+        Assert.False(Directory.Exists(Stage));
+    }
+
+    [Fact]
+    public async Task On_a_press_the_new_window_gets_the_home_the_helper_held()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (plan, window, backend) = Prepared("flock -n \"$HOME_DIR/backend.lock\" true || exit 7\n" + Acknowledges);
+        End(window); End(backend);
+
+        Assert.Equal(0, await AppSwap.RunAsync(plan).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        Assert.Equal("new", Running("new"));
+    }
+
+    [Fact]
+    public async Task A_new_version_silent_before_its_backend_starts_never_has_the_helper_stop_itself()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (plan, window, backend) = Prepared("exec sleep 300", acknowledge: 1);
+        End(window); End(backend);
+
+        Assert.Equal(1, await AppSwap.RunAsync(plan).WaitAsync(TimeSpan.FromSeconds(60)));
+
+        Assert.Equal("old", Running("old"));
+        Assert.True(Alive(await Started("old")));
+    }
+
+    [Fact]
+    public async Task A_going_back_with_the_app_opened_meanwhile_leaves_its_database_alone_and_says_why()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (plan, window, backend) = Prepared($"echo migrated > '{Database}'\n{Silent}", acknowledge: 3);
+        End(window); End(backend);
+
+        var running = AppSwap.RunAsync(plan);
+        await Started("new");
+        using var reopened = HomeLock.Take(Home);
+
+        Assert.Equal(1, await running.WaitAsync(TimeSpan.FromSeconds(60)));
+
+        Assert.Equal("migrated\n", File.ReadAllText(Database));
+        Assert.Contains("open again", SaidNote(), StringComparison.Ordinal);
+        Assert.True(Directory.Exists(Stage));
+    }
+
+    // An install on quit, up to where the app stays closed: what the next launch finds.
+    private async Task<AppSwapPlan> InstalledOnQuit(int acknowledge = 30)
+    {
+        var (plan, window, backend) = Prepared(Acknowledges, acknowledge);
+        Checks($"echo migrated > '{Database}'\nexit 0");
+        End(window); End(backend);
+        Assert.Equal(0, await AppSwap.RunAsync(plan with { Check = CheckProgram }).WaitAsync(TimeSpan.FromSeconds(30)));
+        var (nextWindow, nextBackend) = (Sleeper(), Sleeper());
+        return plan with { Watch = true, WindowPid = nextWindow.Id, WindowStart = AppSwap.StartOf(nextWindow.Id), BackendPid = nextBackend.Id, BackendStart = AppSwap.StartOf(nextBackend.Id) };
+    }
+
+    private Process Own(int pid) => _started.Single(process => process.Id == pid);
+
+    [Fact]
+    public async Task The_next_launch_saying_its_window_is_up_lets_the_old_app_and_the_copy_go()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var watch = await InstalledOnQuit();
+
+        var running = AppSwap.RunAsync(watch);
+        await Task.WhenAny(running, Task.Delay(300));
+        Assert.False(running.IsCompleted);
+        AppSwap.Acknowledge(Folder, "2.0.0");
+
+        Assert.Equal(0, await running.WaitAsync(TimeSpan.FromSeconds(30)));
+        Assert.Equal("new", Running("new"));
+        Assert.Equal("migrated\n", File.ReadAllText(Database));
+        Assert.False(Directory.Exists(Stage));
+        Assert.False(File.Exists(Backup));
+        Assert.False(File.Exists(Mark));
+        Assert.False(File.Exists(Path.Combine(Folder, "failed.json")));
+        Assert.False(Own(watch.WindowPid).HasExited);
+    }
+
+    [Fact]
+    public async Task A_window_that_came_up_before_the_watch_started_still_counts()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var watch = await InstalledOnQuit();
+        AppSwap.Acknowledge(Folder, "2.0.0");
+
+        Assert.Equal(0, await AppSwap.RunAsync(watch).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        Assert.Equal("new", Running("new"));
+        Assert.False(Directory.Exists(Stage));
+    }
+
+    [Fact]
+    public async Task A_next_launch_whose_backend_exits_first_puts_the_old_app_and_database_back_opens_it_and_says_so()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var watch = await InstalledOnQuit();
+        var running = AppSwap.RunAsync(watch);
+        End(Own(watch.BackendPid));
+
+        Assert.Equal(1, await running.WaitAsync(TimeSpan.FromSeconds(60)));
+
+        Assert.Equal("old", Running("old"));
+        Assert.Equal("original", File.ReadAllText(Database));
+        Assert.Equal("migrated\n", File.ReadAllText(Database + ".failed-2.0.0"));
+        Assert.Equal("Assembly 2.0.0 didn't start, so this app went back to 1.0.0.", SaidNote());
+        Assert.True(Own(watch.WindowPid).HasExited);
+        Assert.True(Alive(await Started("old")));
+        Assert.False(File.Exists(Mark));
+        Assert.False(Directory.Exists(Stage));
+    }
+
+    [Fact]
+    public async Task A_next_launch_that_never_says_its_window_is_up_is_stopped_and_the_old_app_comes_back()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var watch = await InstalledOnQuit(acknowledge: 1);
+
+        Assert.Equal(1, await AppSwap.RunAsync(watch).WaitAsync(TimeSpan.FromSeconds(60)));
+
+        Assert.Equal("old", Running("old"));
+        Assert.Equal("original", File.ReadAllText(Database));
+        Assert.True(Own(watch.WindowPid).HasExited);
+        Assert.True(Own(watch.BackendPid).HasExited);
+        Assert.Equal("Assembly 2.0.0 didn't start, so this app went back to 1.0.0.", SaidNote());
+    }
+
+    [Fact]
+    public async Task A_database_is_at_its_path_at_every_moment_of_a_going_back()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (plan, window, backend) = Prepared("exit 3");
+        File.WriteAllBytes(Database, new byte[64 * 1024 * 1024]);
+        End(window); End(backend);
+
+        var running = AppSwap.RunAsync(plan);
+        var swapped = false;
+        while (!running.IsCompleted)
+        {
+            swapped |= Running("new") == "new";
+            if (swapped) Assert.True(File.Exists(Database), "No database at its path during the going back.");
+            await Task.Yield();
+        }
+
+        Assert.Equal(1, await running);
+        Assert.Equal(64 * 1024 * 1024, new FileInfo(Database).Length);
+    }
+
+    [Fact]
+    public async Task A_copy_that_cannot_be_read_leaves_the_database_where_it_is_and_says_where_the_copy_is()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (plan, window, backend) = Prepared($"echo migrated > '{Database}'\nchmod 000 '{Backup}'\nexit 3");
+        End(window); End(backend);
+
+        Assert.Equal(1, await AppSwap.RunAsync(plan).WaitAsync(TimeSpan.FromSeconds(60)));
+
+        Assert.Equal("migrated\n", File.ReadAllText(Database));
+        Assert.Contains("database couldn't be put back", SaidNote(), StringComparison.Ordinal);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(Backup, (UnixFileMode)0b110_000_000);
     }
 }

@@ -5,16 +5,20 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Assembly.Infrastructure.Persistence;
+using Microsoft.Data.Sqlite;
 
 namespace Assembly.Infrastructure.Updates;
 
 /// <summary>
 /// What the helper needs, written by the old version and read by the new one. <paramref name="Check"/> is set for an install
 /// on quit: the program in the new bundle that proves it starts, run in place of opening the window, which stays closed.
+/// <paramref name="Watch"/> is set on the launch after that one: the bundles are already swapped, and the helper waits to hear
+/// the window came up.
 /// </summary>
 internal sealed record AppSwapPlan(string App, string Fresh, string Program, string Stage, string Folder, string Version, string Previous,
     string Database, string Backup, int WindowPid, long WindowStart, int BackendPid, long BackendStart, int QuitSeconds, int AcknowledgeSeconds,
-    string? Check = null)
+    string? Check = null, bool Watch = false)
 {
     internal static AppSwapPlan For(AppLocation location, string fresh, string program, string stage, string version, string backup, int window)
     {
@@ -36,16 +40,21 @@ internal sealed partial class AppSwapJson : JsonSerializerContext;
 /// The helper, run from the new bundle after leaving the old app's process group. It waits for exactly the old window and
 /// backend to exit, copies the database they left, swaps the bundles in one rename, starts the new one, and waits to hear from
 /// it. After a quit it doesn't open the new one: it runs the new version's check, which opens the database, and leaves the app
-/// closed either way. A new version that exits or stays silent is stopped, by its own process id only, and the old bundle and
-/// database go back.
+/// closed either way, with the old bundle and the copy kept: a database that opens doesn't prove a window does, so only the next
+/// launch saying it's up lets them go. A new version that exits or stays silent is stopped, by its own process id only, and the
+/// old bundle and database go back.
+/// It holds the home lock whenever nothing else should have the database, so a reopened backend stops with home in use.
 /// Only the latest copy and the latest failed database are kept.
 /// </summary>
 internal static partial class AppSwap
 {
     internal const string Ready = "ready";
     internal const string BackupPrefix = "assembly-before-";
-    // The -shm file is only an index of the log, and SQLite rebuilds it on the first open, so it's moved aside but never copied.
-    private static readonly string[] DatabaseFiles = ["", "-wal", "-shm"];
+    /// <summary>Beside the plan, held for as long as a helper runs from that folder, so staging can tell.</summary>
+    internal const string HelperMark = "helper.lock";
+    /// <summary>In the update's folder from an install on quit until its window is up: the plan that can still undo it.</summary>
+    internal const string InstalledMark = "installed.json";
+    // The -shm file is only an index of the log, and SQLite rebuilds it on the first open, so it's never copied.
     private static readonly string[] KeptFiles = ["-wal", ""];
     private const string Socket = "ack.sock";
     private static readonly TimeSpan StartTolerance = TimeSpan.FromSeconds(1);
@@ -68,6 +77,12 @@ internal static partial class AppSwap
 
     internal static async Task<int> RunAsync(AppSwapPlan plan)
     {
+        using var running = new FileStream(Path.Combine(plan.Stage, HelperMark), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        return plan.Watch ? await WatchAsync(plan) : await InstallAsync(plan);
+    }
+
+    private static async Task<int> InstallAsync(AppSwapPlan plan)
+    {
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(plan.QuitSeconds));
         try
         {
@@ -81,6 +96,19 @@ internal static partial class AppSwap
             return 1;
         }
         Directory.CreateDirectory(plan.Folder);
+        // Opened again already: that app has the files, and installs at its own quit. Nothing here has touched them.
+        var home = await TakeHomeAsync(plan);
+        if (home is null)
+        {
+            Remove(plan.Stage);
+            return 1;
+        }
+        try { return await SwapAsync(plan, home); }
+        finally { await home.DisposeAsync(); }
+    }
+
+    private static async Task<int> SwapAsync(AppSwapPlan plan, FileStream home)
+    {
         var address = Path.Combine(plan.Folder, Socket);
         File.Delete(address);
         using var listener = new System.Net.Sockets.Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
@@ -95,6 +123,7 @@ internal static partial class AppSwap
         {
             Say(plan, $"Assembly {plan.Version} couldn't be put in place, so this app stayed on {plan.Previous}.");
             File.Delete(address);
+            await home.DisposeAsync();
             Relaunch(plan);
             return 1;
         }
@@ -102,31 +131,118 @@ internal static partial class AppSwap
         Process? child = null;
         try
         {
+            // A window's backend takes the home itself, so it's free from here until this has to go back.
+            if (plan.Check is null) await home.DisposeAsync();
             child = plan.Check is null ? Launch(plan) : Check(plan);
             if (plan.Check is null ? await AcknowledgedAsync(listener, child, plan) : await CheckedAsync(child, plan))
             {
                 File.Delete(address);
-                Remove(plan.Stage);
+                if (plan.Check is null) Remove(plan.Stage);
+                else WriteMark(plan);
                 return 0;
             }
         }
-        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception or InvalidOperationException) { }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException) { }
         if (child is not null) await StopAsync(child);
         await StopBackendAsync(plan, swapped);
+        File.Delete(address);
+        var held = plan.Check is null ? await TakeHomeAsync(plan) : home;
+        if (held is null)
+        {
+            Say(plan, OpenAgain(plan));
+            return 1;
+        }
+        await using (held) return await WentBackAsync(plan, held);
+    }
+
+    private static string OpenAgain(AppSwapPlan plan) =>
+        $"Assembly {plan.Version} didn't start, and {plan.Previous} couldn't be put back because Assembly is open again. It's kept in {plan.Fresh}.";
+
+    private static async Task<int> WentBackAsync(AppSwapPlan plan, FileStream home)
+    {
         if (await GoBackAsync(plan) is { } stuck)
         {
             // The stage may hold the old app now, so it stays, and whatever is in place opens with the reason on it.
             Say(plan, stuck);
-            File.Delete(address);
+            await home.DisposeAsync();
             if (plan.Check is not null) return 1;
             try { using (Launch(plan)) { } }
             catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception or InvalidOperationException) { }
             return 1;
         }
         Say(plan, $"Assembly {plan.Version} didn't start, so this app went back to {plan.Previous}.");
-        File.Delete(address);
+        await home.DisposeAsync();
         Relaunch(plan);
         return 1;
+    }
+
+    // The launch after an install on quit: the window saying it's up, which removes the mark, is the only thing that lets the old
+    // app go. Its backend leaving first, or nothing in time, and the old one comes back with the reason on it.
+    private static async Task<int> WatchAsync(AppSwapPlan plan)
+    {
+        var mark = Path.Combine(plan.Folder, InstalledMark);
+        var address = Path.Combine(plan.Folder, Socket);
+        File.Delete(address);
+        using (var listener = new System.Net.Sockets.Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified))
+        {
+            listener.Bind(new UnixDomainSocketEndPoint(address));
+            listener.Listen(1);
+            // Bound before this look, so a window that comes up after it is heard.
+            if (File.Exists(mark))
+            {
+                using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(plan.AcknowledgeSeconds));
+                try { await await Task.WhenAny(HearAsync(listener, plan.Version, limit.Token), ExitOf(plan.BackendPid, plan.BackendStart, limit.Token)); }
+                catch (OperationCanceledException) { }
+            }
+        }
+        File.Delete(address);
+        if (!File.Exists(mark))
+        {
+            foreach (var suffix in KeptFiles) File.Delete(plan.Backup + suffix);
+            Remove(plan.Stage);
+            return 0;
+        }
+        await StopSameAsync(plan.WindowPid, plan.WindowStart);
+        await StopSameAsync(plan.BackendPid, plan.BackendStart);
+        var home = await TakeHomeAsync(plan);
+        if (home is null)
+        {
+            Say(plan, OpenAgain(plan));
+            return 1;
+        }
+        File.Delete(mark);
+        await using (home) return await WentBackAsync(plan, home);
+    }
+
+    private static void WriteMark(AppSwapPlan plan)
+    {
+        var mark = Path.Combine(plan.Folder, InstalledMark);
+        File.WriteAllBytes(mark + ".partial", JsonSerializer.SerializeToUtf8Bytes(plan with { Check = null }, AppSwapJson.Default.AppSwapPlan));
+        File.Move(mark + ".partial", mark, overwrite: true);
+    }
+
+    // The lock frees as the holder exits, so a moment's wait tells that apart from a backend really holding it.
+    private static async Task<FileStream?> TakeHomeAsync(AppSwapPlan plan)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try { return HomeLock.Take(Path.GetDirectoryName(plan.Database)!); }
+            catch (Exception error) when (error is InvalidOperationException or IOException)
+            {
+                if (attempt == SwapAttempts) return null;
+                await Task.Delay(TimeSpan.FromSeconds(1));
+            }
+        }
+    }
+
+    private static async Task StopSameAsync(int pid, long start)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            if (Math.Abs(process.StartTime.ToUniversalTime().Ticks - start) <= StartTolerance.Ticks) await StopAsync(process);
+        }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException) { }
     }
 
     // Null when all of it went back; otherwise what's still wrong.
@@ -139,7 +255,7 @@ internal static partial class AppSwap
             catch (IOException) { return $"Assembly {plan.Version} didn't start, and {plan.Previous} couldn't be put back. It's kept in {plan.Fresh}."; }
         }
         try { Restore(plan); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or SqliteException)
         { return $"Assembly {plan.Version} didn't start. This app went back to {plan.Previous}, but its database couldn't be put back. The copy is {plan.Backup}."; }
         return null;
     }
@@ -228,6 +344,8 @@ internal static partial class AppSwap
     /// <summary>The new version's backend says its window is up. With no update waiting there's nobody to tell.</summary>
     internal static void Acknowledge(string folder, string version)
     {
+        var mark = Path.Combine(folder, InstalledMark);
+        if (File.Exists(mark)) File.Delete(mark);
         var address = Path.Combine(folder, Socket);
         if (!File.Exists(address)) return;
         try
@@ -258,28 +376,43 @@ internal static partial class AppSwap
         var file = Path.Combine(Path.GetDirectoryName(plan.Database)!, "backend.lock.pid");
         try
         {
-            if (File.GetLastWriteTimeUtc(file) < swapped - StartTolerance || !int.TryParse((await File.ReadAllTextAsync(file)).Trim(), CultureInfo.InvariantCulture, out var pid)) return;
+            // This helper wrote it too, when it took the lock, and a backend that never started won't have replaced that.
+            if (File.GetLastWriteTimeUtc(file) < swapped - StartTolerance || !int.TryParse((await File.ReadAllTextAsync(file)).Trim(), CultureInfo.InvariantCulture, out var pid) || pid == Environment.ProcessId) return;
             using var backend = Process.GetProcessById(pid);
             await StopAsync(backend);
         }
         catch (Exception error) when (error is IOException or ArgumentException or UnauthorizedAccessException or InvalidOperationException) { }
     }
 
-    // A migrated database can't be read by the older version. What's there is kept beside it, not deleted.
+    // A migrated database can't be read by the older version. What's there is kept beside it, not deleted, and the backup goes in
+    // whole as one file, by one rename: a stop at any moment leaves a database at the path.
     private static void Restore(AppSwapPlan plan)
     {
         if (!File.Exists(plan.Backup)) return;
+        var whole = plan.Database + ".restoring";
+        foreach (var suffix in KeptFiles)
+            if (File.Exists(plan.Backup + suffix)) File.Copy(plan.Backup + suffix, whole + suffix, overwrite: true);
+        if (File.Exists(whole + "-wal")) Fold(whole);
         var name = Path.GetFileName(plan.Database);
         foreach (var old in Directory.EnumerateFiles(Path.GetDirectoryName(plan.Database)!, name + "*.failed-*")) File.Delete(old);
-        foreach (var suffix in DatabaseFiles)
+        if (File.Exists(plan.Database)) File.Copy(plan.Database, $"{plan.Database}.failed-{plan.Version}", overwrite: true);
+        // A log can't stay beside a database it isn't from. With it gone what's at the path is still whole, as of its last checkpoint.
+        foreach (var suffix in new[] { "-wal", "-shm" })
             if (File.Exists(plan.Database + suffix)) File.Move(plan.Database + suffix, $"{plan.Database}{suffix}.failed-{plan.Version}", overwrite: true);
-        foreach (var suffix in KeptFiles)
+        File.Move(whole, plan.Database, overwrite: true);
+    }
+
+    // Writes what's only in the log into the file itself, on the copy and with nothing else open, so one rename can place all of it.
+    private static void Fold(string file)
+    {
+        using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = file, Pooling = false }.ToString()))
         {
-            if (!File.Exists(plan.Backup + suffix)) continue;
-            var partial = plan.Database + suffix + ".partial";
-            File.Copy(plan.Backup + suffix, partial, overwrite: true);
-            File.Move(partial, plan.Database + suffix);
+            db.Open();
+            using var checkpoint = db.CreateCommand();
+            checkpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
+            checkpoint.ExecuteNonQuery();
         }
+        foreach (var suffix in new[] { "-wal", "-shm" }) File.Delete(file + suffix);
     }
 
     private static void Say(AppSwapPlan plan, string note)

@@ -123,6 +123,125 @@ public sealed class AppUpdateTests : IDisposable
     }
 
     [Fact]
+    public async Task A_quit_with_the_last_install_unconfirmed_installs_nothing_as_its_copy_is_the_way_back()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var update = Update(Feed(Package("2.0.0")));
+        await update.StageAsync("2.0.0", _ => { }, default);
+        Directory.CreateDirectory(Path.Combine(_root, "home/app-update"));
+        File.WriteAllText(Installed, "{}");
+
+        await update.InstallOnQuitAsync(default);
+
+        Assert.Empty(_steps);
+    }
+
+    private string Installed => Path.Combine(_root, "home/app-update", AppSwap.InstalledMark);
+
+    // What an install on quit leaves, for this running version.
+    private string KeptFrom(string version)
+    {
+        var kept = Path.Combine(Apps, $".assembly-update-{version}");
+        Directory.CreateDirectory(kept);
+        Directory.CreateDirectory(Path.GetDirectoryName(Installed)!);
+        var plan = new AppSwapPlan(App, Path.Combine(kept, "new/Assembly.app"), "Contents/MacOS/assembly-desktop", kept, Path.GetDirectoryName(Installed)!, version, "0.9.0",
+            Path.Combine(_root, "home/assembly.db"), Path.Combine(_root, "home/app-update/assembly-before.db"), 1, 1, 1, 1, 300, 120);
+        File.WriteAllBytes(Installed, JsonSerializer.SerializeToUtf8Bytes(plan, AppSwapJson.Default.AppSwapPlan));
+        return kept;
+    }
+
+    [Fact]
+    public async Task The_launch_after_an_install_on_quit_starts_a_watch_on_this_app_and_a_later_one_starts_nothing()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var update = Update(Feed(Package("2.0.0")));
+        var kept = KeptFrom("1.0.0");
+
+        await update.WatchFirstStartAsync(default);
+
+        Assert.Equal(["helper"], _steps);
+        using (var plan = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(kept, "plan.json"))))
+        {
+            Assert.True(plan.RootElement.GetProperty("watch").GetBoolean());
+            Assert.Equal(Environment.ProcessId, plan.RootElement.GetProperty("backendPid").GetInt32());
+        }
+
+        update.Started();
+        Assert.False(File.Exists(Installed));
+        await update.WatchFirstStartAsync(default);
+        Assert.Equal(["helper"], _steps);
+    }
+
+    [Fact]
+    public async Task A_mark_for_another_version_watches_nothing_and_is_dropped()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var update = Update(Feed(Package("2.0.0")));
+        KeptFrom("3.0.0");
+
+        await update.WatchFirstStartAsync(default);
+
+        Assert.Empty(_steps);
+        Assert.False(File.Exists(Installed));
+    }
+
+    [Fact]
+    public async Task Staging_leaves_the_folder_a_live_helper_runs_from_and_the_one_an_install_kept()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var update = Update(Feed(Package("2.0.0")));
+        var kept = KeptFrom("1.0.0");
+        var live = Path.Combine(Apps, ".assembly-update-1.5.0");
+        Directory.CreateDirectory(live);
+        var done = Path.Combine(Apps, ".assembly-update-1.6.0");
+        Directory.CreateDirectory(done);
+        File.WriteAllText(Path.Combine(done, AppSwap.HelperMark), "");
+        using var helper = new FileStream(Path.Combine(live, AppSwap.HelperMark), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+        await update.StageAsync("2.0.0", _ => { }, default);
+
+        Assert.True(Directory.Exists(kept));
+        Assert.True(Directory.Exists(live));
+        Assert.False(Directory.Exists(done));
+        Assert.Equal("2.0.0", update.Ready);
+    }
+
+    [Fact]
+    public async Task Staging_the_version_a_live_helper_runs_from_changes_nothing_of_it()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var update = Update(Feed(Package("2.0.0")));
+        Directory.CreateDirectory(Stage);
+        using var helper = new FileStream(Path.Combine(Stage, AppSwap.HelperMark), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+        await Assert.ThrowsAsync<CallFailed>(() => update.StageAsync("2.0.0", _ => { }, default));
+
+        Assert.True(File.Exists(Path.Combine(Stage, AppSwap.HelperMark)));
+    }
+
+    [Fact]
+    public async Task A_helper_that_outlives_the_quits_limit_is_stopped_not_left_running()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var folder = Path.Combine(_root, "helper");
+        Directory.CreateDirectory(folder);
+        var script = Path.Combine(_root, "slow-helper");
+        var pidFile = Path.Combine(folder, "pid");
+        File.WriteAllText(script, $"#!/bin/sh\necho $$ > '{pidFile}'\nexec sleep 300\n");
+        File.SetUnixFileMode(script, (UnixFileMode)0b111_101_101);
+        using var limit = new CancellationTokenSource();
+
+        var starting = AppUpdate.StartHelperAsync(script, Path.Combine(folder, "plan.json"), limit.Token);
+        using (var appeared = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
+            while (!File.Exists(pidFile) || File.ReadAllText(pidFile).Trim().Length == 0) await Task.Delay(20, appeared.Token);
+        var pid = int.Parse(File.ReadAllText(pidFile).Trim());
+        await limit.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => starting);
+        Assert.Throws<ArgumentException>(() => { using var gone = Process.GetProcessById(pid); });
+    }
+
+    [Fact]
     public async Task A_quit_with_a_turn_running_installs_nothing()
     {
         if (!OperatingSystem.IsLinux()) return;
@@ -238,6 +357,7 @@ public sealed class AppUpdateTests : IDisposable
 
     private sealed class FakeApp(CallFailed? fails = null, string? failedVersion = null) : IAppInstall
     {
+        public Task WatchFirstStartAsync(CancellationToken ct) => Task.CompletedTask;
         public readonly List<string> Installed = [];
         public string? FailedVersion => failedVersion;
         public string? Note => failedVersion is null ? null : $"Assembly {failedVersion} didn't start.";

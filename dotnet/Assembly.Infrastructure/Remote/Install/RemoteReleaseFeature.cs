@@ -1,9 +1,8 @@
 using Assembly.Application.Common.Calls;
-using Assembly.Application.Common.Database;
 
 namespace Assembly.Infrastructure.Remote.Install;
 
-/// <summary>The production install: <c>latest</c> reads the signed release, <c>start</c> installs it on a saved machine.</summary>
+/// <summary>The signed release: <c>latest</c> reads it. Installing goes through the update flow, one job per machine.</summary>
 internal sealed class RemoteReleaseFeature(RemoteReleaseFeed feed, RemoteReleaseJobs jobs) : IFeature
 {
     internal const string Name = "remoteRelease";
@@ -20,20 +19,6 @@ internal sealed class RemoteReleaseFeature(RemoteReleaseFeed feed, RemoteRelease
             Owner(call);
             var release = await feed.LatestAsync(call.Cancellation);
             return new RemoteReleaseLatest(release.Record.Version, release.Record.ProtocolVersion);
-        });
-        calls.Write(Name, "start", RemoteReleaseJson.Default.RemoteReleaseStart, RemoteReleaseJson.Default.RemoteReleaseJob, (args, call) =>
-        {
-            Owner(call);
-            return Task.FromResult<Func<IWriteScope, RemoteReleaseJob>>(scope => jobs.Admit(args, scope));
-        }, args => "remote-install:" + args.Machine);
-        calls.Write(Name, "cancel", RemoteReleaseJson.Default.RemoteReleaseOperation, RemoteReleaseJson.Default.RemoteReleaseOperation, (args, call) =>
-        {
-            Owner(call);
-            return Task.FromResult<Func<IWriteScope, RemoteReleaseOperation>>(scope =>
-            {
-                scope.AfterCommit(() => jobs.Cancel(args.OperationId));
-                return args;
-            });
         });
     }
 

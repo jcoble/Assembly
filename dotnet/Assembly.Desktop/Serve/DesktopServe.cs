@@ -49,6 +49,7 @@ public static class DesktopServe
             utilityClis: (AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex")), savedRemote: profile, agentsFile: agents);
         // The window's launcher waits for this line's "listening on " prefix: it comes once /socket takes a hello and
         // the MCP url is set. Remote connection attempts run independently of local startup.
+        backend.WatchFirstStart();
         backend.BeginUpdateChecks();
         Console.WriteLine($"listening on {backend.Address}");
         Console.WriteLine($"home:  {options.Home}");

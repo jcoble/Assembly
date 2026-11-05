@@ -136,9 +136,16 @@ public sealed class DesktopBackend : IAsyncDisposable
     internal int BackgroundRunning => _work.Running;
     internal RemoteConnections Connections => _connections;
     private MachineUpdates? _updates;
+    private IAppInstall? _appInstall;
 
     /// <summary>The first update check, off the startup path. Tests that don't ask stay off the network.</summary>
     public void BeginUpdateChecks() => _updates?.Begin();
+
+    /// <summary>The launch after an install on quit: the old app can still come back if this window doesn't come up.</summary>
+    public void WatchFirstStart()
+    {
+        if (_appInstall is { } install) _work.Start("first start after an update", install.WatchFirstStartAsync);
+    }
 
     /// <summary>
     /// Starts local serving independently of saved connection attempts. A supplied remote is a direct test endpoint;
@@ -165,10 +172,10 @@ public sealed class DesktopBackend : IAsyncDisposable
         }
     }
 
-    private static async Task<DesktopBackend> StartAsync(FileStream homeLock, string home, string token, int port, IAgentLauncher launcher, TextWriter log,
+    internal static async Task<DesktopBackend> StartAsync(FileStream homeLock, string home, string token, int port, IAgentLauncher launcher, TextWriter log,
         RemoteConfig? remote, RemoteTunnel? tunnel, (string Claude, string Codex)? utilityClis, SavedMachine? savedRemote,
         IEngineEffects? engineEffects, Action<EngineRuntime>? engineStarted, AgentsFile? agentsFile,
-        Func<CancellationToken, Task<(string? Path, string? Error)>>? loginShell, Action<IProgramTerminals>? programTerminals)
+        Func<CancellationToken, Task<(string? Path, string? Error)>>? loginShell, Action<IProgramTerminals>? programTerminals, IAppInstall? givenInstall = null)
     {
         var database = Path.Combine(home, "assembly.db");
         var topics = new Topics();
@@ -340,7 +347,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             var releaseFeed = new RemoteReleaseFeed(releaseHttp);
             var remoteShell = new RemoteReleaseShell();
             remoteReleases = new RemoteReleaseJobs(new RemoteReleaseInstall(releaseFeed, remoteShell, TimeProvider.System, Assembly.Infrastructure.Socket.BackendBuild.Version,
-                UpdateSources.Checkout is { } checkout ? new CheckoutPackages(remoteShell, CheckoutBuild.For(checkout, home)) : null), work, topics,
+                UpdateSources.Checkout is { } checkout ? new CheckoutPackages(remoteShell, CheckoutBuild.For(checkout, home)) : null), topics,
                 connections.SavedProfile, (name, ct) => connections.ConnectionAsync(name, true, ct), releaseFeed,
                 agentsFile is null ? null : new LocalReleaseTools(releaseFeed, new ThisMachineShell(), agentsFile.Path, Path.Combine(home, "adapters"), () => activity.Held));
             connections.Start(savedRemote ?? (remote is null ? null : new SavedMachine(remote.Name, remote.Name)));
@@ -391,8 +398,8 @@ public sealed class DesktopBackend : IAsyncDisposable
             var notionEdits = new Assembly.Application.Features.Notion.NotionEdits(db, notionSettings, notionHttp);
             notion = new Assembly.Infrastructure.Notion.NotionCalls(notionSettings, new Assembly.Infrastructure.Notion.NotionOAuth(cliHttp, notionSettings, TimeProvider.System), new Assembly.Infrastructure.Notion.NotionDetailReader(notionHttp), notionCache, new Assembly.Infrastructure.Notion.NotionRefresh(notionHttp, notionCache, notionSettings, TimeProvider.System), notionEdits, new Assembly.Infrastructure.Notion.NotionImageUpload(Path.Combine(home, "staging", "notion"), notionHttp, notionSettings, notionEdits));
             var appBundle = AppUpdate.BundleOf(AppContext.BaseDirectory);
-            IAppInstall? appInstall = appBundle is null || UpdateSources.Checkout is not null || Assembly.Infrastructure.Socket.BackendBuild.Version is not { } appVersion ? null : new AppUpdate(new(appBundle, home, database, appVersion),
-                new RemoteReleaseFeed(releaseHttp), activity.WhenIdleAsync, () => activity.Held, AppUpdate.StartHelperAsync, AppSwap.Window, status.QuitWindow);
+            IAppInstall? appInstall = givenInstall ?? (appBundle is null || UpdateSources.Checkout is not null || Assembly.Infrastructure.Socket.BackendBuild.Version is not { } appVersion ? null : new AppUpdate(new(appBundle, home, database, appVersion),
+                new RemoteReleaseFeed(releaseHttp), activity.WhenIdleAsync, () => activity.Held, AppUpdate.StartHelperAsync, AppSwap.Window, status.QuitWindow));
             var updates = new MachineUpdates(UpdateSources.ForHost(cliHttp, TimeProvider.System, remoteReleases, home: home, app: appInstall), status, new InstalledCalls(launcher, TimeProvider.System),
                 async (machine, ct) => connections!.ByName(machine) is { } reached ? await reached.InstalledToolsAsync(ct) : null,
                 agentsFile is null ? null : () => agentsFile.Reload(), work, log);
@@ -444,6 +451,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, routedTerminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp, gitOperations, providerRuntimeSubscriptions, remoteReleases, releaseHttp, signInRelay, notion);
             backend._updates = updates;
             backend._windowGone = windowGone;
+            backend._appInstall = appInstall;
             endpoint.Listening(backend.Address);
             relay.Start();
             return backend;

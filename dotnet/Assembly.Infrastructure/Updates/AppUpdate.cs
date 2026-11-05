@@ -25,6 +25,8 @@ internal interface IAppInstall
     Task InstallOnQuitAsync(CancellationToken ct);
     /// <summary>The window is up: an update waiting to hear that can finish.</summary>
     void Started();
+    /// <summary>The launch after an install on quit: something has to put the old app back if its window never comes up.</summary>
+    Task WatchFirstStartAsync(CancellationToken ct);
 }
 
 /// <param name="App">The running bundle.</param>
@@ -35,6 +37,7 @@ internal sealed record AppLocation(string App, string Home, string Database, str
 {
     internal string Folder => Path.Combine(Home, "app-update");
     internal string Failed => Path.Combine(Folder, "failed.json");
+    internal string Installed => Path.Combine(Folder, AppSwap.InstalledMark);
 }
 
 /// <summary>
@@ -77,11 +80,15 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
     {
         var parent = Path.GetDirectoryName(location.App)!;
         var stage = Path.Combine(parent, $"{StagePrefix}{version}");
+        var kept = ReadInstalled()?.Stage;
+        if (stage == kept || HelperRunsFrom(stage)) throw new CallFailed($"Assembly {version} is still finishing an earlier update.", "app_update_failed");
         _staged = null;
         try
         {
             // What an earlier run got ready and no one restarted into: this run fetches it again.
-            foreach (var left in Directory.EnumerateDirectories(parent, StagePrefix + "*")) Directory.Delete(left, recursive: true);
+            // Not one a helper runs from or an install on quit still needs: those hold the old app.
+            foreach (var left in Directory.EnumerateDirectories(parent, StagePrefix + "*"))
+                if (left != kept && !HelperRunsFrom(left)) Directory.Delete(left, recursive: true);
             progress($"Downloading Assembly {version}…");
             var release = await feed.AppReleaseAsync(version, ct);
             var unpacked = Path.Combine(stage, "new");
@@ -141,12 +148,44 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
 
     public async Task InstallOnQuitAsync(CancellationToken ct)
     {
-        if (_staged is not { } staged || busy() || Interlocked.CompareExchange(ref _handedOver, 1, 0) != 0) return;
+        // With the last one unconfirmed its copy is still the way back, and another install would replace it.
+        if (_staged is not { } staged || busy() || File.Exists(location.Installed) || Interlocked.CompareExchange(ref _handedOver, 1, 0) != 0) return;
         Directory.CreateDirectory(location.Folder);
         File.Delete(location.Failed);
         await HandOverAsync(staged, Path.Combine(BackendFolder, BackendName), ct);
     }
 
+    public async Task WatchFirstStartAsync(CancellationToken ct)
+    {
+        if (ReadInstalled() is not { } installed) return;
+        // Not what was installed: someone put another version in place by hand, and it has nothing to wait for.
+        if (installed.Version != location.Version)
+        {
+            File.Delete(location.Installed);
+            return;
+        }
+        var planFile = Path.Combine(installed.Stage, "plan.json");
+        var (window, backend) = (windowPid(), Environment.ProcessId);
+        var plan = installed with { Watch = true, WindowPid = window, WindowStart = AppSwap.StartOf(window), BackendPid = backend, BackendStart = AppSwap.StartOf(backend) };
+        await File.WriteAllBytesAsync(planFile, JsonSerializer.SerializeToUtf8Bytes(plan, AppSwapJson.Default.AppSwapPlan), ct);
+        await startHelper(Path.Combine(installed.Stage, HelperCopy), planFile, ct);
+    }
+
+    private AppSwapPlan? ReadInstalled()
+    {
+        try { return JsonSerializer.Deserialize(File.ReadAllBytes(location.Installed), AppSwapJson.Default.AppSwapPlan); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { return null; }
+    }
+
+    // A helper holds this for as long as it runs; a folder it has left, or never ran from, opens.
+    private static bool HelperRunsFrom(string stage)
+    {
+        try { using (new FileStream(Path.Combine(stage, AppSwap.HelperMark), FileMode.Open, FileAccess.ReadWrite, FileShare.None)) return false; }
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { return false; }
+        catch (IOException) { return true; }
+    }
+
+    private const string HelperCopy = "finish-update";
     private const string BackendFolder = "Contents/Resources/backend";
     private static string BackendName => Path.GetFileName(Environment.ProcessPath ?? "assembly");
 
@@ -191,8 +230,8 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
     /// </summary>
     internal static async Task<Action> StartHelperAsync(string helper, string plan, CancellationToken ct)
     {
-        var copy = Path.Combine(Path.GetDirectoryName(plan)!, "finish-update");
-        File.Copy(helper, copy, overwrite: true);
+        var copy = Path.Combine(Path.GetDirectoryName(plan)!, HelperCopy);
+        if (helper != copy) File.Copy(helper, copy, overwrite: true);
         var start = new ProcessStartInfo(copy, ["finish-update", plan]) { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
         var process = Process.Start(start) ?? throw new CallFailed("The update helper could not start.", "app_update_failed");
         void CallOff()
@@ -206,6 +245,12 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
         string? said;
         try { said = await process.StandardOutput.ReadLineAsync(deadline.Token); }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { said = null; }
+        catch (OperationCanceledException)
+        {
+            // Past the caller's limit: it's going on without this, so nothing is left running behind it.
+            CallOff();
+            throw;
+        }
         if (said == AppSwap.Ready) return CallOff;
         CallOff();
         throw new CallFailed("The update helper didn't start.", "app_update_failed");
