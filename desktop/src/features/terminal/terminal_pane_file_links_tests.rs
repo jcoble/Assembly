@@ -144,6 +144,7 @@ async fn a_path_outside_the_folder_gets_the_handlers_notice(cx: &mut TestAppCont
     let asked = open.terminals.lock().unwrap().of("owner");
     assert_eq!(asked.len(), 1);
     assert_eq!(asked[0]["session"], "a");
-    let notes = root.update(open.cx, |_, window, cx| window.notifications(cx).len());
+    let notes =
+        (open.cx).update_window(root.into(), |_, window, cx| window.notifications(cx).len());
     assert_eq!(notes.ok(), Some(1));
 }

@@ -10,6 +10,8 @@ use std::mem;
 
 use super::{Shown, TerminalPane};
 use crate::core::intents::open_url::OpenUrl;
+use crate::core::navigation::external_urls::file_url_address;
+use crate::core::state::selected_session::SelectedSession;
 use crate::features::terminal::terminal_grid::GridCell;
 use crate::features::terminal::terminal_keys::key_bytes;
 
@@ -37,7 +39,12 @@ impl TerminalPane {
             self.link_pressed = true;
             cx.stop_propagation();
             if event.click_count == 1 {
-                window.dispatch_action(Box::new(OpenUrl { url: link.url }), cx);
+                // A file link names a file on the shell's machine: the session's route, none when local.
+                let selected = SelectedSession::global(cx).read(cx);
+                let machine =
+                    (selected.source()).and_then(|source| source.route_machine.as_deref());
+                let url = file_url_address(&link.url, machine).unwrap_or(link.url);
+                window.dispatch_action(Box::new(OpenUrl { url }), cx);
             }
             return;
         }

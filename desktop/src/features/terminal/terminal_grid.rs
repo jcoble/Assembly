@@ -11,6 +11,7 @@ use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Color, Processor};
 
 use super::terminal_links::url_at;
+use crate::core::navigation::external_urls::file_url_address;
 
 pub struct TerminalGrid {
     term: Term<VoidListener>,
@@ -179,7 +180,8 @@ impl TerminalGrid {
     }
 
     /// The link at a cell of the screen as shown: an OSC 8 link, its cells joined across rows, or else a URL printed
-    /// on that row. A `file:` OSC 8 link gives none.
+    /// on that row. A `file:` OSC 8 link keeps its URL, which the click turns into the app's file link; one that link
+    /// can't carry gives none.
     pub fn link_at(&self, column: usize, line: usize) -> Option<HoveredLink> {
         let (columns, lines) = (self.term.columns(), self.term.screen_lines());
         if column >= columns || line >= lines {
@@ -195,6 +197,7 @@ impl TerminalGrid {
                 .uri()
                 .get(..5)
                 .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:"))
+                && file_url_address(hyperlink.uri(), None).is_none()
             {
                 return None;
             }
