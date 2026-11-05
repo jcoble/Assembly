@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use futures_channel::mpsc::unbounded;
+use gpui_kit::App;
 use serde_json::json;
 
 use super::{OpenAnotherProject, WorktreeRow, project_groups};
@@ -179,4 +180,125 @@ async fn a_bar_built_before_the_socket_lists_worktrees_when_opened(cx: &mut gpui
         bar.read_with(cx, |bar, _| bar.worktrees.contains_key("a"))
     })
     .await;
+}
+
+/// A registry bigger than one page: the first page, a next page, and an older project only a search finds.
+fn paged_backend() -> (
+    FakeBackend,
+    futures_channel::mpsc::UnboundedSender<()>,
+    futures_channel::mpsc::UnboundedReceiver<()>,
+) {
+    let (changed, changes) = unbounded();
+    let sent = changed.clone();
+    let row = |id: &str| json!({"id":id,"machine":"local","rootPath":format!("/w/{id}"),"title":id,"createdAt":1});
+    let backend = FakeBackend::start(move |frame| {
+        if let Some(reply) = hello(frame) {
+            return reply;
+        }
+        if frame["t"] == "sub" {
+            return vec![Reply::Frame(
+                json!({"t":"state","sub":frame["id"],"items":[]}),
+            )];
+        }
+        if frame["t"] != "call" {
+            return vec![];
+        }
+        let _ = sent.unbounded_send(());
+        let args = &frame["args"];
+        let result = match frame["method"].as_str() {
+            Some("list") if args["filter"].as_str().is_some_and(|f| !f.is_empty()) => {
+                json!({"projects":[row("older")],"next":null})
+            }
+            Some("list") if !args["after"].is_null() => {
+                json!({"projects":[row("second")],"next":null})
+            }
+            Some("list") => json!({"projects":[row("first")],"next":{"at":1}}),
+            _ => json!({"worktrees":[]}),
+        };
+        vec![Reply::Frame(
+            json!({"t":"result","id":frame["id"],"result":result}),
+        )]
+    });
+    (backend, changed, changes)
+}
+
+fn labels(bar: &mut OpenAnotherProject, cx: &mut App) -> Vec<String> {
+    bar.shown_groups(cx)
+        .into_iter()
+        .flat_map(|group| group.options)
+        .map(|option| option.label)
+        .collect()
+}
+
+#[gpui::test]
+async fn the_filter_finds_a_project_past_the_loaded_page(cx: &mut gpui::TestAppContext) {
+    use crate::core::state::selected_session::SelectedSession;
+
+    let (backend, changed, mut changes) = paged_backend();
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        SelectedSession::init(cx);
+        SocketClient::start(
+            Endpoint {
+                port: backend.port,
+                token: "secret".into(),
+            },
+            cx,
+        );
+        Sessions::start(cx);
+        Machines::start(cx);
+    });
+    let (bar, cx) = cx.add_window_view(OpenAnotherProject::new);
+    bar.update_in(cx, |bar, window, cx| bar.set_open(true, window, cx));
+    until("the first page", &mut changes, &changed, || {
+        cx.run_until_parked();
+        bar.update(cx, |bar, cx| labels(bar, cx)) == ["first"]
+    })
+    .await;
+    bar.update_in(cx, |bar, window, cx| {
+        bar.filter
+            .update(cx, |filter, cx| filter.set_value("older", window, cx));
+        bar.filter_changed(cx);
+    });
+    until("the search", &mut changes, &changed, || {
+        cx.run_until_parked();
+        bar.update(cx, |bar, cx| labels(bar, cx)) == ["older"]
+    })
+    .await;
+}
+
+#[gpui::test]
+async fn the_list_can_load_the_registry_s_next_page(cx: &mut gpui::TestAppContext) {
+    use crate::core::state::selected_session::SelectedSession;
+
+    let (backend, changed, mut changes) = paged_backend();
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        SelectedSession::init(cx);
+        SocketClient::start(
+            Endpoint {
+                port: backend.port,
+                token: "secret".into(),
+            },
+            cx,
+        );
+        Sessions::start(cx);
+        Machines::start(cx);
+    });
+    let (bar, cx) = cx.add_window_view(OpenAnotherProject::new);
+    bar.update_in(cx, |bar, window, cx| bar.set_open(true, window, cx));
+    until("a next page on offer", &mut changes, &changed, || {
+        cx.run_until_parked();
+        bar.update(cx, |bar, cx| bar.has_more(cx))
+    })
+    .await;
+    bar.update(cx, |bar, cx| bar.load_more(cx));
+    until("the second page", &mut changes, &changed, || {
+        cx.run_until_parked();
+        bar.update(cx, |bar, cx| labels(bar, cx)) == ["first", "second"]
+    })
+    .await;
+    assert!(!bar.update(cx, |bar, cx| bar.has_more(cx)));
 }

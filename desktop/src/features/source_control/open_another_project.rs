@@ -1,7 +1,7 @@
 //! `OpenAnotherProject` is the Git tab's Open another project: what its bar shows, and picking a project or worktree on
 //! any connected machine. Picking switches Files and Git together, and only ever changes `ViewedProject`, never the session.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use gpui_kit::component::input::{InputEvent, InputState};
@@ -108,8 +108,12 @@ pub struct OpenAnotherProject {
     highlighted: usize,
     list_scroll: ScrollHandle,
     worktrees: HashMap<String, Vec<WorktreeRow>>,
-    /// The worktree listings on their way; closing the popover drops them, which cancels them on the backend.
-    reads: Vec<Task<()>>,
+    /// The worktree listings by project; closing the popover drops them, which cancels them on the backend.
+    reads: HashMap<String, Task<()>>,
+    /// What the backend found for the filter, which can reach past the registry's loaded pages.
+    searched: Vec<ProjectRecord>,
+    search: Option<Task<()>>,
+    registry_revision: Option<i64>,
     heard_lists: bool,
     _heard: Vec<Subscription>,
 }
@@ -125,8 +129,7 @@ impl OpenAnotherProject {
                 cx.subscribe_in(&filter, window, |bar, _, event: &InputEvent, window, cx| {
                     match event {
                         InputEvent::Change => {
-                            bar.highlighted = 0;
-                            cx.notify();
+                            bar.filter_changed(cx);
                         }
                         InputEvent::PressEnter { .. } => bar.pick_highlighted(window, cx),
                         _ => {}
@@ -141,7 +144,10 @@ impl OpenAnotherProject {
             highlighted: 0,
             list_scroll: ScrollHandle::new(),
             worktrees: HashMap::new(),
-            reads: Vec::new(),
+            reads: HashMap::new(),
+            searched: Vec::new(),
+            search: None,
+            registry_revision: None,
             heard_lists: false,
             _heard: heard,
         };
@@ -165,9 +171,15 @@ impl OpenAnotherProject {
             .push(cx.observe(&sessions, |_, _, cx| cx.notify()));
         self._heard
             .push(cx.observe(&machines, |_, _, cx| cx.notify()));
-        self._heard.push(cx.observe(&projects, |bar, _, cx| {
+        self._heard.push(cx.observe(&projects, |bar, projects, cx| {
+            let revision = projects.read(cx).revision();
+            let changed = revision != bar.registry_revision;
+            bar.registry_revision = revision;
             if bar.open {
                 bar.read_worktrees(cx);
+                if changed {
+                    bar.run_search(cx);
+                }
             }
             cx.notify();
         }));
@@ -194,13 +206,67 @@ impl OpenAnotherProject {
         Projects::get(cx).map_or_else(Vec::new, |projects| projects.read(cx).rows().to_vec())
     }
 
+    /// The registry's loaded pages, then whatever else the filter's search found.
+    fn listed(&self, cx: &mut App) -> Vec<ProjectRecord> {
+        let mut rows = Self::rows(cx);
+        let loaded: HashSet<String> = rows.iter().map(|project| project.id.clone()).collect();
+        rows.extend(
+            self.searched
+                .iter()
+                .filter(|project| !loaded.contains(&project.id))
+                .cloned(),
+        );
+        rows
+    }
+
     fn all_groups(&self, cx: &mut App) -> Vec<ProjectGroup> {
-        project_groups(&Self::rows(cx), &Self::machines(cx), &self.worktrees)
+        project_groups(&self.listed(cx), &Self::machines(cx), &self.worktrees)
     }
 
     fn shown_groups(&self, cx: &mut App) -> Vec<ProjectGroup> {
         let filter = self.filter.read(cx).value().to_string();
         filtered(&self.all_groups(cx), &filter)
+    }
+
+    fn filter_changed(&mut self, cx: &mut Context<Self>) {
+        self.highlighted = 0;
+        self.run_search(cx);
+        cx.notify();
+    }
+
+    /// SQL filters the whole registry; a newer filter drops the search before it.
+    fn run_search(&mut self, cx: &mut Context<Self>) {
+        let filter = self.filter.read(cx).value().to_string();
+        self.search = None;
+        if filter.trim().is_empty() {
+            self.searched.clear();
+            return;
+        }
+        let Some(projects) = Projects::get(cx) else {
+            return;
+        };
+        let call = projects.update(cx, |projects, cx| projects.search(&filter, cx));
+        self.search = Some(cx.spawn(async move |bar, cx| {
+            let answer = call.await;
+            _ = bar.update(cx, |bar, cx| {
+                // A failed search leaves the loaded pages to filter.
+                bar.searched = answer.unwrap_or_default();
+                bar.read_worktrees(cx);
+                cx.notify();
+            });
+        }));
+    }
+
+    /// Whether the registry has a page not loaded yet, offered while nothing is filtered.
+    fn has_more(&self, cx: &mut App) -> bool {
+        self.filter.read(cx).value().trim().is_empty()
+            && Projects::get(cx).is_some_and(|projects| projects.read(cx).next.is_some())
+    }
+
+    fn load_more(&mut self, cx: &mut Context<Self>) {
+        if let Some(projects) = Projects::get(cx) {
+            projects.update(cx, |projects, cx| projects.load_more(cx));
+        }
     }
 
     /// Asks each listed project's machine for its worktrees.
@@ -209,31 +275,35 @@ impl OpenAnotherProject {
             return;
         };
         let machines = Self::machines(cx);
-        self.reads = Self::rows(cx)
+        let wanted: Vec<_> = self
+            .listed(cx)
             .into_iter()
             .filter(|project| {
                 project.removed_at.is_none()
                     && !self.worktrees.contains_key(&project.id)
+                    && !self.reads.contains_key(&project.id)
                     && (project.machine == LOCAL_MACHINE || machines.contains(&project.machine))
             })
-            .map(|project| {
-                let call = socket.read(cx).call::<WorktreeList>(
-                    "projects",
-                    "worktrees",
-                    json!({ "projectId": project.id }),
-                    Some(&format!("open-project/worktrees/{}", project.id)),
-                );
-                cx.spawn(async move |bar, cx| {
-                    // A machine that can't list them still shows the project itself.
-                    if let Outcome::Ok(list) = call.await {
-                        _ = bar.update(cx, |bar, cx| {
-                            bar.worktrees.insert(project.id.clone(), list.worktrees);
-                            cx.notify();
-                        });
-                    }
-                })
-            })
             .collect();
+        for project in wanted {
+            let call = socket.read(cx).call::<WorktreeList>(
+                "projects",
+                "worktrees",
+                json!({ "projectId": project.id }),
+                Some(&format!("open-project/worktrees/{}", project.id)),
+            );
+            let id = project.id.clone();
+            let read = cx.spawn(async move |bar, cx| {
+                // A machine that can't list them still shows the project itself.
+                if let Outcome::Ok(list) = call.await {
+                    _ = bar.update(cx, |bar, cx| {
+                        bar.worktrees.insert(project.id.clone(), list.worktrees);
+                        cx.notify();
+                    });
+                }
+            });
+            self.reads.insert(id, read);
+        }
     }
 
     fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -249,6 +319,8 @@ impl OpenAnotherProject {
                 .update(cx, |filter, cx| filter.focus(window, cx));
         } else {
             self.reads.clear();
+            self.search = None;
+            self.searched.clear();
             self.filter
                 .update(cx, |filter, cx| filter.set_value("", window, cx));
         }
@@ -358,6 +430,7 @@ impl Render for OpenAnotherProject {
             .as_ref()
             .and_then(|viewed| Self::project_of(viewed, cx));
         let can_start_here = start_here.is_some();
+        let more_this = cx.entity().downgrade();
         OpenProjectBar {
             viewing: viewed.as_ref().map(|viewed| {
                 format!(
@@ -375,6 +448,10 @@ impl Render for OpenAnotherProject {
             } else {
                 Vec::new()
             },
+            more: self.open && self.has_more(cx),
+            on_more: Rc::new(move |_, cx| {
+                _ = more_this.update(cx, |bar, cx| bar.load_more(cx));
+            }),
             highlighted: self.highlighted,
             list_scroll: self.list_scroll.clone(),
             on_open_change: Rc::new(move |open, window, cx| {

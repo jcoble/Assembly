@@ -26,6 +26,7 @@ ids! {
         TRIGGER = "open-project.trigger",
         NEW_SESSION = "open-project.new-session",
         BACK = "open-project.back",
+        LOAD_MORE = "open-project.load-more",
     }
     drawer {
         MORE_PANELS = "drawer.more-panels",

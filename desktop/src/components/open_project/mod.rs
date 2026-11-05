@@ -115,6 +115,9 @@ pub struct OpenProjectBar {
     pub open: bool,
     pub filter: Entity<InputState>,
     pub groups: Vec<ProjectGroup>,
+    /// Whether the machine's registry has another page to load.
+    pub more: bool,
+    pub on_more: Pressed,
     /// Which option of the flattened list Enter picks.
     pub highlighted: usize,
     pub list_scroll: ScrollHandle,
@@ -266,7 +269,18 @@ impl OpenProjectBar {
                                     .p_1()
                                     .overflow_y_scroll()
                                     .track_scroll(&self.list_scroll)
-                                    .children(rows),
+                                    .children(rows)
+                                    .when(self.more, |list| {
+                                        let on_more = self.on_more.clone();
+                                        list.child(
+                                            Button::new("open-project-load-more")
+                                                .control(ids::LOAD_MORE, "Load more")
+                                                .ghost()
+                                                .compact()
+                                                .label("Load more")
+                                                .on_click(move |_, window, cx| on_more(window, cx)),
+                                        )
+                                    }),
                             )
                             .vertical_scrollbar(&self.list_scroll)
                             .into_any_element()
