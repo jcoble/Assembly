@@ -16,8 +16,6 @@ mod inline_field;
 #[allow(dead_code)]
 #[path = "../src/features/projects/mod.rs"]
 mod projects;
-#[path = "../src/features/settings/preview/mod.rs"]
-mod settings_preview;
 
 #[path = "../src/features/component_gallery.rs"]
 mod component_gallery;
@@ -29,9 +27,6 @@ mod features {
     pub(crate) use crate::projects;
     pub(crate) mod source_control {
         pub(crate) use crate::git_operation;
-    }
-    pub(crate) mod settings {
-        pub(crate) use crate::settings_preview as preview;
     }
 }
 

@@ -1,22 +1,20 @@
-//! The right side of the Settings page: the shown section's title, then its rows in their cards,
-//! each row a title and one-line description with its control on the right, or its slider underneath.
-
+//! The Settings tab's content: one kit page per section, its cards as groups, and each row as an item with its title and
+//! one-line description beside its control, or its slider underneath.
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::Button;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::label::Label;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::setting::{SettingField, SettingGroup, SettingItem, SettingPage};
 use gpui_kit::component::slider::Slider;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::component::{h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
 use super::fonts;
-use super::row::Row;
-use super::search;
-use super::section::Section;
+use super::row::{ROWS, Row};
+use super::section::{SECTIONS, Section};
 use super::settings_page::SettingsPage;
 use crate::core::state::appearance::{
     CODE_FONT, EDITOR_FONT, EDITOR_FONT_SIZE, EDITOR_LINE_HEIGHT, NumberSetting, TERMINAL_FONT,
@@ -33,93 +31,85 @@ const CONTROL_WIDTH: Pixels = px(220.);
 const SAME_AS_CODE_FONT: &str = "Same as Code font";
 
 impl SettingsPage {
-    pub(super) fn content(
-        &self,
-        query: &str,
-        shown: Option<&Section>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let theme = cx.theme().clone();
-        let column = v_flex()
-            .w_full()
-            .max_w(COLUMN_WIDTH)
-            .mx_auto()
-            .px_4()
-            .pt(px(28.))
-            .pb_10();
-        let Some(section) = shown else {
-            return column.child(
-                div()
-                    .text_role(TextRole::Body, cx)
-                    .text_color(theme.muted_foreground)
-                    .child(format!("Nothing matches “{}”.", query.trim())),
-            );
-        };
-        let cards = search::cards(query, section.id);
-        let mut column = column.child(
-            h_flex()
-                .h(px(32.))
-                .text_role(TextRole::Title, cx)
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(theme.foreground)
-                .child(section.label),
-        );
-        if let Some(failure) = Preferences::failure(cx) {
-            column = column.child(
-                div()
-                    .pt_2()
-                    .text_role(TextRole::Meta, cx)
-                    .text_color(theme.danger)
-                    .child(failure),
-            );
-        }
-        if cards.is_empty() {
-            return column.child(note(
-                "This section isn't in this window yet; it comes with a later change.",
-                cx,
-            ));
-        }
-        for (card, rows) in cards {
-            let mut body = v_flex()
-                .bg(theme.group_box)
-                .border_1()
-                .border_color(theme.border)
-                .rounded(px(8.));
-            for (ix, row) in rows.into_iter().enumerate() {
-                body = body.child(self.row(row, cx).when(ix > 0, |row| {
-                    row.border_t_1().border_color(theme.border.opacity(0.6))
-                }));
-            }
-            column = column
-                .child(
-                    div()
-                        .pt_5()
-                        .pb_1p5()
-                        .px_1()
-                        .text_role(TextRole::Meta, cx)
-                        .text_color(theme.muted_foreground)
-                        .child(card),
-                )
-                .child(body);
-        }
-        column
+    /// One kit page per section, in the old app's order, each with its cards as groups and its rows as items. The search
+    /// box above the sections matches a row's title, description, words and card, and the section's name.
+    pub(super) fn pages(&self, cx: &mut Context<Self>) -> Vec<SettingPage> {
+        let failure = Preferences::failure(cx);
+        SECTIONS
+            .iter()
+            .map(|section| {
+                let mut page = SettingPage::new(section.label)
+                    .icon(section.icon)
+                    .resettable(false);
+                if let Some(failure) = failure.clone() {
+                    // Beside the title, which a search leaves in place.
+                    page = page.title_suffix(move |_, cx| {
+                        Label::new(failure.clone())
+                            .text_role(TextRole::Meta, cx)
+                            .text_color(cx.theme().danger)
+                    });
+                }
+                let mut cards: Vec<(&str, SettingGroup)> = Vec::new();
+                for row in ROWS.iter().filter(|row| row.section == section.id) {
+                    let item = self.item(row, section, cx);
+                    match cards.iter_mut().find(|(card, _)| *card == row.card) {
+                        Some((_, group)) => *group = group.clone().item(item),
+                        None => cards.push((row.card, group().title(row.card).item(item))),
+                    }
+                }
+                if cards.is_empty() {
+                    return page.group(group().item(SettingItem::render(|_, _, cx| {
+                        note(
+                            "This section isn't in this window yet; it comes with a later change.",
+                            cx,
+                        )
+                    })));
+                }
+                page.groups(cards.into_iter().map(|(_, group)| group))
+            })
+            .collect()
     }
 
-    pub(super) fn row(&self, row: &'static Row, cx: &mut Context<Self>) -> Div {
+    /// A row as a kit item: its title and description beside its control, a slider under them, or the machine cards.
+    fn item(
+        &self,
+        row: &'static Row,
+        section: &'static Section,
+        cx: &mut Context<Self>,
+    ) -> SettingItem {
+        let page = cx.entity();
+        let words = [
+            row.title,
+            row.description,
+            row.keywords,
+            row.card,
+            section.label,
+        ];
+        if row.id == "machines" {
+            return SettingItem::render(move |_, window, cx| {
+                page.update(cx, |page, cx| {
+                    page.machines_drawn = true;
+                    page.follow_ssh_hosts(true, window, cx);
+                    page.machines(cx)
+                })
+            })
+            .keywords(words);
+        }
+        let control =
+            SettingField::render(move |_, _, cx| page.update(cx, |page, cx| page.control(row, cx)));
+        let item = SettingItem::new(row.title, control)
+            .description(row.description)
+            .keywords(words);
+        if number_row(row.id).is_some() {
+            item.layout(Axis::Vertical)
+        } else {
+            item
+        }
+    }
+
+    /// The control a row's item draws: a slider with its value, the depth box, or a menu.
+    fn control(&self, row: &'static Row, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let label = v_flex()
-            .gap_0p5()
-            .min_w_0()
-            .child(
-                Label::new(row.title)
-                    .text_role(TextRole::Body, cx)
-                    .text_color(theme.foreground),
-            )
-            .child(
-                Label::new(row.description)
-                    .text_role(TextRole::Meta, cx)
-                    .text_color(theme.muted_foreground),
-            );
         let number = number_row(row.id).map(|number| number.key);
         let slider = self
             .sliders
@@ -127,23 +117,22 @@ impl SettingsPage {
             .find(|(setting, _)| number == Some(setting.key));
         if let Some((setting, state)) = slider {
             let value = SettingsPage::setting_value(*setting, cx);
-            return v_flex().px_4().py_3().gap_3().child(label).child(
-                h_flex()
-                    .gap_4()
-                    .child(div().flex_1().child(Slider::new(state)))
-                    .child(
-                        div()
-                            .w(px(44.))
-                            .text_right()
-                            .text_role(TextRole::Meta, cx)
-                            .text_color(theme.muted_foreground)
-                            .child(setting.label(value)),
-                    ),
-            );
+            return h_flex()
+                .w_full()
+                .gap_4()
+                .child(div().flex_1().child(Slider::new(state)))
+                .child(
+                    div()
+                        .w(px(44.))
+                        .text_right()
+                        .text_role(TextRole::Meta, cx)
+                        .text_color(theme.muted_foreground)
+                        .child(setting.label(value)),
+                )
+                .into_any_element();
         }
         let control = match row.id {
-            "machines" => return self.machines(cx),
-            "session-depth-limit" => return self.depth_row(label, cx),
+            "session-depth-limit" => return self.depth_control(cx).into_any_element(),
             "theme" => {
                 let current = Preferences::read(cx, |appearance| appearance.theme());
                 let choices = ThemeId::ALL
@@ -184,13 +173,13 @@ impl SettingsPage {
                 menu(row.id, shown, choices, key)
             }
         };
-        v_flex()
-            .px_4()
-            .py_3()
-            .gap_2()
-            .child(label)
-            .child(div().w(CONTROL_WIDTH).flex_none().child(control))
+        div().w(CONTROL_WIDTH).child(control).into_any_element()
     }
+}
+
+/// A card, as wide as the old app's content column.
+fn group() -> SettingGroup {
+    SettingGroup::new().w_full().max_w(COLUMN_WIDTH)
 }
 
 /// The number a slider row sets.
@@ -208,8 +197,7 @@ fn number_row(id: &str) -> Option<NumberSetting> {
 }
 
 impl SettingsPage {
-    fn depth_row(&self, label: impl IntoElement, cx: &App) -> Div {
-        let theme = cx.theme();
+    fn depth_control(&self, cx: &App) -> Div {
         let mut control = v_flex()
             .w(CONTROL_WIDTH)
             .gap_1()
@@ -218,17 +206,11 @@ impl SettingsPage {
             control = control.child(
                 div()
                     .text_role(TextRole::Meta, cx)
-                    .text_color(theme.danger)
+                    .text_color(cx.theme().danger)
                     .child(error),
             );
         }
-        h_flex()
-            .px_4()
-            .py_3()
-            .gap_4()
-            .justify_between()
-            .child(label)
-            .child(control)
+        control
     }
 }
 
@@ -274,7 +256,7 @@ fn menu(
         })
 }
 
-fn note(text: &'static str, cx: &App) -> impl IntoElement {
+fn note(text: &'static str, cx: &App) -> Div {
     div()
         .pt_2()
         .text_role(TextRole::Meta, cx)

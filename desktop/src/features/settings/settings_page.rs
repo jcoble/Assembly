@@ -1,28 +1,18 @@
-//! `SettingsPage` owns the open Settings page: a sheet over the whole window, with the sections in a column on the
-//! left under "Search settings", and the chosen section's cards of rows on the right. Each change is saved at once
-//! through `Preferences`, which the window and the views follow. The page and everything it started (the search box,
-//! the sliders, a machine call on its way) go when the sheet closes. Replaces SettingsDialog.svelte and
-//! SettingsHost.svelte.
+//! `SettingsPage` is the page in the Settings tab: GPUI Kit's `Settings`, with the sections in its sidebar over its search
+//! box, and the chosen section's groups of settings on the right. Each change is saved at once through `Preferences`,
+//! which the window and the views follow. The page and everything it started (the sliders, a machine call on its way)
+//! go when the tab closes. Replaces SettingsDialog.svelte and SettingsHost.svelte.
 
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use crate::core::ui::access::control_ids::{settings as ids, settings_nav};
-use crate::core::ui::access::{Control as _, ExposedElement as _};
-use std::cell::Cell;
-
-use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::group_box::GroupBoxVariant;
+use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::setting::{SelectIndex, Settings};
 use gpui_kit::component::slider::{SliderEvent, SliderState};
-use gpui_kit::component::{ActiveTheme as _, Icon, Placement, Sizable as _, WindowExt as _};
-use gpui_kit::component::{h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::json;
 
 use super::fonts;
 use super::machine_edits::MachineEdits;
-use super::search;
-use super::section::Section;
+use super::section::SECTIONS;
 use crate::core::state::appearance::{
     EDITOR_FONT_SIZE, EDITOR_LINE_HEIGHT, NumberSetting, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT,
     UI_FONT_SIZE, UI_LINE_HEIGHT,
@@ -31,18 +21,13 @@ use crate::core::state::machines::{GlobalMachines, Machines};
 use crate::core::state::preferences::Preferences;
 use crate::core::state::sessions_settings::{self, CHILD_LIMIT, DEPTH_KEY};
 
-/// The left column's width, the old app's.
+/// The sections column's width, the old app's.
 const NAV_WIDTH: Pixels = px(208.);
-/// The search box's width in the title row.
-const SEARCH_WIDTH: Pixels = px(280.);
 
 pub struct SettingsPage {
-    pub(super) search: Entity<InputState>,
     pub(super) depth: Entity<InputState>,
     depth_dirty: bool,
     pub(super) depth_error: Option<&'static str>,
-    /// The section picked in the left column; a search that leaves it out shows the first one left.
-    pub(super) chosen: &'static str,
     pub(super) sliders: Vec<(NumberSetting, Entity<SliderState>)>,
     pub(super) ui_fonts: Vec<SharedString>,
     pub(super) code_fonts: Vec<SharedString>,
@@ -52,44 +37,17 @@ pub struct SettingsPage {
     pub(super) machine_edits: MachineEdits,
     /// The button whose machine call is running, and the call; dropping it stops waiting. One call at a time.
     pub(super) machine_call: Option<(SharedString, Task<()>)>,
+    /// The page the kit's sidebar starts on, and a count that starts it there again when bumped.
+    start: (usize, usize),
+    /// Whether the last frame drew the machines, so the SSH hosts are read again each time they come into view.
+    pub(super) machines_drawn: bool,
+    focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
 impl SettingsPage {
-    /// Opens the page over the window, unless a sheet is already up.
-    pub fn open(window: &mut Window, cx: &mut App) {
-        if window.has_active_sheet(cx) {
-            return;
-        }
-        let page = cx.new(|cx| SettingsPage::new(window, cx));
-        let search = page.read(cx).search.clone();
-        // The sheet takes focus when it opens, so the search box takes it on the sheet's first draw.
-        let first_draw = Cell::new(true);
-        window.open_sheet_at(Placement::Left, cx, move |sheet, window, cx| {
-            if first_draw.replace(false) {
-                search.update(cx, |search, cx| search.focus(window, cx));
-            }
-            sheet
-                .size(relative(1.))
-                .resizable(false)
-                .overlay(false)
-                .px_0()
-                .title(Self::title_row(&search, cx))
-                .child(page.clone())
-        });
-    }
-
     pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let search = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Search settings")
-                .clean_on_escape()
-        });
-        let mut subscriptions = vec![cx.subscribe(&search, |_, _, event, cx| {
-            if let InputEvent::Change = event {
-                cx.notify();
-            }
-        })];
+        let mut subscriptions = Vec::new();
         let depth = cx.new(|cx| InputState::new(window, cx));
         let depth_value = Preferences::read(cx, |appearance| {
             sessions_settings::depth(appearance.saved_value(DEPTH_KEY))
@@ -160,11 +118,9 @@ impl SettingsPage {
         );
         let (ui_fonts, code_fonts) = fonts::installed(cx);
         let mut page = Self {
-            search,
             depth,
             depth_dirty: false,
             depth_error: None,
-            chosen: "appearance",
             sliders: sliders.into(),
             ui_fonts,
             code_fonts,
@@ -172,6 +128,9 @@ impl SettingsPage {
             ssh_picker: super::ssh_picker::SshPicker::new(window, cx),
             machine_edits: MachineEdits::default(),
             machine_call: None,
+            start: (0, 0),
+            machines_drawn: false,
+            focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         };
         page.follow_machines(window, cx);
@@ -246,127 +205,42 @@ impl SettingsPage {
         }
         cx.notify();
     }
+}
 
-    /// "Settings" and the search box, in the sheet's own title row beside its close button.
-    fn title_row(search: &Entity<InputState>, cx: &App) -> impl IntoElement {
-        h_flex()
-            .flex_1()
-            .justify_between()
-            .pl(px(64.))
-            .child(
-                div()
-                    .text_role(TextRole::Body, cx)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(cx.theme().foreground)
-                    .child("Settings"),
-            )
-            .child(
-                div().w(SEARCH_WIDTH).child(
-                    Input::new(search)
-                        .control(ids::SEARCH, "Search settings")
-                        .small()
-                        .prefix(Icon::new(IconName::Search).small())
-                        .cleanable(true),
-                ),
-            )
-    }
-
-    fn nav(
-        &self,
-        query: &str,
-        shown: Option<&Section>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let theme = cx.theme();
-        let mut list = v_flex().flex_1().px_2().pt_2().gap_0p5();
-        let mut group = "";
-        for section in search::sections(query) {
-            if section.group != group {
-                group = section.group;
-                list = list.child(
-                    div()
-                        .px_2()
-                        .pt_3()
-                        .pb_1()
-                        .text_role(TextRole::Meta, cx)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme.muted_foreground)
-                        .child(group.to_uppercase()),
-                );
-            }
-            let active = shown.is_some_and(|shown| shown.id == section.id);
-            let id = section.id;
-            list = list.child(
-                h_flex()
-                    .id(id)
-                    .selected_in_tree(Role::Tab, settings_nav(id), section.label, active)
-                    .h(px(30.))
-                    .px_2()
-                    .gap_2()
-                    .rounded(px(6.))
-                    .text_role(TextRole::Body, cx)
-                    .cursor_pointer()
-                    .text_color(theme.sidebar_foreground)
-                    .hover(|row| row.bg(theme.sidebar_accent.opacity(0.6)))
-                    .when(active, |row| {
-                        row.bg(theme.sidebar_accent)
-                            .text_color(theme.sidebar_accent_foreground)
-                    })
-                    .child(Icon::new(section.icon).small())
-                    .child(section.label)
-                    .on_click(cx.listener(move |page, _, _, cx| {
-                        page.chosen = id;
-                        cx.notify();
-                    })),
-            );
-        }
-        v_flex()
-            .w(NAV_WIDTH)
-            .h_full()
-            .flex_none()
-            .bg(theme.sidebar)
-            .border_r_1()
-            .border_color(theme.sidebar_border)
-            .child(list)
-            .child(
-                div()
-                    .p_2()
-                    .border_t_1()
-                    .border_color(theme.sidebar_border)
-                    .child(
-                        Button::new("back-to-app")
-                            .control(ids::BACK, "Back to app")
-                            .ghost()
-                            .small()
-                            .icon(IconName::ArrowLeft)
-                            .label("Back to app")
-                            .on_click(|_, window, cx| window.close_sheet(cx)),
-                    ),
-            )
+impl SettingsPage {
+    /// Shows the section `id`, as a click on its entry in the sidebar would.
+    pub(super) fn show(&mut self, id: &str, cx: &mut Context<Self>) {
+        let page = SECTIONS
+            .iter()
+            .position(|section| section.id == id)
+            .unwrap_or_default();
+        self.start = (page, self.start.1 + 1);
+        cx.notify();
     }
 }
 
 impl Render for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let query = self.search.read(cx).value().to_string();
-        let shown = search::shown(&query, self.chosen);
-        self.follow_ssh_hosts(
-            shown.is_some_and(|section| section.id == "connections"),
-            window,
-            cx,
-        );
-        h_flex()
-            .size_full()
-            .items_start()
-            .child(self.nav(&query, shown, cx))
-            .child(
-                div()
-                    .id("settings-content")
-                    .flex_1()
-                    .h_full()
-                    .overflow_y_scroll()
-                    .bg(cx.theme().background)
-                    .child(self.content(&query, shown, cx)),
-            )
+        // The machines' item sets this again as it draws them; a frame without them forgets the hosts read.
+        if !std::mem::take(&mut self.machines_drawn) {
+            self.follow_ssh_hosts(false, window, cx);
+        }
+        let (page_ix, count) = self.start;
+        div().size_full().track_focus(&self.focus).child(
+            Settings::new(("settings", count))
+                .sidebar_width(NAV_WIDTH)
+                .with_group_variant(GroupBoxVariant::Outline)
+                .default_selected_index(SelectIndex {
+                    page_ix,
+                    group_ix: None,
+                })
+                .pages(self.pages(cx)),
+        )
+    }
+}
+
+impl Focusable for SettingsPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }

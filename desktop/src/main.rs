@@ -50,6 +50,7 @@ fn main() {
         crate::core::socket::picture_client::register(cx);
         inline_field::init(cx);
         features::shell::workspace_preview::register(cx);
+        features::settings::settings_panel::register(cx);
         features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
         SelectedSession::init(cx);
         Preferences::init(cx);

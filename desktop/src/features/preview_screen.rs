@@ -1,6 +1,7 @@
+use crate::core::intents::open_settings::OpenSettings;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::features::component_gallery::ComponentGallery;
-use crate::features::{projects, settings::preview as settings_preview};
+use crate::features::projects;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -8,8 +9,6 @@ use gpui_kit::*;
 pub struct Preview {
     focus: FocusHandle,
     projects: Entity<projects::ProjectsSampleScreen>,
-    settings: Entity<settings_preview::SettingsPreview>,
-    show_settings: bool,
     show_gallery: bool,
     gallery: Entity<ComponentGallery>,
     _navigation: Subscription,
@@ -33,17 +32,6 @@ impl Render for Preview {
                             .outline()
                             .label("Projects")
                             .on_click(cx.listener(|s, _, _, cx| {
-                                s.show_settings = false;
-                                s.show_gallery = false;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("settings")
-                            .outline()
-                            .label("Settings")
-                            .on_click(cx.listener(|s, _, _, cx| {
-                                s.show_settings = true;
                                 s.show_gallery = false;
                                 cx.notify();
                             })),
@@ -71,8 +59,6 @@ impl Render for Preview {
                     .w_full()
                     .child(if self.show_gallery {
                         self.gallery.clone().into_any_element()
-                    } else if self.show_settings {
-                        self.settings.clone().into_any_element()
                     } else {
                         self.projects.clone().into_any_element()
                     }),
@@ -81,29 +67,18 @@ impl Render for Preview {
 }
 
 impl Preview {
-    pub fn show_settings(&mut self, settings: bool, cx: &mut Context<Self>) {
-        self.show_settings = settings;
-        self.show_gallery = false;
-        cx.notify();
-    }
-
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let projects = cx.new(|cx| projects::ProjectsSampleScreen::new(window, cx));
-        let navigation = cx.subscribe(&projects, |view: &mut Preview, _, event, cx| match event {
-            projects::ProjectsEvent::ManageConnections { machine } => {
-                let name = machine.map(projects::Machine::label);
-                view.settings
-                    .update(cx, |settings, cx| settings.focus_machine(name, cx));
-                view.show_settings = true;
-                view.show_gallery = false;
-                cx.notify();
-            }
-        });
+        // The sample's Manage… opens the real Settings tab, where the machines are.
+        let navigation =
+            cx.subscribe_in(&projects, window, |_, _, event, window, cx| match event {
+                projects::ProjectsEvent::ManageConnections => {
+                    window.dispatch_action(Box::new(OpenSettings), cx)
+                }
+            });
         Self {
             focus: cx.focus_handle(),
             projects,
-            settings: cx.new(|cx| settings_preview::SettingsPreview::new(window, cx)),
-            show_settings: false,
             show_gallery: false,
             gallery: cx.new(|cx| ComponentGallery::new(window, cx)),
             _navigation: navigation,

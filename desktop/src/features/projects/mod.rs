@@ -3,7 +3,6 @@ mod project_dialog;
 mod projects_screen;
 mod sample;
 pub use projects_screen::{ProjectsEvent, ProjectsSampleScreen};
-pub use sample::Machine;
 
 pub mod new_project;
 

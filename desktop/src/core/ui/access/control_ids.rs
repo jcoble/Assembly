@@ -53,8 +53,6 @@ ids! {
         CONNECT = "composer.connect",
     }
     settings {
-        SEARCH = "settings.search",
-        BACK = "settings.back",
         MACHINE_NAME = "settings.machine-name",
         MACHINE_SSH = "settings.machine-ssh",
         MACHINE_SSH_RESOLVED = "settings.machine-ssh-resolved",
@@ -154,11 +152,6 @@ pub fn filter_value(area: &str, group: &str, value: &str) -> String {
 /// A row of a list, by the key its owner gave it (`session:<id>`): `rows.session.<id>`.
 pub fn row(key: &str) -> String {
     format!("rows.{}", key.replace(':', "."))
-}
-
-/// A page's entry in the Settings sidebar: `settings.nav.connections`.
-pub fn settings_nav(section: &str) -> String {
-    format!("settings.nav.{}", slug(section))
 }
 
 /// A button on a remote machine's row in Settings > Connections: `settings.machine.workbox-test.connect`

@@ -143,7 +143,7 @@ async fn editing_box<'a>(cx: &'a mut TestAppContext, backend: &FakeBackend) -> P
     });
     cx.update(|window, cx| {
         page.update(cx, |page, cx| {
-            page.chosen = "connections";
+            page.show("connections", cx);
             page.edit_machine(&machine, window, cx);
         })
     });

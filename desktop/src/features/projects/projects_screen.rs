@@ -16,7 +16,8 @@ use std::cell::Cell;
 /// Navigation requests for the host; this view never creates a second Settings implementation.
 #[derive(Clone, Copy, Debug)]
 pub enum ProjectsEvent {
-    ManageConnections { machine: Option<Machine> },
+    /// Opens Settings, where the machines are.
+    ManageConnections,
 }
 
 pub struct ProjectsSampleScreen {
@@ -308,28 +309,29 @@ impl ProjectsSampleScreen {
     }
 
     fn machines(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut pane = v_flex()
-            .w(px(260.))
-            .h_full()
-            .gap_2()
-            .p_4()
-            .bg(cx.theme().group_box)
-            .rounded_lg()
-            .child(
-                h_flex()
-                    .justify_between()
-                    .gap_2()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Machines"))
-                    .child(
-                        Button::new("add-machine")
-                            .ghost()
-                            .small()
-                            .label("Add machine")
-                            .on_click(cx.listener(|_, _, _, cx| {
-                                cx.emit(ProjectsEvent::ManageConnections { machine: None })
-                            })),
-                    ),
-            );
+        let mut pane =
+            v_flex()
+                .w(px(260.))
+                .h_full()
+                .gap_2()
+                .p_4()
+                .bg(cx.theme().group_box)
+                .rounded_lg()
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .gap_2()
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Machines"))
+                        .child(
+                            Button::new("add-machine")
+                                .ghost()
+                                .small()
+                                .label("Add machine")
+                                .on_click(cx.listener(|_, _, _, cx| {
+                                    cx.emit(ProjectsEvent::ManageConnections)
+                                })),
+                        ),
+                );
         pane = pane.child(
             Button::new("all-machines")
                 .ghost()
@@ -377,7 +379,7 @@ impl ProjectsSampleScreen {
                                 } else {menu};
                                 menu.item(PopupMenuItem::new("New project here…").on_click(move |_,window,cx|ProjectDialog::open(create.clone(),DialogMode::Create,machine,window,cx)))
                                     .item(PopupMenuItem::new("Add folder here…").on_click(move |_,window,cx|ProjectDialog::open(add.clone(),DialogMode::Add,machine,window,cx)))
-                                    .item(PopupMenuItem::new("Manage…").on_click(move |_,_,cx|{_=manage.update(cx,|_,cx|cx.emit(ProjectsEvent::ManageConnections{machine:Some(machine)}));}))
+                                    .item(PopupMenuItem::new("Manage…").on_click(move |_,_,cx|{_=manage.update(cx,|_,cx|cx.emit(ProjectsEvent::ManageConnections));}))
                             }),
                     ),
             );

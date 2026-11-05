@@ -5,9 +5,8 @@ use gpui_kit::component::dock::{
 };
 use gpui_kit::*;
 
+/// The tab's name in a saved layout, kept from when it also held a Settings sample, so a saved tab still opens.
 const PANEL: &str = "Projects and Settings preview";
-struct OpenPreview(WeakEntity<PreviewPanel>);
-impl Global for OpenPreview {}
 
 pub struct PreviewPanel {
     content: Entity<Preview>,
@@ -19,35 +18,20 @@ impl PreviewPanel {
             content: cx.new(|cx| Preview::new(window, cx)),
         }
     }
-
-    fn show_settings(&self, settings: bool, cx: &mut Context<Self>) {
-        self.content
-            .update(cx, |content, cx| content.show_settings(settings, cx));
-    }
 }
 
 pub fn register(cx: &mut App) {
     register_panel(cx, PANEL, |_, window, cx| {
         let pane = cx.new(|cx| PreviewPanel::new(window, cx));
-        cx.set_global(OpenPreview(pane.downgrade()));
         CenterPanes::remember(PANEL, PanelId::from(pane.entity_id()), cx);
         panel_handle(pane)
     });
 }
 
-/// One tab hosts the sample screens; reopening a menu entry preserves its edits.
-pub fn open(settings: bool, window: &mut Window, cx: &mut App) {
-    let existing = cx
-        .try_global::<OpenPreview>()
-        .and_then(|pane| pane.0.upgrade());
-    if let Some(pane) = existing {
-        pane.update(cx, |pane, cx| pane.show_settings(settings, cx));
-    }
+/// One tab hosts the sample screens; reopening it keeps their edits.
+pub fn open(window: &mut Window, cx: &mut App) {
     CenterPanes::open(PANEL, window, cx, |window, cx| {
-        let pane = cx.new(|cx| PreviewPanel::new(window, cx));
-        pane.update(cx, |pane, cx| pane.show_settings(settings, cx));
-        cx.set_global(OpenPreview(pane.downgrade()));
-        pane
+        cx.new(|cx| PreviewPanel::new(window, cx))
     });
 }
 
@@ -69,6 +53,6 @@ impl BasePanel for PreviewPanel {
 }
 impl Panel for PreviewPanel {
     fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        PANEL
+        "Projects preview"
     }
 }

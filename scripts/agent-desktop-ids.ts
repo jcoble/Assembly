@@ -90,6 +90,17 @@ async function click(id: string, headed = false): Promise<void> {
   }
 }
 
+/** Clicks the first node with `role` and `name`, for the kit's controls that carry a name but no id. */
+async function clickNamed(role: string, name: string, seconds = 15): Promise<void> {
+  const until = Date.now() + seconds * 1000;
+  for (;;) {
+    const node = flatten(snapshot()).find((node) => node.role === role && node.name === name);
+    if (node?.ref_id && run(['click', node.ref_id]).ok) return;
+    if (Date.now() > until) throw new Error(`no ${role} named ${name} to click`);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
 /** Presses the tab `id` until it says it is picked (a press that lands while the window is still laying out is lost). */
 async function pick(id: string): Promise<void> {
   for (let attempt = 0; ; attempt++) {
@@ -144,15 +155,15 @@ async function main(): Promise<void> {
   await expect('utility.usage', 'button', 'Usage');
   await expect('sessions.empty', 'statictext', 'No sessions here.', true);
 
-  // Settings > Connections, then back.
+  // Settings opens in its own tab; its sidebar is the kit's, whose entries carry names rather than ids. Connections,
+  // then back to Chat.
   await click('utility.settings');
-  await waitFor('settings.back');
-  await click('settings.nav.connections');
+  await waitFor('tabs.settings');
+  await clickNamed('treeitem', 'Connections');
   await waitFor('settings.machine-save');
   await expect('settings.machine-name', 'textfield', 'Machine name');
   await expect('settings.machine.local.name', 'statictext', 'This Mac', true);
-  await click('settings.back');
-  await waitFor('settings.back', false);
+  await pick('tabs.chat');
 
   // The Build Board.
   await click('topbar.board', true);
