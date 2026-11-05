@@ -221,6 +221,7 @@ impl CommitTimeline {
         let row = ListItem::new(SharedString::from(format!("commit:{}", commit.sha)))
             .py_0()
             .min_h(px(28.))
+            .text_role(TextRole::Body, cx)
             .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
             .on_click(
                 cx.listener(move |timeline, _, _, cx| timeline.toggle_commit(toggled.clone(), cx)),
@@ -345,6 +346,7 @@ impl CommitTimeline {
                         file.path
                     )))
                     .selected(chosen)
+                    .text_role(TextRole::Body, cx)
                     .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
                     .on_click(cx.listener(move |timeline, _, window, cx| {
                         timeline.chosen = Some((picked_sha.clone(), picked_path.clone()));

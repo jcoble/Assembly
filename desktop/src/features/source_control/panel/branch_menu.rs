@@ -229,6 +229,7 @@ impl BranchMenu {
                 let choice_off = choice.is_none();
                 ListItem::new(SharedString::from(format!("branch:{}", branch.name)))
                     .py_1()
+                    .text_role(TextRole::Body, cx)
                     .disabled(busy || choice.is_none())
                     .on_click(cx.listener(move |_, _, _, cx| {
                         if let Some(choice) = choice.clone() {
@@ -318,6 +319,7 @@ impl Render for BranchMenu {
             .child(
                 ListItem::new("branch-stash")
                     .py_1()
+                    .text_role(TextRole::Body, cx)
                     .disabled(busy || !has_changes)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(BranchPicked::Stash)))
                     .child(Self::icon_row(
@@ -335,6 +337,7 @@ impl Render for BranchMenu {
                 menu.child(
                     ListItem::new("branch-pop-stash")
                         .py_1()
+                        .text_role(TextRole::Body, cx)
                         .disabled(busy)
                         .on_click(cx.listener(move |_, _, _, cx| {
                             cx.emit(BranchPicked::PopStash(sha.clone()))
@@ -360,6 +363,7 @@ impl Render for BranchMenu {
             .child(
                 ListItem::new("branch-stashes")
                     .py_1()
+                    .text_role(TextRole::Body, cx)
                     .disabled(busy)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(BranchPicked::OpenStashes)))
                     .child(

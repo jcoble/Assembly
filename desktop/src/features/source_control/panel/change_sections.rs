@@ -20,7 +20,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -142,6 +142,7 @@ fn icon_button(
     Button::new(id)
         .named(tooltip.clone())
         .ghost()
+        .small()
         .compact()
         .icon(Icon::new(icon).size(px(14.)))
         .tooltip(tooltip)
@@ -224,9 +225,9 @@ impl SourceControlPane {
                 )
             })
             .when_some(target.filter(|_| open), |list, target| {
-                list.children(files.iter().map(|(letter, file)| {
+                list.child(v_flex().children(files.iter().map(|(letter, file)| {
                     self.file_row(section, *letter, file, &target, root.clone(), busy, cx)
-                }))
+                })))
             })
             .into_any_element()
     }
@@ -367,6 +368,7 @@ impl SourceControlPane {
             .px_2()
             .py_0()
             .min_h(px(28.))
+            .text_role(TextRole::Body, cx)
             .on_click(cx.listener(move |pane, _, window, cx| {
                 pane.selected_file = Some(key.clone());
                 window.dispatch_action(Box::new(open.clone()), cx);
@@ -514,8 +516,8 @@ impl SourceControlPane {
             let absolute = root
                 .as_ref()
                 .map(|root| format!("{}/{}", root.trim_end_matches('/'), file.path));
-            menu.min_w(px(220.))
-                .max_w(px(220.))
+            menu.min_w(px(280.))
+                .max_w(px(280.))
                 .item(reasoned_item(
                     "View changes",
                     reason(view_reason),
