@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Engine;
 using Assembly.Engine.Hosting;
 using Assembly.Engine.NeedsMe;
 using Assembly.Infrastructure.Engine;
@@ -88,16 +89,14 @@ public static class PhoneNeedsRoutes
     internal sealed record Item(string Id, string Kind, string SessionName, string? RunId, string? StepId,
         string Title, string Detail, string? Provider, long CreatedAt, long Version, long Epoch, bool ProviderBacked, IReadOnlyList<Option> Options);
 
-    internal static IReadOnlyList<Item> Read(IReadScope scope, string machine, string? id = null, string? sessionId = null) => scope.Query("""
+    internal static IReadOnlyList<Item> Read(IReadScope scope, string machine, string? id = null, string? sessionId = null) => scope.Query($"""
         SELECT n.id,n.kind,CAST(s.title AS TEXT),n.run_id,n.step_id,n.text,s.provider,n.created_ms,n.version,s.epoch,
             n.options_json,r.payload,n.provider_request_id,n.source_kind,st.definition_key
         FROM engine_needs_me n JOIN engine_session s ON s.id=n.session_id
         LEFT JOIN engine_step st ON st.id=n.step_id
         LEFT JOIN rows r ON r.session_id=n.session_id AND r.seq=(SELECT seq FROM rows WHERE session_id=n.session_id
             AND item_id='ask:'||n.chat_row_id AND kind='ask' ORDER BY seq DESC LIMIT 1)
-        WHERE n.state='open' AND (n.addressee_session_id IS NULL OR
-            (n.source_kind IN ('workflow','workflow_gate') AND n.addressee_session_id=n.session_id AND EXISTS
-                (SELECT 1 FROM engine_run run WHERE run.id=n.run_id AND run.owner_session_id=n.session_id)))
+        WHERE n.state='open' AND {OwnerAttention.Need}
             AND n.machine=$machine
             AND s.machine=$machine AND s.holder='local' AND s.reserved_epoch IS NULL
             AND s.state NOT IN ('foreign','handing_off','ended') AND ($id IS NULL OR n.id=$id)
