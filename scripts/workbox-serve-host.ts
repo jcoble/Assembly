@@ -2,14 +2,14 @@
 import { promises as fs } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
 import { installedRelease, prepareBackend, pruneReleases } from './dev-remote-build.ts';
 import { sameBackendFiles } from './remote-backend-package.ts';
 import { backendIdentity, lane, type Lane } from './dev-remote-identity.ts';
 import { command, lifetime } from './dev-remote-process.ts';
 import { probeSource, type Probe } from './dev-remote-probe.ts';
-import { ensureTools, latestTools, toolKey } from './dev-toolchain.ts';
+import { ensureTools, keepNewer, latestTools, toolKey } from './dev-toolchain.ts';
 import { waitForIdle } from './dev-remote-idle.ts';
+import { HostDown, HostUnseen, waitForAnswer } from './dev-remote-ready.ts';
 import { stage } from './dev-remote-timing.ts';
 
 const owner = lifetime(true);
@@ -38,20 +38,9 @@ async function members(pid: string) {
 async function idle(pid: string) {
   await waitForIdle(() => members(pid), pid, root, request.waitForIdle === true, owner.signal);
 }
-async function ready(pid: string) {
-  // Journal replay for this exact new PID avoids a connection retry loop and startup races.
-  await new Promise<void>((resolve, reject) => {
-    const journal = spawn('journalctl', ['--user', '-u', target.unit, `_PID=${pid}`, '--since', '1 minute ago', '--follow', '-o', 'cat'], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let text = '', failure: Error | undefined;
-    const stop = () => { journal.kill('SIGTERM'); };
-    const abort = () => { failure = Error('sync cancelled before host readiness'); stop(); };
-    owner.signal.addEventListener('abort', abort, { once: true });
-    const deadline = setTimeout(() => { failure = Error('new host did not announce readiness within 30 seconds'); stop(); }, 30_000);
-    journal.stdout.on('data', bytes => { text += bytes; if (text.includes('listening on http://127.0.0.1:' + target.port)) stop(); });
-    journal.on('error', error => { failure = error; stop(); });
-    journal.on('close', () => { clearTimeout(deadline); owner.signal.removeEventListener('abort', abort); failure ? reject(failure) : text.includes('listening on ') ? resolve() : reject(Error('host journal ended before readiness')); });
-    if (owner.signal.aborted) abort();
-  });
+async function hostState() {
+  const [active, pid] = await Promise.all(['ActiveState', 'MainPID'].map(property => run('systemctl', ['--user', 'show', target.unit, '-p', property, '--value'])));
+  return { active: active === 'active' || active === 'activating', pid };
 }
 let stopped = false, candidateStarted = false, originalUnit: string | undefined;
 try {
@@ -71,7 +60,7 @@ try {
   const seedManifest = request.managed && (request.managed.seedManifest ?? seedTools!.trackedManifest(process.cwd()));
   if (request.managed && await seedTools!.seedCohort(seedManifest) !== request.managed.cohort)
     throw Error('remote seed manifest differs from the local safe-backup cohort');
-  const desiredTools = request.managed ? toolKey(request.managed.versions, request.sources, 'linux-x64') : undefined;
+  let desiredTools = request.managed ? toolKey(keepNewer(request.managed.versions, before.toolVersions), request.sources, 'linux-x64') : undefined;
   const adaptersCurrent = before.adapterOK && before.launcherSha === request.launcher && (request.managed ? before.toolsKey === desiredTools : before.adapterSources === request.sources);
   const current = before.backendIdentity === identity;
   if (current && adaptersCurrent && !seedChanged) {
@@ -82,7 +71,9 @@ try {
     let toolsChanged = false;
     if (request.managed || before.missing || !adaptersCurrent) {
       await fs.mkdir(join(root, 'serve'), { recursive: true });
-      ({ changed: toolsChanged } = await ensureTools(process.cwd(), join(root, 'adapters'), join(root, 'serve/agents.json'), request.managed?.versions ?? await latestTools(owner.signal), owner.signal));
+      const tools = await ensureTools(process.cwd(), join(root, 'adapters'), join(root, 'serve/agents.json'), request.managed?.versions ?? await latestTools(owner.signal), owner.signal);
+      toolsChanged = tools.changed;
+      if (request.managed) desiredTools = tools.key;
     }
     const adapterState = before.missing || request.managed || !adaptersCurrent ? await probe(true) : before;
     if (!adapterState.adapterOK || adapterState.launcherSha !== request.launcher)
@@ -141,12 +132,11 @@ TimeoutStopSec=30
       await run('systemctl', ['--user', 'daemon-reload']);
       // Candidate startup may migrate the DB; never roll code back automatically after this point.
       candidateStarted = true;
-      await run('systemctl', ['--user', 'start', target.unit]);
+      await run('systemctl', ['--user', 'start', target.unit]).catch(error => { throw new HostDown(`Remote backend failed to start: ${error instanceof Error ? error.message : String(error)}. No automatic rollback was attempted because startup may have migrated the database.`); });
       const pid = await run('systemctl', ['--user', 'show', target.unit, '-p', 'MainPID', '--value']);
       restartTime();
       const answerTime = stage('answer');
-      await ready(pid);
-      const after = await probe();
+      const after = await waitForAnswer({ pid, state: hostState, answer: () => probe(), signal: owner.signal });
       if (after.backendIdentity !== prepared.identity || after.commit !== prepared.commit || (!before.missing && after.engine !== before.engine) || after.dll !== dll || request.managed && (after.toolsKey !== desiredTools || after.seedCohort !== request.managed.cohort)) throw Error('new host identity could not be verified; inspect lane host before retrying');
       answerTime();
       // Disk only: a failed cleanup never fails a host that is already verified.
@@ -164,10 +154,11 @@ TimeoutStopSec=30
       await command('systemctl', ['--user', 'start', target.unit]);
     } catch { console.error('previous host could not be restored before candidate startup; inspect the lane unit'); }
   }
-  console.log('ASSEMBLY_REMOTE_SYNC ' + JSON.stringify({ reason: candidateStarted
-    ? 'Remote backend failed to start. Host may be down; inspect it before retrying. No automatic rollback was attempted because startup may have migrated the database.'
-    : `Remote backend build or deploy failed: ${error instanceof Error ? error.message : String(error)}` }));
-  console.error(`Workbox Test sync failed${candidateStarted ? ' after candidate startup (host state needs inspection)' : ''}: ${error instanceof Error ? error.message : String(error)}`);
+  const said = error instanceof Error ? error.message : String(error);
+  console.log('ASSEMBLY_REMOTE_SYNC ' + JSON.stringify({ reason: error instanceof HostDown || error instanceof HostUnseen ? said
+    : candidateStarted ? `Remote backend started, but checking it failed: ${said}`
+    : `Remote backend build or deploy failed: ${said}` }));
+  console.error(`Workbox Test sync failed${candidateStarted ? ' after candidate startup (host state needs inspection)' : ''}: ${said}`);
   process.exitCode = 1;
 }
 finally { owner.close(); }

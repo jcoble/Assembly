@@ -444,6 +444,15 @@ pub fn empty_line(state: Option<&ConnectionState>) -> &'static str {
     }
 }
 
+/// What the empty column says. While an update finishes, the window's notice says why there's no backend.
+pub fn empty_words(state: Option<&ConnectionState>, update_finishing: bool) -> &'static str {
+    if update_finishing {
+        ""
+    } else {
+        empty_line(state)
+    }
+}
+
 /// The saved provider and location picks in the `preferences` topic's first update, its state.
 pub fn saved_filters(update: &Update) -> Option<(Vec<String>, Vec<String>, Vec<String>)> {
     let Update::State(items) = update else {

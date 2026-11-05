@@ -96,6 +96,34 @@ public sealed class RemoteReleaseFeedTests
     }
 
     [Fact]
+    public async Task An_install_keeps_its_own_release_when_another_prepares_with_a_newer_one()
+    {
+        var signer = new ReleaseSigner();
+        var record = Record();
+        var (second, signature) = ("{\"schemaVersion\":2}"u8.ToArray(), signer.Sign(Manifest));
+        var files = new Dictionary<string, byte[]>
+        {
+            ["https://api.github.com/repos/jcoble/Assembly/releases?per_page=100"] = Listing(1000, record.Length, signer.Sign(record).Length, "github.com", Manifest.Length, signature.Length),
+            [Base + Archive + ".download.json"] = record,
+            [Base + Archive + ".download.json.sig"] = signer.Sign(record),
+            [AdapterBase + AdapterManifest] = Manifest,
+            [AdapterBase + AdapterManifest + ".sig"] = signature,
+        };
+        var feed = new RemoteReleaseFeed(new HttpClient(new Handler(files)), signer.PublicKey);
+        var packages = new ReleasePackages(feed, new RemoteReleaseShell(), null);
+        var first = await packages.PrepareAsync(default);
+        var before = await first.InstallAdaptersAsync("box", "'stage'", false, _ => { }, default);
+
+        files[AdapterBase + AdapterManifest] = second;
+        files[AdapterBase + AdapterManifest + ".sig"] = signer.Sign(second);
+        var other = await packages.PrepareAsync(default);
+
+        var theirs = await other.InstallAdaptersAsync("box", "'stage'", false, _ => { }, default);
+        Assert.NotEqual(before.ManifestSha256, theirs.ManifestSha256);
+        Assert.Equal(before, await first.InstallAdaptersAsync("box", "'stage'", false, _ => { }, default));
+    }
+
+    [Fact]
     public async Task Names_the_newest_signed_adapters_and_the_hash_of_their_manifest()
     {
         var (feed, handler) = Feed(Record());

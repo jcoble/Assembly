@@ -49,4 +49,23 @@ public sealed class RemoteReleaseTrustTests
     {
         Assert.Throws<CallFailed>(() => RemoteReleaseTrust.Verify(Fixture("old-release.download.json"), Encoding.UTF8.GetBytes(signature)));
     }
+
+    // The app's archive is checked as it downloads, so nothing reads the whole of it into memory.
+    [Fact]
+    public void A_signature_checked_piece_by_piece_as_it_arrives_answers_the_same()
+    {
+        var signer = new ReleaseSigner();
+        var data = new byte[200_000];
+        Random.Shared.NextBytes(data);
+        var signature = signer.Sign(data);
+
+        var whole = new ReleaseDigest();
+        foreach (var piece in data.Chunk(65_536)) whole.Add(piece);
+        RemoteReleaseTrust.Verify(whole, (ReadOnlySpan<byte>)signature, signer.PublicKey);
+
+        var changed = new ReleaseDigest();
+        foreach (var piece in data.Chunk(65_536)) changed.Add(piece);
+        changed.Add([0]);
+        Assert.Equal("release_untrusted", Assert.Throws<CallFailed>(() => RemoteReleaseTrust.Verify(changed, (ReadOnlySpan<byte>)signature, signer.PublicKey)).Reason);
+    }
 }

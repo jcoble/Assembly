@@ -6,6 +6,9 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
+use gpui_kit::AppContext as _;
+use gpui_kit::component::WindowExt as _;
+
 use super::{BackendConfig, Launcher};
 
 const TOKEN: &str = "0123456789abcdef";
@@ -271,4 +274,46 @@ fn the_backend_is_asked_to_exit_when_its_stdin_closes() {
     launcher.thread.take().unwrap().join().unwrap();
     let args = read(&launcher.config, "args");
     assert!(args.contains("--exit-on-stdin-close"), "{args}");
+}
+
+#[test]
+fn a_backend_refused_its_home_means_an_update_is_finishing_and_is_not_started_again() {
+    let (mut launcher, calls) = launch_noting_give_ups(fake("finishing", "exit 75"));
+    launcher.thread.take().unwrap().join().unwrap();
+    assert!(launcher.update_finishing());
+    assert_eq!(calls.try_iter().collect::<Vec<_>>(), [None]);
+    assert_eq!(read(&launcher.config, "runs"), "1\n");
+}
+
+#[test]
+fn another_early_exit_says_nothing_about_an_update() {
+    let (mut launcher, _calls) = launch_noting_give_ups(fake("other-exit", "exit 3"));
+    launcher.thread.take().unwrap().join().unwrap();
+    assert!(!launcher.update_finishing());
+}
+
+#[gpui::test]
+async fn the_window_is_told_the_update_is_finishing_once(cx: &mut gpui::TestAppContext) {
+    cx.executor().allow_parking();
+    let (gave_up, mut heard) = futures_channel::mpsc::unbounded::<()>();
+    let (_, cx) = cx.add_window_view(|window, cx| {
+        gpui_kit::init(cx);
+        let page = cx.new(|_| gpui_kit::EmptyView);
+        gpui_kit::base::Root::new(page, window, cx)
+    });
+    cx.update(|_, cx| {
+        let config = fake("finishing-window", "exit 75");
+        Launcher::start(
+            config,
+            |_, _, _| {},
+            move |_| _ = gave_up.unbounded_send(()),
+            cx,
+        );
+    });
+    _ = heard.recv().await;
+    cx.run_until_parked();
+    // The window that opens after the give-up asks too, and it's still the one notice.
+    cx.update(|_, cx| Launcher::tell_if_update_finishing(cx));
+    cx.run_until_parked();
+    cx.update(|window, cx| assert_eq!(window.notifications(cx).len(), 1));
 }

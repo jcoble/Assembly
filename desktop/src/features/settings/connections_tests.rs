@@ -4,12 +4,16 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::TestAppContext;
-use gpui_kit::{AppContext as _, Entity, Subscription, VisualTestContext, px, size};
+use gpui_kit::component::IndexPath;
+use gpui_kit::component::select::SearchableVec;
+use gpui_kit::{AppContext as _, Entity, Modifiers, Subscription, VisualTestContext, px, size};
 use serde_json::{Value, json};
 
+use super::super::ssh_picker::HostChoice;
 use super::SettingsPage;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
@@ -61,6 +65,30 @@ fn backend() -> FakeBackend {
                 Reply::Frame(
                     json!({"t": "error", "id": set, "code": "failed", "message": "disk full"}),
                 ),
+                done,
+            ],
+            (Some("call"), Some("ready")) => vec![
+                Reply::Frame(json!({"t": "change", "sub": sub, "key": "local", "item":
+                    {"name": null, "kind": "local", "reachable": true, "reason": null, "checked": true, "restartReady": "2.0.0"}})),
+                done,
+            ],
+            (Some("call"), Some("restart")) => vec![done],
+            (Some("call"), Some("downloading")) => vec![
+                Reply::Frame(json!({"t": "change", "sub": sub, "key": "local", "item":
+                    {"name": null, "kind": "local", "reachable": true, "reason": null, "checked": true, "updating": true,
+                     "updatePercent": 42, "updateCancellable": true}})),
+                done,
+            ],
+            (Some("call"), Some("installing")) => vec![
+                Reply::Frame(json!({"t": "change", "sub": sub, "key": "local", "item":
+                    {"name": null, "kind": "local", "reachable": true, "reason": null, "checked": true, "updating": true,
+                     "updatePercent": 60}})),
+                done,
+            ],
+            (Some("call"), Some("cancel")) => vec![
+                Reply::Frame(json!({"t": "change", "sub": sub, "key": "local", "item":
+                    {"name": null, "kind": "local", "reachable": true, "reason": null, "checked": true,
+                     "updates": [{"kind": "desktop", "name": "Desktop", "current": "1", "wanted": "2", "state": "behind"}]}})),
                 done,
             ],
             (Some("call"), Some("flip")) => vec![change(boxed(false)), done],
@@ -326,4 +354,124 @@ async fn a_card_with_something_behind_has_the_one_button_and_shows_why_it_failed
     })
     .await;
     assert!(page.failure().unwrap().contains("No signed release"));
+}
+
+// The card says to press it, and the top bar's button can't be reached under Settings.
+#[gpui::test]
+async fn this_machines_card_has_restart_to_update_when_an_update_is_ready(cx: &mut TestAppContext) {
+    let backend = backend();
+    let mut page = editing_box(cx, &backend).await;
+    assert!(page.cx.debug_bounds("machine-restart").is_none());
+    page.backend_does("ready", "the update ready", |page| {
+        page.cx.update(|_, cx| {
+            Machines::try_global(cx).is_some_and(|machines| {
+                (machines.read(cx).machines()).any(|machine| machine.restart_ready.is_some())
+            })
+        })
+    })
+    .await;
+    draw(page.cx);
+    let button = page.cx.debug_bounds("machine-restart").expect("the button");
+    page.cx.simulate_click(button.center(), Modifiers::none());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let frame = backend.seen.recv_timeout(left).expect("the restart call");
+        if frame["method"] == "restart" {
+            assert_eq!(frame["feature"], "updates");
+            break;
+        }
+    }
+}
+
+// Pressing it stops the run and the button is back to ready; once an install starts there's no Cancel to press.
+#[gpui::test]
+async fn while_downloading_the_card_has_cancel_which_goes_back_to_ready(cx: &mut TestAppContext) {
+    let backend = backend();
+    let mut page = editing_box(cx, &backend).await;
+    let updating = |page: &mut Page<'_>, cancellable: bool| {
+        page.cx.update(|_, cx| {
+            Machines::try_global(cx).is_some_and(|machines| {
+                (machines.read(cx).machines())
+                    .any(|machine| machine.updating && machine.update_cancellable == cancellable)
+            })
+        })
+    };
+    page.backend_does("installing", "installing", |page| updating(page, false))
+        .await;
+    assert!(page.cx.debug_bounds("machine-cancel").is_none());
+    page.backend_does("downloading", "downloading", |page| updating(page, true))
+        .await;
+    let button = page.cx.debug_bounds("machine-cancel").expect("Cancel");
+    page.cx.simulate_click(button.center(), Modifiers::none());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let frame = backend.seen.recv_timeout(left).expect("the cancel call");
+        if frame["method"] == "cancel" {
+            assert_eq!(frame["feature"], "updates");
+            break;
+        }
+    }
+    let (mut changes, changed) = (
+        std::mem::replace(&mut page.changes, unbounded().1),
+        page.changed.clone(),
+    );
+    until("back to ready", &mut changes, &changed, || {
+        page.cx.update(|_, cx| {
+            Machines::try_global(cx).is_some_and(|machines| {
+                (machines.read(cx).machines()).all(|machine| !machine.updating)
+            })
+        })
+    })
+    .await;
+    draw(page.cx);
+    assert!(page.cx.debug_bounds("machine-cancel").is_none());
+}
+
+// Every button a saved machine can offer beside its words left them a letter wide on a real screen.
+#[gpui::test]
+async fn a_machine_with_every_button_keeps_its_words_readable(cx: &mut TestAppContext) {
+    let backend = backend();
+    let mut page = editing_box(cx, &backend).await;
+    page.backend_does("flip", "box not answering", |page| {
+        page.cx.update(|_, cx| {
+            Machines::try_global(cx).is_some_and(|machines| {
+                machines
+                    .read(cx)
+                    .machines()
+                    .nth(1)
+                    .is_some_and(|machine| !machine.reachable)
+            })
+        })
+    })
+    .await;
+    draw(page.cx);
+    let words = page.cx.debug_bounds("machine-status").expect("the status");
+    assert!(
+        words.size.width > px(300.),
+        "the status has {:?}",
+        words.size.width
+    );
+}
+
+#[gpui::test]
+async fn a_saved_machine_leaves_the_host_search_empty_for_the_next(cx: &mut TestAppContext) {
+    let backend = backend();
+    let page = editing_box(cx, &backend).await;
+    let host = HostChoice {
+        host: "host-a".into(),
+        host_name: None,
+    };
+    page.cx.update(|window, cx| {
+        page.page.update(cx, |page, cx| {
+            page.ssh_picker.state.update(cx, |state, cx| {
+                state.set_items(SearchableVec::new(vec![host]), window, cx);
+                state.set_selected_index(Some(IndexPath::new(0)), window, cx);
+                assert!(state.selected_value().is_some(), "picked first");
+            });
+            page.clear_machine_fields(window, cx);
+            assert_eq!(page.ssh_picker.state.read(cx).selected_value(), None);
+        });
+    });
 }

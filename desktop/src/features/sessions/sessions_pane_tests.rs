@@ -12,7 +12,7 @@ use gpui_kit::{Entity, Modifiers, VisualTestContext};
 use gpui_kit::{ListOffset, px};
 use serde_json::{Value, json};
 
-use super::{SessionsPane, empty_line, needs_words, provider_options, saved_filters};
+use super::{SessionsPane, empty_line, empty_words, needs_words, provider_options, saved_filters};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
@@ -170,6 +170,12 @@ fn an_empty_column_says_what_the_connection_is_doing() {
         empty_line(Some(&ConnectionState::Refused { code: 4401 })),
         "The backend isn't running."
     );
+}
+
+#[test]
+fn while_an_update_finishes_the_empty_column_leaves_the_words_to_its_notice() {
+    assert_eq!(empty_words(None, true), "");
+    assert_eq!(empty_words(None, false), "The backend isn't running.");
 }
 
 fn open(cx: &mut TestAppContext) -> (Entity<SessionsPane>, &mut VisualTestContext) {
