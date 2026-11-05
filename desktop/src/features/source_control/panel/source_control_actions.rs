@@ -239,7 +239,7 @@ impl SourceControlPane {
                 }
             }
             MenuAction::OpenHistory => {
-                if let Some(target) = self.shown_target(cx) {
+                if let Some(target) = self.session_target(cx).or_else(|| self.shown_target(cx)) {
                     window.dispatch_action(
                         Box::new(OpenGitHistory {
                             expected_source: target.source,

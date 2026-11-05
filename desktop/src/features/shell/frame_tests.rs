@@ -32,6 +32,7 @@ pub(super) fn open(
 ) -> (Entity<Frame>, Writes, &mut VisualTestContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
+        crate::core::state::selected_session::SelectedSession::init(cx);
         PlaceholderPane::register_all(cx);
     });
     open_window(saved, cx)
@@ -284,6 +285,7 @@ fn a_real_pane_registered_after_the_placeholders_replaces_one(cx: &mut TestAppCo
     let built = Rc::new(Cell::new(false));
     cx.update(|cx| {
         gpui_kit::init(cx);
+        crate::core::state::selected_session::SelectedSession::init(cx);
         PlaceholderPane::register_all(cx);
         let built = built.clone();
         register_panel(cx, CHAT, move |_, _, cx| {
@@ -431,6 +433,7 @@ impl Drop for GivenUp {
 fn a_newer_save_replaces_one_still_being_written(cx: &mut TestAppContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
+        crate::core::state::selected_session::SelectedSession::init(cx);
         PlaceholderPane::register_all(cx);
     });
     let given_up = Rc::new(RefCell::new(Vec::new()));

@@ -22,11 +22,12 @@ use gpui_kit::base::ResizeHandleContext;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{
     BasePanelView, DockArea, DockAreaRenderer, DockContext, DockPlacement, DockSkin, DropIndicator,
-    NodeId, PanelState, TabGroupContext, TabGroupRenderer,
+    NodeId, PaneRef, PanelState, TabGroupContext, TabGroupRenderer,
 };
 use gpui_kit::component::v_flex;
 use gpui_kit::*;
 
+use super::default_layout::{FILES, SOURCE_CONTROL};
 use super::{drawer_buttons::DrawerButtons, side_tabs};
 
 /// The sessions panel's distance from the window's edge and from the work panel (Frame's `PANEL_GAP`).
@@ -38,6 +39,8 @@ pub struct MotionSkin {
     pub inner: Rc<DockSkin>,
     /// Drawn at the foot of the sessions column.
     pub foot: AnyView,
+    /// The one Open another project, drawn above the tabs of whichever group shows Files or Git.
+    pub open_project: AnyView,
     /// The area this skin draws, to tell which dock a tab group is in.
     pub area: WeakEntity<DockArea>,
     /// The bottom dock is shut, as Frame saw it this frame: the centre then reaches over the strip the kit keeps for
@@ -137,13 +140,17 @@ impl DockAreaRenderer for MotionSkin {
     }
 
     fn tab_group_renderer(&self) -> Rc<dyn TabGroupRenderer> {
-        Rc::new(Unfilled(self.inner.tab_group_renderer(), self.area.clone()))
+        Rc::new(Unfilled(
+            self.inner.tab_group_renderer(),
+            self.area.clone(),
+            self.open_project.clone(),
+        ))
     }
 }
 
 /// The kit's tab groups with their fill taken out (TabGroupSkin::frame paints `background`), so the ground behind
 /// shows, and the side docks' own tabs. Everything else passes through.
-struct Unfilled(Rc<dyn TabGroupRenderer>, WeakEntity<DockArea>);
+struct Unfilled(Rc<dyn TabGroupRenderer>, WeakEntity<DockArea>, AnyView);
 
 impl TabGroupRenderer for Unfilled {
     fn frame(&self, group: &TabGroupContext, window: &mut Window, cx: &mut App) -> Stateful<Div> {
@@ -165,7 +172,7 @@ impl TabGroupRenderer for Unfilled {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        match side(&self.1, group.node(), cx) {
+        let tabs = match side(&self.1, group.node(), cx) {
             Some(DockPlacement::Left) => side_tabs::chips(group, window, cx),
             Some(DockPlacement::Right) => match self.1.upgrade() {
                 Some(dock) => DrawerButtons { dock }.into_any_element(),
@@ -174,6 +181,15 @@ impl TabGroupRenderer for Unfilled {
             // Content tabs live in the top chrome; leave the bottom utility dock's bar in place.
             None => Empty.into_any_element(),
             _ => self.0.render_tab_bar(group, window, cx),
+        };
+        if holds_open_project(&self.1, group, cx) {
+            v_flex()
+                .flex_none()
+                .child(self.2.clone())
+                .child(tabs)
+                .into_any_element()
+        } else {
+            tabs
         }
     }
 
@@ -203,6 +219,35 @@ impl TabGroupRenderer for Unfilled {
         cx: &mut App,
     ) -> Option<AnyElement> {
         self.0.render_empty(group, window, cx)
+    }
+}
+
+/// Whether this group draws Open another project: it's showing Files or Git. While Files and Git sit in two open docks
+/// at once, the one view stays above Git, so there's only ever one on screen.
+fn holds_open_project(area: &WeakEntity<DockArea>, group: &TabGroupContext, cx: &App) -> bool {
+    let Some(name) = group.active_panel().map(|panel| panel.panel_name(cx)) else {
+        return false;
+    };
+    match name {
+        SOURCE_CONTROL => true,
+        FILES => !area.upgrade().is_some_and(|area| {
+            let area = area.read(cx);
+            let mut git_shown = false;
+            if area.is_dock_open(DockPlacement::Right)
+                && let Some(tree) = area.layout(DockPlacement::Right)
+            {
+                tree.root().walk(&mut |node| {
+                    if let PaneRef::Tabs { panels, active_ix } = node.kind() {
+                        git_shown |= panels
+                            .get(active_ix)
+                            .and_then(|id| area.panel(*id))
+                            .is_some_and(|panel| panel.panel_name(cx) == SOURCE_CONTROL);
+                    }
+                });
+            }
+            git_shown
+        }),
+        _ => false,
     }
 }
 

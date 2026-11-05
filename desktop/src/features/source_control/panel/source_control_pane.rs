@@ -14,7 +14,9 @@ use super::git_status::{GitStatus, Section};
 use super::git_target::GitTarget;
 use super::pull_requests::pr_section::PrSection;
 use super::result_line::PaneResult;
+use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::session_read::{SessionRead, Shown};
+use crate::core::state::sessions::Sessions;
 use crate::core::state::viewed_project::ViewedProject;
 use crate::core::state::workspace_panes::WorkspaceKey;
 use crate::core::ui::center_panes::CenterPanes;
@@ -299,6 +301,27 @@ impl SourceControlPane {
                 Shown::Read(status) => status.checkout_root.clone(),
                 _ => None,
             },
+        })
+    }
+    /// The selected session's own folder, which pull requests and the history window stay on while a project is viewed.
+    /// `None` when nothing is viewed, since what's shown is then the session's.
+    pub(super) fn session_target(&self, cx: &App) -> Option<GitTarget> {
+        ViewedProject::viewed(cx)?;
+        let selected = SelectedSession::global(cx);
+        let selected = selected.read(cx);
+        let session = selected.session_id()?.to_string();
+        let checkout_root = Sessions::try_global(cx).and_then(|sessions| {
+            let sessions = sessions.read(cx);
+            let item = sessions
+                .items()
+                .iter()
+                .find(|item| item.session_id == session)?;
+            item.checkout_root.clone().or_else(|| item.root.clone())
+        });
+        Some(GitTarget {
+            session,
+            source: selected.source().cloned(),
+            checkout_root,
         })
     }
     fn shown_status(&self, cx: &App) -> Option<GitStatus> {

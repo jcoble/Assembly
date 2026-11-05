@@ -7,6 +7,7 @@ mod drawer_buttons;
 pub mod frame;
 pub mod layout_store;
 pub mod motion_skin;
+pub mod open_another_project;
 pub mod placeholder_pane;
 mod retired_board;
 mod side_tabs;

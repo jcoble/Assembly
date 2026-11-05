@@ -3,6 +3,7 @@
 use super::SourceControlPane;
 use super::outcomes::running_label;
 use crate::core::state::session_read::Shown;
+use crate::core::state::viewed_project::ViewedProject;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::features::source_control::commit_box::{
     can_commit, commit_hint, commit_label, stage_hint, stageable,
@@ -69,6 +70,8 @@ impl Render for SourceControlPane {
             .child(body)
     }
 }
+/// Pull requests stay with the session's branch, whichever project the rest of the panel is showing.
+const PR_SCOPE: &str = "Pull requests below are for the session folder, not this project.";
 impl SourceControlPane {
     fn render_body(&mut self, cx: &mut Context<Self>) -> AnyElement {
         match self.read.read(cx).shown().clone() {
@@ -223,6 +226,16 @@ impl SourceControlPane {
                             }))
                             .children(sections)
                             .children(timeline)
+                            .children(
+                                (ViewedProject::viewed(cx).is_some() && pull_requests.is_some())
+                                    .then(|| {
+                                        div()
+                                            .debug_selector(|| "git-pr-scope".into())
+                                            .text_role(TextRole::Body, cx)
+                                            .text_color(muted)
+                                            .child(PR_SCOPE)
+                                    }),
+                            )
                             .children(pull_requests),
                     ),
             )

@@ -22,6 +22,11 @@ ids! {
         BOARD_BADGE = "topbar.board-badge",
         DRAWER_TOGGLE = "topbar.drawer-toggle",
     }
+    open_project {
+        TRIGGER = "open-project.trigger",
+        NEW_SESSION = "open-project.new-session",
+        BACK = "open-project.back",
+    }
     drawer {
         MORE_PANELS = "drawer.more-panels",
         CLOSE = "drawer.close",

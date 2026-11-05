@@ -103,27 +103,6 @@ impl GitCheckouts {
                 .iter()
                 .any(|worktree| worktree.path == selector.path)
     }
-    /// Source control's picker: `name (session)`, then `name — branch`.
-    pub fn scope_choices(&self) -> Vec<CheckoutChoice> {
-        let others = self.worktrees.iter().map(|worktree| CheckoutChoice {
-            path: Some(worktree.path.clone()),
-            label: match worktree
-                .branch
-                .as_deref()
-                .map(str::trim)
-                .filter(|branch| !branch.is_empty())
-            {
-                Some(branch) => format!("{} — {branch}", folder_name(&worktree.path)),
-                None => folder_name(&worktree.path).to_string(),
-            },
-        });
-        std::iter::once(CheckoutChoice {
-            path: None,
-            label: format!("{} (session)", folder_name(&self.session_root)),
-        })
-        .chain(others)
-        .collect()
-    }
     /// The history tab's picker: `name (branch)`. The session's own branch comes from its status.
     pub fn repository_choices(&self, own_branch: Option<&str>) -> Vec<CheckoutChoice> {
         std::iter::once(CheckoutChoice {

@@ -16,6 +16,7 @@ use serde_json::Value;
 use super::default_layout::LAYOUT_VERSION;
 use super::layout_store::{LayoutStore, WriteLayout};
 use super::motion_skin::MotionSkin;
+use super::open_another_project::OpenAnotherProject;
 use super::top_bar::TopBar;
 use super::utility_strip::UtilityStrip;
 use crate::core::native_views::views::NativeViews;
@@ -63,10 +64,12 @@ impl Frame {
     ) -> Self {
         let utility_strip = cx.new(|_| UtilityStrip);
         let bottom_shut = Rc::new(Cell::new(true));
+        let open_project = cx.new(|cx| OpenAnotherProject::new(window, cx));
         let dock = cx.new(|cx| {
             let skin = MotionSkin {
                 inner: DockSkin::new(cx),
                 foot: utility_strip.into(),
+                open_project: open_project.into(),
                 area: cx.weak_entity(),
                 bottom_shut: bottom_shut.clone(),
             };

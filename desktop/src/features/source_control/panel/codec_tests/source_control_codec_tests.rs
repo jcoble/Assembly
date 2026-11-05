@@ -48,7 +48,6 @@ fn at(top: f32) -> SavedView {
     SavedView {
         open_sections: HashSet::from([Section::Untracked]),
         scroll_top: top,
-        ..SavedView::default()
     }
 }
 fn rows() -> Value {

@@ -14,15 +14,6 @@ fn labels(choices: Vec<CheckoutChoice>) -> Vec<String> {
     choices.into_iter().map(|choice| choice.label).collect()
 }
 #[test]
-fn source_control_names_the_session_folder_then_each_checkout_and_its_branch() {
-    let choices = checkouts().scope_choices();
-    assert_eq!(choices[0].path, None, "the own choice sends no selector");
-    assert_eq!(
-        labels(choices),
-        ["own (session)", "feature — feature", "detached"]
-    );
-}
-#[test]
 fn history_names_each_repository_with_its_branch() {
     assert_eq!(
         labels(checkouts().repository_choices(Some("main"))),

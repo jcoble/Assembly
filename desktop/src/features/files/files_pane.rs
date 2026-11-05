@@ -54,7 +54,7 @@ pub struct FilesPane {
     action_event: Option<Subscription>,
     action_loading: Option<Task<()>>,
     action_error: Option<String>,
-    _heard: Subscription,
+    _heard: [Subscription; 2],
 }
 
 impl FilesPane {
@@ -68,7 +68,9 @@ impl FilesPane {
     }
 
     pub fn new(cx: &mut Context<Self>) -> Self {
+        let viewed = crate::core::state::viewed_project::ViewedProject::global(cx);
         let heard = cx.observe(&SelectedSession::global(cx), |pane, _, cx| pane.follow(cx));
+        let heard_viewed = cx.observe(&viewed, |pane, _, cx| pane.follow(cx));
         let mut pane = FilesPane {
             focus: cx.focus_handle(),
             session: None,
@@ -92,7 +94,7 @@ impl FilesPane {
             action_event: None,
             action_loading: None,
             action_error: None,
-            _heard: heard,
+            _heard: [heard, heard_viewed],
         };
         pane.follow(cx);
         pane
@@ -100,11 +102,11 @@ impl FilesPane {
 
     /// Takes the selected session: a new one drops the old tree and its loads, and loads its root if the pane is shown.
     fn follow(&mut self, cx: &mut Context<Self>) {
-        let session = SelectedSession::global(cx)
-            .read(cx)
-            .session_id()
-            .map(String::from);
-        let source = SelectedSession::global(cx).read(cx).source().cloned();
+        let (session, source) = match crate::core::state::viewed_project::ViewedProject::subject(cx)
+        {
+            Some((session, source)) => (Some(session), source),
+            None => (None, None),
+        };
         if session == self.session && source == self.source {
             return;
         }
@@ -273,7 +275,9 @@ impl FilesPane {
     ) {
         use crate::core::ui::center_panes::CenterPanes;
         use gpui_kit::component::dock::{DockPlacement, PaneRef, PanelHandle};
-        if SelectedSession::global(cx).read(cx).session_id() != Some(session) {
+        if crate::core::state::viewed_project::ViewedProject::subject(cx)
+            .is_none_or(|(subject, _)| subject != session)
+        {
             return;
         }
         let Some(dock) = CenterPanes::dock(cx) else {

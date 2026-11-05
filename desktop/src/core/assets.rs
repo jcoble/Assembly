@@ -10,6 +10,11 @@ gpui_kit::assets::icon_assets!(
     Extra,
     [
         House,
+        FolderSearch,
+        Cloud,
+        FileSymlink,
+        Archive,
+        ArchiveRestore,
         RefreshCw,
         CircleQuestionMark,
         ShieldQuestionMark,

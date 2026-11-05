@@ -115,9 +115,17 @@ impl SourceControlPane {
         let source = shown.as_ref().and_then(|shown| shown.source.clone());
         let head = self.shown_status(cx).and_then(|status| status.head);
         let is_repository = matches!(self.read.read(cx).shown(), Shown::Read(_));
-        if self.pull_requests.as_ref().map(|(key, _)| key) != session.as_ref() {
-            self.pull_requests = session.as_ref().map(|session| {
-                let target = target.clone().unwrap_or_else(|| {
+        // Pull requests stay on the session's folder while a project is viewed.
+        let own = self.session_target(cx);
+        let viewing = own.is_some();
+        let pr_session = own
+            .as_ref()
+            .map(|own| own.session.clone())
+            .or_else(|| session.clone());
+        let pr_target = own.or_else(|| target.clone());
+        if self.pull_requests.as_ref().map(|(key, _)| key) != pr_session.as_ref() {
+            self.pull_requests = pr_session.as_ref().map(|session| {
+                let target = pr_target.clone().unwrap_or_else(|| {
                     crate::features::source_control::git_target::GitTarget::new(session.clone())
                 });
                 let writes = self.writes.clone();
@@ -128,9 +136,12 @@ impl SourceControlPane {
                 )
             });
         }
-        if let (Some((_, section)), Some(target)) = (&self.pull_requests, &target) {
+        if let (Some((_, section)), Some(target)) = (&self.pull_requests, &pr_target) {
             let target = target.clone();
-            let branch = self.shown_status(cx).map(|status| status.branch_name());
+            let branch = self
+                .shown_status(cx)
+                .filter(|_| !viewing)
+                .map(|status| status.branch_name());
             section.update(cx, |section, cx| section.set_target(target, branch, cx));
         }
         if self.timeline.as_ref().map(|(key, _)| key) != session.as_ref() {

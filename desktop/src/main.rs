@@ -9,6 +9,8 @@ mod features;
 #[allow(dead_code)]
 #[path = "components/inline_field/mod.rs"]
 mod inline_field;
+#[path = "components/open_project/mod.rs"]
+mod open_project_component;
 
 use std::cell::{Cell, OnceCell};
 use std::path::PathBuf;
