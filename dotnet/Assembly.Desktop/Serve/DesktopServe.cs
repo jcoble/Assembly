@@ -10,7 +10,7 @@ namespace Assembly.Desktop.Serve;
 /// <summary>Runs the desktop backend until Ctrl+C, with a remote machine when <c>--remote</c> names one.</summary>
 public static class DesktopServe
 {
-    /// <summary>Another process has this home folder, most likely the update helper at work. The window's launcher knows this code.</summary>
+    /// <summary>The update helper has this home folder for a moment. The window's launcher knows this code; any other holder exits 1.</summary>
     public const int HomeInUseExit = 75;
 
     /// <summary>
@@ -48,7 +48,7 @@ public static class DesktopServe
         catch (Assembly.Infrastructure.Persistence.HomeInUseException refused)
         {
             Console.Error.WriteLine($"Assembly can't open {options.Home}: {refused.Message}");
-            return HomeInUseExit;
+            return refused.Update ? HomeInUseExit : 1;
         }
     }
 

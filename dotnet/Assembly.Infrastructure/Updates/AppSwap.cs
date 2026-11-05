@@ -246,7 +246,7 @@ internal static partial class AppSwap
     {
         for (var attempt = 1; ; attempt++)
         {
-            try { return HomeLock.Take(Path.GetDirectoryName(plan.Database)!); }
+            try { return HomeLock.Take(Path.GetDirectoryName(plan.Database)!, update: true); }
             catch (Exception error) when (error is InvalidOperationException or IOException)
             {
                 if (attempt == SwapAttempts) return null;
