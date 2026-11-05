@@ -5,6 +5,7 @@
 //! the backend took it. A call that fails says why on its machine's row, or under the form.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::features::remote_install::restart_button::WORDS as RESTART_WORDS;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _};
@@ -114,7 +115,9 @@ impl SettingsPage {
         // This machine's row has no name, but its update button still needs somewhere to say why it failed.
         let key = machine.name.clone().unwrap_or("local".to_string());
         let failure = self.failure_about(Some(&key), cx);
+        let update_key = key.clone();
         let update = update_offered(&machine).then(|| {
+            let key = update_key;
             self.machine_button(
                 format!("start-{key}").into(),
                 machine_button_id(&key, "update"),
@@ -136,6 +139,31 @@ impl SettingsPage {
                     cx,
                 )
             }))
+        });
+        // Settings covers the top bar's button, and the words on this card say to press it.
+        let restart = (machine.name.is_none() && machine.restart_ready.is_some()).then(|| {
+            let about = key.clone();
+            div().debug_selector(|| "machine-restart".into()).child(
+                self.machine_button(
+                    format!("restart-{about}").into(),
+                    machine_button_id(&about, "restart"),
+                    RESTART_WORDS,
+                )
+                .primary()
+                .loading(machine.restarting)
+                .disabled(machine.restarting || machine.updating || self.machine_call.is_some())
+                .on_click(cx.listener(move |page, _, window, cx| {
+                    page.machine_call(
+                        Some(about.clone()),
+                        "updates",
+                        "restart",
+                        json!({}),
+                        "Couldn't restart",
+                        window,
+                        cx,
+                    )
+                })),
+            )
         });
         let install = install_offered(&machine).then(|| {
             let name = machine.name.clone().unwrap_or_default();
@@ -164,11 +192,13 @@ impl SettingsPage {
             .is_some()
             .then(|| self.machine_actions(machine, cx));
         // On their own line: a note or a reason can be long, and all of them beside it left it a letter wide.
-        let buttons = (update.is_some() || install.is_some() || actions.is_some()).then(|| {
+        let any = update.is_some() || restart.is_some() || install.is_some() || actions.is_some();
+        let buttons = any.then(|| {
             h_flex()
                 .flex_wrap()
                 .justify_end()
                 .gap_2()
+                .children(restart)
                 .children(update)
                 .children(install)
                 .children(actions)

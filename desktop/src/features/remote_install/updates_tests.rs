@@ -1,6 +1,16 @@
-use super::{Machine, behind_notice, behind_words, newer_words, row_status, update_offered};
+use super::{
+    Machine, behind_notice, behind_words, newer_words, notice_words, row_status, update_offered,
+};
+use crate::core::socket::client::SocketClient;
+use crate::core::socket::endpoint::Endpoint;
+use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
+use crate::core::socket::test_wait::until;
 use crate::core::state::machine::UpdateItem;
-use serde_json::json;
+use crate::core::state::machines::Machines;
+use futures_channel::mpsc::unbounded;
+use gpui_kit::component::WindowExt as _;
+use gpui_kit::{AppContext as _, EmptyView};
+use serde_json::{Value, json};
 
 fn machine(value: serde_json::Value) -> Machine {
     serde_json::from_value(value).unwrap()
@@ -217,4 +227,99 @@ fn a_machine_this_app_cant_update_says_why_and_offers_neither_button() {
     assert!(!crate::features::settings::connections::install_offered(
         &old
     ));
+}
+
+#[test]
+fn while_an_update_is_ready_the_notice_says_how_it_installs_and_nothing_about_being_behind() {
+    let ready = machine(
+        json!({"name":null,"kind":"local","reachable":true,"reason":null,"checked":true,"restartReady":"2.0.0",
+        "updates":[{"kind":"desktop","name":"Desktop","current":"1.0.0","wanted":"2.0.0","state":"behind"},
+                   {"kind":"cli","name":"codex","current":"1.0.0","wanted":"2.0.0","state":"behind"}]}),
+    );
+    let machines = [ready, with_updates()];
+    assert_eq!(
+        notice_words(machines.iter()).as_deref(),
+        Some("Assembly 2.0.0 is ready. It installs when you quit, or now with Restart to Update.")
+    );
+}
+
+#[test]
+fn with_nothing_ready_the_notice_still_points_at_update_everything() {
+    let machines = [with_updates()];
+    assert_eq!(
+        notice_words(machines.iter()).as_deref(),
+        Some(
+            "Behind on box: Backend, codex-acp. Use Update everything in Settings to update them."
+        )
+    );
+}
+
+// The update being ready is said over the "Desktop behind" toast that came before it, not beside it.
+#[gpui::test]
+async fn the_ready_notice_replaces_the_behind_notice(cx: &mut gpui::TestAppContext) {
+    cx.executor().allow_parking();
+    let mut sub = Value::Null;
+    let backend = FakeBackend::start(move |frame| {
+        if let Some(replies) = hello(frame) {
+            return replies;
+        }
+        let id = frame["id"].clone();
+        let local = |ready: Value| {
+            json!({"name":null,"kind":"local","reachable":true,"reason":null,"checked":true,"restartReady":ready,
+            "updates":[{"kind":"desktop","name":"Desktop","current":"1.0.0","wanted":"2.0.0","state":"behind"}]})
+        };
+        match (frame["t"].as_str(), frame["method"].as_str()) {
+            (Some("sub"), _) => {
+                sub = id.clone();
+                vec![Reply::Frame(json!({"t":"state","sub":id,"items":[
+                    {"key":"local","item":local(Value::Null)}]}))]
+            }
+            (Some("call"), Some("ready")) => vec![
+                Reply::Frame(
+                    json!({"t":"change","sub":sub,"key":"local","item":local(json!("2.0.0"))}),
+                ),
+                Reply::Frame(json!({"t":"result","id":id,"result":{}})),
+            ],
+            _ => Vec::new(),
+        }
+    });
+    let (_, cx) = cx.add_window_view(|window, cx| {
+        gpui_kit::init(cx);
+        SocketClient::start(
+            Endpoint {
+                port: backend.port,
+                token: "secret".into(),
+            },
+            cx,
+        );
+        Machines::start(cx);
+        super::tell_when_behind(cx);
+        let page = cx.new(|_| EmptyView);
+        gpui_kit::base::Root::new(page, window, cx)
+    });
+    let (changed, mut changes) = unbounded();
+    let machines = cx.update(|_, cx| Machines::try_global(cx).expect("the machines list"));
+    let tell = changed.clone();
+    let _heard = cx.update(|_, cx| cx.observe(&machines, move |_, _| _ = tell.unbounded_send(())));
+    until("the behind notice", &mut changes, &changed, || {
+        cx.update(|window, cx| window.notifications(cx).len()) == 1
+    })
+    .await;
+    let call = cx.update(|_, cx| {
+        SocketClient::global(cx)
+            .read(cx)
+            .call::<Value>("updates", "ready", json!({}), None)
+    });
+    _ = call.await;
+    until("the update ready", &mut changes, &changed, || {
+        cx.update(|_, cx| {
+            let machines = machines.read(cx);
+            machines
+                .machines()
+                .any(|machine| machine.restart_ready.is_some())
+        })
+    })
+    .await;
+    cx.run_until_parked();
+    cx.update(|window, cx| assert_eq!(window.notifications(cx).len(), 1));
 }

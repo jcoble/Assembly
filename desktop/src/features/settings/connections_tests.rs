@@ -4,12 +4,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::TestAppContext;
 use gpui_kit::component::IndexPath;
 use gpui_kit::component::select::SearchableVec;
-use gpui_kit::{AppContext as _, Entity, Subscription, VisualTestContext, px, size};
+use gpui_kit::{AppContext as _, Entity, Modifiers, Subscription, VisualTestContext, px, size};
 use serde_json::{Value, json};
 
 use super::super::ssh_picker::HostChoice;
@@ -66,6 +67,12 @@ fn backend() -> FakeBackend {
                 ),
                 done,
             ],
+            (Some("call"), Some("ready")) => vec![
+                Reply::Frame(json!({"t": "change", "sub": sub, "key": "local", "item":
+                    {"name": null, "kind": "local", "reachable": true, "reason": null, "checked": true, "restartReady": "2.0.0"}})),
+                done,
+            ],
+            (Some("call"), Some("restart")) => vec![done],
             (Some("call"), Some("flip")) => vec![change(boxed(false)), done],
             (Some("call"), Some("remove")) => vec![change(Value::Null), done],
             _ => Vec::new(),
@@ -329,6 +336,34 @@ async fn a_card_with_something_behind_has_the_one_button_and_shows_why_it_failed
     })
     .await;
     assert!(page.failure().unwrap().contains("No signed release"));
+}
+
+// The card says to press it, and the top bar's button can't be reached under Settings.
+#[gpui::test]
+async fn this_machines_card_has_restart_to_update_when_an_update_is_ready(cx: &mut TestAppContext) {
+    let backend = backend();
+    let mut page = editing_box(cx, &backend).await;
+    assert!(page.cx.debug_bounds("machine-restart").is_none());
+    page.backend_does("ready", "the update ready", |page| {
+        page.cx.update(|_, cx| {
+            Machines::try_global(cx).is_some_and(|machines| {
+                (machines.read(cx).machines()).any(|machine| machine.restart_ready.is_some())
+            })
+        })
+    })
+    .await;
+    draw(page.cx);
+    let button = page.cx.debug_bounds("machine-restart").expect("the button");
+    page.cx.simulate_click(button.center(), Modifiers::none());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let frame = backend.seen.recv_timeout(left).expect("the restart call");
+        if frame["method"] == "restart" {
+            assert_eq!(frame["feature"], "updates");
+            break;
+        }
+    }
 }
 
 // Every button a saved machine can offer beside its words left them a letter wide on a real screen.

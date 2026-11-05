@@ -405,9 +405,13 @@ internal static partial class AppSwap
         File.Move(whole, plan.Database, overwrite: true);
     }
 
-    // Whether the database is no longer what was copied before the update, byte for byte, log included.
-    private static bool Changed(AppSwapPlan plan) =>
-        File.Exists(plan.Backup) && KeptFiles.Any(suffix => !SameBytes(plan.Database + suffix, plan.Backup + suffix));
+    // Whether the database is no longer what was copied before the update, byte for byte, log included. One that can't be
+    // compared counts as changed; going back then reports the same unreadable file.
+    private static bool Changed(AppSwapPlan plan)
+    {
+        try { return File.Exists(plan.Backup) && KeptFiles.Any(suffix => !SameBytes(plan.Database + suffix, plan.Backup + suffix)); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return true; }
+    }
 
     private static bool SameBytes(string first, string second)
     {

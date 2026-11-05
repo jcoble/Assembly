@@ -111,7 +111,22 @@ pub fn behind_notice(words: &str) -> String {
     format!("{words} Use Update everything in Settings to update them.")
 }
 
-/// Says once what's behind each time that changes, in the place a person sees when the app starts.
+/// What the notice says now, or `None` when there's nothing to say.
+fn notice_words<'a>(machines: impl Iterator<Item = &'a Machine>) -> Option<String> {
+    let machines: Vec<&Machine> = machines.collect();
+    let ready = (machines.iter())
+        .find(|machine| machine.name.is_none())
+        .and_then(|machine| machine.restart_ready.as_ref());
+    match ready {
+        Some(version) => Some(format!(
+            "Assembly {version} is ready. It installs when you quit, or now with Restart to Update."
+        )),
+        None => behind_words(machines.into_iter()).map(|words| behind_notice(&words)),
+    }
+}
+
+/// Says once what's behind or ready each time that changes, in the place a person sees when the app starts. Each notice
+/// replaces the one before, so an update that's ready doesn't sit beside the toast that said it was behind.
 pub fn tell_when_behind(cx: &mut App) {
     let Some(machines) = Machines::try_global(cx) else {
         return;
@@ -136,18 +151,17 @@ pub fn tell_when_behind(cx: &mut App) {
                 _ = call.await;
             }));
         }
-        let words = behind_words(machines.read(cx).machines());
+        let words = notice_words(machines.read(cx).machines());
         if words == last {
             return;
         }
         last = words.clone();
-        let (Some(words), Some(window)) = (words, cx.windows().into_iter().next()) else {
+        let (Some(text), Some(window)) = (words, cx.windows().into_iter().next()) else {
             return;
         };
-        let text = behind_notice(&words);
         cx.defer(move |cx| {
             _ = window.update(cx, |_, window, cx| {
-                window.push_notification(Notification::warning(text), cx)
+                window.push_notification(Notification::warning(text).id::<BehindNotice>(), cx)
             });
         });
     });

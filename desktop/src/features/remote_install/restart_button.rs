@@ -11,7 +11,7 @@ use crate::core::state::machines::{GlobalMachines, Machines};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::topbar;
 
-const WORDS: &str = "Restart to Update";
+pub(crate) const WORDS: &str = "Restart to Update";
 
 pub struct RestartButton {
     /// Whether this app has an update ready, whether a press is on its way, and what it's doing or waiting for or why it
