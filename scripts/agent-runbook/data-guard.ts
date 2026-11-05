@@ -398,10 +398,18 @@ function checkSqlite(cmd: Simple, args: Word[], state: State) {
   sql.push(...positionals.slice(1));
   if (sql.some(w => w.dynamic)) return true;
   const hasStdin = cmd.stdin !== '';
-  if (positionals.length < 2 && !hasStdin && !sql.length && (cmd.piped || cmd.redirects.some(r => r.op === '<'))) return true;
-  if (cmd.redirects.some(r => r.op === '<' || r.op === '<>')) return true;
+  if (positionals.length < 2 && !hasStdin && cmd.piped) return true;
+  if (cmd.redirects.some(r => READS_STDIN.includes(r.op))) return true;
   return ![...sql.map(w => w.text), cmd.stdin].every(text => sqlSafe(text, state));
 }
+
+const READS_STDIN = ['<', '<>', '<&'];
+const withInput = (cmd: Simple, input: Simple): Simple => ({
+  ...cmd,
+  piped: cmd.piped || input.piped,
+  stdin: cmd.stdin + input.stdin,
+  redirects: [...cmd.redirects, ...input.redirects.filter(r => READS_STDIN.includes(r.op))],
+});
 
 // ---- Entry point -------------------------------------------------------------------------------
 export function checkDataCommand(command: string, cwd: string): { deny?: string } {
@@ -414,7 +422,8 @@ export function checkDataCommand(command: string, cwd: string): { deny?: string 
   const probe = evaluate(globbed, cwd, false);
   return probe.result.deny || !probe.touched ? probe.result : evaluate(globbed, cwd, true).result;
 }
-function evaluate(command: string, cwd: string, strict: boolean, remote = false): { result: { deny?: string }; touched: boolean } {
+// input: what ssh feeds the remote command. Any remote command can read it, so each is judged as if it were its own.
+function evaluate(command: string, cwd: string, strict: boolean, remote = false, input?: Simple): { result: { deny?: string }; touched: boolean } {
   const blocked = { result: deny(), touched: true };
   const parsed = parse(command);
   if (strict && (parsed.malformed || parsed.substitution)) return blocked;
@@ -424,7 +433,8 @@ function evaluate(command: string, cwd: string, strict: boolean, remote = false)
     if (rest.length && BLOCKED.test(basename(rest[0].text))) return blocked;
   }
   let touched = false;
-  for (const [index, cmd] of parsed.commands.entries()) {
+  for (const [index, own] of parsed.commands.entries()) {
+    const cmd = input ? withInput(own, input) : own;
     const { assigns, rest } = leads[index];
     if (assigns.some(a => namesProtectedFolder(a.text))) return blocked;
     const writes = cmd.redirects.filter(r => r.target && !r.dup && !['<', '<&', '<<', '<<-', '<<<'].includes(r.op));
@@ -434,7 +444,7 @@ function evaluate(command: string, cwd: string, strict: boolean, remote = false)
     const name = basename(first.text);
     if (['cd', 'pushd'].includes(first.text)) {
       // A subshell's cd ends with the subshell, and a failed cd stays put, so neither proves the directory moved.
-      if (strict && (parsed.subshell || insideFolder(state.dir))) { state.unknown = true; continue; }
+      if (strict && (parsed.subshell || insideFolder(state.dir) || (remote && state.unknown))) { state.unknown = true; continue; }
       const target = args.find(a => !['-L', '-P', '-e', '-@', '--'].includes(a.text));
       if (remote && target && REMOTE_FOLDER.test(target.text)) state.unknown = true;
       else if (!target) { state.dir = homedir(); state.unknown = false; }
@@ -448,7 +458,7 @@ function evaluate(command: string, cwd: string, strict: boolean, remote = false)
     if (name === 'ssh') {
       const remoteCommand = sshCommand(args);
       if (remoteCommand !== undefined) {
-        const inner = evaluate(remoteCommand, homedir(), strict, true);
+        const inner = evaluate(remoteCommand, homedir(), strict, true, cmd);
         if (inner.result.deny) return blocked;
         if (inner.touched) { touched = true; if (writes.some(r => r.target!.dynamic)) return blocked; }
         continue;

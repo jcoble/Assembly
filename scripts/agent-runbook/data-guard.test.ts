@@ -163,6 +163,19 @@ test('denies_ssh_it_cannot_read_fully', () => {
   denied(`ssh box ${D}`, `ssh "$HOST" 'cat ${D}/x'`, `ssh box "cat $(pwd)/assembly-dotnet/x"`, `ssh box 'bash -c "rm ${D}/x"'`,
     `ssh -o ProxyCommand=/tmp/x box 'cat ${D}/x'`, `ssh -F /tmp/config box 'cat ${D}/x'`, `ssh -J jump box 'cat ${D}/x'`, `ssh box 'cat ${D}/x' > ${D}/y`, `ssh box 'cat ${D}/x' > $OUT`);
 });
+test('keeps_the_remote_folder_after_a_cd_that_may_have_failed', () => {
+  denied(`ssh box 'cd ${D} && cd /definitely-missing || rm -rf sub'`, `ssh box 'cd ${D}; cd /tmp; rm x'`, `ssh box 'cd ${D}; cd; rm x'`, `ssh box 'cd ${D} && cd /tmp || rm x'`);
+  allowed(`ssh box 'cd ${D} && cd /tmp && ls'`);
+});
+test('judges_input_forwarded_over_ssh_as_the_remote_commands_own', () => {
+  const db = `${D}/a.db`;
+  denied(`cat /tmp/i.sql | ssh box 'sqlite3 -readonly ${db}'`, `ssh box 'sqlite3 -readonly ${db}' < /tmp/i.sql`, `ssh box 'sqlite3 -readonly ${db}' <&3`,
+    `ssh box 'sqlite3 -readonly ${db}' <<'S'\n.shell rm x\nS`, `ssh box 'sqlite3 -readonly ${db}' <<< '.shell rm x'`, `ssh box 'cd ${D} && sqlite3 -readonly a.db' <<'S'\n.shell rm x\nS`,
+    `cat /tmp/i.sql | ssh jump "ssh box 'sqlite3 -readonly ${db}'"`, `cat /tmp/i.sql | ssh box 'sqlite3 -readonly ${db} -cmd .tables'`, `cat /tmp/i.sql | sqlite3 -readonly ${db} -cmd .tables`,
+    `cat /tmp/i.sql | ssh box 'cd ${D} && sqlite3 -readonly a.db'`);
+  allowed(`ssh box 'sqlite3 -readonly ${db}' <<'S'\n.tables\nselect 1;\nS`, `ssh box 'sqlite3 -readonly ${db}' <<< 'select 1;'`, `echo hi | ssh box 'cat ${D}/x'`,
+    `cat /tmp/i.sql | ssh box 'sqlite3 -readonly ${db} "select 1"'`, `ssh box 'cat ${D}/x' <<'S'\nhi\nS`);
+});
 test('allows_any_command_inside_a_verifier_container', () => {
   allowed(`docker exec verify-pr-12 rm -rf ${D}/x`, `docker exec -i -u verify -e A=1 -w /work verify-spike-run2 bash -c "mkdir -p ${D}/ui-check"`,
     `ssh box 'docker exec verify-pr-12 rm ${D}/x'`, `ssh box 'docker exec verify-spike-run2 bash -c "mkdir -p \\$HOME/assembly-dotnet/ui-check; echo \\$(date)"'`);
