@@ -10,6 +10,9 @@ use gpui_kit::*;
 #[path = "file_view_lock_tests.rs"]
 mod tests;
 
+/// What the close prompt's Save says on a locked file, which keeps its tab open.
+pub(super) const SAVE_LOCKED: &str = "Press Edit anyway to save this file.";
+
 impl FileView {
     /// The banner over a locked file's editor.
     pub(super) fn banner_words(&self) -> Option<&'static str> {
@@ -17,9 +20,9 @@ impl FileView {
             .then_some("Outside this session's project, so it opened read-only.")
     }
 
-    /// The header's status for a locked file.
+    /// The header's marker for an outside file; it stays after Edit anyway (spec 2.4).
     pub(super) fn status_words(&self) -> Option<&'static str> {
-        self.locked.then_some("outside project")
+        self.outside.is_some().then_some("outside project")
     }
 
     /// History reads a session's checkout, so an outside file has none.

@@ -175,7 +175,9 @@ impl Render for FileView {
                         Button::new("file-compare")
                             .ghost()
                             .label("Compare")
-                            .disabled(self.document.is_none() || self.saving.is_some())
+                            .disabled(
+                                self.document.is_none() || self.saving.is_some() || self.locked,
+                            )
                             .on_click(cx.listener(|view, _, _, cx| view.compare_document(cx))),
                     )
                     .when(self.comparison.is_some(), |row| {
@@ -192,6 +194,7 @@ impl Render for FileView {
                     .when(self.has_history(), |row| {
                         row.child(
                             Button::new("file-history")
+                                .debug_selector(|| "file-history".into())
                                 .ghost()
                                 .label(if self.history_shown {
                                     "Hide history"

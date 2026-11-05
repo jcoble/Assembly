@@ -9,7 +9,8 @@ use serde_json::json;
 
 impl FileView {
     pub(super) fn compare_document(&mut self, cx: &mut Context<Self>) {
-        if self.saving.is_some() {
+        // Compare stages the draft beside the file, so a locked file doesn't.
+        if self.saving.is_some() || self.locked {
             return;
         }
         let (Some(snapshot), Some(socket)) =

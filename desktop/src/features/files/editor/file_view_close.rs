@@ -30,6 +30,9 @@ impl FileView {
             let _ = view.update(cx, |view, cx| {
                 view.prompting = None;
                 match answer {
+                    Ok(0) if view.locked => {
+                        view.editor_error = Some(super::lock::SAVE_LOCKED.into());
+                    }
                     Ok(0) => {
                         view.closing_window = Some(handle);
                         view.save_document(cx);

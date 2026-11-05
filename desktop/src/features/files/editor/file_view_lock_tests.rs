@@ -46,6 +46,16 @@ impl Stage<'_> {
         self.draw();
     }
 
+    /// Puts a dirty draft in the store, as a restored outside draft comes back.
+    fn dirty(&mut self, text: &str) {
+        self.cx.update(|_, cx| {
+            let docs = cx.global_mut::<DocumentStore>();
+            let version = docs.snapshot(&hosts_document()).unwrap().version;
+            docs.replace(&hosts_document(), version, text.into())
+                .unwrap();
+        });
+    }
+
     fn draft(&mut self) -> (String, bool) {
         self.cx.update(|_, cx| {
             let docs = cx.global::<DocumentStore>();
@@ -72,13 +82,7 @@ async fn an_outside_file_is_read_only_from_its_first_frame(cx: &mut TestAppConte
 async fn save_does_nothing_while_locked(cx: &mut TestAppContext) {
     let mut stage = stage(cx, Box::new(answers));
     let view = stage.outside_tab().await;
-    // A restored outside draft comes back dirty and locked.
-    stage.cx.update(|_, cx| {
-        let docs = cx.global_mut::<DocumentStore>();
-        let version = docs.snapshot(&hosts_document()).unwrap().version;
-        docs.replace(&hosts_document(), version, "restored draft\n".into())
-            .unwrap();
-    });
+    stage.dirty("restored draft\n");
     view.update(stage.cx, |view, cx| view.save_document(cx));
     stage.cx.update(|window, cx| {
         let state = view.read(cx).editor.as_ref().unwrap().state.clone();
@@ -172,8 +176,12 @@ async fn the_banner_and_status_say_outside_project(cx: &mut TestAppContext) {
 
     stage.click("file-outside-notice-action");
     view.read_with(stage.cx, |view, _| {
-        assert_eq!(view.banner_words(), None);
-        assert_eq!(view.status_words(), None);
+        assert_eq!(view.banner_words(), None, "the banner and its button go");
+        assert_eq!(
+            view.status_words(),
+            Some("outside project"),
+            "the marker stays"
+        );
     });
     assert!(
         stage.cx.debug_bounds("file-outside-notice").is_none(),
@@ -193,6 +201,11 @@ async fn an_outside_tab_has_no_history(cx: &mut TestAppContext) {
             "History can't open"
         );
     });
+    stage.draw();
+    assert!(
+        stage.cx.debug_bounds("file-history").is_none(),
+        "no History button"
+    );
 }
 
 #[gpui::test]
@@ -214,10 +227,59 @@ async fn a_session_file_is_never_locked(cx: &mut TestAppContext) {
         assert!(view.has_history());
     });
     assert!(stage.cx.debug_bounds("file-outside-notice").is_none());
+    assert!(
+        stage.cx.debug_bounds("file-history").is_some(),
+        "History is drawn"
+    );
     stage.type_in(&view, "x");
     let (text, dirty) = stage.draft();
     assert!(
         dirty && text.contains('x'),
         "typing edits the draft: {text:?}"
     );
+}
+
+#[gpui::test]
+async fn compare_does_nothing_while_locked(cx: &mut TestAppContext) {
+    let mut stage = stage(cx, Box::new(answers));
+    let view = stage.outside_tab().await;
+    stage.dirty("restored draft\n");
+    view.update(stage.cx, |view, cx| view.compare_document(cx));
+    stage.cx.run_until_parked();
+
+    assert!(
+        stage.sent("beginSave").is_empty(),
+        "nothing is staged beside the file"
+    );
+    view.read_with(stage.cx, |view, _| assert!(view.comparison.is_none()));
+}
+
+#[gpui::test]
+async fn saving_from_the_close_prompt_while_locked_says_edit_anyway(cx: &mut TestAppContext) {
+    let mut stage = stage(cx, Box::new(answers));
+    let view = stage.outside_tab().await;
+    stage.dirty("restored draft\n");
+    view.update_in(stage.cx, |view, window, cx| view.request_close(window, cx));
+    stage.cx.run_until_parked();
+    stage.cx.simulate_prompt_answer("Save");
+    stage.cx.run_until_parked();
+
+    view.read_with(stage.cx, |view, _| {
+        assert_eq!(
+            view.editor_error.as_deref(),
+            Some("Press Edit anyway to save this file.")
+        );
+    });
+    let alias = outside_key(None, "/etc/hosts");
+    assert!(
+        stage
+            .cx
+            .update(
+                |_, cx| crate::core::ui::center_panes::CenterPanes::find::<FileView>(&alias, cx)
+            )
+            .is_some(),
+        "the tab stays open"
+    );
+    assert!(stage.sent("beginSave").is_empty());
+    assert_eq!(stage.draft(), ("restored draft\n".into(), true));
 }
