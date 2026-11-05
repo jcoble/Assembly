@@ -98,8 +98,10 @@ impl FilesPane {
             cx.notify();
             return;
         }
-        // Showing again reloads this once the lease is back.
+        // This runs once the lease is back.
         if !self.started {
+            self.reload_when_ready = true;
+            self.start(cx);
             return;
         }
         let snapshot = self.tree_snapshot();

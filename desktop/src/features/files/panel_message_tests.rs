@@ -99,3 +99,24 @@ fn an_unknown_failure_shows_failed_with_its_text() {
 fn not_loaded_does_not_say_empty() {
     assert_eq!(message(RootState::NotLoaded), None);
 }
+
+#[test]
+fn the_buttons_show_only_where_refresh_can_act() {
+    for shown in [
+        None,
+        Some(PanelMessage::Listing),
+        Some(PanelMessage::Failed("no".into())),
+        Some(PanelMessage::EmptyFolder),
+    ] {
+        assert!(has_header(shown.as_ref()), "{shown:?}");
+    }
+    for hidden in [
+        PanelMessage::NoSession,
+        PanelMessage::NoFolder,
+        PanelMessage::FolderNotMade,
+        PanelMessage::CheckoutDeleted,
+        PanelMessage::Waiting,
+    ] {
+        assert!(!has_header(Some(&hidden)), "{hidden:?}");
+    }
+}

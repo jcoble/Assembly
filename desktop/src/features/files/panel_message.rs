@@ -4,6 +4,8 @@ use crate::core::socket::call_failure::CallFailure;
 use crate::core::socket::error_code::ErrorCode;
 
 pub const FOLDER_NOT_MADE: &str = "folder_not_made";
+pub const READ_ONLY: &str =
+    "This folder is open for reading only — switch back to the session folder to change it.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PanelMessage {
@@ -58,6 +60,14 @@ fn from_failure(failure: &CallFailure) -> PanelMessage {
         }
     }
     PanelMessage::Failed(failure.message.clone())
+}
+
+/// The buttons show over a tree that is listed, listing, stopped or failed: anything Refresh can act on.
+pub fn has_header(message: Option<&PanelMessage>) -> bool {
+    matches!(
+        message,
+        None | Some(PanelMessage::Listing | PanelMessage::Failed(_) | PanelMessage::EmptyFolder)
+    )
 }
 
 impl PanelMessage {

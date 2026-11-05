@@ -1,13 +1,15 @@
 //! Native tree rows and controls borrow the pane's owned lazy model and action state.
 use super::{FileView, FilesPane, INDENT, Row, TREE_LINE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::file_icon::file_glyph;
 use crate::empty_state_component::empty_state;
-use crate::features::files::panel_message::PanelMessage;
+use crate::features::files::panel_message::{PanelMessage, has_header};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::ContextMenuExt as _;
+use gpui_kit::component::tag::Tag;
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -40,10 +42,14 @@ impl FilesPane {
                 let (accent, secondary, foreground) =
                     (theme.accent, theme.secondary, theme.foreground);
                 let glyph = match (folder, open) {
-                    (true, true) => IconName::FolderOpen,
-                    (true, false) => IconName::Folder,
-                    _ => IconName::File,
+                    (true, true) => Icon::new(IconName::FolderOpen)
+                        .size(px(14.))
+                        .text_color(muted),
+                    (true, false) => Icon::new(IconName::Folder).size(px(14.)).text_color(muted),
+                    _ if entry.excluded => file_glyph(&path, cx).text_color(muted),
+                    _ => file_glyph(&path, cx),
                 };
+                let chip = self.clipboard_chip(&path, cx);
                 line(depth)
                     .id(ix)
                     .rounded(px(6.))
@@ -62,7 +68,7 @@ impl FilesPane {
                             .text_color(muted),
                         )
                     }))
-                    .child(Icon::new(glyph).size(px(14.)).text_color(muted))
+                    .child(glyph)
                     .child(
                         div()
                             .min_w_0()
@@ -70,6 +76,9 @@ impl FilesPane {
                             .text_ellipsis()
                             .child(entry.name.clone()),
                     )
+                    .when_some(chip, |row, chip| {
+                        row.child(Tag::secondary().small().flex_none().child(chip))
+                    })
                     .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
                     .on_click(cx.listener(move |pane, event: &ClickEvent, window, cx| {
                         if pane.session != row_session || pane.source != row_source {
@@ -147,7 +156,7 @@ impl FilesPane {
                 Button::new("files-try-again")
                     .ghost()
                     .label("Try again")
-                    .on_click(cx.listener(|pane, _, _, cx| pane.refresh(cx)))
+                    .on_click(cx.listener(|pane, _, _, cx| pane.retry(cx)))
                     .into_any_element(),
             ),
             PanelMessage::EmptyFolder => Some(
@@ -208,48 +217,9 @@ impl Render for FilesPane {
             return pane.child(self.message_view(message, cx));
         }
         let count = self.tree.row_count();
-        pane.child(
-            h_flex()
-                .px_2()
-                .py_1()
-                .gap_1()
-                .child(
-                    Button::new("files-excluded")
-                        .ghost()
-                        .label(if self.include_excluded {
-                            "Hide excluded"
-                        } else {
-                            "Show excluded"
-                        })
-                        .on_click(cx.listener(|pane, _, _, cx| {
-                            pane.include_excluded = !pane.include_excluded;
-                            pane.refresh(cx);
-                        })),
-                )
-                .child(
-                    Button::new("files-sort")
-                        .ghost()
-                        .label(if self.descending { "Z–A" } else { "A–Z" })
-                        .on_click(cx.listener(|pane, _, _, cx| {
-                            pane.descending = !pane.descending;
-                            pane.refresh(cx);
-                        })),
-                )
-                .child(
-                    Button::new("files-new")
-                        .ghost()
-                        .label("New file")
-                        .on_click(cx.listener(|pane, _, window, cx| {
-                            pane.open_action("createFile", String::new(), None, None, window, cx)
-                        })),
-                )
-                .child(
-                    Button::new("files-refresh")
-                        .ghost()
-                        .label("Refresh")
-                        .on_click(cx.listener(|pane, _, _, cx| pane.refresh(cx))),
-                ),
-        )
+        pane.when(has_header(message.as_ref()), |pane| {
+            pane.child(self.header(cx))
+        })
         .children(self.action_error.clone().map(|error| {
             div()
                 .px_2()

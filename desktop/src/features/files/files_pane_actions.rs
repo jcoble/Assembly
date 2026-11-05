@@ -59,7 +59,7 @@ impl FilesPane {
                 cx.remove_global::<FileClipboard>();
             }
             if pane.session.as_deref() == Some(finished.session.as_str()) {
-                pane.refresh(cx);
+                pane.reload_kept(cx);
             }
         }));
         window.open_dialog(cx, move |dialog, _, cx| {
@@ -74,7 +74,27 @@ impl FilesPane {
         });
     }
 
-    fn metadata_action(&mut self, path: String, action: &'static str, cx: &mut Context<Self>) {
+    /// The chip for a row on the clipboard: its word, when `path` in this folder is what was cut or copied.
+    pub(in crate::features::files) fn clipboard_chip(
+        &self,
+        path: &str,
+        cx: &App,
+    ) -> Option<&'static str> {
+        let copied = &cx.try_global::<FileClipboard>()?.0;
+        let owner = self.owner.as_ref()?;
+        (copied.source == self.source
+            && copied.key.path == path
+            && copied.key.machine == owner.machine
+            && copied.key.checkout_root == owner.checkout_root)
+            .then_some(if copied.cut { "cut" } else { "copy" })
+    }
+
+    pub(in crate::features::files) fn metadata_action(
+        &mut self,
+        path: String,
+        action: &'static str,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(session), Some(socket)) = (self.session.clone(), SocketClient::try_global(cx))
         else {
             return;
@@ -308,10 +328,7 @@ impl FilesPane {
             ));
         menu.item(
             PopupMenuItem::new("Toggle excluded files").on_click(move |_, _, cx| {
-                let _ = pane.update(cx, |pane, cx| {
-                    pane.include_excluded = !pane.include_excluded;
-                    pane.refresh(cx);
-                });
+                let _ = pane.update(cx, |pane, cx| pane.toggle_excluded(cx));
             }),
         )
     }

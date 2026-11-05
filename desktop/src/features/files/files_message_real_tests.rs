@@ -233,7 +233,7 @@ async fn try_again_after_a_listing_failure_lists_the_folder(cx: &mut TestAppCont
     })
     .await;
     fs::rename(&away, &root).unwrap();
-    pane.update(cx, |pane, cx| pane.refresh(cx));
+    pane.update(cx, |pane, cx| pane.retry(cx));
     settled(&pane, cx, |pane| {
         !pane.is_loading() && pane.message().is_none()
     })

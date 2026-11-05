@@ -11,6 +11,8 @@ use serde_json::json;
 
 #[path = "files_pane_actions.rs"]
 mod actions;
+#[path = "files_pane_header.rs"]
+mod header;
 #[path = "files_pane_render.rs"]
 mod render;
 #[path = "files_pane_root.rs"]
@@ -28,9 +30,9 @@ use crate::core::socket::outcome::Outcome;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::ui::pane_names::FILES;
 
-pub const TREE_LINE: Pixels = px(26.);
+pub const TREE_LINE: Pixels = px(28.);
 /// How far each level of the tree steps in.
-const INDENT: Pixels = px(14.);
+const INDENT: Pixels = px(16.);
 
 type Subject = (
     Option<String>,
@@ -110,7 +112,7 @@ impl FilesPane {
             started: false,
             shown: false,
             generation: 0,
-            include_excluded: true,
+            include_excluded: false,
             descending: false,
             lease: None,
             observing: None,
@@ -229,19 +231,6 @@ impl FilesPane {
         }
     }
 
-    pub(super) fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.generation = self.generation.wrapping_add(1);
-        self.loads.clear();
-        self.observing = None;
-        self.drop_reload();
-        self.clear_root_failure();
-        self.tree = FileTree::default();
-        self.started = false;
-        self.start(cx);
-        cx.notify();
-    }
-
-    #[cfg(test)]
     pub(super) fn is_loading(&self) -> bool {
         self.observing.is_some() || !self.loads.is_empty() || self.building.is_some()
     }

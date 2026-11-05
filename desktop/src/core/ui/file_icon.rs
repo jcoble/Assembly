@@ -211,18 +211,21 @@ fn tone_color(tone: Tone, cx: &App) -> Hsla {
         Tone::Muted => theme.muted_foreground,
     }
 }
+/// The file's glyph in its colour, for a row whose tooltip says something else.
+pub fn file_glyph(path: &str, cx: &App) -> Icon {
+    let look = file_look(path);
+    Icon::new(look.glyph.icon())
+        .size(px(14.))
+        .text_color(tone_color(look.tone, cx))
+}
 /// The file's glyph with what it is as its tooltip. `id` only has to be unique among its siblings.
 pub fn file_icon(id: impl Into<SharedString>, path: &str, cx: &App) -> Stateful<Div> {
-    let look = file_look(path);
+    let label = file_look(path).label;
     div()
         .id(ElementId::Name(id.into()))
         .flex_none()
-        .child(
-            Icon::new(look.glyph.icon())
-                .size(px(14.))
-                .text_color(tone_color(look.tone, cx)),
-        )
-        .tooltip(move |window, cx| Tooltip::new(look.label).build(window, cx))
+        .child(file_glyph(path, cx))
+        .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
 }
 
 #[cfg(test)]

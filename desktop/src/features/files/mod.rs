@@ -21,6 +21,8 @@ pub mod panel_message;
 pub mod search_pane;
 
 #[cfg(test)]
+mod files_header_real_tests;
+#[cfg(test)]
 mod files_message_real_tests;
 #[cfg(test)]
 mod files_real_tests;

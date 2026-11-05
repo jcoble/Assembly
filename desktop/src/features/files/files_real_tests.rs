@@ -65,9 +65,24 @@ pub(super) async fn selected_session(
     let Outcome::Ok(added) = adding.await else {
         panic!("the project wasn't added");
     };
-    let Outcome::Ok(created) = call("create", stub_session(&added), cx).await else {
+    let asked = stub_session(&added);
+    let client = asked["clientId"].clone();
+    let Outcome::Ok(created) = call("create", asked, cx).await else {
         panic!("the session wasn't made");
     };
+    // Creating it starts a checkout operation on the repo, which is the session's folder. Tests move and fill that
+    // folder, so they start once the operation is over.
+    for _ in 0..100 {
+        let Outcome::Ok(found) = call("byClient", json!({ "clientId": client }), cx).await else {
+            panic!("the session can't be found by its client id");
+        };
+        if found["checkoutState"] != "pending" {
+            break;
+        }
+        cx.background_executor
+            .timer(Duration::from_millis(50))
+            .await;
+    }
     let id = created["sessionId"].as_str().unwrap().to_string();
     // The session made here, by its id, read again until its root shows: under load a page can come before it.
     let mut last = Value::Null;
@@ -181,25 +196,14 @@ async fn the_tree_loads_when_shown_and_opens_folders_one_at_a_time(cx: &mut Test
     });
     settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
-        assert_eq!(
-            shape(pane),
-            [".git/ -", "src/", "target/ -", ".gitignore", "readme.md"]
-        );
+        assert_eq!(shape(pane), ["src/", ".gitignore", "readme.md"]);
     });
     pane.update(cx, |pane, cx| pane.clicked("src".into(), true, cx));
     settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
         assert_eq!(
             shape(pane),
-            [
-                ".git/ -",
-                "src/ v",
-                "  lib/",
-                "  main.rs",
-                "target/ -",
-                ".gitignore",
-                "readme.md"
-            ]
+            ["src/ v", "  lib/", "  main.rs", ".gitignore", "readme.md"]
         );
         assert_eq!(pane.selected.as_deref(), Some("src"));
     });
@@ -256,7 +260,7 @@ async fn a_folder_made_after_the_tab_was_shown_loads_when_shown_again(cx: &mut T
     });
     settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
-        assert_eq!(shape(pane), [".git/ -", ".gitignore", "readme.md"])
+        assert_eq!(shape(pane), [".gitignore", "readme.md"])
     });
 }
 
@@ -341,7 +345,7 @@ async fn a_tool_changing_the_folder_reloads_the_tree_with_its_open_folders_kept(
     pane.read_with(cx, |pane, _| {
         assert_eq!(
             shape(pane),
-            [".git/ -", "src/ v", "  added.rs", "  main.rs", ".gitignore"]
+            ["src/ v", "  added.rs", "  main.rs", ".gitignore"]
         );
         assert_eq!(pane.selected.as_deref(), Some("src"));
     });
