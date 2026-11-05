@@ -431,3 +431,55 @@ async fn an_open_still_out_when_the_minute_ends_gets_its_answer(cx: &mut TestApp
     answer(&last(&opens), refused("source_changed"), cx);
     assert_eq!(shown(cx), [NOT_CONNECTED], "no more waiting");
 }
+
+// Spec section 2 point 8: the person's own open wins.
+#[gpui::test]
+async fn a_person_opening_a_session_ends_a_waiting_link(cx: &mut TestAppContext) {
+    let (host, opens, cx) = window(cx);
+    let _nav = ready(&host, cx).await;
+    hold_machines(true, true, cx);
+    link("s1", Some("Box"), cx);
+    answer(&last(&opens), refused("source_changed"), cx);
+    let person = OpenSession {
+        id: "clicked".into(),
+        route_machine: None,
+        request_id: "person".into(),
+        historical: false,
+    };
+    answer(&person, Ok(()), cx);
+    cx.update(|_, cx| Machines::change_holding(box_machine(true, true), cx));
+    cx.run_until_parked();
+    assert_eq!(opens.borrow().len(), 1, "the link is over");
+    advance(61, cx);
+    assert_eq!(shown(cx), Vec::<String>::new());
+}
+
+#[gpui::test]
+async fn a_link_does_not_retry_over_an_open_in_flight(cx: &mut TestAppContext) {
+    use crate::core::engine::SessionKey;
+    use crate::core::intents::session_open::{SessionOpenRequest, SessionOpenTarget};
+    let (host, opens, cx) = window(cx);
+    let nav = ready(&host, cx).await;
+    hold_machines(true, true, cx);
+    link("s1", Some("Box"), cx);
+    answer(&last(&opens), refused("source_changed"), cx);
+    nav.hold_target();
+    nav.pane.update_in(cx, |pane, window, cx| {
+        pane.request_open(
+            SessionOpenRequest {
+                key: SessionKey {
+                    machine: "owner".into(),
+                    id: "clicked".into(),
+                },
+                request_id: "person".into(),
+                target: SessionOpenTarget::Historical,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    cx.update(|_, cx| Machines::change_holding(box_machine(true, true), cx));
+    cx.run_until_parked();
+    assert_eq!(opens.borrow().len(), 1, "the click isn't cut off");
+}
