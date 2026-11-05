@@ -223,7 +223,7 @@ impl TerminalPane {
         (self._scrollbar, self.scrollbar_opacity) = (None, 0.);
         (self.dragging_bar, self.bar_pressed) = (None, false);
         (self.hovered, self.hovered_cell, self.link_pressed) = (None, None, false);
-        self.marked = None;
+        (self.marked, self.focus_wanted) = (None, false);
         self.reopen.clear();
         self.typed.clear();
         self.grid = TerminalGrid::new(self.size.0, self.size.1);

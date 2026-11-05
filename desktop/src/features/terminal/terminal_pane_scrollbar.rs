@@ -111,11 +111,17 @@ impl TerminalPane {
             move |_, _, window, _| {
                 let moved = this.clone();
                 window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
-                    if phase.capture() && event.pressed_button == Some(MouseButton::Left) {
-                        let y = event.position.y;
-                        moved.update(cx, |pane, cx| pane.drag_bar(y, cx)).ok();
-                        cx.stop_propagation();
+                    if !phase.capture() {
+                        return;
                     }
+                    if event.pressed_button != Some(MouseButton::Left) {
+                        // Its release was lost: the bar lets go, and the move goes on as any other.
+                        moved.update(cx, |pane, cx| pane.release_bar(cx)).ok();
+                        return;
+                    }
+                    let y = event.position.y;
+                    moved.update(cx, |pane, cx| pane.drag_bar(y, cx)).ok();
+                    cx.stop_propagation();
                 });
                 let released = this.clone();
                 window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {

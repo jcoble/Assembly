@@ -23,8 +23,11 @@ impl TerminalPane {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus, cx);
-        // A release that landed elsewhere or never came leaves nothing for the next one to swallow.
+        // A release that landed elsewhere or never came leaves nothing for the next one to swallow, nor a drag on.
         self.link_pressed = false;
+        if event.button == MouseButton::Left {
+            self.end_drag(cx);
+        }
         if event.button == MouseButton::Left && self.press_bar(event.position, cx) {
             cx.stop_propagation();
             return;
@@ -161,7 +164,8 @@ impl TerminalPane {
         cells
     }
 
-    /// Tracking modes consume mouse input; otherwise selection and scrollback keep their usual behavior.
+    /// Tracking modes consume mouse input; otherwise selection and scrollback keep their usual behavior. A stopped
+    /// shell's last program hears nothing, so selecting and copying work after exit (spec 2).
     fn report_mouse(
         &mut self,
         button: u8,
@@ -171,7 +175,7 @@ impl TerminalPane {
         cx: &mut Context<Self>,
     ) -> bool {
         let mode = self.grid.mouse_mode();
-        if !mode.intersects(TermMode::MOUSE_MODE) {
+        if self.stopped() || !mode.intersects(TermMode::MOUSE_MODE) {
             return false;
         }
         cx.stop_propagation();

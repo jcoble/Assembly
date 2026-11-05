@@ -84,12 +84,17 @@ impl TerminalPane {
             move |_, _, window, _| {
                 let moved = this.clone();
                 window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
-                    if phase.bubble() && event.pressed_button == Some(MouseButton::Left) {
-                        let position = event.position;
-                        moved
-                            .update(cx, |pane, cx| pane.drag_moved(position, cx))
-                            .ok();
+                    if !phase.bubble() {
+                        return;
                     }
+                    let position = event.position;
+                    // No left button held: its release was lost, as when the window lost activation mid-drag.
+                    moved
+                        .update(cx, |pane, cx| match event.pressed_button {
+                            Some(MouseButton::Left) => pane.drag_moved(position, cx),
+                            _ => pane.end_drag(cx),
+                        })
+                        .ok();
                 });
                 let released = this.clone();
                 window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
@@ -115,9 +120,10 @@ impl TerminalPane {
         }
     }
 
-    /// Copy and Paste on right-click, unless a program holds the mouse: then the press goes to it.
+    /// Copy and Paste on right-click, unless a program holds the mouse: then the press goes to it. A stopped shell's
+    /// last program holds nothing.
     pub(super) fn with_menu(&self, pane: Stateful<Div>, cx: &mut Context<Self>) -> AnyElement {
-        if self.grid.mouse_mode().intersects(TermMode::MOUSE_MODE) {
+        if !self.stopped() && self.grid.mouse_mode().intersects(TermMode::MOUSE_MODE) {
             return pane.into_any_element();
         }
         let this = cx.entity().downgrade();

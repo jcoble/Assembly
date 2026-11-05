@@ -155,7 +155,7 @@ impl TerminalPane {
     }
 
     /// Exited, gone or stopped: only closing the tab changes it.
-    fn stopped(&self) -> bool {
+    pub(super) fn stopped(&self) -> bool {
         matches!(self.shown, Shown::Exited(_) | Shown::Said(_) | Shown::Gone)
     }
 

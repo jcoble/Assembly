@@ -392,3 +392,6 @@ mod links;
 
 #[path = "terminal_pane_file_links_tests.rs"]
 mod file_links;
+
+#[path = "terminal_pane_lost_release_tests.rs"]
+mod lost_release;
