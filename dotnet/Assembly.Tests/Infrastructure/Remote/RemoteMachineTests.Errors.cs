@@ -2,6 +2,9 @@ using Assembly.Tests.Infrastructure.Http;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Agents;
 using Assembly.Tests.Draft.Base;
+using Assembly.Infrastructure.Remote;
+using Assembly.Desktop.Serve;
+using System.Net.WebSockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -20,7 +23,7 @@ public sealed partial class RemoteMachineTests
         };
         await remote.StartAsync();
         await using var desktop = await DesktopOnAsync(remote, Directory.CreateTempSubdirectory("assembly-desktop-").FullName);
-        await desktop.Connections.ReadyAsync(Box);
+        await OwnerVerifiedAsync(desktop);
 
         using var socket = await ApiTests.OpenOwnerSocketAsync(desktop.Address, DesktopToken);
         var created = await ApiTests.SocketRequestAsync(socket, 1, "machines", "agents",
@@ -50,6 +53,7 @@ public sealed partial class RemoteMachineTests
         }));
         var home = Directory.CreateTempSubdirectory("assembly-desktop-").FullName;
         await using var desktop = await DesktopOnAsync(remote, home);
+        await OwnerVerifiedAsync(desktop);
         var parent = (await RestartCallAsync(desktop, DesktopToken, "sessions", "create",
             new { agent = "claude", clientId = Guid.NewGuid().ToString("N") })).GetProperty("sessionId").GetString()!;
         await RestartSendAsync(desktop, DesktopToken, parent, "hi", "errors-parent");
@@ -98,6 +102,7 @@ public sealed partial class RemoteMachineTests
         string sessionId;
         await using (var first = await DesktopOnAsync(remote, home))
         {
+            await OwnerVerifiedAsync(first);
             var created = await RestartCallAsync(first, DesktopToken, "sessions", "create",
                 new { agent = "claude", clientId = Guid.NewGuid().ToString("N"), machine = Box });
             sessionId = created.GetProperty("sessionId").GetString()!;
@@ -110,5 +115,28 @@ public sealed partial class RemoteMachineTests
         await RowsPageAsync(desktop, DesktopToken, sessionId);
 
         await Until(() => _log.ToString().Contains($"remote session {sessionId}: {Box} didn't answer"));
+    }
+
+    [Fact]
+    public async Task Ssh_exiting_marks_the_remote_unreachable_and_the_next_answer_marks_it_reachable()
+    {
+        // The tunnel's command exits each time this file appears.
+        var exit = Path.Combine(Directory.CreateTempSubdirectory("assembly-tunnel-").FullName, "exit");
+        await using var tunnel = new RemoteTunnel("/bin/sh", ["-c", $"while [ ! -e '{exit}' ]; do sleep 0.1; done; rm '{exit}'"], TextWriter.Null);
+        await using var desktop = await DesktopBackend.StartAsync(Directory.CreateTempSubdirectory("assembly-desktop-").FullName, DesktopToken, 0,
+            _desktopLauncher, _log, new RemoteConfig(Box, _box.Address, BoxToken), tunnel);
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://{desktop.Address.Authority}/socket"), CancellationToken.None);
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{DesktopToken}}","protocol":1}""");
+        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
+        await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"machines"}""");
+        Assert.Contains("\"reachable\":true", await ReadTextAsync(socket));
+
+        File.WriteAllText(exit, "");
+        Assert.Contains("\"reachable\":false,\"reason\":\"ssh tunnel exited\"", await ReadTextAsync(socket));
+
+        await SendTextAsync(socket, $$$"""{"t":"call","id":2,"feature":"machines","method":"agents","args":{"machine":"{{{Box}}}"}}""");
+        Assert.Contains("\"reachable\":true", await ReadTextAsync(socket));
+        Assert.Contains("\"result\":", await ReadTextAsync(socket));
     }
 }
