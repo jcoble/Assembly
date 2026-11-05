@@ -80,4 +80,28 @@ public sealed class PromptPathsTests
         Assert.Empty(named);
         Assert.Empty(attached);
     }
+
+    [Fact]
+    public void A_quoted_phrase_does_not_hide_the_path_inside_it() =>
+        Assert.Equal(["/a.md"], PromptPaths.Of("he said \"read /a.md first\" ok").Named);
+
+    [Fact]
+    public void A_stray_quote_hides_nothing_after_it() =>
+        Assert.Equal(["/a.md", "/b.md"], PromptPaths.Of("a 6\" screen, see /a.md and /b.md").Named);
+
+    [Fact]
+    public void A_quote_opening_a_word_that_never_closes_is_literal() =>
+        Assert.Equal(["/a.md", "/b.md"], PromptPaths.Of("see \"/a.md and /b.md").Named);
+
+    [Fact]
+    public void A_quote_does_not_close_on_a_later_line() =>
+        Assert.Equal(["/a.md", "/b.md"], PromptPaths.Of("see \"/a.md\nand /b.md\" ok").Named);
+
+    [Fact]
+    public void A_home_path_with_a_space_groups_too() =>
+        Assert.Equal(["~/my docs/a.md"], PromptPaths.Of("see \"~/my docs/a.md\" ok").Named);
+
+    [Fact]
+    public void Punctuation_around_a_quoted_path_goes_and_the_group_holds() =>
+        Assert.Equal(["/my docs/a.md"], PromptPaths.Of("see (\"/my docs/a.md\"), ok").Named);
 }

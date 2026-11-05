@@ -13,6 +13,8 @@ namespace Assembly.Application.Features.Chat.Rows;
 /// </summary>
 internal sealed class OpenTool(string itemId, string? runId = null)
 {
+    private const int MostNamed = 50;
+
     private ToolCallFields _fields = new();
     private string? _lastLine;
     private byte[] _lastDetail = DetailFingerprint(new ToolDetail(itemId));
@@ -69,19 +71,27 @@ internal sealed class OpenTool(string itemId, string? runId = null)
         return (changedLine, changedDetail);
     }
 
-    /// <summary>The paths this call mentions beyond those its row already carries, null when there are none.</summary>
+    /// <summary>
+    /// The paths this call mentions, null when there are none. A shell call keeps all it parsed, because the read ignores
+    /// a shell call's <c>path</c>. Other kinds keep only those beyond what their row already carries.
+    /// </summary>
     private IReadOnlyList<string>? NamedPaths(string? path, UnifiedDiff? diff)
     {
-        var known = new HashSet<string>(diff is { Files.Count: > 1 } ? diff.Files.Select(file => file.Path) : []);
-        if (path is not null) known.Add(path);
         IEnumerable<string> paths = _fields.Kind switch
         {
             "execute" when ToolSummary.Command(_fields.Input) is { } command => ShellPaths.Candidates(command, Cwd(_fields.Input)),
-            "read" or "edit" or "delete" or "move" => (_fields.Paths ?? []).Concat(_fields.Diffs?.SelectMany(diff => diff.Paths) ?? []),
+            "read" or "edit" or "delete" or "move" => Beyond(path, diff),
             _ => [],
         };
-        var extra = paths.Distinct().Where(named => !known.Contains(named)).ToArray();
-        return extra.Length == 0 ? null : extra;
+        var named = paths.Distinct().Take(MostNamed).ToArray();
+        return named.Length == 0 ? null : named;
+    }
+
+    private IEnumerable<string> Beyond(string? path, UnifiedDiff? diff)
+    {
+        var known = new HashSet<string>(diff is { Files.Count: > 1 } ? diff.Files.Select(file => file.Path) : []);
+        if (path is not null) known.Add(path);
+        return (_fields.Paths ?? []).Concat(_fields.Diffs?.SelectMany(diff => diff.Paths) ?? []).Where(named => !known.Contains(named));
     }
 
     private static string? Cwd(JsonElement? input) =>

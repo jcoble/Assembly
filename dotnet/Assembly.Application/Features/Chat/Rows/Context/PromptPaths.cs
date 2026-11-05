@@ -11,6 +11,9 @@ public static class PromptPaths
     private const string Prefix = "Attached image: ";
     private const string Thumbnail = ") thumbnail: ";
     private const int MostPaths = 20;
+    // A leading dot stays, so "./a" and "../a" aren't read as the absolute "/a".
+    private static readonly char[] Leading = ['(', ')', ',', ';', ':', '\'', '"', '`'];
+    private static readonly char[] Trailing = [.. Leading, '.'];
 
     public static (IReadOnlyList<string> Named, IReadOnlyList<AttachedImage> Attached) Of(string text)
     {
@@ -49,8 +52,7 @@ public static class PromptPaths
         var named = new List<string>();
         foreach (var word in Words(text))
         {
-            // A leading dot stays, so "./a" and "../a" aren't read as the absolute "/a".
-            var path = word.TrimStart('(', ')', ',', ';', ':', '\'', '"', '`').TrimEnd('(', ')', ',', '.', ';', ':', '\'', '"', '`');
+            var path = word.TrimStart(Leading).TrimEnd(Trailing);
             if ((path.StartsWith('/') || path.StartsWith("~/", StringComparison.Ordinal)) && !path.Contains("://") && !named.Contains(path))
                 named.Add(path);
             if (named.Count == MostPaths)
@@ -59,22 +61,35 @@ public static class PromptPaths
         return named;
     }
 
-    /// <summary>Splits on whitespace outside double quotes, keeping the quotes on the word.</summary>
+    /// <summary>
+    /// Splits on whitespace. A double quote that opens a word groups it only when a path follows and the quote closes on
+    /// that line, as a dropped path with a space arrives; any other double quote is an ordinary character. The word keeps its quotes.
+    /// </summary>
     private static IEnumerable<string> Words(string text)
     {
         var start = -1;
-        var quoted = false;
         for (var i = 0; i < text.Length; i++)
         {
-            if (text[i] == '"') quoted = !quoted;
-            if (char.IsWhiteSpace(text[i]) && !quoted)
+            if (char.IsWhiteSpace(text[i]))
             {
                 if (start >= 0) yield return text[start..i];
                 start = -1;
+                continue;
             }
-            else if (start < 0)
-                start = i;
+            if (start < 0) start = i;
+            if (text[i] == '"' && text[start..i].All(c => Leading.Contains(c)) && ClosingQuote(text, i) is { } close)
+                i = close;
         }
         if (start >= 0) yield return text[start..];
+    }
+
+    /// <summary>The quote closing the one at <paramref name="open"/>, when a path starts inside it and it closes on that line.</summary>
+    private static int? ClosingQuote(string text, int open)
+    {
+        var inside = text.AsSpan(open + 1);
+        if (!inside.StartsWith("/") && !inside.StartsWith("~/"))
+            return null;
+        var end = inside.IndexOfAny('"', '\n');
+        return end >= 0 && inside[end] == '"' ? open + 1 + end : null;
     }
 }

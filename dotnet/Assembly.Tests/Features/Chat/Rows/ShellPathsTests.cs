@@ -127,4 +127,106 @@ public sealed class ShellPathsTests
         Assert.Equal(50, found.Distinct().Count());
         Assert.Equal("f49.md", found[^1]);
     }
+
+    [Theory]
+    [InlineData("cat")]
+    [InlineData("head")]
+    [InlineData("tail")]
+    [InlineData("less")]
+    [InlineData("more")]
+    [InlineData("wc")]
+    [InlineData("nl")]
+    [InlineData("bat")]
+    [InlineData("tee")]
+    [InlineData("touch")]
+    [InlineData("cp")]
+    [InlineData("mv")]
+    [InlineData("sed")]
+    [InlineData("awk")]
+    [InlineData("grep")]
+    [InlineData("rg")]
+    [InlineData("ag")]
+    public void Every_listed_command_names_its_arguments(string command) =>
+        Assert.Equal(["a.md"], Of($"{command} a.md"));
+
+    [Theory]
+    [InlineData("if")]
+    [InlineData("then")]
+    [InlineData("do")]
+    [InlineData("else")]
+    [InlineData("elif")]
+    [InlineData("!")]
+    [InlineData("{")]
+    [InlineData("sudo")]
+    [InlineData("env")]
+    [InlineData("time")]
+    public void Every_listed_prefix_is_skipped(string prefix) =>
+        Assert.Equal(["a.md"], Of($"{prefix} cat a.md"));
+
+    [Theory]
+    [InlineData("-g")]
+    [InlineData("--glob")]
+    [InlineData("-t")]
+    [InlineData("--type")]
+    [InlineData("-e")]
+    [InlineData("-f")]
+    public void Every_listed_flags_value_is_left_out(string flag) =>
+        Assert.Equal(["a.md"], Of($"rg {flag} value a.md"));
+
+    /// <summary><paramref name="expected"/> holds the paths joined by a bar, empty for none.</summary>
+    [Theory]
+    // Separators.
+    [InlineData("false || cat a.md", "a.md")]
+    [InlineData("cat a.md||cat b.md", "a.md|b.md")]
+    [InlineData("sleep 1 & cat a.md", "a.md")]
+    // Redirects.
+    [InlineData("echo hi >out.md", "out.md")]
+    [InlineData("echo hi >>out.md", "out.md")]
+    [InlineData("echo hi &> out.md", "out.md")]
+    [InlineData("echo hi &>> out.md", "out.md")]
+    [InlineData("echo hi >| forced.md", "forced.md")]
+    [InlineData("echo hi >& out.log", "out.log")]
+    [InlineData("echo hi >&out.log", "out.log")]
+    [InlineData("echo hi >&2", "")]
+    [InlineData("echo hi 2>&1", "")]
+    [InlineData("cat <&3", "")]
+    // Heredocs and here-strings.
+    [InlineData("cat <<-EOF\n\tcat ignored.md\n\tEOF\ncat after.md", "after.md")]
+    [InlineData("cat <<< notes.md", "")]
+    // Comments.
+    [InlineData("# don't do this\ncat a.md", "a.md")]
+    [InlineData("cat a.md # see b.md", "a.md")]
+    [InlineData("echo hi # > note.md", "")]
+    [InlineData("cat a#b.md", "a#b.md")]
+    [InlineData("cat \"#a.md\"", "#a.md")]
+    // Grouping.
+    [InlineData("{ cat a.md; } > out.md", "a.md|out.md")]
+    // cd back to the start, with no cwd.
+    [InlineData("cd docs; cd ..; cat c.md", "c.md")]
+    [InlineData("cd docs/.. && cat c.md", "c.md")]
+    [InlineData("cd . && cat c.md", "c.md")]
+    // cd to a place that can't be known.
+    [InlineData("cd; cat a.md; cat /abs.md; cat ~/h.md", "/abs.md|~/h.md")]
+    [InlineData("cd $X && cat a.md /abs.md", "/abs.md")]
+    [InlineData("cd - && cat a.md", "")]
+    [InlineData("cd $X; cd docs; cat a.md", "")]
+    [InlineData("cd $X; echo hi > a.md", "")]
+    [InlineData("cd $X; bash -lc 'cat a.md'", "")]
+    [InlineData("cd $X; cd /known; cat a.md", "/known/a.md")]
+    // cd inside parentheses.
+    [InlineData("(cd docs && cat a.md); cat b.md", "docs/a.md|b.md")]
+    [InlineData("(cd $X; cat a.md); cat b.md", "b.md")]
+    public void A_rule_names_what_it_says(string command, string expected) =>
+        Assert.Equal(expected.Split('|', StringSplitOptions.RemoveEmptyEntries), Of(command));
+
+    [Theory]
+    [InlineData("cd docs; cd ..; cat c.md", "/repo/c.md")]
+    [InlineData("cd . && cat c.md", "/repo/c.md")]
+    [InlineData("(cd docs && cat a.md); cat c.md", "/repo/docs/a.md|/repo/c.md")]
+    public void With_a_cwd_cd_comes_back_to_it(string command, string expected) =>
+        Assert.Equal(expected.Split('|'), Of(command, "/repo"));
+
+    [Fact]
+    public void A_cwd_does_not_survive_a_cd_to_an_unknown_place() =>
+        Assert.Empty(Of("cd $X && cat README.md", "/repo"));
 }

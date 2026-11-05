@@ -5,16 +5,21 @@ namespace Assembly.Application.Features.Chat.Rows.Context;
 /// <summary>
 /// The paths a shell command may have read or written: candidates only, from a fixed list of commands and any
 /// redirect target. Pure, with no disk access; <c>rows/files</c> drops candidates that aren't real files. A relative
-/// word is resolved against the base folder when one is known (the input's <c>cwd</c>, then any <c>cd</c>), else kept
-/// relative. A leading <c>~/</c> stays as written.
+/// word is resolved against the base folder (the input's <c>cwd</c>, then any <c>cd</c>). With no base it stays relative,
+/// to the session's folder. After a <c>cd</c> to a place that can't be known it names nothing. A leading <c>~/</c> stays
+/// as written.
 /// </summary>
 public static class ShellPaths
 {
     private static readonly HashSet<string> Readers = ["cat", "head", "tail", "less", "more", "wc", "nl", "bat", "tee", "touch", "cp", "mv", "sed", "awk", "grep", "rg", "ag"];
-    private static readonly HashSet<string> Prefixes = ["if", "then", "do", "else", "sudo", "env", "time"];
+    private static readonly HashSet<string> Prefixes = ["if", "then", "do", "else", "elif", "!", "{", "sudo", "env", "time"];
     private static readonly HashSet<string> ValueFlags = ["-g", "--glob", "-t", "--type", "-e", "-f"];
     private static readonly HashSet<string> Shells = ["sh", "bash", "zsh"];
     private const int MostPaths = 50;
+    /// <summary>The base after a <c>cd</c> to a place that can't be known. A real path can't contain it.</summary>
+    private const string Unknown = "\0";
+    /// <summary>A redirect that can duplicate a descriptor: <c>&gt;&amp;</c> or <c>&lt;&amp;</c>.</summary>
+    private const string Duplicating = "&";
 
     public static IReadOnlyList<string> Candidates(string command, string? cwd)
     {
@@ -31,6 +36,7 @@ public static class ShellPaths
     {
         var baseFolder = cwd;
         var segment = new List<Token>();
+        var outside = new Stack<string?>();
         foreach (var token in Tokenize(script).Append(new Token(Kind.Separator, ";")))
         {
             if (token.Kind != Kind.Separator)
@@ -42,6 +48,9 @@ public static class ShellPaths
             segment.Clear();
             if (found.Count >= MostPaths)
                 return;
+            // A cd inside parentheses stays inside them.
+            if (token.Text == "(") outside.Push(baseFolder);
+            else if (token.Text == ")" && outside.Count > 0) baseFolder = outside.Pop();
         }
     }
 
@@ -56,8 +65,9 @@ public static class ShellPaths
             {
                 if (i + 1 < tokens.Count && tokens[i + 1].Kind == Kind.Word)
                 {
-                    if (token.Kind == Kind.Redirect && !tokens[i + 1].Text.StartsWith('&'))
-                        Add(tokens[i + 1].Text, baseFolder, found);
+                    var target = tokens[i + 1].Text;
+                    if (token.Kind == Kind.Redirect && !(token.Text == Duplicating && target.All(char.IsDigit)))
+                        Add(target, baseFolder, found);
                     i++;
                 }
                 continue;
@@ -76,9 +86,11 @@ public static class ShellPaths
 
         if (name == "cd")
         {
-            if (args.Count == 0) return "~";
             var target = args.FirstOrDefault(arg => !arg.StartsWith('-'));
-            return target is null || Skipped(target) ? null : Resolve(target, baseFolder);
+            if (target is null || Skipped(target) || Resolve(target, baseFolder) is not { } place)
+                return Unknown;
+            // Back at the start with no cwd: that's the session's folder, so no base at all.
+            return place.Length == 0 ? null : place;
         }
 
         if (Shells.Contains(name))
@@ -120,16 +132,18 @@ public static class ShellPaths
         if (word == "-" || Skipped(word) || found.Count >= MostPaths)
             return;
         var path = Resolve(word, baseFolder);
-        if (path.Length == 0 || path is "/" or "~" || path.StartsWith("/dev/") || found.Contains(path))
+        if (path is null or { Length: 0 } or "/" or "~" || path.StartsWith("/dev/") || found.Contains(path))
             return;
         found.Add(path);
     }
 
-    /// <summary><paramref name="word"/> made absolute against <paramref name="baseFolder"/> when that's known, with <c>.</c> and <c>..</c> cleaned up.</summary>
-    private static string Resolve(string word, string? baseFolder)
+    /// <summary><paramref name="word"/> joined to <paramref name="baseFolder"/> if it has one, with <c>.</c> and <c>..</c> cleaned up; null when it's relative to an unknown place.</summary>
+    private static string? Resolve(string word, string? baseFolder)
     {
         if (word == "~" || word.StartsWith("~/") || word.StartsWith('/'))
             return Clean(word);
+        if (baseFolder == Unknown)
+            return null;
         return Clean(baseFolder is null ? word : $"{baseFolder}/{word}");
     }
 
@@ -150,7 +164,7 @@ public static class ShellPaths
 
     /// <summary>
     /// Words with their quotes removed, separators (<c>; &amp;&amp; || | &amp;</c>, newlines and parentheses) and
-    /// redirects. A heredoc's body is skipped; <c>$(...)</c> and backticks stay inside their word.
+    /// redirects. A heredoc's body and a comment are skipped; <c>$(...)</c> and backticks stay inside their word.
     /// </summary>
     private static List<Token> Tokenize(string text)
     {
@@ -211,6 +225,11 @@ public static class ShellPaths
                     heredocs.Clear();
                 }
             }
+            else if (c == '#' && !inWord)
+            {
+                var end = text.IndexOf('\n', i);
+                i = end < 0 ? text.Length : end;
+            }
             else if (c is ' ' or '\t' or '\r')
             {
                 EndWord();
@@ -223,7 +242,7 @@ public static class ShellPaths
                 tokens.Add(new Token(Kind.Separator, two ? "||" : c.ToString()));
                 i += two ? 2 : 1;
             }
-            else if (c == '&' && !(tokens.Count > 0 && tokens[^1].Kind == Kind.Redirect && !inWord))
+            else if (c == '&')
             {
                 EndWord();
                 if (i + 1 < text.Length && text[i + 1] == '>')
@@ -263,11 +282,17 @@ public static class ShellPaths
                     }
                     if (delimiter.Length > 0) heredocs.Add((delimiter.ToString(), tabs));
                 }
+                else if (i + 1 < text.Length && text[i + 1] == '&')
+                {
+                    tokens.Add(new Token(Kind.Redirect, Duplicating));
+                    i += 2;
+                }
                 else
                 {
-                    var append = i + 1 < text.Length && text[i + 1] == '>' && c == '>';
-                    tokens.Add(new Token(Kind.Redirect, append ? ">>" : c.ToString()));
-                    i += append ? 2 : 1;
+                    // ">|" writes as ">" does, and its bar is no pipe.
+                    var two = c == '>' && i + 1 < text.Length && text[i + 1] is '>' or '|';
+                    tokens.Add(new Token(Kind.Redirect, c.ToString()));
+                    i += two ? 2 : 1;
                 }
             }
             else

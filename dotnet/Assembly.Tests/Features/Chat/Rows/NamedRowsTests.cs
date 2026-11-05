@@ -128,4 +128,35 @@ public sealed class NamedRowsTests
         ];
         Assert.Equal(From(events).Rows.Select(row => row.Payload.GetRawText()), From(events).Rows.Select(row => row.Payload.GetRawText()));
     }
+
+    [Fact]
+    public void A_shell_call_keeps_a_parsed_path_equal_to_its_location()
+    {
+        var turn = Tool(new ToolCallFields(Name: "Bash", Kind: "execute", Input: Input("""{"command":"cat /abs/a.md"}"""), Paths: ["/abs/a.md"]));
+        Assert.Equal("/abs/a.md", Text(turn.OfItem("t")[^1], "path"));
+        Assert.Equal(["/abs/a.md"], Named(turn));
+    }
+
+    [Fact]
+    public void A_shell_call_keeps_a_parsed_path_equal_to_its_inputs_path()
+    {
+        var turn = Tool(new ToolCallFields(Name: "Bash", Kind: "execute", Input: Input("""{"command":"cat /abs/a.md","path":"/abs/a.md"}""")));
+        Assert.Equal(["/abs/a.md"], Named(turn));
+    }
+
+    [Fact]
+    public void A_shell_calls_location_is_not_itself_named()
+    {
+        var turn = Tool(new ToolCallFields(Name: "Bash", Kind: "execute", Input: Input("""{"command":"ls /gone"}"""), Paths: ["/gone"]));
+        Assert.False(turn.OfItem("t")[^1].Payload.TryGetProperty("named", out _));
+    }
+
+    [Fact]
+    public void A_read_with_many_locations_names_at_most_fifty()
+    {
+        var named = Named(Tool(new ToolCallFields(Name: "Read", Kind: "read", Paths: [.. Enumerable.Range(0, 80).Select(i => $"/p/{i}.md")])));
+        Assert.Equal(50, named.Length);
+        Assert.Equal("/p/1.md", named[0]);
+        Assert.Equal("/p/50.md", named[^1]);
+    }
 }
