@@ -147,6 +147,14 @@ public sealed class AppUpdateTests : IDisposable
     }
 
     [Fact]
+    public void A_new_version_has_five_minutes_to_say_its_window_is_up_before_it_goes_back()
+    {
+        var home = Path.Combine(_root, "home");
+        var plan = AppSwapPlan.For(new(App, home, Path.Combine(home, "assembly.db"), "1.0.0"), "fresh", "program", "stage", "2.0.0", "backup", Environment.ProcessId);
+        Assert.Equal(TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(plan.AcknowledgeSeconds));
+    }
+
+    [Fact]
     public async Task It_gets_ready_and_goes_no_further_until_the_restart_is_pressed()
     {
         if (!OperatingSystem.IsLinux()) return;
@@ -213,7 +221,7 @@ public sealed class AppUpdateTests : IDisposable
         Directory.CreateDirectory(kept);
         Directory.CreateDirectory(Path.GetDirectoryName(Installed)!);
         var plan = new AppSwapPlan(App, Path.Combine(kept, "new/Assembly.app"), "Contents/MacOS/assembly-desktop", kept, Path.GetDirectoryName(Installed)!, version, "0.9.0",
-            Path.Combine(_root, "home/assembly.db"), Path.Combine(_root, "home/app-update/assembly-before.db"), 1, 1, 1, 1, 300, 120);
+            Path.Combine(_root, "home/assembly.db"), Path.Combine(_root, "home/app-update/assembly-before.db"), 1, 1, 1, 1, 300, 300);
         File.WriteAllBytes(Installed, JsonSerializer.SerializeToUtf8Bytes(plan, AppSwapJson.Default.AppSwapPlan));
         return kept;
     }

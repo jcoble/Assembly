@@ -24,7 +24,7 @@ internal sealed record AppSwapPlan(string App, string Fresh, string Program, str
     {
         var backend = Environment.ProcessId;
         return new(location.App, fresh, program, stage, location.Folder, version, location.Version, location.Database, backup,
-            window, AppSwap.StartOf(window), backend, AppSwap.StartOf(backend), 300, 120);
+            window, AppSwap.StartOf(window), backend, AppSwap.StartOf(backend), 300, 300);
     }
 }
 
