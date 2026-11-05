@@ -212,7 +212,7 @@ public sealed partial class RemoteReleaseInstallTests
         if (!OperatingSystem.IsLinux()) return;
         var (install, _, handler, serverSha) = Fixture();
         await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
-        await using var jobs = new RemoteReleaseJobs(install, new TopicSet(), (name, _) => name == "box" ? Machine : null, (_, _) => Task.CompletedTask,
+        await using var jobs = new RemoteReleaseJobs(install, (name, _) => name == "box" ? Machine : null, (_, _) => Task.CompletedTask,
             new RemoteReleaseFeed(new HttpClient(handler), LastSigner!.PublicKey));
         var status = new MachineStatus(new TopicSet(), ["box"]);
         var source = UpdateSources.ForHost(new HttpClient(new RemoteReleaseFeedTests.Handler([])), TimeProvider.System, jobs, "");
@@ -239,7 +239,7 @@ public sealed partial class RemoteReleaseInstallTests
         if (!OperatingSystem.IsLinux()) return;
         var (install, _, handler, _) = Fixture();
         await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
-        await using var jobs = new RemoteReleaseJobs(install, new TopicSet(), (name, _) => name == "box" ? Machine : null, (_, _) => Task.CompletedTask,
+        await using var jobs = new RemoteReleaseJobs(install, (name, _) => name == "box" ? Machine : null, (_, _) => Task.CompletedTask,
             new RemoteReleaseFeed(new HttpClient(handler), LastSigner!.PublicKey));
         var status = new MachineStatus(new TopicSet(), ["box"]);
         var source = UpdateSources.ForHost(new HttpClient(new RemoteReleaseFeedTests.Handler([])), TimeProvider.System, jobs, "");

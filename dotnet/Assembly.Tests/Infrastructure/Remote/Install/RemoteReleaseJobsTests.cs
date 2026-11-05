@@ -2,7 +2,6 @@ using Assembly.Application.Common;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Remote.Install;
-using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Infrastructure.Remote;
 
@@ -10,7 +9,6 @@ public sealed class RemoteReleaseJobsTests : IAsyncLifetime
 {
     private readonly TempDatabase _file = new();
     private readonly BackgroundWork _work = new(TimeProvider.System, TextWriter.Null);
-    private readonly TopicSet _topics = new();
     private Assembly.Infrastructure.Persistence.AppDatabase _db = null!;
 
     public Task InitializeAsync() { _db = TestDatabase.Open(_file.Path); return Task.CompletedTask; }
@@ -27,7 +25,7 @@ public sealed class RemoteReleaseJobsTests : IAsyncLifetime
     }
 
     private RemoteReleaseJobs Jobs(HttpMessageHandler handler, List<string>? connected = null) =>
-        new(new RemoteReleaseInstall(new RemoteReleaseFeed(new HttpClient(handler)), new RemoteReleaseShell(), TimeProvider.System), _topics,
+        new(new RemoteReleaseInstall(new RemoteReleaseFeed(new HttpClient(handler)), new RemoteReleaseShell(), TimeProvider.System),
             (name, _) => name is "box" or "second" ? new SavedMachine(name, name + "-host") : null,
             (name, _) => { connected?.Add(name); return Task.CompletedTask; });
 

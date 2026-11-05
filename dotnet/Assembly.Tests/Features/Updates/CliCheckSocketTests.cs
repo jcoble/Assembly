@@ -66,6 +66,19 @@ public sealed class CliCheckSocketTests
         socket.Abort();
     }
 
+    [Fact]
+    public async Task The_real_backend_has_no_remote_release_call_or_topic_left()
+    {
+        using var f = new CliCheckFixture();
+        await using var backend = await DesktopBackend.StartAsync(Path.Combine(f.Home, "desktop"), "cli-token", 0, f.Launcher, TextWriter.Null);
+        using var socket = await Open(backend.Address);
+        await Send(socket, new { t = "call", id = 1, feature = "remoteRelease", method = "latest", args = new { } });
+        Assert.Equal("there's no call remoteRelease/latest", (await Read(socket)).GetProperty("message").GetString());
+        await Send(socket, new { t = "sub", id = 2, topic = "remoteRelease", key = Guid.NewGuid().ToString("D") });
+        Assert.Equal("there's no topic remoteRelease", (await Read(socket)).GetProperty("message").GetString());
+        socket.Abort();
+    }
+
     private static async Task<ClientWebSocket> Open(Uri address)
     {
         var socket = new ClientWebSocket(); using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));

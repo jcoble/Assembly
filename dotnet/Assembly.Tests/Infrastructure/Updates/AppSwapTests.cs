@@ -66,6 +66,10 @@ public sealed class AppSwapTests : IDisposable
 
     private string? SaidNote() => JsonSerializer.Deserialize(File.ReadAllBytes(Path.Combine(Folder, "failed.json")), AppSwapJson.Default.AppSwapResult)?.Note;
 
+    // A person may have used the new version before it went back, so its database is kept and the note says where.
+    private string WentBackKeepingLaterWrites =>
+        $"Assembly 2.0.0 didn't start, so this app went back to 1.0.0. Anything written after the update is kept in {Database}.failed-2.0.0, not in this app's database.";
+
     private static void End(Process process) { process.Kill(); process.WaitForExit(); }
 
     private async Task<int> Started(string name)
@@ -118,7 +122,7 @@ public sealed class AppSwapTests : IDisposable
         Assert.Equal("old", Running("old"));
         Assert.Equal("original", File.ReadAllText(Database));
         Assert.Equal("migrated\n", File.ReadAllText(Database + ".failed-2.0.0"));
-        Assert.Equal("Assembly 2.0.0 didn't start, so this app went back to 1.0.0.", SaidNote());
+        Assert.Equal(WentBackKeepingLaterWrites, SaidNote());
         Assert.True(Alive(await Started("old")));
         Assert.False(Directory.Exists(Stage));
     }
@@ -468,7 +472,7 @@ public sealed class AppSwapTests : IDisposable
         Assert.Equal("old", Running("old"));
         Assert.Equal("original", File.ReadAllText(Database));
         Assert.Equal("migrated\n", File.ReadAllText(Database + ".failed-2.0.0"));
-        Assert.Equal("Assembly 2.0.0 didn't start, so this app went back to 1.0.0.", SaidNote());
+        Assert.Equal(WentBackKeepingLaterWrites, SaidNote());
         Assert.True(Own(watch.WindowPid).HasExited);
         Assert.True(Alive(await Started("old")));
         Assert.False(File.Exists(Mark));
@@ -487,7 +491,7 @@ public sealed class AppSwapTests : IDisposable
         Assert.Equal("original", File.ReadAllText(Database));
         Assert.True(Own(watch.WindowPid).HasExited);
         Assert.True(Own(watch.BackendPid).HasExited);
-        Assert.Equal("Assembly 2.0.0 didn't start, so this app went back to 1.0.0.", SaidNote());
+        Assert.Equal(WentBackKeepingLaterWrites, SaidNote());
     }
 
     [Fact]
@@ -509,6 +513,8 @@ public sealed class AppSwapTests : IDisposable
 
         Assert.Equal(1, await running);
         Assert.Equal(64 * 1024 * 1024, new FileInfo(Database).Length);
+        // Nothing was written after the update, so there's nothing to point at.
+        Assert.Equal("Assembly 2.0.0 didn't start, so this app went back to 1.0.0.", SaidNote());
     }
 
     [Fact]

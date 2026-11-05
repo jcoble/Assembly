@@ -160,6 +160,8 @@ internal static partial class AppSwap
 
     private static async Task<int> WentBackAsync(AppSwapPlan plan, FileStream home)
     {
+        // A window may have been used before this went back: what it wrote stays in the kept database, and the note says where.
+        var written = plan.Check is null && Changed(plan);
         if (await GoBackAsync(plan) is { } stuck)
         {
             // The stage may hold the old app now, so it stays, and whatever is in place opens with the reason on it.
@@ -170,7 +172,8 @@ internal static partial class AppSwap
             catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception or InvalidOperationException) { }
             return 1;
         }
-        Say(plan, $"Assembly {plan.Version} didn't start, so this app went back to {plan.Previous}.");
+        var kept = written ? $" Anything written after the update is kept in {plan.Database}.failed-{plan.Version}, not in this app's database." : "";
+        Say(plan, $"Assembly {plan.Version} didn't start, so this app went back to {plan.Previous}.{kept}");
         await home.DisposeAsync();
         Relaunch(plan);
         return 1;
@@ -400,6 +403,25 @@ internal static partial class AppSwap
         foreach (var suffix in new[] { "-wal", "-shm" })
             if (File.Exists(plan.Database + suffix)) File.Move(plan.Database + suffix, $"{plan.Database}{suffix}.failed-{plan.Version}", overwrite: true);
         File.Move(whole, plan.Database, overwrite: true);
+    }
+
+    // Whether the database is no longer what was copied before the update, byte for byte, log included.
+    private static bool Changed(AppSwapPlan plan) =>
+        File.Exists(plan.Backup) && KeptFiles.Any(suffix => !SameBytes(plan.Database + suffix, plan.Backup + suffix));
+
+    private static bool SameBytes(string first, string second)
+    {
+        if (!File.Exists(first) || !File.Exists(second)) return File.Exists(first) == File.Exists(second);
+        using var a = File.OpenRead(first);
+        using var b = File.OpenRead(second);
+        if (a.Length != b.Length) return false;
+        var (left, right) = (new byte[1 << 16], new byte[1 << 16]);
+        for (int read; (read = a.Read(left)) > 0;)
+        {
+            b.ReadExactly(right.AsSpan(0, read));
+            if (!left.AsSpan(0, read).SequenceEqual(right.AsSpan(0, read))) return false;
+        }
+        return true;
     }
 
     // Writes what's only in the log into the file itself, on the copy and with nothing else open, so one rename can place all of it.

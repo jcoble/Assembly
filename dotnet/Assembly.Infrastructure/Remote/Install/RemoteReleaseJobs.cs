@@ -1,28 +1,20 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
-using Assembly.Application.Common.Topics;
 using Assembly.Infrastructure.Updates;
 
 namespace Assembly.Infrastructure.Remote.Install;
 
-internal sealed record RemoteReleaseLatestArgs;
-internal sealed record RemoteReleaseLatest(string Version, int ProtocolVersion);
-internal sealed record RemoteReleaseJob(Guid OperationId, long Version, string Machine, string State, string Phase,
-    string? ErrorCode, string? Message, RemoteReleaseReceipt? Result);
+internal sealed record RemoteReleaseJob(string Machine, string State, string? ErrorCode, string? Message);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(RemoteReleaseRecord))]
-[JsonSerializable(typeof(RemoteReleaseLatestArgs))]
-[JsonSerializable(typeof(RemoteReleaseLatest))]
-[JsonSerializable(typeof(RemoteReleaseJob))]
 internal sealed partial class RemoteReleaseJson : JsonSerializerContext;
 
-/// <summary>One install per machine at a time, its state pushed on the topic. Started and stopped with the backend.</summary>
-internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, ITopics topics,
+/// <summary>One install per machine at a time. Started and stopped with the backend.</summary>
+internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install,
     Func<string, CancellationToken, SavedMachine?> profile, Func<string, CancellationToken, Task> connect,
     RemoteReleaseFeed? feed = null, LocalReleaseTools? local = null) : IReleaseInstall, IAsyncDisposable
 {
@@ -38,8 +30,6 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, ITopics to
     private readonly Lock _gate = new();
     private readonly Dictionary<Guid, Entry> _entries = [];
     private bool _disposed;
-
-    internal RemoteReleaseJob? TryStatus(Guid id) { lock (_gate) return _entries.TryGetValue(id, out var entry) ? entry.Job : null; }
 
     /// <summary>An update's way in, waited for: one job per machine.</summary>
     public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct, bool keepAdapters = false) =>
@@ -63,7 +53,7 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, ITopics to
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_entries.Values.Any(value => !value.Terminal && value.Job.Machine == machine)) throw new CallFailed($"An install on {machine} is already running.", "install_busy");
-            entry = new(new(id, 1, machine, "running", "Starting…", null, null, null)) { Progress = progress };
+            entry = new(new(machine, "running", null, null)) { Progress = progress };
             _entries.Add(id, entry);
         }
         await Run(entry, saved, act, ct);
@@ -76,10 +66,9 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, ITopics to
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(entry.Cancel.Token, hostStop);
         try
         {
-            var receipt = await act(machine, phase => { entry.Progress?.Invoke(phase); Change(entry, job => job with { Phase = phase }); }, linked.Token);
-            Change(entry, job => job with { Phase = "Connecting…" });
+            await act(machine, phase => entry.Progress?.Invoke(phase), linked.Token);
             await connect(machine.Name, linked.Token);
-            Change(entry, job => job with { State = "succeeded", Result = receipt });
+            Change(entry, job => job with { State = "succeeded" });
         }
         catch (OperationCanceledException) { Change(entry, job => job with { State = "cancelled", ErrorCode = "cancelled" }); }
         catch (CallFailed failed) { Change(entry, job => job with { State = "failed", ErrorCode = failed.Reason ?? "install_failed", Message = failed.Message }); }
@@ -89,9 +78,7 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, ITopics to
 
     private void Change(Entry entry, Func<RemoteReleaseJob, RemoteReleaseJob> change)
     {
-        RemoteReleaseJob snapshot;
-        lock (_gate) { entry.Job = change(entry.Job) with { Version = entry.Job.Version + 1 }; snapshot = entry.Job; }
-        topics.Publish(RemoteReleaseFeature.Name, snapshot.OperationId.ToString("D"), JsonSerializer.Serialize(snapshot, RemoteReleaseJson.Default.RemoteReleaseJob));
+        lock (_gate) entry.Job = change(entry.Job);
     }
 
     public async ValueTask DisposeAsync()
