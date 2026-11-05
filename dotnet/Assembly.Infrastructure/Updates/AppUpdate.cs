@@ -25,6 +25,8 @@ internal interface IAppInstall
     Task InstallOnQuitAsync(CancellationToken ct);
     /// <summary>The window is up: an update waiting to hear that can finish.</summary>
     void Started();
+    /// <summary>Someone called off the run that got it ready: the stage goes and there's nothing to restart into.</summary>
+    void Unstage();
     /// <summary>The launch after an install on quit: something has to put the old app back if its window never comes up.</summary>
     Task WatchFirstStartAsync(CancellationToken ct);
 }
@@ -75,6 +77,13 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
     public void Started() => AppSwap.Acknowledge(location.Folder, location.Version);
 
     public string? Ready => _staged?.Version;
+
+    public void Unstage()
+    {
+        if (Interlocked.Exchange(ref _staged, null) is not { } staged || staged.Stage == ReadInstalled()?.Stage || HelperRunsFrom(staged.Stage)) return;
+        try { Directory.Delete(staged.Stage, recursive: true); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+    }
 
     public async Task StageAsync(string version, Action<string> progress, CancellationToken ct)
     {

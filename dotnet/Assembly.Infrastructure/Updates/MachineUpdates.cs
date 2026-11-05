@@ -262,6 +262,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         var place = machine is null ? UpdateProgress.ThisMachine : item.Ssh ?? machine;
         var downloaded = (item.Updates ?? []).Count(update => update.State == UpdateItem.Behind && update.Kind is "desktop" or "backend");
         var pieces = (item.Updates ?? []).Count(update => update.State == UpdateItem.Behind) - downloaded;
+        var readyBefore = source.AppReady;
         status.Updating(machine, true, null);
         var run = _progress.Begin(machine, place, pieces, downloaded > 0);
         try
@@ -270,12 +271,16 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             MachineBehind behind = new(machine, [.. (item.Updates ?? []).Where(update => update.State == UpdateItem.Behind)],
                 (item.Updates ?? []).Any(update => update.Kind == "adapter" && update.State == UpdateItem.Newer));
             await source.UpdateAsync([behind], automatic, note => status.Updating(machine, true, note), either.Token);
+            // A cancel that came as the last piece finished still counts: nothing installed, as the button said.
+            run.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) when (run.IsCancellationRequested)
         {
             // Someone called it off: a later check doesn't start it again, and the button can.
             cancelled = true;
             lock (_started) _started.Add(Slot(machine));
+            // What this run got ready goes with it, so there's no Restart to Update for an update someone called off.
+            if (machine is null && source.AppReady != readyBefore) source.DropAppReady();
         }
         catch (CallFailed error) { ending = "Update failed: " + error.Message; }
         catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }

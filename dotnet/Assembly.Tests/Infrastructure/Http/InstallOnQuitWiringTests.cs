@@ -25,6 +25,7 @@ public sealed class InstallOnQuitWiringTests : IDisposable
         public Task StageAsync(string version, Action<string> progress, CancellationToken ct) => Task.CompletedTask;
         public Task RestartAsync(Action<string> progress, CancellationToken ct) => Task.CompletedTask;
         public void Started() { }
+        public void Unstage() { }
         public Task WatchFirstStartAsync(CancellationToken ct) { Watched.TrySetResult(); return Task.CompletedTask; }
         public Task InstallOnQuitAsync(CancellationToken ct)
         {

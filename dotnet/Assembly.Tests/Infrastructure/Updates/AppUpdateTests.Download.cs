@@ -117,4 +117,19 @@ public sealed partial class AppUpdateTests
 
         Assert.Equal(["download", "verify", "unpack", "wait for idle", "helper start"], TimedStages(Path.Combine(_root, "home/app-update")));
     }
+
+    [Fact]
+    public async Task An_update_that_got_ready_and_was_called_off_leaves_nothing_staged()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var update = Update(Feed(Package("2.0.0")));
+        await update.StageAsync("2.0.0", _ => { }, default);
+        Assert.True(Directory.Exists(Stage));
+
+        update.Unstage();
+
+        Assert.Null(update.Ready);
+        Assert.False(Directory.Exists(Stage));
+        await Assert.ThrowsAsync<CallFailed>(() => update.RestartAsync(_ => { }, default));
+    }
 }

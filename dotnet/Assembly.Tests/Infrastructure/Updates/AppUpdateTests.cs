@@ -365,6 +365,7 @@ public sealed partial class AppUpdateTests : IDisposable
         public string? Ready { get; private set; }
         public int Restarts;
         public void Started() { }
+        public void Unstage() => Ready = null;
         public Task StageAsync(string version, Action<string> progress, CancellationToken ct)
         {
             Installed.Add(version);

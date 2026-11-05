@@ -132,9 +132,12 @@ public sealed class UpdateProgressTests
         Assert.False(_progress.Cancel());
     }
 
-    private sealed class Source : IUpdateSource
+    private sealed class Source(bool stages = false) : IUpdateSource
     {
         internal int Updates;
+        internal string? Ready;
+        public string? AppReady => Ready;
+        public void DropAppReady() => Ready = null;
         internal readonly TaskCompletionSource<CancellationToken> Running = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<UpdateWanted> WantedAsync(CancellationToken ct, bool fresh = false) => Task.FromResult(new UpdateWanted(null, "2.0.0",
             new Dictionary<string, string?>(), "sources", new Dictionary<string, string?>()));
@@ -143,6 +146,8 @@ public sealed class UpdateProgressTests
         public async Task UpdateAsync(IReadOnlyList<MachineBehind> machines, bool automatic, Action<string> progress, CancellationToken ct)
         {
             Interlocked.Increment(ref Updates);
+            // The app gets ready first, and a remote is still downloading when the cancel comes.
+            if (stages) Ready = "2.0.0";
             Running.TrySetResult(ct);
             await Task.Delay(Timeout.Infinite, ct);
         }
@@ -181,6 +186,23 @@ public sealed class UpdateProgressTests
 
         Assert.True(updates.Start());
         await Until(() => source.Updates == 2);
+    }
+
+    [Fact]
+    public async Task A_cancel_after_the_app_got_ready_drops_it_and_offers_no_restart()
+    {
+        await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
+        var source = new Source(stages: true);
+        var updates = Updates(source, work);
+        _status.Updates(null, [new("desktop", "Desktop", "1.0.0", "2.0.0", UpdateItem.Behind)]);
+        Assert.True(updates.Start());
+        await source.Running.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(updates.Cancel());
+        await Until(() => !_status.Items[0].Updating);
+
+        Assert.Null(source.Ready);
+        Assert.Null(_status.Items[0].RestartReady);
     }
 
     [Fact]

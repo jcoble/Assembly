@@ -27,6 +27,8 @@ internal interface IUpdateSource
     Task RestartAppAsync(Action<string> progress, CancellationToken ct) => throw new CallFailed("No update is ready to restart into.", "no_update");
     /// <summary>This app's window is up.</summary>
     void AppStarted() { }
+    /// <summary>The run that got this app ready was called off.</summary>
+    void DropAppReady() { }
     /// <summary>Puts a backend on a saved machine, from wherever this source's files come from, and connects.</summary>
     Task InstallAsync(string machine, Action<string> progress, CancellationToken ct);
     /// <summary>
@@ -196,6 +198,7 @@ internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall?
     public Task RestartAppAsync(Action<string> progress, CancellationToken ct) =>
         (app ?? throw new CallFailed("No update is ready to restart into.", "no_update")).RestartAsync(progress, ct);
     public void AppStarted() => app?.Started();
+    public void DropAppReady() => app?.Unstage();
 
     public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct) =>
         (release ?? throw new CallFailed("No signed release is published yet, so there's nothing to install.", "no_release")).InstallAsync(machine, progress, ct);
