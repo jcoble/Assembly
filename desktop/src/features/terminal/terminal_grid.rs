@@ -198,12 +198,12 @@ impl TerminalGrid {
                     bold: cell.flags.contains(Flags::BOLD),
                     wide: cell.flags.contains(Flags::WIDE_CHAR),
                     selected: selection.is_some_and(|range| range.contains(cell.point)),
-                    italic: false,
-                    underline: false,
-                    strike: false,
-                    dim: false,
-                    hidden: false,
-                    marks: Vec::new(),
+                    italic: cell.flags.contains(Flags::ITALIC),
+                    underline: cell.flags.intersects(Flags::ALL_UNDERLINES),
+                    strike: cell.flags.contains(Flags::STRIKEOUT),
+                    dim: cell.flags.contains(Flags::DIM),
+                    hidden: cell.flags.contains(Flags::HIDDEN),
+                    marks: cell.zerowidth().map(<[char]>::to_vec).unwrap_or_default(),
                 }
             })
             .collect()
