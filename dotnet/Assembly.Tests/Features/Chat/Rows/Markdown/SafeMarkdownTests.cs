@@ -81,6 +81,14 @@ public sealed class SafeMarkdownTests
         AssertBlocks("[click](javascript:alert(1))", P(T("click")));
 
     [Fact]
+    public void An_assembly_link_stays_a_link() =>
+        AssertBlocks("[open](assembly://session/owned-1)", P(new SafeLink("assembly://session/owned-1", [T("open")])));
+
+    [Fact]
+    public void An_assembly_link_holding_a_control_character_becomes_its_text() =>
+        AssertBlocks("[open](<assembly://session/a\u0001b>)", P(T("open")));
+
+    [Fact]
     public void Tables_keep_headers_and_cells() =>
         AssertBlocks("| a | b |\n|---|---|\n| 1 | **2** |\n",
             new SafeTable([[T("a")], [T("b")]], [[[T("1")], [new SafeStrong([T("2")])]]]));

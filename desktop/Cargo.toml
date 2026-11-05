@@ -1,6 +1,6 @@
 [package]
 name = "assembly-desktop"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 publish = false
 
@@ -15,6 +15,7 @@ serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 alacritty_terminal = "=0.26.0"
 base64 = "=0.22.1"
 chrono = { version = "=0.4.45", default-features = false, features = ["clock"] }
+percent-encoding = "=2.3.2"
 tungstenite = "=0.27.0"
 ureq = { version = "=3.5.0", default-features = false, features = ["rustls"] }
 url = "=2.5.8"
