@@ -105,6 +105,27 @@ public sealed class PhoneInboxHttpTests
         Assert.DoesNotContain(await phone.IdsAsync(), id => id == phone.CommandNeed);
     }
 
+    [Fact]
+    public async Task A_phone_lists_a_failed_step_with_attempts_left_and_retries_it()
+    {
+        await using var phone = await PhoneInbox.FailedStepAsync();
+        var id = "step:" + phone.FailedStep;
+        var item = await phone.ItemAsync(id);
+        Assert.Equal("restart", item.GetProperty("kind").GetString());
+        Assert.Equal("checks failed", item.GetProperty("title").GetString());
+        Assert.Equal("Attempt 1 of 2 failed. Retry runs it again.", item.GetProperty("detail").GetString());
+        var option = Assert.Single(item.GetProperty("options").EnumerateArray());
+        Assert.Equal("Retry", option.GetProperty("label").GetString());
+
+        using var retried = await phone.AnswerAsync(id, new { optionId = "retry", version = item.GetProperty("version").GetInt64() });
+        Assert.Equal(HttpStatusCode.NoContent, retried.StatusCode);
+        Assert.NotEqual("failed", phone.StepRowState);
+        Assert.Equal(0, await phone.CountAsync());
+
+        using var again = await phone.AnswerAsync(id, new { optionId = "retry", version = item.GetProperty("version").GetInt64() });
+        Assert.Equal(HttpStatusCode.Conflict, again.StatusCode);
+    }
+
     private sealed class PhoneInbox : IAsyncDisposable
     {
         private readonly CommandStepTests.Fixture _fixture;
@@ -130,6 +151,23 @@ public sealed class PhoneInboxHttpTests
         {
             var f = CommandStepTests.ApprovalBesideCommand();
             var (commandNeed, gateNeed, _, _) = await CommandStepTests.BothAsking(f, settled: true);
+            return await OpenAsync(f, commandNeed, gateNeed);
+        }
+
+        public static async Task<PhoneInbox> FailedStepAsync() => await OpenAsync(await OwnerAttentionTests.FailedWith(attempts: 2), "", "");
+
+        public string FailedStep => _fixture.Step;
+        public string StepRowState => _fixture.Core.Text("SELECT state FROM engine_step WHERE id=$id", new SqlArg("$id", FailedStep))!;
+        public long RunVersion => _fixture.Core.Number("SELECT version FROM engine_run");
+
+        public async Task<int> CountAsync()
+        {
+            var inbox = await _http.GetFromJsonAsync<JsonElement>("/phone/v1/inbox");
+            return inbox.GetProperty("items").GetArrayLength();
+        }
+
+        private static async Task<PhoneInbox> OpenAsync(CommandStepTests.Fixture f, string commandNeed, string gateNeed)
+        {
             var core = f.Core;
             var runtime = EngineRuntime.Start(core.Db, new Topics(), core.Time, core.Limits);
             var hub = new LiveHub(RowStore.Open(core.Db));

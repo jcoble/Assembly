@@ -22,7 +22,7 @@ public sealed class OwnerAttentionTests
         return PhoneNeedsRoutes.Read(scope, f.Core.Machine).Select(item => item.Id).ToArray();
     }
 
-    private static async Task<Fixture> FailedWith(int attempts)
+    internal static async Task<Fixture> FailedWith(int attempts)
     {
         var f = new Fixture([], "allow", flow: $"name: Flow\npolicy: {{default: allow}}\nsteps:\n  checks:\n    max_attempts: {attempts}\n    run: [\"exit 3\"]\n");
         Assert.True(f.Start(f.Prepare()).Applied);

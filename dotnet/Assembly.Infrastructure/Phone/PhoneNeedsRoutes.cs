@@ -24,7 +24,8 @@ public static class PhoneNeedsRoutes
             var peer = authenticate(context);
             if (peer is null || string.IsNullOrWhiteSpace(peer.DeviceId))
             { await JsonReply.ErrorAsync(context, 401, "Pair this phone again"); return; }
-            var items = ((IEngineRuntime)runtime).Read(scope => Read(scope, runtime.Machine), context.RequestAborted);
+            var items = ((IEngineRuntime)runtime).Read(scope => Read(scope, runtime.Machine)
+                .Concat(PhoneStoppedSteps.Read(scope, runtime.Machine)).OrderByDescending(item => item.CreatedAt).ToArray(), context.RequestAborted);
             await JsonReply.WriteAsync(context, 200, json => WriteInbox(json, items));
         });
         routes.MapPost("/phone/v1/inbox/{id}/answer", async context =>
@@ -37,6 +38,11 @@ public static class PhoneNeedsRoutes
             { await JsonReply.ErrorAsync(context, 400, "invalid answer"); return; }
             // Routing leaves %2F encoded, and a gate's id has slashes in it.
             var id = Uri.UnescapeDataString(context.Request.RouteValues["id"] as string ?? "");
+            if (id.StartsWith(PhoneStoppedSteps.Prefix, StringComparison.Ordinal))
+            {
+                await PhoneStoppedSteps.RetryAsync(context, runtime, peer, id, option, version, ensureCurrentPeer);
+                return;
+            }
             var item = ((IEngineRuntime)runtime).Read(scope => Read(scope, runtime.Machine, id).SingleOrDefault(), context.RequestAborted);
             if (item is null || item.Version != version)
             { await StaleAsync(context, runtime, id); return; }
