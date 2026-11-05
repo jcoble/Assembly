@@ -25,6 +25,8 @@ public sealed partial class WorkflowScheduleTests
     [InlineData("UPDATE engine_provider SET auth_state='needs_sign_in'", "Sign in to codex to run this step.")]
     [InlineData("UPDATE engine_provider SET installation='missing'", "codex isn't installed on this machine.")]
     [InlineData("DELETE FROM engine_provider", "codex hasn't been checked on this machine.")]
+    [InlineData("UPDATE engine_provider SET auth_state='could_not_check'", "Couldn't check whether codex is signed in on this machine.")]
+    [InlineData("UPDATE engine_provider SET installation='unknown',auth_state='could_not_check',facts_json=NULL", "Couldn't tell whether codex is installed on this machine.")]
     public void A_step_its_provider_or_model_cant_run_fails_with_the_reason_and_needs_the_owner(string change, string reason)
     {
         using var f = new Fixture();
@@ -33,6 +35,22 @@ public sealed partial class WorkflowScheduleTests
         Assert.Equal(("failed", reason, true), Blocked(f));
         Assert.Equal(0, f.Core.Count("engine_step_attempt"));
         Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_event WHERE kind='step.changed' AND entity_id=$id AND entity_version=(SELECT version FROM engine_step WHERE id=$id)", new SqlArg("$id", f.Step)));
+    }
+
+    [Theory]
+    [InlineData("UPDATE engine_provider SET auth_state='checking'")]
+    [InlineData("UPDATE engine_provider SET installation='unknown',auth_state='checking',facts_json=NULL")]
+    public void A_step_waits_while_its_provider_is_being_checked_and_starts_once_the_check_says_it_can(string checking)
+    {
+        using var f = new Fixture();
+        var facts = f.Core.Text("SELECT facts_json FROM engine_provider");
+        Providers(f, checking);
+        Assert.False(Block(f));
+        Assert.Equal(("pending", null, false), Blocked(f));
+        f.Core.Db.Writer.Write("test.provider", s => s.Execute(
+            "UPDATE engine_provider SET installation='installed',auth_state='signed_in',facts_json=$facts", new SqlArg("$facts", facts)));
+        Assert.False(Block(f));
+        Assert.True(f.Apply(f.Prepare()).Result.Applied);
     }
 
     [Fact]

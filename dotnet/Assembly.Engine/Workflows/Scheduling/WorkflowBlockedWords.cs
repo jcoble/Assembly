@@ -1,12 +1,14 @@
 namespace Assembly.Engine.Workflows.Scheduling;
 
-/// <summary>Why a step's provider or model can't run it, naming which. Other reasons a step isn't ready are the scheduler's to wait out.</summary>
+/// <summary>Why a step's provider or model can't run it, naming which. Other reasons a step isn't ready, such as a check still running, are the scheduler's to wait out.</summary>
 internal static class WorkflowBlockedWords
 {
     internal static string? Of(string? reason, DispatchEligibility w) => reason switch
     {
         "model_unavailable" => $"Model {w.Model} isn't available for {w.Provider} on this machine.",
         "sign_in_required" => $"Sign in to {w.Provider} to run this step.",
+        "provider_check_failed" when w.ProviderFacts.Installation == "unknown" => $"Couldn't tell whether {w.Provider} is installed on this machine.",
+        "provider_check_failed" => $"Couldn't check whether {w.Provider} is signed in on this machine.",
         "provider_unavailable" when w.Provider == "" => "This step names no provider.",
         "provider_unavailable" when !w.ProviderFacts.Configured => $"{w.Provider} isn't set up on this machine.",
         "provider_unavailable" when w.ProviderFacts.Installation is null or "installed" => $"{w.Provider} hasn't been checked on this machine.",

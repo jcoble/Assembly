@@ -173,7 +173,11 @@ public static partial class WorkflowDispatch
             row.Session is not null && resume is null ? "workflow_resume_unavailable" :
             resume is not null && (resume.AccountContext != account || resume.Folder != row.Folder || resume.WorkspaceId != row.Workspace || resume.Head != row.Head) ? "workflow_resume_context_changed" :
             row.WorkspaceState != "ready" || row.Folder == "" || row.Head is null ? "workspace_not_ready" :
-            !provider.Configured || provider.Installation != "installed" || selectedModel is null && !provider.ModelAvailable ? "provider_unavailable" :
+            !provider.Configured ? "provider_unavailable" :
+            provider.Authentication == "checking" ? "provider_checking" :
+            provider.Installation is not ("installed" or "unknown") ? "provider_unavailable" :
+            provider.Installation == "unknown" || provider.Authentication == "could_not_check" ? "provider_check_failed" :
+            selectedModel is null && !provider.ModelAvailable ? "provider_unavailable" :
             provider.Authentication is not ("signed_in" or "unverified" or "unsupported") ? "sign_in_required" :
             !provider.ModelAvailable ? "model_unavailable" :
             dependencies.Any(d => !(d.State == "succeeded" && d.ReceiptHash is not null || d.State == "skipped" && d.RuleSkippable && d.RuleReason is not null || d.Optional && (d.State is "failed" or "cancelled"))) ? "dependency_not_ready" :
