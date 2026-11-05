@@ -113,6 +113,8 @@ test('installer is idempotent and preserves unrelated hooks', t => {
     assert.equal(config.hooks.SessionStart[0].hooks[0].command, 'existing-session-hook');
     assert.equal(config.hooks.PostToolUse[0].hooks[0].command, 'existing-tool-hook');
     assert.equal(config.hooks.PreCompact.length, 1);
+    const backup = JSON.parse(readFileSync(join(f.home, name + '.agent-runbook.bak'), 'utf8'));
+    assert.deepEqual(backup, existing, 'Idempotent installation must retain the original config backup.');
   }
 });
 test('child recovery with shared session_id never checkpoints parent and missing bindings block explicitly', t => {
