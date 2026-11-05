@@ -2,7 +2,8 @@
 //! run or its error changes. The rail follows a session's run, the Board a run by its id.
 use gpui_kit::*;
 
-use crate::core::engine::workflow_items::RunView;
+use crate::core::engine::workflow_items::{RunItem, RunView, StepItem};
+use crate::core::engine::workflow_read::{self, UNREACHABLE};
 use crate::core::engine::{EngineChanged, EngineFeed, EngineScope, EngineWatch, SessionKey};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
@@ -20,6 +21,8 @@ pub struct RunReader {
     watch: Option<EngineWatch>,
     view: Option<RunView>,
     error: Option<String>,
+    /// The view is what the shared rows last said, since the run's machine can't be asked now.
+    last_known: bool,
     dirty: bool,
     serial: u64,
     read: Option<Task<()>>,
@@ -33,7 +36,13 @@ impl RunReader {
         let feed = EngineFeed::global(cx);
         let changed = cx.subscribe(&feed, |reader, _, event: &EngineChanged, cx| {
             let owner = matches!(&reader.source, RunSource::Session(parent) if event.sessions.contains(parent));
-            if owner || reader.scope.as_ref().is_some_and(|scope| event.scopes.contains(scope)) {
+            // While it shows last known steps, anything new from that machine is worth asking again.
+            let back = reader.last_known
+                && reader.scope.as_ref().is_some_and(|scope| {
+                    event.keys.iter().any(|key| key.machine == scope.machine)
+                        || event.scopes.iter().any(|changed| changed.machine == scope.machine)
+                });
+            if owner || back || reader.scope.as_ref().is_some_and(|scope| event.scopes.contains(scope)) {
                 reader.dirty = true;
                 reader.refresh(cx);
                 cx.notify();
@@ -46,6 +55,7 @@ impl RunReader {
             watch: None,
             view: None,
             error: None,
+            last_known: false,
             dirty: true,
             serial: 0,
             read: None,
@@ -81,6 +91,40 @@ impl RunReader {
 
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+
+    pub fn is_last_known(&self) -> bool {
+        self.last_known
+    }
+
+    /// Shows what's held, or what the shared rows last said. False when they've nothing on this run.
+    fn show_last_known(&mut self, machine: &str, run_id: &str, cx: &App) -> bool {
+        if self.view.is_none() {
+            let feed = self.feed.read(cx);
+            let rows = feed.topic_items("runs");
+            let of = |kind: &str| {
+                rows.iter()
+                    .filter(move |item| item.key.machine == machine && item.key.kind == kind)
+                    .map(|item| item.value.clone())
+                    .collect::<Vec<_>>()
+            };
+            let run = of("run")
+                .into_iter()
+                .filter_map(|value| RunItem::decode(value).ok())
+                .find(|run| run.id == run_id);
+            let Some(run) = run else {
+                return false;
+            };
+            let steps = of("step")
+                .into_iter()
+                .filter_map(|value| StepItem::decode(value).ok())
+                .filter(|step| step.run_id == run_id)
+                .collect();
+            self.view = Some(RunView::last_known(run, steps));
+        }
+        self.error = None;
+        self.last_known = true;
+        true
     }
 
     pub fn reading(&self) -> bool {
@@ -177,30 +221,43 @@ impl RunReader {
             }
         }
         if !self.feed.read(cx).loaded(&scope) {
-            self.error = Some("Loading the current workflow…".into());
+            if !self.show_last_known(&machine, &run_id, cx) {
+                self.error = Some("Loading the current workflow…".into());
+            }
             return;
         }
         self.serial += 1;
         let serial = self.serial;
         self.error = None;
         self.read = Some(cx.spawn(async move |reader, cx| {
-            let result = crate::core::engine::workflow_read::run(&machine, &run_id, cx).await;
+            let result = workflow_read::run(&machine, &run_id, cx).await;
             let _ = reader.update(cx, |reader, cx| {
                 if reader.serial != serial || !reader.current(cx) {
                     return;
                 }
                 reader.read = None;
-                if !reader
-                    .scope
-                    .as_ref()
-                    .is_some_and(|scope| reader.feed.read(cx).loaded(scope))
-                {
-                    reader.view = None;
-                    reader.error = Some("The workflow source is no longer coherent.".into());
-                } else {
-                    match result {
-                        Ok(page) => reader.view = Some(page),
-                        Err(error) => reader.error = Some(error.message),
+                match result {
+                    Err(error) if error.code == UNREACHABLE => {
+                        if !reader.show_last_known(&machine, &run_id, cx) {
+                            reader.error = Some("Loading the current workflow…".into());
+                        }
+                    }
+                    _ if !reader
+                        .scope
+                        .as_ref()
+                        .is_some_and(|scope| reader.feed.read(cx).loaded(scope)) =>
+                    {
+                        reader.view = None;
+                        reader.error = Some("The workflow source is no longer coherent.".into());
+                    }
+                    Ok(page) => {
+                        reader.view = Some(page);
+                        reader.last_known = false;
+                    }
+                    Err(error) => {
+                        reader.last_known = false;
+                        reader.view = None;
+                        reader.error = Some(error.message);
                     }
                 }
                 // A push received during this bounded pass schedules exactly one following pass.

@@ -1,6 +1,10 @@
 using System.Text.Json;
 using Assembly.Engine;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Engine.Sessions;
+using Assembly.Infrastructure.Remote;
+using Assembly.Application.Common.Machines;
 
 namespace Assembly.Tests.Infrastructure.Remote;
 
@@ -82,7 +86,8 @@ public sealed partial class EngineForwardTests
         Assert.Equal(1, h.Remote.OwnerReadCalls);
         await Send(bulk, Call(2, "entity", "tool_call", "tool", machine));
         var error = await Read(bulk);
-        Assert.Equal("unreachable", error.GetProperty("code").GetString());
+        Assert.Equal(omitted ? "unreachable" : "engine_differs", error.GetProperty("code").GetString());
+        Assert.Equal(omitted ? "workbox-test is reconnecting" : "workbox-test is now a different machine from the one this belongs to", error.GetProperty("message").GetString());
         Assert.Equal("workbox-test", error.GetProperty("machine").GetString());
         Assert.Equal(1, h.Remote.OwnerReadCalls); // No owner read payload passed the bulk identity fence.
         var args = JsonSerializer.Deserialize("""{"entityKind":"tool_call","entityId":"tool"}""", EngineJson.Default.JsonElement);
@@ -90,6 +95,64 @@ public sealed partial class EngineForwardTests
         Assert.Equal(JsonValueKind.Null, ordinary.ValueKind);
         Assert.Equal(2, h.Remote.OwnerReadCalls);
         Assert.Equal(1, h.Remote.MachineCalls); // All forwarding reused the one mirror handshake.
+    }
+
+    [Fact]
+    public async Task While_a_machine_reconnects_a_call_only_waits_and_it_isnt_called_a_different_machine()
+    {
+        await using var h = await Started();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Remote.Identifying = () => { entered.TrySetResult(); return release.Task; };
+        h.Remote.Endpoint.DropAll();
+        try
+        {
+            await entered.Task.WaitAsync(Wait);
+            using var live = await Open(h.Mac);
+            await Send(live, Call(1, "usage", "session", "s", h.Remote.Fixture.Machine));
+            var error = await Read(live);
+            Assert.Equal("unreachable", error.GetProperty("code").GetString());
+            Assert.Equal("workbox-test is reconnecting", error.GetProperty("message").GetString());
+            Assert.Equal(0, h.Remote.OwnerReadCalls);
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Fact]
+    public async Task A_lost_socket_that_had_worked_comes_back_quickly_however_many_times()
+    {
+        await using var h = await Started();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        for (var loss = 1; loss <= 5; loss++)
+        {
+            h.Remote.Endpoint.DropAll();
+            h.Remote.Commit(loss);
+            await h.Reached(h.Remote.Through);
+        }
+        // The old backoff never reset, so these five took 1+2+4+8+16 s.
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(15), $"took {clock.Elapsed}");
+    }
+
+    [Fact]
+    public async Task A_tunnel_coming_back_cuts_the_wait_short()
+    {
+        await using var h = await Started();
+        var never = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        var sessions = SessionStore.Open(h.Mac.Fixture.Db, h.Mac.Fixture.Time, "/isolated");
+        using var hub = new LiveHub(RowStore.Open(h.Mac.Fixture.Db));
+        await using var machine = new RemoteMachine("returning", h.Remote.Address, "isolated-token", hub, sessions, TextWriter.Null,
+            new MachineStatus(h.Mac.Topics, []), topics: h.Mac.Topics, time: never);
+        var opens = System.Threading.Channels.Channel.CreateUnbounded<int>();
+        machine.SocketOpened += () => opens.Writer.TryWrite(1);
+        await machine.ProbeAsync(default);
+        await opens.Reader.ReadAsync().AsTask().WaitAsync(Wait);
+        h.Remote.Endpoint.DropAll();
+        // The fake clock never lets the backoff end, so only the wake can bring it back.
+        while (!opens.Reader.TryRead(out _))
+        {
+            machine.ConnectNow();
+            await Task.WhenAny(opens.Reader.WaitToReadAsync().AsTask(), Task.Delay(50)).WaitAsync(Wait);
+        }
     }
 
     [Fact]

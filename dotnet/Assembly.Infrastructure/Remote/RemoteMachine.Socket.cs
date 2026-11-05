@@ -294,16 +294,25 @@ internal sealed partial class RemoteMachine
         $"{{\"t\":\"sub\",\"id\":{id},\"topic\":\"rows\",\"key\":{JsonSerializer.Serialize(session, RowJsonContext.Rows.String)},\"after\":{(after is null ? "null" : after.Value.ToString(System.Globalization.CultureInfo.InvariantCulture))}" +
         (expected is null ? "}" : $",\"expectedSource\":{JsonSerializer.Serialize(expected, RowJsonContext.Rows.ExpectedSource)}}}");
 
+    /// <summary>The way back is open again, so stop waiting out the backoff.</summary>
+    internal void ConnectNow()
+    {
+        try { Volatile.Read(ref _socketWaiting)?.Cancel(); }
+        catch (ObjectDisposedException) { } // The wait just ended by itself.
+    }
+    private CancellationTokenSource? _socketWaiting;
+    private static readonly TimeSpan SocketMaxBackoff = TimeSpan.FromSeconds(5);
+
     private async Task SocketLoopAsync()
     {
         var backoff = TimeSpan.FromSeconds(1);
         while (!_socketStop.IsCancellationRequested)
         {
             ClientWebSocket? socket = null;
-            var copied = false;
             try
             {
                 socket = await ConnectSocketAsync(_socketStop.Token);
+                backoff = TimeSpan.FromSeconds(1);
                 _status.Reachable(_name);
                 _follower.Resume();
                 while (true)
@@ -373,7 +382,6 @@ internal sealed partial class RemoteMachine
                         }
                     }
                     finally { _socketSend.Release(); }
-                    copied |= frame.GetProperty("t").GetString() == "rows";
                 }
             }
             catch (Exception error) when (error is WebSocketException or IOException or OperationCanceledException or MachineUnreachable or ObjectDisposedException)
@@ -403,10 +411,15 @@ internal sealed partial class RemoteMachine
                 finally { _socketSend.Release(); }
                 await titleDrain;
             }
-            if (copied) backoff = TimeSpan.FromSeconds(1);
-            try { await Task.Delay(backoff, _time, _socketStop.Token); }
-            catch (OperationCanceledException) when (_socketStop.IsCancellationRequested) { break; }
-            backoff = TimeSpan.FromSeconds(Math.Min(backoff.TotalSeconds * 2, 30));
+            using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(_socketStop.Token))
+            {
+                Volatile.Write(ref _socketWaiting, waiting);
+                try { await Task.Delay(backoff, _time, waiting.Token); }
+                catch (OperationCanceledException) when (_socketStop.IsCancellationRequested) { break; }
+                catch (OperationCanceledException) { }
+                finally { Volatile.Write(ref _socketWaiting, null); }
+            }
+            backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, SocketMaxBackoff.Ticks));
         }
     }
 
@@ -478,7 +491,13 @@ internal sealed partial class RemoteMachine
 
     // Both helpers run only under the existing send gate; the socket reference is the connection epoch.
     private ClientWebSocket RequireEngine(string machine) => !_ownerStopping && !_socketStop.IsCancellationRequested && _socket is { State: WebSocketState.Open } socket && _engineIdentity == machine
-        ? socket : throw Unreachable("unverified engine peer", $"{_name}: socket engine identity differs or is unverified");
+        ? socket : throw EngineNotVerified(machine, _engineIdentity);
+
+    /// <summary>Nothing passes this check without the expected identity. Having none yet is only a wait, and says so without
+    /// marking the machine offline; having another is the one case that says it's a different machine.</summary>
+    private MachineUnreachable EngineNotVerified(string expected, string? actual) => actual is null || actual == expected
+        ? new(_name, $"{_name} is reconnecting")
+        : new(_name, $"{_name} is now a different machine from the one this belongs to", engineDiffers: true);
 
     private void InvalidateEngine()
     {
