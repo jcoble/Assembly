@@ -26,12 +26,17 @@ pub(crate) fn newer_words(item: &UpdateItem) -> Option<String> {
     })
 }
 
+/// The card's update button: for what's behind or running, and also while a new app waits to restart, whose tools still update.
+pub(crate) fn update_offered(machine: &Machine) -> bool {
+    machine.offered().next().is_some() || machine.updating
+}
+
 /// One sentence for the notice at app start, or `None` when nothing is behind.
 pub fn behind_words<'a>(machines: impl Iterator<Item = &'a Machine>) -> Option<String> {
     let found: Vec<String> = machines
-        .filter(|machine| machine.restart_ready.is_none() && machine.behind().next().is_some())
+        .filter(|machine| machine.offered().next().is_some())
         .map(|machine| {
-            let names: Vec<&str> = machine.behind().map(|item| item.name.as_str()).collect();
+            let names: Vec<&str> = machine.offered().map(|item| item.name.as_str()).collect();
             format!("{}: {}", machine_name(machine), names.join(", "))
         })
         .collect();
@@ -63,7 +68,18 @@ pub(crate) fn row_status(machine: &Machine, reached: &str, status: &str) -> Stri
         parts.extend(machine.backend_note());
         parts.extend(machine.updates.iter().filter_map(newer_words));
     }
-    let behind: Vec<&str> = machine.behind().map(|item| item.name.as_str()).collect();
+    parts.extend(machine.cant_update.clone());
+    if machine.restarting {
+        parts.push(
+            machine
+                .restart_note
+                .clone()
+                .unwrap_or("Restarting…".to_string()),
+        );
+    } else {
+        parts.extend(machine.restart_note.clone());
+    }
+    let behind: Vec<&str> = machine.offered().map(|item| item.name.as_str()).collect();
     if machine.updating {
         parts.push(
             machine
@@ -75,6 +91,9 @@ pub(crate) fn row_status(machine: &Machine, reached: &str, status: &str) -> Stri
         parts.push(note.clone());
     } else if let Some(version) = &machine.restart_ready {
         parts.push(format!("Assembly {version} is ready to restart into"));
+        if !behind.is_empty() {
+            parts.push(format!("{} behind", behind.join(", ")));
+        }
     } else if machine.reachable {
         if behind.is_empty() {
             parts.extend(checked_words(machine));

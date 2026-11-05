@@ -14,9 +14,10 @@ use crate::core::ui::access::control_ids::topbar;
 const WORDS: &str = "Restart to Update";
 
 pub struct RestartButton {
-    /// Whether this app has an update ready, whether it's already on its way, and what it's doing or waiting for.
+    /// Whether this app has an update ready, whether a press is on its way, and what it's doing or waiting for or why it
+    /// failed. This machine's tools have their own note, on its card, and nothing of theirs shows here.
     ready: bool,
-    updating: bool,
+    restarting: bool,
     note: Option<String>,
     _machines: Option<Subscription>,
     _follow: Subscription,
@@ -27,7 +28,7 @@ impl RestartButton {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let mut button = Self {
             ready: false,
-            updating: false,
+            restarting: false,
             note: None,
             _machines: None,
             _follow: cx.observe_global::<GlobalMachines>(Self::follow),
@@ -54,10 +55,10 @@ impl RestartButton {
             .machines()
             .find(|machine| machine.name.is_none());
         let ready = here.is_some_and(|machine| machine.restart_ready.is_some());
-        let updating = here.is_some_and(|machine| machine.updating);
-        let note = here.and_then(|machine| machine.update_note.clone());
-        if (ready, updating, &note) != (self.ready, self.updating, &self.note) {
-            (self.ready, self.updating, self.note) = (ready, updating, note);
+        let restarting = here.is_some_and(|machine| machine.restarting);
+        let note = here.and_then(|machine| machine.restart_note.clone());
+        if (ready, restarting, &note) != (self.ready, self.restarting, &self.note) {
+            (self.ready, self.restarting, self.note) = (ready, restarting, note);
             cx.notify();
         }
     }
@@ -65,9 +66,14 @@ impl RestartButton {
     /// A press that's held up says why right here, where it was pressed.
     fn words(&self) -> &str {
         match &self.note {
-            Some(note) if self.updating => note,
+            Some(note) if self.restarting => note,
             _ => WORDS,
         }
+    }
+
+    /// Why the last press didn't get there, for pressing again.
+    fn failure(&self) -> Option<&String> {
+        self.note.as_ref().filter(|_| !self.restarting)
     }
 
     fn press(&mut self, cx: &mut Context<Self>) {
@@ -90,12 +96,11 @@ impl Render for RestartButton {
             .primary()
             .small()
             .label(self.words().to_owned())
-            .loading(self.updating)
-            .disabled(self.updating)
+            .loading(self.restarting)
+            .disabled(self.restarting)
             .control(topbar::RESTART_TO_UPDATE, WORDS)
             .on_click(cx.listener(|button, _, _, cx| button.press(cx)));
-        // Why the last press didn't get there, for pressing again.
-        if let Some(failure) = self.note.as_ref().filter(|_| !self.updating) {
+        if let Some(failure) = self.failure() {
             button = button.tooltip(failure.clone());
         }
         div()

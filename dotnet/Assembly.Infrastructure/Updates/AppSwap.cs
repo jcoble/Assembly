@@ -38,7 +38,9 @@ internal static partial class AppSwap
 {
     internal const string Ready = "ready";
     internal const string BackupPrefix = "assembly-before-";
+    // The -shm file is only an index of the log, and SQLite rebuilds it on the first open, so it's moved aside but never copied.
     private static readonly string[] DatabaseFiles = ["", "-wal", "-shm"];
+    private static readonly string[] KeptFiles = ["-wal", ""];
     private const string Socket = "ack.sock";
     private static readonly TimeSpan StartTolerance = TimeSpan.FromSeconds(1);
 
@@ -139,8 +141,14 @@ internal static partial class AppSwap
     private static void CopyDatabase(AppSwapPlan plan)
     {
         foreach (var old in Directory.EnumerateFiles(plan.Folder, BackupPrefix + "*")) File.Delete(old);
-        foreach (var suffix in DatabaseFiles)
-            if (File.Exists(plan.Database + suffix)) File.Copy(plan.Database + suffix, plan.Backup + suffix);
+        // The database itself comes last and by rename: it being there says the whole copy is, and only then can it go back.
+        foreach (var suffix in KeptFiles)
+        {
+            if (!File.Exists(plan.Database + suffix)) continue;
+            var partial = plan.Backup + suffix + ".partial";
+            File.Copy(plan.Database + suffix, partial, overwrite: true);
+            File.Move(partial, plan.Backup + suffix);
+        }
     }
 
     private static void Relaunch(AppSwapPlan plan)
@@ -241,7 +249,7 @@ internal static partial class AppSwap
         foreach (var old in Directory.EnumerateFiles(Path.GetDirectoryName(plan.Database)!, name + "*.failed-*")) File.Delete(old);
         foreach (var suffix in DatabaseFiles)
             if (File.Exists(plan.Database + suffix)) File.Move(plan.Database + suffix, $"{plan.Database}{suffix}.failed-{plan.Version}", overwrite: true);
-        foreach (var suffix in DatabaseFiles)
+        foreach (var suffix in KeptFiles)
         {
             if (!File.Exists(plan.Backup + suffix)) continue;
             var partial = plan.Database + suffix + ".partial";

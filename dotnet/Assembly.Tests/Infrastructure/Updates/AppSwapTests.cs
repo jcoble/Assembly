@@ -144,6 +144,58 @@ public sealed class AppSwapTests : IDisposable
     }
 
     [Fact]
+    public async Task A_real_database_with_writes_only_in_its_log_comes_back_whole_after_a_migration_that_failed()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        // A new version that migrates for real, leaving a table the old one has never seen, then dies.
+        var migrate = $"python3 -c \"import sqlite3; d=sqlite3.connect('{Database}'); d.execute('create table migrated(n)'); d.execute('delete from turns'); d.commit(); d.close()\"\nexit 3";
+        var (plan, window, backend) = Prepared(migrate);
+        File.Delete(Database);
+        // What the old app leaves when it's killed: rows only in the log, never checkpointed, with its index beside them.
+        Python($$"""
+            import os, sqlite3
+            d = sqlite3.connect(r'{{Database}}')
+            d.execute('PRAGMA journal_mode=WAL')
+            d.execute('PRAGMA wal_autocheckpoint=0')
+            d.execute('create table turns(n)')
+            d.executemany('insert into turns values (?)', [(n,) for n in range(1000)])
+            d.commit()
+            os._exit(0)
+            """);
+        Assert.True(new FileInfo(Database + "-wal").Length > 0);
+        Assert.True(File.Exists(Database + "-shm"));
+        End(window); End(backend);
+
+        Assert.Equal(1, await AppSwap.RunAsync(plan).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        Assert.True(File.Exists(Backup + "-wal"));
+        Assert.False(File.Exists(Backup + "-shm"));
+        // The migration did run, and what it left is kept aside.
+        Assert.True(File.Exists(Database + ".failed-2.0.0"));
+        Assert.False(File.Exists(Database + "-shm.partial"));
+        using var opened = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Database};Pooling=False");
+        opened.Open();
+        Assert.Equal(1000L, Scalar(opened, "select count(*) from turns"));
+        Assert.Equal(499500L, Scalar(opened, "select sum(n) from turns"));
+        Assert.Equal(0L, Scalar(opened, "select count(*) from sqlite_master where name = 'migrated'"));
+        Assert.Equal("ok", Scalar(opened, "PRAGMA integrity_check"));
+    }
+
+    private static object? Scalar(Microsoft.Data.Sqlite.SqliteConnection connection, string sql)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return command.ExecuteScalar();
+    }
+
+    private static void Python(string script)
+    {
+        using var process = Process.Start(new ProcessStartInfo("python3", ["-c", script.Replace("\n            ", "\n", StringComparison.Ordinal)]) { UseShellExecute = false })!;
+        process.WaitForExit();
+        Assert.Equal(0, process.ExitCode);
+    }
+
+    [Fact]
     public async Task A_way_back_that_is_stuck_says_where_the_old_app_is_opens_what_is_there_and_deletes_nothing()
     {
         if (!OperatingSystem.IsLinux()) return;

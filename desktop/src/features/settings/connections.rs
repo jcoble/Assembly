@@ -22,7 +22,7 @@ use crate::core::ui::access::control_ids::{
     machine_button as machine_button_id, machine_line, settings as ids,
 };
 use crate::core::ui::access::{Control as _, say};
-use crate::features::remote_install::updates::row_status;
+use crate::features::remote_install::updates::{row_status, update_offered};
 
 /// What the form shows in a blank port or token file: the backend's defaults (SavedMachine.cs), which it fills in.
 const DEFAULT_PORT: &str = "9797";
@@ -114,30 +114,29 @@ impl SettingsPage {
         // This machine's row has no name, but its update button still needs somewhere to say why it failed.
         let key = machine.name.clone().unwrap_or("local".to_string());
         let failure = self.failure_about(Some(&key), cx);
-        let update = (machine.restart_ready.is_none()
-            && (machine.behind().next().is_some() || machine.updating))
-            .then(|| {
-                self.machine_button(
-                    format!("start-{key}").into(),
-                    machine_button_id(&key, "update"),
-                    UPDATE,
+        let update = update_offered(&machine).then(|| {
+            self.machine_button(
+                format!("start-{key}").into(),
+                machine_button_id(&key, "update"),
+                UPDATE,
+            )
+            .primary()
+            .loading(machine.updating)
+            // A press of Restart holds this machine's one place, and would make this do nothing.
+            .disabled(machine.updating || machine.restarting || self.machine_call.is_some())
+            .on_click(cx.listener(move |page, _, window, cx| {
+                let about = Some(key.clone());
+                page.machine_call(
+                    about,
+                    "updates",
+                    "start",
+                    json!({}),
+                    "Couldn't update",
+                    window,
+                    cx,
                 )
-                .primary()
-                .loading(machine.updating)
-                .disabled(machine.updating || self.machine_call.is_some())
-                .on_click(cx.listener(move |page, _, window, cx| {
-                    let about = Some(key.clone());
-                    page.machine_call(
-                        about,
-                        "updates",
-                        "start",
-                        json!({}),
-                        "Couldn't update",
-                        window,
-                        cx,
-                    )
-                }))
-            });
+            }))
+        });
         let install = install_offered(&machine).then(|| {
             let name = machine.name.clone().unwrap_or_default();
             self.machine_button(
@@ -546,5 +545,5 @@ const CHECK: &str = "Check for updates";
 const INSTALL: &str = "Install Assembly here";
 
 pub(crate) fn install_offered(machine: &Machine) -> bool {
-    machine.name.is_some() && machine.didnt_answer()
+    machine.name.is_some() && machine.didnt_answer() && machine.cant_update.is_none()
 }

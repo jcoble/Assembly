@@ -15,6 +15,8 @@ internal interface IUpdateSource
     Task<UpdateWanted> WantedAsync(CancellationToken ct, bool fresh = false);
     /// <summary>True when a remote on an older version is this app's to update. app-dev starts its own lane's itself, before the desktop is built.</summary>
     bool StartsRemoteUpdates(string machine);
+    /// <summary>A lane's own remote is updated by app-dev's script with the lane's token file, so what it's saved with doesn't stop it.</summary>
+    bool IgnoresTokenFile(string machine) => false;
     /// <summary>True when an app behind installs this version by itself. One that failed to start is left to the button.</summary>
     bool StartsAppUpdate(string version) => false;
     /// <summary>What the last app update left to say.</summary>
@@ -115,6 +117,7 @@ internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm, IR
         await UpdateSources.CliVersionsAsync(npm, ct));
 
     public bool StartsRemoteUpdates(string machine) => !Lane(machine);
+    public bool IgnoresTokenFile(string machine) => Lane(machine);
 
     private static bool Lane(string? machine) => machine == DevRemoteSyncStatus.Machine && Environment.GetEnvironmentVariable(DevRemoteSyncStatus.Variable) is { Length: > 0 };
 

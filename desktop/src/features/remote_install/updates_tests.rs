@@ -1,4 +1,4 @@
-use super::{Machine, behind_notice, behind_words, newer_words, row_status};
+use super::{Machine, behind_notice, behind_words, newer_words, row_status, update_offered};
 use crate::core::state::machine::UpdateItem;
 use serde_json::json;
 
@@ -166,4 +166,55 @@ fn a_ready_update_says_so_and_stops_counting_as_behind_on_this_machine() {
         "Local · Connected · Assembly 2.0.0 is ready to restart into"
     );
     assert_eq!(behind_words(std::iter::once(&ready)), None);
+}
+
+#[test]
+fn with_an_update_ready_this_machines_tools_can_still_be_updated_from_its_card() {
+    let tools = machine(
+        json!({"name":null,"kind":"local","reachable":true,"reason":null,"checked":true,"restartReady":"2.0.0",
+        "updates":[{"kind":"desktop","name":"Desktop","current":"1.0.0","wanted":"2.0.0","state":"behind"},
+                   {"kind":"cli","name":"codex","current":"1.0.0","wanted":"2.0.0","state":"behind"}]}),
+    );
+    assert!(update_offered(&tools));
+    assert_eq!(
+        row_status(&tools, "Local", "Connected"),
+        "Local · Connected · Assembly 2.0.0 is ready to restart into · codex behind"
+    );
+    assert_eq!(
+        behind_words(std::iter::once(&tools)).as_deref(),
+        Some("Behind on This machine: codex.")
+    );
+
+    // Only the app itself behind, and ready: that's the restart button's.
+    let app = machine(
+        json!({"name":null,"kind":"local","reachable":true,"reason":null,"checked":true,"restartReady":"2.0.0",
+        "updates":[{"kind":"desktop","name":"Desktop","current":"1.0.0","wanted":"2.0.0","state":"behind"}]}),
+    );
+    assert!(!update_offered(&app));
+}
+
+#[test]
+fn a_press_of_restart_shows_on_the_card_as_well() {
+    let waiting = machine(
+        json!({"name":null,"kind":"local","reachable":true,"reason":null,"checked":true,"restartReady":"2.0.0",
+        "restarting":true,"restartNote":"Waiting for running sessions to finish…"}),
+    );
+    assert_eq!(
+        row_status(&waiting, "Local", "Connected"),
+        "Local · Connected · Waiting for running sessions to finish… · Assembly 2.0.0 is ready to restart into"
+    );
+}
+
+#[test]
+fn a_machine_this_app_cant_update_says_why_and_offers_neither_button() {
+    let old = machine(
+        json!({"name":"box","kind":"remote","reachable":false,"reason":"not checked yet","checked":true,
+        "cantUpdate":"Saved with the token file x, not an install's own, so this app can't install or update here. Clear the token file in Settings to install.",
+        "updates":[{"kind":"backend","name":"Backend","current":"0.1.0","wanted":null,"state":"unknown"}]}),
+    );
+    assert!(row_status(&old, "box", "Offline").contains("Saved with the token file x"));
+    assert!(!update_offered(&old));
+    assert!(!crate::features::settings::connections::install_offered(
+        &old
+    ));
 }

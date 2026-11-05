@@ -14,8 +14,13 @@ internal sealed record AdapterArguments(bool Keep, string Tag, string ManifestSh
 /// <summary>Where an install's files come from: the only thing development and a delivered app do differently.</summary>
 internal interface IRemotePackages
 {
-    /// <summary>Answers before anything touches the machine: a version with no release stops here.</summary>
-    Task PrepareAsync(CancellationToken ct);
+    /// <summary>Answers before anything touches the machine: a version with no release stops here. Each install has its own answer.</summary>
+    Task<IRemotePackage> PrepareAsync(CancellationToken ct);
+}
+
+/// <summary>The package one install uses, from start to finish. Machines install side by side.</summary>
+internal interface IRemotePackage
+{
     /// <summary>Gets the package onto the machine and unpacks it in the stage.</summary>
     Task<ReceivedPackage> ReceiveAsync(string target, string stage, Action<string> phase, CancellationToken ct);
     /// <summary>The adapters for a backend install.</summary>
@@ -28,11 +33,11 @@ internal interface IRemotePackages
 /// Development: this checkout, built here for Linux and sent over SSH. Adapters and CLIs are installed with the same
 /// script a lane's are, from the scripts in the package, so they match this checkout's sources.
 /// </summary>
-internal sealed class CheckoutPackages(RemoteReleaseShell shell, Func<CancellationToken, Task<string>> build) : IRemotePackages
+internal sealed class CheckoutPackages(RemoteReleaseShell shell, Func<CancellationToken, Task<string>> build) : IRemotePackages, IRemotePackage
 {
     internal const string Adapters = "\"$HOME/assembly-host/adapters\"", Agents = "\"$HOME/assembly-host/serve/agents.json\"";
 
-    public Task PrepareAsync(CancellationToken ct) => Task.CompletedTask;
+    public Task<IRemotePackage> PrepareAsync(CancellationToken ct) => Task.FromResult<IRemotePackage>(this);
 
     public async Task<ReceivedPackage> ReceiveAsync(string target, string stage, Action<string> phase, CancellationToken ct)
     {
@@ -105,17 +110,19 @@ internal static class CheckoutBuild
 /// <summary>A delivered app: the signed release. The remote downloads it itself, and the desktop checks what it says it got.</summary>
 internal sealed class ReleasePackages(RemoteReleaseFeed feed, RemoteReleaseShell shell, string? version) : IRemotePackages
 {
-    private VerifiedRemoteRelease? _release;
+    public async Task<IRemotePackage> PrepareAsync(CancellationToken ct) =>
+        new ReleasePackage(await (version is null ? feed.LatestAsync(ct) : feed.ForVersionAsync(version, ct)), shell);
+}
 
-    public async Task PrepareAsync(CancellationToken ct) =>
-        _release = await (version is null ? feed.LatestAsync(ct) : feed.ForVersionAsync(version, ct));
-
+/// <summary>One signed release, for one install.</summary>
+internal sealed class ReleasePackage(VerifiedRemoteRelease release, RemoteReleaseShell shell) : IRemotePackage
+{
     public async Task<ReceivedPackage> ReceiveAsync(string target, string stage, Action<string> phase, CancellationToken ct)
     {
         phase("Downloading backend on the remote machine…");
-        var record = _release!.Record;
+        var record = release.Record;
         var archive = stage + "/package.tar.gz";
-        var command = $"set -eu; cd {RemoteReleaseInstall.Quote(stage)}; python3 -u -c {RemoteReleaseInstall.Quote(RemoteReleaseScript.Download)} {RemoteReleaseInstall.Quote(_release.ArchiveUrl)} {RemoteReleaseInstall.Quote(archive)} " +
+        var command = $"set -eu; cd {RemoteReleaseInstall.Quote(stage)}; python3 -u -c {RemoteReleaseInstall.Quote(RemoteReleaseScript.Download)} {RemoteReleaseInstall.Quote(release.ArchiveUrl)} {RemoteReleaseInstall.Quote(archive)} " +
             $"{record.Bytes.ToString(CultureInfo.InvariantCulture)} {RemoteReleaseInstall.Quote(record.Sha256)} {RemoteReleaseInstall.Quote(record.Version)} & child=$!; printf '%s\\n' \"$child\" > download.pid; wait \"$child\"; rm -f download.pid";
         ReceivedPackage? inspected = null;
         CallFailed? invalid = null;
@@ -140,7 +147,7 @@ internal sealed class ReleasePackages(RemoteReleaseFeed feed, RemoteReleaseShell
     }
 
     public Task<AdapterArguments> InstallAdaptersAsync(string target, string quotedStage, bool keep, Action<string> phase, CancellationToken ct) =>
-        Task.FromResult(new AdapterArguments(keep, _release!.Adapters.Tag, _release.Adapters.ManifestSha256));
+        Task.FromResult(new AdapterArguments(keep, release.Adapters.Tag, release.Adapters.ManifestSha256));
 
     public async Task<AdapterArguments?> UpdateToolsAsync(string target, string quotedStage, ToolsBehind tools, Action<string> phase, CancellationToken ct)
     {
@@ -150,6 +157,6 @@ internal sealed class ReleasePackages(RemoteReleaseFeed feed, RemoteReleaseShell
             await ReleaseCliUpdate.RunAsync(shell, target, cli, CheckoutPackages.Agents, ct);
         }
         if (!tools.Adapters) return null;
-        return new(false, _release!.Adapters.Tag, _release.Adapters.ManifestSha256);
+        return new(false, release.Adapters.Tag, release.Adapters.ManifestSha256);
     }
 }

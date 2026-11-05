@@ -11,7 +11,7 @@ namespace Assembly.Infrastructure.Updates;
 /// machine that isn't answering has nothing known about it. Each machine updates by itself, so one waiting on its sessions
 /// holds up nothing else, and says so on its own card. A remote on an older version starts its update by itself, once per run
 /// of the app so a failure can't repeat forever; the button can always try again. An app that's behind gets ready the same
-/// way, and restarts only when someone says so.
+/// way, and restarts only when someone says so. A machine this app can't update has nothing behind and no update of its own.
 /// </summary>
 internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status, InstalledCalls local,
     Func<string, CancellationToken, Task<InstalledTools?>> remote, Action? reload, BackgroundWork work, TextWriter log) : IFeature
@@ -19,11 +19,21 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     private const string ThisApp = "";
     private readonly HashSet<string> _updating = [];
     private readonly HashSet<string> _started = [];
+    private TaskCompletionSource _freed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private bool _restarting;
 
     private static string Slot(string? machine) => machine ?? ThisApp;
 
     private bool Take(string? machine) { lock (_updating) return _updating.Add(Slot(machine)); }
-    private void Free(string? machine) { lock (_updating) _updating.Remove(Slot(machine)); }
+    private void Free(string? machine)
+    {
+        lock (_updating)
+        {
+            _updating.Remove(Slot(machine));
+            _freed.TrySetResult();
+            _freed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+    }
     private bool Updating(string? machine) { lock (_updating) return _updating.Contains(Slot(machine)); }
 
     public void Register(ICallRegistry calls)
@@ -108,6 +118,13 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         // What an unreachable machine last said is old news: a decision from it could install over a newer backend.
         var reachable = answered || saved?.Reachable == true;
         var items = UpdateCheck.Remote(reachable ? saved?.Backend : null, await TryRead(() => remote(machine, stop)), wanted);
+        if (saved?.CantUpdate is not null && source.IgnoresTokenFile(machine)) status.MayUpdate(machine);
+        else if (saved?.CantUpdate is not null)
+        {
+            // Offered nothing and started by nothing: pressing it could only fail. The reason is on the card.
+            status.Updates(machine, [.. items.Select(item => item.State == UpdateItem.Behind ? item with { State = UpdateItem.Unknown } : item)]);
+            return;
+        }
         status.Updates(machine, items);
         if (reachable && source.StartsRemoteUpdates(machine) && items.Any(item => item.Kind == "backend" && item.State == UpdateItem.Behind)) StartBy(machine);
     }
@@ -157,30 +174,56 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     }
 
     /// <summary>
-    /// The only thing that restarts this app. A remote waiting on its sessions doesn't hold it up. False only while this app
-    /// is already busy, which its button shows. It waits for this app's sessions; a failure leaves the update ready to press again.
+    /// The only thing that restarts this app. A remote waiting on its sessions doesn't hold it up. It waits for this computer's
+    /// tools update, then this app's sessions, saying so on its button. False only while a press is already under way; a failure
+    /// leaves the update ready to press again.
     /// </summary>
     internal bool RestartApp()
     {
         if (source.AppReady is null) throw new CallFailed("No update is ready to restart into.", "no_update");
-        if (!Take(null)) return false;
+        lock (_updating)
+        {
+            if (_restarting) return false;
+            _restarting = true;
+        }
         work.Start("restart to update", async stop =>
         {
             string? ending = null;
+            var taken = false;
             try
             {
-                status.Updating(null, true, null);
-                await source.RestartAppAsync(note => status.Updating(null, true, note), stop);
+                status.Restarting(true, null);
+                await TakeWhenFreeAsync(ThisApp, () => status.Restarting(true, WaitingForTools), stop);
+                taken = true;
+                await source.RestartAppAsync(note => status.Restarting(true, note), stop);
             }
-            catch (CallFailed error) { ending = "Update failed: " + error.Message; }
-            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }
+            catch (CallFailed error) { ending = "Couldn't restart: " + error.Message; }
+            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Couldn't restart: " + error.Message; }
             finally
             {
-                Free(null);
-                status.Updating(null, false, ending);
+                if (taken) Free(null);
+                lock (_updating) _restarting = false;
+                status.Restarting(false, ending);
             }
         });
         return true;
+    }
+
+    internal const string WaitingForTools = "Waiting for this computer's update to finish…";
+
+    private async Task TakeWhenFreeAsync(string slot, Action waiting, CancellationToken stop)
+    {
+        for (; ; )
+        {
+            Task freed;
+            lock (_updating)
+            {
+                if (_updating.Add(slot)) return;
+                freed = _freed.Task;
+            }
+            waiting();
+            await freed.WaitAsync(stop);
+        }
     }
 
     /// <summary>

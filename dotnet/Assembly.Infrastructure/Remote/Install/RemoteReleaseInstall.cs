@@ -24,12 +24,12 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
     {
         ReceivedPackage? inspected = null;
         string? serverSha = null;
-        await WithPackageAsync(machine, phase, false, async (target, quoted, package) =>
+        await WithPackageAsync(machine, phase, false, async (target, quoted, source, package) =>
         {
             inspected = package;
             await WhenIdleAsync(target, quoted, phase, async () =>
             {
-                var adapters = await _packages.InstallAdaptersAsync(target, quoted, keepAdapters, phase, ct);
+                var adapters = await source.InstallAdaptersAsync(target, quoted, keepAdapters, phase, ct);
                 phase("Installing and starting the backend…");
                 await shell.RunAsync(target, $"set -eu; cd {quoted}; sh install.sh {Arguments(machine, adapters)}", null, ct);
             }, ct);
@@ -45,9 +45,9 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
     /// needs the running host to restart; a CLI doesn't, since each session starts its own.
     /// </summary>
     internal Task UpdateToolsAsync(SavedMachine machine, ToolsBehind tools, Action<string> phase, CancellationToken ct) =>
-        WithPackageAsync(machine, phase, true, (target, quoted, _) => WhenIdleAsync(target, quoted, phase, async () =>
+        WithPackageAsync(machine, phase, true, (target, quoted, source, _) => WhenIdleAsync(target, quoted, phase, async () =>
         {
-            if (await _packages.UpdateToolsAsync(target, quoted, tools, phase, ct) is not { } adapters) return;
+            if (await source.UpdateToolsAsync(target, quoted, tools, phase, ct) is not { } adapters) return;
             phase("Installing adapters and restarting the backend…");
             await shell.RunAsync(target, $"set -eu; cd {quoted}; sh install.sh --adapters {Arguments(machine, adapters)}", null, ct);
         }, ct), ct);
@@ -56,11 +56,11 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
         $"{(adapters.Keep ? "--keep-adapters " : "")}{machine.Port.ToString(CultureInfo.InvariantCulture)} {Quote(adapters.Tag)} {Quote(adapters.ManifestSha256)}";
 
     // Everything that needs the signed package on the machine: the installer comes in it. The stage goes with the call.
-    private async Task WithPackageAsync(SavedMachine machine, Action<string> phase, bool toolsOnly, Func<string, string, ReceivedPackage, Task> act, CancellationToken ct)
+    private async Task WithPackageAsync(SavedMachine machine, Action<string> phase, bool toolsOnly, Func<string, string, IRemotePackage, ReceivedPackage, Task> act, CancellationToken ct)
     {
         Validate(machine);
         phase("Finding the signed release…");
-        await _packages.PrepareAsync(ct);
+        var source = await _packages.PrepareAsync(ct);
         var target = machine.Ssh;
 
         phase("Checking the remote operating system and download tools…");
@@ -79,7 +79,7 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
         try
         {
             await shell.RunAsync(target, $"install -d -m 700 {quoted}", null, ct);
-            await act(target, quoted, await _packages.ReceiveAsync(target, stage, phase, ct));
+            await act(target, quoted, source, await source.ReceiveAsync(target, stage, phase, ct));
         }
         finally
         {

@@ -43,7 +43,21 @@ fn backend(asked: Arc<Mutex<Vec<String>>>, tell: UnboundedSender<()>) -> FakeBac
             (Some("call"), Some("waiting")) => vec![
                 Reply::Frame(json!({"t": "change", "sub": *sub, "key": "local", "item": {
                     "name": null, "kind": "local", "reachable": true, "reason": null, "checked": true,
-                    "restartReady": "2.0.0", "updating": true, "updateNote": "Waiting for running sessions to finish…"}})),
+                    "restartReady": "2.0.0", "restarting": true, "restartNote": "Waiting for this computer's update to finish…",
+                    "updating": true, "updateNote": "Updating codex…"}})),
+                Reply::Frame(json!({"t": "result", "id": id, "result": {}})),
+            ],
+            // This machine's tools, updating and then failing, with no press under way.
+            (Some("call"), Some("tools")) => vec![
+                Reply::Frame(json!({"t": "change", "sub": *sub, "key": "local", "item": {
+                    "name": null, "kind": "local", "reachable": true, "reason": null, "checked": true,
+                    "restartReady": "2.0.0", "updateNote": "Update failed: no network"}})),
+                Reply::Frame(json!({"t": "result", "id": id, "result": {}})),
+            ],
+            (Some("call"), Some("failed")) => vec![
+                Reply::Frame(json!({"t": "change", "sub": *sub, "key": "local", "item": {
+                    "name": null, "kind": "local", "reachable": true, "reason": null, "checked": true,
+                    "restartReady": "2.0.0", "restartNote": "Couldn't restart: the disk is full"}})),
                 Reply::Frame(json!({"t": "result", "id": id, "result": {}})),
             ],
             (Some("call"), Some(method)) => {
@@ -136,7 +150,29 @@ async fn it_appears_when_an_update_is_ready_and_only_a_press_asks_for_the_restar
         "Restart to Update"
     );
 
-    // Pressed, and held up by a running turn: the button says so rather than only spinning.
+    // A failed tools update belongs to the card: the button still only offers the restart.
+    let call = cx.update(|_, cx| {
+        SocketClient::global(cx)
+            .read(cx)
+            .call::<Value>("test", "tools", json!({}), None)
+    });
+    _ = call.await;
+    until("tools failed", &mut changes, &changed, || {
+        cx.update(|_, cx| {
+            machines
+                .read(cx)
+                .machines()
+                .any(|machine| machine.update_note.is_some())
+        })
+    })
+    .await;
+    assert_eq!(
+        cx.update(|_, cx| button.read(cx).words().to_owned()),
+        "Restart to Update"
+    );
+    assert_eq!(cx.update(|_, cx| button.read(cx).failure().cloned()), None);
+
+    // Pressed, and held up by this computer's update: the button says so rather than only spinning.
     let call = cx.update(|_, cx| {
         SocketClient::global(cx)
             .read(cx)
@@ -144,11 +180,37 @@ async fn it_appears_when_an_update_is_ready_and_only_a_press_asks_for_the_restar
     });
     _ = call.await;
     until("waiting", &mut changes, &changed, || {
-        cx.update(|_, cx| machines.read(cx).machines().any(|machine| machine.updating))
+        cx.update(|_, cx| {
+            machines
+                .read(cx)
+                .machines()
+                .any(|machine| machine.restarting)
+        })
     })
     .await;
     assert_eq!(
         cx.update(|_, cx| button.read(cx).words().to_owned()),
-        "Waiting for running sessions to finish…"
+        "Waiting for this computer's update to finish…"
+    );
+
+    // A press that failed goes back to offering the restart, with the reason on its tooltip.
+    let call = cx.update(|_, cx| {
+        SocketClient::global(cx)
+            .read(cx)
+            .call::<Value>("test", "failed", json!({}), None)
+    });
+    _ = call.await;
+    until("failed", &mut changes, &changed, || {
+        cx.update(|_, cx| button.read(cx).failure().is_some())
+    })
+    .await;
+    assert_eq!(
+        cx.update(|_, cx| button.read(cx).words().to_owned()),
+        "Restart to Update"
+    );
+    assert_eq!(
+        cx.update(|_, cx| button.read(cx).failure().cloned())
+            .as_deref(),
+        Some("Couldn't restart: the disk is full")
     );
 }

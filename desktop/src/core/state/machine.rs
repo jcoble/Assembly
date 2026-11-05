@@ -40,6 +40,15 @@ pub struct Machine {
     /// The new version of the app waiting for Restart to Update.
     #[serde(default)]
     pub restart_ready: Option<String>,
+    /// A press of Restart to Update is under way, apart from this machine's tools.
+    #[serde(default)]
+    pub restarting: bool,
+    /// What that press is doing or waiting for, or why it failed.
+    #[serde(default)]
+    pub restart_note: Option<String>,
+    /// Why this app won't install or update anything here. Shown instead of offering a button that could only fail.
+    #[serde(default)]
+    pub cant_update: Option<String>,
     /// When a remote stopped answering; cleared when it answers.
     #[serde(default)]
     pub offline_since_ms: Option<i64>,
@@ -76,6 +85,13 @@ impl Machine {
     /// The pieces behind on this machine.
     pub fn behind(&self) -> impl Iterator<Item = &UpdateItem> {
         self.updates.iter().filter(|item| item.is_behind())
+    }
+
+    /// What an update button would do something about. A new version of the app that's ready is Restart to Update's.
+    pub fn offered(&self) -> impl Iterator<Item = &UpdateItem> {
+        let ready = self.restart_ready.is_some();
+        self.behind()
+            .filter(move |item| !(ready && item.kind == "desktop"))
     }
 
     /// Which commit a remote's backend is on against this app's. Shown as information; only a check before a PR needs them equal.
