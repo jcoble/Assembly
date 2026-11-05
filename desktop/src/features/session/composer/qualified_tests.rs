@@ -130,7 +130,7 @@ fn a_source_moving_under_the_pending_read_is_no_error_and_goes_to_the_pane(
     let told = heard.clone();
     let _listening = cx.update(|_, cx| {
         cx.subscribe(&composer, move |_, event: &super::ComposerEvent, _| {
-            if matches!(event, super::ComposerEvent::SourceLost) {
+            if matches!(event, super::ComposerEvent::SourceLost(_)) {
                 told.set(true);
             }
         })

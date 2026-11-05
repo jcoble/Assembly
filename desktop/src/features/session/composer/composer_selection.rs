@@ -75,8 +75,11 @@ impl Composer {
     }
     /// Not an error of this composer's: the pane owning the session decides what to say and reopens it.
     pub(super) fn source_lost(&mut self, cx: &mut Context<Self>) {
+        let lost = self.session_key.clone();
         self.invalidate_source(cx);
-        cx.emit(super::ComposerEvent::SourceLost);
+        if let Some(key) = lost {
+            cx.emit(super::ComposerEvent::SourceLost(key));
+        }
     }
 
     pub fn invalidate_source(&mut self, cx: &mut Context<Self>) {

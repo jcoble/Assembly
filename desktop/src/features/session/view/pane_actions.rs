@@ -359,18 +359,14 @@ impl SessionPane {
 
     pub(super) fn send_refused(&mut self, error: CallError, cx: &mut Context<Self>) {
         let moved = matches!(&error,CallError::Refused{code,..} if code=="source_changed");
-        let remote = (self.row_source.as_ref()).and_then(|source| source.route_machine.clone());
-        if let (true, Some(machine)) = (moved, remote) {
-            self.composer
-                .update(cx, |composer, cx| composer.invalidate_source(cx));
-            self.on_rows(
-                crate::features::session::client::session_client::RowUpdate::Refused {
-                    code: "source_changed".into(),
-                    message: error.reason(),
-                },
-                cx,
-            );
-            self.status = format!("That didn't reach {machine}. Try again.").into();
+        if let Some(machine) = (self.row_source.as_ref())
+            .and_then(|source| source.route_machine.clone())
+            .filter(|_| moved)
+        {
+            self.remote_went_away(&error, cx);
+            let unheard: SharedString = format!("That didn't reach {machine}. Try again.").into();
+            self.status = unheard.clone();
+            self.unheard = Some(unheard);
             return;
         }
         if moved {
@@ -382,7 +378,39 @@ impl SessionPane {
         self.say_failed("That didn't go through", error, cx);
     }
 
-    fn say_failed(&mut self, what: &str, error: CallError, cx: &mut Context<Self>) {
+    /// A remote machine going away or coming back takes reads with it. That's no error; the session reopens.
+    fn remote_went_away(&mut self, error: &CallError, cx: &mut Context<Self>) -> bool {
+        if !self.is_remote() {
+            return false;
+        }
+        match error {
+            CallError::Unreachable { .. } => true,
+            CallError::Refused { code, message } if code == "source_changed" => {
+                self.on_rows(
+                    crate::features::session::client::session_client::RowUpdate::Refused {
+                        code: code.clone(),
+                        message: message.clone(),
+                    },
+                    cx,
+                );
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn read_refused(&mut self, error: CallError, cx: &mut Context<Self>) {
+        if self.remote_went_away(&error, cx) {
+            return;
+        }
+        self.status = format!("Could not mark this journal read: {}", error.reason()).into();
+        cx.notify();
+    }
+
+    pub(super) fn say_failed(&mut self, what: &str, error: CallError, cx: &mut Context<Self>) {
+        if self.remote_went_away(&error, cx) {
+            return;
+        }
         self.status = match error {
             CallError::Aborted => return,
             CallError::Unreachable { machine } => format!("{machine} is offline").into(),

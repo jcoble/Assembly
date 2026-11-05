@@ -46,6 +46,7 @@ pub struct SessionPane {
     /// The machine behind this session stopped answering; it opens again when the machine does.
     source_lost: bool,
     source_reopens: u8,
+    unheard: Option<SharedString>,
     active_reopen: Option<(
         crate::core::intents::session_open::SessionOpenRequest,
         AnyWindowHandle,

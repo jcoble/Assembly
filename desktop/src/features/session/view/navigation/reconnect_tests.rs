@@ -181,9 +181,9 @@ async fn a_remote_machine_going_away_is_no_error_and_its_session_reopens_when_it
     nav.calls_at_least("open_target", targets + 1).await;
 }
 
-async fn on_a_remote_session<'a>(
-    cx: &'a mut TestAppContext,
-) -> (NavigationFixture, &'a mut gpui::VisualTestContext) {
+async fn on_a_remote_session(
+    cx: &mut TestAppContext,
+) -> (NavigationFixture, &mut gpui::VisualTestContext) {
     cx.executor().allow_parking();
     cx.update(gpui_kit::init);
     cx.update(SelectedSession::init);
@@ -223,7 +223,16 @@ async fn a_read_refused_on_a_returning_machine_reopens_the_session_with_no_error
     let (mut nav, cx) = on_a_remote_session(cx).await;
     let before = opens(&nav);
     let composer = nav.pane.read_with(cx, |pane, _| pane.composer.clone());
-    composer.update(cx, |_, cx| cx.emit(ComposerEvent::SourceLost));
+    let of = |id: &str| crate::core::engine::SessionKey {
+        machine: "owner".into(),
+        id: id.into(),
+    };
+    composer.update(cx, |_, cx| {
+        cx.emit(ComposerEvent::SourceLost(of("earlier")))
+    });
+    cx.run_until_parked();
+    assert_eq!(opens(&nav), before, "the session it was shown before");
+    composer.update(cx, |_, cx| cx.emit(ComposerEvent::SourceLost(of("a"))));
     nav.calls_at_least("open_target", before + 1).await;
     assert_eq!(
         nav.pane
@@ -240,6 +249,7 @@ async fn an_answer_refused_on_a_returning_machine_says_so_plainly_and_reopens_th
     use crate::features::session::client::session_client::CallError;
     let (mut nav, cx) = on_a_remote_session(cx).await;
     let before = opens(&nav);
+    nav.forget_results();
     nav.pane.update(cx, |pane, cx| {
         pane.send_refused(
             CallError::Refused {
@@ -251,6 +261,15 @@ async fn an_answer_refused_on_a_returning_machine_says_so_plainly_and_reopens_th
         assert_eq!(pane.status.as_ref(), "That didn't reach lane. Try again.");
     });
     nav.calls_at_least("open_target", before + 1).await;
+    // Opening clears the line, but the press still went unheard.
+    nav.opened("a", cx).await;
+    cx.run_until_parked();
+    assert_eq!(
+        nav.pane
+            .read_with(cx, |pane, _| pane.status.clone())
+            .as_ref(),
+        "That didn't reach lane. Try again."
+    );
 }
 
 #[gpui::test]
@@ -273,4 +292,31 @@ async fn a_source_that_keeps_moving_stops_reopening_and_says_so(cx: &mut TestApp
     });
     cx.run_until_parked();
     assert_eq!(opens(&nav), before);
+}
+
+#[gpui::test]
+async fn background_reads_on_a_machine_going_away_say_nothing_and_reopen_the_session(
+    cx: &mut TestAppContext,
+) {
+    use crate::features::session::client::session_client::CallError;
+    let (mut nav, cx) = on_a_remote_session(cx).await;
+    let moved = || CallError::Refused {
+        code: "source_changed".into(),
+        message: "The selected row source changed.".into(),
+    };
+    let before = opens(&nav);
+    nav.pane.update(cx, |pane, cx| {
+        pane.read_refused(moved(), cx);
+        assert_eq!(pane.status.as_ref(), "");
+    });
+    nav.calls_at_least("open_target", before + 1).await;
+    nav.pane.update(cx, |pane, cx| {
+        pane.say_failed("Couldn't read the tool call", moved(), cx);
+        assert_eq!(pane.status.as_ref(), "");
+        let gone = CallError::Unreachable {
+            machine: "lane".into(),
+        };
+        pane.read_refused(gone, cx);
+        assert_eq!(pane.status.as_ref(), "");
+    });
 }
