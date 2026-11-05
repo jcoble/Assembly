@@ -126,9 +126,11 @@ public static class PhoneNeedsRoutes
             return new Option(option, chosen is { } label ? JsonReply.String(label, "name") ?? option : option,
                 kind?.StartsWith("reject", StringComparison.Ordinal) == true ? "danger" : kind == "allow_once" ? "primary" : "neutral");
         }).ToArray();
-        var title = card is null ? row.Text(5) : JsonReply.String(card.RootElement, "title") ?? row.Text(5);
+        var timedOut = row.Text(1) == "command_timeout";
+        var title = timedOut && !row.IsNull(14) ? $"{row.Text(14)} ran out of time"
+            : card is null ? row.Text(5) : JsonReply.String(card.RootElement, "title") ?? row.Text(5);
         var detail = gate ? "" : card is null ? row.Text(5) : JsonReply.String(card.RootElement, "message") ?? "";
-        return new Item(row.Text(0), gate ? "gate" : row.Text(1), row.Text(2), row.IsNull(3) ? null : row.Text(3),
+        return new Item(row.Text(0), gate ? "gate" : timedOut ? "timeout" : row.Text(1), row.Text(2), row.IsNull(3) ? null : row.Text(3),
             row.IsNull(14) ? row.IsNull(4) ? null : row.Text(4) : row.Text(14), title, detail, row.IsNull(12) && source is "workflow" or "workflow_gate" ? null : row.Text(6), row.Long(7), row.Long(8), row.Long(9), !row.IsNull(12), options);
     }, new SqlArg("$machine", machine), new("$id", id), new("$session", sessionId));
 

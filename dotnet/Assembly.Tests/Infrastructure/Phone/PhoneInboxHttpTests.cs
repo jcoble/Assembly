@@ -19,6 +19,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Topics = Assembly.Infrastructure.Topics.Topics;
+using Assembly.Engine.Contracts;
 
 namespace Assembly.Tests.Infrastructure.Phone;
 
@@ -106,6 +107,18 @@ public sealed class PhoneInboxHttpTests
     }
 
     [Fact]
+    public async Task A_phone_reads_a_step_timeout_in_plain_words()
+    {
+        await using var phone = await PhoneInbox.TimedOutAsync();
+        var item = await phone.ItemAsync(phone.CommandNeed);
+        Assert.Equal("timeout", item.GetProperty("kind").GetString());
+        Assert.Equal("checks ran out of time", item.GetProperty("title").GetString());
+        Assert.Equal("Stopped at its time limit. Retry runs it again.", item.GetProperty("detail").GetString());
+        Assert.Equal(new[] { "Retry", "Cancel" },
+            item.GetProperty("options").EnumerateArray().Select(option => option.GetProperty("label").GetString()));
+    }
+
+    [Fact]
     public async Task A_phone_lists_a_failed_step_with_attempts_left_and_retries_it()
     {
         await using var phone = await PhoneInbox.FailedStepAsync();
@@ -155,6 +168,19 @@ public sealed class PhoneInboxHttpTests
         }
 
         public static async Task<PhoneInbox> FailedStepAsync() => await OpenAsync(await OwnerAttentionTests.FailedWith(attempts: 2), "", "");
+
+        public static async Task<PhoneInbox> TimedOutAsync()
+        {
+            var f = new CommandStepTests.Fixture("printf first", "printf second");
+            Assert.True(f.Start(f.Prepare()).Applied);
+            var deadline = f.Core.Number("SELECT deadline_ms FROM engine_step");
+            var first = f.Claim();
+            Assert.True(f.Complete(first, await f.Host().ExecuteAsync(first, default)).Applied);
+            var expire = new CommandContext(Guid.NewGuid(), f.Core.Machine, new(ActorKind.System, "engine.worker"), f.Step,
+                f.Core.Number("SELECT version FROM engine_step"), 1, deadline);
+            Assert.True(f.Core.Db.Writer.Write("test.timeout", scope => f.Commands.ExpireWorkflowCommand(scope, expire)).Applied);
+            return await OpenAsync(f, f.Core.Text("SELECT id FROM engine_needs_me WHERE state='open'")!, "");
+        }
 
         public string FailedStep => _fixture.Step;
         public string StepRowState => _fixture.Core.Text("SELECT state FROM engine_step WHERE id=$id", new SqlArg("$id", FailedStep))!;

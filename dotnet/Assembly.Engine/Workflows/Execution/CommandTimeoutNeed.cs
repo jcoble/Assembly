@@ -16,14 +16,14 @@ public static partial class WorkflowExecutionNeeds
         var id = effect.Id + "/timed_out";
         var binding = new WorkflowExecutionNeed(i.OrderKey, i.StepId, i.Generation, i.Attempt, i.CommandIndex, i.ExecutionEpoch, effect.Id, "timed_out");
         var presentation = NeedPresentationInputs.Normalize(new(owner!, i.RunId, i.StepId, "command_timeout",
-            "Step timed out and its executor stopped; waiting for owner.", ["retry", "cancel"], null, null, null));
+            "Stopped at its time limit. Retry runs it again.", ["retry", "cancel"], null, null, null));
         var displayNumber = NeedPresentationInputs.AllocateNumber(s);
         s.Execute("""
             UPDATE engine_needs_me SET state='cancelled',version=version+1,updated_ms=$now WHERE source_kind='workflow'
               AND run_id=$run AND step_id=$step AND state='open';
             INSERT INTO engine_needs_me(id,version,machine,created_ms,updated_ms,session_id,run_id,step_id,kind,text,options_json,state,
               addressee_session_id,source_kind,execution_json,presentation_json,display_number)
-            VALUES($id,1,$machine,$now,$now,$owner,$run,$step,'command_timeout','Step timed out and its executor stopped; waiting for owner.',
+            VALUES($id,1,$machine,$now,$now,$owner,$run,$step,'command_timeout','Stopped at its time limit. Retry runs it again.',
               '["retry","cancel"]','open',$owner,'workflow',$binding,$presentation,$display);
             """, new("$now", c.NowMs), new("$run", i.RunId), new("$step", i.StepId), new("$id", id), new("$machine", c.Machine),
             new("$owner", owner), new("$presentation", JsonSerializer.Serialize(presentation, EngineJson.Default.NeedPresentation)),
