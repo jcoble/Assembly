@@ -57,6 +57,7 @@ public static class RunTransitions
         s.Execute("UPDATE engine_run SET state='cancelling',version=version+1,updated_ms=$now WHERE id=$id",
             new("$now", c.NowMs), new("$id", c.EntityId));
         List<EventDraft> events = [Changed(c.EntityId, run.Version + 1, run.Owner, "cancelling")];
+        events.AddRange(ResendStopped(s, c, c.EntityId, run.Owner));
         events.AddRange(s.Query("""
             UPDATE engine_step SET state='cancelled',version=version+1,updated_ms=$now,ended_ms=$now
             WHERE run_id=$id AND (state='pending' OR kind='gate' AND state='waiting')
@@ -213,6 +214,11 @@ public static class RunTransitions
             WHERE id=$id
             """, new("$state", next), new("$now", c.NowMs), new("$id", runId));
         events.Add(Changed(runId, run.Version + 1, run.Owner, next));
+        if (next is "succeeded" or "failed" or "cancelled")
+        {
+            events.AddRange(ResendStopped(s, c, runId, run.Owner));
+            events.AddRange(CloseWorkflowNeeds(s, c, runId, run.Owner, run.Epoch));
+        }
         return events;
     }
 
@@ -233,6 +239,8 @@ public static class RunTransitions
         if (expired == 0) return Refused(c, "owner_not_expired", run);
         s.Execute("UPDATE engine_run SET state='failed',version=version+1,updated_ms=$now,ended_ms=$now WHERE id=$id", new("$now", c.NowMs), new("$id", runId));
         List<EventDraft> events = [Changed(runId, run.Version + 1, run.Owner, "failed")];
+        events.AddRange(ResendStopped(s, c, runId, run.Owner));
+        events.AddRange(CloseWorkflowNeeds(s, c, runId, run.Owner, run.Epoch));
         List<EffectDraft> effects = [];
         if (run.Workflow)
         {
@@ -282,6 +290,22 @@ public static class RunTransitions
         """, r => new Run(r.Long(0), r.Text(1), r.Text(2), r.Long(3), r.Long(4) != 0, r.Text(5)), new SqlArg("$id", id));
     private static EventDraft StepPending(string id, string run, string owner) =>
         new("step.changed", "step", id, 1, false, new(null, run, id, owner, "pending", null));
+    /// <summary>A stopped step needs the owner only while its run is live, so a run that stops being live sends those rows again.</summary>
+    private static IEnumerable<EventDraft> ResendStopped(IWriteScope s, CommandContext c, string runId, string owner) => s.Query($"""
+        UPDATE engine_step AS t SET version=version+1,updated_ms=$now WHERE t.run_id=$id
+          AND EXISTS(SELECT 1 FROM engine_run r WHERE r.id=t.run_id AND r.definition_hash IS NOT NULL)
+          AND ({Assembly.Application.Common.Engine.OwnerAttention.Retry} OR {Assembly.Application.Common.Engine.OwnerAttention.Continue})
+        RETURNING id,version,session_id,state
+        """, r => new EventDraft("step.changed", "step", r.Text(0), r.Long(1), false,
+            new(r.IsNull(2) ? null : r.Text(2), runId, r.Text(0), owner, r.Text(3), null)), new("$now", c.NowMs), new("$id", runId));
+
+    /// <summary>A run that has ended can't act on its own workflow's questions, so none stay open counting against the owner.</summary>
+    private static IEnumerable<EventDraft> CloseWorkflowNeeds(IWriteScope s, CommandContext c, string runId, string owner, long epoch) => s.Query("""
+        UPDATE engine_needs_me SET state='cancelled',version=version+1,updated_ms=$now
+        WHERE run_id=$id AND source_kind IN ('workflow','workflow_gate') AND state='open' RETURNING id,version,step_id
+        """, r => new EventDraft("needs_me.cancelled", "needs_me", r.Text(0), r.Long(1), false,
+            new(owner, runId, r.IsNull(2) ? null : r.Text(2), owner, "cancelled", epoch)), new SqlArg("$id", runId), new("$now", c.NowMs));
+
     private static EventDraft StepCancelled(string id, long version, string? session, string run, string owner) =>
         new("step.changed", "step", id, version, false, new(session, run, id, owner, "cancelled", null));
     private static EventDraft Changed(string id, long version, string owner, string state) =>

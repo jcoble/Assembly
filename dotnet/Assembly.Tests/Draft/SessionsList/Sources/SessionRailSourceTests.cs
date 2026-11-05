@@ -165,6 +165,42 @@ public sealed partial class SessionRailTests
         });
     }
 
+    [Fact]
+    public void A_step_stopped_for_retry_counts_once_and_a_question_for_a_session_not_at_all()
+    {
+        var owner = Parent(title: "Owner");
+        Assert.Equal(new RailTotals(0), Read().Totals);
+        _database.Writer.Write("test.failed-step", scope =>
+        {
+            scope.Execute("""
+                INSERT INTO engine_run(id,version,machine,created_ms,updated_ms,owner_session_id,state,owner_loss_limit_ms,definition_hash)
+                VALUES('run',1,$machine,1,1,$owner,'running',1,'hash');
+                INSERT INTO engine_step(id,version,machine,created_ms,updated_ms,run_id,name,state,attempt,attempt_in_generation,max_attempts,required,rule_skippable)
+                VALUES('step',1,$machine,1,1,'run','step','failed',1,1,2,1,0);
+                """, new("$machine", _engineMachine), new("$owner", owner));
+            return 0;
+        });
+        Assert.Equal(new RailTotals(1), Read().Totals);
+
+        var mirrored = Parent(machine: "work", title: "Remote");
+        _database.Writer.Write("test.mirror-session", scope => scope.Execute("""
+            UPDATE engine_mirror_row AS m SET row_json=json_set(m.row_json,'$.provider',s.agent,'$.folder',s.repo_url,'$.updatedMs',s.updated_at,'$.title',s.title)
+            FROM session_info s WHERE m.entity_kind='session' AND m.entity_id=s.session_id AND s.session_id=$id;
+            """, new SqlArg("$id", mirrored)));
+        OpenEngineNeed(mirrored, "for-owner");
+        Assert.Equal(new RailTotals(2), Read().Totals);
+        _database.Writer.Write("test.mirror", scope =>
+        {
+            scope.Execute("""
+                INSERT INTO engine_mirror_row(machine,entity_kind,entity_id,generation,version,row_json)
+                VALUES('fixture-engine:work','needs_me','not-for-owner',1,1,$need),('fixture-engine:work','step','stopped',1,1,$step);
+                """, new("$need", JsonSerializer.Serialize(new { id = "not-for-owner", machine = "fixture-engine:work", sessionId = mirrored, state = "open", forOwner = false })),
+                new("$step", JsonSerializer.Serialize(new { id = "stopped", machine = "fixture-engine:work", ownerSessionId = mirrored, needsOwner = true })));
+            return 0;
+        });
+        Assert.Equal(new RailTotals(3), Read().Totals);
+    }
+
     private void OpenEngineNeed(string session, string id)
     {
         var facade = _sessions.Get(session)!;
@@ -177,7 +213,7 @@ public sealed partial class SessionRailTests
                     INSERT INTO engine_mirror_row(machine,entity_kind,entity_id,generation,version,row_json)
                     VALUES($machine,'needs_me',$id,1,1,$json);
                     """, new("$machine", machine), new("$id", id),
-                    new("$json", JsonSerializer.Serialize(new { id, machine, sessionId = session, state = "open" })));
+                    new("$json", JsonSerializer.Serialize(new { id, machine, sessionId = session, state = "open", forOwner = true })));
             }
             else
             {

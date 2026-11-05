@@ -194,7 +194,7 @@ impl Composer {
                             return;
                         }
                         let item=match item {Ok(item)=>item,Err(error)=>{
-                            if matches!(&error,CallError::Refused{code,..} if code=="source_changed"){composer.invalidate_source(cx);}
+                            if matches!(&error,CallError::Refused{code,..} if code=="source_changed"){composer.source_lost(cx);return;}
                             composer.error=Some(error.reason().into());cx.notify();return;
                         }};
                         let mut delivered = false;
@@ -337,7 +337,7 @@ impl Composer {
                     cx.emit(ComposerEvent::PendingChanged);
                 }
                 Err(error) => {
-                    if matches!(&error,CallError::Refused{code,..} if code=="source_changed"){composer.invalidate_source(cx);}
+                    if matches!(&error,CallError::Refused{code,..} if code=="source_changed"){composer.source_lost(cx);return;}
                     composer.error = Some(
                         format!("Couldn't recover pending prompts: {}", error.reason()).into(),
                     );

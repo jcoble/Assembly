@@ -1,5 +1,5 @@
 //! Canonical metadata/answer semantics, independent of widget layout or provider execution.
-use super::need_row::{NeedRowState, failure_state, typed_answer};
+use super::need_row::{NeedRowState, failure_state, refused_receipt, typed_answer};
 use crate::core::engine::{EngineItem, EngineKey, EngineRefusal, engine_items::NeedItem};
 use serde_json::{Value, json};
 fn need(mode: Option<&str>) -> NeedItem {
@@ -44,6 +44,23 @@ fn explicit_text_keeps_exact_whitespace_and_refuses_over_ui_budget_without_trunc
         json!("  Exact text\n")
     );
     assert!(typed_answer(&need(Some("text")), json!("x".repeat(601))).is_err());
+}
+#[test]
+fn an_engine_code_never_reaches_the_screen() {
+    let words = |state| match state {
+        NeedRowState::Refused { reason } => reason,
+        NeedRowState::Failed { message } => message,
+        other => panic!("not a refusal: {other:?}"),
+    };
+    let stale = words(failure_state(&EngineRefusal {
+        code: "stale_attempt".into(),
+        message: "stale_attempt".into(),
+    }));
+    assert_eq!(stale, "This question no longer applies.");
+    let unknown = words(failure_state(&refused_receipt(Some(
+        "some_new_code".into(),
+    ))));
+    assert_eq!(unknown, "The answer was refused.");
 }
 #[test]
 fn typed_refusals_and_unknown_outcomes_do_not_become_success_or_automatic_retries() {

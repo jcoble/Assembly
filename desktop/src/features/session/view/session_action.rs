@@ -29,24 +29,6 @@ pub enum SessionAction {
     ShowAllDiff {
         key: String,
     },
-    /// Pick a choice in an open question's form: the field's one choice, or one more of many (picked again, it's
-    /// taken off).
-    Pick {
-        ask_id: String,
-        field: String,
-        value: String,
-        many: bool,
-    },
-    /// Turn a check box in an open question's form on or off.
-    Flag {
-        ask_id: String,
-        field: String,
-        on: bool,
-    },
-    /// Send an open question's form as it's filled in.
-    SubmitAsk {
-        ask_id: String,
-    },
     /// `send/answer`: the option's `{ optionId }` or the form's `{ action, content }`.
     Answer {
         ask_id: String,

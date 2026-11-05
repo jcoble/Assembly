@@ -6,8 +6,8 @@ use gpui_kit::*;
 
 use super::BoardPanel;
 use crate::activity::{RunRow, StatusChip};
+use crate::core::engine::SessionKey;
 use crate::core::engine::workflow_items::RunItem;
-use crate::core::engine::{EngineKey, SessionKey};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::activity::run_view::now_ms;
 use crate::features::board::board_queries::is_terminal;
@@ -15,7 +15,7 @@ use crate::features::board::board_sections::{
     Entry, group_heading, machine_label, offline_reason, offline_since,
 };
 use crate::features::board::question_row::{card_key, need_card};
-use crate::features::board::run_steps::pill;
+use crate::features::board::run_steps::{pill, run_line};
 use crate::features::board::session_tabs::{session_entry, task_label};
 
 fn row_machine(entry: &Entry) -> Option<&str> {
@@ -28,29 +28,9 @@ fn row_machine(entry: &Entry) -> Option<&str> {
 impl BoardPanel {
     fn run_row(&self, run: &RunItem, this: WeakEntity<Self>) -> RunRow {
         let steps = self.data.steps_of(run);
-        let open_need = steps.iter().any(|step| {
-            step.needs_me_ids.iter().any(|id| {
-                let key = EngineKey {
-                    machine: run.machine.clone(),
-                    kind: "needs_me".into(),
-                    id: id.clone(),
-                };
-                self.data
-                    .needs
-                    .get(&key)
-                    .is_some_and(|need| need.state == "open")
-            })
-        });
+        let open_need = self.data.run_needs_owner(run);
         let state = pill(run, &steps, open_need);
-        let running = steps
-            .iter()
-            .find(|step| step.state == "running")
-            .map(|step| step.label_present.clone());
-        let line = run
-            .display_prerequisite
-            .clone()
-            .or(running)
-            .unwrap_or_else(|| state.label().to_owned());
+        let line = run_line(run, &steps, state);
         RunRow {
             key: card_key(&run.key()),
             title: run.title.clone().unwrap_or_else(|| run.id.clone()).into(),
