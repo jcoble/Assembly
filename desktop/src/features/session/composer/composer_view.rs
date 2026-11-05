@@ -17,6 +17,7 @@ use super::agent_config::{AgentConfig, ConfigOption};
 use super::answer_panel::AnswerPanel;
 use super::attachment::{Attachment, AttachmentState};
 use super::config_labels::{approval_label, effort_label, model_label};
+use super::config_pills::{Grouped, shown};
 use super::context_meter::ContextMeter;
 use super::shape::{Lock, hint};
 use crate::core::engine::EngineFeed;
@@ -393,25 +394,27 @@ impl Composer {
 
 /// What the Context tab shows of the composer (context/live_facts.rs).
 impl Composer {
-    /// The model, effort and access mode in the pills' words; one the agent doesn't offer, or has no value for, is
-    /// `None`.
+    /// The model, effort and access mode in the pills' words, grouped as the pills group them; one the agent doesn't
+    /// offer, or has no value for, is `None`.
     pub fn live_config(&self) -> (Option<String>, Option<String>, Option<String>) {
-        let menus = self.menus();
-        let value = |pick: fn(&ConfigOption) -> bool, label: fn(&ConfigOption, &str) -> String| {
-            let (option, current) = menus.iter().find(|(option, _)| pick(option))?;
-            let shown = match *current {
-                "" => option.current_value.as_deref().unwrap_or_default(),
-                current => current,
-            };
-            (!shown.is_empty()).then(|| label(option, shown))
+        let menus = self.menus().into_iter();
+        let grouped = Grouped::of(
+            menus
+                .map(|(option, current)| (option.clone(), current.to_string()))
+                .collect(),
+        );
+        let word = |slot: Option<(ConfigOption, String)>,
+                    label: fn(&ConfigOption, &str) -> String| {
+            let (option, current) = slot?;
+            let value = shown(&option, &current);
+            (!value.is_empty()).then(|| label(&option, value))
         };
         (
-            value(ConfigOption::model, model_label),
-            value(|option| !option.model() && option.effort(), effort_label),
-            value(
-                |option| !option.model() && !option.effort() && option.approval(),
-                |option, shown| approval_label(Some(option), shown),
-            ),
+            word(grouped.model, model_label),
+            word(grouped.effort, effort_label),
+            word(grouped.approval, |option, value| {
+                approval_label(Some(option), value)
+            }),
         )
     }
 
@@ -483,6 +486,10 @@ mod target;
 #[cfg(test)]
 #[path = "composer_view_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "live_config_tests.rs"]
+mod live_config_tests;
 
 #[cfg(test)]
 #[path = "qualified_tests.rs"]

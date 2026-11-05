@@ -120,13 +120,12 @@ pub struct SessionPane {
     _writes: HashMap<String, Task<()>>,
     /// The newest seq told to the backend as read, for the open session.
     read_to: i64,
-    /// The selected session, followed once the pane is registered.
+    /// The selected session, followed from construction so this pane publishes its live facts when its session is
+    /// picked and clears them when another is (pane_live.rs).
     _selected: Option<Subscription>,
     /// Hears the machines list start, then follows it, for the open session's machine (pane_machine.rs).
     _machines_started: Subscription,
     _machines: Option<Subscription>,
-    /// The session whose live facts this pane last published (pane_live.rs), so it clears only its own.
-    live: Option<(String, Option<crate::core::engine::SessionKey>)>,
     /// The composer's events and changes, the timeline's scrolling, the header and the pane's own release.
     _heard: [Subscription; 5],
 }

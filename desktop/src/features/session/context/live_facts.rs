@@ -1,6 +1,6 @@
 //! `LiveFacts` is the selected session's live facts, held in one app-wide value: its context report, its newest turn
 //! figures, its agent settings and its draft images. The session pane showing the selected session publishes it on a
-//! real change and clears it only while it's still its own; the Context tab observes it, so the tab follows live with
+//! real change and clears it only while the value is still the one it published; the Context tab observes it, so the tab follows live with
 //! no second subscription and no polling.
 
 use std::sync::Arc;
@@ -12,6 +12,8 @@ use crate::features::session::model::session_view::ContextReport;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LiveFacts {
+    /// The session pane that published it, which alone clears it.
+    pub publisher: EntityId,
     pub session: String,
     pub key: Option<SessionKey>,
     /// The agent's name, for "not reported by NAME".
@@ -86,15 +88,15 @@ impl LiveFacts {
         });
     }
 
-    /// Clears it only if it's still this session's.
-    pub fn clear(session: &str, key: Option<&SessionKey>, cx: &mut App) {
+    /// Clears it only if this publisher's value is still the one held.
+    pub fn clear(publisher: EntityId, cx: &mut App) {
         let Some(global) = Self::try_global(cx) else {
             return;
         };
         global.update(cx, |value, cx| {
             if value
                 .as_ref()
-                .is_some_and(|facts| facts.session == session && facts.key.as_ref() == key)
+                .is_some_and(|facts| facts.publisher == publisher)
             {
                 *value = None;
                 cx.notify();

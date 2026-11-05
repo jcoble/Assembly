@@ -1,6 +1,7 @@
 //! Building a `SessionPane`: its composer, header, timeline, row renderer and the subscriptions it keeps.
 use super::*;
 use crate::core::state::selected_session::SelectedSession;
+use crate::features::session::context::live_facts::LiveFacts;
 
 impl SessionPane {
     pub fn new(client: Rc<dyn SessionClient>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -84,7 +85,10 @@ impl SessionPane {
                 cx.notify()
             }),
             cx.observe(&composer, |pane, _, cx| pane.publish_live(cx)),
-            cx.on_release(|pane, cx| pane.clear_live(cx)),
+            cx.on_release({
+                let publisher = cx.entity_id();
+                move |_, cx| LiveFacts::clear(publisher, cx)
+            }),
         ];
         let selected = SelectedSession::try_global(cx)
             .map(|selected| cx.observe(&selected, |pane, _, cx| pane.publish_live(cx)));
@@ -138,7 +142,6 @@ impl SessionPane {
             _loads: HashMap::new(),
             _writes: HashMap::new(),
             read_to: 0,
-            live: None,
             _heard: heard,
             _machines_started: machines,
             _machines: None,

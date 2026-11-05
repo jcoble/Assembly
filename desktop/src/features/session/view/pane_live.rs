@@ -17,8 +17,8 @@ impl SessionPane {
         Some((session, key))
     }
 
-    /// Publishes this pane's session's facts if it's the selected one; clears what it published before for a session
-    /// it no longer shows or that is no longer selected.
+    /// Publishes this pane's session's facts if it's the selected one, and otherwise clears what this pane published.
+    /// While a reload's page is still coming (`held`), the last value stays, so the tab never sees an empty session.
     pub(super) fn publish_live(&mut self, cx: &mut Context<Self>) {
         if LiveFacts::try_global(cx).is_none() {
             return;
@@ -30,25 +30,25 @@ impl SessionPane {
                 selected.session_id() == Some(session.as_str()) && selected.key() == key.as_ref()
             })
         });
-        if self.live.is_some() && (!selected || self.live != identity) {
-            self.clear_live(cx);
-        }
+        let publisher = cx.entity_id();
         let (true, Some((session, key))) = (selected, identity) else {
+            LiveFacts::clear(publisher, cx);
             return;
         };
-        self.live = Some((session.clone(), key.clone()));
-        let facts = self.live_facts(session, key, cx);
+        if self.held.is_some() {
+            return;
+        }
+        let facts = self.live_facts(publisher, session, key, cx);
         LiveFacts::publish(facts, cx);
     }
 
-    /// Clears what this pane published, if the value is still its own.
-    pub(super) fn clear_live(&mut self, cx: &mut App) {
-        if let Some((session, key)) = self.live.take() {
-            LiveFacts::clear(&session, key.as_ref(), cx);
-        }
-    }
-
-    fn live_facts(&self, session: String, key: Option<SessionKey>, cx: &App) -> LiveFacts {
+    fn live_facts(
+        &self,
+        publisher: EntityId,
+        session: String,
+        key: Option<SessionKey>,
+        cx: &App,
+    ) -> LiveFacts {
         let stats = self.view.stats.values();
         // A cancelled turn reports all zeros, so the last real figures stay.
         let figures = (stats.clone())
@@ -66,9 +66,13 @@ impl SessionPane {
         let (model, effort, access) = composer.live_config();
         let positive = |n: Option<i64>| n.filter(|n| *n > 0);
         LiveFacts {
+            publisher,
             session,
             key,
-            provider: composer.agent_name(),
+            // The agent's name once the composer has read it, else the session's provider as the engine named it, so
+            // a read-only or offline session still says whose figures are missing.
+            provider: (composer.agent_name())
+                .or_else(|| self.active_provider.clone().map(SharedString::from)),
             context: self.view.context,
             input_tokens: figures.and_then(|turn| positive(turn.input_tokens)),
             output_tokens: figures.and_then(|turn| positive(turn.output_tokens)),
