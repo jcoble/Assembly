@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Assembly.Domain.Rows;
 using Assembly.Domain.Events;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Features.Chat.Rows.Context;
 
 namespace Assembly.Application.Features.Chat.Rows;
 
@@ -41,6 +42,7 @@ namespace Assembly.Application.Features.Chat.Rows;
 [JsonSerializable(typeof(RowsFeature.SessionArgs))]
 [JsonSerializable(typeof(IReadOnlyList<FileTouched>))]
 [JsonSerializable(typeof(SessionAttachments))]
+[JsonSerializable(typeof(SessionTokens))]
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(TerminalExit))]
 [JsonSerializable(typeof(IReadOnlyList<ToolTerminalState>))]

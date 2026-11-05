@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
+using Assembly.Application.Features.Chat.Rows.Context;
 using Assembly.Application.Features.Chat.Sessions;
 
 namespace Assembly.Application.Features.Chat.Rows;
@@ -158,6 +159,19 @@ internal sealed class RowsFeature : IFeature
             }
             if (_sessions.Get(args.Session) is null) throw new CallFailed("unknown session");
             var result = _store.FilesTouched(args.Session, call.Cancellation);
+            bound?.EnsureCurrent(); return result;
+        });
+        calls.Read(Topic, "tokens", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.SessionTokens, async (args, call) =>
+        {
+            call.Cancellation.ThrowIfCancellationRequested();
+            var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
+            if (bound?.Remote == true)
+            {
+                var tokens = await bound.TokensAsync(call.Cancellation);
+                bound.EnsureCurrent(); return tokens;
+            }
+            if (_sessions.Get(args.Session) is null) throw new CallFailed("unknown session");
+            var result = new SessionTokens(_store.SessionTokens(args.Session, call.Cancellation));
             bound?.EnsureCurrent(); return result;
         });
         calls.Read(Topic, "attachments", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.SessionAttachments, async (args, call) =>

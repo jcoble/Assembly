@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Features.Chat.Rows.Context;
 using Assembly.Application.Features.Chat.Rows.Markdown;
 using Assembly.Domain.Markdown;
 using Assembly.Domain.Rows;
@@ -381,6 +382,19 @@ public sealed partial class RowStore
             """,
             reader => new FileTouched(reader.Text(0), reader.Long(1), reader.Long(2), reader.Long(3)), cancellationToken,
             new SqlArg("$session", sessionId));
+
+    /// <summary>
+    /// The session's token total (<c>rows/tokens</c>): the sum of what each turn reported at its end, since a provider's
+    /// total restarts every turn. Null when no turn reported one; a cancelled turn's zeros aren't stored.
+    /// </summary>
+    public long? SessionTokens(string sessionId, CancellationToken cancellationToken) =>
+        _db.Query(
+            """
+            SELECT SUM(json_extract(payload, '$.totalTokens')) FROM rows
+            WHERE session_id = $session AND kind = 'stats' AND json_extract(payload, '$.totalTokens') > 0;
+            """,
+            reader => reader.IsNull(0) ? (long?)null : reader.Long(0), cancellationToken,
+            new SqlArg("$session", sessionId)).FirstOrDefault();
 
     /// <summary>
     /// The last <paramref name="tail"/> characters of the session's newest <paramref name="limit"/> prompts that may have

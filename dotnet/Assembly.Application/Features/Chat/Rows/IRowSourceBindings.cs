@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Features.Chat.Rows.Context;
 
 namespace Assembly.Application.Features.Chat.Rows;
 
@@ -28,6 +29,8 @@ public abstract class RowSourceBinding : IExpectedSourceGuard
     public abstract IAsyncEnumerable<JsonElement> WatchAsync(long? after, CancellationToken ct);
     public virtual Task<IReadOnlyList<FileTouched>> FilesAsync(CancellationToken ct) =>
         throw new CallFailed("Source-bound file context is unavailable.", "source_changed");
+    public virtual Task<SessionTokens> TokensAsync(CancellationToken ct) =>
+        throw new CallFailed("Source-bound token context is unavailable.", "source_changed");
     public virtual Task<SessionAttachments> AttachmentsAsync(CancellationToken ct) =>
         throw new CallFailed("Source-bound attachment context is unavailable.", "source_changed");
     public abstract void Dispose();
