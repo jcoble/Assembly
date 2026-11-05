@@ -235,12 +235,25 @@ async fn a_session_file_whose_name_starts_with_a_tilde_opens_as_a_session_file(
 }
 
 // Brief item 4: an absolute path with a session and no source keeps that session, so it never resolves on a guessed
-// machine. One the sessions list doesn't hold has no known machine, so the person is asked to select a session.
+// machine. One that isn't listed or selected, while a remote machine is configured, can't be placed.
 #[gpui::test]
 async fn an_absolute_path_with_a_session_and_no_source_keeps_its_session(cx: &mut TestAppContext) {
     use crate::core::navigation::deep_links::notices;
+    use crate::core::state::machines::Machines;
     let mut h = harness(cx);
+    h.cx.update(|_, cx| {
+        Machines::start_holding(
+            vec![(
+                "Box".into(),
+                serde_json::json!({"name": "Box", "kind": "remote", "reachable": true, "checked": true}),
+            )],
+            cx,
+        )
+    });
     h.open_path("/etc/hosts");
     let shown = h.cx.update(|_, cx| notices(cx));
-    assert_eq!(shown, ["Select a session to open this file."]);
+    assert_eq!(
+        shown,
+        ["That file didn't open: Assembly can't tell which machine this session is on."]
+    );
 }

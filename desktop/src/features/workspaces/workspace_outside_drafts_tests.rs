@@ -10,6 +10,7 @@ use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
 use gpui_kit::Subscription;
 
+const ASKED: &str = "This file has unsaved changes. Save them before leaving?";
 const REFUSED: &str = "Not saved: the current workspace and its drafts remain open.";
 
 fn key() -> WorkspaceKey {
@@ -70,7 +71,9 @@ async fn a_dirty_outside_tab_with_no_workspace_asks_before_a_session_opens(
     });
     // Cancel keeps the tab, its draft and the session closed.
     request(&mut stage);
-    assert!(stage.cx.has_pending_prompt(), "the guard asks first");
+    let asked = stage.cx.pending_prompt().expect("the guard asks first");
+    assert_eq!(asked.0, ASKED);
+    assert_eq!(asked.1, "hosts");
     stage.cx.simulate_prompt_answer("Cancel");
     stage.cx.run_until_parked();
     assert_eq!(refusals.try_recv().ok().as_deref(), Some(REFUSED));
@@ -102,6 +105,10 @@ async fn closing_the_window_asks_about_a_dirty_outside_tab_with_no_workspace(
 
     assert!(!stage.cx.simulate_close(), "the window stays while it asks");
     stage.cx.run_until_parked();
+    assert_eq!(
+        stage.cx.pending_prompt().map(|asked| asked.0).as_deref(),
+        Some(ASKED)
+    );
     stage.cx.simulate_prompt_answer("Cancel");
     stage.cx.run_until_parked();
     assert_eq!(stage.cx.read(|cx| cx.windows().len()), 1);

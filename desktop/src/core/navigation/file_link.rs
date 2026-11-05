@@ -84,7 +84,9 @@ pub fn open(
 }
 
 /// Opens an absolute or `~` `path` from a link that came with `session` and no source. The session's machine is the one
-/// the sessions list says; a session the list doesn't hold has no known machine, so nothing is guessed.
+/// the sessions list says. A session the list doesn't hold is placed only where nothing is guessed: the selected one
+/// opens with the selection's source, and with no remote machine configured it can only be on this machine, which
+/// resolves with no inside hint. Anything else can't be placed.
 pub fn open_unsourced(path: String, session: String, jump: Jump, cx: &mut App) {
     let listed = Sessions::try_global(cx).and_then(|sessions| {
         let sessions = sessions.read(cx);
@@ -94,11 +96,25 @@ pub fn open_unsourced(path: String, session: String, jump: Jump, cx: &mut App) {
             .find(|item| item.session_id == session)?;
         Some(item.machine.clone().filter(|machine| !machine.is_empty()))
     });
-    let Some(machine) = listed else {
-        return show_notice(NO_SESSION.into(), cx);
-    };
-    resolve(path, machine, Some(Came::Unsourced(session)), jump, cx)
+    if let Some(machine) = listed {
+        return resolve(path, machine, Some(Came::Unsourced(session)), jump, cx);
+    }
+    let selected = SelectedSession::try_global(cx).and_then(|selected| {
+        let selected = selected.read(cx);
+        let key = selected.key().filter(|key| key.id == session)?;
+        Some((key.clone(), selected.source()?.clone()))
+    });
+    if let Some(from) = selected {
+        let machine = from.1.route_machine.clone();
+        return resolve(path, machine, Some(Came::Sourced(from)), jump, cx);
+    }
+    if !Machines::any_remote(cx) {
+        return resolve(path, None, None, jump, cx);
+    }
+    show_notice(didnt_open(NO_MACHINE), cx)
 }
+
+const NO_MACHINE: &str = "Assembly can't tell which machine this session is on.";
 
 /// The session a path link came with.
 enum Came {

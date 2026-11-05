@@ -37,6 +37,11 @@ async fn cancelling_the_workspace_guard_preserves_the_dirty_draft(cx: &mut TestA
     let (_, cx) = cx.add_window_view(|_, _| Host);
     let task = cx.update(|window, cx| run(Drafts::Checkout(key.clone()), window, cx));
     cx.run_until_parked();
+    let asked = cx.pending_prompt().map(|asked| asked.0);
+    assert_eq!(
+        asked.as_deref(),
+        Some("This workspace could not be saved. Keep the draft before leaving?")
+    );
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
     assert!(!task.await);

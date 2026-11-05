@@ -19,6 +19,16 @@ pub enum Drafts {
 }
 
 impl Drafts {
+    /// What the prompt asks: a workspace that couldn't be saved, or a file nothing will save.
+    fn question(&self) -> &'static str {
+        match self {
+            Self::Checkout(_) => {
+                "This workspace could not be saved. Keep the draft before leaving?"
+            }
+            Self::Unowned => "This file has unsaved changes. Save them before leaving?",
+        }
+    }
+
     /// The dirty documents it covers, now.
     pub fn keys(&self, cx: &App) -> Vec<DocumentKey> {
         let Some(docs) = cx.try_global::<DocumentStore>() else {
@@ -73,7 +83,7 @@ pub fn guard_close(window: &mut Window, cx: &mut App) {
 }
 
 pub fn run(drafts: Drafts, window: &mut Window, cx: &mut App) -> Task<bool> {
-    let keys = drafts.keys(cx);
+    let (keys, question) = (drafts.keys(cx), drafts.question());
     let handle = window.window_handle();
     cx.spawn(async move |cx| {
         for document in keys {
@@ -87,7 +97,7 @@ pub fn run(drafts: Drafts, window: &mut Window, cx: &mut App) -> Task<bool> {
             let prompt = handle.update(cx, |_, window, cx| {
                 window.prompt(
                     PromptLevel::Warning,
-                    "This workspace could not be saved. Keep the draft before leaving?",
+                    question,
                     Some(&document.path),
                     &["Save to file", "Discard", "Cancel"],
                     cx,

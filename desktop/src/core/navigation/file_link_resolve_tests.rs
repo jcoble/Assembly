@@ -436,14 +436,74 @@ async fn a_local_session_with_no_source_resolves_its_file_here(cx: &mut TestAppC
     assert!(h.opened() == [outside(None, "/etc/hosts")]);
 }
 
-// No guess: a session the list doesn't hold has no known machine, so the file isn't opened on one.
+/// What the loaded machines list holds: this machine, and `remote` when given.
+fn machines(h: &mut Harness<'_>, remote: Option<&str>) {
+    let mut items = vec![(
+        "local".to_string(),
+        json!({"name": null, "kind": "local", "reachable": true, "checked": true}),
+    )];
+    if let Some(name) = remote {
+        items.push((
+            name.to_string(),
+            json!({"name": name, "kind": "remote", "reachable": true, "checked": true}),
+        ));
+    }
+    h.cx.update(|_, cx| Machines::start_holding(items, cx));
+}
+
+const NO_MACHINE: &str =
+    "That file didn't open: Assembly can't tell which machine this session is on.";
+
+// Re-review item 4 (a): a session the list doesn't hold that is the selected one opens with the selection's source.
 #[gpui::test]
-async fn a_session_with_no_source_that_the_list_lacks_asks_for_a_session(cx: &mut TestAppContext) {
+async fn an_unlisted_session_that_is_selected_uses_the_selection_s_source(cx: &mut TestAppContext) {
     let mut h = harness(cx);
     h.connect();
+    machines(&mut h, Some("Box"));
+    h.list(vec![listed("other", Some("Box"))]);
+    h.select("t1", Some("Box"));
+    h.open_unsourced("/work/a/src/a.txt", "t1").await;
+    let asked = h.asked();
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    assert_eq!(asked[0]["session"], "t1");
+    assert_eq!(asked[0]["expectedSource"]["routeMachine"], "Box");
+    assert_eq!(
+        asked[1]["target"],
+        json!({"path": "/work/a/src/a.txt", "machine": "Box", "insideOf": "r"})
+    );
+    assert_eq!(h.opened().len(), 1);
+    assert_eq!(h.opened()[0].path, "src/a.txt");
+    assert_eq!(h.shown(), Vec::<String>::new());
+}
+
+// Re-review item 4 (b): with no remote machine configured, the session can only be on this machine, so the file
+// resolves here with no inside hint, as before.
+#[gpui::test]
+async fn an_unlisted_session_with_no_remote_machine_resolves_here(cx: &mut TestAppContext) {
+    let mut h = harness(cx);
+    h.connect();
+    machines(&mut h, None);
+    h.list(vec![listed("other", None)]);
+    h.open_unsourced("/etc/hosts", "t1").await;
+    let asked = h.asked();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_eq!(
+        asked[0]["target"],
+        json!({"path": "/etc/hosts", "machine": null, "insideOf": null})
+    );
+    assert!(h.opened() == [outside(None, "/etc/hosts")]);
+    assert_eq!(h.shown(), Vec::<String>::new());
+}
+
+// Re-review item 4 (c): no guess. An unlisted, unselected session while a remote is configured could be on either.
+#[gpui::test]
+async fn an_unlisted_session_with_a_remote_machine_says_it_can_t_tell(cx: &mut TestAppContext) {
+    let mut h = harness(cx);
+    h.connect();
+    machines(&mut h, Some("Box"));
     h.list(vec![listed("other", Some("Box"))]);
     h.open_unsourced("/etc/hosts", "t1").await;
-    assert_eq!(h.shown(), ["Select a session to open this file."]);
+    assert_eq!(h.shown(), [NO_MACHINE]);
     assert!(h.asked().is_empty());
     assert!(h.opened().is_empty());
 }
