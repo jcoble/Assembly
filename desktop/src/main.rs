@@ -6,6 +6,8 @@
 mod activity;
 mod core;
 mod features;
+#[path = "components/hinted_item/mod.rs"]
+mod hinted_item;
 #[allow(dead_code)]
 #[path = "components/inline_field/mod.rs"]
 mod inline_field;
