@@ -1,6 +1,5 @@
-//! `OpenAnotherProject` is the one Open another project in the window: what its bar shows, and picking a project or
-//! worktree on any connected machine. The dock draws this one view above the Files and Git tabs, so switching between
-//! them neither moves nor rebuilds it. It only ever changes `ViewedProject`, never the session.
+//! `OpenAnotherProject` is the Git tab's Open another project: what its bar shows, and picking a project or worktree on
+//! any connected machine. Picking switches Files and Git together, and only ever changes `ViewedProject`, never the session.
 
 use std::collections::HashMap;
 use std::rc::Rc;

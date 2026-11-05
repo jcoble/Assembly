@@ -66,6 +66,7 @@ impl Render for SourceControlPane {
         v_flex()
             .track_focus(&self.focus)
             .size_full()
+            .child(self.open_project.clone())
             .child(header)
             .child(body)
     }

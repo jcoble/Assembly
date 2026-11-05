@@ -42,6 +42,7 @@ pub mod graph_lanes;
 pub mod history_filter;
 #[path = "history/history_pane.rs"]
 pub mod history_pane;
+pub mod open_another_project;
 #[cfg(test)]
 mod pane_state_tests;
 pub mod pull_requests;

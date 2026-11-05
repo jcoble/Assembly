@@ -25,7 +25,7 @@ pub fn init(cx: &mut gpui_kit::App) -> Result<(), String> {
         cx,
     )?;
     crate::core::state::workspace_panes::WorkspacePanes::register(
-        Box::new(crate::features::shell::open_another_project::ViewedProjectCodec),
+        Box::new(crate::features::source_control::open_another_project::ViewedProjectCodec),
         cx,
     )?;
     crate::features::source_control::source_control_pane::SourceControlPane::register_workspace(

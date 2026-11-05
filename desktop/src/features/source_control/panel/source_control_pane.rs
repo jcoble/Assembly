@@ -12,6 +12,7 @@ use super::git_branches::GitBranchList;
 use super::git_failure::{GitFailure, Recovery};
 use super::git_status::{GitStatus, Section};
 use super::git_target::GitTarget;
+use super::open_another_project::OpenAnotherProject;
 use super::pull_requests::pr_section::PrSection;
 use super::result_line::PaneResult;
 use crate::core::state::selected_session::SelectedSession;
@@ -56,6 +57,7 @@ pub struct SourceControlPane {
     focus: FocusHandle,
     window: AnyWindowHandle,
     read: Entity<SessionRead<GitStatus>>,
+    open_project: Entity<OpenAnotherProject>,
     window_active: bool,
     active: bool,
     last_session: Option<String>,
@@ -225,6 +227,7 @@ impl SourceControlPane {
             focus: cx.focus_handle(),
             window: handle,
             read,
+            open_project: cx.new(|cx| OpenAnotherProject::new(window, cx)),
             window_active: window.is_window_active(),
             active: false,
             last_session: None,
