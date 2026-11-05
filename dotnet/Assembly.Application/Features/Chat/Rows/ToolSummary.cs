@@ -27,13 +27,25 @@ internal static class ToolSummary
         return null;
     }
 
+    /// <summary>The path the call named, joined onto the folder the call ran in when it is relative.</summary>
     public static string? Path(JsonElement? input)
     {
         if (input is not { ValueKind: JsonValueKind.Object } fields)
             return null;
         foreach (var key in (string[])["file_path", "path"])
             if (fields.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String)
-                return value.GetString();
+                return InFolder(value.GetString(), input);
         return null;
+    }
+
+    /// <summary>A relative path joined onto the call's own <c>workdir</c>, else its <c>cwd</c>; anything else is unchanged.</summary>
+    public static string? InFolder(string? path, JsonElement? input)
+    {
+        if (path is null || System.IO.Path.IsPathRooted(path) || path.StartsWith('~') || input is not { ValueKind: JsonValueKind.Object } fields)
+            return path;
+        foreach (var key in (string[])["workdir", "cwd"])
+            if (fields.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } folder)
+                return System.IO.Path.Join(folder, path);
+        return path;
     }
 }
