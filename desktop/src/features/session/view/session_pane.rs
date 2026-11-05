@@ -252,12 +252,13 @@ impl SessionPane {
         }
         match change {
             // A reply, tool or card changing in place in a run that isn't folded changes no entry: only its row
-            // draws again, so a streaming reply never rebuilds the timeline.
+            // draws again, so a streaming reply never rebuilds the timeline. An ask also holds or frees the composer.
             Change::Updated(at)
-                if self.view.items[at]
-                    .run_id
-                    .as_ref()
-                    .is_none_or(|run| !self.folds.contains_key(run)) =>
+                if !matches!(self.view.items[at].kind, ItemKind::Ask { .. })
+                    && self.view.items[at]
+                        .run_id
+                        .as_ref()
+                        .is_none_or(|run| !self.folds.contains_key(run)) =>
             {
                 self.redraw(at, cx)
             }

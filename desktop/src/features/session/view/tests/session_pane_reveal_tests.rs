@@ -92,13 +92,19 @@ fn a_reveal_steps_on_its_own_tick_and_not_on_every_display_frame(cx: &mut TestAp
         "display frames don't step it"
     );
 
-    cx.executor().advance_clock(REVEAL_TICK);
-    cx.run_until_parked();
+    // A step's size comes from real time, which the test clock doesn't move.
+    let tick_passes = |cx: &mut VisualTestContext| {
+        pane.update_in(cx, |pane, _, _| {
+            pane.revealed_at = Instant::now() - REVEAL_TICK;
+        });
+        cx.executor().advance_clock(REVEAL_TICK);
+        cx.run_until_parked();
+    };
+    tick_passes(cx);
     let stepped = reveal(&pane, cx).expect("still revealing").shown;
     assert!(stepped > started, "its tick steps it");
 
-    cx.executor().advance_clock(REVEAL_TICK);
-    cx.run_until_parked();
+    tick_passes(cx);
     assert!(
         reveal(&pane, cx).expect("still revealing").shown > stepped,
         "and the next tick steps it again, without a new row"

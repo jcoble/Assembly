@@ -13,6 +13,7 @@ use super::tests::{jump, live, open, page, row, show, user};
 use crate::core::theme::grow::GROW;
 use crate::core::ui::expand_row::{ExpandRow, ExpandRowEvent};
 use crate::features::session::client::fake_client::FakeClient;
+use crate::features::session::composer::shape::Lock;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::entries::Entry;
 use crate::features::session::rows::tool::ToolState;
@@ -538,6 +539,23 @@ fn an_ask_answered_while_disconnected_shuts_once_the_page_reloads(cx: &mut TestA
     )));
     jump(&client, 3, cx);
     assert!(!is_open(cx), "the reloaded page's answer shuts it");
+}
+
+// The answer arrives as the ask changing in place, which redraws only its row; the draft still has to let go.
+#[gpui::test]
+fn answering_an_approval_live_lets_the_composer_go(cx: &mut TestAppContext) {
+    let ask = |seq: i64, state: &str| {
+        let payload =
+            json!({ "kind": "permission", "state": state, "options": [], "answer": null });
+        row(seq, "ask", Some("ask:a1"), payload)
+    };
+    let (pane, client, cx) = opened(vec![user(1, "go"), ask(2, "open")], cx);
+    let locked = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| pane.read(cx).composer.read(cx).locked())
+    };
+    assert_eq!(locked(cx), Some(Lock::Approval));
+    live(&client, ask(3, "answered"), cx);
+    assert_eq!(locked(cx), None);
 }
 
 // An opened call's detail (up to 1 MiB of output and as much diff) is held once, however often its row draws: the
