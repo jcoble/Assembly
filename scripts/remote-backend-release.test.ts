@@ -143,7 +143,7 @@ fi
     let code = 0;
     let stderr = '';
     try {
-      await execFileAsync('sh', ['-c', `set -eu\nport=9797\nroot=$HOME/assembly-dotnet\n${REMOTE_BACKEND_INSTALL_SCRIPT.slice(start)}`], { cwd: home, env });
+      await execFileAsync('sh', ['-c', `set -eu\nmode=install\nport=9797\nroot=$HOME/assembly-dotnet\n${REMOTE_BACKEND_INSTALL_SCRIPT.slice(start)}`], { cwd: home, env });
     } catch (error) {
       const failure = error as { code: number; stderr: string };
       code = failure.code;

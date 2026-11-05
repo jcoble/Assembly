@@ -29,7 +29,8 @@ internal sealed partial class RemoteReleaseJson : JsonSerializerContext;
 
 /// <summary>The one install running at a time, its state pushed on the topic. Started and stopped with the backend.</summary>
 internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, BackgroundWork work, ITopics topics,
-    Func<string, CancellationToken, SavedMachine?> profile, Func<string, CancellationToken, Task> connect) : IReleaseInstall, IAsyncDisposable
+    Func<string, CancellationToken, SavedMachine?> profile, Func<string, CancellationToken, Task> connect,
+    RemoteReleaseFeed? feed = null, LocalReleaseTools? local = null) : IReleaseInstall, IAsyncDisposable
 {
     private sealed class Entry(RemoteReleaseJob job)
     {
@@ -67,14 +68,26 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, Background
                 entry = new(accepted);
                 _entries.Add(request.OperationId, entry);
             }
-            work.Start("remote release install", async hostStop => { await Task.Yield(); await Run(entry, machine, hostStop); });
+            work.Start("remote release install", async hostStop => { await Task.Yield(); await Run(entry, machine, Installed, hostStop); });
         });
         scope.Publish(RemoteReleaseFeature.Name, request.OperationId.ToString("D"), accepted, RemoteReleaseJson.Default.RemoteReleaseJob);
         return accepted;
     }
 
     /// <summary>The one update's way in: the same job and the same one-at-a-time rule as the call, waited for.</summary>
-    public async Task InstallAsync(string machine, Action<string> progress, CancellationToken ct)
+    public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct) =>
+        WaitedAsync(machine, progress, Installed, ct);
+
+    public Task UpdateToolsAsync(string? machine, ToolsBehind tools, Action<string> progress, CancellationToken ct)
+    {
+        if (machine is not null)
+            return WaitedAsync(machine, progress, async (saved, phase, stop) => { await install.UpdateToolsAsync(saved, tools, phase, stop); return null; }, ct);
+        return local is null ? throw new CallFailed("This app can't update its own adapters and CLIs.", "local_update_unavailable") : local.UpdateAsync(tools, progress, ct);
+    }
+
+    public Task<PublishedVersions> PublishedAsync(CancellationToken ct) => feed?.PublishedAsync(ct) ?? Task.FromResult(new PublishedVersions(null, null, null));
+
+    private async Task WaitedAsync(string machine, Action<string> progress, Func<SavedMachine, Action<string>, CancellationToken, Task<RemoteReleaseReceipt?>> act, CancellationToken ct)
     {
         var saved = profile(machine, ct) ?? throw new CallFailed("Unknown remote machine.", "unknown_machine");
         var id = Guid.NewGuid();
@@ -86,7 +99,7 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, Background
             entry = new(new(id, 1, machine, "running", "Starting…", null, null, null)) { Progress = progress };
             _entries.Add(id, entry);
         }
-        await Run(entry, saved, ct);
+        await Run(entry, saved, act, ct);
         ct.ThrowIfCancellationRequested();
         if (entry.Job.State == "failed") throw new CallFailed(entry.Job.Message ?? "The install failed.", entry.Job.ErrorCode ?? "install_failed");
     }
@@ -98,12 +111,14 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, Background
         work.Start("cancel remote release install", async _ => { await Task.Yield(); await entry.Cancel.CancelAsync(); });
     }
 
-    private async Task Run(Entry entry, SavedMachine machine, CancellationToken hostStop)
+    private async Task<RemoteReleaseReceipt?> Installed(SavedMachine machine, Action<string> phase, CancellationToken ct) => await install.InstallLatestAsync(machine, phase, ct);
+
+    private async Task Run(Entry entry, SavedMachine machine, Func<SavedMachine, Action<string>, CancellationToken, Task<RemoteReleaseReceipt?>> act, CancellationToken hostStop)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(entry.Cancel.Token, hostStop);
         try
         {
-            var receipt = await install.InstallLatestAsync(machine, phase => { entry.Progress?.Invoke(phase); Change(entry, job => job with { Phase = phase }); }, linked.Token);
+            var receipt = await act(machine, phase => { entry.Progress?.Invoke(phase); Change(entry, job => job with { Phase = phase }); }, linked.Token);
             Change(entry, job => job with { Phase = "Connecting…" });
             await connect(machine.Name, linked.Token);
             Change(entry, job => job with { State = "succeeded", Result = receipt });

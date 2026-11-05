@@ -13,7 +13,7 @@ namespace Assembly.Tests.Infrastructure.Remote;
 /// The whole install against a local stand-in for GitHub and a throwaway home. The package is the real packager's output
 /// and install.sh, agents-file.sh and the download script all really run; only systemctl, ss and the network stand in.
 /// </summary>
-public sealed class RemoteReleaseInstallTests : IDisposable
+public sealed partial class RemoteReleaseInstallTests : IDisposable
 {
     private const string Version = "1.2.3";
     private const string Archive = "assembly-remote-backend-1.2.3-x86_64-unknown-linux-gnu.tar.gz";
@@ -21,6 +21,7 @@ public sealed class RemoteReleaseInstallTests : IDisposable
     private static readonly SavedMachine Machine = new("box", "fixture-host");
 
     private readonly string _root = Directory.CreateTempSubdirectory("remote-release-test-").FullName;
+    private ReleaseSigner? LastSigner;
     private string Home => Path.Combine(_root, "home");
     private string Github => Path.Combine(_root, "github");
     private string Bin => Path.Combine(Home, ".local/bin");
@@ -100,9 +101,14 @@ case "$*" in
   *restart*) : >"$HOME/assembly-dotnet/serve/assembly.db"; exit "${RESTART_FAILS:-0}" ;;
   *is-active*--quiet*|*--quiet*is-active*) exit 0 ;;
   *is-active*) echo active ;;
+  *ControlGroup*) echo "/../../..$HOME/cgroup" ;;
+  *MainPID*) echo 1 ;;
 esac
 exit 0
 """);
+        // The control group is read at /sys/fs/cgroup + the service's group: that path climbs back out to this folder.
+        Directory.CreateDirectory(Path.Combine(Home, "cgroup"));
+        File.WriteAllText(Path.Combine(Home, "cgroup/cgroup.procs"), "1\n");
         Script("ss", "#!/bin/sh\nprintf 'LISTEN 0 128 127.0.0.1:9797 0.0.0.0:*\\n'\n");
         // agents-file.sh reads the adapter release the desktop named through curl: only its two assets.
         Script("curl", """
@@ -128,6 +134,7 @@ cp "$GITHUB_FIXTURE/$(basename "$url")" "$out"
         Run("node", Path.Combine(repository, "scripts/remote-backend-release.ts"), Version, server, Github);
         var record = File.ReadAllBytes(Path.Combine(Github, Archive + ".download.json"));
         var signer = new ReleaseSigner();
+        LastSigner = signer;
         var signature = signer.Sign(record);
         var adapterManifest = File.ReadAllBytes(Path.Combine(Github, RemoteReleaseFeedTests.AdapterManifest));
         var adapterSignature = signer.Sign(adapterManifest);
@@ -237,7 +244,8 @@ cp "$GITHUB_FIXTURE/$(basename "$url")" "$out"
         var failed = await Assert.ThrowsAsync<CallFailed>(() => install.InstallLatestAsync(Machine, _ => { }, default));
         Assert.Contains("does not match its signature", failed.Message, StringComparison.Ordinal);
         Assert.False(File.Exists(Path.Combine(Installed, "bin/assembly-remote-server")));
-        Assert.False(File.Exists(Path.Combine(Home, "systemctl.log")));
+        Assert.DoesNotContain(" stop ", SystemctlLog, StringComparison.Ordinal);
+        Assert.DoesNotContain("restart", SystemctlLog, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -276,5 +284,97 @@ cp "$GITHUB_FIXTURE/$(basename "$url")" "$out"
         var failed = await Assert.ThrowsAsync<CallFailed>(() => install.InstallLatestAsync(new("box", ssh, port, tokenFile), _ => { }, default));
         Assert.Equal("bad_args", failed.Reason);
         Assert.Empty(shell.Targets);
+    }
+
+    private void Session(int pid) => File.AppendAllText(Path.Combine(Home, "cgroup/cgroup.procs"), pid + "\n");
+
+    private static Process RunningSession()
+    {
+        var start = new ProcessStartInfo("sh", ["-c", "cat"]) { RedirectStandardInput = true };
+        return Process.Start(start)!;
+    }
+
+    private string SystemctlLog => File.Exists(Path.Combine(Home, "systemctl.log")) ? File.ReadAllText(Path.Combine(Home, "systemctl.log")) : "";
+
+    [Fact]
+    public async Task A_running_session_is_waited_for_and_never_stopped_then_the_install_finishes()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (install, _, _, serverSha) = Fixture();
+        using var session = RunningSession();
+        Session(session.Id);
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var running = install.InstallLatestAsync(Machine, phase =>
+        {
+            if (phase == RemoteReleaseInstall.WaitingWords) waiting.TrySetResult();
+        }, default);
+        await waiting.Task.WaitAsync(TimeSpan.FromSeconds(60));
+
+        Assert.False(session.HasExited);
+        Assert.DoesNotContain(" stop ", SystemctlLog, StringComparison.Ordinal);
+        Assert.DoesNotContain("restart", SystemctlLog, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(Installed, "bin/assembly-remote-server")));
+        Assert.False(running.IsCompleted);
+
+        session.StandardInput.Close();
+        await session.WaitForExitAsync();
+        var receipt = await running.WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.Equal(Version, receipt.Version);
+        Assert.Contains("restart", SystemctlLog, StringComparison.Ordinal);
+        Assert.Equal(serverSha, Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(Installed, "bin/assembly-remote-server")))));
+    }
+
+    [Fact]
+    public async Task Cancelling_the_wait_leaves_the_session_and_the_service_alone()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (install, _, _, _) = Fixture();
+        using var session = RunningSession();
+        Session(session.Id);
+        using var stop = new CancellationTokenSource();
+        var running = install.InstallLatestAsync(Machine, phase =>
+        {
+            if (phase == RemoteReleaseInstall.WaitingWords) stop.Cancel();
+        }, stop.Token);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running.WaitAsync(TimeSpan.FromSeconds(60)));
+        Assert.False(session.HasExited);
+        Assert.DoesNotContain(" stop ", SystemctlLog, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(Installed, "bin/assembly-remote-server")));
+        session.StandardInput.Close();
+        await session.WaitForExitAsync();
+    }
+
+    [Fact]
+    public async Task A_session_that_starts_after_the_wait_sends_it_back_to_waiting_and_is_not_stopped()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (install, _, _, _) = Fixture();
+        using var late = RunningSession();
+        // agents-file.sh runs between the wait and the stop; a session starting then is what this stand-in plays.
+        var real = Run("sh", "-c", "command -v tar");
+        Script("tar", "#!/bin/sh\nprintf '%s\\n' " + late.Id + " >>\"$HOME/cgroup/cgroup.procs\"\nexec " + real + " \"$@\"\n");
+        var waited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var running = install.InstallLatestAsync(Machine, phase =>
+        {
+            if (phase == RemoteReleaseInstall.WaitingWords) waited.TrySetResult();
+        }, default);
+        await waited.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.False(late.HasExited);
+        Assert.DoesNotContain(" stop ", SystemctlLog, StringComparison.Ordinal);
+        late.StandardInput.Close();
+        await late.WaitForExitAsync();
+        await running.WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.Contains("restart", SystemctlLog, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_service_whose_sessions_cannot_be_seen_is_not_stopped()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (install, _, _, _) = Fixture();
+        Directory.Delete(Path.Combine(Home, "cgroup"), recursive: true);
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => install.InstallLatestAsync(Machine, _ => { }, default));
+        Assert.Contains("nothing was stopped", failed.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(" stop ", SystemctlLog, StringComparison.Ordinal);
     }
 }

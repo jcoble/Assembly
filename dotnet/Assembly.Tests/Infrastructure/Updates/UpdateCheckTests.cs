@@ -2,6 +2,7 @@ using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
+using Assembly.Infrastructure.Remote.Install;
 using Assembly.Infrastructure.Socket;
 using Assembly.Infrastructure.Topics;
 using Assembly.Infrastructure.Updates;
@@ -87,10 +88,16 @@ public sealed class UpdateCheckTests
         Assert.Equal(items, status.Items[0].Updates);
     }
 
-    private sealed class FakeSource(Func<Action<string>, CancellationToken, Task> update) : IUpdateSource
+    private sealed class FakeSource(Func<Action<string>, CancellationToken, Task> update, bool starts = false) : IUpdateSource
     {
         public Task<UpdateWanted> WantedAsync(CancellationToken ct) => Task.FromResult(Dev());
-        public Task UpdateAsync(IReadOnlyList<string> remotes, Action<string> progress, CancellationToken ct) => update(progress, ct);
+        public bool StartsRemoteUpdates => starts;
+        public int Automatic;
+        public Task UpdateAsync(IReadOnlyList<MachineBehind> machines, bool automatic, Action<string> progress, CancellationToken ct)
+        {
+            if (automatic) Interlocked.Increment(ref Automatic);
+            return update(progress, ct);
+        }
     }
 
     private static MachineUpdates Updates(IUpdateSource source, MachineStatus status, BackgroundWork work, Action? reload = null) =>
@@ -141,17 +148,30 @@ public sealed class UpdateCheckTests
     {
         var source = UpdateSources.ForHost(new HttpClient(), TimeProvider.System, checkout: "");
         Assert.IsType<ReleaseUpdateSource>(source);
-        var refused = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync(["box"], _ => { }, CancellationToken.None));
+        var refused = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync([new("box", [Item("backend")])], false, _ => { }, CancellationToken.None));
         Assert.Equal("no_release", refused.Reason);
     }
+
+    private static UpdateItem Item(string kind, string name = "x", string wanted = "9.0.0") => new(kind, name, "1.0.0", wanted, UpdateItem.Behind);
 
     private sealed class FakeRelease : IReleaseInstall
     {
         public List<string> Installed { get; } = [];
+        public List<(string? Machine, ToolsBehind Tools)> Tools { get; } = [];
+        public PublishedVersions Published { get; set; } = new(null, null, null);
+        public int Reads { get; private set; }
+        public string? FailOn { get; init; }
+        public Task<PublishedVersions> PublishedAsync(CancellationToken ct) { Reads++; return Task.FromResult(Published); }
         public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct)
         {
+            if (machine == FailOn) throw new CallFailed($"{machine} is unreachable.");
             Installed.Add(machine);
             progress("Downloading.");
+            return Task.CompletedTask;
+        }
+        public Task UpdateToolsAsync(string? machine, ToolsBehind tools, Action<string> progress, CancellationToken ct)
+        {
+            Tools.Add((machine, tools));
             return Task.CompletedTask;
         }
     }
@@ -162,14 +182,14 @@ public sealed class UpdateCheckTests
     }
 
     [Fact]
-    public async Task A_release_install_runs_on_every_remote_and_a_delivered_app_compares_the_same_number()
+    public async Task A_release_install_runs_on_each_remote_behind_and_a_delivered_app_compares_the_same_number()
     {
         var release = new FakeRelease();
         var source = UpdateSources.ForHost(new HttpClient(new NoNetwork()), TimeProvider.System, release, "");
         var notes = new List<string>();
-        await source.UpdateAsync(["box", "other"], notes.Add, CancellationToken.None);
+        await source.UpdateAsync([new("box", [Item("backend")]), new("other", [Item("backend")])], false, notes.Add, CancellationToken.None);
         Assert.Equal(["box", "other"], release.Installed);
-        Assert.Equal(["Downloading.", "Downloading."], notes);
+        Assert.Equal(["box: Downloading.", "other: Downloading."], notes);
         var wanted = await source.WantedAsync(CancellationToken.None);
         Assert.Equal(BackendBuild.Version, wanted.Backend);
         Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { Version = "0.0.0-other" }, null, wanted)));
@@ -190,10 +210,155 @@ public sealed class UpdateCheckTests
                 """);
             var notes = new List<string>();
             var source = UpdateSources.ForHost(new HttpClient(), TimeProvider.System, checkout: root);
-            var failed = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync([], notes.Add, CancellationToken.None));
+            var failed = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync([], false, notes.Add, CancellationToken.None));
             Assert.Equal(["Waiting."], notes);
             Assert.Equal("Workbox Test sync: nope", failed.Message);
         }
         finally { Directory.Delete(root, true); }
+    }
+
+    private static ReleaseUpdateSource Delivered(FakeRelease release, TimeProvider? time = null) =>
+        new(new CliReleaseSource(new HttpClient(new NoNetwork()), TimeProvider.System), release, time ?? TimeProvider.System);
+
+    [Fact]
+    public async Task The_button_updates_only_what_is_behind_and_a_current_backend_stays()
+    {
+        var release = new FakeRelease();
+        await Delivered(release).UpdateAsync(
+        [
+            new(null, [Item("adapter", "codex-acp"), Item("cli", "codex", "4.0.0")]),
+            new("tools-only", [Item("adapter", "codex-acp")]),
+            new("cli-only", [Item("cli", "claude", "5.0.0")]),
+            new("backend", [Item("backend"), Item("adapter", "codex-acp"), Item("cli", "claude", "5.0.0")]),
+            new("current", []),
+        ], false, _ => { }, default);
+        Assert.Equal(["backend"], release.Installed);
+        Assert.Equal([null, "tools-only", "cli-only", "backend"], release.Tools.Select(tool => tool.Machine));
+        Assert.True(release.Tools[0].Tools.Adapters);
+        Assert.Equal([new CliBehind("codex", "4.0.0")], release.Tools[0].Tools.Clis);
+        Assert.Equal([], release.Tools[1].Tools.Clis);
+        Assert.False(release.Tools[2].Tools.Adapters);
+        // The backend's install brought its adapters, so only its CLI is left.
+        Assert.False(release.Tools[3].Tools.Adapters);
+        Assert.Equal([new CliBehind("claude", "5.0.0")], release.Tools[3].Tools.Clis);
+    }
+
+    [Fact]
+    public async Task One_machine_failing_does_not_hold_up_the_rest_and_the_failure_is_said()
+    {
+        var release = new FakeRelease { FailOn = "down" };
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => Delivered(release).UpdateAsync([new("down", [Item("backend")]), new("up", [Item("backend")])], false, _ => { }, default));
+        Assert.Equal(["up"], release.Installed);
+        Assert.Contains("down is unreachable.", failed.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_button_says_it_cannot_install_the_app_and_never_claims_it_did()
+    {
+        var release = new FakeRelease();
+        MachineBehind[] behind = [new(null, [Item("desktop", "Desktop", "0.3.0")])];
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => Delivered(release).UpdateAsync(behind, false, _ => { }, default));
+        Assert.Contains("Assembly 0.3.0", failed.Message, StringComparison.Ordinal);
+        // By itself it stays quiet about that, since nobody asked.
+        await Delivered(release).UpdateAsync(behind, true, _ => { }, default);
+    }
+
+    [Fact]
+    public async Task The_check_takes_the_app_and_adapters_from_the_release_and_a_newer_remote_is_not_behind()
+    {
+        var release = new FakeRelease { Published = new("9.9.9", new Dictionary<string, string> { ["codex-acp"] = "7.0.0" }, "packed") };
+        var wanted = await Delivered(release).WantedAsync(default);
+        Assert.Equal("9.9.9", wanted.App);
+        Assert.Equal("7.0.0", wanted.Adapters["codex-acp"]);
+        Assert.Null(wanted.Adapters["claude-agent-acp"]);
+        Assert.Equal("packed", wanted.Packaging);
+        Assert.Equal(["desktop"], Behind(UpdateCheck.Local("1.0.0", null, wanted)));
+        Assert.Equal(["adapter"], Behind(UpdateCheck.Remote(null, new(new Dictionary<string, string> { ["codex-acp"] = "6.0.0", ["claude-agent-acp"] = "6.0.0" }, "packed", []), wanted)));
+
+        var mine = wanted with { Backend = "1.0.0" };
+        Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { Version = "0.9.0" }, null, mine)));
+        Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { Version = null }, null, mine)));
+        Assert.Empty(Behind(UpdateCheck.Remote(Same with { Version = "1.1.0" }, null, mine)));
+        // A checkout builds whichever number it has, so there either way is different.
+        Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { Version = "1.1.0" }, Tools(), Dev())));
+    }
+
+    [Fact]
+    public async Task Nothing_published_or_readable_is_unknown_and_never_behind()
+    {
+        var wanted = await Delivered(new FakeRelease()).WantedAsync(default);
+        Assert.Null(wanted.App);
+        Assert.All(wanted.Adapters.Values, Assert.Null);
+        var installed = new InstalledTools(new Dictionary<string, string> { ["codex-acp"] = "1.0.0", ["claude-agent-acp"] = "1.0.0" }, "any", []);
+        Assert.Empty(Behind(UpdateCheck.Local("1.0.0", installed, wanted)));
+    }
+
+    [Fact]
+    public async Task The_published_versions_are_read_once_within_a_while()
+    {
+        var release = new FakeRelease { Published = new("9.9.9", null, null) };
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        var source = Delivered(release, clock);
+        await source.WantedAsync(default);
+        await source.WantedAsync(default);
+        Assert.Equal(1, release.Reads);
+        clock.Advance(TimeSpan.FromMinutes(11));
+        await source.WantedAsync(default);
+        Assert.Equal(2, release.Reads);
+    }
+
+    private sealed class Welcome(string version)
+    {
+        internal readonly MachineStatus Status = new(new Topics(), ["box"]);
+        internal void Say() => Status.Backend("box", new("a", "a", false, version, "1.0.0"));
+    }
+
+    [Fact]
+    public async Task A_remote_on_another_version_starts_the_update_at_its_hello_with_no_button()
+    {
+        var welcome = new Welcome("0.0.1-old");
+        await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
+        var source = new FakeSource((_, _) => Task.CompletedTask, starts: true);
+        var updates = Updates(source, welcome.Status, work);
+        updates.Begin();
+        welcome.Say();
+        await Until(() => source.Automatic == 1);
+    }
+
+    [Fact]
+    public async Task A_failing_update_by_itself_is_not_tried_over_and_over_and_the_button_still_works()
+    {
+        var welcome = new Welcome("0.0.1-old");
+        await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
+        var attempts = 0;
+        var source = new FakeSource((_, _) => { attempts++; throw new CallFailed("no release"); }, starts: true);
+        var updates = Updates(source, welcome.Status, work);
+        await updates.CheckAsync("box", default);
+        Assert.Equal(UpdateItem.Unknown, welcome.Status.Items[1].Updates![0].State);
+        welcome.Status.Welcomed = null;
+        welcome.Say();
+        await updates.CheckAsync("box", default);
+        await Until(() => welcome.Status.Items[1].UpdateNote == "Update failed: no release" && !welcome.Status.Items[1].Updating);
+        // The failed update's own recheck and every later hello come back behind, and start nothing more.
+        await updates.CheckAsync("box", default);
+        await updates.CheckAsync("box", default);
+        Assert.Equal(1, attempts);
+        Assert.True(updates.Start());
+        await Until(() => attempts == 2);
+    }
+
+    [Fact]
+    public async Task A_checkout_leaves_the_launch_update_to_app_dev()
+    {
+        var welcome = new Welcome("0.0.1-old");
+        await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
+        var source = new FakeSource((_, _) => Task.CompletedTask);
+        var updates = Updates(source, welcome.Status, work);
+        welcome.Status.Welcomed = null;
+        welcome.Say();
+        await updates.CheckAsync("box", default);
+        Assert.Equal(UpdateItem.Behind, welcome.Status.Items[1].Updates![0].State);
+        Assert.Equal(0, source.Automatic);
+        Assert.False(welcome.Status.Items[1].Updating);
     }
 }

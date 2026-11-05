@@ -8,11 +8,14 @@ namespace Assembly.Infrastructure.Updates;
 /// <summary>
 /// Owns the one check and the one update. The check runs when this app starts, each time a remote says hello, and after an
 /// update; there's no timer. Results go out on the machines topic. A failure to read shows as unknown, never as behind.
+/// A remote on another version starts the update by itself, once per run of the app so a failure can't repeat forever; the
+/// button can always try again.
 /// </summary>
 internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status, InstalledCalls local,
     Func<string, CancellationToken, Task<InstalledTools?>> remote, Action? reload, BackgroundWork work, TextWriter log) : IFeature
 {
     private int _updating;
+    private readonly HashSet<string> _started = [];
 
     public void Register(ICallRegistry calls) => calls.Read("updates", "start", UpdatesJson.Default.InstalledArgs, UpdatesJson.Default.UpdateStarted, (_, call) =>
     {
@@ -44,9 +47,20 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     internal async Task CheckAsync(string? machine, CancellationToken stop)
     {
         var wanted = await source.WantedAsync(stop);
-        if (machine is null) status.Updates(null, UpdateCheck.Local(BackendBuild.Version, await TryRead(async () => await local.ReadAsync(stop)), wanted));
-        else status.Updates(machine, UpdateCheck.Remote(status.Items.FirstOrDefault(item => item.Name == machine)?.Backend,
-            await TryRead(() => remote(machine, stop)), wanted));
+        if (machine is null) { status.Updates(null, UpdateCheck.Local(BackendBuild.Version, await TryRead(async () => await local.ReadAsync(stop)), wanted)); return; }
+        var items = UpdateCheck.Remote(status.Items.FirstOrDefault(item => item.Name == machine)?.Backend, await TryRead(() => remote(machine, stop)), wanted);
+        status.Updates(machine, items);
+        if (source.StartsRemoteUpdates && items.Any(item => item.Kind == "backend" && item.State == UpdateItem.Behind)) StartBy(machine);
+    }
+
+    // A check that arrives during an update starts nothing: the end of that update checks every machine again.
+    private void StartBy(string machine)
+    {
+        lock (_started)
+        {
+            if (_started.Contains(machine) || !Begin(automatic: true)) return;
+            _started.Add(machine);
+        }
     }
 
     private async Task<InstalledTools?> TryRead(Func<Task<InstalledTools?>> read)
@@ -57,14 +71,16 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     }
 
     /// <summary>False when an update is already running: it's the same one, so the button joins it.</summary>
-    internal bool Start()
+    internal bool Start() => Begin(automatic: false);
+
+    private bool Begin(bool automatic)
     {
         if (Interlocked.CompareExchange(ref _updating, 1, 0) != 0) return false;
-        work.Start("update", RunAsync);
+        work.Start("update", stop => RunAsync(automatic, stop));
         return true;
     }
 
-    private async Task RunAsync(CancellationToken stop)
+    private async Task RunAsync(bool automatic, CancellationToken stop)
     {
         var machines = status.Items.Select(item => item.Name).ToArray();
         void Show(bool updating, string? note) { foreach (var machine in machines) status.Updating(machine, updating, note); }
@@ -72,7 +88,8 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         try
         {
             Show(true, null);
-            await source.UpdateAsync([.. machines.OfType<string>()], note => Show(true, note), stop);
+            MachineBehind[] behind = [.. status.Items.Select(item => new MachineBehind(item.Name, [.. (item.Updates ?? []).Where(update => update.State == UpdateItem.Behind)]))];
+            await source.UpdateAsync(behind, automatic, note => Show(true, note), stop);
         }
         catch (CallFailed error) { ending = "Update failed: " + error.Message; }
         catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }

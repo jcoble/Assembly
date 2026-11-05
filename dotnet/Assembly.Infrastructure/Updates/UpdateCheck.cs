@@ -5,9 +5,11 @@ namespace Assembly.Infrastructure.Updates;
 /// <summary>
 /// What each piece should be, from an <see cref="IUpdateSource"/>. A null value is unknown: the check says so and never
 /// calls it behind. <paramref name="Backend"/> is the one version number a remote's backend must be on.
+/// <paramref name="NeverOlder"/> is a release's rule: a remote newer than this app means the app is what's behind, and
+/// putting an older build on a database a newer one may have migrated isn't safe. A checkout builds whichever number it has.
 /// </summary>
 internal sealed record UpdateWanted(string? App, string? Backend,
-    IReadOnlyDictionary<string, string?> Adapters, string? Packaging, IReadOnlyDictionary<string, string?> Clis);
+    IReadOnlyDictionary<string, string?> Adapters, string? Packaging, IReadOnlyDictionary<string, string?> Clis, bool NeverOlder = false);
 
 /// <summary>The one check, the same in development and in production: only its wanted values differ.</summary>
 internal static class UpdateCheck
@@ -17,9 +19,15 @@ internal static class UpdateCheck
          .. Tools(installed, wanted)];
 
     internal static IReadOnlyList<UpdateItem> Remote(RemoteBackend? backend, InstalledTools? installed, UpdateWanted wanted) =>
-        [new("backend", "Backend", backend?.Version, wanted.Backend,
-             backend is null ? UpdateItem.Unknown : backend.Version != wanted.Backend ? UpdateItem.Behind : UpdateItem.UpToDate),
-         .. Tools(installed, wanted)];
+        [Backend(backend, wanted), .. Tools(installed, wanted)];
+
+    private static UpdateItem Backend(RemoteBackend? backend, UpdateWanted wanted)
+    {
+        if (wanted.NeverOlder && backend?.Version is { } have && wanted.Backend is { } want && CliVersion.Compare(have, want) == "ahead")
+            return new("backend", "Backend", have, null, UpdateItem.Unknown);
+        return new("backend", "Backend", backend?.Version, wanted.Backend,
+            backend is null ? UpdateItem.Unknown : backend.Version != wanted.Backend ? UpdateItem.Behind : UpdateItem.UpToDate);
+    }
 
     private static IEnumerable<UpdateItem> Tools(InstalledTools? installed, UpdateWanted wanted)
     {

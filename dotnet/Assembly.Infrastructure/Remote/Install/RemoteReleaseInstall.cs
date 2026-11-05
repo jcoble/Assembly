@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
+using Assembly.Infrastructure.Updates;
 
 namespace Assembly.Infrastructure.Remote.Install;
 
@@ -11,13 +12,54 @@ internal sealed record RemoteReleaseReceipt(string Version, string Commit);
 /// Installs the latest signed backend on a saved machine. The desktop verifies the signed record; the remote downloads
 /// the archive and the adapters straight from GitHub, checks them, then installs, starts and is read back.
 /// </summary>
-internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, RemoteReleaseShell shell, TimeProvider time)
+internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, RemoteReleaseShell shell, TimeProvider time, string? version = null)
 {
+    /// <summary>Puts the signed backend, and the adapters that go with it, on the machine.</summary>
     internal async Task<RemoteReleaseReceipt> InstallLatestAsync(SavedMachine machine, Action<string> phase, CancellationToken ct)
     {
+        Inspected? inspected = null;
+        string? serverSha = null;
+        await WithPackageAsync(machine, phase, async (release, target, quoted, package) =>
+        {
+            inspected = package;
+            await WhenIdleAsync(target, quoted, phase, () =>
+            {
+                phase("Installing and starting the backend…");
+                return shell.RunAsync(target, $"set -eu; cd {quoted}; sh install.sh {Arguments(machine, release)}", null, ct);
+            }, ct);
+            phase("Verifying the service, database, and loopback listener…");
+            serverSha = await shell.RunAsync(target, ReceiptCommand(machine.Port), null, ct);
+        }, ct);
+        if (serverSha != inspected!.ServerSha256) throw new CallFailed("Installed backend checksum does not match the signed package.", "install_mismatch");
+        return new(inspected.Version, inspected.Commit);
+    }
+
+    /// <summary>
+    /// Updates what's behind on a machine whose backend is current, and leaves that backend's files alone. A new adapter
+    /// needs the running host to restart; a CLI doesn't, since each session starts its own.
+    /// </summary>
+    internal Task UpdateToolsAsync(SavedMachine machine, ToolsBehind tools, Action<string> phase, CancellationToken ct) =>
+        WithPackageAsync(machine, phase, (release, target, quoted, _) => WhenIdleAsync(target, quoted, phase, async () =>
+        {
+            foreach (var cli in tools.Clis)
+            {
+                phase($"Updating {cli.Family}…");
+                await ReleaseCliUpdate.RunAsync(shell, target, cli, "\"$HOME/assembly-dotnet/serve/agents.json\"", ct);
+            }
+            if (!tools.Adapters) return;
+            phase("Installing adapters and restarting the backend…");
+            await shell.RunAsync(target, $"set -eu; cd {quoted}; sh install.sh --adapters {Arguments(machine, release)}", null, ct);
+        }, ct), ct);
+
+    private static string Arguments(SavedMachine machine, VerifiedRemoteRelease release) =>
+        $"{machine.Port.ToString(CultureInfo.InvariantCulture)} {Quote(machine.TokenFile)} {Quote(release.Adapters.Tag)} {Quote(release.Adapters.ManifestSha256)}";
+
+    // Everything that needs the signed package on the machine: the installer comes in it. The stage goes with the call.
+    private async Task WithPackageAsync(SavedMachine machine, Action<string> phase, Func<VerifiedRemoteRelease, string, string, Inspected, Task> act, CancellationToken ct)
+    {
         Validate(machine);
-        phase("Finding the latest signed backend…");
-        var release = await feed.LatestAsync(ct);
+        phase("Finding the signed release…");
+        var release = await (version is null ? feed.LatestAsync(ct) : feed.ForVersionAsync(version, ct));
         var target = machine.Ssh;
 
         phase("Checking the remote operating system and download tools…");
@@ -34,13 +76,7 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
         {
             await shell.RunAsync(target, $"install -d -m 700 {quoted}", null, ct);
             phase("Downloading backend on the remote machine…");
-            var inspected = await ReceiveAsync(target, stage, release, ct);
-            phase("Installing and starting the backend…");
-            await shell.RunAsync(target, $"set -eu; cd {quoted}; sh install.sh {machine.Port.ToString(CultureInfo.InvariantCulture)} {Quote(machine.TokenFile)} {Quote(release.Adapters.Tag)} {Quote(release.Adapters.ManifestSha256)}", null, ct);
-            phase("Verifying the service, database, and loopback listener…");
-            var receipt = await shell.RunAsync(target, ReceiptCommand(machine.Port), null, ct);
-            if (receipt != inspected.ServerSha256) throw new CallFailed("Installed backend checksum does not match the signed package.", "install_mismatch");
-            return new(inspected.Version, inspected.Commit);
+            await act(release, target, quoted, await ReceiveAsync(target, stage, release, ct));
         }
         finally
         {
@@ -48,6 +84,21 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
             await shell.RunAsync(target, CleanupCommand(stage), null, cleanup.Token);
         }
     }
+
+    // Waits on the machine for running sessions to end, then acts. Nothing here stops one: install.sh checks again directly
+    // before it stops anything and refuses, which comes back here to wait again. A cancelled wait leaves a waiter on the
+    // machine that only ever waits, and ends with the sessions or when the stage is cleaned up.
+    private async Task WhenIdleAsync(string target, string quotedStage, Action<string> phase, Func<Task> act, CancellationToken ct)
+    {
+        for (; ; )
+        {
+            await shell.RunAsync(target, $"set -eu; cd {quotedStage}; sh install.sh --wait-idle", _ => phase(WaitingWords), ct);
+            try { await act(); return; }
+            catch (CallFailed busy) when (busy.Reason == "remote_busy") { phase(WaitingWords); }
+        }
+    }
+
+    internal const string WaitingWords = "Waiting for running sessions to finish…";
 
     private sealed record Inspected(string Version, string Commit, string ServerSha256);
 
@@ -79,7 +130,7 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
         return inspected ?? throw new CallFailed("Remote backend download finished without verification.", "release_invalid");
     }
 
-    private const string RequireToolsCommand = "set -eu; PATH=$HOME/.local/bin:$PATH; for tool in python3 sha256sum systemctl install ss awk grep bash curl tar node; do command -v \"$tool\" >/dev/null || { echo \"Missing remote install tool: $tool\" >&2; exit 1; }; done; python3 -c 'import ssl, tarfile, urllib.request, sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' || { echo 'Remote install requires Python 3.9 or newer with SSL support' >&2; exit 1; }";
+    private const string RequireToolsCommand = "set -eu; PATH=$HOME/.local/bin:$PATH; for tool in python3 sha256sum systemctl install ss awk grep bash curl tar node pidwait; do command -v \"$tool\" >/dev/null || { echo \"Missing remote install tool: $tool\" >&2; exit 1; }; done; python3 -c 'import ssl, tarfile, urllib.request, sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' || { echo 'Remote install requires Python 3.11 or newer with SSL support' >&2; exit 1; }";
 
     private static string ReceiptCommand(int port)
     {

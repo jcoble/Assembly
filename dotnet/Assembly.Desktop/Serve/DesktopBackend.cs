@@ -341,8 +341,9 @@ public sealed class DesktopBackend : IAsyncDisposable
             // Follows GitHub's redirect to the release asset, which the shared client deliberately doesn't.
             releaseHttp = new HttpClient(new SocketsHttpHandler { UseCookies = false });
             var releaseFeed = new RemoteReleaseFeed(releaseHttp);
-            remoteReleases = new RemoteReleaseJobs(new RemoteReleaseInstall(releaseFeed, new RemoteReleaseShell(), TimeProvider.System), work, topics,
-                connections.SavedProfile, (name, ct) => connections.ConnectionAsync(name, true, ct));
+            remoteReleases = new RemoteReleaseJobs(new RemoteReleaseInstall(releaseFeed, new RemoteReleaseShell(), TimeProvider.System, Assembly.Infrastructure.Socket.BackendBuild.Version), work, topics,
+                connections.SavedProfile, (name, ct) => connections.ConnectionAsync(name, true, ct), releaseFeed,
+                agentsFile is null ? null : new LocalReleaseTools(releaseFeed, new ThisMachineShell(), agentsFile.Path, Path.Combine(home, "adapters"), () => activity.Held));
             connections.Start(savedRemote ?? (remote is null ? null : new SavedMachine(remote.Name, remote.Name)));
             // Direct test endpoints use the same owner; their callers historically expect routing ready on return.
             var startupName = savedRemote?.Name ?? remote?.Name;

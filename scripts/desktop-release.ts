@@ -60,6 +60,9 @@ export function writeDesktopPackage(input: PackageInput): string {
     copyFileSync(input.backendBinary, program);
     chmodSync(program, 0o755);
     writeFileSync(path.join(backend, 'packaged.json'), `${JSON.stringify(PACKAGED_CONFIG, null, 2)}\n`);
+    // The one adapter installer, which a remote runs from its release package too. The backend finds it beside itself.
+    copyFileSync(path.join(source, 'dotnet/scripts/agents-file.sh'), path.join(backend, 'agents-file.sh'));
+    chmodSync(path.join(backend, 'agents-file.sh'), 0o755);
     // The nested program first: signing the bundle seals what's inside it.
     for (const target of [program, app]) execFileSync('codesign', ['--force', '--timestamp=none', '--sign', input.identity, target]);
     mkdirSync(input.outputDirectory, { recursive: true });

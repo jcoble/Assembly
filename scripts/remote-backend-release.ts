@@ -36,24 +36,69 @@ export type RemoteBackendPackageInput = {
 
 // $1 is the saved machine's port and $2 its token file under the remote's home: what a connection reads.
 // $3 and $4 are the adapter release and the manifest hash the desktop verified against the pinned key.
+// --wait-idle only waits for running sessions to end; after it, the final check before the stop exits 75 when one started
+// anyway. --adapters installs adapters and restarts the same backend, for when only they are behind.
 export const REMOTE_BACKEND_INSTALL_SCRIPT = `#!/bin/sh
 set -eu
 
-port=$1
-case "$2" in /*) token_file=$2 ;; *) token_file=$HOME/$2 ;; esac
 root=$HOME/assembly-dotnet
 PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 export PATH
+mode=install
+
+# Everything in the service's control group besides the host is a running session: an adapter, its CLI, a terminal.
+running() {
+  [ "$(systemctl --user is-active assembly-dotnet.service || true)" = active ] || return 0
+  main=$(systemctl --user show assembly-dotnet.service -p MainPID --value)
+  group=$(systemctl --user show assembly-dotnet.service -p ControlGroup --value)
+  if [ -z "$group" ] || [ ! -d "/sys/fs/cgroup$group" ]; then
+    echo "Can't tell whether sessions are running on this machine, so nothing was stopped" >&2
+    exit 1
+  fi
+  find "/sys/fs/cgroup$group" -name cgroup.procs -exec cat {} + | while read -r pid; do
+    [ "$pid" = "$main" ] || [ ! -d "/proc/$pid" ] || echo "$pid"
+  done
+}
+
+case "\${1:-}" in
+  --wait-idle)
+    said=
+    while :; do
+      pids=$(running)
+      [ -n "$pids" ] || exit 0
+      [ -n "$said" ] || { echo waiting; said=1; }
+      # pidwait takes process exit events and reads the file's first ID; the next pass catches any others.
+      file=$(mktemp ./.idle.XXXXXX)
+      printf '%s\\n' "$pids" >"$file"
+      pidwait -F "$file" || [ "$?" -eq 1 ]
+      rm -f "$file"
+    done ;;
+  --adapters) mode=adapters; shift ;;
+esac
+
+port=$1
+case "$2" in /*) token_file=$2 ;; *) token_file=$HOME/$2 ;; esac
 
 [ "$(uname -s)" = "Linux" ] || { echo "Assembly remote backend requires Linux" >&2; exit 1; }
 [ "$(uname -m)" = "x86_64" ] || { echo "Unsupported Linux architecture: $(uname -m)" >&2; exit 1; }
-for command in sha256sum systemctl install ss awk bash curl tar python3 node; do
+for command in sha256sum systemctl install ss awk bash curl tar python3 node pidwait; do
   command -v "$command" >/dev/null 2>&1 || { echo "Required command is missing: $command" >&2; exit 1; }
 done
+
+# Directly before anything stops: a session that started during the steps above sends the install back to waiting.
+refuse_if_running() {
+  pids=$(running)
+  if [ -n "$pids" ]; then
+    echo "A session started on this machine, so nothing was stopped" >&2
+    exit 75
+  fi
+}
 
 sha256sum -c SHA256SUMS
 install -d "$root/bin" "$root/serve" "$HOME/.config/systemd/user"
 ASSEMBLY_ADAPTER_TAG=$3 ASSEMBLY_ADAPTER_MANIFEST_SHA256=$4 bash payload/dotnet/scripts/agents-file.sh "$root/adapters" "$root/serve/agents.json"
+refuse_if_running
+if [ "$mode" = install ]; then
 systemctl --user stop assembly-dotnet.service >/dev/null 2>&1 || true
 install -m 755 payload/assembly-remote-server "$root/bin/.assembly-remote-server.new"
 mv "$root/bin/.assembly-remote-server.new" "$root/bin/assembly-remote-server"
@@ -79,6 +124,7 @@ EOF
 mv "$HOME/.config/systemd/user/.assembly-dotnet.service.new" "$HOME/.config/systemd/user/assembly-dotnet.service"
 systemctl --user daemon-reload
 systemctl --user enable assembly-dotnet.service
+fi
 systemctl --user restart assembly-dotnet.service
 
 # The first start after an update can migrate stored data, so wait while the service is still
@@ -97,8 +143,10 @@ while :; do
   if [ "$state" = active ] \\
     && [ -n "$listeners" ] \\
     && printf '%s\\n' "$listeners" | awk -v want="127.0.0.1:$port" '$4 != want { exit 1 } END { if (NR == 0) exit 1 }'; then
-    install -m 644 manifest.json "$root/serve/.backend-manifest.new"
-    mv "$root/serve/.backend-manifest.new" "$root/serve/backend-manifest.json"
+    if [ "$mode" = install ]; then
+      install -m 644 manifest.json "$root/serve/.backend-manifest.new"
+      mv "$root/serve/.backend-manifest.new" "$root/serve/backend-manifest.json"
+    fi
     exit 0
   fi
   [ "$waited" -lt 120 ] || break
