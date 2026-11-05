@@ -123,13 +123,8 @@ pub(super) fn parse(
             );
         }
     }
-    let files: HashSet<_> = snapshot
-        .get("files")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|file| file.get("path").and_then(Value::as_str))
-        .collect();
+    // A session file's identity is under this checkout; an outside file's, under its own engine and real parent.
+    let files = crate::features::files::file_view::FileView::saved_identities(snapshot, key);
     let mut order = HashSet::new();
     for tab in &tabs.order {
         if !order.insert(tab.as_str()) {
@@ -147,11 +142,7 @@ pub(super) fn parse(
             "document:{}",
             serde_json::to_string(&(&machine, &root, &path)).expect("file document identity")
         );
-        if &actual != tab
-            || machine != key.machine
-            || root != key.checkout_root
-            || !files.contains(path.as_str())
-        {
+        if &actual != tab || !files.contains(tab) {
             return Err("A saved tab refers to a file outside the sole Files snapshot or a noncanonical alias.".into());
         }
     }

@@ -47,7 +47,9 @@ fn clean_limit_keeps_the_active_and_most_recent_in_original_tab_order() {
                 base_revision: None,
                 draft: None,
                 view_state: None,
+                outside: None,
             },
+            identity: format!("document:{index}"),
             active: index == 0,
             recent: index,
         })
@@ -90,19 +92,25 @@ fn dirty_buffers_are_kept_when_the_clean_tab_limit_is_reached() {
                 base_revision: Some("base".into()),
                 draft: (index < 3).then(|| "λ\r\n".into()),
                 view_state: None,
+                outside: None,
             },
+            identity: format!("document:{index}"),
             active: index == 19,
             recent: index,
         })
         .collect();
     let snapshot = select(
         candidates,
-        vec![Entry {
-            path: "hidden-dirty".into(),
-            base_revision: Some("base".into()),
-            draft: Some("hidden text".into()),
-            view_state: None,
-        }],
+        vec![(
+            Entry {
+                path: "hidden-dirty".into(),
+                base_revision: Some("base".into()),
+                draft: Some("hidden text".into()),
+                view_state: None,
+                outside: None,
+            },
+            "document:hidden-dirty".into(),
+        )],
     );
     assert_eq!(
         snapshot
@@ -132,7 +140,9 @@ fn clean_retention_keys_match_serialized_file_order_without_copying_draft_text()
                 base_revision: Some("base".into()),
                 draft: (index < 2).then(|| "actual large draft".into()),
                 view_state: None,
+                outside: None,
             },
+            identity: format!("document:{index}"),
             active: index == 2,
             recent: index,
         })

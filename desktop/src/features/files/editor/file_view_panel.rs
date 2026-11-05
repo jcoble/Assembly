@@ -7,7 +7,6 @@ use gpui_kit::component::input::Editor;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::json;
 
 impl EventEmitter<PanelEvent> for FileView {}
 
@@ -79,7 +78,7 @@ impl BasePanel for FileView {
         PanelState {
             panel_name: FILE.into(),
             children: Vec::new(),
-            info: PanelInfo::panel(json!({ "session": self.session, "path": self.path })),
+            info: PanelInfo::panel(self.saved_info()),
         }
     }
 }

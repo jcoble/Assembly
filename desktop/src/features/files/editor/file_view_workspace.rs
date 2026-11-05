@@ -19,6 +19,9 @@ pub(crate) struct WorkspaceTab {
     pub active: bool,
     pub recent: u64,
     pub view: DocumentView,
+    /// The draft key it's saved under in the workspace.
+    pub document: DocumentKey,
+    pub outside: Option<super::super::file_codec::SavedOutside>,
 }
 #[derive(Default)]
 struct Activity(u64);
@@ -40,11 +43,12 @@ impl FileView {
             .cloned()
     }
 
-    pub(crate) fn layout_ref(&self) -> (&str, &str) {
-        (&self.session, &self.path)
+    /// The tab key the dock's saved layout knows this pane by.
+    pub(crate) fn layout_ref(&self) -> String {
+        self.tab_key()
     }
     pub(crate) fn restored_workspace_path(&self, key: &WorkspaceKey) -> Option<&str> {
-        (self.owning_workspace().as_ref() == Some(key)
+        (self.outside.is_none() && self.owning_workspace().as_ref() == Some(key)
             || self.expected_workspace.as_ref() == Some(key))
         .then_some(self.path.as_str())
     }
@@ -58,11 +62,41 @@ impl FileView {
         self.restored_workspace_path(key)
             .ok_or_else(|| "A file tab has no confirmed owning workspace identity.".to_string())
     }
-    pub(crate) fn captured_workspace_paths(
+    /// The document identity this tab is ordered under in `key`'s workspace; `None` when it isn't saved there.
+    pub(crate) fn workspace_identity(&self, key: &WorkspaceKey) -> Result<Option<String>, String> {
+        if self.outside.is_some() {
+            if !self.rename_ready() {
+                return Err(
+                    "Finish the current file operation before capturing its center tab.".into(),
+                );
+            }
+            return Ok(self
+                .outside_document_in(key)
+                .map(|document| document.identity()));
+        }
+        let path = self.workspace_path(key)?;
+        Ok(Some(workspace_document(key, path).identity()))
+    }
+    /// The identity a restored tab answers to in `key`'s workspace.
+    pub(crate) fn restored_identity(&self, key: &WorkspaceKey) -> Option<String> {
+        match &self.outside {
+            Some(_) => self.outside_document_in(key),
+            None => Some(workspace_document(key, self.restored_workspace_path(key)?)),
+        }
+        .map(|document| document.identity())
+    }
+    pub(crate) fn captured_workspace_identities(
         key: &WorkspaceKey,
         cx: &App,
     ) -> std::collections::HashSet<String> {
-        super::super::file_codec::captured_paths(key, cx)
+        super::super::file_codec::captured_identities(key, cx)
+    }
+    /// The document identities a saved Files snapshot lists for `key`'s workspace.
+    pub(crate) fn saved_identities(
+        snapshot: &serde_json::Value,
+        key: &WorkspaceKey,
+    ) -> std::collections::HashSet<String> {
+        super::super::file_codec::saved_identities(snapshot, key)
     }
     pub(super) fn activated_for_workspace(&mut self, cx: &mut App) {
         if !cx.has_global::<Activity>() {
@@ -73,6 +107,20 @@ impl FileView {
         self.last_active = activity.0;
     }
     pub(crate) fn workspace_tab(&self, key: &WorkspaceKey, cx: &App) -> Option<WorkspaceTab> {
+        if let Some(outside) = &self.outside {
+            let document = self.outside_document_in(key)?;
+            return Some(WorkspaceTab {
+                path: self.path.clone(),
+                active: self.active,
+                recent: self.last_active,
+                view: self.current_document_view(cx),
+                outside: Some(super::super::file_codec::SavedOutside {
+                    machine: outside.file.machine.clone(),
+                    engine: document.machine.clone(),
+                }),
+                document,
+            });
+        }
         let matches = self.owning_workspace().as_ref() == Some(key)
             || self.document.as_ref().is_some_and(|document| {
                 document.machine == key.machine && document.checkout_root == key.checkout_root
@@ -86,10 +134,12 @@ impl FileView {
         }
         let view = self.current_document_view(cx);
         Some(WorkspaceTab {
+            document: workspace_document(key, &self.path),
             path: self.path.clone(),
             active: self.active,
             recent: self.last_active,
             view,
+            outside: None,
         })
     }
     fn current_document_view(&self, cx: &App) -> DocumentView {
@@ -235,5 +285,14 @@ impl FileView {
                 cx,
             );
         }
+    }
+}
+
+/// The draft key of the session file at `path` in `key`'s checkout.
+fn workspace_document(key: &WorkspaceKey, path: &str) -> DocumentKey {
+    DocumentKey {
+        machine: key.machine.clone(),
+        checkout_root: key.checkout_root.clone(),
+        path: path.into(),
     }
 }

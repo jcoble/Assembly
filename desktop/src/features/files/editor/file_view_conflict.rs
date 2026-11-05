@@ -18,8 +18,13 @@ impl FileView {
             return;
         };
         self.comparison = None;
-        let begin = socket.read(cx).call::<Begun>("files", "beginSave", json!({ "session": self.session,
-            "path": self.path, "expectedRevision": snapshot.base_revision, "size": snapshot.text.len(), "expectedSource": self.source, "expectedOwner": self.owner }), None);
+        let begin = socket.read(cx).call::<Begun>(
+            "files",
+            "beginSave",
+            self.file_args(json!({
+            "expectedRevision": snapshot.base_revision, "size": snapshot.text.len() })),
+            None,
+        );
         self.saving = Some(cx.spawn(async move |view, cx| {
             let upload =
                 match upload_draft(&view, cx, &socket, begin, snapshot.text.as_bytes()).await {

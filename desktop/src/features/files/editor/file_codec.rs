@@ -2,7 +2,8 @@
 use super::document_store::{
     DocumentKey, DocumentStore, DocumentView, RestoredDraft, validate_key,
 };
-use super::file_view::FileView;
+use super::file_view::{FileView, outside_document};
+use crate::core::intents::open_file::OutsideFile;
 use crate::core::state::workspace_panes::{PaneCodec, WorkspaceKey, WorkspacePanes};
 use crate::core::ui::center_panes::CenterPanes;
 use gpui_kit::*;
@@ -26,6 +27,17 @@ struct Entry {
     draft: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     view_state: Option<ViewState>,
+    /// Set for an outside file, whose `path` is then its real absolute path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    outside: Option<SavedOutside>,
+}
+/// Where an outside file lives: its route machine (`None` for this one) and its owning engine's machine id, so its
+/// draft key is known without asking the owner.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SavedOutside {
+    pub machine: Option<String>,
+    pub engine: String,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -36,6 +48,7 @@ struct Snapshot {
 }
 struct Candidate {
     entry: Entry,
+    identity: String,
     active: bool,
     recent: u64,
 }
@@ -58,11 +71,13 @@ impl PaneCodec for FilesCodec {
             .filter_map(|view| {
                 let view = view.read(cx);
                 let tab = view.workspace_tab(key, cx)?;
-                let document = document_key(key, &tab.path);
+                let mut entry = capture_entry(tab.path, Some(&tab.document), tab.view, cx);
+                entry.outside = tab.outside;
                 Some(Candidate {
                     active: tab.active,
                     recent: tab.recent,
-                    entry: capture_entry(tab.path, Some(&document), tab.view, cx),
+                    identity: tab.document.identity(),
+                    entry,
                 })
             })
             .collect();
@@ -71,11 +86,15 @@ impl PaneCodec for FilesCodec {
             .map(|docs| {
                 docs.dirty_keys(&key.machine, &key.checkout_root)
                     .into_iter()
-                    .map(|document| Entry {
-                        path: document.path.clone(),
-                        base_revision: docs.base_revision(&document).map(str::to_owned),
-                        draft: docs.draft(&document).map(str::to_owned),
-                        view_state: docs.view_state(&document).map(view_state),
+                    .map(|document| {
+                        let entry = Entry {
+                            path: document.path.clone(),
+                            base_revision: docs.base_revision(&document).map(str::to_owned),
+                            draft: docs.draft(&document).map(str::to_owned),
+                            view_state: docs.view_state(&document).map(view_state),
+                            outside: None,
+                        };
+                        (entry, document.identity())
                     })
                     .collect()
             })
@@ -140,18 +159,35 @@ impl PaneCodec for FilesCodec {
             return;
         }
         self.deactivate(window, cx);
+        let active = (snapshot.active_path.as_ref())
+            .and_then(|path| snapshot.files.iter().find(|entry| &entry.path == path))
+            .map(|entry| (entry.path.clone(), entry.outside.clone()));
         for entry in snapshot.files {
-            FileView::restore_workspace(
-                &key,
-                entry.path,
-                entry.view_state.map(document_view),
-                window,
-                cx,
-            );
+            let view = entry.view_state.map(document_view);
+            match entry.outside {
+                Some(outside) => {
+                    let file = OutsideFile {
+                        machine: outside.machine,
+                        path: entry.path,
+                    };
+                    FileView::restore_outside(&key, file, outside.engine, view, window, cx)
+                }
+                None => FileView::restore_workspace(&key, entry.path, view, window, cx),
+            }
         }
-        if let Some(path) = snapshot.active_path {
-            let source = FileView::workspace_source(&key, cx);
-            FileView::open_at(key.session_id, path, (None, None), true, source, window, cx);
+        match active {
+            Some((path, Some(outside))) => {
+                let file = OutsideFile {
+                    machine: outside.machine,
+                    path,
+                };
+                FileView::open_outside(file, (None, None), true, window, cx);
+            }
+            Some((path, None)) => {
+                let source = FileView::workspace_source(&key, cx);
+                FileView::open_at(key.session_id, path, (None, None), true, source, window, cx);
+            }
+            None => {}
         }
     }
 }
@@ -161,7 +197,7 @@ impl Snapshot {
             .iter()
             .filter_map(|entry| {
                 Some(RestoredDraft {
-                    key: document_key(key, &entry.path),
+                    key: entry_document(key, entry)?,
                     base_revision: entry.base_revision.clone()?,
                     text: entry.draft.clone()?,
                     view: entry
@@ -178,13 +214,16 @@ fn parse(value: &Value, key: &WorkspaceKey) -> Result<Snapshot, String> {
     let snapshot: Snapshot = serde_json::from_value(value.clone())
         .map_err(|_| "Couldn't restore the saved file tabs.".to_string())?;
     let mut seen = HashSet::new();
+    let mut paths = HashSet::new();
     let mut clean = 0;
     for entry in &snapshot.files {
-        validate_key(&document_key(key, &entry.path))
-            .map_err(|_| "A stored file path is outside its checkout.".to_string())?;
-        if !seen.insert(&entry.path) {
+        let document = entry_document(key, entry)
+            .filter(|document| validate_key(document).is_ok())
+            .ok_or("A stored file path is outside its checkout.")?;
+        if !seen.insert(document.identity()) {
             return Err("The stored file tabs contain a duplicate path.".into());
         }
+        paths.insert(entry.path.as_str());
         if entry.draft.is_some()
             && entry
                 .base_revision
@@ -208,35 +247,39 @@ fn parse(value: &Value, key: &WorkspaceKey) -> Result<Snapshot, String> {
         || snapshot
             .active_path
             .as_ref()
-            .is_some_and(|active| !seen.contains(active))
+            .is_some_and(|active| !paths.contains(active.as_str()))
     {
         return Err("The saved file tab selection is invalid.".into());
     }
     Ok(snapshot)
 }
-fn select(candidates: Vec<Candidate>, drafts: Vec<Entry>) -> Snapshot {
+fn select(candidates: Vec<Candidate>, drafts: Vec<(Entry, String)>) -> Snapshot {
     let active_path = candidates
         .iter()
         .find(|candidate| candidate.active)
         .map(|candidate| candidate.entry.path.clone());
     let keep = retained_clean(candidates.iter().map(|candidate| {
         (
-            candidate.entry.path.as_str(),
+            candidate.identity.as_str(),
             candidate.active,
             candidate.recent,
             candidate.entry.draft.is_some(),
         )
     }));
-    let mut files: Vec<_> = candidates
+    let kept: Vec<_> = candidates
         .iter()
         .filter(|candidate| {
-            candidate.entry.draft.is_some() || keep.contains(candidate.entry.path.as_str())
+            candidate.entry.draft.is_some() || keep.contains(candidate.identity.as_str())
         })
+        .collect();
+    let mut identities: HashSet<_> = kept.iter().map(|candidate| &candidate.identity).collect();
+    let mut files: Vec<_> = kept
+        .iter()
         .map(|candidate| candidate.entry.clone())
         .collect();
-    for draft in drafts {
-        if !files.iter().any(|entry| entry.path == draft.path) {
-            files.push(draft);
+    for (draft, identity) in &drafts {
+        if identities.insert(identity) {
+            files.push(draft.clone());
         }
     }
     Snapshot { files, active_path }
@@ -255,6 +298,7 @@ fn capture_entry(
             .map(str::to_owned),
         draft: document.and_then(|key| docs?.draft(key)).map(str::to_owned),
         view_state: Some(view_state(view)),
+        outside: None,
     }
 }
 pub(super) fn legacy_view(view: DocumentView) -> Value {
@@ -268,6 +312,25 @@ pub(super) fn legacy_entry(
 ) -> Value {
     serde_json::to_value(capture_entry(path, document, view, cx))
         .expect("finite file view metadata")
+}
+/// The draft key of a saved entry: under the workspace's checkout, or an outside file's engine and real parent.
+fn entry_document(key: &WorkspaceKey, entry: &Entry) -> Option<DocumentKey> {
+    match &entry.outside {
+        Some(outside) => outside_document(&outside.engine, &entry.path),
+        None => Some(document_key(key, &entry.path)),
+    }
+}
+/// The document identities the saved Files snapshot lists, which its center tabs may name.
+pub(crate) fn saved_identities(snapshot: &Value, key: &WorkspaceKey) -> HashSet<String> {
+    (snapshot
+        .get("files")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten())
+    .filter_map(|file| serde_json::from_value::<Entry>(file.clone()).ok())
+    .filter_map(|entry| entry_document(key, &entry))
+    .map(|document| document.identity())
+    .collect()
 }
 fn document_key(key: &WorkspaceKey, path: &str) -> DocumentKey {
     DocumentKey {
@@ -306,31 +369,34 @@ fn retained_clean<'a>(
         .collect()
 }
 /// The center order uses the same retention decision without cloning genuine draft payloads a second time.
-pub(crate) fn captured_paths(key: &WorkspaceKey, cx: &App) -> HashSet<String> {
+pub(crate) fn captured_identities(key: &WorkspaceKey, cx: &App) -> HashSet<String> {
     let docs = cx.try_global::<DocumentStore>();
     let tabs: Vec<_> = CenterPanes::file_views(cx)
         .iter()
         .filter_map(|view| view.read(cx).workspace_tab(key, cx))
+        .map(|tab| {
+            let dirty = docs.is_some_and(|docs| docs.is_dirty(&tab.document));
+            (tab.document.identity(), tab.active, tab.recent, dirty)
+        })
         .collect();
-    let dirty = |path: &str| docs.is_some_and(|docs| docs.is_dirty(&document_key(key, path)));
-    let mut paths: HashSet<String> = retained_clean(
+    let mut identities: HashSet<String> =
+        retained_clean(tabs.iter().map(|(identity, active, recent, dirty)| {
+            (identity.as_str(), *active, *recent, *dirty)
+        }))
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    identities.extend(
         tabs.iter()
-            .map(|tab| (tab.path.as_str(), tab.active, tab.recent, dirty(&tab.path))),
-    )
-    .into_iter()
-    .map(str::to_owned)
-    .collect();
-    paths.extend(
-        tabs.iter()
-            .filter(|tab| dirty(&tab.path))
-            .map(|tab| tab.path.clone()),
+            .filter(|(_, _, _, dirty)| *dirty)
+            .map(|(identity, _, _, _)| identity.clone()),
     );
     if let Some(docs) = docs {
-        paths.extend(
+        identities.extend(
             docs.dirty_keys(&key.machine, &key.checkout_root)
-                .into_iter()
-                .map(|document| document.path),
+                .iter()
+                .map(DocumentKey::identity),
         );
     }
-    paths
+    identities
 }

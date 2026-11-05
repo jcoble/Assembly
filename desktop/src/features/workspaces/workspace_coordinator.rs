@@ -127,14 +127,19 @@ impl WorkspaceCoordinator {
         window: &Window,
         cx: &App,
     ) -> Result<Option<gpui_kit::component::dock::DockAreaState>, String> {
+        // With no workspace open, an outside file belongs to none, so it isn't saved by the back door either.
         if self.current_target().is_none() {
-            return Ok(Some(state.clone()));
+            return super::legacy_layout::strip_outside(state).map(Some);
         }
         let views = crate::core::ui::center_panes::CenterPanes::file_views(cx);
         if views.is_empty() {
             return super::legacy_layout::prune_refs(state, &[]).map(Some);
         }
         let Some(current) = &self.current else {
+            if views.iter().all(|view| view.read(cx).is_outside()) {
+                let state = super::legacy_layout::strip_outside(state)?;
+                return super::legacy_layout::prune_refs(&state, &[]).map(Some);
+            }
             return Ok(None);
         };
         if !current.writable || current.revision == 0 {
@@ -473,3 +478,7 @@ mod saving;
 #[cfg(test)]
 #[path = "workspace_layout_tests.rs"]
 mod layout_tests;
+
+#[cfg(test)]
+#[path = "workspace_outside_tests.rs"]
+mod outside_tests;

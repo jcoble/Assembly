@@ -52,8 +52,9 @@ impl FileView {
         if let Some(revision) = revision {
             snapshot.base_revision = revision;
         }
-        let args = json!({ "session": self.session, "path": self.path,
-            "expectedRevision": snapshot.base_revision, "size": snapshot.text.len(), "expectedSource": self.source, "expectedOwner": self.owner });
+        let args = self.file_args(
+            json!({ "expectedRevision": snapshot.base_revision, "size": snapshot.text.len() }),
+        );
         let bytes = snapshot.text.clone().into_bytes();
         self.save = Some(FileSaveController::begin(snapshot));
         let begin = socket
@@ -163,16 +164,15 @@ impl FileView {
         let Some(socket) = SocketClient::try_bulk(cx) else {
             return;
         };
-        let session = self.session.clone();
-        let path = self.path.clone();
-        let source = self.source.clone();
-        let owner = self.owner.clone();
+        let file = self.file_args(json!({}));
         self.saving = Some(cx.spawn(async move |view, cx| {
             let mut content = String::new();
             let mut offset = 0;
             let mut revision: Option<String> = None;
             loop {
-                let args = json!({ "session": session, "path": path, "offset": offset, "revision": revision, "expectedSource": source, "expectedOwner": owner });
+                let mut args = file.clone();
+                args["offset"] = json!(offset);
+                args["revision"] = json!(revision);
                 let Ok(call) = view.update(cx, |_, cx| socket.read(cx).call::<crate::features::files::entry::FileChunk>("files", "read", args, None)) else { return; };
                 let chunk = match call.await {
                     Outcome::Ok(chunk) if !chunk.binary && revision.as_ref().is_none_or(|r| r == &chunk.revision) => chunk,
