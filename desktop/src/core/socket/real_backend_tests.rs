@@ -189,7 +189,10 @@ fn real_backend_reports_a_gone_shell_by_call() {
         let mut client = Client::start_on(backend.endpoint(), "/socket/terminal");
         assert_eq!(client.state(), ConnectionState::Connecting);
         let state = client.state();
-        assert!(matches!(state, ConnectionState::Connected { .. }), "{state:?}");
+        assert!(
+            matches!(state, ConnectionState::Connected { .. }),
+            "{state:?}"
+        );
         client
     };
     let call = |client: &Client, method: &str, args: serde_json::Value| {

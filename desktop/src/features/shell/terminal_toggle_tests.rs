@@ -404,7 +404,9 @@ fn the_real_pane_takes_the_focus_when_opened(cx: &mut TestAppContext) {
             .walk(&mut |node| {
                 if let PaneRef::Tabs { panels, .. } = node.kind() {
                     for id in panels.iter() {
-                        let panel = area.panel(*id).filter(|panel| panel.panel_name(cx) == TERMINAL);
+                        let panel = area
+                            .panel(*id)
+                            .filter(|panel| panel.panel_name(cx) == TERMINAL);
                         pane = pane.take().or(panel.cloned());
                     }
                 }
