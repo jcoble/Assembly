@@ -4,6 +4,7 @@
 //! (drawer_buttons.rs). Replaces TopTabRow.svelte's chrome, HomeButton.svelte and the
 //! `window-chrome` markup in routes/+page.svelte.
 
+use crate::features::remote_install::restart_button::RestartButton;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -41,6 +42,7 @@ pub struct TopBar {
     board_memory: BoardMemory,
     /// How many need the owner, read when the shared rows change.
     badge: Option<SharedString>,
+    restart: Entity<RestartButton>,
     _feed: Subscription,
     /// A notification's click opens the panel on its question.
     _notifications: Option<Subscription>,
@@ -68,6 +70,7 @@ impl TopBar {
             })
         });
         Self {
+            restart: cx.new(RestartButton::new),
             dock,
             _subscription,
             _notifications,
@@ -206,6 +209,7 @@ impl Render for TopBar {
                     ),
             )
             .child(top_tabs::tabs(self.dock.clone(), window, cx))
+            .child(self.restart.clone())
             .child(drawer_buttons::toggle(self.dock.clone(), cx))
     }
 }

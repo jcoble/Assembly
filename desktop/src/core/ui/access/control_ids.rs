@@ -21,6 +21,7 @@ ids! {
         BOARD = "topbar.board",
         BOARD_BADGE = "topbar.board-badge",
         DRAWER_TOGGLE = "topbar.drawer-toggle",
+        RESTART_TO_UPDATE = "topbar.restart-to-update",
     }
     drawer {
         MORE_PANELS = "drawer.more-panels",

@@ -16,8 +16,12 @@ internal interface IAppInstall
     string? FailedVersion { get; }
     /// <summary>What the last update left to say, when this app is the one it went back to.</summary>
     string? Note { get; }
-    /// <summary>Gets it ready, waits for running sessions, then hands over and asks the window to quit.</summary>
-    Task InstallAsync(string version, Action<string> progress, CancellationToken ct);
+    /// <summary>The version downloaded, checked and waiting for the restart, if any.</summary>
+    string? Ready { get; }
+    /// <summary>Gets it ready and goes no further: the app never restarts by itself.</summary>
+    Task StageAsync(string version, Action<string> progress, CancellationToken ct);
+    /// <summary>The press: waits for running sessions, then hands over and asks the window to quit.</summary>
+    Task RestartAsync(Action<string> progress, CancellationToken ct);
     /// <summary>The window is up: an update waiting to hear that can finish.</summary>
     void Started();
 }
@@ -33,13 +37,16 @@ internal sealed record AppLocation(string App, string Home, string Database, str
 }
 
 /// <summary>
-/// Everything before the swap. The stage sits beside the bundle so the swap stays on one volume. Nothing is stopped: the
-/// wait for sessions comes before the quit, and the helper does the rest once this app has gone.
+/// Everything before the swap. The stage sits beside the bundle so the swap stays on one volume. It's made and checked with
+/// nothing stopped, and waits there: only Restart to Update goes on, to the wait for sessions and the quit. The helper does
+/// the rest once this app has gone.
 /// </summary>
 internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed feed, Func<CancellationToken, Task> idle, Action<string> backup,
     Func<string, string, CancellationToken, Task> startHelper, Func<int> windowPid, Action quit) : IAppInstall
 {
-    private const string Bundle = "Assembly.app";
+    private const string Bundle = "Assembly.app", StagePrefix = ".assembly-update-";
+    private sealed record Staged(string Version, string Stage, string Fresh, string Program);
+    private volatile Staged? _staged;
 
     /// <summary>The bundle a packaged backend runs inside; none from a checkout.</summary>
     internal static string? BundleOf(string backendFolder)
@@ -60,16 +67,19 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
 
     public void Started() => AppSwap.Acknowledge(location.Folder, location.Version);
 
-    public async Task InstallAsync(string version, Action<string> progress, CancellationToken ct)
+    public string? Ready => _staged?.Version;
+
+    public async Task StageAsync(string version, Action<string> progress, CancellationToken ct)
     {
         var parent = Path.GetDirectoryName(location.App)!;
-        var stage = Path.Combine(parent, $".assembly-update-{version}");
-        var handed = false;
+        var stage = Path.Combine(parent, $"{StagePrefix}{version}");
+        _staged = null;
         try
         {
+            // What an earlier run got ready and no one restarted into: this run fetches it again.
+            foreach (var left in Directory.EnumerateDirectories(parent, StagePrefix + "*")) Directory.Delete(left, recursive: true);
             progress($"Downloading Assembly {version}…");
             var release = await feed.AppReleaseAsync(version, ct);
-            if (Directory.Exists(stage)) Directory.Delete(stage, recursive: true);
             var unpacked = Path.Combine(stage, "new");
             Directory.CreateDirectory(unpacked);
             var archive = Path.Combine(stage, "app.tar.gz");
@@ -78,23 +88,7 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
             await UnpackAsync(archive, unpacked, ct);
             File.Delete(archive);
             var fresh = Path.Combine(unpacked, Bundle);
-            var program = Inspect(fresh, version);
-            progress(RemoteReleaseInstall.WaitingWords);
-            await idle(ct);
-            Directory.CreateDirectory(location.Folder);
-            progress("Backing up this app's database…");
-            var copy = Path.Combine(location.Folder, $"assembly-before-{version}.db");
-            File.Delete(copy);
-            backup(copy);
-            File.Delete(location.Failed);
-            var plan = AppSwapPlan.For(location, fresh, program, stage, version, copy, windowPid());
-            var planFile = Path.Combine(stage, "plan.json");
-            await File.WriteAllBytesAsync(planFile, JsonSerializer.SerializeToUtf8Bytes(plan, AppSwapJson.Default.AppSwapPlan), ct);
-            var helper = Path.Combine(fresh, "Contents/Resources/backend", Path.GetFileName(Environment.ProcessPath ?? "assembly"));
-            await startHelper(helper, planFile, ct);
-            handed = true;
-            progress($"Restarting into Assembly {version}…");
-            quit();
+            _staged = new(version, stage, fresh, Inspect(fresh, version));
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -102,11 +96,38 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
         }
         finally
         {
-            if (!handed)
+            if (_staged is null)
             {
                 try { if (Directory.Exists(stage)) Directory.Delete(stage, recursive: true); }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
             }
+        }
+    }
+
+    public async Task RestartAsync(Action<string> progress, CancellationToken ct)
+    {
+        var staged = _staged ?? throw new CallFailed("No update is ready to restart into.", "no_update");
+        try
+        {
+            progress(RemoteReleaseInstall.WaitingWords);
+            await idle(ct);
+            Directory.CreateDirectory(location.Folder);
+            progress("Backing up this app's database…");
+            var copy = Path.Combine(location.Folder, $"assembly-before-{staged.Version}.db");
+            File.Delete(copy);
+            backup(copy);
+            File.Delete(location.Failed);
+            var plan = AppSwapPlan.For(location, staged.Fresh, staged.Program, staged.Stage, staged.Version, copy, windowPid());
+            var planFile = Path.Combine(staged.Stage, "plan.json");
+            await File.WriteAllBytesAsync(planFile, JsonSerializer.SerializeToUtf8Bytes(plan, AppSwapJson.Default.AppSwapPlan), ct);
+            var helper = Path.Combine(staged.Fresh, "Contents/Resources/backend", Path.GetFileName(Environment.ProcessPath ?? "assembly"));
+            await startHelper(helper, planFile, ct);
+            progress($"Restarting into Assembly {staged.Version}…");
+            quit();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            throw new CallFailed($"Assembly can't replace itself in {Path.GetDirectoryName(location.App)}, so nothing was changed: {error.Message}", "app_update_failed");
         }
     }
 

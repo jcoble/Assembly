@@ -9,7 +9,7 @@ namespace Assembly.Infrastructure.Updates;
 /// Owns the one check and the one update. The check runs when this app starts, each time a remote says hello, and after an
 /// update; there's no timer. Results go out on the machines topic. A failure to read shows as unknown, never as behind.
 /// A remote on an older version starts the update by itself, once per run of the app so a failure can't repeat forever; the
-/// button can always try again.
+/// button can always try again. An app that's behind gets ready the same way, and restarts only when someone says so.
 /// </summary>
 internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status, InstalledCalls local,
     Func<string, CancellationToken, Task<InstalledTools?>> remote, Action? reload, BackgroundWork work, TextWriter log) : IFeature
@@ -29,6 +29,11 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         {
             if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
             return Task.FromResult(new UpdateStarted(Install(args.Machine)));
+        });
+        calls.Read("updates", "restart", UpdatesJson.Default.InstalledArgs, UpdatesJson.Default.UpdateStarted, (_, call) =>
+        {
+            if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
+            return Task.FromResult(new UpdateStarted(RestartApp()));
         });
         calls.Read("updates", "appStarted", UpdatesJson.Default.InstalledArgs, UpdatesJson.Default.UpdateChecked, (_, call) =>
         {
@@ -136,6 +141,33 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         return true;
     }
 
+    /// <summary>
+    /// The only thing that restarts this app. False when an update is already running. It waits for sessions like any
+    /// update; a failure leaves the update ready to press again.
+    /// </summary>
+    internal bool RestartApp()
+    {
+        if (source.AppReady is null) throw new CallFailed("No update is ready to restart into.", "no_update");
+        if (Interlocked.CompareExchange(ref _updating, 1, 0) != 0) return false;
+        work.Start("restart to update", async stop =>
+        {
+            string? ending = null;
+            try
+            {
+                status.Updating(null, true, null);
+                await source.RestartAppAsync(note => status.Updating(null, true, note), stop);
+            }
+            catch (CallFailed error) { ending = "Update failed: " + error.Message; }
+            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }
+            finally
+            {
+                Volatile.Write(ref _updating, 0);
+                status.Updating(null, false, ending);
+            }
+        });
+        return true;
+    }
+
     /// <summary>False when an update is already running: it's the same one, so the button joins it.</summary>
     internal bool Start() => Begin(automatic: false);
 
@@ -163,6 +195,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         finally
         {
             Volatile.Write(ref _updating, 0);
+            status.RestartReady(source.AppReady);
             Show(false, ending);
         }
         if (ending is null) Updated();

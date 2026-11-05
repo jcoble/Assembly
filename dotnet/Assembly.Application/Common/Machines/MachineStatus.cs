@@ -20,7 +20,8 @@ public sealed record MachineItem(string? Name, string Kind, bool Reachable, stri
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Updating = false,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? UpdateNote = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Quit = false,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] long? OfflineSinceMs = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] long? OfflineSinceMs = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? RestartReady = null);
 
 /// <summary>One piece the update check looked at: <paramref name="Kind"/> is desktop, backend, adapter or cli.</summary>
 public sealed record UpdateItem(string Kind, string Name, string? Current, string? Wanted, string State)
@@ -126,6 +127,9 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes, T
 
     /// <summary>Whether the one update is running, and what it's doing or why it failed.</summary>
     public void Updating(string? machine, bool updating, string? note) => Change(machine, item => item with { Updating = updating, UpdateNote = note });
+
+    /// <summary>Which new version of the app is waiting for someone to press Restart to Update.</summary>
+    public void RestartReady(string? version) => Change(null, item => item with { RestartReady = version });
 
     /// <summary>Asks the window to quit: a new version of the app is ready to take over.</summary>
     public void QuitWindow() => Change(null, item => item with { Quit = true });

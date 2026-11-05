@@ -19,6 +19,10 @@ internal interface IUpdateSource
     bool StartsAppUpdate(string version) => false;
     /// <summary>What the last app update left to say.</summary>
     string? AppNote => null;
+    /// <summary>The version of this app waiting for its restart.</summary>
+    string? AppReady => null;
+    /// <summary>Someone pressed Restart to Update.</summary>
+    Task RestartAppAsync(Action<string> progress, CancellationToken ct) => throw new CallFailed("No update is ready to restart into.", "no_update");
     /// <summary>This app's window is up.</summary>
     void AppStarted() { }
     /// <summary>Puts a backend on a saved machine, from wherever this source's files come from, and connects.</summary>
@@ -185,6 +189,9 @@ internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall?
     public bool StartsRemoteUpdates(string machine) => true;
     public bool StartsAppUpdate(string version) => app is not null && app.FailedVersion != version;
     public string? AppNote => app?.Note;
+    public string? AppReady => app?.Ready;
+    public Task RestartAppAsync(Action<string> progress, CancellationToken ct) =>
+        (app ?? throw new CallFailed("No update is ready to restart into.", "no_update")).RestartAsync(progress, ct);
     public void AppStarted() => app?.Started();
 
     public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct) =>
@@ -211,11 +218,12 @@ internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall?
     {
         if (release is null) throw new CallFailed("No signed release is published yet, so there's nothing to update from.", "no_release");
         var failures = new List<string>();
-        // The app first: it's the side behind, and once it's back, every machine is checked against the new number.
+        // The app first: it's the side behind. The remotes wait for the new number, which comes with the restart.
         var behind = machines.FirstOrDefault(machine => machine.Name is null)?.Behind.FirstOrDefault(item => item.Kind == "desktop");
         if (behind?.Wanted is { } wanted && app is not null)
         {
-            try { await app.InstallAsync(wanted, progress, ct); return; }
+            if (app.Ready == wanted) return;
+            try { await app.StageAsync(wanted, progress, ct); return; }
             catch (CallFailed failed) { failures.Add(failed.Message); }
         }
         await UpdateSources.RemotesAsync(release, machines, progress, failures, ct);

@@ -37,6 +37,9 @@ pub struct Machine {
     /// A new version of the app is ready and asks this window to quit.
     #[serde(default)]
     pub quit: bool,
+    /// The new version of the app waiting for Restart to Update.
+    #[serde(default)]
+    pub restart_ready: Option<String>,
     /// When a remote stopped answering; cleared when it answers.
     #[serde(default)]
     pub offline_since_ms: Option<i64>,

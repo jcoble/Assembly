@@ -79,11 +79,19 @@ public sealed class AppUpdateTests : IDisposable
     }
 
     [Fact]
-    public async Task It_gets_everything_ready_waits_for_sessions_backs_up_hands_over_then_quits()
+    public async Task It_gets_ready_and_goes_no_further_until_the_restart_is_pressed()
     {
         if (!OperatingSystem.IsLinux()) return;
         var notes = new List<string>();
-        await Update(Feed(Package("2.0.0"))).InstallAsync("2.0.0", notes.Add, default);
+        var update = Update(Feed(Package("2.0.0")));
+        await update.StageAsync("2.0.0", notes.Add, default);
+
+        Assert.Empty(_steps);
+        Assert.Equal("2.0.0", update.Ready);
+        Assert.True(File.Exists(Path.Combine(Stage, "new/Assembly.app/Contents/MacOS/assembly-desktop")));
+        Assert.Equal(["Downloading Assembly 2.0.0…", "Checking Assembly 2.0.0…"], notes);
+
+        await update.RestartAsync(notes.Add, default);
 
         Assert.Equal(["idle", "idle done", "backup", "helper", "quit"], _steps);
         Assert.Equal("old", File.ReadAllText(Path.Combine(App, "Contents/old")));
@@ -99,7 +107,7 @@ public sealed class AppUpdateTests : IDisposable
     {
         if (!OperatingSystem.IsLinux()) return;
         var archive = Package("2.0.0");
-        var failed = await Assert.ThrowsAsync<CallFailed>(() => Update(Feed(archive, new ReleaseSigner().Sign(archive))).InstallAsync("2.0.0", _ => { }, default));
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => Update(Feed(archive, new ReleaseSigner().Sign(archive))).StageAsync("2.0.0", _ => { }, default));
         Assert.Equal("Release signature verification failed.", failed.Message);
         Assert.Empty(_steps);
         Assert.False(Directory.Exists(Stage));
@@ -109,26 +117,28 @@ public sealed class AppUpdateTests : IDisposable
     public async Task A_signed_archive_of_another_version_is_not_installed()
     {
         if (!OperatingSystem.IsLinux()) return;
-        var failed = await Assert.ThrowsAsync<CallFailed>(() => Update(Feed(Package("1.5.0"))).InstallAsync("2.0.0", _ => { }, default));
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => Update(Feed(Package("1.5.0"))).StageAsync("2.0.0", _ => { }, default));
         Assert.Equal("The download doesn't contain Assembly 2.0.0.", failed.Message);
         Assert.Empty(_steps);
         Assert.False(Directory.Exists(Stage));
     }
 
     [Fact]
-    public async Task A_running_session_holds_it_back_and_stopping_leaves_nothing()
+    public async Task A_running_session_holds_the_restart_back_and_stopping_keeps_it_ready()
     {
         if (!OperatingSystem.IsLinux()) return;
         var activity = new TurnActivity();
         activity.Hold(true);
         using var stop = new CancellationTokenSource();
-        var running = Update(Feed(Package("2.0.0")), activity.WhenIdleAsync).InstallAsync("2.0.0", _ => { }, stop.Token);
+        var update = Update(Feed(Package("2.0.0")), activity.WhenIdleAsync);
+        await update.StageAsync("2.0.0", _ => { }, default);
+        var running = update.RestartAsync(_ => { }, stop.Token);
         await Task.WhenAny(running, Task.Delay(500));
         Assert.Equal(["idle"], _steps);
         await stop.CancelAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running);
         Assert.Equal(["idle"], _steps);
-        Assert.False(Directory.Exists(Stage));
+        Assert.Equal("2.0.0", update.Ready);
     }
 
     [Fact]
@@ -137,7 +147,9 @@ public sealed class AppUpdateTests : IDisposable
         if (!OperatingSystem.IsLinux()) return;
         var activity = new TurnActivity();
         activity.Hold(true);
-        var running = Update(Feed(Package("2.0.0")), activity.WhenIdleAsync).InstallAsync("2.0.0", _ => { }, default);
+        var update = Update(Feed(Package("2.0.0")), activity.WhenIdleAsync);
+        await update.StageAsync("2.0.0", _ => { }, default);
+        var running = update.RestartAsync(_ => { }, default);
         await Task.WhenAny(running, Task.Delay(300));
         Assert.DoesNotContain("quit", _steps);
         activity.Hold(false);
@@ -151,7 +163,7 @@ public sealed class AppUpdateTests : IDisposable
         if (!OperatingSystem.IsLinux()) return;
         var update = Update(Feed(Package("2.0.0")));
         File.SetUnixFileMode(Apps, (UnixFileMode)0b101_101_101);
-        var failed = await Assert.ThrowsAsync<CallFailed>(() => update.InstallAsync("2.0.0", _ => { }, default));
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => update.StageAsync("2.0.0", _ => { }, default));
         Assert.StartsWith($"Assembly can't replace itself in {Apps}, so nothing was changed", failed.Message, StringComparison.Ordinal);
         Assert.Empty(_steps);
         Assert.Equal("old", File.ReadAllText(Path.Combine(App, "Contents/old")));
@@ -172,12 +184,17 @@ public sealed class AppUpdateTests : IDisposable
         public readonly List<string> Installed = [];
         public string? FailedVersion => failedVersion;
         public string? Note => failedVersion is null ? null : $"Assembly {failedVersion} didn't start.";
+        public string? Ready { get; private set; }
+        public int Restarts;
         public void Started() { }
-        public Task InstallAsync(string version, Action<string> progress, CancellationToken ct)
+        public Task StageAsync(string version, Action<string> progress, CancellationToken ct)
         {
             Installed.Add(version);
-            return fails is null ? Task.CompletedTask : throw fails;
+            if (fails is not null) throw fails;
+            Ready = version;
+            return Task.CompletedTask;
         }
+        public Task RestartAsync(Action<string> progress, CancellationToken ct) { Restarts++; return Task.CompletedTask; }
     }
 
     private sealed class FakeReleases : IReleaseInstall
@@ -204,6 +221,21 @@ public sealed class AppUpdateTests : IDisposable
     }
 
     [Fact]
+    public async Task An_update_already_ready_is_not_fetched_again_and_only_the_restart_starts_it()
+    {
+        var (app, releases) = (new FakeApp(), new FakeReleases());
+        var source = Source(releases, app);
+        await source.UpdateAsync(AppAndRemote, true, _ => { }, default);
+        await source.UpdateAsync(AppAndRemote, false, _ => { }, default);
+        Assert.Equal(["2.0.0"], app.Installed);
+        Assert.Empty(releases.Remotes);
+        Assert.Equal(0, app.Restarts);
+        Assert.Equal("2.0.0", source.AppReady);
+        await source.RestartAppAsync(_ => { }, default);
+        Assert.Equal(1, app.Restarts);
+    }
+
+    [Fact]
     public async Task An_app_that_could_not_update_says_why_and_the_remotes_still_go()
     {
         var (app, releases) = (new FakeApp(new("can't")), new FakeReleases());
@@ -224,7 +256,9 @@ public sealed class AppUpdateTests : IDisposable
 
     private sealed class AppBehind(bool starts) : IUpdateSource
     {
-        public int Automatic;
+        public int Automatic, Restarts;
+        public string? AppReady { get; set; }
+        public Task RestartAppAsync(Action<string> progress, CancellationToken ct) { Restarts++; return Task.CompletedTask; }
         public readonly TaskCompletionSource Ran = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<UpdateWanted> WantedAsync(CancellationToken ct, bool fresh = false) => Task.FromResult(new UpdateWanted("99.0.0", "99.0.0", new Dictionary<string, string?>(), null, new Dictionary<string, string?>()));
         public bool StartsRemoteUpdates(string machine) => true;
@@ -233,6 +267,7 @@ public sealed class AppUpdateTests : IDisposable
         public Task UpdateAsync(IReadOnlyList<MachineBehind> machines, bool automatic, Action<string> progress, CancellationToken ct)
         {
             if (automatic && machines.Any(machine => machine.Name is null && machine.Behind.Any(item => item.Kind == "desktop"))) Interlocked.Increment(ref Automatic);
+            AppReady = "99.0.0";
             Ran.TrySetResult();
             return Task.CompletedTask;
         }
@@ -254,6 +289,27 @@ public sealed class AppUpdateTests : IDisposable
         while (status.Items[0].Updating) await Task.Delay(5, deadline.Token);
         await updates.CheckAsync(null, default);
         Assert.Equal(1, source.Automatic);
+    }
+
+    [Fact]
+    public async Task A_ready_update_is_offered_and_the_app_restarts_only_when_asked()
+    {
+        var status = new MachineStatus(new Assembly.Infrastructure.Topics.Topics(), []);
+        await using var work = new Assembly.Application.Common.BackgroundWork(TimeProvider.System, TextWriter.Null);
+        var source = new AppBehind(starts: true);
+        var updates = Machines(source, status, work);
+        await Assert.ThrowsAsync<CallFailed>(() => Task.FromResult(updates.RestartApp()));
+
+        await updates.CheckAsync(null, default);
+        await source.Ran.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (status.Items[0].RestartReady is null) await Task.Delay(5, deadline.Token);
+        Assert.Equal("99.0.0", status.Items[0].RestartReady);
+        Assert.False(status.Items[0].Quit);
+        Assert.Equal(0, source.Restarts);
+
+        Assert.True(updates.RestartApp());
+        while (source.Restarts == 0) await Task.Delay(5, deadline.Token);
     }
 
     [Fact]

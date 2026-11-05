@@ -1,6 +1,5 @@
-use super::{Machine, behind_notice, behind_words, newer_words};
+use super::{Machine, behind_notice, behind_words, newer_words, row_status};
 use crate::core::state::machine::UpdateItem;
-use crate::features::settings::connections::row_status;
 use serde_json::json;
 
 fn machine(value: serde_json::Value) -> Machine {
@@ -154,4 +153,17 @@ fn a_machine_that_did_not_answer_claims_no_versions_but_keeps_its_note() {
         ),
         "host · Offline · Sending…"
     );
+}
+
+#[test]
+fn a_ready_update_says_so_and_stops_counting_as_behind_on_this_machine() {
+    let ready = machine(
+        json!({"name":null,"kind":"local","reachable":true,"reason":null,"checked":true,"restartReady":"2.0.0",
+        "updates":[{"kind":"desktop","name":"Desktop","current":"1.0.0","wanted":"2.0.0","state":"behind"}]}),
+    );
+    assert_eq!(
+        row_status(&ready, "Local", "Connected"),
+        "Local · Connected · Assembly 2.0.0 is ready to restart into"
+    );
+    assert_eq!(behind_words(std::iter::once(&ready)), None);
 }

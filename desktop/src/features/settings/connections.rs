@@ -22,6 +22,7 @@ use crate::core::ui::access::control_ids::{
     machine_button as machine_button_id, machine_line, settings as ids,
 };
 use crate::core::ui::access::{Control as _, say};
+use crate::features::remote_install::updates::row_status;
 
 /// What the form shows in a blank port or token file: the backend's defaults (SavedMachine.cs), which it fills in.
 const DEFAULT_PORT: &str = "9797";
@@ -113,28 +114,30 @@ impl SettingsPage {
         // This machine's row has no name, but its update button still needs somewhere to say why it failed.
         let key = machine.name.clone().unwrap_or("local".to_string());
         let failure = self.failure_about(Some(&key), cx);
-        let update = (machine.behind().next().is_some() || machine.updating).then(|| {
-            self.machine_button(
-                format!("start-{key}").into(),
-                machine_button_id(&key, "update"),
-                UPDATE,
-            )
-            .primary()
-            .loading(machine.updating)
-            .disabled(machine.updating || self.machine_call.is_some())
-            .on_click(cx.listener(move |page, _, window, cx| {
-                let about = Some(key.clone());
-                page.machine_call(
-                    about,
-                    "updates",
-                    "start",
-                    json!({}),
-                    "Couldn't update",
-                    window,
-                    cx,
+        let update = (machine.restart_ready.is_none()
+            && (machine.behind().next().is_some() || machine.updating))
+            .then(|| {
+                self.machine_button(
+                    format!("start-{key}").into(),
+                    machine_button_id(&key, "update"),
+                    UPDATE,
                 )
-            }))
-        });
+                .primary()
+                .loading(machine.updating)
+                .disabled(machine.updating || self.machine_call.is_some())
+                .on_click(cx.listener(move |page, _, window, cx| {
+                    let about = Some(key.clone());
+                    page.machine_call(
+                        about,
+                        "updates",
+                        "start",
+                        json!({}),
+                        "Couldn't update",
+                        window,
+                        cx,
+                    )
+                }))
+            });
         let install = install_offered(&machine).then(|| {
             let name = machine.name.clone().unwrap_or_default();
             self.machine_button(
@@ -544,54 +547,4 @@ const INSTALL: &str = "Install Assembly here";
 
 pub(crate) fn install_offered(machine: &Machine) -> bool {
     machine.name.is_some() && machine.didnt_answer()
-}
-
-/// What a check with nothing behind found. "Nothing is behind" is only said when every piece was read: one that wasn't
-/// isn't known to be current. No check yet says nothing.
-fn checked_words(machine: &Machine) -> Option<String> {
-    if machine.updates.is_empty() {
-        return None;
-    }
-    let unread: Vec<&str> = (machine.updates.iter())
-        .filter(|item| item.state == "unknown")
-        .map(|item| item.name.as_str())
-        .collect();
-    Some(if unread.is_empty() {
-        "Nothing is behind".to_string()
-    } else {
-        format!("Couldn't read {}", unread.join(", "))
-    })
-}
-
-/// Where the machine is, how it answered, then its backend and what's behind, all as information.
-pub(crate) fn row_status(machine: &Machine, reached: &str, status: &str) -> String {
-    let mut parts = vec![reached.to_string(), status.to_string()];
-    // What a machine that isn't answering last said about its versions may no longer be true.
-    if machine.reachable {
-        parts.extend(machine.backend_note());
-        parts.extend(
-            machine
-                .updates
-                .iter()
-                .filter_map(crate::features::remote_install::updates::newer_words),
-        );
-    }
-    let behind: Vec<&str> = machine.behind().map(|item| item.name.as_str()).collect();
-    if machine.updating {
-        parts.push(
-            machine
-                .update_note
-                .clone()
-                .unwrap_or("Updating…".to_string()),
-        );
-    } else if let Some(note) = &machine.update_note {
-        parts.push(note.clone());
-    } else if machine.reachable {
-        if behind.is_empty() {
-            parts.extend(checked_words(machine));
-        } else {
-            parts.push(format!("{} behind", behind.join(", ")));
-        }
-    }
-    parts.join(" · ")
 }
