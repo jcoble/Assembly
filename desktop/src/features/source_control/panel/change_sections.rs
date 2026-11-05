@@ -46,8 +46,8 @@ impl RowWrite {
         }
     }
 }
-pub(super) fn row_write(file: &ChangedFile, letter: char) -> RowWrite {
-    if letter == '!' {
+pub(super) fn row_write(file: &ChangedFile) -> RowWrite {
+    if file.conflicted() {
         RowWrite::Resolve
     } else if file.worktree != "." {
         RowWrite::Stage
@@ -113,7 +113,7 @@ pub(super) fn stageable_in(status: &GitStatus, section: Section) -> Vec<String> 
     status
         .section(section)
         .into_iter()
-        .filter(|(letter, _)| *letter != '!')
+        .filter(|(_, file)| !file.conflicted())
         .map(|(_, file)| file.path.clone())
         .collect()
 }
@@ -127,7 +127,7 @@ fn empty_text(section: Section) -> &'static str {
 fn letter_tone(letter: char, cx: &App) -> Hsla {
     match letter {
         'A' | '?' => cx.theme().success,
-        'D' | '!' => cx.theme().danger,
+        'D' => cx.theme().danger,
         'R' | 'C' => cx.theme().primary,
         _ => cx.theme().warning,
     }
@@ -274,7 +274,7 @@ impl SourceControlPane {
         let files: Vec<ChangedFile> = status
             .section(section)
             .into_iter()
-            .filter(|(letter, _)| *letter != '!')
+            .filter(|(_, file)| !file.conflicted())
             .map(|(_, file)| file.clone())
             .collect();
         actions.push(
@@ -316,7 +316,7 @@ impl SourceControlPane {
         };
         let id = format!("{}:{}", section.label(), file.path);
         let cluster =
-            hovered.then(|| self.row_buttons(letter, file, target, &id, name, busy, &reasons, cx));
+            hovered.then(|| self.row_buttons(file, target, &id, name, busy, &reasons, cx));
         let word = (!hovered).then(|| change_word(file)).flatten();
         let row = h_flex()
             .w_full()
@@ -362,7 +362,7 @@ impl SourceControlPane {
         };
         let tip = SharedString::from(file.tip());
         let hover_key = key.clone();
-        let menu = self.file_menu(letter, file, target, read_only, root, busy, cx);
+        let menu = self.file_menu(file, target, read_only, root, busy, cx);
         ListItem::new(SharedString::from(format!("git-file:{id}")))
             .selected(selected)
             .px_2()
@@ -390,7 +390,6 @@ impl SourceControlPane {
     #[allow(clippy::too_many_arguments)]
     fn row_buttons(
         &self,
-        letter: char,
         file: &ChangedFile,
         target: &GitTarget,
         id: &str,
@@ -406,7 +405,7 @@ impl SourceControlPane {
             None => format!("{label} — {name}"),
         };
         let path = file.path.clone();
-        let write = row_write(file, letter);
+        let write = row_write(file);
         let reason = match write {
             RowWrite::Unstage => reasons.unstage,
             RowWrite::Stage | RowWrite::Resolve => reasons.stage,
@@ -428,7 +427,7 @@ impl SourceControlPane {
                 });
             },
         );
-        let discard = (letter != '!').then(|| {
+        let discard = (!file.conflicted()).then(|| {
             let weak = pane.clone();
             let file = file.clone();
             icon_button(
@@ -469,7 +468,6 @@ impl SourceControlPane {
     #[allow(clippy::too_many_arguments)]
     fn file_menu(
         &self,
-        letter: char,
         file: &ChangedFile,
         target: &GitTarget,
         read_only: bool,
@@ -541,7 +539,7 @@ impl SourceControlPane {
                         });
                     },
                 ))
-                .when(letter != '!', |menu| {
+                .when(!file.conflicted(), |menu| {
                     menu.item(reasoned_item(
                         "Discard changes…",
                         reason(reasons.discard),

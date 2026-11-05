@@ -73,19 +73,18 @@ impl ChangedFile {
         self.index == "?"
     }
 
-    fn conflicted(&self) -> bool {
+    pub fn conflicted(&self) -> bool {
         self.index == "U" || self.worktree == "U"
     }
 
     /// Its letter in `section`, or `None` when it isn't in it. A file staged and then edited again is in both Staged
-    /// and Changes; a conflict is only in Changes, as "!", since git's C is a copy.
+    /// and Changes, and so is a conflict, as "U" in both, as the old app showed it.
     fn letter_in(&self, section: Section) -> Option<char> {
         let letter = |side: &str| side.chars().next().filter(|&c| c != '.');
         match section {
             Section::Untracked => self.untracked().then_some('?'),
             _ if self.untracked() => None,
-            Section::Changes if self.conflicted() => Some('!'),
-            Section::Staged if self.conflicted() => None,
+            _ if self.conflicted() => Some('U'),
             Section::Staged => letter(&self.index),
             Section::Changes => letter(&self.worktree),
         }
@@ -136,13 +135,14 @@ impl GitStatus {
         files
     }
 
-    /// Older payloads establish a total only when every changed file is present.
+    /// Older payloads establish a total only when every changed file is present. A conflict is listed under
+    /// Staged but nothing of it is ready to commit, the same as the backend's total.
     pub fn staged_total(&self) -> Option<usize> {
         self.total_staged.or_else(|| {
             (self.total_files == self.files.len()).then(|| {
                 self.files
                     .iter()
-                    .filter(|file| file.letter_in(Section::Staged).is_some())
+                    .filter(|file| !file.conflicted() && file.letter_in(Section::Staged).is_some())
                     .count()
             })
         })

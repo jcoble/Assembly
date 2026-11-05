@@ -52,7 +52,7 @@ pub fn stageable(status: &GitStatus) -> Vec<String> {
     let mut paths: Vec<String> = [Section::Changes, Section::Untracked]
         .into_iter()
         .flat_map(|section| status.section(section))
-        .filter(|(letter, _)| *letter != '!')
+        .filter(|(_, file)| !file.conflicted())
         .map(|(_, file)| file.path.clone())
         .collect();
     paths.sort();
