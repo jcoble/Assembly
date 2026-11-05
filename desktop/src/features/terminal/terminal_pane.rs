@@ -131,8 +131,7 @@ pub struct TerminalPane {
     hovered_cell: Option<(usize, usize)>,
     /// A Cmd or Ctrl-click opened a link: its release goes nowhere.
     link_pressed: bool,
-    /// The composition in progress. Stub until Task 9.
-    #[allow(dead_code)]
+    /// The composition in progress, kept but not shown or sent (terminal_pane_ime.rs).
     marked: Option<String>,
 }
 
@@ -220,6 +219,7 @@ impl TerminalPane {
         (self._scrollbar, self.scrollbar_opacity) = (None, 0.);
         (self.dragging_bar, self.bar_pressed) = (None, false);
         (self.hovered, self.hovered_cell, self.link_pressed) = (None, None, false);
+        self.marked = None;
         self.reopen.clear();
         self.typed.clear();
         self.grid = TerminalGrid::new(self.size.0, self.size.1);
@@ -473,6 +473,7 @@ impl Render for TerminalPane {
             .when(self.hovered.is_some(), |pane| pane.cursor_pointer())
             .size_full()
             .text_role(TextRole::Body, cx)
+            .child(self.input_handler(cx))
             .when(self.selecting, |pane| pane.child(self.drag_listeners(cx)))
             .when(self.bar_pressed, |pane| pane.child(self.bar_listeners(cx)));
         let note = |text: SharedString| {

@@ -264,6 +264,37 @@ async fn no_input_is_taken_unless_open(cx: &mut TestAppContext) {
     assert_eq!(writes(&open).len(), 1);
 }
 
+#[gpui::test]
+async fn the_input_method_sees_its_composition_and_the_cursor_cell(cx: &mut TestAppContext) {
+    let terminals = Terminals {
+        rows: vec![json!({"seq": 3, "prevSeq": 0, "data": STANDARD.encode(b"abc")})],
+        ..Default::default()
+    };
+    let mut open = open(cx, terminals, false).await;
+    open.until("the output shown", |_, pane| {
+        following(pane) && pane.grid.cursor() == Some((3, 0))
+    })
+    .await;
+    composing(&mut open, "ka");
+    (open.pane).update_in(open.cx, |pane, window, cx| {
+        use gpui_kit::EntityInputHandler as _;
+        assert_eq!(pane.marked_text_range(window, cx), Some(0..2));
+        let mut adjusted = None;
+        assert_eq!(
+            pane.text_for_range(1..5, &mut adjusted, window, cx).as_deref(),
+            Some("a")
+        );
+        assert_eq!(adjusted, Some(1..2));
+        let cell = pane.cell;
+        let bounds = pane.bounds_for_range(0..0, pane.bounds, window, cx);
+        let at = pane.origin + gpui_kit::point(cell.width * 3., gpui_kit::px(0.));
+        assert_eq!(bounds, Some(gpui_kit::Bounds::new(at, cell)));
+        pane.unmark_text(window, cx);
+        assert_eq!(pane.marked_text_range(window, cx), None);
+    });
+    assert!(writes(&open).is_empty(), "a composition was sent");
+}
+
 /// Preferences before the pane, so it observes them, then the pane on a shell, in an active window.
 async fn with_preferences(cx: &mut TestAppContext) -> super::Open<'_> {
     cx.update(crate::core::state::preferences::Preferences::init);
