@@ -18,6 +18,32 @@ public sealed partial class FilesSocketTests
         Assert.Equal("a.txt", answer.GetProperty("result").GetProperty("entries")[0].GetProperty("path").GetString());
     }
 
+    /// <summary>A session can start in a viewed folder between a save's beginning and its commit; its files win.</summary>
+    [Fact]
+    public async Task A_save_begun_on_a_viewed_folder_is_refused_when_a_session_starts_there_before_it_commits()
+    {
+        var folder = Directory.CreateDirectory(Path.Combine(_checkouts.FullName, "viewed-save")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(folder, "a"), "old");
+        var view = FolderView.Id("p1", folder);
+        using var bulk = await OpenAsync(bulk: true);
+        await CallAsync(bulk, 1, "read", $$"""{"session":"{{view}}","path":"a"}""");
+        var revision = JsonDocument.Parse(await ReadAsync(bulk)).RootElement.GetProperty("result").GetProperty("revision").GetString();
+        await CallAsync(bulk, 2, "beginSave", $$"""{"session":"{{view}}","path":"a","expectedRevision":"{{revision}}","size":3}""");
+        var upload = JsonDocument.Parse(await ReadAsync(bulk)).RootElement.GetProperty("result").GetProperty("upload").GetString();
+        await CallAsync(bulk, 3, "saveChunk", $$"""{"upload":"{{upload}}","offset":0,"data":"bmV3"}""");
+        Assert.Equal("result", JsonDocument.Parse(await ReadAsync(bulk)).RootElement.GetProperty("t").GetString());
+        _db.Writer.Write("test.session-starts", scope => scope.Execute("""
+            INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,folder,title,state,activity_state,holder,epoch,cancel_requested)
+            SELECT $id,0,machine_id,0,0,'claude',$folder,'Busy session','running','running','local',0,0 FROM engine_meta WHERE singleton=1
+            """, new("$id", Guid.NewGuid().ToString()), new("$folder", folder)));
+        await CallAsync(bulk, 4, "commitSave", $$"""{"upload":"{{upload}}"}""");
+        var refused = await ReadAsync(bulk);
+        Assert.Equal("error", JsonDocument.Parse(refused).RootElement.GetProperty("t").GetString());
+        Assert.Contains("is working in this folder", refused);
+        Assert.Equal("old", await File.ReadAllTextAsync(Path.Combine(folder, "a")));
+        Assert.Empty(Directory.GetFiles(folder, ".assembly-save-*"));
+    }
+
     [Fact]
     public async Task A_draft_cannot_begin_against_a_replacement_checkout_even_with_identical_file_bytes()
     {

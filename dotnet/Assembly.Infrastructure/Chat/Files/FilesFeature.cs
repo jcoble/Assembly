@@ -73,6 +73,7 @@ internal sealed partial class FilesFeature(SessionStore sessions, FileOwner owne
             var result = await uploads.CommitAsync(args.Upload, call.Connection, linked.Token, (session, root) =>
             {
                 if (LocalRoot(session, linked.Token) != root) throw new CallFailed("the session's checkout changed; the draft is preserved");
+                if (FolderView.IsView(session)) owners.RequireViewWritable(session, linked.Token);
             });
             return _ => result;
         }, order: args => uploads.OrderKey(args.Upload), failed: (args, call) => uploads.Drop(args.Upload, call.Connection), bulk: true);
