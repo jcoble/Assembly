@@ -1,8 +1,12 @@
-//! The Context tab's Attachments card: the images the session's prompts carried, newest prompt first, each by the
-//! name it was attached with. A click opens one full size, as Chat's chips do. A remote session's images stay on its
-//! machine; only a captured, validated source permits opening those bytes.
+//! The Context tab's Attachments card: the draft's images first, from the composer's own pictures, then the images
+//! the session's prompts carried, newest prompt first. Each row has a thumbnail slot, the name it was attached with and
+//! its type. A click opens one full size, as Chat's chips do. A remote session's images stay on its machine; only a
+//! captured, validated source permits opening those bytes. A prompt sent while the tab shows reads the sent images
+//! again, so a sent draft moves down to them.
 
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use std::sync::Arc;
+
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -10,8 +14,10 @@ use serde_json::Value;
 
 use super::ContextPane;
 use super::listing::Listing;
+use crate::activity::{StatusChip, Tone};
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::composer::attachment::Attachment;
+use crate::features::session::context::live_facts::DraftImage;
 use crate::features::session::view::lightbox::{open_lightbox, read_image};
 use crate::section_card::SectionCard;
 use gpui_kit::assets::IconName;
@@ -28,17 +34,37 @@ impl ContextPane {
                 .text_color(muted)
                 .child(text)
         };
-        let count = match &self.attachments {
-            Listing::Read(images) if !images.is_empty() => Some(images.len()),
-            _ => None,
-        };
+        let (drafts, sent) = self.listed(cx);
+        let count = Some(sent.len()).filter(|count| *count > 0);
+        let draft_rows = drafts.into_iter().map(|draft| {
+            let selector = format!("attachment-draft-{}", draft.id);
+            let row = row(
+                ("attachment-draft", draft.id),
+                selector,
+                draft.preview.clone(),
+                draft.name.clone(),
+                draft.mime,
+                cx,
+            );
+            match draft.preview {
+                Some(image) => {
+                    let name = draft.name;
+                    row.cursor_pointer().hover(|row| row.bg(hover)).on_click(
+                        move |_, window, cx| open_lightbox(image.clone(), name.clone(), window, cx),
+                    )
+                }
+                None => row,
+            }
+        });
+        let draft_rows: Vec<_> = draft_rows.collect();
+        let rows = draft_rows.len() + sent.len();
         let body = match &self.attachments {
             Listing::Reading => note("attachments-note-reading", "Reading this session…".into()),
             Listing::Failed(why) => note(
                 "attachments-note-failed",
                 format!("Couldn't read attachments: {why}").into(),
             ),
-            Listing::Read(images) if images.is_empty() => note(
+            Listing::Read(images) if images.is_empty() && draft_rows.is_empty() => note(
                 "attachments-note-empty",
                 "Nothing attached. Images added to this session's message box are listed here."
                     .into(),
@@ -46,12 +72,14 @@ impl ContextPane {
             Listing::Read(images) => {
                 v_flex().children(images.iter().enumerate().map(|(index, (path, name))| {
                     let selector = format!("attachment-{path}");
-                    let row = h_flex()
-                        .id(("attachment", index))
-                        .debug_selector(move || selector)
-                        .h(px(28.))
-                        .px_2()
-                        .child(div().min_w_0().truncate().child(name.clone()));
+                    let row = row(
+                        ("attachment", index),
+                        selector,
+                        None,
+                        name.clone().into(),
+                        sent_type(path, name),
+                        cx,
+                    );
                     match remote {
                         Some(_)
                             if self
@@ -74,7 +102,8 @@ impl ContextPane {
             }
         };
         SectionCard::new(IconName::Image, "Attachments")
-            .count(count.unwrap_or_default())
+            .count(rows)
+            .children(draft_rows)
             .child(body)
             .when_some(
                 remote.filter(|_| {
@@ -107,6 +136,56 @@ impl ContextPane {
                         .child(format!("Couldn't open the image: {why}")),
                 )
             })
+    }
+
+    /// The draft images to list, when the live facts are the selected session's, less any already sent, and the sent
+    /// images read. The count chip counts both.
+    pub(super) fn listed(&self, cx: &App) -> (Vec<DraftImage>, &[(String, String)]) {
+        let sent: &[(String, String)] = match &self.attachments {
+            Listing::Read(images) => images,
+            _ => &[],
+        };
+        let drafts = self.live(cx).map(|facts| facts.drafts).unwrap_or_default();
+        (unsent(drafts, sent), sent)
+    }
+
+    /// Reads the sent images again in their own task, after a prompt was sent while the tab shows. The files list and
+    /// the images shown stay until the answer arrives; a changed source is refused as `read` does.
+    pub(super) fn reread_attachments(&mut self, cx: &mut Context<Self>) {
+        let Some(scope) = self.context_scope.clone().filter(|scope| scope.valid) else {
+            return;
+        };
+        self.attachments_serial += 1;
+        let (serial, attachments_serial) = (self.read_serial, self.attachments_serial);
+        let answer = self.client.call(
+            "rows",
+            "attachments",
+            scope.args(),
+            Some("rows/attachments"),
+            cx,
+        );
+        self._attachments = Some(cx.spawn(async move |pane, cx| {
+            let answer = answer.await;
+            pane.update(cx, |pane, cx| {
+                if !pane.current(serial, &scope) || pane.attachments_serial != attachments_serial {
+                    return;
+                }
+                if matches!(&answer, Err(CallError::Refused { code, .. }) if code == "source_changed") {
+                    pane.refuse_source(&scope, cx);
+                }
+                pane.take_attachments(answer);
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Keeps `rows/attachments`' answer, or why it couldn't be read.
+    pub(super) fn take_attachments(&mut self, answer: Result<Value, CallError>) {
+        (self.attachments, self.machine, self.more) = match answer {
+            Ok(answer) => attached(&answer),
+            Err(error) => (Listing::Failed(error.reason()), None, false),
+        };
     }
 
     /// Reads an attached image by its file name in the store (the end of its path) and opens it full size.
@@ -169,3 +248,73 @@ pub(super) fn attached(answer: &Value) -> (Listing<(String, String)>, Option<Str
     let more = answer["more"].as_bool().unwrap_or_default();
     (Listing::Read(images), machine.map(String::from), more)
 }
+
+/// The draft's images less any the sent list already holds by its saved path, which shows once, as sent.
+pub(super) fn unsent(drafts: Vec<DraftImage>, sent: &[(String, String)]) -> Vec<DraftImage> {
+    drafts
+        .into_iter()
+        .filter(|draft| {
+            draft
+                .saved_path
+                .as_ref()
+                .is_none_or(|saved| !sent.iter().any(|(path, _)| path == saved))
+        })
+        .collect()
+}
+
+/// A sent image's type, from the extension of the name it was attached with, else of the file it was saved as.
+pub(super) fn sent_type(path: &str, name: &str) -> Option<&'static str> {
+    Attachment::mime_of(name).or_else(|| Attachment::mime_of(path))
+}
+
+/// The type chip's words.
+pub(super) fn type_words(mime: Option<&str>) -> SharedString {
+    mime.unwrap_or("type not reported").to_string().into()
+}
+
+/// One image's row: its thumbnail slot, which shows `preview` or else a plain box with an image icon, its name and its
+/// type chip.
+fn row(
+    id: impl Into<ElementId>,
+    selector: String,
+    preview: Option<Arc<Image>>,
+    name: SharedString,
+    mime: Option<&'static str>,
+    cx: &App,
+) -> Stateful<Div> {
+    let theme = cx.theme();
+    let thumbnail = div()
+        .flex_none()
+        .size(px(40.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(theme.radius)
+        .overflow_hidden()
+        .bg(theme.muted)
+        .map(|thumbnail| match preview {
+            Some(image) => thumbnail.child(img(image).size_full().object_fit(ObjectFit::Cover)),
+            None => thumbnail.child(
+                Icon::new(IconName::Image)
+                    .small()
+                    .text_color(theme.muted_foreground),
+            ),
+        });
+    h_flex()
+        .id(id)
+        .debug_selector(move || selector)
+        .px_2()
+        .py_1()
+        .gap_2()
+        .child(thumbnail)
+        .child(div().flex_1().min_w_0().truncate().child(name))
+        .child(
+            div()
+                .flex_none()
+                .child(StatusChip::new(type_words(mime), Tone::Neutral)),
+        )
+}
+
+#[cfg(test)]
+#[path = "attachment_rows_tests.rs"]
+mod tests;

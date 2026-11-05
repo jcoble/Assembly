@@ -4,7 +4,8 @@
 //! Like it, the tab reads the lists (`rows/files`, `rows/attachments`) and the session's total (`rows/tokens`) when
 //! it's shown, and again when another session is picked while it's shown, and doesn't follow the live rows: Chat
 //! already does, and nobody watches these lists while they change. The two cards above follow the session's live facts
-//! (live_facts.rs), which read nothing, except that a turn ending while shown reads the total again.
+//! (live_facts.rs), which read nothing, except that a turn ending while shown reads the total again. The Attachments
+//! card lists the draft's images from the same facts, and a prompt sent while shown reads `rows/attachments` again.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
@@ -82,6 +83,11 @@ pub struct ContextPane {
     /// The newest ended turn's run when the total was read, so another turn ending while shown reads it again. `None`
     /// until the session's facts are first seen after a read.
     ended_read: Option<Option<String>>,
+    /// The newest prompt's seq when the attachments were read, so a prompt sent while shown reads them again. `None`
+    /// until the session's facts are first seen after a read.
+    prompt_read: Option<Option<i64>>,
+    /// Counts the attachments' reads, so only the newest one's answer is kept.
+    attachments_serial: u64,
     _selected: Subscription,
     /// Follows the selected session's live facts, where they've been set up.
     _facts: Option<Subscription>,
@@ -89,6 +95,8 @@ pub struct ContextPane {
     _read: Option<Task<()>>,
     /// The total's read, apart from the lists so its failure can't disturb them.
     _tokens: Option<Task<()>>,
+    /// The attachments' own read after a prompt was sent, which leaves the files list alone.
+    _attachments: Option<Task<()>>,
     /// The image opening now.
     _open: Option<Task<()>>,
 }
@@ -115,11 +123,14 @@ impl ContextPane {
             open_failed: None,
             total: None,
             ended_read: None,
+            prompt_read: None,
+            attachments_serial: 0,
             _selected: cx.observe(&SelectedSession::global(cx), |pane, _, cx| pane.read(cx)),
             _facts: LiveFacts::try_global(cx)
                 .map(|facts| cx.observe(&facts, |pane, _, cx| pane.facts_changed(cx))),
             _read: None,
             _tokens: None,
+            _attachments: None,
             _open: None,
         }
     }
@@ -137,8 +148,10 @@ impl ContextPane {
             self.more,
             self.open_failed,
         ) = (Listing::Reading, Listing::Reading, None, false, None);
-        (self.total, self.ended_read) = (None, None);
-        (self._read, self._open, self._tokens) = (None, None, None);
+        (self.total, self.ended_read, self.prompt_read) = (None, None, None);
+        (self._read, self._open, self._tokens, self._attachments) = (None, None, None, None);
+        self.attachments_serial += 1;
+        let attachments_serial = self.attachments_serial;
         cx.notify();
         if !self.active {
             return;
@@ -190,15 +203,17 @@ impl ContextPane {
                     pane.refuse_source(&scope, cx);
                 }
                 pane.files = touched(files);
-                (pane.attachments, pane.machine, pane.more) = match attachments {
-                    Ok(answer) => attached(&answer),
-                    Err(error) => (Listing::Failed(error.reason()), None, false),
-                };
+                // A prompt sent since asked for the attachments again, and that newer answer wins.
+                if pane.attachments_serial == attachments_serial {
+                    pane.take_attachments(attachments);
+                }
                 cx.notify();
             })
             .ok();
         }));
-        self.ended_read = self.live(cx).map(|facts| facts.newest_ended_run);
+        let live = self.live(cx);
+        self.ended_read = live.as_ref().map(|facts| facts.newest_ended_run.clone());
+        self.prompt_read = live.map(|facts| facts.newest_prompt_seq);
         self.read_tokens(tokens_scope, cx);
     }
 
@@ -261,18 +276,23 @@ impl ContextPane {
             .cloned()
     }
 
-    /// Redraws the cards; a turn that ended while shown reads the total again.
+    /// Redraws the cards; a turn that ended while shown reads the total again, and a prompt sent while shown reads the
+    /// attachments again.
     fn facts_changed(&mut self, cx: &mut Context<Self>) {
         cx.notify();
         let Some(scope) = self.context_scope.clone().filter(|scope| scope.valid) else {
             return;
         };
-        let Some(ended) = self.live(cx).map(|facts| facts.newest_ended_run) else {
+        let Some(facts) = self.live(cx) else {
             return;
         };
-        match self.ended_read.replace(ended.clone()) {
-            Some(read) if read != ended => self.read_tokens(scope, cx),
-            _ => {}
+        let ended = facts.newest_ended_run;
+        if matches!(self.ended_read.replace(ended.clone()), Some(read) if read != ended) {
+            self.read_tokens(scope, cx);
+        }
+        let prompt = facts.newest_prompt_seq;
+        if matches!(self.prompt_read.replace(prompt), Some(read) if read != prompt) {
+            self.reread_attachments(cx);
         }
     }
 }
@@ -304,6 +324,7 @@ impl BasePanel for ContextPane {
                 self._read = None;
                 self._open = None;
                 self._tokens = None;
+                self._attachments = None;
                 self.context_scope = None;
                 self.read_serial += 1;
             }
@@ -360,7 +381,6 @@ fn no_session(cx: &App) -> impl IntoElement {
 
 #[path = "attachments_section.rs"]
 mod attachments_section;
-use attachments_section::attached;
 #[path = "files_touched.rs"]
 mod files_touched;
 use files_touched::{names, touched};
