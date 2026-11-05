@@ -136,7 +136,7 @@ async fn settled<T: 'static>(
 /// The tree's lines as text: an open folder ends in "/ v", an excluded entry in " -".
 fn shape(pane: &FilesPane) -> Vec<String> {
     pane.tree
-        .rows()
+        .visible(0..pane.tree.row_count())
         .iter()
         .map(|row| match row {
             Row::Entry { entry, depth, open } => format!(
@@ -170,7 +170,7 @@ async fn the_tree_loads_when_shown_and_opens_folders_one_at_a_time(cx: &mut Test
     let (pane, cx) = cx.add_window_view(|_, cx| FilesPane::new(cx));
     // Hidden, it asks for nothing.
     pane.read_with(cx, |pane, _| {
-        assert!(pane.tree.rows().is_empty() && pane.loads.is_empty())
+        assert!(pane.tree.row_count() == 0 && pane.loads.is_empty())
     });
     pane.update_in(cx, |pane, window, cx| {
         BasePanel::set_active(pane, true, window, cx)

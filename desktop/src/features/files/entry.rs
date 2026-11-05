@@ -1,13 +1,14 @@
 //! What `files/list`, `files/search` and `files/read` answer (dotnet/Assembly.Infrastructure/Chat/Files/). Paths are from the
 //! session's folder, with `/` between names.
 
+use gpui_kit::SharedString;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {
-    pub path: String,
-    pub name: String,
+    pub path: SharedString,
+    pub name: SharedString,
     pub is_directory: bool,
     /// Ignored by git (or `.git` itself): drawn dimmer.
     pub excluded: bool,

@@ -346,10 +346,10 @@ impl FilesPane {
             RevealStep::Ready => {
                 self.selected = Some(path.clone());
                 self.revealing = None;
-                if let Some(ix) =
-                    self.tree.rows().iter().position(
-                        |row| matches!(row, Row::Entry { entry, .. } if entry.path == path),
-                    )
+                let rows = self.tree.visible(0..self.tree.row_count());
+                if let Some(ix) = rows
+                    .iter()
+                    .position(|row| matches!(row, Row::Entry { entry, .. } if entry.path == path))
                 {
                     self.list.scroll_to_item(ix, ScrollStrategy::Center);
                 }

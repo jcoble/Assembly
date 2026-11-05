@@ -74,11 +74,11 @@ impl FilesPane {
                             return;
                         }
                         window.focus(&pane.focus, cx);
-                        pane.clicked(path.clone(), folder, cx);
+                        pane.clicked(path.to_string(), folder, cx);
                         if let (false, Some(session)) = (folder, pane.session.clone()) {
                             FileView::open_at(
                                 session,
-                                path.clone(),
+                                path.to_string(),
                                 (None, None),
                                 event.click_count() > 1,
                                 row_source.clone(),
@@ -93,7 +93,7 @@ impl FilesPane {
                                 menu,
                                 pane.clone(),
                                 session.clone(),
-                                menu_path.clone(),
+                                menu_path.to_string(),
                                 folder,
                                 menu_source.clone(),
                                 cx,
@@ -152,7 +152,7 @@ impl Render for FilesPane {
                     .child("Pick a session to see its files."),
             );
         }
-        let count = self.tree.rows().len();
+        let count = self.tree.row_count();
         pane.child(
             h_flex()
                 .px_2()
@@ -208,13 +208,12 @@ impl Render for FilesPane {
                 count,
                 cx.processor(|pane, range: std::ops::Range<usize>, _window, cx| {
                     let pane = &*pane;
+                    let start = range.start;
                     pane.tree
-                        .rows()
+                        .visible(range)
                         .into_iter()
                         .enumerate()
-                        .skip(range.start)
-                        .take(range.len())
-                        .map(|(ix, row)| pane.row(row, ix, cx))
+                        .map(|(at, row)| pane.row(row, start + at, cx))
                         .collect()
                 }),
             )
