@@ -322,14 +322,17 @@ impl Render for BranchMenu {
                     .text_role(TextRole::Body, cx)
                     .disabled(busy || !has_changes)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(BranchPicked::Stash)))
-                    .child(Self::icon_row(
-                        IconName::Archive,
-                        if has_changes {
-                            "Stash all changes, including new files".to_string()
-                        } else {
-                            "Nothing to stash".to_string()
-                        },
-                    ).when(busy || !has_changes, |row| row.opacity(OFF_ROW_OPACITY))),
+                    .child(
+                        Self::icon_row(
+                            IconName::Archive,
+                            if has_changes {
+                                "Stash all changes, including new files".to_string()
+                            } else {
+                                "Nothing to stash".to_string()
+                            },
+                        )
+                        .when(busy || !has_changes, |row| row.opacity(OFF_ROW_OPACITY)),
+                    ),
             )
             .when_some(self.stashes.first().cloned(), |menu, latest| {
                 let label = format!("Pop {}", latest.description());

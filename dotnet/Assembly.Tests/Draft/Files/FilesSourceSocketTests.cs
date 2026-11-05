@@ -1,9 +1,23 @@
 using System.Text.Json;
+using Assembly.Infrastructure.Chat;
 
 namespace Assembly.Tests.Draft.Files;
 
 public sealed partial class FilesSocketTests
 {
+    /// <summary>A forward names this machine as the source of a viewed folder, which has no session row to check it against.</summary>
+    [Fact]
+    public async Task A_viewed_folder_forwarded_here_lists_with_this_machine_as_its_source()
+    {
+        var folder = Directory.CreateDirectory(Path.Combine(_checkouts.FullName, "viewed")).FullName;
+        File.WriteAllText(Path.Combine(folder, "a.txt"), "one");
+        var machine = _db.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", row => row.Text(0), default);
+        using var socket = await OpenAsync();
+        await CallAsync(socket, 1, "list", $$$"""{"session":"{{{FolderView.Id("p1", folder)}}}","dir":"","expectedSource":{"machine":"{{{machine}}}","generation":0,"routeMachine":null}}""");
+        var answer = JsonDocument.Parse(await ReadAsync(socket)).RootElement;
+        Assert.Equal("a.txt", answer.GetProperty("result").GetProperty("entries")[0].GetProperty("path").GetString());
+    }
+
     [Fact]
     public async Task A_draft_cannot_begin_against_a_replacement_checkout_even_with_identical_file_bytes()
     {
