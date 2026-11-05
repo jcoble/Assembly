@@ -40,7 +40,7 @@ const ROWS: (usize, usize) = (4, 100);
 const FIRST_SIZE: (usize, usize) = (96, 28);
 
 /// How long the cursor shows, then hides, while it blinks (ghostty-web's interval, as the old app had).
-const BLINK: Duration = Duration::from_millis(600);
+const BLINK: Duration = Duration::from_millis(530);
 
 #[derive(Debug, PartialEq)]
 pub enum Shown {
@@ -90,8 +90,10 @@ pub struct TerminalPane {
     focus_wanted: bool,
     /// The open under way is a retry, from the timer or a push, not from showing the tab or picking a session.
     retried: bool,
-    /// The blinking cursor's half of the blink; it stays shown while the pane hasn't the focus.
+    /// The blinking cursor's half of the blink; it stays shown while it doesn't blink.
     cursor_on: bool,
+    /// The pane has the focus, one of the blink's conditions.
+    has_focus: bool,
     _selected: Subscription,
     /// Draws again when the terminal's font or the theme changes.
     _preferences: Option<Subscription>,
@@ -113,7 +115,7 @@ pub struct TerminalPane {
     _retry: Option<Task<()>>,
     /// The tries to open on that timer so far, for its back-off.
     retries: usize,
-    /// Blinks the cursor while the pane has the focus; dropping it stops the timer.
+    /// Blinks the cursor (see `blink_as_needed`); dropping it stops the timer.
     _blink: Option<Task<()>>,
     /// Scrolls during a drag near the edge or past it; dropping it stops the timer.
     _autoscroll: Option<Task<()>>,
@@ -170,9 +172,11 @@ impl TerminalPane {
             focus_wanted: false,
             retried: false,
             cursor_on: true,
+            has_focus: false,
             _focused: focused,
-            _preferences: Preferences::try_global(cx)
-                .map(|preferences| cx.observe(&preferences, |_, _, cx| cx.notify())),
+            _preferences: Preferences::try_global(cx).map(|preferences| {
+                cx.observe(&preferences, |pane, _, cx| pane.blink_as_needed(cx))
+            }),
             _selected: cx.observe(&SelectedSession::global(cx), |pane, _, cx| pane.refresh(cx)),
             _follow: None,
             _replay: None,
@@ -224,12 +228,11 @@ impl TerminalPane {
         self.typed.clear();
         self.grid = TerminalGrid::new(self.size.0, self.size.1);
         self.session = wanted.clone();
-        self.shown = Shown::Nothing;
-        cx.notify();
+        self.set_shown(Shown::Nothing, cx);
         let Some(_) = wanted else {
             return;
         };
-        self.shown = Shown::Opening;
+        self.set_shown(Shown::Opening, cx);
         self.open(cx);
     }
 
@@ -336,7 +339,8 @@ impl TerminalPane {
 
     /// The pane took or lost the focus, which a program that asked for focus reports hears as `ESC [I` or `ESC [O`.
     fn focused(&mut self, focused: bool, cx: &mut Context<Self>) {
-        self.blink(focused, cx);
+        self.has_focus = focused;
+        self.blink_as_needed(cx);
         if self.shown != Shown::Open || !self.grid.focus_reporting() {
             return;
         }
@@ -345,26 +349,29 @@ impl TerminalPane {
         self.write(cx);
     }
 
-    /// Blinks the cursor while the pane has the focus, and shows it steady otherwise. It draws again only while the
-    /// shell is open, where the cursor shows.
-    fn blink(&mut self, focused: bool, cx: &mut Context<Self>) {
-        self.cursor_on = true;
-        self._blink = focused.then(|| {
-            cx.spawn(async move |pane, cx| {
+    /// Blinks the cursor only while the shell is open, the pane has the focus and the Cursor blink preference is on;
+    /// otherwise no timer runs and the cursor shows steady. A blink already running carries on.
+    pub(super) fn blink_as_needed(&mut self, cx: &mut Context<Self>) {
+        let wanted = self.has_focus
+            && self.shown == Shown::Open
+            && Preferences::read(cx, Appearance::terminal_cursor_blink);
+        if !wanted {
+            (self._blink, self.cursor_on) = (None, true);
+        } else if self._blink.is_none() {
+            self.cursor_on = true;
+            self._blink = Some(cx.spawn(async move |pane, cx| {
                 loop {
                     cx.background_executor().timer(BLINK).await;
                     let blinked = pane.update(cx, |pane, cx| {
                         pane.cursor_on = !pane.cursor_on;
-                        if pane.shown == Shown::Open {
-                            cx.notify();
-                        }
+                        cx.notify();
                     });
                     if blinked.is_err() {
                         return;
                     }
                 }
-            })
-        });
+            }));
+        }
         cx.notify();
     }
 

@@ -93,10 +93,11 @@ impl Appearance {
         self.saved.get(key)
     }
 
-    /// Whether the terminal's cursor blinks. Stub until Task 10.
-    #[allow(dead_code)]
+    /// Whether the terminal's cursor blinks; on unless saved off.
     pub fn terminal_cursor_blink(&self) -> bool {
-        false
+        (self.saved.get(TERMINAL_CURSOR_BLINK))
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
     }
 
     pub fn number(&self, setting: &NumberSetting) -> f32 {

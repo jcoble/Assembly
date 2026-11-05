@@ -93,7 +93,7 @@ impl TerminalPane {
         };
         if matches!(update, Update::State(_)) {
             if self.shown == Shown::Opening {
-                self.shown = Shown::Open;
+                self.set_shown(Shown::Open, cx);
                 self.focus_wanted = true;
             }
             self.catch_up(cx);
@@ -117,11 +117,11 @@ impl TerminalPane {
                 self.reconnected(cx);
             }
             Output::Caught => self.reconnected(cx),
-            Output::Exit(code) => self.shown = Shown::Exited(code),
-            Output::Unavailable(Availability::ConnectionLost) => self.reconnecting(),
-            Output::Unavailable(Availability::TerminalMissing) => self.stop(Shown::Gone),
+            Output::Exit(code) => self.set_shown(Shown::Exited(code), cx),
+            Output::Unavailable(Availability::ConnectionLost) => self.reconnecting(cx),
+            Output::Unavailable(Availability::TerminalMissing) => self.stop(Shown::Gone, cx),
             Output::Unavailable(Availability::SourceChanged) => {
-                self.stop(Shown::Said(SOURCE_CHANGED.into()))
+                self.stop(Shown::Said(SOURCE_CHANGED.into()), cx)
             }
         }
         cx.notify();
@@ -130,14 +130,14 @@ impl TerminalPane {
     /// A call on the terminal failed: quiet when the connection is down; otherwise the tab stops and says why.
     pub(super) fn call_failed(&mut self, failure: CallFailure, cx: &mut Context<Self>) {
         if connection_down(&failure) {
-            self.reconnecting();
+            self.reconnecting(cx);
             if self.shown == Shown::Reconnecting && self.link.is_none() {
                 self.wait_to_reopen(cx);
             }
         } else if failure.code == ErrorCode::TerminalMissing {
-            self.stop(Shown::Gone);
+            self.stop(Shown::Gone, cx);
         } else {
-            self.stop(Shown::Said(failure.message));
+            self.stop(Shown::Said(failure.message), cx);
         }
         cx.notify();
     }
@@ -159,9 +159,9 @@ impl TerminalPane {
         matches!(self.shown, Shown::Exited(_) | Shown::Said(_) | Shown::Gone)
     }
 
-    fn reconnecting(&mut self) {
+    fn reconnecting(&mut self, cx: &mut Context<Self>) {
         if !self.stopped() {
-            self.shown = Shown::Reconnecting;
+            self.set_shown(Shown::Reconnecting, cx);
             // Keys caught in the drop are dropped, none queued.
             self.typed.clear();
         }
@@ -171,17 +171,17 @@ impl TerminalPane {
     /// draw has measured the room without the note.
     fn reconnected(&mut self, cx: &mut Context<Self>) {
         if self.shown == Shown::Reconnecting {
-            self.shown = Shown::Open;
+            self.set_shown(Shown::Open, cx);
             self.size_unsent = true;
             cx.notify();
         }
     }
 
-    fn stop(&mut self, shown: Shown) {
+    fn stop(&mut self, shown: Shown, cx: &mut Context<Self>) {
         if self.stopped() {
             return;
         }
-        self.shown = shown;
+        self.set_shown(shown, cx);
         (self._follow, self._replay, self._resize) = (None, None, None);
         (self.held, self.resize_wanted, self.size_unsent) = (None, None, false);
         self.typed.clear();
@@ -279,10 +279,16 @@ impl TerminalPane {
     fn refresh_open(&mut self, cx: &mut Context<Self>) {
         self.reopen.clear();
         (self._retry, self._follow) = (None, None);
-        self.shown = Shown::Opening;
+        self.set_shown(Shown::Opening, cx);
         self.retried = true;
         self.open(cx);
         cx.notify();
+    }
+
+    /// Every change of what the pane shows goes through here, so the cursor's blink follows it.
+    pub(super) fn set_shown(&mut self, shown: Shown, cx: &mut Context<Self>) {
+        self.shown = shown;
+        self.blink_as_needed(cx);
     }
 
     /// Whether the note uses the error color.
