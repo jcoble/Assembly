@@ -82,7 +82,6 @@ impl SettingsPage {
         };
         let label = v_flex()
             .gap_0p5()
-            .flex_1()
             .min_w_0()
             .child(
                 say(
@@ -105,6 +104,7 @@ impl SettingsPage {
                             machine_line(machine.name.as_deref().unwrap_or("local"), "status"),
                             row_status(&machine, reached, &status),
                         )
+                        .debug_selector(|| "machine-status".into())
                         .flex_1()
                         .min_w_0()
                         .whitespace_normal(),
@@ -161,19 +161,22 @@ impl SettingsPage {
             .name
             .is_some()
             .then(|| self.machine_actions(machine, cx));
+        // On their own line: a note or a reason can be long, and all of them beside it left it a letter wide.
+        let buttons = (update.is_some() || install.is_some() || actions.is_some()).then(|| {
+            h_flex()
+                .flex_wrap()
+                .justify_end()
+                .gap_2()
+                .children(update)
+                .children(install)
+                .children(actions)
+        });
         v_flex()
             .px_4()
             .py_3()
             .gap_1p5()
-            .child(
-                h_flex()
-                    .gap_4()
-                    .justify_between()
-                    .child(label)
-                    .children(update)
-                    .children(install)
-                    .children(actions),
-            )
+            .child(label)
+            .children(buttons)
             .children(failure)
     }
 
@@ -386,6 +389,9 @@ impl SettingsPage {
         }
         self.ssh_picker.target = None;
         self.ssh_picker.failure = None;
+        self.ssh_picker
+            .state
+            .update(cx, |state, cx| state.set_selected_index(None, window, cx));
         cx.notify();
     }
 

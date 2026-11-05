@@ -7,9 +7,12 @@ use std::sync::{Arc, Mutex};
 
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::TestAppContext;
+use gpui_kit::component::IndexPath;
+use gpui_kit::component::select::SearchableVec;
 use gpui_kit::{AppContext as _, Entity, Subscription, VisualTestContext, px, size};
 use serde_json::{Value, json};
 
+use super::super::ssh_picker::HostChoice;
 use super::SettingsPage;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
@@ -326,4 +329,51 @@ async fn a_card_with_something_behind_has_the_one_button_and_shows_why_it_failed
     })
     .await;
     assert!(page.failure().unwrap().contains("No signed release"));
+}
+
+// Every button a saved machine can offer beside its words left them a letter wide on a real screen.
+#[gpui::test]
+async fn a_machine_with_every_button_keeps_its_words_readable(cx: &mut TestAppContext) {
+    let backend = backend();
+    let mut page = editing_box(cx, &backend).await;
+    page.backend_does("flip", "box not answering", |page| {
+        page.cx.update(|_, cx| {
+            Machines::try_global(cx).is_some_and(|machines| {
+                machines
+                    .read(cx)
+                    .machines()
+                    .nth(1)
+                    .is_some_and(|machine| !machine.reachable)
+            })
+        })
+    })
+    .await;
+    draw(page.cx);
+    let words = page.cx.debug_bounds("machine-status").expect("the status");
+    assert!(
+        words.size.width > px(300.),
+        "the status has {:?}",
+        words.size.width
+    );
+}
+
+#[gpui::test]
+async fn a_saved_machine_leaves_the_host_search_empty_for_the_next(cx: &mut TestAppContext) {
+    let backend = backend();
+    let page = editing_box(cx, &backend).await;
+    let host = HostChoice {
+        host: "host-a".into(),
+        host_name: None,
+    };
+    page.cx.update(|window, cx| {
+        page.page.update(cx, |page, cx| {
+            page.ssh_picker.state.update(cx, |state, cx| {
+                state.set_items(SearchableVec::new(vec![host]), window, cx);
+                state.set_selected_index(Some(IndexPath::new(0)), window, cx);
+                assert!(state.selected_value().is_some(), "picked first");
+            });
+            page.clear_machine_fields(window, cx);
+            assert_eq!(page.ssh_picker.state.read(cx).selected_value(), None);
+        });
+    });
 }
