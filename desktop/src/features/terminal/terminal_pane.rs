@@ -210,8 +210,8 @@ impl TerminalPane {
                     pane.grid.feed(&before);
                     let subscription = match link.follow(cx) {
                         Ok(subscription) => subscription,
-                        Err(why) => {
-                            pane.shown = Shown::Said(why);
+                        Err(failure) => {
+                            pane.shown = Shown::Said(failure.message);
                             cx.notify();
                             return None;
                         }
@@ -224,8 +224,8 @@ impl TerminalPane {
                     // The subscription state starts catch-up, so its arrival cannot cause a second initial read.
                     Some(subscription)
                 }
-                Err(why) => {
-                    pane.shown = Shown::Said(why);
+                Err(failure) => {
+                    pane.shown = Shown::Said(failure.message);
                     cx.notify();
                     None
                 }
@@ -255,7 +255,9 @@ impl TerminalPane {
                         pane.grid.feed(&bytes);
                         pane.link = Some(link);
                     }
-                    Err(why) => eprintln!("terminal: its output didn't read: {why}"),
+                    Err(failure) => {
+                        eprintln!("terminal: its output didn't read: {}", failure.message)
+                    }
                 }
                 for update in pane.held.take().unwrap_or_default() {
                     pane.output(update, cx);
@@ -405,8 +407,9 @@ impl TerminalPane {
             let written = write.await;
             pane.update(cx, |pane, cx| {
                 pane.writing = false;
-                if let Err(why) = written {
+                if let Err(failure) = written {
                     // As the old app: the keys went nowhere, so the terminal stops and says why.
+                    let why = failure.message;
                     pane.shown = Shown::Said(format!("The terminal didn't take the keys: {why}"));
                     (pane._follow, pane._replay) = (None, None);
                     pane.typed.clear();

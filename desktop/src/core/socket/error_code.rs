@@ -47,6 +47,8 @@ impl ErrorCode {
             | "install_busy"
             | "operation_capacity"
             | "operation_unknown" => ErrorCode::Refused { code: code.into() },
+            "connection_lost" => ErrorCode::ConnectionLost,
+            "terminal_missing" => ErrorCode::TerminalMissing,
             "uncertain" => ErrorCode::Uncertain {
                 machine: machine.unwrap_or_default(),
             },
