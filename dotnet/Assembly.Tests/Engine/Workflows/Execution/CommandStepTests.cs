@@ -20,6 +20,15 @@ namespace Assembly.Tests.Engine.Workflows.Execution;
 public sealed class CommandStepTests
 {
     [Fact]
+    public async Task A_command_runs_under_the_supervisor_that_ends_it_when_the_backend_dies()
+    {
+        using var f = new Fixture("ps -o args= -p $PPID");
+        Assert.True(f.Start(f.Prepare()).Applied);
+        var effect = f.Claim(); await f.Host().ExecuteAsync(effect, default);
+        Assert.Contains("getppid", File.ReadAllText(effect.Payload.Deserialize(WorkflowExecutionJson.Default.CommandExecutionIntent)!.OutputPath));
+    }
+
+    [Fact]
     public async Task Ordinary_nonzero_collects_failure_and_runs_remaining_commands_without_provider_session()
     {
         using var f = new Fixture("printf first; exit 7", "printf second");

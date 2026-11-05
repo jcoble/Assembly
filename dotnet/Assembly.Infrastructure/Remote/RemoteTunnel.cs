@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Assembly.Application.Common.Agents;
+using Assembly.Infrastructure.Common.Processes;
 using System.Net.Sockets;
 using System.Net;
 using System.Runtime.InteropServices;
@@ -57,17 +59,12 @@ public sealed class RemoteTunnel : IAsyncDisposable
     /// <summary>Raised each time the command exits on its own.</summary>
     public event Action? Exited;
 
-    // Leads a new group, runs the command in it, and exits as the command did; once this process (its parent) is gone,
-    // it kills the group. SIGCHLD wakes the sleep, so the command's exit is seen at once.
-    private const string Wrapper =
-        """use POSIX ":sys_wait_h"; setpgrp(0, 0); my $parent = getppid(); $SIG{CHLD} = sub {}; """
-        + """defined(my $child = fork) or die "fork: $!\n"; if (!$child) { exec { $ARGV[0] } @ARGV or die "exec $ARGV[0]: $!\n" } """
-        + """while (waitpid($child, WNOHANG) == 0) { kill "KILL", -$$ if getppid() != $parent; sleep 1 } """
-        + """exit($? & 127 ? 128 + ($? & 127) : $? >> 8);""";
-
     /// <summary>Runs <paramref name="command"/> under the wrapper: in its own group, which ends when this process does.</summary>
-    public static RemoteTunnel Wrapped(IReadOnlyList<string> command, TextWriter log, bool restart = true) =>
-        new("/usr/bin/perl", ["-e", Wrapper, "--", .. command], log, restart);
+    public static RemoteTunnel Wrapped(IReadOnlyList<string> command, TextWriter log, bool restart = true)
+    {
+        var supervised = ProcessGroup.Supervised(new(command[0], [.. command.Skip(1)], "/", null));
+        return new(supervised.FileName, [.. supervised.Arguments], log, restart);
+    }
 
     public static RemoteTunnel ForSsh(string host, int localPort, int remotePort, TextWriter log) =>
         Wrapped(
