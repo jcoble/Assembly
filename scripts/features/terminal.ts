@@ -100,7 +100,7 @@ try {
   const kept = await host.call('read', { terminal, offset: 0 });
   bytes = Buffer.from(kept.data, 'base64');
   offset = kept.offset + bytes.length;
-  while (!bytes.toString().includes('terminal-ready')) await read();
+  while (!bytes.toString().includes('terminal-ready\r\n')) await read();
   const replay = await host.call('read', { terminal, offset: 0 });
   assert.equal(replay.offset, 0);
   assert.equal(replay.end, offset);
