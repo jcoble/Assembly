@@ -21,6 +21,8 @@ pub mod files_pane;
 pub mod panel_message;
 
 #[cfg(test)]
+mod files_entry_real_tests;
+#[cfg(test)]
 mod files_filter_real_tests;
 #[cfg(test)]
 mod files_header_real_tests;
@@ -35,8 +37,7 @@ mod files_reload_real_tests;
 mod file_comparison;
 
 mod file_actions;
-
-mod file_action_form;
+pub mod file_entry_bar;
 
 #[path = "editor/file_codec.rs"]
 mod file_codec;

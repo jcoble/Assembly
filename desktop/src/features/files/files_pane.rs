@@ -12,6 +12,8 @@ use serde_json::json;
 
 #[path = "files_pane_actions.rs"]
 mod actions;
+#[path = "files_pane_entry.rs"]
+mod entry_bar;
 #[path = "files_pane_filter.rs"]
 mod filter;
 #[path = "files_pane_header.rs"]
@@ -20,6 +22,8 @@ mod header;
 mod render;
 #[path = "files_pane_root.rs"]
 mod root;
+#[path = "files_pane_run.rs"]
+mod run;
 #[path = "files_pane_workspace.rs"]
 mod workspace;
 
@@ -76,9 +80,14 @@ pub struct FilesPane {
     /// Each folder's load, by folder; dropping one cancels its call.
     pub(super) loads: HashMap<String, Task<()>>,
     list: UniformListScrollHandle,
-    action_event: Option<Subscription>,
+    /// The file action running, one at a time.
+    action: super::file_actions::ActionRun,
+    /// The entry bar, while something is being named.
+    pub(super) entry: Option<entry_bar::OpenEntry>,
+    /// The action itself. Hiding or switching leaves it to finish; only the pane going away drops it.
+    action_task: Option<Task<()>>,
     action_loading: Option<Task<()>>,
-    action_error: Option<String>,
+    pub(super) action_error: Option<String>,
     pub(super) filter: Entity<super::file_filter::FileFilter>,
     /// The filter's field and what it heard, made on the first draw, which has the window.
     filter_input: Option<(Entity<InputState>, Subscription)>,
@@ -135,7 +144,9 @@ impl FilesPane {
             restoring_tree: None,
             loads: HashMap::new(),
             list: UniformListScrollHandle::new(),
-            action_event: None,
+            action: Default::default(),
+            entry: None,
+            action_task: None,
             action_loading: None,
             action_error: None,
             filter,
@@ -169,6 +180,7 @@ impl FilesPane {
         self.release_watch(cx);
         self.action_loading = None;
         self.action_error = None;
+        self.entry = None;
         self.generation = self.generation.wrapping_add(1);
         self.session = session;
         self.source = source;
@@ -378,6 +390,10 @@ impl FilesPane {
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Keys typed in the filter or the entry bar are theirs.
+        if !self.focus.is_focused(window) {
+            return;
+        }
         match event.keystroke.key.as_str() {
             "up" | "down" => {
                 if let Some((path, _, ix)) = self.tree.adjacent(
@@ -421,7 +437,7 @@ impl FilesPane {
             }
             "f2" => {
                 if let Some(path) = self.selected.clone() {
-                    self.open_action("rename", path, None, None, window, cx);
+                    self.start_entry(super::file_entry_bar::EntryKind::Rename, &path, window, cx);
                 }
             }
             _ => return,

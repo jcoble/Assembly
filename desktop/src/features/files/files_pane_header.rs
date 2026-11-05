@@ -4,6 +4,7 @@ use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::viewed_project::ViewedProject;
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::files as ids;
+use crate::features::files::file_entry_bar::EntryKind;
 use crate::features::files::panel_message::READ_ONLY;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -88,14 +89,14 @@ impl FilesPane {
                 tool(ids::NEW_FILE, IconName::FilePlus, tip("New file"))
                     .disabled(!creatable)
                     .on_click(cx.listener(|pane, _, window, cx| {
-                        pane.open_action("createFile", String::new(), None, None, window, cx)
+                        pane.start_entry(EntryKind::NewFile, "", window, cx)
                     })),
             )
             .child(
                 tool(ids::NEW_FOLDER, IconName::FolderPlus, tip("New folder"))
                     .disabled(!creatable)
                     .on_click(cx.listener(|pane, _, window, cx| {
-                        pane.open_action("createFolder", String::new(), None, None, window, cx)
+                        pane.start_entry(EntryKind::NewFolder, "", window, cx)
                     })),
             )
             .child(

@@ -98,6 +98,13 @@ impl FilesPane {
                             );
                         }
                     }))
+                    .on_mouse_down(MouseButton::Right, {
+                        let picked = menu_path.to_string();
+                        cx.listener(move |pane, _, _, cx| {
+                            pane.selected = Some(picked.clone());
+                            cx.notify();
+                        })
+                    })
                     .context_menu(move |menu, _, cx| {
                         if let Some(session) = &menu_session {
                             Self::file_menu(
@@ -167,11 +174,9 @@ impl FilesPane {
                             .ghost()
                             .label("New file")
                             .on_click(cx.listener(|pane, _, window, cx| {
-                                pane.open_action(
-                                    "createFile",
-                                    String::new(),
-                                    None,
-                                    None,
+                                pane.start_entry(
+                                    crate::features::files::file_entry_bar::EntryKind::NewFile,
+                                    "",
                                     window,
                                     cx,
                                 )
@@ -182,11 +187,9 @@ impl FilesPane {
                             .ghost()
                             .label("New folder")
                             .on_click(cx.listener(|pane, _, window, cx| {
-                                pane.open_action(
-                                    "createFolder",
-                                    String::new(),
-                                    None,
-                                    None,
+                                pane.start_entry(
+                                    crate::features::files::file_entry_bar::EntryKind::NewFolder,
+                                    "",
                                     window,
                                     cx,
                                 )
@@ -223,6 +226,7 @@ impl Render for FilesPane {
         let results = filtering.then(|| self.filter_results(cx));
         pane.when(header, |pane| pane.child(self.header(cx)))
             .children(field)
+            .children(self.entry_view(cx))
             .children(self.action_error.clone().map(|error| {
                 div()
                     .px_2()

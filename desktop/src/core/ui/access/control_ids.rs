@@ -40,6 +40,7 @@ ids! {
         HISTORY_GO = "files.history-go",
         HISTORY_REFRESH = "files.history-refresh",
         HISTORY_LARGE = "files.history-large",
+        ENTRY = "files.entry",
     }
     drawer {
         MORE_PANELS = "drawer.more-panels",

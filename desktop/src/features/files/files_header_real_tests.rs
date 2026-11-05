@@ -6,6 +6,25 @@ use crate::core::engine::SessionKey;
 use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::state::selected_session::SelectedSession;
 use gpui::TestAppContext;
+use gpui_kit::VisualTestContext;
+
+/// Opens `session` read only, as a session another machine is working in.
+pub(super) fn make_read_only(session: &str, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        SelectedSession::global(cx).update(cx, |selected, cx| {
+            let key = SessionKey {
+                machine: "here".into(),
+                id: session.to_string(),
+            };
+            let source = ExpectedRowSource {
+                machine: "here".into(),
+                generation: 1,
+                route_machine: None,
+            };
+            selected.commit_open(key, source, true, cx);
+        });
+    });
+}
 
 #[gpui::test]
 async fn excluded_files_start_hidden_and_show_dim_when_asked(cx: &mut TestAppContext) {
@@ -118,20 +137,7 @@ async fn new_buttons_are_disabled_with_the_reason_in_a_read_only_folder(cx: &mut
         assert!(pane.can_create(cx));
         assert_eq!(pane.read_only_reason(cx), None);
     });
-    cx.update(|_, cx| {
-        SelectedSession::global(cx).update(cx, |selected, cx| {
-            let key = SessionKey {
-                machine: "here".into(),
-                id: session.clone(),
-            };
-            let source = ExpectedRowSource {
-                machine: "here".into(),
-                generation: 1,
-                route_machine: None,
-            };
-            selected.commit_open(key, source, true, cx);
-        });
-    });
+    make_read_only(&session, cx);
     pane.read_with(cx, |pane, cx| {
         assert!(!pane.can_create(cx));
         assert_eq!(pane.read_only_reason(cx).as_deref(), Some(READ_ONLY));
