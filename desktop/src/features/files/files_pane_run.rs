@@ -1,4 +1,5 @@
-//! One file action at a time, run straight from the entry bar or the menu, with no dialog, as in the old panel.
+//! One file action at a time, run from the entry bar or the menu. Delete asks first; the rest run straight away, as
+//! in the old panel.
 //! The owner is checked first; a rename or move checks open documents before and after, and moves their tabs. The
 //! pane holds the task; hiding the tab or switching session leaves it running to its end, so open tabs are never
 //! left on old paths.
@@ -9,6 +10,8 @@ use crate::core::ui::center_panes::CenterPanes;
 use crate::features::files::document_store::{DocumentKey, DocumentStore};
 use crate::features::files::entry::FileOwnership;
 use crate::features::files::file_actions::{ActionReply, ActionRun, ActionState};
+use gpui_kit::component::WindowExt as _;
+use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::*;
 use serde_json::json;
 
@@ -61,13 +64,36 @@ impl FilesPane {
         );
     }
 
+    /// Asks before moving `path` to the Trash, and only Move to Trash runs it. A tree that can't write says why on
+    /// its red line and asks nothing.
     pub(in crate::features::files) fn delete_entry(
         &mut self,
         path: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.run_action("trash", path, None, None, window, cx);
+        if let Some(reason) = self.write_block(cx) {
+            self.entry_failed(reason);
+            cx.notify();
+            return;
+        }
+        let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+        let pane = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let (pane, path) = (pane.clone(), path.clone());
+            alert
+                .title(format!("Move \u{201c}{name}\u{201d} to the Trash?"))
+                .description(format!("{path}\nYou can restore it from the Trash."))
+                .ok_text("Move to Trash")
+                .ok_variant(ButtonVariant::Danger)
+                .show_cancel(true)
+                .on_ok(move |_, window, cx| {
+                    _ = pane.update(cx, |pane, cx| {
+                        pane.run_action("trash", path.clone(), None, None, window, cx)
+                    });
+                    true
+                })
+        });
     }
 
     pub(in crate::features::files) fn run_action(

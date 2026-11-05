@@ -1,6 +1,5 @@
-//! The entry bar and the menu's writes against the real backend: New, Rename, Delete, Cut, Copy and Paste, with no
-//! dialog.
-use std::fs;
+//! The entry bar and the menu's writes against the real backend: New, Rename, Cut, Copy and Paste, with no dialog.
+//! Delete asks first; `files_delete_real_tests` covers it.
 use std::path::Path;
 
 use gpui::TestAppContext;
@@ -105,33 +104,6 @@ async fn rename_collision_keeps_the_bar_and_says_why(cx: &mut TestAppContext) {
         assert!(!pane.action_running());
     });
     assert!(Path::new(&root).join("a.md").is_file());
-}
-
-#[gpui::test]
-async fn delete_moves_to_trash_without_a_dialog(cx: &mut TestAppContext) {
-    let name = format!("trash-me-{}.md", std::process::id());
-    let (_backend, root, _session, pane, cx) = shown_pane(cx, &[name.as_str(), "keep.md"]).await;
-    pane.update_in(cx, |pane, window, cx| {
-        pane.delete_entry(name.clone(), window, cx)
-    });
-    done(&pane, cx).await;
-    let gone = !Path::new(&root).join(&name).exists();
-    pane.read_with(cx, |pane, _| {
-        if gone {
-            assert!(!shape(pane).contains(&name));
-            assert_eq!(pane.action_error, None);
-        } else {
-            // A host with no Trash refuses, and says so on the red line; nothing is deleted outright.
-            let error = pane.action_error.clone().unwrap_or_default();
-            assert!(error.contains("Trash"), "{error}");
-        }
-    });
-    // Only this test's own file leaves the Trash it was moved to.
-    if let Some(home) = std::env::var_os("HOME") {
-        let trash = Path::new(&home).join(".local/share/Trash");
-        let _ = fs::remove_file(trash.join("files").join(&name));
-        let _ = fs::remove_file(trash.join("info").join(format!("{name}.trashinfo")));
-    }
 }
 
 #[gpui::test]
