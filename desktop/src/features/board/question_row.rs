@@ -12,6 +12,7 @@ use crate::activity::{CardBody, NeedsCard, NeedsState, StatusChip, Tone};
 use crate::core::engine::engine_items::{NeedItem, WORK_REDONE};
 use crate::core::engine::{EngineFeed, EngineKey, EngineScope, SessionKey};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::ask::answer_words::answered_words;
 use crate::core::ui::ask::need_row::{NeedRow, NeedRowEvent};
 use crate::core::ui::row_drop_down::RowDropDowns;
 
@@ -83,8 +84,8 @@ pub fn card_state(need: &NeedItem) -> NeedsState {
         "answered" => NeedsState::Answered {
             summary: need
                 .answer_text
-                .clone()
-                .unwrap_or_else(|| "Answered".into())
+                .as_deref()
+                .map_or_else(|| "Answered".into(), answered_words)
                 .into(),
             delivery: Some(by.unwrap_or_else(|| "Answered elsewhere".into()).into()),
         },

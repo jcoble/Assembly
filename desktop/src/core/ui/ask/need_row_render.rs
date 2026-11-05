@@ -1,5 +1,6 @@
 //! `NeedRow`'s render: the need's title, detail, answer controls and its working, failed or settled state.
 use super::*;
+use crate::core::ui::ask::answer_words::{answered_words, choice_words, picked_words};
 
 /// A gate is decided, not dismissed (the engine refuses it), so it gets no Dismiss.
 fn dismiss(allowed: bool, cx: &mut Context<NeedRow>) -> Option<impl IntoElement> {
@@ -14,7 +15,7 @@ fn dismiss(allowed: bool, cx: &mut Context<NeedRow>) -> Option<impl IntoElement>
 }
 
 impl Render for NeedRow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let title = self
             .need
@@ -85,16 +86,26 @@ impl Render for NeedRow {
         }
         if self.need.state != "open" {
             if let Some(answer) = &self.need.answer {
-                column = column.child(self.need.answer_text.clone().unwrap_or_else(|| {
-                    AskForm::shown(
-                        self.need
-                            .presentation
-                            .as_ref()
-                            .and_then(|presentation| presentation.schema.as_ref()),
-                        answer,
-                    )
-                    .to_string()
-                }));
+                column = column.child(
+                    self.need
+                        .answer_text
+                        .as_deref()
+                        .map(answered_words)
+                        .or_else(|| {
+                            let options = &self.need.presentation.as_ref()?.options;
+                            picked_words(answer, options)
+                        })
+                        .unwrap_or_else(|| {
+                            AskForm::shown(
+                                self.need
+                                    .presentation
+                                    .as_ref()
+                                    .and_then(|presentation| presentation.schema.as_ref()),
+                                answer,
+                            )
+                            .to_string()
+                        }),
+                );
             }
             if let Some(unsent) = self.unsent.clone() {
                 column = column.child(
@@ -164,10 +175,10 @@ impl Render for NeedRow {
                 ),
             );
         }
-        let on_action: controls::OnControl = {
+        let on_answer: OnAnswer = {
             let row = cx.weak_entity();
-            Rc::new(move |action, _, cx| {
-                let _ = row.update(cx, |row, cx| row.control(action, cx));
+            Rc::new(move |answer, _, cx| {
+                let _ = row.update(cx, |row, cx| row.control(answer, cx));
             })
         };
         let mut answers = v_flex()
@@ -179,6 +190,9 @@ impl Render for NeedRow {
                 self.need.text.clone(),
                 self.need.answer.clone(),
             ) {
+                if let Some(form) = &self.form {
+                    form.update(cx, |form, cx| form.sync(&payload, window, cx));
+                }
                 if presentation.input_mode == "form" && self.form.is_none() {
                     answers = answers.child("This form's input controls are unavailable.");
                 } else {
@@ -195,7 +209,7 @@ impl Render for NeedRow {
                         &payload,
                         self.form.as_ref(),
                         &choices,
-                        on_action,
+                        on_answer,
                         cx,
                     ));
                 }
@@ -236,12 +250,7 @@ impl Render for NeedRow {
                 let gate = self.need().kind == "workflow_gate";
                 for (index, option) in presentation.options.iter().enumerate() {
                     let id = option.id.clone();
-                    // A gate's options arrive as bare words, "approve" and "deny".
-                    let label = if gate {
-                        sentence_case(&option.label)
-                    } else {
-                        option.label.clone()
-                    };
+                    let label = choice_words(option);
                     let selector = format!("need-choice:{id}");
                     let button = Button::new(SharedString::from(selector.clone())).label(label);
                     let button = if gate && id == "revise" {
@@ -318,11 +327,4 @@ impl NeedRow {
             );
         }
     }
-}
-
-fn sentence_case(word: &str) -> String {
-    let mut letters = word.chars();
-    letters.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(letters).collect()
-    })
 }

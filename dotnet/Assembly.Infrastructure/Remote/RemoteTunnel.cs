@@ -15,7 +15,7 @@ namespace Assembly.Infrastructure.Remote;
 /// </summary>
 public sealed class RemoteTunnel : IAsyncDisposable
 {
-    private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(10);
 
     private readonly string _file;
     private readonly string[] _args;
@@ -57,6 +57,9 @@ public sealed class RemoteTunnel : IAsyncDisposable
     /// <summary>Raised each time the command exits on its own.</summary>
     public event Action? Exited;
 
+    /// <summary>Raised each time ssh has its forward up, including after it comes back.</summary>
+    public event Action? Forwarding;
+
     // Leads a new group, runs the command in it, and exits as the command did; once this process (its parent) is gone,
     // it kills the group. SIGCHLD wakes the sleep, so the command's exit is seen at once.
     private const string Wrapper =
@@ -73,7 +76,7 @@ public sealed class RemoteTunnel : IAsyncDisposable
         Wrapped(
             [
                 "ssh", "-v", "-N", "-n", "-S", "none",
-                "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+                "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
                 "-L", $"127.0.0.1:{localPort}:127.0.0.1:{remotePort}", host,
             ],
             log);
@@ -173,7 +176,11 @@ public sealed class RemoteTunnel : IAsyncDisposable
         while (await process.StandardError.ReadLineAsync() is { } line)
         {
             // With ExitOnForwardFailure, ssh reaches this point only after its local forwards bind.
-            if (line == "debug1: Entering interactive session.") _forwardReady.TrySetResult(true);
+            if (line == "debug1: Entering interactive session.")
+            {
+                _forwardReady.TrySetResult(true);
+                Forwarding?.Invoke();
+            }
             if (line.StartsWith("debug1:", StringComparison.Ordinal)
                 || line.StartsWith("debug2:", StringComparison.Ordinal)
                 || line.StartsWith("debug3:", StringComparison.Ordinal)) continue;

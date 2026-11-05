@@ -40,6 +40,24 @@ impl EngineStore {
             .filter_map(|key| self.items.get(key))
             .collect()
     }
+    /// Steps of the session's runs the engine says are stopped until the person moves them.
+    pub fn stopped_steps_of(&self, session: &SessionKey) -> usize {
+        self.scopes
+            .get(&EngineScope {
+                machine: session.machine.clone(),
+                topic: "runs".into(),
+                key: None,
+            })
+            .into_iter()
+            .flatten()
+            .filter(|key| key.kind == "step")
+            .filter_map(|key| self.items.get(key))
+            .filter(|step| {
+                step.value["needsOwner"] == true
+                    && step.value["ownerSessionId"].as_str() == Some(session.id.as_str())
+            })
+            .count()
+    }
     /// Parentage uses the owning child's exported parentMachine/parentId pair.
     /// Missing legacy ownership remains unknown; no ID or saved-name fallback exists.
     pub fn children_of(&self, parent: &SessionKey) -> Vec<&EngineItem> {

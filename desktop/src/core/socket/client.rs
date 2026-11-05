@@ -39,11 +39,11 @@ pub struct SocketClient {
     thread: Option<JoinHandle<()>>,
 }
 
-struct GlobalSocket(Entity<SocketClient>);
+pub(crate) struct GlobalSocket(Entity<SocketClient>);
 
 impl Global for GlobalSocket {}
 
-struct GlobalBulk(Entity<SocketClient>);
+pub(crate) struct GlobalBulk(Entity<SocketClient>);
 
 impl Global for GlobalBulk {}
 

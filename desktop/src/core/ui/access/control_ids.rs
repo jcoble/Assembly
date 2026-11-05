@@ -176,6 +176,12 @@ pub fn machine_line(machine: &str, line: &str) -> String {
     format!("settings.machine.{}.{line}", slug(machine))
 }
 
+/// A button of a question's form, on whichever surface draws it: `ask.a1.continue` (`cancel`, `skip`, `previous`,
+/// `blank`, `continue`).
+pub fn ask_control(key: &str, action: &str) -> String {
+    format!("ask.{}.{action}", slug(key))
+}
+
 /// A tab of the Build Board's panel: `board.tab.needs-you`, `board.tab.workflows`.
 pub fn board_tab(name: &str) -> String {
     format!("board.tab.{}", slug(name))

@@ -118,3 +118,51 @@ fn unsafe_links_are_refused() {
         );
     }
 }
+
+// Spec section 6: a link on a task page that `route_url` refuses, handed on to the app's link handling.
+#[test]
+fn a_task_page_hands_on_links_the_app_accepts() {
+    use crate::core::navigation::external_urls::ExternalRoute;
+    assert_eq!(
+        passes_on("assembly://session/s1", RouteRefused::Unsupported),
+        Some(ExternalRoute::Session {
+            id: "s1".into(),
+            machine: None
+        })
+    );
+    assert_eq!(
+        passes_on(
+            "assembly://open?url=https%3A%2F%2Fa.test",
+            RouteRefused::Unsupported
+        ),
+        Some(ExternalRoute::Open {
+            url: "https://a.test".into()
+        })
+    );
+    assert_eq!(
+        passes_on("assembly://file?path=%2Fa", RouteRefused::Unsupported),
+        Some(ExternalRoute::File {
+            path: "/a".into(),
+            machine: None
+        })
+    );
+}
+
+#[test]
+fn a_task_page_hands_on_nothing_else_so_a_task_link_can_not_loop() {
+    assert_eq!(
+        passes_on(
+            "assembly://task/3f4394b0689d81b19819c696dad2fd48",
+            RouteRefused::NotConnected
+        ),
+        None
+    );
+    assert_eq!(
+        passes_on("assembly://nothing", RouteRefused::Unsupported),
+        None
+    );
+    assert_eq!(
+        passes_on("file:///etc/passwd", RouteRefused::Unsupported),
+        None
+    );
+}

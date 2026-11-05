@@ -450,7 +450,7 @@ public sealed partial class WorkflowScheduleTests
         public string Step { get; }
         public string Prompt { get; }
         public int CommittedShells { get; private set; }
-        public Fixture(string prompt = "full snapshotted prompt", int messageLimit = 20, bool failProjection = false, string? yaml = null)
+        public Fixture(string prompt = "full snapshotted prompt", int messageLimit = 20, bool failProjection = false, string? yaml = null, bool unconfigured = false)
         {
             Prompt = prompt; Core = new(topics: Topics); Core.SeedSession("owner");
             var store = new ProjectStore(Core.Db, Core.Time);
@@ -460,7 +460,7 @@ public sealed partial class WorkflowScheduleTests
                 s.Publish("test.chat-shell", null, command.Title, EngineJson.Default.String);
                 s.AfterCommit(() => CommittedShells++);
                 if (failProjection) throw new InvalidOperationException("projection failure");
-            }, isConfiguredProvider: (provider, account) => provider == "codex" && account == "");
+            }, isConfiguredProvider: (provider, account) => !unconfigured && provider == "codex" && account == "");
             var request = new WorkflowStartRequest(Guid.NewGuid(), Run, 0, 0, "owner", "request", ".assembly/workflows/flow.yml", project.Id, "task", null, Json("{}"));
             var context = new CommandContext(request.CommandId, Core.Machine, new(ActorKind.Window, "owner"), Run, 0, 0, 1000);
             var source = WorkflowParser.Parse(new(yaml ?? """

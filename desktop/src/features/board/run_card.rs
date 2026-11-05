@@ -15,7 +15,7 @@ use super::board_commands::{
     BoardRunAction, refusal_line, run_command, selected_after, step_recovery, undo_token,
 };
 use super::board_queries::BoardData;
-use super::board_sections::offline_reason;
+use super::board_sections::{machine_label, offline_reason};
 use super::question_row::{QuestionRows, need_card};
 use super::run_footer::{Footer, RunAction, footer};
 use super::run_steps::{card_steps, visible_steps};
@@ -382,6 +382,12 @@ fn waiting_at(steps: &[&StepItem], data: &BoardData, machine: &str) -> Option<(u
     })
 }
 
+/// The open question this run's card shows in place, so a list beside the card doesn't show it twice.
+pub(super) fn question_on_card(run: &RunItem, data: &BoardData) -> Option<EngineKey> {
+    let (visible, _) = visible_steps(&data.steps_of(run));
+    waiting_at(&visible, data, &run.machine).map(|(_, key)| key)
+}
+
 impl RunCard {
     /// Drawn by whoever holds it, from its current read of the shared rows.
     pub fn draw(&mut self, data: &BoardData, cx: &mut Context<Self>) -> AnyElement {
@@ -408,7 +414,17 @@ impl RunCard {
             visible_steps(&all)
         };
         let waiting = waiting_at(&visible, data, &run.machine);
-        let offline = offline_reason(&run.machine, self.feed.read(cx), cx);
+        let last_known = self.reader.read(cx).is_last_known();
+        let offline = offline_reason(&run.machine, self.feed.read(cx), cx).or_else(|| {
+            last_known.then(|| {
+                format!(
+                    "{} is reconnecting",
+                    machine_label(&run.machine, self.feed.read(cx), cx)
+                )
+                .into()
+            })
+        });
+        let unknown_since = last_known.then(|| offline.clone()).flatten();
         let mut rows = card_steps(run, &visible, now);
         for (row, step) in rows.iter_mut().zip(&visible) {
             row.actions = self.step_actions(step, offline.as_ref(), cx);
@@ -457,6 +473,12 @@ impl RunCard {
         let busy = self.action.is_some();
         v_flex()
             .gap_2()
+            .children(unknown_since.map(|why| {
+                div()
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(muted)
+                    .child(format!("{why}. These are the last steps it sent."))
+            }))
             .child(
                 h_flex()
                     .gap_2()

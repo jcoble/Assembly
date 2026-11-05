@@ -131,6 +131,8 @@ pub enum ComposerEvent {
         receipt: OwnerPromptAccepted,
     },
     PendingChanged,
+    /// That session's source moved under a read; the pane owns reopening it, if it still shows that session.
+    SourceLost(crate::core::engine::SessionKey),
 }
 #[path = "owner_prompt.rs"]
 mod owner_prompt;

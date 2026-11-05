@@ -43,9 +43,7 @@ impl SessionPane {
                         && pane.row_source == source
                         && let Err(error) = answer
                     {
-                        pane.status =
-                            format!("Could not mark this journal read: {}", error.reason()).into();
-                        cx.notify();
+                        pane.read_refused(error, cx);
                     }
                 })
                 .ok();

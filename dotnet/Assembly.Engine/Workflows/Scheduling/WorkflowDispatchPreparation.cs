@@ -123,9 +123,12 @@ public static partial class WorkflowDispatch
         var account = accountContext?.Invoke(selectedProvider) ?? "";
         var provider = scope.QueryFirst("""
             SELECT installation,auth_state,facts_json IS NOT NULL AND ($model IS NULL OR EXISTS(
-              SELECT 1 FROM json_each(facts_json,'$.models') model WHERE json_extract(model.value,'$.id')=$model))
+              SELECT 1 FROM json_each(facts_json,'$.models') model WHERE json_extract(model.value,'$.id')=$model)),
+              checked_ms IS NULL AND installation='unknown' AND auth_state<>'checking'
             FROM engine_provider WHERE machine=$machine AND provider=$provider AND account_context=$account
-            """, r => new DispatchProvider(configured?.Invoke(selectedProvider, account) == true, r.Text(0), r.Text(1), r.Long(2) != 0),
+            """, r => r.Long(3) != 0
+                ? new DispatchProvider(configured?.Invoke(selectedProvider, account) == true, null, null, false) // A row a sign-in left, with no check behind it.
+                : new DispatchProvider(configured?.Invoke(selectedProvider, account) == true, r.Text(0), r.Text(1), r.Long(2) != 0),
             new SqlArg("$machine", row.Machine), new("$provider", selectedProvider), new("$account", account), new("$model", selectedModel))
             ?? new DispatchProvider(configured?.Invoke(selectedProvider, account) == true, null, null, false);
         var dependencies = scope.Query("""
@@ -173,7 +176,12 @@ public static partial class WorkflowDispatch
             row.Session is not null && resume is null ? "workflow_resume_unavailable" :
             resume is not null && (resume.AccountContext != account || resume.Folder != row.Folder || resume.WorkspaceId != row.Workspace || resume.Head != row.Head) ? "workflow_resume_context_changed" :
             row.WorkspaceState != "ready" || row.Folder == "" || row.Head is null ? "workspace_not_ready" :
-            !provider.Configured || provider.Installation != "installed" || selectedModel is null && !provider.ModelAvailable ? "provider_unavailable" :
+            !provider.Configured ? "provider_unavailable" :
+            provider.Authentication == "checking" ? "provider_checking" :
+            provider.Installation is null || row.Dispatch == WorkflowBlockedWords.Recheck ? "provider_unchecked" :
+            provider.Installation is not ("installed" or "unknown") ? "provider_unavailable" :
+            provider.Installation == "unknown" || provider.Authentication == "could_not_check" ? "provider_check_failed" :
+            selectedModel is null && !provider.ModelAvailable ? "provider_unavailable" :
             provider.Authentication is not ("signed_in" or "unverified" or "unsupported") ? "sign_in_required" :
             !provider.ModelAvailable ? "model_unavailable" :
             dependencies.Any(d => !(d.State == "succeeded" && d.ReceiptHash is not null || d.State == "skipped" && d.RuleSkippable && d.RuleReason is not null || d.Optional && (d.State is "failed" or "cancelled"))) ? "dependency_not_ready" :

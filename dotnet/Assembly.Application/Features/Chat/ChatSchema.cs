@@ -1,4 +1,5 @@
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Engine;
 using Assembly.Application.Features.Chat.Rows;
 
 namespace Assembly.Application.Features.Chat;
@@ -166,13 +167,22 @@ internal static class Schema
               AND c.source_route IS source.source_route AND c.agent=s.agent AND c.parent_id IS s.parent_session_id)),
         engine_needs AS (
           SELECT n.id, n.machine, 0 AS generation, n.session_id
-          FROM engine_needs_me n JOIN local_source local ON local.machine_id=n.machine WHERE n.state='open'
+          FROM engine_needs_me n JOIN local_source local ON local.machine_id=n.machine WHERE n.state='open' AND {OwnerAttention.Need}
+          UNION ALL
+          SELECT t.id, t.machine, 0, r.owner_session_id
+          FROM engine_run r JOIN engine_step t ON t.run_id=r.id JOIN local_source local ON local.machine_id=t.machine
+          WHERE r.state IN ('queued','running','needs_me') AND {OwnerAttention.Step}
           UNION ALL
           SELECT n.entity_id, n.machine, n.generation, json_extract(n.row_json,'$.sessionId')
           FROM engine_mirror_row n JOIN engine_mirror m ON m.machine=n.machine AND m.generation=n.generation AND m.state='live'
           WHERE n.entity_kind='needs_me' AND json_type(n.row_json,'$.id')='text' AND json_type(n.row_json,'$.machine')='text'
             AND json_type(n.row_json,'$.sessionId')='text' AND json_extract(n.row_json,'$.id')=n.entity_id
-            AND json_extract(n.row_json,'$.machine')=n.machine AND json_extract(n.row_json,'$.state')='open'),
+            AND json_extract(n.row_json,'$.machine')=n.machine AND json_extract(n.row_json,'$.state')='open'
+            AND json_extract(n.row_json,'$.forOwner')=1
+          UNION ALL
+          SELECT n.entity_id, n.machine, n.generation, json_extract(n.row_json,'$.ownerSessionId')
+          FROM engine_mirror_row n JOIN engine_mirror m ON m.machine=n.machine AND m.generation=n.generation AND m.state='live'
+          WHERE n.entity_kind='step' AND json_extract(n.row_json,'$.needsOwner')=1),
         sessions AS (
           SELECT s.session_id, s.agent,
             CASE WHEN s.is_bare THEN 'bare:' || COALESCE(s.machine,'local') ELSE s.repo_url END AS repo_url,

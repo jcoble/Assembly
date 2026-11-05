@@ -311,6 +311,9 @@ impl NavigationFixture {
         )
         .await;
     }
+    pub fn forget_results(&self) {
+        self.results.borrow_mut().clear();
+    }
     pub async fn opened(&mut self, id: &str, cx: &mut VisualTestContext) {
         until(
             "correlated complete navigator result",

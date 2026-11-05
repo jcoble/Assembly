@@ -18,6 +18,21 @@ public sealed class RemoteTunnelTests
         Assert.Contains(Enumerable.Range(0, args.Length - 1), i => args[i] == "-S" && args[i + 1] == "none");
     }
 
+    [Fact]
+    public async Task It_says_each_time_its_forward_comes_up_and_gives_up_on_a_silent_host()
+    {
+        await using var ssh = RemoteTunnel.ForSsh("-V", 12345, 9797, TextWriter.Null);
+        var args = (string[])typeof(RemoteTunnel).GetField("_args",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(ssh)!;
+        Assert.Contains(Enumerable.Range(0, args.Length - 1), i => args[i] == "-o" && args[i + 1] == "ConnectTimeout=10");
+
+        var up = System.Threading.Channels.Channel.CreateUnbounded<int>();
+        await using var tunnel = new RemoteTunnel("/bin/sh", ["-c", "echo 'debug1: Entering interactive session.' >&2"], TextWriter.Null);
+        tunnel.Forwarding += () => up.Writer.TryWrite(1);
+        // The first start may have raised it before this subscribed; the restart after it proves it's raised again.
+        await up.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(20));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1000)]
