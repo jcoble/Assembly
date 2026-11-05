@@ -4,20 +4,34 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 
-use super::external_urls::ExternalRoute;
+use super::external_urls::{ExternalRoute, parse_external};
 use super::waiting_session_link;
+use crate::core::intents::open_url::OpenUrl;
+use crate::features::tasks::tasks_pane::{self, NOT_OPENABLE};
 
 /// Carries out a route.
 pub fn handle_route(route: ExternalRoute, cx: &mut App) {
     match route {
         ExternalRoute::Session { id, machine } => waiting_session_link::open(id, machine, cx),
-        route => crate::features::tasks::tasks_pane::handle_external(route, cx),
+        ExternalRoute::Open { url } => cx.dispatch_action(&OpenUrl { url }),
+        ExternalRoute::File { .. } => {}
+        ExternalRoute::NotionOAuth { state, claim_code } => {
+            tasks_pane::receive_sign_in(state, claim_code, cx)
+        }
+        ExternalRoute::Task { page_id } => tasks_pane::open_task_link(page_id, cx),
+        ExternalRoute::Unsupported => show_notice(NOT_OPENABLE.into(), cx),
     }
 }
 
-/// Carries out an `assembly://` address clicked inside the app. False when it isn't one the app accepts.
-pub fn handle_address(_address: &str, _cx: &mut App) -> bool {
-    false
+/// Carries out an `assembly://` address clicked inside the app. False when it isn't one the app accepts. A click runs
+/// while its window is being updated, and a route updates the window itself, so the route waits until that's done.
+pub fn handle_address(address: &str, cx: &mut App) -> bool {
+    let route = parse_external(address);
+    if route == ExternalRoute::Unsupported {
+        return false;
+    }
+    cx.defer(move |cx| handle_route(route, cx));
+    true
 }
 
 /// A warning in the window, outside any window update.

@@ -5,10 +5,12 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::{AppContext as _, EmptyView, VisualTestContext};
 
 use super::{OpenUrl, register};
+use crate::core::state::selected_session::SelectedSession;
 
 fn window(cx: &mut TestAppContext) -> &mut VisualTestContext {
     cx.update(|cx| {
         gpui_kit::init(cx);
+        SelectedSession::init(cx);
         register(cx);
     });
     let (_, cx) = cx.add_window_view(|window, cx| {

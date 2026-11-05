@@ -13,7 +13,6 @@ use gpui_kit::*;
 
 use crate::core::engine::SessionKey;
 use crate::core::intents::open_task::{OpenTask, OpenTaskLink};
-use crate::core::navigation::external_urls::ExternalRoute;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::update::Update;
 use crate::core::state::selected_session::SelectedSession;
@@ -288,35 +287,21 @@ impl TasksPane {
     }
 }
 
-/// A link from outside the app, once the window is up.
-pub fn handle_external(route: ExternalRoute, cx: &mut App) {
-    match route {
-        ExternalRoute::NotionOAuth { state, claim_code } => {
-            if let Some(pane) = cx
-                .try_global::<OpenPane>()
-                .and_then(|open| open.0.upgrade())
-            {
-                let setup = pane.read(cx).setup.clone();
-                setup.update(cx, |setup, cx| setup.receive(state, claim_code, cx));
-            }
-        }
-        ExternalRoute::Task { page_id } => {
-            let url = format!("assembly://task/{page_id}");
-            TasksPane::in_window(cx, move |pane, window, cx| pane.open_link(&url, window, cx));
-        }
-        ExternalRoute::Session { .. } | ExternalRoute::Open { .. } | ExternalRoute::File { .. } => {
-        }
-        ExternalRoute::Unsupported => {
-            if let Some(window) = cx
-                .active_window()
-                .or_else(|| cx.windows().into_iter().next())
-            {
-                let _ = window.update(cx, |_, window, cx| {
-                    window.push_notification(Notification::warning(NOT_OPENABLE), cx);
-                });
-            }
-        }
+/// A sign-in callback from outside the app, once the window is up.
+pub fn receive_sign_in(state: String, claim_code: String, cx: &mut App) {
+    if let Some(pane) = cx
+        .try_global::<OpenPane>()
+        .and_then(|open| open.0.upgrade())
+    {
+        let setup = pane.read(cx).setup.clone();
+        setup.update(cx, |setup, cx| setup.receive(state, claim_code, cx));
     }
+}
+
+/// A task link from outside the app, once the window is up.
+pub fn open_task_link(page_id: String, cx: &mut App) {
+    let url = format!("assembly://task/{page_id}");
+    TasksPane::in_window(cx, move |pane, window, cx| pane.open_link(&url, window, cx));
 }
 
 /// About a row's height, for what to draw ahead and how many rows fill the tab.
