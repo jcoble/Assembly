@@ -128,6 +128,7 @@ fn images(pane: &Entity<ContextPane>, cx: &mut VisualTestContext) -> Listing<(St
     pane.read_with(cx, |pane, _| pane.attachments.clone())
 }
 
+// Pins: g0-shape#14
 #[test]
 fn a_sent_images_type_comes_from_its_extension() {
     assert_eq!(sent_type("/h/a/9f.png", "shot.png"), Some("image/png"));
@@ -143,6 +144,7 @@ fn a_sent_images_type_comes_from_its_extension() {
     assert_eq!(type_words(Some("image/png")), "image/png");
 }
 
+// Pins: g0-shape#14
 #[test]
 fn an_unknown_type_reads_as_not_reported() {
     assert_eq!(sent_type("/h/a/9f.bmp", "old.bmp"), None);
@@ -150,6 +152,7 @@ fn an_unknown_type_reads_as_not_reported() {
     assert_eq!(type_words(None), "type not reported");
 }
 
+// Pins: g0-shape#14
 #[gpui::test]
 fn draft_images_come_first_and_the_chip_counts_every_row(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -190,6 +193,7 @@ fn draft_images_come_first_and_the_chip_counts_every_row(cx: &mut TestAppContext
     assert!(cx.debug_bounds("attachments-note-empty").is_none());
 }
 
+// Pins: g0-shape#14
 #[gpui::test]
 fn a_draft_opens_its_own_picture_full_size_with_no_read(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -216,6 +220,7 @@ fn a_draft_opens_its_own_picture_full_size_with_no_read(cx: &mut TestAppContext)
     );
 }
 
+// Pins: g0-shape#14
 #[gpui::test]
 fn another_sessions_drafts_are_not_listed(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -230,6 +235,7 @@ fn another_sessions_drafts_are_not_listed(cx: &mut TestAppContext) {
     assert_eq!(rows(&pane, cx), 0);
 }
 
+// Pins: g0-shape#14
 #[gpui::test]
 fn a_saved_draft_also_listed_as_sent_shows_once_as_sent(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -268,6 +274,7 @@ fn a_saved_draft_also_listed_as_sent_shows_once_as_sent(cx: &mut TestAppContext)
     assert_eq!(rows(&pane, cx), 2);
 }
 
+// Pins: g0-shape#14
 #[gpui::test]
 fn a_new_prompt_reads_only_the_attachments_again_and_keeps_the_lists_meanwhile(
     cx: &mut TestAppContext,
@@ -326,6 +333,7 @@ fn a_new_prompt_reads_only_the_attachments_again_and_keeps_the_lists_meanwhile(
     );
 }
 
+// Pins: g0-shape#14
 #[gpui::test]
 fn a_hidden_tab_reads_nothing_when_a_prompt_is_sent(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -338,6 +346,7 @@ fn a_hidden_tab_reads_nothing_when_a_prompt_is_sent(cx: &mut TestAppContext) {
     assert_eq!(calls_of(&client, "rows/attachments").len(), 1);
 }
 
+// Pins: g0-shape#14
 #[gpui::test]
 fn a_refused_re_read_marks_the_source_invalid(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -381,6 +390,7 @@ fn a_refused_re_read_marks_the_source_invalid(cx: &mut TestAppContext) {
     );
 }
 
+// Pins: g0-shape#14
 #[gpui::test]
 fn the_count_chip_counts_a_draft_and_a_sent_image(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -400,6 +410,7 @@ fn the_count_chip_counts_a_draft_and_a_sent_image(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("card-count-Attachments-1").is_none());
 }
 
+// Pins: g0-shape#14
 #[gpui::test]
 fn a_failed_re_read_keeps_the_images_shown(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -422,6 +433,7 @@ fn a_failed_re_read_keeps_the_images_shown(cx: &mut TestAppContext) {
     );
 }
 
+// Pins: g0-shape#14
 #[gpui::test]
 fn a_failed_re_read_leaves_the_first_reads_answer_to_fill_the_list(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);

@@ -53,6 +53,7 @@ public sealed class FilesTouchedTests : IDisposable
 
     private static string[] Paths(IEnumerable<FileTouched> files) => files.Select(file => file.Path).ToArray();
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_calls_start_and_end_count_once()
     {
@@ -61,6 +62,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(new FileTouched("a.rs", 3, 1, 1, 2), Assert.Single(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void Two_calls_on_a_file_count_two_and_add_their_lines()
     {
@@ -69,6 +71,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(new FileTouched("a.rs", 5, 4, 2, 2), Assert.Single(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_call_naming_a_file_twice_counts_once()
     {
@@ -77,6 +80,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(1, Assert.Single(Read()).Count);
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_failed_calls_lines_dont_add_but_it_still_counts()
     {
@@ -85,6 +89,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(new FileTouched("a.rs", 3, 0, 2, 2), Assert.Single(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_failed_calls_files_lines_dont_add_either()
     {
@@ -93,6 +98,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal([new FileTouched("a.rs", 0, 0, 1, 1), new FileTouched("b.rs", 0, 0, 1, 1)], Read());
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_calls_path_outside_its_files_still_lists_with_no_lines()
     {
@@ -101,6 +107,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal([new FileTouched("a.rs", 2, 1, 1, 1), new FileTouched("b.rs", 3, 0, 1, 1), new FileTouched("input.rs", 0, 0, 1, 1)], Read());
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_path_also_in_its_files_doesnt_double_its_lines_or_count()
     {
@@ -109,6 +116,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal([new FileTouched("a.rs", 2, 1, 1, 1), new FileTouched("b.rs", 3, 0, 1, 1)], Read());
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_read_and_a_failed_call_list()
     {
@@ -117,6 +125,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(["s.rs", "c.rs", "f.rs", "r.md"], Paths(Read()));
     }
 
+    // Pins: g0-shape#13
     [Theory]
     [InlineData("search")]
     [InlineData("fetch")]
@@ -129,6 +138,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Empty(ReadNoFolder());
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_shell_calls_own_path_is_ignored()
     {
@@ -137,6 +147,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Empty(ReadNoFolder());
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_shell_candidate_that_exists_lists_with_its_count()
     {
@@ -146,6 +157,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(new FileTouched("a.md", 0, 0, 2, 2), Assert.Single(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_shell_candidate_that_doesnt_exist_is_dropped()
     {
@@ -154,6 +166,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Empty(Read());
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void An_existing_folder_is_dropped_whatever_named_it()
     {
@@ -163,6 +176,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Empty(Read());
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void An_edit_path_that_no_longer_exists_stays()
     {
@@ -171,6 +185,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(["gone.rs"], Paths(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_path_both_edited_and_shell_named_stays_when_gone()
     {
@@ -179,6 +194,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(new FileTouched("gone.rs", 0, 0, 2, 2), Assert.Single(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_second_location_on_a_read_isnt_checked_for_existence()
     {
@@ -187,6 +203,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(["one.md", "two.md"], Paths(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void An_absolute_and_a_relative_path_are_one_row()
     {
@@ -195,6 +212,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(new FileTouched("a.rs", 2, 0, 2, 2), Assert.Single(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_home_path_and_its_tilde_are_one_row()
     {
@@ -205,6 +223,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(new FileTouched("/home/x/a.md", 0, 0, 2, 2), file);
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_home_path_inside_the_folder_is_relative_too()
     {
@@ -215,6 +234,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(new FileTouched("a.md", 0, 0, 2, 2), file);
     }
 
+    // Pins: g0-shape#13
     [Theory]
     [InlineData("/work/a_b")]
     [InlineData("/work/100%")]
@@ -228,6 +248,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(["/work/100x/d.md", "/work/axb/c.md", "a.md"], Paths(files));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_folder_name_that_only_starts_the_same_isnt_stripped()
     {
@@ -236,6 +257,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal([$"{Folder}-other/a.md"], Paths(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void An_attached_image_lists_with_its_name_unchecked()
     {
@@ -244,6 +266,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(new FileTouched("/gone/one.png", 0, 0, 1, 1, "shot.png"), Assert.Single(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_prompt_path_that_exists_lists_and_one_that_doesnt_is_dropped()
     {
@@ -253,6 +276,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(new FileTouched("a.md", 0, 0, 1, 1), Assert.Single(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_prompt_naming_a_file_twice_counts_once_and_two_prompts_count_two()
     {
@@ -262,6 +286,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(new FileTouched("a.png", 0, 0, 2, 2, "a.png"), Assert.Single(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void The_sessions_own_folder_doesnt_list()
     {
@@ -270,6 +295,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Empty(_store.FilesTouched("s", CancellationToken.None, Folder));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void Sixty_real_files_give_the_newest_fifty()
     {
@@ -281,6 +307,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(Enumerable.Range(10, 50).Reverse().Select(i => $"f{i:00}.rs"), Paths(files));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void Ties_on_seq_sort_by_path()
     {
@@ -289,6 +316,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(["a.md", "b.md", "c.md"], Paths(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void Three_hundred_candidates_newer_than_ten_real_files_still_return_the_ten()
     {
@@ -298,6 +326,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(Enumerable.Range(0, 10).Reverse().Select(i => $"f{i}.rs"), Paths(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void Reading_stops_at_the_budget_of_paths()
     {
@@ -307,6 +336,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Empty(Read());
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void Paging_stops_once_fifty_are_kept()
     {
@@ -319,6 +349,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal([0], offsets);
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_cancelled_read_stops_between_files()
     {
@@ -331,6 +362,7 @@ public sealed class FilesTouchedTests : IDisposable
     }
 
     // A call written between two page reads moves paths in the order; the pages read up to the seq taken at the start.
+    // Pins: g0-shape#13
     [Fact]
     public void A_row_written_between_page_reads_neither_repeats_nor_skips_a_path()
     {
@@ -359,6 +391,7 @@ public sealed class FilesTouchedTests : IDisposable
         private bool Ask(string path) { Asked.Add(path); cancel.Cancel(); return false; }
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void Older_rows_with_only_a_path_list()
     {
@@ -367,6 +400,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(new FileTouched("old.rs", 1, 2, 1, 1), Assert.Single(Read()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void No_folder_checks_nothing()
     {
@@ -376,6 +410,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal([Path.Combine(Folder, "src"), "gone.md", "~/kept.md"], Paths(ReadNoFolder()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_folder_and_no_probe_checks_nothing()
     {
@@ -384,6 +419,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Equal(["gone.md"], Paths(_store.FilesTouched("s", CancellationToken.None, Folder)));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_probe_with_no_folder_asks_nothing()
     {
@@ -394,6 +430,7 @@ public sealed class FilesTouchedTests : IDisposable
         Assert.Empty(probe.Asked);
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void An_attached_image_is_never_asked_about_and_a_relative_path_is_asked_inside_the_folder()
     {
@@ -411,6 +448,7 @@ public sealed class FilesTouchedTests : IDisposable
         public bool IsFolder(string path) { Asked.Add(path); return false; }
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void Rows_written_by_the_converter_list_what_the_prompt_and_shell_named()
     {

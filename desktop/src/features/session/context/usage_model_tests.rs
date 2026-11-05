@@ -2,6 +2,7 @@
 
 use super::{Usage, usage};
 
+// Pins: g0-shape#17
 #[test]
 fn a_running_total_reported_as_used_becomes_the_session_total() {
     // The old app's test figures: used far above the window while in plus out fit it.
@@ -25,6 +26,7 @@ fn a_running_total_reported_as_used_becomes_the_session_total() {
     );
 }
 
+// Pins: g0-shape#17
 #[test]
 fn the_rule_waits_until_the_total_has_been_read() {
     let held = usage(
@@ -51,12 +53,14 @@ fn the_rule_waits_until_the_total_has_been_read() {
     );
 }
 
+// Pins: g0-shape#17
 #[test]
 fn a_quarter_of_the_window_reads_25() {
     let quarter = usage(Some(50_000), Some(200_000), None, None, None, true);
     assert_eq!(quarter.percent, Some(25));
 }
 
+// Pins: g0-shape#17
 #[test]
 fn half_a_pair_gives_no_percent() {
     assert_eq!(
@@ -71,6 +75,7 @@ fn half_a_pair_gives_no_percent() {
     assert_eq!((used_only.input, used_only.output), (Some(10), None));
 }
 
+// Pins: g0-shape#17
 #[test]
 fn used_above_the_window_reads_at_most_100() {
     let over = usage(Some(300_000), Some(200_000), None, None, None, true);
@@ -90,6 +95,7 @@ fn used_above_the_window_reads_at_most_100() {
     );
 }
 
+// Pins: g0-shape#17
 #[test]
 fn zeros_read_as_not_reported() {
     let zeros = usage(Some(0), Some(0), Some(0), Some(0), Some(0), true);

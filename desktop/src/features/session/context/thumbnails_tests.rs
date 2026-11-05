@@ -126,6 +126,7 @@ pub(super) fn in_atlas(image: &RenderImage, cx: &mut VisualTestContext) -> bool 
     cx.update(|window, _| window.has_image_atlas_entry(image))
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn images_are_read_one_at_a_time_newest_first(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -156,6 +157,7 @@ fn images_are_read_one_at_a_time_newest_first(cx: &mut TestAppContext) {
     assert!(thumbnail(&pane, NEW, cx).is_some() && thumbnail(&pane, OLD, cx).is_some());
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn a_row_shows_the_placeholder_until_its_thumbnail_arrives(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -177,6 +179,7 @@ fn a_row_shows_the_placeholder_until_its_thumbnail_arrives(cx: &mut TestAppConte
     assert!(in_atlas(&made, cx), "the row draws the thumbnail");
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn a_failed_read_keeps_the_placeholder_and_is_not_tried_again(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -206,6 +209,7 @@ fn a_failed_read_keeps_the_placeholder_and_is_not_tried_again(cx: &mut TestAppCo
     );
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn hiding_the_tab_cancels_the_queue(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -220,6 +224,7 @@ fn hiding_the_tab_cancels_the_queue(cx: &mut TestAppContext) {
     assert!(thumbnail(&pane, NEW, cx).is_none(), "the answer is dropped");
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn hiding_the_tab_releases_every_thumbnail_and_gpuis_copy(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -242,6 +247,7 @@ fn hiding_the_tab_releases_every_thumbnail_and_gpuis_copy(cx: &mut TestAppContex
     );
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn picking_another_session_releases_the_thumbnails(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -263,6 +269,7 @@ fn picking_another_session_releases_the_thumbnails(cx: &mut TestAppContext) {
     assert!(!in_atlas(&made, cx), "GPUI's copy is released");
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn showing_the_tab_again_starts_over(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -283,6 +290,7 @@ fn showing_the_tab_again_starts_over(cx: &mut TestAppContext) {
     assert!(thumbnail(&pane, NEW, cx).is_some() && thumbnail(&pane, OLD, cx).is_some());
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn a_changed_source_stops_the_queue(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -329,6 +337,7 @@ fn a_changed_source_stops_the_queue(cx: &mut TestAppContext) {
     );
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn a_remote_image_with_no_source_is_not_read(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -341,6 +350,7 @@ fn a_remote_image_with_no_source_is_not_read(cx: &mut TestAppContext) {
     assert!(drawn(cx, format!("attachment-{NEW}-placeholder")));
 }
 
+// Pins: g0-shape#18
 #[test]
 fn a_large_picture_scales_to_120_px_on_its_longest_edge() {
     let image = Image::from_bytes(ImageFormat::Png, png(4000, 3000));

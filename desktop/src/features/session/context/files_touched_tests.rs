@@ -117,6 +117,7 @@ fn opening(path: &str) -> OpenFile {
     }
 }
 
+// Pins: g0-shape#13
 #[gpui::test]
 fn a_count_chip_shows_only_when_more_than_one_call_named_the_file(cx: &mut TestAppContext) {
     let (pane, client, _, cx) = open(cx);
@@ -140,6 +141,7 @@ fn a_count_chip_shows_only_when_more_than_one_call_named_the_file(cx: &mut TestA
     );
 }
 
+// Pins: g0-shape#13
 #[gpui::test]
 fn a_click_opens_the_file_through_the_normal_open_with_the_listed_source(cx: &mut TestAppContext) {
     let (pane, client, opened, cx) = open(cx);
@@ -153,6 +155,7 @@ fn a_click_opens_the_file_through_the_normal_open_with_the_listed_source(cx: &mu
     assert!(*opened.borrow() == [opening("src/a.rs")]);
 }
 
+// Pins: g0-shape#13
 #[gpui::test]
 fn a_file_outside_the_folder_is_a_normal_row_and_opens_by_its_whole_path(cx: &mut TestAppContext) {
     let (pane, client, opened, cx) = open(cx);
@@ -184,6 +187,7 @@ fn a_file_outside_the_folder_is_a_normal_row_and_opens_by_its_whole_path(cx: &mu
     assert!(*opened.borrow() == [opening("/home/x/.codex/AGENTS.md")]);
 }
 
+// Pins: g0-shape#13
 #[gpui::test]
 fn an_attached_image_shows_its_name_and_opens_full_size_by_its_file_name(cx: &mut TestAppContext) {
     let (pane, client, opened, cx) = open(cx);
@@ -219,6 +223,7 @@ fn an_attached_image_shows_its_name_and_opens_full_size_by_its_file_name(cx: &mu
     );
 }
 
+// Pins: g0-shape#13
 #[test]
 fn an_older_remotes_answer_with_no_count_or_name_still_reads() {
     let answer = json!([{ "path": "src/a.rs", "added": 5, "removed": 1, "lastSeq": 4 }]);
@@ -234,6 +239,7 @@ fn an_older_remotes_answer_with_no_count_or_name_still_reads() {
     );
 }
 
+// Pins: g0-shape#17
 #[gpui::test]
 fn an_unavailable_source_reads_the_total_as_answered_with_none(cx: &mut TestAppContext) {
     let (pane, client, _, cx) = open(cx);
@@ -258,6 +264,7 @@ fn an_unavailable_source_reads_the_total_as_answered_with_none(cx: &mut TestAppC
     assert!(client.calls().is_empty(), "nothing is read");
 }
 
+// Pins: g0-shape#13
 #[gpui::test]
 fn an_attached_row_shows_the_name_it_was_attached_with(cx: &mut TestAppContext) {
     let (pane, client, _, cx) = open(cx);
@@ -281,6 +288,7 @@ fn an_attached_row_shows_the_name_it_was_attached_with(cx: &mut TestAppContext) 
     );
 }
 
+// Pins: g0-shape#13
 #[test]
 fn a_whole_path_outside_the_shared_folder_keeps_its_leading_slash() {
     let files = [file("/home/x/.codex/AGENTS.md"), file("src/a.rs")];
@@ -290,6 +298,7 @@ fn a_whole_path_outside_the_shared_folder_keeps_its_leading_slash() {
     );
 }
 
+// Pins: g0-shape#13
 #[test]
 fn a_home_path_outside_the_shared_folder_keeps_its_leading_tilde() {
     let files = [file("~/.codex/AGENTS.md"), file("src/a.rs")];

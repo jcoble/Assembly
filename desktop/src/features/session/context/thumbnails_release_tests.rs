@@ -62,6 +62,7 @@ fn want(pane: &Entity<ContextPane>, paths: &[&str], cx: &mut VisualTestContext) 
     cx.run_until_parked();
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn a_second_show_with_no_hide_releases_the_first_shows_thumbnails(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -80,6 +81,7 @@ fn a_second_show_with_no_hide_releases_the_first_shows_thumbnails(cx: &mut TestA
     assert!(thumbnail(&pane, NEW, cx).is_some_and(|again| !Arc::ptr_eq(&again, &made)));
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn removing_the_tab_from_the_dock_releases_and_stops(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -104,6 +106,7 @@ fn removing_the_tab_from_the_dock_releases_and_stops(cx: &mut TestAppContext) {
     );
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn an_image_over_the_limits_is_skipped_and_not_tried_again(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -121,6 +124,7 @@ fn an_image_over_the_limits_is_skipped_and_not_tried_again(cx: &mut TestAppConte
     assert_eq!(image_reads(&client).len(), 2, "it isn't read again");
 }
 
+// Pins: g0-shape#18
 #[test]
 fn decoding_refuses_an_image_wider_than_the_limit() {
     let wide = Image::from_bytes(ImageFormat::Png, png(16_385, 1));
@@ -129,12 +133,14 @@ fn decoding_refuses_an_image_wider_than_the_limit() {
     assert!(scale(&widest).is_ok());
 }
 
+// Pins: g0-shape#18
 #[test]
 fn a_small_picture_keeps_its_size() {
     let small = scale(&Image::from_bytes(ImageFormat::Png, png(8, 6))).expect("it decodes");
     assert_eq!((small.size(0).width.0, small.size(0).height.0), (8, 6));
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn a_re_read_keeps_the_thumbnails_made_and_reads_only_the_new_image(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -157,6 +163,7 @@ fn a_re_read_keeps_the_thumbnails_made_and_reads_only_the_new_image(cx: &mut Tes
     assert!(in_atlas(&made, cx), "the kept one stays drawn");
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn a_path_dropped_from_the_list_is_released(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -173,6 +180,7 @@ fn a_path_dropped_from_the_list_is_released(cx: &mut TestAppContext) {
     assert!(in_atlas(&old, cx), "the one still listed stays");
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn a_read_finishing_after_its_path_was_dropped_is_not_kept(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -191,6 +199,7 @@ fn a_read_finishing_after_its_path_was_dropped_is_not_kept(cx: &mut TestAppConte
     assert_eq!(image_reads(&client), ["b0.png", "9f.png"]);
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn another_reads_changed_source_stops_the_queue(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);

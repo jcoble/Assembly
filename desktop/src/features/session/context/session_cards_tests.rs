@@ -110,6 +110,7 @@ fn texts(words: &[Words]) -> Vec<(&str, bool)> {
         .collect()
 }
 
+// Pins: g0-shape#16
 #[gpui::test]
 fn the_cards_say_the_selected_sessions_facts_and_total(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -158,6 +159,7 @@ fn the_cards_say_the_selected_sessions_facts_and_total(cx: &mut TestAppContext) 
     );
 }
 
+// Pins: g0-shape#16
 #[gpui::test]
 fn missing_facts_say_who_didnt_report_them(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -195,6 +197,7 @@ fn missing_facts_say_who_didnt_report_them(cx: &mut TestAppContext) {
     );
 }
 
+// Pins: g0-shape#16
 #[test]
 fn a_not_reported_line_names_the_provider_as_people_read_it() {
     assert_eq!(not_reported(Some("claude")), "not reported by Claude");
@@ -207,6 +210,7 @@ fn a_not_reported_line_names_the_provider_as_people_read_it() {
     assert_eq!(words[3].text, "In not reported");
 }
 
+// Pins: g0-shape#16
 #[gpui::test]
 fn with_no_session_one_message_replaces_every_card(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -242,6 +246,7 @@ fn with_no_session_one_message_replaces_every_card(cx: &mut TestAppContext) {
     );
 }
 
+// Pins: g0-shape#17
 #[gpui::test]
 fn a_turn_ending_while_shown_reads_the_total_again(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -278,6 +283,7 @@ fn a_turn_ending_while_shown_reads_the_total_again(cx: &mut TestAppContext) {
     );
 }
 
+// Pins: g0-shape#17
 #[gpui::test]
 fn a_failed_total_leaves_the_lists(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -305,6 +311,7 @@ fn a_failed_total_leaves_the_lists(cx: &mut TestAppContext) {
     assert_eq!(total, Some(None), "read as not reported");
 }
 
+// Pins: g0-shape#17
 #[gpui::test]
 fn a_hidden_tab_reads_no_total(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -324,6 +331,7 @@ fn a_hidden_tab_reads_no_total(cx: &mut TestAppContext) {
     );
 }
 
+// Pins: g0-shape#16
 #[gpui::test]
 fn facts_for_another_owner_of_the_same_id_read_as_not_reported(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -363,6 +371,7 @@ fn facts_for_another_owner_of_the_same_id_read_as_not_reported(cx: &mut TestAppC
     );
 }
 
+// Pins: g0-shape#17
 #[gpui::test]
 fn the_total_reads_as_reading_until_rows_tokens_answers(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
@@ -387,6 +396,7 @@ fn the_total_reads_as_reading_until_rows_tokens_answers(cx: &mut TestAppContext)
     );
 }
 
+// Pins: g0-shape#17
 #[gpui::test]
 fn a_refused_total_marks_the_source_changed_and_keeps_the_lists(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);

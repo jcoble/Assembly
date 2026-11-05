@@ -35,6 +35,7 @@ public sealed class SessionTokensTests
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
     // The turn-end shapes the adapters send: Codex's quota extension at protocol 2, and a usage object (Claude's recording).
+    // Pins: g0-shape#17
     [Theory]
     [InlineData("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn","_meta":{"quota":{"token_count":{"totalTokens":14601,"inputTokens":2308,"cachedInputTokens":12288,"cacheWriteInputTokens":0,"outputTokens":5,"reasoningOutputTokens":0}}}}""", 14601)]
     [InlineData("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn","usage":{"inputTokens":2,"outputTokens":715,"cachedReadTokens":12932,"cachedWriteTokens":19460,"totalTokens":33109}}""", 33109)]
@@ -50,6 +51,7 @@ public sealed class SessionTokensTests
         Assert.Equal(total, Converted.Get(stats, "totalTokens").GetInt64());
     }
 
+    // Pins: g0-shape#17
     [Fact]
     public void A_zero_total_is_left_out_of_the_stats_row()
     {
@@ -62,6 +64,7 @@ public sealed class SessionTokensTests
         Assert.All(turns.OfKind(RowKind.Stats), row => Assert.False(row.Payload.TryGetProperty("totalTokens", out _)));
     }
 
+    // Pins: g0-shape#17
     [Fact]
     public void A_two_turn_session_answers_the_sum_of_its_turns()
     {
@@ -76,6 +79,7 @@ public sealed class SessionTokensTests
         Assert.Equal(47_710, store.SessionTokens("s", CancellationToken.None));
     }
 
+    // Pins: g0-shape#17
     [Fact]
     public void A_session_with_no_stats_answers_null()
     {
@@ -87,6 +91,7 @@ public sealed class SessionTokensTests
         Assert.Null(store.SessionTokens("s", CancellationToken.None));
     }
 
+    // Pins: g0-shape#17
     [Fact]
     public void A_cancelled_turn_with_zeros_adds_nothing()
     {
@@ -102,6 +107,7 @@ public sealed class SessionTokensTests
         Assert.Equal(1_000, store.SessionTokens("s", CancellationToken.None));
     }
 
+    // Pins: g0-shape#17
     [Fact]
     public async Task Rows_tokens_with_an_expected_source_is_answered_not_refused()
     {

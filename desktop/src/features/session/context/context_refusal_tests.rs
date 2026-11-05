@@ -28,6 +28,7 @@ impl Render for Host {
     }
 }
 
+// Pins: g0-shape#18
 #[gpui::test]
 fn a_thumbnails_changed_source_tells_chat(cx: &mut TestAppContext) {
     cx.update(|cx| {

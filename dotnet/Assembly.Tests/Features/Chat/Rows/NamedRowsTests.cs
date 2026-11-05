@@ -17,6 +17,7 @@ public sealed class NamedRowsTests
     private static string[] Named(Converted turn) =>
         Get(turn.OfItem("t")[^1], "named").EnumerateArray().Select(path => path.GetString()!).ToArray();
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_second_location_is_named_and_the_first_stays_the_path()
     {
@@ -25,6 +26,7 @@ public sealed class NamedRowsTests
         Assert.Equal(["/b.md"], Named(turn));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_move_names_its_other_location()
     {
@@ -33,6 +35,7 @@ public sealed class NamedRowsTests
         Assert.Equal(["/to.md"], Named(turn));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void Paths_a_row_already_lists_in_files_are_not_named_again()
     {
@@ -41,6 +44,7 @@ public sealed class NamedRowsTests
         Assert.False(turn.OfItem("t")[^1].Payload.TryGetProperty("named", out _));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_location_beyond_a_diffs_files_is_named()
     {
@@ -48,6 +52,7 @@ public sealed class NamedRowsTests
         Assert.Equal(["/c.md"], Named(turn));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_one_file_diff_at_another_path_than_the_input_is_named()
     {
@@ -56,18 +61,22 @@ public sealed class NamedRowsTests
         Assert.Equal(["/repo/a.md"], Named(turn));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_shell_call_names_its_commands_file() =>
         Assert.Equal(["a.md"], Named(Tool(new ToolCallFields(Name: "Bash", Kind: "execute", Input: Input("""{"command":"cat a.md"}""")))));
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_shell_call_resolves_against_its_cwd() =>
         Assert.Equal(["/repo/a.md"], Named(Tool(new ToolCallFields(Name: "Bash", Kind: "execute", Input: Input("""{"command":"cat a.md","cwd":"/repo"}""")))));
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_shell_calls_argv_keeps_its_script_whole() =>
         Assert.Equal(["my docs/a.md"], Named(Tool(new ToolCallFields(Name: "Bash", Kind: "execute", Input: Input("""{"command":["bash","-lc","cat 'my docs/a.md'"]}""")))));
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_shell_calls_description_is_not_read_as_a_command()
     {
@@ -75,6 +84,7 @@ public sealed class NamedRowsTests
         Assert.False(turn.OfItem("t")[^1].Payload.TryGetProperty("named", out _));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_one_file_read_writes_no_named()
     {
@@ -82,6 +92,7 @@ public sealed class NamedRowsTests
         Assert.False(turn.OfItem("t")[^1].Payload.TryGetProperty("named", out _));
     }
 
+    // Pins: g0-shape#13
     [Theory]
     [InlineData("search")]
     [InlineData("fetch")]
@@ -93,6 +104,7 @@ public sealed class NamedRowsTests
         Assert.False(turn.OfItem("t")[^1].Payload.TryGetProperty("named", out _));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void Both_prompt_rows_carry_their_lists()
     {
@@ -109,6 +121,7 @@ public sealed class NamedRowsTests
         }
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_prompt_with_no_paths_writes_no_lists()
     {
@@ -117,6 +130,7 @@ public sealed class NamedRowsTests
         Assert.False(user.Payload.TryGetProperty("attached", out _));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void The_same_events_give_identical_rows_twice()
     {
@@ -129,6 +143,7 @@ public sealed class NamedRowsTests
         Assert.Equal(From(events).Rows.Select(row => row.Payload.GetRawText()), From(events).Rows.Select(row => row.Payload.GetRawText()));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_shell_call_keeps_a_parsed_path_equal_to_its_location()
     {
@@ -137,6 +152,7 @@ public sealed class NamedRowsTests
         Assert.Equal(["/abs/a.md"], Named(turn));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_shell_call_keeps_a_parsed_path_equal_to_its_inputs_path()
     {
@@ -144,6 +160,7 @@ public sealed class NamedRowsTests
         Assert.Equal(["/abs/a.md"], Named(turn));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_shell_calls_location_is_not_itself_named()
     {
@@ -151,6 +168,7 @@ public sealed class NamedRowsTests
         Assert.False(turn.OfItem("t")[^1].Payload.TryGetProperty("named", out _));
     }
 
+    // Pins: g0-shape#13
     [Fact]
     public void A_read_with_many_locations_names_at_most_fifty()
     {
