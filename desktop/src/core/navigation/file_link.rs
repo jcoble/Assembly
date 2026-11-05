@@ -61,10 +61,13 @@ fn answered(
     source: ExpectedRowSource,
     cx: &mut App,
 ) {
-    // The person has moved on.
     let selected = SelectedSession::global(cx).read(cx);
-    if selected.key() != Some(&key) || selected.source() != Some(&source) {
+    // The person has moved on.
+    if selected.key() != Some(&key) {
         return;
+    }
+    if selected.source() != Some(&source) {
+        return show_notice(didnt_open("The session's source changed."), cx);
     }
     let owner = match answer {
         Outcome::Ok(owner) => owner,

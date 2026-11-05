@@ -384,3 +384,20 @@ async fn a_changed_selection_drops_every_link_it_catches(cx: &mut TestAppContext
     assert_eq!(opened[0].path, "three.cs");
     assert_eq!(h.shown(), Vec::<String>::new());
 }
+
+#[gpui::test]
+async fn the_same_session_on_a_new_source_while_asking_says_so(cx: &mut TestAppContext) {
+    let mut h = harness(cx);
+    h.connect();
+    h.owner.lock().unwrap().hold = true;
+    h.select("s1", None);
+    h.link("/work/a/x.cs", None).await;
+    h.select("s1", Some("Box"));
+    h.flush("release").await;
+    h.flush("ping").await;
+    assert!(h.opened().is_empty());
+    assert_eq!(
+        h.shown(),
+        ["That file didn't open: The session's source changed."]
+    );
+}
