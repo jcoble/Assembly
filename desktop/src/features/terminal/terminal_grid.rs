@@ -10,6 +10,8 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Color, Processor};
 
+use super::terminal_links::url_at;
+
 pub struct TerminalGrid {
     term: Term<VoidListener>,
     parser: Processor,
@@ -37,8 +39,7 @@ pub struct GridCell {
     pub marks: Vec<char>,
 }
 
-/// A link under the mouse: where it shows, as (screen line, start column, end column), and where it goes. Stub until
-/// Task 8.
+/// A link under the mouse: where it shows, as (screen line, start column, end column), and where it goes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HoveredLink {
     pub line_spans: Vec<(usize, usize, usize)>,
@@ -177,10 +178,58 @@ impl TerminalGrid {
         self.scroll(by);
     }
 
-    /// The link at a cell of the screen as shown. Stub until Task 8.
-    #[allow(dead_code)]
-    pub fn link_at(&self, _column: usize, _line: usize) -> Option<HoveredLink> {
-        None
+    /// The link at a cell of the screen as shown: an OSC 8 link, its cells joined across rows, or else a URL printed
+    /// on that row. A `file:` OSC 8 link gives none.
+    pub fn link_at(&self, column: usize, line: usize) -> Option<HoveredLink> {
+        let (columns, lines) = (self.term.columns(), self.term.screen_lines());
+        if column >= columns || line >= lines {
+            return None;
+        }
+        let offset = self.display_offset() as i32;
+        let grid = self.term.grid();
+        let cell =
+            |index: usize| &grid[Line((index / columns) as i32 - offset)][Column(index % columns)];
+        let at = line * columns + column;
+        if let Some(hyperlink) = cell(at).hyperlink() {
+            if hyperlink
+                .uri()
+                .get(..5)
+                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:"))
+            {
+                return None;
+            }
+            let same = |index: &usize| cell(*index).hyperlink().as_ref() == Some(&hyperlink);
+            let first = (0..at).rev().take_while(same).last().unwrap_or(at);
+            let last = (at..columns * lines).take_while(same).last().unwrap_or(at);
+            let line_spans = (first / columns..=last / columns)
+                .map(|row| {
+                    let start = if row == first / columns {
+                        first % columns
+                    } else {
+                        0
+                    };
+                    let end = if row == last / columns {
+                        last % columns + 1
+                    } else {
+                        columns
+                    };
+                    (row, start, end)
+                })
+                .collect();
+            let url = hyperlink.uri().to_string();
+            return Some(HoveredLink { line_spans, url });
+        }
+        let row: String = (0..columns)
+            .map(|at| match cell(line * columns + at).c {
+                c if c < ' ' => ' ',
+                c => c,
+            })
+            .collect();
+        let (start, end, url) = url_at(&row, column)?;
+        Some(HoveredLink {
+            line_spans: vec![(line, start, end)],
+            url,
+        })
     }
 
     /// The selected text, lines joined by line breaks; none when nothing is selected.

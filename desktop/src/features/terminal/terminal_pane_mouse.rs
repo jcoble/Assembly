@@ -1,11 +1,16 @@
 //! The mouse on the Terminal tab: a drag selects (terminal_pane_select.rs follows it), a double-click selects a word,
-//! a press on the scrollbar takes it (terminal_pane_scrollbar.rs), and the wheel scrolls back through the history, or
+//! a press on the scrollbar takes it (terminal_pane_scrollbar.rs), a link under the mouse underlines and opens through
+//! `OpenUrl` on a Cmd or Ctrl-click (spec 7), and the wheel scrolls back through the history, or
 //! reports the mouse in the tracking/encoding modes requested by the program.
 
 use alacritty_terminal::term::TermMode;
 use gpui_kit::*;
 
+use std::mem;
+
 use super::{Shown, TerminalPane};
+use crate::core::intents::open_url::OpenUrl;
+use crate::features::terminal::terminal_grid::GridCell;
 use crate::features::terminal::terminal_keys::key_bytes;
 
 impl TerminalPane {
@@ -18,6 +23,17 @@ impl TerminalPane {
         window.focus(&self.focus, cx);
         if event.button == MouseButton::Left && self.press_bar(event.position, cx) {
             cx.stop_propagation();
+            return;
+        }
+        // Cmd or Ctrl on a link opens it, even with a program holding the mouse, which hears neither press nor release.
+        if event.button == MouseButton::Left
+            && event.modifiers.secondary(cx)
+            && let Some(link) = (self.cell_at(event.position))
+                .and_then(|(column, line, _)| self.grid.link_at(column, line))
+        {
+            self.link_pressed = true;
+            cx.stop_propagation();
+            window.dispatch_action(Box::new(OpenUrl { url: link.url }), cx);
             return;
         }
         let Some((column, line, right)) = self.cell_at(event.position) else {
@@ -50,6 +66,9 @@ impl TerminalPane {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if event.pressed_button.is_none() {
+            self.hover(event.position, cx);
+        }
         // A selecting drag is followed by terminal_pane_select.rs, past the pane's edge too.
         let mode = self.grid.mouse_mode();
         if mode.contains(TermMode::MOUSE_MOTION)
@@ -70,12 +89,47 @@ impl TerminalPane {
             cx.stop_propagation();
             return;
         }
+        if event.button == MouseButton::Left && mem::take(&mut self.link_pressed) {
+            cx.stop_propagation();
+            return;
+        }
         if event.button == MouseButton::Left {
             self.end_drag(cx);
         }
         if let Some(button) = button_code(event.button) {
             self.report_mouse(button, event.position, event.modifiers, true, cx);
         }
+    }
+
+    /// Finds the link under the mouse, on its row only, and draws again when it changed.
+    fn hover(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let link =
+            (self.cell_at(position)).and_then(|(column, line, _)| self.grid.link_at(column, line));
+        if link != self.hovered {
+            self.hovered = link;
+            cx.notify();
+        }
+    }
+
+    /// The mouse left the pane: no link is under it.
+    pub(super) fn hovered_pane(&mut self, hovered: &bool, _: &mut Window, cx: &mut Context<Self>) {
+        if !*hovered && self.hovered.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// The screen's cells, those of the link under the mouse underlined.
+    pub(super) fn cells(&self) -> Vec<GridCell> {
+        let mut cells = self.grid.cells();
+        if let Some(link) = &self.hovered {
+            for cell in &mut cells {
+                let on = |&(line, start, end): &(usize, usize, usize)| {
+                    cell.line == line && (start..end).contains(&cell.column)
+                };
+                cell.underline |= link.line_spans.iter().any(on);
+            }
+        }
+        cells
     }
 
     /// Tracking modes consume mouse input; otherwise selection and scrollback keep their usual behavior.

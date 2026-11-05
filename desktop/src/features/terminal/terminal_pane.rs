@@ -125,9 +125,10 @@ pub struct TerminalPane {
     bar_pressed: bool,
     /// Fades the scrollbar in, waits and fades it out; it ends once hidden.
     _scrollbar: Option<Task<()>>,
-    /// The link under the mouse. Stub until Task 8.
-    #[allow(dead_code)]
+    /// The link under the mouse.
     hovered: Option<HoveredLink>,
+    /// A Cmd or Ctrl-click opened a link: its release goes nowhere.
+    link_pressed: bool,
     /// The composition in progress. Stub until Task 9.
     #[allow(dead_code)]
     marked: Option<String>,
@@ -188,6 +189,7 @@ impl TerminalPane {
             bar_pressed: false,
             _scrollbar: None,
             hovered: None,
+            link_pressed: false,
             marked: None,
         }
     }
@@ -214,6 +216,7 @@ impl TerminalPane {
         (self._autoscroll, self.selecting) = (None, false);
         (self._scrollbar, self.scrollbar_opacity) = (None, 0.);
         (self.dragging_bar, self.bar_pressed) = (None, false);
+        (self.hovered, self.link_pressed) = (None, false);
         self.reopen.clear();
         self.typed.clear();
         self.grid = TerminalGrid::new(self.size.0, self.size.1);
@@ -462,6 +465,8 @@ impl Render for TerminalPane {
             .on_mouse_up(MouseButton::Right, cx.listener(Self::mouse_up))
             .on_mouse_down_out(cx.listener(Self::pressed_outside))
             .on_scroll(cx.listener(Self::wheel))
+            .on_hover(cx.listener(Self::hovered_pane))
+            .when(self.hovered.is_some(), |pane| pane.cursor_pointer())
             .size_full()
             .text_role(TextRole::Body, cx)
             .when(self.selecting, |pane| pane.child(self.drag_listeners(cx)))
@@ -495,7 +500,7 @@ impl Render for TerminalPane {
                     .then(|| self.grid.cursor())
                     .flatten();
                 let grid = draw(
-                    self.grid.cells(),
+                    self.cells(),
                     (self.size.1, cursor),
                     Preferences::terminal_text(cx),
                     palette(Preferences::read(cx, Appearance::theme)),
