@@ -16,6 +16,7 @@ use gpui_kit::*;
 use super::default_layout::{
     AGENTS, CONTEXT, FILES, HISTORY, RUN, SOURCE_CONTROL, TASKS, TERMINAL, WORKTREES,
 };
+use super::terminal_toggle::{terminal_showing, toggle_terminal};
 
 const PILL_W: Pixels = px(28.);
 const PILL_H: Pixels = px(24.);
@@ -57,10 +58,7 @@ pub struct DrawerButtons {
 impl RenderOnce for DrawerButtons {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let area = self.dock.read(cx);
-        let (open, terminal_open) = (
-            area.is_dock_open(DockPlacement::Right),
-            area.is_dock_open(DockPlacement::Bottom),
-        );
+        let open = area.is_dock_open(DockPlacement::Right);
         // Each visible drawer pane: its id, its name, and whether its tab group shows it.
         let mut panes: Vec<(PanelId, &'static str, bool)> = Vec::new();
         if let Some(tree) = area.layout(DockPlacement::Right) {
@@ -134,7 +132,7 @@ impl RenderOnce for DrawerButtons {
             .w(CONTROL)
             .h(CONTROL)
             .tooltip("More panels")
-            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, cx| {
                 let menu =
                     overflow
                         .iter()
@@ -155,13 +153,8 @@ impl RenderOnce for DrawerButtons {
                 menu.separator().item(
                     PopupMenuItem::new(TERMINAL)
                         .icon(IconName::SquareTerminal)
-                        .checked(terminal_open)
-                        .on_click(move |_, window, cx| {
-                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
-                            dock.update(cx, |dock, cx| {
-                                dock.toggle_dock(DockPlacement::Bottom, window, cx)
-                            });
-                        }),
+                        .checked(terminal_showing(&dock, cx))
+                        .on_click(move |_, window, cx| toggle_terminal(&dock, window, cx)),
                 )
             });
         let dock = self.dock.clone();
