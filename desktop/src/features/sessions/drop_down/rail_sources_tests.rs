@@ -145,6 +145,109 @@ async fn remote_child_outside_the_sql_rail_page_uses_the_one_discovered_source_s
     drop(pane);
 }
 
+// Source-derived real socket fixture, not native/provider acceptance.
+#[gpui::test]
+async fn a_saved_machine_that_stops_answering_keeps_its_rows_until_it_returns_as_another_engine(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::core::{
+        engine::EngineFeed,
+        socket::{
+            client::SocketClient,
+            endpoint::Endpoint,
+            fake_backend::{FakeBackend, Reply},
+            test_wait::until,
+        },
+        state::{machines::Machines, selected_session::SelectedSession},
+    };
+    use crate::features::sessions::sessions_pane::SessionsPane;
+    use futures_channel::mpsc::unbounded;
+    use serde_json::Value;
+    let machine = |reachable: bool| json!({"name":"Saved B","kind":"remote","reachable":reachable,"checked":true});
+    let mut machines_sub = Value::Null;
+    let mut remote = "actual-B";
+    let backend = FakeBackend::start(move |frame| {
+        let id = frame["id"].clone();
+        let result = |value| vec![Reply::Frame(json!({"t":"result","id":id,"result":value}))];
+        match (frame["t"].as_str(), frame["topic"].as_str(), frame["method"].as_str()) {
+            (Some("hello"), ..) => vec![Reply::Frame(
+                json!({"t":"welcome","protocol":1,"machine":"Friendly A","engine":"actual-A"}),
+            )],
+            (Some("sub"), Some("machines"), _) => {
+                machines_sub = id.clone();
+                vec![Reply::Frame(json!({"t":"state","sub":id,"items":[{"key":"Saved B","item":machine(true)}]}))]
+            }
+            (Some("call"), _, Some(change @ ("machine_down" | "machine_back"))) => {
+                let back = change == "machine_back";
+                if back {
+                    remote = "actual-B-reinstalled";
+                }
+                let mut replies = vec![Reply::Frame(
+                    json!({"t":"change","sub":machines_sub,"key":"Saved B","item":machine(back)}),
+                )];
+                replies.extend(result(json!({})));
+                replies
+            }
+            (Some("call"), _, Some("resolve_source")) => {
+                let saved = frame["args"]["routeMachine"] == "Saved B";
+                result(json!({"machine":if saved{remote}else{"actual-A"},"generation":if saved{7}else{0},"routeMachine":if saved{Some("Saved B")}else{None}}))
+            }
+            (Some("sub"), Some("sessions" | "needs_me"), _) if frame["stream"] == "engine" => {
+                vec![Reply::Frame(
+                    json!({"t":"engine_snapshot","id":id,"machine":frame["machine"],"through":1,"items":[],"more":false}),
+                )]
+            }
+            (Some("call"), _, _) => result(json!({})),
+            _ => vec![],
+        }
+    });
+    cx.executor().allow_parking();
+    let (socket, feed, listed) = cx.update(|cx| {
+        gpui_kit::init(cx);
+        SelectedSession::init(cx);
+        let socket = SocketClient::start(
+            Endpoint {
+                port: backend.port,
+                token: "fixture".into(),
+            },
+            cx,
+        );
+        Machines::start(cx);
+        (socket, EngineFeed::global(cx), Machines::try_global(cx).unwrap())
+    });
+    let (pane, visual) = cx.add_window_view(SessionsPane::new);
+    let (changed, mut changes) = unbounded();
+    let (tell, told) = (changed.clone(), changed.clone());
+    let _feed = visual.update(|_, cx| {
+        cx.observe(&feed, move |_, _| {
+            let _ = tell.unbounded_send(());
+        })
+    });
+    let _machines = visual.update(|_, cx| {
+        cx.observe(&listed, move |_, _| {
+            let _ = told.unbounded_send(());
+        })
+    });
+    let loaded = |visual: &mut gpui::VisualTestContext| {
+        visual.update(|_, cx| feed.read(cx).loaded_machines("sessions"))
+    };
+    let both = vec!["actual-A".to_owned(), "actual-B".to_owned()];
+    until("the remote's rows", &mut changes, &changed, || loaded(visual) == both).await;
+    let change = |visual: &mut gpui::VisualTestContext, method: &str| {
+        visual.update(|_, cx| socket.read(cx).call::<Value>("test", method, json!({}), None))
+    };
+    change(visual, "machine_down").await;
+    until("the machine to read offline", &mut changes, &changed, || {
+        visual.update(|_, cx| listed.read(cx).machines().any(|held| !held.reachable))
+    })
+    .await;
+    assert_eq!(loaded(visual), both, "the Board still needs the offline machine's rows");
+    change(visual, "machine_back").await;
+    let replaced = vec!["actual-A".to_owned(), "actual-B-reinstalled".to_owned()];
+    until("only the machine's current engine", &mut changes, &changed, || loaded(visual) == replaced).await;
+    drop(pane);
+}
+
 // Source-derived real socket fixtures, not native/provider acceptance. No rail state or preference frame is answered
 // and no needs_me snapshot arrives, so the session notice under test is the only thing that can read the rail.
 mod session_notices {

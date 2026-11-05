@@ -79,6 +79,8 @@ pub struct SessionsPane {
     pub(super) source_pass: Option<Task<()>>,
     pub(super) source_serial: u64,
     pub(super) source_cut: Option<(Entity<SocketClient>, u64, Vec<Option<String>>)>,
+    /// The connection the engine watches were opened on: a new one opens them again.
+    pub(super) source_connection: Option<(Entity<SocketClient>, u64)>,
     pub(super) engine_watches:
         HashMap<crate::core::engine::EngineScope, crate::core::engine::EngineWatch>,
     /// The `sessionRail` feed and the backend clock, once the backend's first ready line started the socket.
@@ -208,6 +210,7 @@ impl SessionsPane {
             now: None,
             running_drawn: Rc::default(),
             _heard: heard,
+            source_connection: None,
             engine_watches: HashMap::new(),
             source_pass: None,
             source_serial: 0,
