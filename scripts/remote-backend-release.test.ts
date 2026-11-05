@@ -212,11 +212,16 @@ async function installed(home: string) {
   };
 }
 
-async function withMachine(act: (run: (binary: string, version: string, args: string[]) => Promise<{ code: number; stderr: string }>, home: string) => Promise<void>) {
+async function withMachine(act: (run: (binary: string, version: string, args: string[], env?: Record<string, string>) => Promise<{ code: number; stderr: string }>, home: string) => Promise<void>) {
   const home = await mkdtemp(path.join(tmpdir(), 'assembly-remote-undo-test-'));
   try {
     const bin = path.join(home, '.local/bin');
     await mkdir(bin, { recursive: true });
+    await writeFile(path.join(bin, 'cp'), `#!/bin/sh
+for last; do :; done
+if [ -n "\${CP_FAILS_ON:-}" ]; then case "$*" in *"$CP_FAILS_ON"*) printf partial >"$last"; exit 1 ;; esac; fi
+exec /bin/cp "$@"
+`, { mode: 0o755 });
     for (const tool of ['curl', 'tar', 'python3', 'node', 'pidwait', 'sleep']) await writeFile(path.join(bin, tool), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     await writeFile(path.join(home, 'state'), 'inactive\n');
     await mkdir(path.join(home, 'cgroup'));
@@ -225,9 +230,13 @@ server=$HOME/assembly-host/bin/assembly-remote-server
 case "$*" in
   *is-active*) cat "$HOME/state"; [ "$(cat "$HOME/state")" = active ] ;;
   *restart*)
+    [ ! -e "$HOME/kill-on-restart" ] || { rm "$HOME/kill-on-restart"; kill -KILL $PPID; }
+    [ ! -e "$HOME/term-on-restart" ] || kill -TERM $PPID
     if grep -q migrates "$server"; then echo migrated >"$HOME/assembly-host/serve/assembly.db"; echo migrated-wal >"$HOME/assembly-host/serve/assembly.db-wal"; fi
     if grep -q exits "$server"; then echo failed >"$HOME/state"; else echo active >"$HOME/state"; fi ;;
-  *stop*) echo inactive >"$HOME/state" ;;
+  *stop*)
+    echo inactive >"$HOME/state"
+    [ ! -e "$HOME/term-on-stop" ] || { rm "$HOME/term-on-stop"; kill -TERM $PPID; } ;;
   *ControlGroup*) echo "/../../..$HOME/cgroup" ;;
   *) exit 0 ;;
 esac
@@ -239,21 +248,21 @@ port=$(sed -n 's/^ExecStart=.* --port \\([0-9]*\\) .*/\\1/p' "$HOME/.config/syst
 case "$*" in *":$port"*) printf 'LISTEN 0 128 127.0.0.1:%s 0.0.0.0:*\\n' "$port" ;; esac
 `, { mode: 0o755 });
     let run = 0;
-    await act(async (binary, version, args) => {
+    await act(async (binary, version, args, env = {}) => {
       const stage = path.join(home, `stage-${run++}`);
       await mkdir(path.join(stage, 'payload/dotnet/scripts'), { recursive: true });
       await writeFile(path.join(stage, 'payload/assembly-remote-server'), binary);
-      await writeFile(path.join(stage, 'payload/dotnet/scripts/agents-file.sh'), 'printf "%s" "$ASSEMBLY_ADAPTER_TAG" >"$2"\n');
+      await writeFile(path.join(stage, 'payload/dotnet/scripts/agents-file.sh'), 'printf "%s" "$ASSEMBLY_ADAPTER_TAG" >"$2"\n[ -z "${SESSION_STARTS:-}" ] || echo "$SESSION_STARTS" >"$HOME/cgroup/cgroup.procs"\n');
       await writeFile(path.join(stage, 'install.sh'), REMOTE_BACKEND_INSTALL_SCRIPT);
       await writeFile(path.join(stage, 'manifest.json'), JSON.stringify({ version }, null, 2));
       const sum = createHash('sha256').update(binary).digest('hex');
       await writeFile(path.join(stage, 'SHA256SUMS'), `${sum}  payload/assembly-remote-server\n`);
       try {
-        await execFileAsync('sh', ['install.sh', ...args], { cwd: stage, env: { HOME: home, PATH: '/usr/bin:/bin' } });
-        return { code: 0, stderr: '' };
+        const { stderr } = await execFileAsync('sh', ['install.sh', ...args], { cwd: stage, env: { HOME: home, PATH: '/usr/bin:/bin', ...env } });
+        return { code: 0, stderr };
       } catch (error) {
-        const failure = error as { code: number; stderr: string };
-        return { code: failure.code, stderr: failure.stderr };
+        const failure = error as { code: number | null; stderr: string };
+        return { code: failure.code ?? -1, stderr: failure.stderr };
       }
     }, home);
   } finally {
@@ -343,5 +352,119 @@ test('the token file is the install\'s own and is no longer something to pass', 
     assert.equal((await run('good one', '1.0.0', ['--keep-adapters', '9801', '', ''])).code, 0);
     const after = await installed(home);
     assert.match(after.unit!, new RegExp(`--token-file ${home}/\\.config/assembly-host/env\\n`));
+  });
+});
+
+async function installedWithData(run: (binary: string, version: string, args: string[], env?: Record<string, string>) => Promise<{ code: number; stderr: string }>, home: string) {
+  assert.equal((await run('good one', '1.0.0', ['9801', 'old-tag', 'x'])).code, 0);
+  const root = path.join(home, 'assembly-host');
+  await writeFile(path.join(root, 'serve/assembly.db'), 'the database');
+  await writeFile(path.join(root, 'serve/assembly.db-wal'), 'its log');
+  return installed(home);
+}
+
+test('a signal during the stop leaves a working install exactly as it was, and running', async () => {
+  await withMachine(async (run, home) => {
+    const old = await installedWithData(run, home);
+    await writeFile(path.join(home, 'term-on-stop'), '');
+    const stopped = await run('good two', '2.0.0', ['--keep-adapters', '9802', '', '']);
+    assert.equal(stopped.code, 1);
+    assert.match(stopped.stderr, /previous backend is running again on port 9801/);
+    assert.doesNotMatch(stopped.stderr, /no earlier one/);
+    assert.deepEqual(await installed(home), old);
+  });
+});
+
+for (const file of ['assembly.db', 'assembly-remote-server', 'assembly-host.service']) {
+  test(`a copy of ${file} that fails partway is never put back over the real one`, async () => {
+    await withMachine(async (run, home) => {
+      const old = await installedWithData(run, home);
+      const failed = await run('exits', '2.0.0', ['--keep-adapters', '9802', '', ''], { CP_FAILS_ON: file });
+      assert.equal(failed.code, 1);
+      assert.match(failed.stderr, /previous backend is running again on port 9801/);
+      assert.deepEqual(await installed(home), old);
+    });
+  });
+}
+
+test('a signal during the undo does not stop it', async () => {
+  await withMachine(async (run, home) => {
+    const old = await installedWithData(run, home);
+    await writeFile(path.join(home, 'term-on-restart'), '');
+    const failed = await run('exits migrates', '2.0.0', ['--keep-adapters', '9802', '', '']);
+    assert.equal(failed.code, 1);
+    await rm(path.join(home, 'term-on-restart'));
+    assert.deepEqual(await installed(home), old);
+  });
+});
+
+test('an install killed with things replaced is undone by the next run before anything else, and loses nothing', async () => {
+  await withMachine(async (run, home) => {
+    const old = await installedWithData(run, home);
+    await writeFile(path.join(home, 'kill-on-restart'), '');
+    const killed = await run('exits migrates', '2.0.0', ['--keep-adapters', '9802', '', '']);
+    assert.notEqual(killed.code, 0);
+    assert.equal((await installed(home)).binary, 'exits migrates');
+    assert.equal((await installed(home)).before, true);
+
+    // Even an older package than the one left behind gets a fair reading: it's compared with what was really installed.
+    const next = await run('good two', '1.0.0', ['--keep-adapters', '9801', '', '']);
+    assert.equal(next.code, 0, next.stderr);
+    assert.match(next.stderr, /stopped partway/);
+    const after = await installed(home);
+    assert.equal(after.binary, 'good two');
+    assert.equal(after.database, old.database);
+    assert.equal(after.wal, old.wal);
+    assert.equal(after.before, false);
+  });
+});
+
+test('a session that starts during the adapters refuses the update and changes nothing', async () => {
+  await withMachine(async (run, home) => {
+    const old = await installedWithData(run, home);
+    assert.equal(old.state, 'active\n');
+    const refused = await run('good two', '2.0.0', ['9801', 'new-tag', 'x'], { SESSION_STARTS: String(process.pid) });
+    assert.equal(refused.code, 75);
+    assert.deepEqual(await installed(home), old);
+    assert.equal(old.agents, 'old-tag');
+  });
+});
+
+test('a first install killed partway is removed by the next run, not kept as if it were the old one', async () => {
+  await withMachine(async (run, home) => {
+    await writeFile(path.join(home, 'kill-on-restart'), '');
+    assert.notEqual((await run('exits', '1.0.0', ['--keep-adapters', '9801', '', ''])).code, 0);
+    assert.equal((await installed(home)).binary, 'exits');
+
+    const next = await run('exits', '1.0.0', ['--keep-adapters', '9801', '', '']);
+    assert.equal(next.code, 1);
+    assert.match(next.stderr, /stopped partway/);
+    assert.match(next.stderr, /no earlier one to go back to/);
+    const after = await installed(home);
+    assert.equal(after.binary, null);
+    assert.equal(after.unit, null);
+  });
+});
+
+test('a session in what a killed install left is not ended: the next run refuses and keeps what it needs', async () => {
+  await withMachine(async (run, home) => {
+    const old = await installedWithData(run, home);
+    await writeFile(path.join(home, 'kill-on-restart'), '');
+    assert.notEqual((await run('migrates', '2.0.0', ['--keep-adapters', '9802', '', ''])).code, 0);
+    await writeFile(path.join(home, 'state'), 'active\n');
+    await writeFile(path.join(home, 'cgroup/cgroup.procs'), `${process.pid}\n`);
+
+    const refused = await run('good two', '3.0.0', ['--keep-adapters', '9801', '', '']);
+    assert.equal(refused.code, 75);
+    assert.equal((await installed(home)).binary, 'migrates');
+    assert.equal((await installed(home)).before, true);
+
+    await writeFile(path.join(home, 'cgroup/cgroup.procs'), '');
+    const next = await run('good two', '3.0.0', ['--keep-adapters', '9801', '', '']);
+    assert.equal(next.code, 0, next.stderr);
+    assert.match(next.stderr, /stopped partway/);
+    const after = await installed(home);
+    assert.equal(after.binary, 'good two');
+    assert.equal(after.database, old.database);
   });
 });

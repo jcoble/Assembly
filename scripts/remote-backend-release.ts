@@ -41,8 +41,9 @@ export type RemoteBackendPackageInput = {
 // --wait-idle only waits for running sessions to end; after it, the final check before the stop exits 75 when one started
 // anyway. --adapters installs adapters and restarts the same backend, for when only they are behind, on the port its unit
 // already has. --keep-adapters installs the backend and leaves adapters alone, for when the machine's are newer than the
-// release's. A backend older than the one installed is refused. From the stop until the new backend is listening,
-// everything it replaces is kept, and any failure puts it back and starts it again.
+// release's. A backend older than the one installed is refused, and so is anything once a session starts, with nothing
+// changed. From the stop until the new backend is listening, everything it replaces is kept, and any failure puts it back and
+// starts it again. Nothing is replaced until all of it is kept, and an install stopped too hard to undo itself is undone by the next.
 export const REMOTE_BACKEND_INSTALL_SCRIPT = `#!/bin/sh
 set -eu
 
@@ -91,6 +92,59 @@ while :; do
   esac
 done
 
+# One name at a time, so what's there is always whole. Only a kept file is ever put back.
+keep() {
+  [ ! -e "$1" ] || { cp -p --reflink=auto "$1" "$before/.$2.partial" && mv -f "$before/.$2.partial" "$before/$2"; }
+}
+put_back() {
+  [ ! -e "$before/$1" ] || { cp -p --reflink=auto "$before/$1" "$2.restoring" && mv -f "$2.restoring" "$2"; }
+}
+# Can stop at any point and run again: nothing kept goes until the mark does.
+restore() {
+  put_back agents.json "$root/serve/agents.json" &&
+    put_back assembly-remote-server "$root/bin/assembly-remote-server" &&
+    put_back assembly-host.service "$unit" &&
+    put_back backend-manifest.json "$root/serve/backend-manifest.json" || return 1
+  if [ -e "$before/assembly.db" ]; then
+    rm -f "$root/serve/assembly.db" "$root/serve/assembly.db-wal" "$root/serve/assembly.db-shm" &&
+      put_back assembly.db-wal "$root/serve/assembly.db-wal" &&
+      put_back assembly.db "$root/serve/assembly.db" || return 1
+  fi
+  rm -f "$before/complete"
+}
+
+refuse_if_running() {
+  pids=$(running)
+  if [ -n "$pids" ]; then
+    echo "A session started on this machine, so nothing was stopped" >&2
+    [ -e "$before/complete" ] || rm -rf "$before"
+    exit 75
+  fi
+}
+
+# An earlier run was killed with things replaced. It comes first: everything below reads what's installed.
+if [ -e "$before/complete" ]; then
+  # The backend it left may have come up and been connected to. A session in it isn't ended for this; the mark waits.
+  refuse_if_running
+  echo "An earlier install stopped partway, so what it replaced is being put back" >&2
+  systemctl --user stop assembly-host.service >/dev/null 2>&1 || true
+  restore || { echo "What an earlier install replaced couldn't be put back, and it's kept in $before" >&2; exit 1; }
+  if [ -e "$before/first-install" ]; then
+    systemctl --user disable assembly-host.service >/dev/null 2>&1 || true
+    rm -f "$unit" "$root/bin/assembly-remote-server"
+    rm -rf "$before"
+    systemctl --user daemon-reload
+  else
+    rm -rf "$before"
+    systemctl --user daemon-reload
+    systemctl --user restart assembly-host.service
+  fi
+fi
+
+# Decided here, from the real binary: a signal can arrive before anything has been kept.
+had_server=
+[ ! -e "$root/bin/assembly-remote-server" ] || had_server=1
+
 port=$1
 if [ "$mode" = adapters ]; then
   # The host keeps running on what its unit says, whatever the saved machine says now.
@@ -105,14 +159,6 @@ for command in sha256sum systemctl install ss awk bash curl tar python3 node pid
 done
 
 # Directly before anything changes: a session that started during the steps above sends the install back to waiting.
-refuse_if_running() {
-  pids=$(running)
-  if [ -n "$pids" ]; then
-    echo "A session started on this machine, so nothing was stopped" >&2
-    exit 75
-  fi
-}
-
 version_of() { sed -n 's/^ *"version": *"\\([^"]*\\)".*/\\1/p' "$1" 2>/dev/null | head -n 1; }
 
 sha256sum -c SHA256SUMS
@@ -130,10 +176,13 @@ install -d "$root/bin" "$root/serve" "$HOME/.config/systemd/user"
 refuse_if_running
 rm -rf "$before"
 mkdir -p "$before"
+new_agents=
 if [ -z "$keep" ]; then
-  [ ! -e "$root/serve/agents.json" ] || cp -p "$root/serve/agents.json" "$before/agents.json"
-  # Bundles are never changed in place, and the old one stays until the install after this. A session in one is unaffected.
-  ASSEMBLY_ADAPTER_TAG=$2 ASSEMBLY_ADAPTER_MANIFEST_SHA256=$3 bash payload/dotnet/scripts/agents-file.sh "$root/adapters" "$root/serve/agents.json"
+  # Written aside from a copy, which keeps its settings, and put in place only past the last check. Bundles are never changed
+  # in place, and the one in use stays until the install after this, so a session in one is unaffected.
+  [ ! -e "$root/serve/agents.json" ] || cp -p "$root/serve/agents.json" "$before/agents.new.json"
+  ASSEMBLY_ADAPTER_TAG=$2 ASSEMBLY_ADAPTER_MANIFEST_SHA256=$3 bash payload/dotnet/scripts/agents-file.sh "$root/adapters" "$before/agents.new.json"
+  new_agents=1
   refuse_if_running
 fi
 
@@ -142,13 +191,18 @@ listening() {
   [ -n "$listeners" ] && printf '%s\\n' "$listeners" | awk -v want="127.0.0.1:$1" '$4 != want { exit 1 } END { if (NR == 0) exit 1 }'
 }
 
-# Any way out from here but success. The folder stays when the previous backend doesn't come back, as all that's left of it.
+# Any way out from here but success. Another signal can't stop it; anything harder leaves the mark for the next run.
 undo() {
   code=$?
-  trap - EXIT HUP INT TERM
+  trap - EXIT
+  trap '' HUP INT TERM
   set +e
   systemctl --user stop assembly-host.service >/dev/null 2>&1
-  if [ "$mode" = install ] && [ ! -e "$before/assembly-remote-server" ]; then
+  if [ -e "$before/complete" ] && ! restore; then
+    echo "What this install replaced couldn't be put back, and it's kept in $before; the next install tries again" >&2
+    exit "$code"
+  fi
+  if [ "$mode" = install ] && [ -z "$had_server" ]; then
     systemctl --user disable assembly-host.service >/dev/null 2>&1
     rm -f "$unit" "$root/bin/assembly-remote-server"
     systemctl --user daemon-reload
@@ -156,19 +210,8 @@ undo() {
     echo "The install failed and there was no earlier one to go back to, so the service was removed" >&2
     exit "$code"
   fi
-  [ ! -e "$before/agents.json" ] || mv -f "$before/agents.json" "$root/serve/agents.json"
-  if [ "$mode" = install ]; then
-    mv -f "$before/assembly-remote-server" "$root/bin/assembly-remote-server"
-    [ ! -e "$before/assembly-host.service" ] || mv -f "$before/assembly-host.service" "$unit"
-    [ ! -e "$before/backend-manifest.json" ] || mv -f "$before/backend-manifest.json" "$root/serve/backend-manifest.json"
-    # Nothing can have connected to the new backend yet, so all it can have written is its own migration.
-    if [ -e "$before/assembly.db" ]; then
-      rm -f "$root/serve/assembly.db" "$root/serve/assembly.db-wal" "$root/serve/assembly.db-shm"
-      for file in assembly.db assembly.db-wal assembly.db-shm; do
-        [ ! -e "$before/$file" ] || mv -f "$before/$file" "$root/serve/$file"
-      done
-    fi
-  fi
+  # Nothing can have connected to the new backend yet, so all it can have written to the database is its own migration.
+  rm -rf "$before"
   systemctl --user daemon-reload
   systemctl --user enable assembly-host.service >/dev/null 2>&1
   systemctl --user restart assembly-host.service
@@ -176,14 +219,13 @@ undo() {
   waited=0
   while [ "$waited" -lt 120 ]; do
     if [ "$(systemctl --user is-active assembly-host.service)" = active ] && listening "$old_port"; then
-      rm -rf "$before"
       echo "The previous backend is running again on port $old_port" >&2
       exit "$code"
     fi
     waited=$((waited + 1))
     sleep 1
   done
-  echo "The previous backend did not come back on port $old_port; what it needs is kept in $before" >&2
+  echo "The previous backend is back in place but did not start listening on port $old_port" >&2
   exit "$code"
 }
 trap undo EXIT
@@ -191,13 +233,19 @@ trap 'exit 1' HUP INT TERM
 
 if [ "$mode" = install ]; then
 systemctl --user stop assembly-host.service >/dev/null 2>&1 || true
-[ ! -e "$root/bin/assembly-remote-server" ] || cp -p "$root/bin/assembly-remote-server" "$before/assembly-remote-server"
-[ ! -e "$unit" ] || cp -p "$unit" "$before/assembly-host.service"
-[ ! -e "$root/serve/backend-manifest.json" ] || cp -p "$root/serve/backend-manifest.json" "$before/backend-manifest.json"
-# Stopped, so these files are the whole database. The first start of a new version can migrate it.
-for file in assembly.db assembly.db-wal assembly.db-shm; do
-  [ ! -e "$root/serve/$file" ] || cp -p --reflink=auto "$root/serve/$file" "$before/$file"
-done
+keep "$root/bin/assembly-remote-server" assembly-remote-server
+keep "$unit" assembly-host.service
+keep "$root/serve/backend-manifest.json" backend-manifest.json
+# Stopped, so these files are the whole database. The first start of a new version can migrate it. The -shm file is only an
+# index of the log, and SQLite rebuilds it.
+keep "$root/serve/assembly.db" assembly.db
+keep "$root/serve/assembly.db-wal" assembly.db-wal
+fi
+[ -z "$new_agents" ] || keep "$root/serve/agents.json" agents.json
+[ "$mode" != install ] || [ -n "$had_server" ] || : >"$before/first-install"
+: >"$before/complete"
+[ -z "$new_agents" ] || mv -f "$before/agents.new.json" "$root/serve/agents.json"
+if [ "$mode" = install ]; then
 install -m 755 payload/assembly-remote-server "$root/bin/.assembly-remote-server.new"
 mv "$root/bin/.assembly-remote-server.new" "$root/bin/assembly-remote-server"
 
@@ -250,6 +298,7 @@ while :; do
       mv "$root/serve/.backend-manifest.new" "$root/serve/backend-manifest.json"
     fi
     trap - EXIT HUP INT TERM
+    rm -f "$before/complete"
     rm -rf "$before"
     exit 0
   fi
