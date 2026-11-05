@@ -8,7 +8,7 @@ namespace Assembly.Infrastructure.Updates;
 /// <summary>
 /// Owns the one check and the one update. The check runs when this app starts, each time a remote says hello, and after an
 /// update; there's no timer. Results go out on the machines topic. A failure to read shows as unknown, never as behind.
-/// A remote on another version starts the update by itself, once per run of the app so a failure can't repeat forever; the
+/// A remote on an older version starts the update by itself, once per run of the app so a failure can't repeat forever; the
 /// button can always try again.
 /// </summary>
 internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status, InstalledCalls local,
@@ -88,7 +88,8 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         try
         {
             Show(true, null);
-            MachineBehind[] behind = [.. status.Items.Select(item => new MachineBehind(item.Name, [.. (item.Updates ?? []).Where(update => update.State == UpdateItem.Behind)]))];
+            MachineBehind[] behind = [.. status.Items.Select(item => new MachineBehind(item.Name, [.. (item.Updates ?? []).Where(update => update.State == UpdateItem.Behind)],
+                (item.Updates ?? []).Any(update => update.Kind == "adapter" && update.State == UpdateItem.Newer)))];
             await source.UpdateAsync(behind, automatic, note => Show(true, note), stop);
         }
         catch (CallFailed error) { ending = "Update failed: " + error.Message; }

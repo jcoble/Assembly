@@ -1,4 +1,5 @@
 use super::{Machine, behind_notice, behind_words, item_words};
+use crate::core::state::machine::UpdateItem;
 use crate::features::settings::connections::row_status;
 use serde_json::json;
 
@@ -39,6 +40,25 @@ fn the_notice_names_what_is_behind_and_stays_quiet_otherwise() {
         "updates":[{"kind":"cli","name":"codex","current":"2.0.0","wanted":"2.0.0","state":"current"}]}),
     )];
     assert_eq!(behind_words(current.iter()), None);
+}
+
+#[test]
+fn what_is_ahead_says_so_and_a_backend_says_this_app_is_lower() {
+    let item = |kind: &str, name: &str, current: &str, wanted: &str| UpdateItem {
+        kind: kind.into(),
+        name: name.into(),
+        current: Some(current.into()),
+        wanted: Some(wanted.into()),
+        state: "newer".into(),
+    };
+    assert_eq!(
+        item_words(&item("backend", "Backend", "0.2.0", "0.1.0")),
+        "Backend 0.2.0, newer than this app's 0.1.0"
+    );
+    assert_eq!(
+        item_words(&item("adapter", "codex-acp", "2.0.0", "1.0.0")),
+        "codex-acp 2.0.0, newer than 1.0.0"
+    );
 }
 
 #[test]

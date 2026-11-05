@@ -37,7 +37,8 @@ export type RemoteBackendPackageInput = {
 // $1 is the saved machine's port and $2 its token file under the remote's home: what a connection reads.
 // $3 and $4 are the adapter release and the manifest hash the desktop verified against the pinned key.
 // --wait-idle only waits for running sessions to end; after it, the final check before the stop exits 75 when one started
-// anyway. --adapters installs adapters and restarts the same backend, for when only they are behind.
+// anyway. --adapters installs adapters and restarts the same backend, for when only they are behind. --keep-adapters
+// installs the backend and leaves adapters alone, for when the machine's are newer than the release's.
 export const REMOTE_BACKEND_INSTALL_SCRIPT = `#!/bin/sh
 set -eu
 
@@ -45,6 +46,7 @@ root=$HOME/assembly-dotnet
 PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 export PATH
 mode=install
+keep=
 
 # Everything in the service's control group besides the host is a running session: an adapter, its CLI, a terminal.
 running() {
@@ -74,6 +76,7 @@ case "\${1:-}" in
       rm -f "$file"
     done ;;
   --adapters) mode=adapters; shift ;;
+  --keep-adapters) keep=1; shift ;;
 esac
 
 port=$1
@@ -96,7 +99,7 @@ refuse_if_running() {
 
 sha256sum -c SHA256SUMS
 install -d "$root/bin" "$root/serve" "$HOME/.config/systemd/user"
-ASSEMBLY_ADAPTER_TAG=$3 ASSEMBLY_ADAPTER_MANIFEST_SHA256=$4 bash payload/dotnet/scripts/agents-file.sh "$root/adapters" "$root/serve/agents.json"
+[ -n "$keep" ] || ASSEMBLY_ADAPTER_TAG=$3 ASSEMBLY_ADAPTER_MANIFEST_SHA256=$4 bash payload/dotnet/scripts/agents-file.sh "$root/adapters" "$root/serve/agents.json"
 refuse_if_running
 if [ "$mode" = install ]; then
 systemctl --user stop assembly-dotnet.service >/dev/null 2>&1 || true

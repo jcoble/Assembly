@@ -52,6 +52,38 @@ public sealed class UpdateCheckTests
     public void A_newer_install_is_not_behind() => Assert.Empty(Behind(UpdateCheck.Remote(Same, Tools(adapter: "2.1.0", cli: "3.1.0"), Dev())));
 
     [Fact]
+    public void What_is_ahead_says_so_and_nothing_goes_backwards()
+    {
+        var newer = UpdateCheck.Remote(Same with { Version = "1.10.0" }, Tools(adapter: "2.1.0", cli: "3.1.0"), Dev());
+        Assert.All(newer, item => Assert.Equal(UpdateItem.Newer, item.State));
+        // Numbers, not text: 1.10.0 is ahead of 1.9.0, and a number that can't be compared decides nothing.
+        Assert.Equal(UpdateItem.Behind, UpdateCheck.Remote(Same with { Version = "1.9.0" }, null, Dev() with { Backend = "1.10.0" })[0].State);
+        Assert.Equal(UpdateItem.Unknown, UpdateCheck.Remote(Same with { Version = "1.0.0-beta" }, null, Dev())[0].State);
+    }
+
+    [Fact]
+    public void Unknown_is_neither_behind_nor_newer()
+    {
+        var items = UpdateCheck.Remote(null, Tools(cli: null), Dev() with { Backend = null });
+        Assert.DoesNotContain(items, item => item.Kind is "backend" or "cli" && item.State is UpdateItem.Behind or UpdateItem.Newer);
+        Assert.Equal(UpdateItem.Unknown, UpdateCheck.Remote(Same, null, Dev() with { Backend = null })[0].State);
+    }
+
+    [Fact]
+    public void One_adapter_ahead_holds_the_bundle_back_since_they_install_together()
+    {
+        var wanted = Dev() with { Adapters = new Dictionary<string, string?> { ["first-acp"] = "2.0.0", ["second-acp"] = "2.0.0" } };
+        InstalledTools Have(string first, string second, string packaging = "sources") => new(new Dictionary<string, string> { ["first-acp"] = first, ["second-acp"] = second }, packaging, []);
+        Assert.Equal(["adapter", "adapter"], Behind(UpdateCheck.Remote(Same, Have("1.0.0", "1.0.0"), wanted)));
+        var held = UpdateCheck.Remote(Same, Have("2.1.0", "1.0.0"), wanted);
+        Assert.Empty(Behind(held));
+        Assert.Equal(UpdateItem.Newer, held.Single(item => item.Name == "first-acp").State);
+        Assert.Equal(UpdateItem.Unknown, held.Single(item => item.Name == "second-acp").State);
+        // Different packaging doesn't bring an older adapter either.
+        Assert.Empty(Behind(UpdateCheck.Remote(Same, Have("2.1.0", "2.0.0", "older"), wanted)));
+    }
+
+    [Fact]
     public void A_missing_bundle_is_behind() =>
         Assert.Equal(["adapter"], Behind(UpdateCheck.Remote(Same, new(new Dictionary<string, string>(), null, []), Dev())));
 
@@ -161,11 +193,13 @@ public sealed class UpdateCheckTests
         public PublishedVersions Published { get; set; } = new(null, null, null);
         public int Reads { get; private set; }
         public string? FailOn { get; init; }
+        public List<string> KeptAdapters { get; } = [];
         public Task<PublishedVersions> PublishedAsync(CancellationToken ct) { Reads++; return Task.FromResult(Published); }
-        public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct)
+        public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct, bool keepAdapters = false)
         {
             if (machine == FailOn) throw new CallFailed($"{machine} is unreachable.");
             Installed.Add(machine);
+            if (keepAdapters) KeptAdapters.Add(machine);
             progress("Downloading.");
             return Task.CompletedTask;
         }
@@ -192,7 +226,7 @@ public sealed class UpdateCheckTests
         Assert.Equal(["box: Downloading.", "other: Downloading."], notes);
         var wanted = await source.WantedAsync(CancellationToken.None);
         Assert.Equal(BackendBuild.Version, wanted.Backend);
-        Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { Version = "0.0.0-other" }, null, wanted)));
+        Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { Version = "0.0.0" }, null, wanted)));
         Assert.Empty(Behind(UpdateCheck.Remote(Same with { Version = BackendBuild.Version }, null, wanted)));
     }
 
@@ -279,8 +313,8 @@ public sealed class UpdateCheckTests
         Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { Version = "0.9.0" }, null, mine)));
         Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { Version = null }, null, mine)));
         Assert.Empty(Behind(UpdateCheck.Remote(Same with { Version = "1.1.0" }, null, mine)));
-        // A checkout builds whichever number it has, so there either way is different.
-        Assert.Equal(["backend"], Behind(UpdateCheck.Remote(Same with { Version = "1.1.0" }, Tools(), Dev())));
+        // The one rule, the same for a checkout: the side with the lower number updates, never the other way.
+        Assert.Empty(Behind(UpdateCheck.Remote(Same with { Version = "1.1.0" }, Tools(), Dev())));
     }
 
     [Fact]
@@ -314,9 +348,9 @@ public sealed class UpdateCheckTests
     }
 
     [Fact]
-    public async Task A_remote_on_another_version_starts_the_update_at_its_hello_with_no_button()
+    public async Task A_remote_on_an_older_version_starts_the_update_at_its_hello_with_no_button()
     {
-        var welcome = new Welcome("0.0.1-old");
+        var welcome = new Welcome("0.0.1");
         await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
         var source = new FakeSource((_, _) => Task.CompletedTask, starts: true);
         var updates = Updates(source, welcome.Status, work);
@@ -326,9 +360,32 @@ public sealed class UpdateCheckTests
     }
 
     [Fact]
+    public async Task A_remote_on_a_higher_version_starts_nothing_and_says_it_is_newer()
+    {
+        var welcome = new Welcome("99.0.0");
+        await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
+        var source = new FakeSource((_, _) => Task.CompletedTask, starts: true);
+        var updates = Updates(source, welcome.Status, work);
+        welcome.Say();
+        await updates.CheckAsync("box", default);
+        Assert.Equal(UpdateItem.Newer, welcome.Status.Items[1].Updates![0].State);
+        Assert.Equal(0, source.Automatic);
+        Assert.False(welcome.Status.Items[1].Updating);
+    }
+
+    [Fact]
+    public async Task A_backend_install_leaves_adapters_that_are_ahead_of_the_release()
+    {
+        var release = new FakeRelease();
+        await Delivered(release).UpdateAsync([new("box", [Item("backend")], AdaptersNewer: true), new("other", [Item("backend")])], false, _ => { }, default);
+        Assert.Equal(["box"], release.KeptAdapters);
+        Assert.Equal(["box", "other"], release.Installed);
+    }
+
+    [Fact]
     public async Task A_failing_update_by_itself_is_not_tried_over_and_over_and_the_button_still_works()
     {
-        var welcome = new Welcome("0.0.1-old");
+        var welcome = new Welcome("0.0.1");
         await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
         var attempts = 0;
         var source = new FakeSource((_, _) => { attempts++; throw new CallFailed("no release"); }, starts: true);
@@ -350,7 +407,7 @@ public sealed class UpdateCheckTests
     [Fact]
     public async Task A_checkout_leaves_the_launch_update_to_app_dev()
     {
-        var welcome = new Welcome("0.0.1-old");
+        var welcome = new Welcome("0.0.1");
         await using var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
         var source = new FakeSource((_, _) => Task.CompletedTask);
         var updates = Updates(source, welcome.Status, work);

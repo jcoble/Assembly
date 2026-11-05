@@ -7,7 +7,7 @@ import { sameBackendFiles } from './remote-backend-package.ts';
 import { backendIdentity, lane, type Lane } from './dev-remote-identity.ts';
 import { command, lifetime } from './dev-remote-process.ts';
 import { probeSource, type Probe } from './dev-remote-probe.ts';
-import { ensureTools, latestTools, toolKey } from './dev-toolchain.ts';
+import { ensureTools, keepNewer, latestTools, toolKey } from './dev-toolchain.ts';
 import { waitForIdle } from './dev-remote-idle.ts';
 import { HostDown, HostUnseen, waitForAnswer } from './dev-remote-ready.ts';
 import { stage } from './dev-remote-timing.ts';
@@ -60,7 +60,7 @@ try {
   const seedManifest = request.managed && (request.managed.seedManifest ?? seedTools!.trackedManifest(process.cwd()));
   if (request.managed && await seedTools!.seedCohort(seedManifest) !== request.managed.cohort)
     throw Error('remote seed manifest differs from the local safe-backup cohort');
-  const desiredTools = request.managed ? toolKey(request.managed.versions, request.sources, 'linux-x64') : undefined;
+  let desiredTools = request.managed ? toolKey(keepNewer(request.managed.versions, before.toolVersions), request.sources, 'linux-x64') : undefined;
   const adaptersCurrent = before.adapterOK && before.launcherSha === request.launcher && (request.managed ? before.toolsKey === desiredTools : before.adapterSources === request.sources);
   const current = before.backendIdentity === identity;
   if (current && adaptersCurrent && !seedChanged) {
@@ -71,7 +71,9 @@ try {
     let toolsChanged = false;
     if (request.managed || before.missing || !adaptersCurrent) {
       await fs.mkdir(join(root, 'serve'), { recursive: true });
-      ({ changed: toolsChanged } = await ensureTools(process.cwd(), join(root, 'adapters'), join(root, 'serve/agents.json'), request.managed?.versions ?? await latestTools(owner.signal), owner.signal));
+      const tools = await ensureTools(process.cwd(), join(root, 'adapters'), join(root, 'serve/agents.json'), request.managed?.versions ?? await latestTools(owner.signal), owner.signal);
+      toolsChanged = tools.changed;
+      if (request.managed) desiredTools = tools.key;
     }
     const adapterState = before.missing || request.managed || !adaptersCurrent ? await probe(true) : before;
     if (!adapterState.adapterOK || adapterState.launcherSha !== request.launcher)

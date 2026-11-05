@@ -84,7 +84,7 @@ for (const [name, state] of [
 });
 for (const [name, state] of [
   ['a raised number', { version: '0.2.0', hostVersion: '0.1.0' }],
-  ['a remote on a higher number', { version: '0.1.0', hostVersion: '0.2.0' }],
+  ['a lower number, compared as numbers', { version: '0.10.0', hostVersion: '0.9.0' }],
   ['an old host that reports no number', { hostVersion: null }],
   ['a lane with nothing installed', { missing: true }],
 ] as const) test(`launch check: ${name} is behind, and the check itself deploys nothing`, () => {
@@ -205,6 +205,7 @@ function launchFixture(state: object) {
   writeFileSync(join(f.root, 'scripts/dev-toolchain.ts'), `import fs from 'node:fs';
 export const packages = [];
 export const toolKey = () => 'key';
+export const keepNewer = versions => versions;
 export const toolsCurrent = async () => true;
 export const checkoutSources = async () => 'sources';
 export const latestTools = async () => { fs.appendFileSync(process.env.CALLS, JSON.stringify(['tools','latest'])+'\\n'); return {}; };
@@ -401,5 +402,33 @@ test('a copied managed identity refuses before SSH and an adopted outdated lane 
     f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, versions: {}, cohort: 'needs-seed', adopted: true });
     result = f.run(); assert.equal(result.status, 1); assert.match(result.stderr, /creator to update/);
     assert.equal(f.calls().filter(call => call[0] === 'git' && call[1] === 'push').length, 0);
+  } finally { f.close(); }
+});
+for (const [name, env, state] of [
+  ['the launch check', check, {}],
+  ['the one update', update, {}],
+  ['the one update with a new seed', update, { seedCohort: 'old' }],
+  ['serving by hand', {}, {}],
+  ['the one update, compared as numbers', update, { version: '0.9.0', hostVersion: '0.10.0' }],
+] as const) test(`${name}: a remote on a higher number gets nothing, and it says this checkout is the side behind`, () => {
+  const f = fixture({ version: '0.1.0', hostVersion: '0.2.0', ...state });
+  try {
+    Object.assign(f.env, env);
+    if ('seedCohort' in state) f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, cohort: 'new' });
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /newer than this checkout's [\d.]+, so nothing was deployed\. This checkout is the side that's behind: pull to update it\./);
+    assert.equal(deploys(f), 0);
+    assert.equal(pushes(f), 0);
+  } finally { f.close(); }
+});
+test('launch check: a number that can\'t be compared decides nothing', () => {
+  const f = fixture({ version: '0.1.0', hostVersion: 'garbled' });
+  try {
+    Object.assign(f.env, check);
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /can't be compared/);
+    assert.equal(deploys(f), 0);
   } finally { f.close(); }
 });

@@ -3,7 +3,7 @@ import { constants as fsConstants, promises as fs } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { command } from './dev-remote-process.ts';
-import { adapterSources, sourcesDigest } from './dev-remote-identity.ts';
+import { adapterSources, sourcesDigest, versionOrder } from './dev-remote-identity.ts';
 // Workbox Test has no npm, so a machine without one gets this pinned copy in the lane's own folder.
 export const npmPin = { version: '11.17.0', integrity: 'sha512-PurxiZexEHDTE4SSaLI3ZrnbAGiZfeyUcQcxcP5D+hfytNAze/D1IzDuInTn9XVLIbAQUnQuSPXJx02LHjLvQw==' };
 export const packages = ['@agentclientprotocol/claude-agent-acp', '@agentclientprotocol/codex-acp', '@anthropic-ai/claude-code', '@openai/codex'] as const;
@@ -16,6 +16,10 @@ export async function latestTools(signal: AbortSignal): Promise<ToolVersions> {
     if (!version || !/^\d+\.\d+\.\d+$/.test(version)) throw Error('invalid stable version for ' + name);
     return [name, version];
   }))) as ToolVersions;
+}
+// A version a machine already has beats a lower one asked for: the registry's latest can go backwards.
+export function keepNewer(wanted: ToolVersions, installed: Partial<Record<string, string>> = {}) {
+  return Object.fromEntries(packages.map(name => [name, installed[name] !== undefined && versionOrder(installed[name], wanted[name]) === 'newer' ? installed[name] : wanted[name]])) as ToolVersions;
 }
 export function toolKey(versions: ToolVersions, sources: string, target: string) {
   return createHash('sha256').update(JSON.stringify({ versions: packages.map(name => [name, versions[name]]), sources, target })).digest('hex');
@@ -42,6 +46,21 @@ export async function toolsCurrent(adapters: string, descriptor: string, key: st
 async function readAgents(descriptor: string): Promise<Record<string, { cli?: string; args: string[] }>> {
   return Object.fromEntries(JSON.parse(await fs.readFile(descriptor, 'utf8')).map((agent: { id: string }) => [agent.id, agent]));
 }
+// The dev record, and the adapters themselves for a bundle that came from a release and has no record.
+async function installedVersions(adapters: string, descriptor: string) {
+  const read = (file: string) => fs.readFile(file, 'utf8').then(JSON.parse).catch(() => undefined);
+  const found: Partial<Record<string, string>> = { ...(await read(join(adapters, 'dev-tools.json')))?.versions };
+  const agents = await read(descriptor);
+  for (const entry of Array.isArray(agents) ? agents.map(agent => agent?.args?.[0]) : []) {
+    if (typeof entry !== 'string') continue;
+    const bundle = entry.includes('/node_modules/') ? entry.split('/node_modules/')[0] : dirname(entry);
+    for (const name of packages.slice(0, 2)) {
+      const version = (await read(join(bundle, 'node_modules', name, 'package.json')))?.version;
+      if (version) found[name] = version;
+    }
+  }
+  return found;
+}
 export async function ensureNpm(adapters: string, signal: AbortSignal, run = command, pin = npmPin, path = process.env.PATH ?? '') {
   const home = join(adapters, 'npm', pin.version), bin = join(home, 'bin');
   for (const directory of [bin, ...path.split(':').filter(Boolean)]) {
@@ -65,6 +84,7 @@ export async function ensureTools(root: string, adapters: string, descriptor: st
   const { safePath } = await import('./seed-dev.ts');
   for (const path of [adapters, descriptor, join(adapters, 'clis'), join(adapters, 'assets'), join(adapters, 'bundles')]) safePath(path, false);
   for (const name of packages) if (!/^\d+\.\d+\.\d+$/.test(versions[name] ?? '')) throw Error('invalid managed version for ' + name);
+  versions = keepNewer(versions, await installedVersions(adapters, descriptor));
   const launcher = createHash('sha256').update(await fs.readFile(join(root, 'scripts/adapters/claude-launcher.ts'))).digest('hex');
   const sources = await checkoutSources(root);
   const key = toolKey(versions, sources, target);

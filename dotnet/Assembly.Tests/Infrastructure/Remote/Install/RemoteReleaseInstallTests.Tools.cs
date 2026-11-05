@@ -40,6 +40,20 @@ public sealed partial class RemoteReleaseInstallTests
     }
 
     [Fact]
+    public async Task A_backend_install_can_leave_newer_adapters_exactly_as_they_are()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (install, _, _, serverSha) = Fixture();
+        Directory.CreateDirectory(Path.GetDirectoryName(AgentsFile)!);
+        File.WriteAllText(AgentsFile, "[\"newer adapters\"]");
+        await install.InstallLatestAsync(Machine, _ => { }, default, keepAdapters: true);
+
+        Assert.Equal(serverSha, Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(Installed, "bin/assembly-remote-server")))));
+        Assert.Equal("[\"newer adapters\"]", File.ReadAllText(AgentsFile));
+        Assert.False(Directory.Exists(Path.Combine(Installed, "adapters/bundles")));
+    }
+
+    [Fact]
     public async Task A_cli_alone_updates_with_no_restart_and_waits_for_a_running_session()
     {
         if (!OperatingSystem.IsLinux()) return;

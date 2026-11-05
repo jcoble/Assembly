@@ -75,8 +75,8 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install, Background
     }
 
     /// <summary>The one update's way in: the same job and the same one-at-a-time rule as the call, waited for.</summary>
-    public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct) =>
-        WaitedAsync(machine, progress, Installed, ct);
+    public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct, bool keepAdapters = false) =>
+        WaitedAsync(machine, progress, async (saved, phase, stop) => await install.InstallLatestAsync(saved, phase, stop, keepAdapters), ct);
 
     public Task UpdateToolsAsync(string? machine, ToolsBehind tools, Action<string> progress, CancellationToken ct)
     {

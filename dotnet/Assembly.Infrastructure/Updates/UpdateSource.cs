@@ -11,7 +11,7 @@ namespace Assembly.Infrastructure.Updates;
 internal interface IUpdateSource
 {
     Task<UpdateWanted> WantedAsync(CancellationToken ct);
-    /// <summary>True when a remote on another version is this app's to update. app-dev starts that itself, before the desktop is built.</summary>
+    /// <summary>True when a remote on an older version is this app's to update. app-dev starts that itself, before the desktop is built.</summary>
     bool StartsRemoteUpdates { get; }
     /// <summary>
     /// Updates everything behind, reporting what it's doing. <paramref name="automatic"/> is when no one pressed the button.
@@ -20,8 +20,11 @@ internal interface IUpdateSource
     Task UpdateAsync(IReadOnlyList<MachineBehind> machines, bool automatic, Action<string> progress, CancellationToken ct);
 }
 
-/// <summary>What the last check found behind on one machine; this one when <paramref name="Name"/> is null.</summary>
-internal sealed record MachineBehind(string? Name, IReadOnlyList<UpdateItem> Behind);
+/// <summary>
+/// What the last check found behind on one machine; this one when <paramref name="Name"/> is null.
+/// <paramref name="AdaptersNewer"/> is when its adapters are ahead of what a release brings, so a backend install leaves them.
+/// </summary>
+internal sealed record MachineBehind(string? Name, IReadOnlyList<UpdateItem> Behind, bool AdaptersNewer = false);
 
 internal sealed record CliBehind(string Family, string Version);
 
@@ -61,7 +64,7 @@ internal static class UpdateSources
         LatestAsync(CliReleaseSource.Families, CliReleaseSource.PackageOf, npm, ct);
 }
 
-/// <summary>Development: the update builds this checkout. app-dev starts it on launch when a remote's number differs, without waiting on the desktop.</summary>
+/// <summary>Development: the update builds this checkout. app-dev starts it on launch when a remote's number is lower, without waiting on the desktop.</summary>
 internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm) : IUpdateSource
 {
     public async Task<UpdateWanted> WantedAsync(CancellationToken ct) => new(BackendBuild.Version, BackendBuild.Version,
@@ -106,7 +109,7 @@ internal interface IReleaseInstall
 {
     Task<PublishedVersions> PublishedAsync(CancellationToken ct);
     /// <summary>The backend and its adapters, waiting for running sessions.</summary>
-    Task InstallAsync(string machine, Action<string> progress, CancellationToken ct);
+    Task InstallAsync(string machine, Action<string> progress, CancellationToken ct, bool keepAdapters = false);
     /// <summary>Adapters and CLIs on a machine, this one when <paramref name="machine"/> is null, leaving a current backend in place.</summary>
     Task UpdateToolsAsync(string? machine, ToolsBehind tools, Action<string> progress, CancellationToken ct);
 }
@@ -128,7 +131,7 @@ internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall?
         var published = await PublishedAsync(ct);
         return new(published.App, BackendBuild.Version,
             UpdateSources.AdapterNames.ToDictionary(name => name, name => published.Adapters?.GetValueOrDefault(name), StringComparer.Ordinal),
-            published.Packaging, await UpdateSources.CliVersionsAsync(npm, ct), NeverOlder: true);
+            published.Packaging, await UpdateSources.CliVersionsAsync(npm, ct));
     }
 
     private async Task<PublishedVersions> PublishedAsync(CancellationToken ct)
@@ -154,7 +157,7 @@ internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall?
         {
             void Note(string note) => progress(machine.Name is null ? note : $"{machine.Name}: {note}");
             var backend = machine.Name is not null && machine.Behind.Any(item => item.Kind == "backend");
-            if (backend) await Try(() => release.InstallAsync(machine.Name!, Note, ct));
+            if (backend) await Try(() => release.InstallAsync(machine.Name!, Note, ct, machine.AdaptersNewer));
             // The backend's install brings its adapters; a CLI is separate either way.
             var tools = ToolsBehind.Of(machine.Behind);
             if (backend) tools = tools with { Adapters = false };

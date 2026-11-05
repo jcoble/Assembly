@@ -17,6 +17,16 @@ fn machine_name(machine: &Machine) -> &str {
 }
 
 fn item_words(item: &UpdateItem) -> String {
+    if let ("newer", Some(current), Some(wanted)) =
+        (item.state.as_str(), &item.current, &item.wanted)
+    {
+        let side = if item.kind == "backend" {
+            "this app's "
+        } else {
+            ""
+        };
+        return format!("{} {current}, newer than {side}{wanted}", item.name);
+    }
     match (&item.current, &item.wanted) {
         (Some(current), Some(wanted)) if current != wanted => {
             format!("{} {current} → {wanted}", item.name)

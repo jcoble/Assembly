@@ -48,6 +48,49 @@ test('dependency check skips all install/build work on the second launch, and ke
     assert.equal(calls.filter(call => call[0] === process.execPath).length, 0, 'current ACP adapters must not rebuild for a CLI update');
   } finally { f.close(); }
 });
+test('a registry that goes backwards never puts an older adapter or CLI over a newer one', async () => {
+  const f = fixture(), adapters = join(f.root, 'adapters'), descriptor = join(f.root, 'profile/agents.json');
+  const installed = Object.fromEntries(packages.map(name => [name, '2.0.0'])) as ToolVersions;
+  const asked: string[] = [];
+  let bundled = '{}';
+  const run = async (tool: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+    if (tool === 'npm') {
+      const prefix = args[args.indexOf('--prefix') + 1];
+      asked.push(...args.filter(arg => arg.includes('@', 1)));
+      for (const arg of args.filter(arg => arg.includes('@', 1) && !arg.startsWith('--'))) { const at = arg.lastIndexOf('@'); f.write(join(prefix, 'node_modules', arg.slice(0, at), 'package.json'), JSON.stringify({ version: arg.slice(at + 1) })); }
+    } else if (tool === process.execPath) {
+      const [wanted, stage] = args.slice(-2);
+      asked.push('bundle ' + wanted);
+      bundled = wanted;
+      f.write(join(stage, 'assembly-adapters-linux-x64.json'), '{}');
+    } else if (tool === 'bash') {
+      const bundle = join(adapters, 'bundles/one');
+      f.write(join(bundle, 'claude-launcher.ts'), 'launcher');
+      const bin = (options?.env?.PATH ?? '').split(':')[0];
+      for (const [name, version] of Object.entries(JSON.parse(bundled) as Record<string, string>)) f.write(join(bundle, 'node_modules/@agentclientprotocol', name, 'package.json'), JSON.stringify({ version }));
+      f.write(join(bundle, 'node_modules/@agentclientprotocol/codex-acp/dist/index.js'), 'codex');
+      for (const id of ['claude', 'codex']) f.write(join(bin, id), id);
+      f.write(descriptor, JSON.stringify([{ id: 'claude', cli: join(bin, 'claude'), args: [join(bundle, 'claude-launcher.ts')] }, { id: 'codex', cli: join(bin, 'codex'), args: [join(bundle, 'node_modules/@agentclientprotocol/codex-acp/dist/index.js')] }]));
+    }
+    return '';
+  };
+  const ensure = (versions: ToolVersions) => ensureTools(f.root, adapters, descriptor, versions, new AbortController().signal, run as any, 'linux-x64', fakeNpm);
+  try {
+    const first = await ensure(installed);
+    asked.length = 0;
+    const older = Object.fromEntries(packages.map(name => [name, '1.9.0'])) as ToolVersions;
+    const again = await ensure(older);
+    assert.equal(again.changed, false, 'an older ask changes nothing');
+    assert.equal(again.key, first.key);
+    assert.deepEqual(asked, []);
+    // One moved forward: that one updates, and the others stay.
+    const mixed = await ensure({ ...older, '@openai/codex': '2.1.0' });
+    assert.equal(mixed.changed, true);
+    assert.ok(asked.includes('@openai/codex@2.1.0'), asked.join());
+    assert.ok(asked.includes('@anthropic-ai/claude-code@2.0.0'), asked.join());
+    assert.equal(asked.some(line => line.includes('1.9.0')), false, asked.join());
+  } finally { f.close(); }
+});
 test('a failed adapter build leaves nothing the next launch would mistake for a finished one', async () => {
   const f = fixture(), adapters = join(f.root, 'adapters'), descriptor = join(f.root, 'profile/agents.json');
   const versions = Object.fromEntries(packages.map(name => [name, '1.2.3'])) as ToolVersions;

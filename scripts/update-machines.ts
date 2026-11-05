@@ -1,8 +1,9 @@
 // `npm run deploy:remote`: updates whatever is behind on this checkout's machine and its lane remote: adapters, their
 // launcher and scripts, CLIs and the remote's backend. The desktop's update button runs this same command. A run with
 // nothing behind builds nothing, and a running session is never killed: the remote finishes once its host goes idle.
-// `--if-behind` is a dev launch: when the remote's version number matches it does nothing else at all, not even reading
-// the network for tool versions, and when it differs it does this same update.
+// `--if-behind` is a dev launch: unless the remote's version number is lower it does nothing else at all, not even reading
+// the network for tool versions, and when it's lower it does this same update. A remote on a higher number is never touched,
+// by either: this checkout is the side that's behind.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, promises as fs } from 'node:fs';
 import { homedir } from 'node:os';

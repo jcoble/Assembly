@@ -22,7 +22,7 @@ public sealed record MachineItem(string? Name, string Kind, bool Reachable, stri
 /// <summary>One piece the update check looked at: <paramref name="Kind"/> is desktop, backend, adapter or cli.</summary>
 public sealed record UpdateItem(string Kind, string Name, string? Current, string? Wanted, string State)
 {
-    public const string Behind = "behind", Unknown = "unknown", UpToDate = "current";
+    public const string Behind = "behind", Unknown = "unknown", UpToDate = "current", Newer = "newer";
 }
 
 /// <summary>

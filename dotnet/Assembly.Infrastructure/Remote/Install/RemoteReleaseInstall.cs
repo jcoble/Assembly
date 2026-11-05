@@ -14,8 +14,8 @@ internal sealed record RemoteReleaseReceipt(string Version, string Commit);
 /// </summary>
 internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, RemoteReleaseShell shell, TimeProvider time, string? version = null)
 {
-    /// <summary>Puts the signed backend, and the adapters that go with it, on the machine.</summary>
-    internal async Task<RemoteReleaseReceipt> InstallLatestAsync(SavedMachine machine, Action<string> phase, CancellationToken ct)
+    /// <summary>Puts the signed backend, and the adapters that go with it unless the machine's are newer, on the machine.</summary>
+    internal async Task<RemoteReleaseReceipt> InstallLatestAsync(SavedMachine machine, Action<string> phase, CancellationToken ct, bool keepAdapters = false)
     {
         Inspected? inspected = null;
         string? serverSha = null;
@@ -25,7 +25,7 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
             await WhenIdleAsync(target, quoted, phase, () =>
             {
                 phase("Installing and starting the backend…");
-                return shell.RunAsync(target, $"set -eu; cd {quoted}; sh install.sh {Arguments(machine, release)}", null, ct);
+                return shell.RunAsync(target, $"set -eu; cd {quoted}; sh install.sh {(keepAdapters ? "--keep-adapters " : "")}{Arguments(machine, release)}", null, ct);
             }, ct);
             phase("Verifying the service, database, and loopback listener…");
             serverSha = await shell.RunAsync(target, ReceiptCommand(machine.Port), null, ct);
