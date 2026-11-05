@@ -86,12 +86,13 @@ public static class PhoneNeedsRoutes
 
     internal sealed record Option(string Id, string Label, string Style, bool NeedsText = false);
     internal sealed record Item(string Id, string Kind, string SessionName, string? RunId, string? StepId,
-        string Title, string Detail, string Provider, long CreatedAt, long Version, long Epoch, bool ProviderBacked, IReadOnlyList<Option> Options);
+        string Title, string Detail, string? Provider, long CreatedAt, long Version, long Epoch, bool ProviderBacked, IReadOnlyList<Option> Options);
 
     internal static IReadOnlyList<Item> Read(IReadScope scope, string machine, string? id = null, string? sessionId = null) => scope.Query("""
         SELECT n.id,n.kind,CAST(s.title AS TEXT),n.run_id,n.step_id,n.text,s.provider,n.created_ms,n.version,s.epoch,
-            n.options_json,r.payload,n.provider_request_id,n.source_kind
+            n.options_json,r.payload,n.provider_request_id,n.source_kind,st.definition_key
         FROM engine_needs_me n JOIN engine_session s ON s.id=n.session_id
+        LEFT JOIN engine_step st ON st.id=n.step_id
         LEFT JOIN rows r ON r.session_id=n.session_id AND r.seq=(SELECT seq FROM rows WHERE session_id=n.session_id
             AND item_id='ask:'||n.chat_row_id AND kind='ask' ORDER BY seq DESC LIMIT 1)
         WHERE n.state='open' AND (n.addressee_session_id IS NULL OR
@@ -123,7 +124,7 @@ public static class PhoneNeedsRoutes
         var title = card is null ? row.Text(5) : JsonReply.String(card.RootElement, "title") ?? row.Text(5);
         var detail = gate ? "" : card is null ? row.Text(5) : JsonReply.String(card.RootElement, "message") ?? "";
         return new Item(row.Text(0), gate ? "gate" : row.Text(1), row.Text(2), row.IsNull(3) ? null : row.Text(3),
-            row.IsNull(4) ? null : row.Text(4), title, detail, row.Text(6), row.Long(7), row.Long(8), row.Long(9), !row.IsNull(12), options);
+            row.IsNull(14) ? row.IsNull(4) ? null : row.Text(4) : row.Text(14), title, detail, row.IsNull(12) && source is "workflow" or "workflow_gate" ? null : row.Text(6), row.Long(7), row.Long(8), row.Long(9), !row.IsNull(12), options);
     }, new SqlArg("$machine", machine), new("$id", id), new("$session", sessionId));
 
     /// <summary>A workflow's own approval words. The engine offers ids; only a provider's question brings its own labels.</summary>
@@ -133,6 +134,8 @@ public static class PhoneNeedsRoutes
         "allow_once" => new(id, "Allow once", "primary"),
         "revise" => new(id, "Revise", "neutral", NeedsText: true),
         "deny" => new(id, "Deny", "danger"),
+        "retry" => new(id, "Retry", "primary"),
+        "cancel" => new(id, "Cancel", "danger"),
         _ => new(id, id, "neutral")
     };
 
@@ -174,9 +177,12 @@ public static class PhoneNeedsRoutes
             json.WriteString("sessionName", item.SessionName); json.WriteString("runId", item.RunId); json.WriteString("stepId", item.StepId);
             json.WriteString("title", item.Title); json.WriteString("detail", item.Detail);
             json.WriteNumber("createdAt", item.CreatedAt); json.WriteNumber("version", item.Version);
-            json.WriteStartArray("evidence"); json.WriteStartObject();
-            json.WriteString("label", "Provider"); json.WriteString("text", item.Provider);
-            json.WriteEndObject(); json.WriteEndArray(); json.WriteStartArray("options");
+            json.WriteStartArray("evidence");
+            if (item.Provider is { } provider)
+            {
+                json.WriteStartObject(); json.WriteString("label", "Provider"); json.WriteString("text", provider); json.WriteEndObject();
+            }
+            json.WriteEndArray(); json.WriteStartArray("options");
             foreach (var option in item.Options)
             {
                 json.WriteStartObject(); json.WriteString("id", option.Id); json.WriteString("label", option.Label);

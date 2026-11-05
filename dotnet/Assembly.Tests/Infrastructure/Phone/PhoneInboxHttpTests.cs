@@ -38,6 +38,8 @@ public sealed class PhoneInboxHttpTests
         Assert.True(options[1].GetProperty("needsText").GetBoolean());
         Assert.False(options[0].TryGetProperty("needsText", out _));
         Assert.Equal("", gate.GetProperty("detail").GetString());
+        Assert.Equal("approve", gate.GetProperty("stepId").GetString());
+        Assert.Empty(gate.GetProperty("evidence").EnumerateArray());
     }
 
     [Fact]
@@ -49,6 +51,8 @@ public sealed class PhoneInboxHttpTests
         var options = command.GetProperty("options").EnumerateArray().ToArray();
         Assert.Equal(new[] { "Allow once", "Deny" }, options.Select(option => option.GetProperty("label").GetString()));
         Assert.Equal(new[] { "primary", "danger" }, options.Select(option => option.GetProperty("style").GetString()));
+        Assert.Equal("checks", command.GetProperty("stepId").GetString());
+        Assert.Empty(command.GetProperty("evidence").EnumerateArray());
     }
 
     [Fact]
