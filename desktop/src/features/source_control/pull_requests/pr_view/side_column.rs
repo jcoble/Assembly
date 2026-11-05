@@ -96,7 +96,7 @@ fn check_row(index: usize, check: &PullRequestCheck, cx: &App) -> impl IntoEleme
             word.id(SharedString::from(format!("pr-check:{index}")))
                 .cursor_pointer()
                 .on_click(move |_, window, cx| {
-                    window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
+                    window.dispatch_action(Box::new(OpenInBrowser { url: url.clone() }), cx)
                 })
                 .into_any_element()
         })

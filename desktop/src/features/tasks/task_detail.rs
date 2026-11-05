@@ -8,7 +8,7 @@ use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
 use serde_json::Value;
 
-use crate::core::intents::open_url::OpenUrl;
+use crate::core::intents::open_url::OpenInBrowser;
 use crate::inline_field::{
     ChoiceOption, FieldValue, InlineField, SaveFailure, SaveRequest, SaveRequested,
 };
@@ -199,7 +199,7 @@ impl TaskDetailView {
 
     pub(super) fn open_in_notion(&self, window: &mut Window, cx: &mut App) {
         window.dispatch_action(
-            Box::new(OpenUrl {
+            Box::new(OpenInBrowser {
                 url: self.page_url(),
             }),
             cx,

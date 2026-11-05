@@ -6,18 +6,17 @@ use gpui_kit::*;
 
 use crate::core::intents::open_file::OpenFile;
 use crate::core::intents::open_pull_requests::OpenPullRequests;
-use crate::core::intents::open_url::OpenUrl;
+use crate::core::intents::open_url::OpenInBrowser;
 use crate::core::navigation::deep_links::handle_route;
+use crate::core::socket::client::SocketClient;
 use crate::core::state::selected_session::SelectedSession;
 use crate::features::tasks::notion_client::NotionClient;
 use crate::features::tasks::task_detail::{TaskDetailEvent, TaskDetailView, TaskSeed};
 use crate::features::tasks::task_export::*;
-use crate::features::tasks::task_navigation::{
-    RouteContext, RouteRefused, TaskRoute, passes_on, route_url,
-};
+use crate::features::tasks::task_navigation::{RouteContext, TaskRoute, passes_on, route_url};
 use crate::features::tasks::tasks_state::*;
 
-use super::{NO_SESSION, NOT_CONNECTED, NOT_OPENABLE, TasksPane};
+use super::{NO_SESSION, NOT_OPENABLE, TasksPane};
 
 impl TasksPane {
     pub(super) fn open_row(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -131,7 +130,7 @@ impl TasksPane {
                     "notion_source_mismatch" | "notion_http_403" | "notion_http_404"
                 );
                 if let Some(url) = self.page_fallback.take().filter(|_| elsewhere) {
-                    window.dispatch_action(Box::new(OpenUrl { url }), cx);
+                    window.dispatch_action(Box::new(OpenInBrowser { url }), cx);
                     self.go_back(window, cx);
                     return;
                 }
@@ -146,17 +145,23 @@ impl TasksPane {
         cx.notify();
     }
 
-    /// A link on a task page, or from outside.
+    /// A link on a task page, or from outside. Where a Notion link goes depends on whether Notion is connected, which
+    /// the tab knows once its first settings arrive; a link before that waits for them.
     pub(super) fn open_link(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.start(cx);
+        if self.state.settings.is_none() && SocketClient::try_global(cx).is_some() {
+            self.waiting_link = Some(url.to_string());
+            return;
+        }
         let context = RouteContext {
             source: self.state.source(),
         };
         match route_url(url, &context) {
-            Ok(TaskRoute::Task(source)) => self.open_task(source, None, window, cx),
-            Ok(TaskRoute::NotionPage { source, url }) => {
+            Some(TaskRoute::Task(source)) => self.open_task(source, None, window, cx),
+            Some(TaskRoute::NotionPage { source, url }) => {
                 self.open_task(source, Some(url), window, cx)
             }
-            Ok(TaskRoute::PullRequest { repo, number }) => window.dispatch_action(
+            Some(TaskRoute::PullRequest { repo, number }) => window.dispatch_action(
                 Box::new(OpenPullRequests {
                     session_id: None,
                     repo: Some(repo),
@@ -164,19 +169,18 @@ impl TasksPane {
                 }),
                 cx,
             ),
-            Ok(TaskRoute::File { path }) => self.open_file(path, window, cx),
-            Ok(TaskRoute::Web(url)) => window.dispatch_action(Box::new(OpenUrl { url }), cx),
-            Err(refused) => {
-                if let Some(route) = passes_on(url, refused) {
+            Some(TaskRoute::File { path }) => self.open_file(path, window, cx),
+            // Neither a task nor a pull request, so only the browser is left, and it mustn't come back here.
+            Some(TaskRoute::Web(url)) => {
+                window.dispatch_action(Box::new(OpenInBrowser { url }), cx)
+            }
+            None => {
+                if let Some(route) = passes_on(url) {
                     // This runs while the window is being updated, and a route updates the window itself.
                     cx.defer(move |cx| handle_route(route, cx));
                     return;
                 }
-                let words = match refused {
-                    RouteRefused::NotConnected => NOT_CONNECTED,
-                    RouteRefused::Unsupported => NOT_OPENABLE,
-                };
-                window.push_notification(Notification::warning(words), cx);
+                window.push_notification(Notification::warning(NOT_OPENABLE), cx);
             }
         }
     }

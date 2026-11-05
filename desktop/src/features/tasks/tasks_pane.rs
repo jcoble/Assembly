@@ -24,8 +24,12 @@ use super::notion_client::NotionClient;
 use super::notion_setup::NotionSetup;
 use super::task_detail::TaskDetailView;
 use super::task_export::*;
+use super::task_navigation::notion_web_page;
 use super::tasks_state::*;
 
+#[cfg(test)]
+#[path = "tasks_pane_links_tests.rs"]
+mod links_tests;
 #[path = "tasks_pane_list.rs"]
 mod list;
 #[path = "tasks_pane_open.rs"]
@@ -49,6 +53,8 @@ pub struct TasksPane {
     detail: Option<Entity<TaskDetailView>>,
     /// A Notion page that may not be a task in this source; opened in the browser if it isn't.
     page_fallback: Option<String>,
+    /// A link that came before the tab knew whether Notion is connected; followed once it does.
+    waiting_link: Option<String>,
     /// The session a task was opened from.
     task_session: Option<SessionKey>,
     refreshing: bool,
@@ -201,6 +207,7 @@ impl TasksPane {
             setup,
             detail: None,
             page_fallback: None,
+            waiting_link: None,
             task_session: None,
             refreshing: false,
             first_refresh_done: false,
@@ -298,16 +305,32 @@ pub fn receive_sign_in(state: String, claim_code: String, cx: &mut App) {
     }
 }
 
-/// A task link, once the window is up.
+/// A task link, once the window is up. With no Tasks tab to open it in, its Notion page opens in the browser.
 pub fn open_task_link(page_id: String, cx: &mut App) {
-    let url = format!("assembly://task/{page_id}");
-    TasksPane::in_window(cx, move |pane, window, cx| pane.open_link(&url, window, cx));
+    let page = notion_web_page(&page_id);
+    open_here_or_in_browser(format!("assembly://task/{page_id}"), page, cx);
+}
+
+/// A Notion page link from anywhere: its task here when Notion is connected, else the page in the browser.
+pub fn open_notion_page(url: String, cx: &mut App) {
+    open_here_or_in_browser(url.clone(), url, cx);
+}
+
+fn open_here_or_in_browser(link: String, page: String, cx: &mut App) {
+    if (cx.try_global::<OpenPane>())
+        .and_then(|open| open.0.upgrade())
+        .is_none()
+    {
+        return cx.open_url(&page);
+    }
+    TasksPane::in_window(cx, move |pane, window, cx| {
+        pane.open_link(&link, window, cx)
+    });
 }
 
 /// About a row's height, for what to draw ahead and how many rows fill the tab.
 const ROW_HEIGHT: f32 = 64.;
 const NO_TAB: &str = "The Tasks tab isn't open in this window.";
-const NOT_CONNECTED: &str = "Connect Notion to open tasks.";
 pub(crate) const NOT_OPENABLE: &str = "Assembly can't open that link.";
 const NO_SESSION: &str = "Select a session to open this file.";
 

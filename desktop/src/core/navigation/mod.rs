@@ -15,3 +15,6 @@ pub(crate) mod file_link;
 mod file_link_resolve_tests;
 pub mod open_url_handler;
 mod waiting_session_link;
+pub mod web_links;
+#[cfg(test)]
+mod web_links_tests;

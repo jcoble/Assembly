@@ -26,7 +26,7 @@ fn window(cx: &mut TestAppContext) -> &mut VisualTestContext {
 #[gpui::test]
 fn an_open_link_goes_where_web_links_go(cx: &mut TestAppContext) {
     let cx = window(cx);
-    let url = "https://GitHub.com/o/r/pull/7?a=b%20c";
+    let url = "https://GitHub.com/o/r/issues/7?a=b%20c";
     let route = ExternalRoute::Open { url: url.into() };
     // As the queue does: outside any window update.
     cx.update(|_, cx| cx.defer(move |cx| handle_route(route, cx)));

@@ -311,8 +311,12 @@ impl PrPane {
             }
         }
         self.sync_scope(cx);
-        if let Some(number) = intent.number {
-            self.select_pr(intent.repo, number, cx);
+        match (intent.repo, intent.number) {
+            (Some(repository), Some(number)) => {
+                self.open_linked(PrTarget { repository, number }, cx)
+            }
+            (None, Some(number)) => self.select_pr(None, number, cx),
+            _ => {}
         }
         cx.notify();
     }

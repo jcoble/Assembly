@@ -1,8 +1,9 @@
 //! Where a link on a task page goes, from the URL alone. Nothing is guessed: a file link needs a session to resolve
-//! against, an unknown Notion page stays a web page, and anything else that isn't http or https is refused.
+//! against, a Notion page with no connection stays a web page, and anything else that isn't http or https is refused.
 
 use super::task_export::NotionTaskRef;
 use crate::core::navigation::external_urls::{ExternalRoute, canonical_notion_id, parse_external};
+use crate::core::navigation::web_links::{notion_page, pull_request};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskRoute {
@@ -23,55 +24,49 @@ pub enum TaskRoute {
     Web(String),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RouteRefused {
-    NotConnected,
-    Unsupported,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct RouteContext {
     /// The connected data source.
     pub source: Option<String>,
 }
 
-/// Whether a link `route_url` refused is one to hand on to the app's link handling, and as what.
-pub fn passes_on(address: &str, refused: RouteRefused) -> Option<ExternalRoute> {
-    match (refused, parse_external(address)) {
-        (RouteRefused::NotConnected, _) | (_, ExternalRoute::Unsupported) => None,
-        (RouteRefused::Unsupported, route) => Some(route),
+/// Whether a link `route_url` refused is one to hand on to the app's link handling, and as what. A task link never is,
+/// so it can't come back here.
+pub fn passes_on(address: &str) -> Option<ExternalRoute> {
+    match parse_external(address) {
+        ExternalRoute::Unsupported | ExternalRoute::Task { .. } => None,
+        route => Some(route),
     }
 }
 
-pub fn route_url(address: &str, context: &RouteContext) -> Result<TaskRoute, RouteRefused> {
+/// Where a link goes, or `None` when it's refused.
+pub fn route_url(address: &str, context: &RouteContext) -> Option<TaskRoute> {
     if address.chars().any(|c| c.is_control() || c.is_whitespace()) {
-        return Err(RouteRefused::Unsupported);
+        return None;
     }
-    let url = url::Url::parse(address).map_err(|_| RouteRefused::Unsupported)?;
+    let url = url::Url::parse(address).ok()?;
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(RouteRefused::Unsupported);
+        return None;
     }
     match url.scheme() {
         "assembly" if url.host_str() == Some("task") => {
-            let page_id = url
-                .path()
-                .strip_prefix('/')
-                .and_then(canonical_notion_id)
-                .ok_or(RouteRefused::Unsupported)?;
-            let data_source_id = context.source.clone().ok_or(RouteRefused::NotConnected)?;
-            Ok(TaskRoute::Task(NotionTaskRef {
+            let page_id = url.path().strip_prefix('/').and_then(canonical_notion_id)?;
+            let Some(data_source_id) = context.source.clone() else {
+                return Some(TaskRoute::Web(notion_web_page(&page_id)));
+            };
+            Some(TaskRoute::Task(NotionTaskRef {
                 data_source_id,
                 page_id,
             }))
         }
         "file" if url.host_str().is_none_or(str::is_empty) => {
-            let path = url.to_file_path().map_err(|_| RouteRefused::Unsupported)?;
-            Ok(TaskRoute::File {
+            let path = url.to_file_path().ok()?;
+            Some(TaskRoute::File {
                 path: path.to_string_lossy().into_owned(),
             })
         }
-        "http" | "https" => Ok(web_route(&url, context)),
-        _ => Err(RouteRefused::Unsupported),
+        "http" | "https" => Some(web_route(&url, context)),
+        _ => None,
     }
 }
 
@@ -91,25 +86,7 @@ fn web_route(url: &url::Url, context: &RouteContext) -> TaskRoute {
     TaskRoute::Web(url.to_string())
 }
 
-fn pull_request(url: &url::Url) -> Option<(String, u64)> {
-    if url.scheme() != "https" || url.host_str() != Some("github.com") {
-        return None;
-    }
-    let parts: Vec<&str> = url.path_segments()?.collect();
-    let [owner, repo, "pull", number, ..] = parts.as_slice() else {
-        return None;
-    };
-    Some((format!("{owner}/{repo}"), number.parse().ok()?))
-}
-
-/// The page id ends the last path segment, after any title (`Some-Title-<32 digits>`).
-fn notion_page(url: &url::Url) -> Option<String> {
-    let host = url.host_str()?;
-    if url.scheme() != "https" || !matches!(host, "www.notion.so" | "notion.so" | "app.notion.com")
-    {
-        return None;
-    }
-    let last = url.path_segments()?.rfind(|part| !part.is_empty())?;
-    let tail = last.len().checked_sub(32).and_then(|at| last.get(at..))?;
-    canonical_notion_id(last).or_else(|| canonical_notion_id(tail))
+/// A task's page on the Notion website, as the old app opened a task link with no connection.
+pub fn notion_web_page(page_id: &str) -> String {
+    format!("https://app.notion.com/p/{}", page_id.replace('-', ""))
 }
