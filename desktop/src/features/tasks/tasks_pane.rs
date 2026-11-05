@@ -287,7 +287,7 @@ impl TasksPane {
     }
 }
 
-/// A sign-in callback from outside the app, once the window is up.
+/// A sign-in callback, once the window is up.
 pub fn receive_sign_in(state: String, claim_code: String, cx: &mut App) {
     if let Some(pane) = cx
         .try_global::<OpenPane>()
@@ -298,7 +298,7 @@ pub fn receive_sign_in(state: String, claim_code: String, cx: &mut App) {
     }
 }
 
-/// A task link from outside the app, once the window is up.
+/// A task link, once the window is up.
 pub fn open_task_link(page_id: String, cx: &mut App) {
     let url = format!("assembly://task/{page_id}");
     TasksPane::in_window(cx, move |pane, window, cx| pane.open_link(&url, window, cx));
