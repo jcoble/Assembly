@@ -12,6 +12,7 @@ using Assembly.Application.Features.Chat.Rows.Context;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Events;
 using Assembly.Domain.Rows;
+using Assembly.Infrastructure.Chat;
 using Assembly.Infrastructure.Engine.Sessions;
 using Assembly.Infrastructure.Socket;
 using Assembly.Tests.Draft.Base.Chat;
@@ -40,7 +41,7 @@ public sealed class RowsExpectedSourceTests
         var session = sessions.Create("codex", "repo").SessionId; f.SeedSession(session);
         using var hub = new LiveHub(RowStore.Open(f.Db), topics: topics);
         var machines = new MachineSet(new FakeMachine(null, sessions));
-        await using var host = await SocketHost.Start(f, topics, new RowsFeature(hub, RowStore.Open(f.Db), sessions, machines));
+        await using var host = await SocketHost.Start(f, topics, new RowsFeature(hub, RowStore.Open(f.Db), sessions, machines, new DiskPathProbe()));
         var expected = new ExpectedSource(f.Machine, 0, null);
         using var control = await host.Open();
         await Subscribe(control, session, expected);
@@ -65,7 +66,7 @@ public sealed class RowsExpectedSourceTests
         Publish(hub, session, "LOCAL_OWNER");
         var machines = new MachineSet(new FakeMachine(null, sessions));
         await using var host = await SocketHost.Start(f, topics,
-            new RowsFeature(hub, store, sessions, machines, new SessionRowSources(f.Db, sessions, machines)));
+            new RowsFeature(hub, store, sessions, machines, new DiskPathProbe(), new SessionRowSources(f.Db, sessions, machines)));
         var expected = new ExpectedSource(f.Machine, 0, null);
         using var bulk = await host.Open(bulk: true);
         await Call(bulk, 1, "page", session, expected);
@@ -143,6 +144,28 @@ public sealed class RowsExpectedSourceTests
         var answer = await Read(control);
         Assert.True(Type(answer) == "result", answer.GetRawText());
         Assert.Equal(4_000, answer.GetProperty("result").GetProperty("total").GetInt64());
+        Assert.Equal(f.Expected, f.Sources.Captures.Single());
+        Assert.Equal(new(f.Expected.Machine, 0, null), f.OwnerSources.Captures.Single());
+    }
+
+    // The named file exists only in the owner's folder, so a check on this side couldn't keep it.
+    [Fact]
+    public async Task Remote_files_answer_the_owners_list_unfiltered_and_never_the_poisoned_copy()
+    {
+        await using var f = await RemoteFixture.Start();
+        var folder = Directory.CreateDirectory(f.Hosts.Remote.Sessions.Root(f.Hosts.Remote.Sessions.Get(f.Session)!)!);
+        using var removed = new Removed(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder.FullName, "owner-only.md"), "x");
+        Tool(f.OwnerHub, f.Session, "t1", """{"name":"sh","state":"completed","hasDetail":false,"kind":"execute","named":["owner-only.md","owner-gone.md"]}""");
+        Tool(f.OwnerHub, f.Session, "t2", """{"name":"edit","state":"completed","path":"owner-edit.rs","added":2,"hasDetail":false,"kind":"edit"}""");
+        Tool(f.LocalHub, f.Session, "t3", """{"name":"edit","state":"completed","path":"poisoned.rs","hasDetail":false,"kind":"edit"}""");
+        using var control = await f.Socket.Open();
+        await Send(control, new { t = "call", id = 1, feature = "rows", method = "files", args = new { session = f.Session }, expectedSource = f.Expected });
+        var answer = await Read(control);
+        Assert.True(Type(answer) == "result", answer.GetRawText());
+        var files = answer.GetProperty("result").EnumerateArray().ToArray();
+        Assert.Equal(["owner-edit.rs", "owner-only.md"], files.Select(file => file.GetProperty("path").GetString()));
+        Assert.Equal((2, 1), (files[0].GetProperty("added").GetInt64(), files[0].GetProperty("count").GetInt64()));
         Assert.Equal(f.Expected, f.Sources.Captures.Single());
         Assert.Equal(new(f.Expected.Machine, 0, null), f.OwnerSources.Captures.Single());
     }
@@ -321,6 +344,16 @@ public sealed class RowsExpectedSourceTests
         converter.Apply(new TurnStarted(1000, Guid.NewGuid().ToString("N"), "turn"));
         hub.Publish(session, converter.Apply(new TurnEnded(1001, "end_turn", new TokenUsage(1, 1, null, null, total))));
     }
+    private sealed class Removed(DirectoryInfo folder) : IDisposable
+    {
+        public void Dispose() => folder.Delete(recursive: true);
+    }
+    private static void Tool(LiveHub hub, string session, string item, string payload)
+    {
+        var batch = new RowBatch();
+        batch.Rows.Add(new("run-1", item, RowKind.Tool, JsonDocument.Parse(payload).RootElement.Clone(), 1000));
+        hub.Publish(session, batch);
+    }
     private static void Child(LiveHub hub, string session, string child)
     {
         var batch = new RowBatch();
@@ -354,6 +387,7 @@ public sealed class RowsExpectedSourceTests
             public override string? ActiveRun => inner.ActiveRun;
             public override Task<JsonElement> PageAsync(long before, int limit, CancellationToken ct) => inner.PageAsync(before, limit, ct);
             public override Task<SubagentPage> SubagentsAsync(string? after, int limit, CancellationToken ct) => inner.SubagentsAsync(after, limit, ct);
+            public override Task<IReadOnlyList<FileTouched>> FilesAsync(CancellationToken ct) => inner.FilesAsync(ct);
             public override Task<SessionTokens> TokensAsync(CancellationToken ct) => inner.TokensAsync(ct);
             public override async IAsyncEnumerable<JsonElement> WatchAsync(long? after, [EnumeratorCancellation] CancellationToken ct)
             {
@@ -395,7 +429,7 @@ public sealed class RowsExpectedSourceTests
                     var machines = new MachineSet(new FakeMachine(null, host.Sessions));
                     f.OwnerHub = new(store, topics: host.Topics); f._ownerHubs.Add(f.OwnerHub);
                     f.OwnerSources = new(new SessionRowSources(host.Fixture.Db, host.Sessions, machines));
-                    new RowsFeature(f.OwnerHub, store, host.Sessions, machines, f.OwnerSources).Register(calls);
+                    new RowsFeature(f.OwnerHub, store, host.Sessions, machines, new DiskPathProbe(), f.OwnerSources).Register(calls);
                 };
                 await f.Hosts.Start();
                 f.Session = f.Hosts.Remote.Sessions.Create("codex", "repo").SessionId;
@@ -409,7 +443,7 @@ public sealed class RowsExpectedSourceTests
                 Publish(f._localHub, f.Session, "POISONED_COPY"); Child(f._localHub, f.Session, "poison-child");
                 var machines = new MachineSet(new FakeMachine(null, local.Sessions));
                 f.Sources = new(new SessionRowSources(local.Fixture.Db, local.Sessions, machines, f.Hosts.Connections));
-                f.Socket = await SocketHost.Start(local.Fixture, local.Topics, new RowsFeature(f._localHub, store, local.Sessions, machines, f.Sources));
+                f.Socket = await SocketHost.Start(local.Fixture, local.Topics, new RowsFeature(f._localHub, store, local.Sessions, machines, new DiskPathProbe(), f.Sources));
                 f.Expected = f.CurrentSource();
                 return f;
             }

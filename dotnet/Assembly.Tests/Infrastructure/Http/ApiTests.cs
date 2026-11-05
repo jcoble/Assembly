@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
+using Assembly.Infrastructure.Chat;
 using Assembly.Infrastructure.Http;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Application.Features.Chat.Rows;
@@ -155,7 +156,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         _app = ApiServer.Build(new ApiServices(_hub, _sessionStore, machines, attachments, Token,
             Writer: _database.Writer, Topics: _topics, Features: [new SessionsFeature(_sessionStore, machines, new SessionRowSources(_database, _sessionStore, machines),
                     owningMachine: _engine.Machine, owningHome: _work),
-                new SendFeature(_sessionStore, machines, _hub, new EngineDoor(_engine, _sessionStore, machines, attachments, TimeProvider.System, _answers)), new RowsFeature(_hub, store, _sessionStore, machines),
+                new SendFeature(_sessionStore, machines, _hub, new EngineDoor(_engine, _sessionStore, machines, attachments, TimeProvider.System, _answers)), new RowsFeature(_hub, store, _sessionStore, machines, new DiskPathProbe()),
                 new ConfigFeature(_sessionStore, machines), _machinesFeature,
                 new AttachmentsFeature(_sessionStore, machines, Path.Combine(_work, "staging"))]), port: 0, out _);
         await _app.StartAsync();

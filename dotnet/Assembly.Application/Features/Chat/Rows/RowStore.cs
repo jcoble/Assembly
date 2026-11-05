@@ -356,32 +356,64 @@ public sealed partial class RowStore
     }
 
     /// <summary>
-    /// The files the session's tool calls edited, deleted or moved, newest first (<c>rows/files</c>). Each call counts once,
-    /// by its newest row, since a call writes one as it starts and another as it ends; a failed call touched nothing. A call
-    /// that changed several files lists each in <c>files</c>; one that changed one names it in <c>path</c>.
+    /// What the session named, newest first (<c>rows/files</c>): reads, edits, deletes, moves and shell calls by each call's
+    /// newest row, and prompts. Each call or prompt counts once, a failed call adds no lines, and a path that only shell or
+    /// prompt text named must still exist, when a <paramref name="probe"/> and a <paramref name="folder"/> say which disk.
+    /// A call's lines come from <c>files</c> when it has them, so its <c>path</c> then lists with none of its own.
     /// </summary>
-    public IReadOnlyList<FileTouched> FilesTouched(string sessionId, CancellationToken cancellationToken) =>
+    public IReadOnlyList<FileTouched> FilesTouched(string sessionId, CancellationToken cancellationToken, string? folder = null, string? home = null, IPathProbe? probe = null) =>
+        TouchedFiles.Read((limit, offset) => FilesTouchedPage(sessionId, folder, home, limit, offset, cancellationToken), folder, probe, cancellationToken);
+
+    // ~/ expands before the folder is stripped and before grouping, so ~/a, /home/x/a and a can be one file. substr, not
+    // LIKE, so a folder with _ or % in its name still matches.
+    private IReadOnlyList<TouchedRow> FilesTouchedPage(string sessionId, string? folder, string? home, int limit, int offset, CancellationToken cancellationToken) =>
         _db.Query(
             """
             WITH calls AS (
-              SELECT r.seq, r.payload FROM rows r
+              SELECT r.seq, r.item_id, r.payload, json_extract(r.payload, '$.kind') AS kind,
+                     json_extract(r.payload, '$.state') AS state
+              FROM rows r
               WHERE r.session_id = $session AND r.kind = 'tool'
-                AND json_extract(r.payload, '$.kind') IN ('edit', 'delete', 'move') AND json_extract(r.payload, '$.state') <> 'failed'
-                AND NOT EXISTS (SELECT 1 FROM rows l WHERE l.session_id = r.session_id AND l.item_id = r.item_id AND l.kind = 'tool'
-                                AND l.seq > r.seq)),
-            changes AS (
-              SELECT c.seq, json_extract(f.value, '$.path') AS path, json_extract(f.value, '$.added') AS added,
-                json_extract(f.value, '$.removed') AS removed
-              FROM calls c, json_each(c.payload, '$.files') f
+                AND json_extract(r.payload, '$.kind') IN ('read', 'edit', 'delete', 'move', 'execute')
+                AND NOT EXISTS (SELECT 1 FROM rows l WHERE l.session_id = r.session_id AND l.item_id = r.item_id AND l.kind = 'tool' AND l.seq > r.seq)),
+            mentions AS (
+              SELECT c.seq, c.item_id AS call, json_extract(f.value, '$.path') AS path,
+                     CASE WHEN c.state = 'failed' THEN 0 ELSE COALESCE(json_extract(f.value, '$.added'), 0) END AS added,
+                     CASE WHEN c.state = 'failed' THEN 0 ELSE COALESCE(json_extract(f.value, '$.removed'), 0) END AS removed,
+                     0 AS candidate, NULL AS name
+              FROM calls c, json_each(c.payload, '$.files') f WHERE c.kind <> 'execute'
               UNION ALL
-              SELECT c.seq, json_extract(c.payload, '$.path'), json_extract(c.payload, '$.added'), json_extract(c.payload, '$.removed')
-              FROM calls c WHERE json_extract(c.payload, '$.files') IS NULL)
-            SELECT path, SUM(COALESCE(added, 0)), SUM(COALESCE(removed, 0)), MAX(seq) FROM changes
-            WHERE path IS NOT NULL
-            GROUP BY path ORDER BY 4 DESC, 1;
+              SELECT c.seq, c.item_id, json_extract(c.payload, '$.path'),
+                     CASE WHEN c.state = 'failed' OR json_extract(c.payload, '$.files') IS NOT NULL THEN 0 ELSE COALESCE(json_extract(c.payload, '$.added'), 0) END,
+                     CASE WHEN c.state = 'failed' OR json_extract(c.payload, '$.files') IS NOT NULL THEN 0 ELSE COALESCE(json_extract(c.payload, '$.removed'), 0) END,
+                     0, NULL
+              FROM calls c WHERE c.kind <> 'execute'
+              UNION ALL
+              SELECT c.seq, c.item_id, n.value, 0, 0, c.kind = 'execute', NULL
+              FROM calls c, json_each(c.payload, '$.named') n
+              UNION ALL
+              SELECT u.seq, u.seq, n.value, 0, 0, 1, NULL
+              FROM rows u, json_each(u.payload, '$.named') n WHERE u.session_id = $session AND u.kind = 'user'
+              UNION ALL
+              SELECT u.seq, u.seq, json_extract(a.value, '$.path'), 0, 0, 0, json_extract(a.value, '$.name')
+              FROM rows u, json_each(u.payload, '$.attached') a WHERE u.session_id = $session AND u.kind = 'user'),
+            homed AS (
+              SELECT seq, call, added, removed, candidate, name,
+                     CASE WHEN $home IS NOT NULL AND substr(path, 1, 2) = '~/' THEN $home || substr(path, 2) ELSE path END AS path
+              FROM mentions WHERE path IS NOT NULL),
+            named AS (
+              SELECT seq, call, added, removed, candidate, name,
+                     CASE WHEN $folder IS NOT NULL AND substr(path, 1, length($folder) + 1) = $folder || '/'
+                          THEN substr(path, length($folder) + 2) ELSE path END AS path
+              FROM homed)
+            SELECT path, SUM(added), SUM(removed), COUNT(DISTINCT call), MAX(seq), MIN(candidate), MAX(name)
+            FROM named
+            WHERE $folder IS NULL OR path <> $folder
+            GROUP BY path ORDER BY 5 DESC, 1 LIMIT $limit OFFSET $offset;
             """,
-            reader => new FileTouched(reader.Text(0), reader.Long(1), reader.Long(2), reader.Long(3)), cancellationToken,
-            new SqlArg("$session", sessionId));
+            reader => new TouchedRow(reader.Text(0), reader.Long(1), reader.Long(2), reader.Long(3), reader.Long(4), reader.Long(5) == 1, reader.IsNull(6) ? null : reader.Text(6)),
+            cancellationToken, new SqlArg("$session", sessionId), new SqlArg("$folder", folder), new SqlArg("$home", home),
+            new SqlArg("$limit", limit), new SqlArg("$offset", offset));
 
     /// <summary>
     /// The session's token total (<c>rows/tokens</c>): the sum of what each turn reported at its end, since a provider's

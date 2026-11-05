@@ -168,8 +168,9 @@ public sealed partial class ChatSocketTests
         using var socket = await OpenAsync();
 
         await CallAsync(socket, 1, "rows", "files", $$"""{"session":"{{session}}"}""");
-        Assert.Equal("""{"t":"result","id":1,"result":[{"path":"e.rs","added":0,"removed":0,"lastSeq":8},""" +
-            """{"path":"c.rs","added":0,"removed":0,"lastSeq":5},{"path":"a.rs","added":5,"removed":1,"lastSeq":4}]}""",
+        Assert.Equal("""{"t":"result","id":1,"result":[{"path":"e.rs","added":0,"removed":0,"count":1,"lastSeq":8},""" +
+            """{"path":"d.rs","added":0,"removed":0,"count":1,"lastSeq":6},{"path":"c.rs","added":0,"removed":0,"count":1,"lastSeq":5},""" +
+            """{"path":"a.rs","added":5,"removed":1,"count":2,"lastSeq":4},{"path":"b.rs","added":0,"removed":0,"count":1,"lastSeq":3}]}""",
             await ReadAsync(socket));
         await CallAsync(socket, 2, "rows", "files", """{"session":"nope"}""");
         Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"unknown session"}""", await ReadAsync(socket));
@@ -189,8 +190,43 @@ public sealed partial class ChatSocketTests
 
         await CallAsync(socket, 1, "rows", "files", $$"""{"session":"{{session}}"}""");
 
-        Assert.Equal("""{"t":"result","id":1,"result":[{"path":"a.rs","added":2,"removed":0,"lastSeq":1},""" +
-            """{"path":"b.rs","added":3,"removed":0,"lastSeq":1}]}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"result","id":1,"result":[{"path":"a.rs","added":2,"removed":0,"count":1,"lastSeq":1},""" +
+            """{"path":"b.rs","added":3,"removed":0,"count":1,"lastSeq":1}]}""", await ReadAsync(socket));
+    }
+
+    // Pins: g0-shape#13
+    // A local session's read checks its own folder and the machine's home: a shell candidate must exist there.
+    [Fact]
+    public async Task Rows_files_checks_a_local_sessions_own_folder_and_home()
+    {
+        var folder = _home.CreateSubdirectory("session-folder").FullName;
+        var session = _sessions.Add("local-folder", "claude", "repo", "", workingFolder: folder).SessionId;
+        await File.WriteAllTextAsync(Path.Combine(folder, "here.md"), "x");
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Row(session, RowKind.Tool, "t1", """{"name":"sh","state":"completed","hasDetail":false,"kind":"execute","named":["here.md","gone.md"]}""");
+        Row(session, RowKind.Tool, "t2", $$"""{"name":"sh","state":"completed","hasDetail":false,"kind":"execute","named":["{{folder}}/here.md"]}""");
+        Row(session, RowKind.Tool, "t3", """{"name":"edit","state":"completed","path":"~/never-made-by-this-test.rs","hasDetail":false,"kind":"edit"}""");
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "files", $$"""{"session":"{{session}}"}""");
+
+        Assert.Equal($$"""{"t":"result","id":1,"result":[{"path":"{{home}}/never-made-by-this-test.rs","added":0,"removed":0,"count":1,"lastSeq":3},""" +
+            """{"path":"here.md","added":0,"removed":0,"count":2,"lastSeq":2}]}""", await ReadAsync(socket));
+    }
+
+    // Pins: g0-shape#13
+    // A remote session's copied rows name another machine's disk, so nothing is checked on this one and ~/ stays as written.
+    [Fact]
+    public async Task Rows_files_leaves_a_remote_sessions_copied_rows_unchecked()
+    {
+        var session = _sessions.Add("r1", "claude", "repo", "box").SessionId;
+        Row(session, RowKind.Tool, "t1", """{"name":"sh","state":"completed","hasDetail":false,"kind":"execute","named":["there.md","~/there.md"]}""");
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "files", $$"""{"session":"{{session}}"}""");
+
+        Assert.Equal("""{"t":"result","id":1,"result":[{"path":"there.md","added":0,"removed":0,"count":1,"lastSeq":1},""" +
+            """{"path":"~/there.md","added":0,"removed":0,"count":1,"lastSeq":1}]}""", await ReadAsync(socket));
     }
 
     // Pins: g0-shape#13

@@ -40,14 +40,16 @@ internal sealed class RowsFeature : IFeature
     private readonly RowStore _store;
     private readonly SessionStore _sessions;
     private readonly MachineSet _machines;
+    private readonly IPathProbe _paths;
     private readonly IRowSourceBindings? _sources;
 
-    public RowsFeature(LiveHub hub, RowStore store, SessionStore sessions, MachineSet machines, IRowSourceBindings? sources = null)
+    public RowsFeature(LiveHub hub, RowStore store, SessionStore sessions, MachineSet machines, IPathProbe paths, IRowSourceBindings? sources = null)
     {
         _hub = hub;
         _store = store;
         _sessions = sessions;
         _machines = machines;
+        _paths = paths;
         _sources = sources;
     }
 
@@ -157,8 +159,11 @@ internal sealed class RowsFeature : IFeature
                 var files = await bound.FilesAsync(call.Cancellation);
                 bound.EnsureCurrent(); return files;
             }
-            if (_sessions.Get(args.Session) is null) throw new CallFailed("unknown session");
-            var result = _store.FilesTouched(args.Session, call.Cancellation);
+            var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
+            // A remote session's copied rows are read here with no disk check, since this disk isn't the one they name.
+            var local = string.IsNullOrEmpty(session.Machine);
+            var result = _store.FilesTouched(args.Session, call.Cancellation, local ? _sessions.Root(session) : null,
+                local ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) : null, local ? _paths : null);
             bound?.EnsureCurrent(); return result;
         });
         calls.Read(Topic, "tokens", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.SessionTokens, async (args, call) =>
