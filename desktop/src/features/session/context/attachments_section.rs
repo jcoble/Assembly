@@ -1,4 +1,4 @@
-//! The Context tab's Attachments section: the images the session's prompts carried, newest prompt first, each by the
+//! The Context tab's Attachments card: the images the session's prompts carried, newest prompt first, each by the
 //! name it was attached with. A click opens one full size, as Chat's chips do. A remote session's images stay on its
 //! machine; only a captured, validated source permits opening those bytes.
 
@@ -13,6 +13,8 @@ use super::listing::Listing;
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::composer::attachment::Attachment;
 use crate::features::session::view::lightbox::{open_lightbox, read_image};
+use crate::section_card::SectionCard;
+use gpui_kit::assets::IconName;
 
 impl ContextPane {
     pub(super) fn attachments_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -71,19 +73,8 @@ impl ContextPane {
                 }))
             }
         };
-        v_flex()
-            .gap_1()
-            .child(
-                h_flex()
-                    .px_2()
-                    .h(px(28.))
-                    .gap_2()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("Attachments")
-                    .when_some(count, |heading, count| {
-                        heading.child(div().text_color(muted).child(count.to_string()))
-                    }),
-            )
+        SectionCard::new(IconName::Image, "Attachments")
+            .count(count.unwrap_or_default())
             .child(body)
             .when_some(
                 remote.filter(|_| {

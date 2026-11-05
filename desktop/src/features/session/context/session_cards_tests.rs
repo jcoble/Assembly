@@ -1,0 +1,361 @@
+//! The Session and Context usage cards on the fake client: what they say from the live facts, when the session's total
+//! is read, and the one message that replaces every card with no session picked.
+
+use std::rc::Rc;
+
+use gpui::TestAppContext;
+use gpui_kit::component::dock::BasePanel as _;
+use gpui_kit::{Entity, VisualTestContext};
+use serde_json::{Value, json};
+
+use super::super::listing::Listing;
+use super::super::{ContextPane, FileTouched};
+use super::{Words, not_reported, session_words, usage_words};
+use crate::core::engine::SessionKey;
+use crate::core::socket::row_source::ExpectedRowSource;
+use crate::core::state::selected_session::SelectedSession;
+use crate::features::session::client::fake_client::FakeClient;
+use crate::features::session::client::session_client::CallError;
+use crate::features::session::context::live_facts::LiveFacts;
+use crate::features::session::model::session_view::ContextReport;
+
+fn open(cx: &mut TestAppContext) -> (Entity<ContextPane>, FakeClient, &mut VisualTestContext) {
+    cx.update(gpui_kit::init);
+    cx.update(SelectedSession::init);
+    cx.update(LiveFacts::init);
+    let client = FakeClient::default();
+    let fake = client.clone();
+    let (pane, cx) = cx.add_window_view(move |_, cx| ContextPane::new(Rc::new(fake), cx));
+    (pane, client, cx)
+}
+
+fn pick(session: Option<&str>, cx: &mut VisualTestContext) {
+    let session = session.map(String::from);
+    cx.update(|_, cx| {
+        SelectedSession::global(cx).update(cx, |selected, cx| selected.select(session, cx))
+    });
+    cx.run_until_parked();
+}
+
+fn shown(pane: &Entity<ContextPane>, active: bool, cx: &mut VisualTestContext) {
+    pane.update_in(cx, |pane, window, cx| pane.set_active(active, window, cx));
+    cx.run_until_parked();
+}
+
+fn draw(cx: &mut VisualTestContext) {
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+}
+
+fn tokens_reads(client: &FakeClient) -> usize {
+    client
+        .calls()
+        .iter()
+        .filter(|(call, _)| call == "rows/tokens")
+        .count()
+}
+
+/// Shows the tab on s1 with an empty file list, no images and the given `rows/tokens` answer.
+fn shown_on_s1(
+    tokens: Result<Value, CallError>,
+    pane: &Entity<ContextPane>,
+    client: &FakeClient,
+    cx: &mut VisualTestContext,
+) {
+    client.queue_answer(Ok(json!([])));
+    client.queue_answer(Ok(json!({ "prompts": [] })));
+    client.queue_answer(tokens);
+    pick(Some("s1"), cx);
+    shown(pane, true, cx);
+}
+
+fn facts(
+    pane: &Entity<ContextPane>,
+    session: &str,
+    key: Option<SessionKey>,
+    turns_ended: usize,
+) -> LiveFacts {
+    LiveFacts {
+        publisher: pane.entity_id(),
+        session: session.into(),
+        key,
+        provider: Some("claude".into()),
+        context: Some(ContextReport {
+            seq: 3,
+            used: 51_285,
+            size: 1_000_000,
+            input_tokens: None,
+            output_tokens: None,
+        }),
+        input_tokens: Some(40_000),
+        output_tokens: Some(10_000),
+        model: Some("Opus".into()),
+        effort: Some("High".into()),
+        access: Some("Ask when needed".into()),
+        newest_prompt_seq: Some(2),
+        turns_ended,
+        drafts: Vec::new(),
+    }
+}
+
+fn publish(facts: LiveFacts, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| LiveFacts::publish(facts, cx));
+    cx.run_until_parked();
+}
+
+fn texts(words: &[Words]) -> Vec<(&str, bool)> {
+    words
+        .iter()
+        .map(|words| (words.text.as_str(), words.reported))
+        .collect()
+}
+
+#[gpui::test]
+fn the_cards_say_the_selected_sessions_facts_and_total(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    shown_on_s1(Ok(json!({ "total": 1_234_567 })), &pane, &client, cx);
+    publish(facts(&pane, "s1", None, 1), cx);
+    draw(cx);
+
+    let (live, total) = pane.read_with(cx, |pane, cx| (pane.live(cx), pane.total));
+    assert_eq!(total, Some(Some(1_234_567)));
+    assert_eq!(
+        texts(&session_words(live.as_ref())),
+        [("Opus", true), ("High", true), ("Ask when needed", true)]
+    );
+    let (percent, words) = usage_words(live.as_ref(), total);
+    assert_eq!(percent, Some(5));
+    assert_eq!(
+        texts(&words),
+        [
+            ("Current context: 51,285", true),
+            ("of 1,000,000", true),
+            ("1,234,567 tokens", true),
+            ("In: 40,000", true),
+            ("Out: 10,000", true),
+        ]
+    );
+    for id in [
+        "context-model",
+        "context-effort",
+        "context-access",
+        "context-used",
+        "context-window",
+        "context-percent",
+        "context-total",
+        "context-in",
+        "context-out",
+    ] {
+        assert!(cx.debug_bounds(id).is_some(), "{id} is drawn");
+    }
+    let session = cx.debug_bounds("context-model").unwrap();
+    let usage = cx.debug_bounds("context-used").unwrap();
+    let files = cx.debug_bounds("context-note-empty").unwrap();
+    let images = cx.debug_bounds("attachments-note-empty").unwrap();
+    assert!(
+        session.top() < usage.top() && usage.top() < files.top() && files.top() < images.top(),
+        "the cards are in order"
+    );
+}
+
+#[gpui::test]
+fn missing_facts_say_who_didnt_report_them(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    // An older remote has no `rows/tokens`; an answer with no total is the same.
+    shown_on_s1(Ok(json!({})), &pane, &client, cx);
+    let mut bare = facts(&pane, "s1", None, 0);
+    (bare.context, bare.input_tokens, bare.output_tokens) = (None, None, None);
+    (bare.model, bare.effort, bare.access) = (None, None, None);
+    publish(bare, cx);
+    draw(cx);
+
+    let (live, total) = pane.read_with(cx, |pane, cx| (pane.live(cx), pane.total));
+    assert_eq!(total, Some(None), "answered, with nothing reported");
+    let missing = ("not reported by Claude", false);
+    assert_eq!(
+        texts(&session_words(live.as_ref())),
+        [missing, missing, missing]
+    );
+    let (percent, words) = usage_words(live.as_ref(), total);
+    assert_eq!(percent, None);
+    assert_eq!(
+        texts(&words),
+        [
+            ("Current context not reported by Claude", false),
+            ("window size not reported by Claude", false),
+            missing,
+            ("In not reported by Claude", false),
+            ("Out not reported by Claude", false),
+        ]
+    );
+    assert!(cx.debug_bounds("context-used").is_some());
+    assert!(
+        cx.debug_bounds("context-percent").is_none(),
+        "no bar without both numbers"
+    );
+}
+
+#[test]
+fn a_not_reported_line_names_the_provider_as_people_read_it() {
+    assert_eq!(not_reported(Some("claude")), "not reported by Claude");
+    assert_eq!(
+        not_reported(Some("Claude Code")),
+        "not reported by Claude Code"
+    );
+    assert_eq!(not_reported(None), "not reported");
+    let (_, words) = usage_words(None, None);
+    assert_eq!(words[3].text, "In not reported");
+}
+
+#[gpui::test]
+fn with_no_session_one_message_replaces_every_card(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    client.queue_answer(Ok(
+        json!([{ "path": "src/a.rs", "added": 1, "removed": 0, "lastSeq": 2 }]),
+    ));
+    client.queue_answer(Ok(json!({ "prompts": [] })));
+    client.queue_answer(Ok(json!({ "total": 9 })));
+    pick(Some("s1"), cx);
+    shown(&pane, true, cx);
+    publish(facts(&pane, "s1", None, 0), cx);
+    draw(cx);
+    assert!(cx.debug_bounds("touched-file-src/a.rs").is_some());
+
+    pick(None, cx);
+    draw(cx);
+    assert!(cx.debug_bounds("context-note-pick").is_some());
+    for id in [
+        "context-model",
+        "context-used",
+        "context-total",
+        "touched-file-src/a.rs",
+        "context-note-reading",
+        "attachments-note-empty",
+        "attachments-note-reading",
+    ] {
+        assert!(cx.debug_bounds(id).is_none(), "{id} isn't drawn");
+    }
+    assert_eq!(
+        pane.read_with(cx, |pane, _| pane.files.clone()),
+        Listing::Reading,
+        "nor kept"
+    );
+}
+
+#[gpui::test]
+fn a_turn_ending_while_shown_reads_the_total_again(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    shown_on_s1(Ok(json!({ "total": 100 })), &pane, &client, cx);
+    publish(facts(&pane, "s1", None, 1), cx);
+    assert_eq!(tokens_reads(&client), 1, "facts arriving don't read again");
+    assert_eq!(
+        client
+            .calls()
+            .iter()
+            .find(|(call, _)| call == "rows/tokens")
+            .map(|(_, args)| args.clone()),
+        Some(json!({ "session": "s1" }))
+    );
+
+    let mut typed = facts(&pane, "s1", None, 1);
+    typed.drafts.clear();
+    typed.newest_prompt_seq = Some(5);
+    publish(typed, cx);
+    assert_eq!(tokens_reads(&client), 1, "only a turn ending reads it");
+
+    client.queue_answer(Ok(json!({ "total": 250 })));
+    publish(facts(&pane, "s1", None, 2), cx);
+    assert_eq!(tokens_reads(&client), 2);
+    assert_eq!(pane.read_with(cx, |pane, _| pane.total), Some(Some(250)));
+    assert_eq!(
+        client
+            .calls()
+            .iter()
+            .filter(|(call, _)| call == "rows/files")
+            .count(),
+        1,
+        "the lists aren't read again"
+    );
+}
+
+#[gpui::test]
+fn a_failed_total_leaves_the_lists(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    client.queue_answer(Ok(
+        json!([{ "path": "src/a.rs", "added": 1, "removed": 0, "lastSeq": 2 }]),
+    ));
+    client.queue_answer(Ok(json!({ "prompts": [] })));
+    client.queue_answer(Err(CallError::Failed("disk is full".into())));
+    pick(Some("s1"), cx);
+    shown(&pane, true, cx);
+    let (files, images, total) = pane.read_with(cx, |pane, _| {
+        (pane.files.clone(), pane.attachments.clone(), pane.total)
+    });
+    assert_eq!(
+        files,
+        Listing::Read(vec![FileTouched {
+            path: "src/a.rs".into(),
+            added: 1,
+            removed: 0
+        }])
+    );
+    assert_eq!(images, Listing::Read(vec![]));
+    assert_eq!(total, Some(None), "read as not reported");
+}
+
+#[gpui::test]
+fn a_hidden_tab_reads_no_total(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    pick(Some("s1"), cx);
+    publish(facts(&pane, "s1", None, 1), cx);
+    publish(facts(&pane, "s1", None, 2), cx);
+    assert_eq!(tokens_reads(&client), 0);
+
+    shown_on_s1(Ok(json!({ "total": 1 })), &pane, &client, cx);
+    assert_eq!(tokens_reads(&client), 1, "shown, it reads");
+    shown(&pane, false, cx);
+    publish(facts(&pane, "s1", None, 3), cx);
+    assert_eq!(
+        tokens_reads(&client),
+        1,
+        "hidden again, a turn ending reads nothing"
+    );
+}
+
+#[gpui::test]
+fn facts_for_another_owner_of_the_same_id_read_as_not_reported(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    let owner = |machine: &str| SessionKey {
+        machine: machine.into(),
+        id: "s1".into(),
+    };
+    let source = ExpectedRowSource {
+        machine: "a".into(),
+        generation: 0,
+        route_machine: None,
+    };
+    cx.update(|_, cx| {
+        SelectedSession::global(cx).update(cx, |selected, cx| {
+            selected.commit_open(owner("a"), source, true, cx)
+        })
+    });
+    client.queue_answer(Ok(json!([])));
+    client.queue_answer(Ok(json!({ "prompts": [] })));
+    client.queue_answer(Ok(json!({ "total": 7 })));
+    shown(&pane, true, cx);
+    publish(facts(&pane, "s1", Some(owner("b")), 1), cx);
+    draw(cx);
+
+    let live = pane.read_with(cx, |pane, cx| pane.live(cx));
+    assert_eq!(live, None);
+    assert_eq!(
+        texts(&session_words(live.as_ref()))[0],
+        ("not reported", false)
+    );
+    assert!(cx.debug_bounds("context-percent").is_none());
+
+    publish(facts(&pane, "s1", Some(owner("a")), 1), cx);
+    assert!(
+        pane.read_with(cx, |pane, cx| pane.live(cx)).is_some(),
+        "its own owner's facts show"
+    );
+}
