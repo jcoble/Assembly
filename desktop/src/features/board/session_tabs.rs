@@ -24,6 +24,7 @@ use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::activity::run_view::now_ms;
 use crate::core::ui::row_drop_down::{GrowingBody, RowDropDowns};
 use crate::core::ui::three_line_row::row_height;
+use crate::features::projects::projects::{ProjectRecord, Projects};
 use crate::features::sessions::drop_down::native_details::NativeDetails;
 use gpui_kit::assets::IconName;
 
@@ -102,6 +103,15 @@ pub fn task_label(url: &str) -> SharedString {
     found.map_or_else(|| "Task".into(), |key| key.to_owned().into())
 }
 
+/// The project's name. An id is no label, so a project this machine's registry doesn't list just isn't named.
+pub fn project_label(project_id: Option<&str>, projects: &[ProjectRecord]) -> Option<SharedString> {
+    let id = project_id?;
+    projects
+        .iter()
+        .find(|project| project.id == id)
+        .map(|project| project.title.clone().into())
+}
+
 fn open_owner_questions(session: &SessionKey, data: &BoardData) -> usize {
     data.needs
         .values()
@@ -168,11 +178,13 @@ pub fn session_entry(
             .to_owned()
             .into(),
         ),
-        project: session
-            .project_id
-            .clone()
-            .or(run.and_then(|run| run.project_id.clone()))
-            .map(Into::into),
+        project: project_label(
+            session
+                .project_id
+                .as_deref()
+                .or(run.and_then(|run| run.project_id.as_deref())),
+            Projects::listed(cx),
+        ),
         step: steps
             .iter()
             .find(|step| step.state == "running")

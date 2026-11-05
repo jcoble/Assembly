@@ -62,6 +62,11 @@ impl Projects {
         cx.set_global(GlobalProjects(projects.clone()));
         Some(projects)
     }
+    /// What's listed so far, for drawing. Whoever draws it holds [`Self::get`] so that it's there and heard.
+    pub fn listed(cx: &App) -> &[ProjectRecord] {
+        cx.try_global::<GlobalProjects>()
+            .map_or(&[], |global| global.0.read(cx).rows())
+    }
     fn new(socket: Entity<SocketClient>, cx: &mut Context<Self>) -> Self {
         let mut subscription = socket.read(cx).subscribe("projects", None);
         let feed = cx.spawn(async move |projects, cx| {

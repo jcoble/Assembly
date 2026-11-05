@@ -149,6 +149,9 @@ impl BoardPanel {
         if let Some(machines) = Machines::try_global(cx) {
             watching.push(cx.observe(&machines, |_, _, cx| cx.notify()));
         }
+        if let Some(projects) = crate::features::projects::projects::Projects::get(cx) {
+            watching.push(cx.observe(&projects, |_, _, cx| cx.notify()));
+        }
         let clock = SocketClient::try_global(cx).map(|_| cx.new(|_| BackendClock::new()));
         if let Some(clock) = &clock {
             watching.push(cx.subscribe(clock, |_, _, _: &Tick, cx| cx.notify()));

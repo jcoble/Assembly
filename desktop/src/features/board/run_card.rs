@@ -382,6 +382,12 @@ fn waiting_at(steps: &[&StepItem], data: &BoardData, machine: &str) -> Option<(u
     })
 }
 
+/// The open question this run's card shows in place, so a list beside the card doesn't show it twice.
+pub(super) fn question_on_card(run: &RunItem, data: &BoardData) -> Option<EngineKey> {
+    let (visible, _) = visible_steps(&data.steps_of(run));
+    waiting_at(&visible, data, &run.machine).map(|(_, key)| key)
+}
+
 impl RunCard {
     /// Drawn by whoever holds it, from its current read of the shared rows.
     pub fn draw(&mut self, data: &BoardData, cx: &mut Context<Self>) -> AnyElement {

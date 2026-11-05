@@ -9,6 +9,7 @@ use super::board_queries::{
     BoardData, answered_today, badge_count, by_machine, done_runs_today, done_today, live_runs,
     live_top_level, open_owner_questions, stopped_runs,
 };
+use super::run_card::question_on_card;
 use crate::core::engine::{EngineFeed, EngineKey};
 use crate::core::socket::client::SocketClient;
 use crate::core::state::machines::Machines;
@@ -56,6 +57,12 @@ pub fn tab_sections(
                     .cloned(),
             );
             let stopped = stopped_runs(data);
+            let on_cards = stopped
+                .iter()
+                .filter_map(|key| data.runs.get(key))
+                .filter_map(|run| question_on_card(run, data))
+                .collect::<HashSet<_>>();
+            listed.retain(|key| !on_cards.contains(key));
             let mut sections = vec![Section::Open(listed), Section::Answered(answered)];
             if !stopped.is_empty() {
                 sections.insert(0, Section::Stopped(stopped));
