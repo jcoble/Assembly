@@ -48,6 +48,7 @@ impl TerminalPane {
                 cx.background_executor().timer(AUTOSCROLL_EVERY).await;
                 let scrolled = pane.update(cx, |pane, cx| {
                     if pane.grid.scroll(pane.scroll_direction() * AUTOSCROLL_LINES) {
+                        pane.unhover();
                         pane.show_scrollbar(cx);
                     }
                     pane.extend_selection();

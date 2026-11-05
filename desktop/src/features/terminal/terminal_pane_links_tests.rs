@@ -135,3 +135,47 @@ async fn the_modifier_click_does_not_start_a_selection(cx: &mut TestAppContext) 
     open.cx.run_until_parked();
     assert_eq!(*opened.borrow(), vec![URL.to_string()]);
 }
+
+/// Everything written to the shell, in order.
+fn heard(terminals: &Terminals) -> Vec<u8> {
+    (terminals.of("write").iter())
+        .flat_map(|args| STANDARD.decode(args["data"].as_str().unwrap()).unwrap())
+        .collect()
+}
+
+#[gpui::test]
+async fn a_modifier_click_whose_release_never_came_swallows_no_later_release(
+    cx: &mut TestAppContext,
+) {
+    let (mut open, opened) = printed(cx, "\x1b[?1000h\x1b[?1006h").await;
+    let (position, modifiers) = (on_the_link(&mut open), modifier(&mut open));
+    open.cx
+        .simulate_mouse_down(position, MouseButton::Left, modifiers);
+    open.cx.run_until_parked();
+    assert_eq!(*opened.borrow(), vec![URL.to_string()]);
+    // The release landed elsewhere; the next plain click reaches the program whole.
+    let off = at(&mut open, 1.5, 0.5);
+    open.cx.simulate_click(off, Modifiers::none());
+    let expected = b"\x1b[<0;2;1M\x1b[<0;2;1m".to_vec();
+    open.until("the press and the release", |terminals, _| {
+        heard(terminals) == expected
+    })
+    .await;
+}
+
+#[gpui::test]
+async fn a_held_move_after_a_modifier_click_reaches_no_program(cx: &mut TestAppContext) {
+    let (mut open, opened) = printed(cx, "\x1b[?1002h\x1b[?1006h").await;
+    let (position, modifiers) = (on_the_link(&mut open), modifier(&mut open));
+    open.cx
+        .simulate_mouse_down(position, MouseButton::Left, modifiers);
+    let moved = at(&mut open, 12.5, 0.5);
+    open.cx
+        .simulate_mouse_move(moved, Some(MouseButton::Left), modifiers);
+    open.cx
+        .simulate_mouse_up(moved, MouseButton::Left, modifiers);
+    open.cx.run_until_parked();
+    assert_eq!(*opened.borrow(), vec![URL.to_string()]);
+    let sent = heard(&open.terminals.lock().unwrap());
+    assert!(sent.is_empty(), "the program heard {sent:?}");
+}

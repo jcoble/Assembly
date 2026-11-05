@@ -553,3 +553,16 @@ async fn folder_missing_fills_the_pane_with_the_backends_message(cx: &mut TestAp
     open.pane
         .read_with(open.cx, |pane, _| assert!(pane.link.is_none()));
 }
+
+#[gpui::test]
+async fn each_output_row_draws_again(cx: &mut TestAppContext) {
+    let mut open = showing(cx, "hello", Vec::new()).await;
+    let drawn = std::rc::Rc::new(std::cell::Cell::new(0));
+    let (count, pane) = (drawn.clone(), open.pane.clone());
+    let _drawn =
+        (open.cx).update(|_, cx| cx.observe(&pane, move |_, _| count.set(count.get() + 1)));
+    open.push_row(output(5, " there"));
+    assert!(drawn.get() > 0, "the new output wasn't drawn");
+    let text = open.pane.read_with(open.cx, |pane, _| pane.grid.text());
+    assert_eq!(text, "hello there");
+}

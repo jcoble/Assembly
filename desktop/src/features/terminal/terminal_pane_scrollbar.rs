@@ -95,6 +95,7 @@ impl TerminalPane {
     fn scroll_bar_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         if offset != self.grid.display_offset() {
             self.grid.scroll_to_offset(offset);
+            self.unhover();
             self.show_scrollbar(cx);
             cx.notify();
         }

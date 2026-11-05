@@ -284,6 +284,7 @@ impl TerminalPane {
         if size != self.size {
             self.size = size;
             self.grid.resize(size.0, size.1);
+            self.unhover();
             self.size_unsent = true;
             cx.notify();
         }
