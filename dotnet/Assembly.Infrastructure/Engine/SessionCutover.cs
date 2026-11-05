@@ -209,6 +209,31 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
         Apply(scope, sessionId, row.Version, row.Epoch, new(ActorKind.System, "session.configured"), new ReportSessionModel(model));
     }
 
+    /// <summary>The folder a session this machine owns works in.</summary>
+    internal string? FolderOf(string sessionId)
+    {
+        using var scope = db.OpenSnapshot(CancellationToken.None);
+        return scope.QueryFirst("SELECT folder FROM engine_session WHERE id=$id AND machine=$machine AND holder='local' AND state<>'foreign'",
+            r => r.Text(0), new("$id", sessionId), new("$machine", _machine));
+    }
+
+    /// <summary>Git has <paramref name="branch"/> checked out in the folder, so every session this machine owns there is on it.
+    /// A checkout the Engine has underway settles the record itself. The sessions list hears after commit.</summary>
+    internal void BranchObserved(string folder, string? branch) => db.Writer.Write("session.branch", scope =>
+    {
+        foreach (var session in scope.Query("""
+            SELECT e.id,e.version,e.epoch FROM engine_session e JOIN session_info s ON s.session_id=e.id
+            WHERE e.folder=$folder AND e.machine=$machine AND e.holder='local' AND e.state<>'foreign'
+              AND e.checkout_state<>'pending' AND e.branch IS NOT $branch
+            """, r => (Id: r.Text(0), Version: r.Long(1), Epoch: r.Long(2)),
+            new("$folder", folder), new("$machine", _machine), new("$branch", branch)))
+        {
+            Apply(scope, session.Id, session.Version, session.Epoch, new(ActorKind.System, "session.branch_observed"), new ReportSessionBranch(branch));
+            sessions.CheckoutChanged(scope, session.Id, folder, branch);
+        }
+        return 0;
+    });
+
     public void Titled(IWriteScope scope, string sessionId, string actualStoredTitle, ReadOnlyMemory<byte> exactTitleUtf8)
     {
         var row = Owning(scope, sessionId);

@@ -274,7 +274,7 @@ internal static class Schema
             OR ($anchor IS NOT NULL AND NOT EXISTS (SELECT 1 FROM candidates))
           ORDER BY n LIMIT $limit),
         engine_sessions AS (
-          SELECT e.id, e.machine, 0 AS generation, e.parent_id, e.model, r.worktree, e.activity_state
+          SELECT e.id, e.machine, 0 AS generation, e.parent_id, e.model, r.worktree, e.activity_state, e.branch
           FROM engine_session e JOIN local_source local ON local.machine_id=e.machine
           JOIN page p ON p.kind='session' AND p.session_id=e.id AND p.source_machine=e.machine AND p.source_generation=0
           LEFT JOIN engine_run r ON r.id=e.run_id AND r.machine=e.machine
@@ -284,7 +284,8 @@ internal static class Schema
             CASE WHEN json_type(e.row_json,'$.parentId')='text' THEN json_extract(e.row_json,'$.parentId') END,
             CASE WHEN json_type(e.row_json,'$.model')='text' THEN json_extract(e.row_json,'$.model') END,
             CASE WHEN json_type(r.row_json,'$.worktree')='text' THEN json_extract(r.row_json,'$.worktree') END,
-            CASE WHEN json_type(e.row_json,'$.activityState')='text' THEN json_extract(e.row_json,'$.activityState') END
+            CASE WHEN json_type(e.row_json,'$.activityState')='text' THEN json_extract(e.row_json,'$.activityState') END,
+            CASE WHEN json_type(e.row_json,'$.branch')='text' THEN json_extract(e.row_json,'$.branch') END
           FROM engine_mirror_row e JOIN page p ON p.kind='session' AND p.session_id=e.entity_id
             AND p.source_machine=e.machine AND p.source_generation=e.generation
           JOIN engine_mirror m ON m.machine=e.machine AND m.generation=e.generation AND m.state='live'
@@ -310,10 +311,10 @@ internal static class Schema
              WHERE p.kind = 'session' AND n.session_id = p.facade_id AND {SummaryKinds} AND n.kind = 'subagent'
                AND n.item_id IS NOT NULL) AS native_activity
           FROM page p)
-        SELECT 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, needs, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+        SELECT 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, needs, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
           NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM totals
         UNION ALL
-        SELECT 1, ROW_NUMBER() OVER (ORDER BY agent), NULL, NULL, NULL, agent, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+        SELECT 1, ROW_NUMBER() OVER (ORDER BY agent), NULL, NULL, NULL, agent, NULL, NULL, NULL, NULL, NULL, NULL,
           NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
         FROM (SELECT DISTINCT agent FROM rail_roster)
         UNION ALL
@@ -322,7 +323,7 @@ internal static class Schema
           COALESCE((SELECT e.seq FROM rows e INDEXED BY rows_summary WHERE p.kind = 'session' AND e.session_id = p.facade_id
                     AND {SummaryKinds} AND e.kind = 'turn' AND json_extract(e.payload, '$.state') IN ('finished', 'failed', 'cancelled')
                     ORDER BY e.item_id DESC, e.seq DESC LIMIT 1), 0) > p.read_seq,
-          json_extract(b.payload, '$.branch'), b.created_at,
+          e.branch,
           p.section_index, p.header, p.ordering,
           (SELECT NULLIF(substr(trim(replace(group_concat(t.text, ' ' ORDER BY t.n), char(10), ' ')), 1, 160), '') FROM (
              SELECT k.key AS n, (SELECT group_concat(v.atom, '' ORDER BY v.id) FROM json_tree(k.value) v
@@ -338,9 +339,6 @@ internal static class Schema
         LEFT JOIN rail_roster s ON p.kind='session' AND s.session_id=p.session_id AND s.source_machine IS p.source_machine
           AND s.source_generation IS p.source_generation AND s.source_route IS p.source_route
         LEFT JOIN engine_sessions e ON e.id=p.session_id AND e.machine=p.source_machine AND e.generation=p.source_generation
-        LEFT JOIN rows b ON p.kind = 'session' AND b.session_id = p.facade_id AND b.seq = (
-          SELECT MAX(r.seq) FROM rows r INDEXED BY rows_item WHERE r.session_id = p.facade_id AND r.item_id IS NULL AND r.kind = 'stats'
-            AND COALESCE(json_extract(r.payload, '$.branch'), '') <> '')
         LEFT JOIN rows m ON p.kind = 'session' AND m.session_id = p.facade_id AND m.seq = (
           SELECT r.seq FROM rows r WHERE r.session_id = p.facade_id AND r.kind = 'message' ORDER BY r.seq DESC LIMIT 1)
         ORDER BY 1, 2;

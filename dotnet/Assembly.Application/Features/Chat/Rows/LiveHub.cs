@@ -44,12 +44,14 @@ public sealed class LiveHub : IDisposable
     {
         if (batch.IsEmpty && observe is null)
             return [];
+        IReadOnlyList<StoredRow> saved;
         lock (_gate)
         {
-            var saved = _store.Commit(sessionId, batch, observe);
+            saved = _store.Commit(sessionId, batch, observe);
             if (saved.Count > 0) Push(sessionId, saved);
-            return saved;
         }
+        if (saved.Count > 0) Committed?.Invoke(sessionId, saved);
+        return saved;
     }
 
     public IReadOnlyList<StoredRow> PublishRecovered(RecoveredChatTurn recovered, RowBatch batch, Action<IWriteScope>? observe)
@@ -79,6 +81,9 @@ public sealed class LiveHub : IDisposable
     /// under the hub's lock, so a handler only signals.
     /// </summary>
     public event Action<string>? Unwatched;
+
+    /// <summary>Rows this machine produced were saved, outside the hub's lock. A row copied from another machine isn't one.</summary>
+    public event Action<string, IReadOnlyList<StoredRow>>? Committed;
 
     /// <summary>Whether a webview watches the session's rows: its live socket, or a rows sub on the socket.</summary>
     public bool HasSubscribers(string sessionId)

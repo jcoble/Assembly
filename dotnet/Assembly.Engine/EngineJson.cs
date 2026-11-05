@@ -114,6 +114,7 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(StopSession))]
 [JsonSerializable(typeof(LinkTask))]
 [JsonSerializable(typeof(ReportSessionModel))]
+[JsonSerializable(typeof(ReportSessionBranch))]
 [JsonSerializable(typeof(ReportSessionTitle))]
 [JsonSerializable(typeof(StartRun))]
 [JsonSerializable(typeof(CancelRun))]

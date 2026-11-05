@@ -3,6 +3,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Infrastructure.Engine.Workflows;
 using Assembly.Engine.Mcp;
 using Assembly.Engine.Mcp.Tools;
+using Assembly.Infrastructure.Engine.Checkouts;
 using Assembly.Infrastructure.Engine.Helpers;
 using Assembly.Infrastructure.Engine.Needs;
 using Assembly.Infrastructure.Engine.Relays;
@@ -137,6 +138,7 @@ public sealed class DesktopBackend : IAsyncDisposable
     internal int BackgroundRunning => _work.Running;
     internal RemoteConnections Connections => _connections;
     private MachineUpdates? _updates;
+    private SessionBranches? _branches;
 
     /// <summary>The first update check, off the startup path. Tests that don't ask stay off the network.</summary>
     public void BeginUpdateChecks() => _updates?.Begin();
@@ -180,6 +182,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         WorkflowReceiptServices? workflowReceipts = null;
         BackgroundWork? work = null;
         LiveHub? hub = null;
+        SessionBranches? branches = null;
         RemoteConnections? connections = null;
         SignInRelay? signInRelay = null;
         MachinesFeature? machinesFeature = null;
@@ -396,6 +399,8 @@ public sealed class DesktopBackend : IAsyncDisposable
             var cliUpdates = new UpdateCalls(launcher, engine.Machine, cliHttp, TimeProvider.System, hostStop.Token,
                 (machine, ct) => connections.CliLocator(db, machine, ct), new RemoteCliClient(cliHttp, TimeProvider.System));
             var git = new GitCli();
+            branches = new SessionBranches(cutover, git, log);
+            hub.Committed += branches.RowsCommitted;
             var gh = new GhCli();
             gitOperations = new GitOperations(work, topics, TimeProvider.System, engine.Machine);
             var patches = new GitTextPatch(git);
@@ -421,7 +426,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                     new FilesFeature(sessionStore, fileOwners, work, new FileRemoteRoutes(db, fileOwners, connections, work), sessionSources),
                     new Assembly.Application.Features.Workspaces.WorkspacesFeature(new Assembly.Application.Features.Workspaces.WorkspaceStore(db, TimeProvider.System)),
                     new WorktreesFeature(sessionStore),
-                    gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes),
+                    gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes, branches),
                     new PullRequestsFeature(sessionStore, prReader, gitRoutes, projectPrReads), new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes, projectPrActions, projectCoordinator),
                     new FoldersFeature(localFolders), new ProjectsFeature(projectStore,
                         name => name == "local" ? localFolders : new RemoteProjectFolders(connections, name), db)], board, Engine: engine), port, out _);
@@ -429,6 +434,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             await app.StartAsync();
             var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, routedTerminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp, gitOperations, providerRuntimeSubscriptions, remoteInstalls, remoteReleases, releaseHttp, signInRelay, notion);
             backend._updates = updates;
+            backend._branches = branches;
             endpoint.Listening(backend.Address);
             relay.Start();
             return backend;
@@ -463,6 +469,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             if (sessions is not null) await sessions.DisposeAsync();
             if (work is not null) await work.DisposeAsync();
             cliHttp?.Dispose();
+            if (branches is not null) await branches.DisposeAsync();
             hub?.Dispose();
             activity.Hold(false);
             hostStop?.Dispose();
@@ -514,6 +521,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         await _terminals.DisposeAsync();
         await _helperCards.DisposeAsync();
         await _sessions.DisposeAsync();
+        if (_branches is not null) await _branches.DisposeAsync();
         // After the sessions, so a stop's cancel fails fast; before the database, which a write still finishing needs.
         await _work.DisposeAsync();
         _cliHttp.Dispose();

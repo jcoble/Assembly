@@ -4,6 +4,7 @@ using Assembly.Infrastructure.Engine.Workflows;
 using Microsoft.AspNetCore.Builder;
 using Assembly.Engine.Mcp;
 using Assembly.Engine.Mcp.Tools;
+using Assembly.Infrastructure.Engine.Checkouts;
 using Assembly.Infrastructure.Engine.Helpers;
 using Assembly.Infrastructure.Engine.Needs;
 using CallFailed = Assembly.Application.Common.Calls.CallFailed;
@@ -108,6 +109,7 @@ public static class ServeRun
         BoardTools? board = null;
         MachinesFeature? machinesFeature = null;
         MachineCalls? ownerMachineCalls = null;
+        SessionBranches? branches = null;
         WebApplication? app = null;
         var stopGate = new object();
         Task? stopped = null;
@@ -208,6 +210,8 @@ public static class ServeRun
             var sessionSources = new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(db, sessionStore, machines);
             var door = new EngineDoor(engine, sessionStore, machines, attachments, TimeProvider.System, answers, hub, sessionSources);
             var git = new GitCli();
+            branches = new SessionBranches(cutover, git, Console.Out);
+            hub.Committed += branches.RowsCommitted;
             var gh = new GhCli();
             gitOperations = new GitOperations(work, topics, TimeProvider.System, engine.Machine);
             var patches = new GitTextPatch(git);
@@ -226,7 +230,7 @@ public static class ServeRun
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(options.Home, "staging", "attachments"), sessionSources),
                     new FilesFeature(sessionStore, new FileOwner(sessionStore, db), work, sources: sessionSources),
-                    gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes),
+                    gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes, branches),
                     new PullRequestsFeature(sessionStore, prReader, gitRoutes, projectPrReads), new FoldersFeature(localFolders),
                     new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes, projectPrActions)],
                 board, Engine: engine), options.Port, out _);
@@ -258,6 +262,7 @@ public static class ServeRun
             if (machinesFeature is not null) await machinesFeature.DisposeAsync();
             await helperCards.DisposeAsync();
             if (sessions is not null) await sessions.DisposeAsync();
+            if (branches is not null) await branches.DisposeAsync();
         }
     }
 }

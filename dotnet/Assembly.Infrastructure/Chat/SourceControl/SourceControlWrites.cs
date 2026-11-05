@@ -4,11 +4,12 @@ using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Git;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat.SourceControl;
+using Assembly.Infrastructure.Engine.Checkouts;
 using Assembly.Infrastructure.Git;
 
 namespace Assembly.Infrastructure.Chat.SourceControl;
 /// <summary>Short owner writes use the same host checkout lease as Engine checkout effects.</summary>
-internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, CheckoutWrites writes, TimeProvider time, SourceControlFeature routes) : IFeature
+internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, CheckoutWrites writes, TimeProvider time, SourceControlFeature routes, SessionBranches? branches = null) : IFeature
 {
     private readonly GitWriter git = new(cli);
     public void Register(ICallRegistry calls)
@@ -44,7 +45,12 @@ internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, Check
         // A session's branch is the Engine's to change; a viewed folder has no session to tell.
         calls.Write("git", "switchBranch", GitWritesJson.Default.BranchArgs, GitWritesJson.Default.GitWriteResult,
             (args, call) => FolderView.IsView(args.Session)
-                ? Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitBranches(cli).SwitchAsync(root, args.Name, args.Create, args.ExpectedHead, call.Cancellation))
+                ? Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, async root =>
+                {
+                    var switched = await new GitBranches(cli).SwitchAsync(root, args.Name, args.Create, args.ExpectedHead, call.Cancellation);
+                    branches?.FolderChanged(root);
+                    return switched;
+                })
                 : throw new CallFailed("forbidden"), args => args.Session);
         calls.Write("git", "stash", GitWritesJson.Default.StashArgs, GitWritesJson.Default.GitWriteResult,
             (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitStashes(cli, time).StashAsync(root, FolderView.IsView(args.Session) ? "view" : args.Session, args.Message, args.IncludeUntracked, call.Cancellation)), args => args.Session);

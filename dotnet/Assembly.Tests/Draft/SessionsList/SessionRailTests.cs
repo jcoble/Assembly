@@ -418,28 +418,39 @@ public sealed partial class SessionRailTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void RecordedBranchComesFromTheLatestStats(bool remote)
+    public void RailBranchIsTheEnginesNotAnOldTurnsStats(bool remote)
     {
         var session = Parent(machine: remote ? "workbox-test" : null);
         Assert.Null(Entry(Read(), session).Branch);
-        var seq = 0L;
-        void Stats(string? branch, long at)
-        {
-            var payload = JsonSerializer.SerializeToElement(new { status = "completed", branch });
-            if (remote)
-                Assert.True(_hub.PublishCopy(new StoredRow(session, ++seq, "run-1", null, RowKind.Stats, payload, at, PrevSeq: seq - 1)));
-            else
-                _hub.Publish(session, Batch((null, RowKind.Stats, new { status = "completed", branch }), at));
-        }
-        Stats("main", 10);
-        _topics.Published.Clear();
-        Stats("lane/rail", 20);
-        Assert.Contains((RailTopic, (string?)session, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
-        Stats("", 30);
-        Stats(null, 40);
+        var stats = JsonSerializer.SerializeToElement(new { status = "completed", branch = "old-from-stats" });
+        if (remote)
+            Assert.True(_hub.PublishCopy(new StoredRow(session, 1, "run-1", null, RowKind.Stats, stats, 10, PrevSeq: 0)));
+        else
+            _hub.Publish(session, Batch((null, RowKind.Stats, new { status = "completed", branch = "old-from-stats" }), 10));
+        Assert.Null(Entry(Read(), session).Branch);
 
-        var entry = Entry(Read(), session);
-        Assert.Equal(("lane/rail", 20L), (entry.Branch, entry.BranchAt));
+        var facade = _sessions.Get(session)!;
+        _database.Writer.Write("test.branch", scope => remote
+            ? scope.Execute("UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.provider',$provider,'$.folder','/recorded/remote','$.updatedMs',$updated,'$.branch','real') WHERE entity_id=$id",
+                new("$provider", facade.Agent), new("$updated", facade.UpdatedAt), new("$id", session))
+            : scope.Execute("UPDATE engine_session SET branch='real' WHERE id=$id", new Assembly.Application.Common.Database.SqlArg("$id", session)));
+        var known = Assert.Single(Read().Sessions, row => row.SessionId == session && row.Source is not null);
+        Assert.Equal("real", known.Branch);
+    }
+
+    [Fact]
+    public void CommittedHearsRowsThisMachineProducedNotCopies()
+    {
+        var session = Parent();
+        var heard = new List<string>();
+        _hub.Committed += (id, rows) => heard.AddRange(rows.Select(row => id + ":" + row.Kind));
+
+        _hub.Publish(session, Batch(("t1", RowKind.Tool, new { state = "completed" }), 10));
+        Assert.Equal([session + ":" + RowKind.Tool], heard);
+
+        var copied = Parent(machine: "workbox-test");
+        Assert.True(_hub.PublishCopy(new StoredRow(copied, 1, "run-1", "t1", RowKind.Tool, JsonSerializer.SerializeToElement(new { state = "completed" }), 10, PrevSeq: 0)));
+        Assert.Single(heard);
     }
 
     [Fact]
