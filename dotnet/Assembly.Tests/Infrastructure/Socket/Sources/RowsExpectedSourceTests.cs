@@ -8,6 +8,7 @@ using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Features.Chat.Rows.Context;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Events;
 using Assembly.Domain.Rows;
@@ -129,6 +130,21 @@ public sealed class RowsExpectedSourceTests
         var wire = string.Join("", replay.Select(frame => frame.GetRawText()));
         Assert.Contains("OWNER_ONLY", wire); Assert.DoesNotContain("POISONED_COPY", wire);
         Assert.Equal(new(f.Expected.Machine, 0, null), f.OwnerSources.Captures.Last());
+    }
+
+    [Fact]
+    public async Task Remote_tokens_answer_the_owners_total_and_never_the_poisoned_copy()
+    {
+        await using var f = await RemoteFixture.Start();
+        Stats(f.OwnerHub, f.Session, 4_000);
+        Stats(f.LocalHub, f.Session, 999_999);
+        using var control = await f.Socket.Open();
+        await Send(control, new { t = "call", id = 1, feature = "rows", method = "tokens", args = new { session = f.Session }, expectedSource = f.Expected });
+        var answer = await Read(control);
+        Assert.True(Type(answer) == "result", answer.GetRawText());
+        Assert.Equal(4_000, answer.GetProperty("result").GetProperty("total").GetInt64());
+        Assert.Equal(f.Expected, f.Sources.Captures.Single());
+        Assert.Equal(new(f.Expected.Machine, 0, null), f.OwnerSources.Captures.Single());
     }
 
     [Fact]
@@ -299,6 +315,12 @@ public sealed class RowsExpectedSourceTests
     }
     private static void Publish(LiveHub hub, string session, string text) =>
         hub.Publish(session, new RowConverter().Apply(new TurnStarted(1000, Guid.NewGuid().ToString("N"), text)));
+    private static void Stats(LiveHub hub, string session, long total)
+    {
+        var converter = new RowConverter();
+        converter.Apply(new TurnStarted(1000, Guid.NewGuid().ToString("N"), "turn"));
+        hub.Publish(session, converter.Apply(new TurnEnded(1001, "end_turn", new TokenUsage(1, 1, null, null, total))));
+    }
     private static void Child(LiveHub hub, string session, string child)
     {
         var batch = new RowBatch();
@@ -332,6 +354,7 @@ public sealed class RowsExpectedSourceTests
             public override string? ActiveRun => inner.ActiveRun;
             public override Task<JsonElement> PageAsync(long before, int limit, CancellationToken ct) => inner.PageAsync(before, limit, ct);
             public override Task<SubagentPage> SubagentsAsync(string? after, int limit, CancellationToken ct) => inner.SubagentsAsync(after, limit, ct);
+            public override Task<SessionTokens> TokensAsync(CancellationToken ct) => inner.TokensAsync(ct);
             public override async IAsyncEnumerable<JsonElement> WatchAsync(long? after, [EnumeratorCancellation] CancellationToken ct)
             {
                 await foreach (var frame in inner.WatchAsync(after, ct))
@@ -359,6 +382,7 @@ public sealed class RowsExpectedSourceTests
         internal ExpectedSource Expected = null!;
         private readonly List<LiveHub> _ownerHubs = [];
         private LiveHub _localHub = null!;
+        internal LiveHub LocalHub => _localHub;
         internal static async Task<RemoteFixture> Start()
         {
             var f = new RemoteFixture();

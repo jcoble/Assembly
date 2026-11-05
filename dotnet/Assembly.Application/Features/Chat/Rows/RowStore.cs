@@ -391,7 +391,7 @@ public sealed partial class RowStore
         _db.Query(
             """
             SELECT SUM(json_extract(payload, '$.totalTokens')) FROM rows
-            WHERE session_id = $session AND kind = 'stats' AND json_extract(payload, '$.totalTokens') > 0;
+            WHERE session_id = $session AND item_id IS NULL AND kind = 'stats' AND json_extract(payload, '$.totalTokens') > 0;
             """,
             reader => reader.IsNull(0) ? (long?)null : reader.Long(0), cancellationToken,
             new SqlArg("$session", sessionId)).FirstOrDefault();

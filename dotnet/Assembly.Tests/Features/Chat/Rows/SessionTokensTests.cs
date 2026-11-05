@@ -122,7 +122,8 @@ public sealed class SessionTokensTests
         using var socket = await Connect(app);
         var expected = new ExpectedSource(f.Machine, 0, null);
 
-        await Send(socket, new { t = "call", id = 1, feature = "rows", method = "tokens", args = new { session, expectedSource = expected } });
+        // At frame level, where the dispatcher checks which calls may carry a source.
+        await Send(socket, new { t = "call", id = 1, feature = "rows", method = "tokens", args = new { session }, expectedSource = expected });
 
         Assert.Equal("""{"t":"result","id":1,"result":{"total":5000}}""", await Read(socket));
     }
