@@ -98,22 +98,18 @@ pub fn parse_external(address: &str) -> ExternalRoute {
             .map_or(ExternalRoute::Unsupported, |page_id| ExternalRoute::Task {
                 page_id,
             }),
-        Some(host @ ("session" | "open" | "file")) if is_plain(address, &url) => match host {
-            "session" => session_route(&url),
-            "open" => open_route(&url),
-            _ => file_route(&url),
-        }
-        .unwrap_or(ExternalRoute::Unsupported),
-        _ => ExternalRoute::Unsupported,
+        _ => exact_link(address).unwrap_or(ExternalRoute::Unsupported),
     }
 }
 
 /// A link from the system: as `parse_external`, and a `file:` URL is a file on this machine.
 pub fn parse_incoming(address: &str) -> ExternalRoute {
-    if address.starts_with("file:///") {
-        file_url_route(address).unwrap_or(ExternalRoute::Unsupported)
-    } else {
-        parse_external(address)
+    match address.strip_prefix("file:///") {
+        Some(path) if is_bare_text(address) => {
+            file_url_route(path).unwrap_or(ExternalRoute::Unsupported)
+        }
+        Some(_) => ExternalRoute::Unsupported,
+        None => parse_external(address),
     }
 }
 
@@ -129,78 +125,99 @@ pub fn session_link(id: &str, machine: Option<&str>) -> String {
     }
 }
 
-/// The parser quietly drops spaces, tabs and newlines the raw text still holds, so a link holding any of them isn't one.
-fn is_plain(address: &str, url: &url::Url) -> bool {
-    !address.chars().any(|c| c.is_control() || c.is_whitespace())
-        && url.fragment().is_none()
-        && url.port().is_none()
-}
-
-fn session_route(url: &url::Url) -> Option<ExternalRoute> {
-    let id = percent_decode_str(url.path().strip_prefix('/')?)
-        .decode_utf8()
-        .ok()?;
-    if id.is_empty() || id.contains('/') || id.contains(char::is_control) {
-        return None;
+/// The session, open and file shapes, read from the link's own text: `url::Url` cleans up dot segments, ports, empty
+/// credentials, case and spare separators, so what it hands back isn't what the link says.
+fn exact_link(address: &str) -> Option<ExternalRoute> {
+    let rest = address
+        .strip_prefix("assembly://")
+        .filter(|_| is_bare_text(address))?;
+    let (target, query) = match rest.split_once('?') {
+        Some((target, query)) => (target, Some(query)),
+        None => (rest, None),
+    };
+    match target {
+        "open" | "open/" => open_route(query),
+        "file" | "file/" => file_route(query),
+        _ => session_route(target.strip_prefix("session/")?, query),
     }
-    let [machine] = query_values(url, ["profile"])?;
-    Some(ExternalRoute::Session {
-        id: id.into_owned(),
-        machine,
-    })
 }
 
-fn open_route(url: &url::Url) -> Option<ExternalRoute> {
-    let [address] = query_values(url, ["url"])?;
-    let address = address.filter(|_| has_no_path(url))?;
+/// No whitespace, control character or fragment anywhere in the raw text.
+fn is_bare_text(address: &str) -> bool {
+    !address
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || c == '#')
+}
+
+fn session_route(segment: &str, query: Option<&str>) -> Option<ExternalRoute> {
+    let id = decoded(segment)
+        .filter(|id| !id.is_empty() && !id.contains('/') && id != "." && id != "..")?;
+    let [machine] = query_values(query, ["profile"])?;
+    Some(ExternalRoute::Session { id, machine })
+}
+
+fn open_route(query: Option<&str>) -> Option<ExternalRoute> {
+    let [address] = query_values(query, ["url"])?;
+    let address = address?;
     is_web_page(&address).then_some(ExternalRoute::Open { url: address })
 }
 
-fn file_route(url: &url::Url) -> Option<ExternalRoute> {
-    let [path, machine] = query_values(url, ["path", "profile"])?;
-    let path = path.filter(|_| has_no_path(url))?;
+fn file_route(query: Option<&str>) -> Option<ExternalRoute> {
+    let [path, machine] = query_values(query, ["path", "profile"])?;
+    let path = path?;
     is_clean_path(&path).then_some(ExternalRoute::File { path, machine })
 }
 
-fn file_url_route(address: &str) -> Option<ExternalRoute> {
-    let url = url::Url::parse(address).ok()?;
-    if !is_plain(address, &url) || url.query().is_some() {
+/// What follows `file:///`. No query or backslash, and each component is written out: an encoded slash would add one.
+fn file_url_route(text: &str) -> Option<ExternalRoute> {
+    if text.contains(['?', '\\']) {
         return None;
     }
-    let path = percent_decode_str(url.path())
-        .decode_utf8()
-        .ok()?
-        .into_owned();
+    let path = decoded(text)?;
+    if path.split('/').count() != text.split('/').count() || path.split('/').any(str::is_empty) {
+        return None;
+    }
+    let path = format!("/{path}");
     is_clean_path(&path).then_some(ExternalRoute::File {
         path,
         machine: None,
     })
 }
 
-fn has_no_path(url: &url::Url) -> bool {
-    url.path().is_empty() || url.path() == "/"
-}
-
-/// Absolute, with no `.` or `..` component and no control character.
+/// Absolute, with no `.` or `..` component.
 fn is_clean_path(path: &str) -> bool {
-    path.starts_with('/')
-        && !path.contains(char::is_control)
-        && !path.split('/').any(|part| part == "." || part == "..")
+    path.starts_with('/') && !path.split('/').any(|part| part == "." || part == "..")
 }
 
-/// The value of each key, in the order asked. Each key comes at most once, and with a non-empty value free of control
-/// characters. A query naming no key at all, or any other key, is refused.
-fn query_values<const N: usize>(url: &url::Url, keys: [&str; N]) -> Option<[Option<String>; N]> {
+/// The value of each key, in the order asked. Each key comes at most once, spelled exactly, with a non-empty value. A
+/// query holding anything else is refused, even an empty pair.
+fn query_values<const N: usize>(
+    query: Option<&str>,
+    keys: [&str; N],
+) -> Option<[Option<String>; N]> {
     let mut values = [const { None }; N];
-    for (key, value) in url.query_pairs() {
+    let Some(query) = query else {
+        return Some(values);
+    };
+    for pair in query.split('&') {
+        let (key, value) = pair.split_once('=')?;
         let at = keys.iter().position(|known| *known == key)?;
-        if values[at].is_some() || value.is_empty() || value.contains(char::is_control) {
+        if values[at].is_some() || value.is_empty() {
             return None;
         }
-        values[at] = Some(value.into_owned());
+        values[at] = Some(decoded(value)?);
     }
-    let is_bare_query = url.query().is_some() && values.iter().all(Option::is_none);
-    (!is_bare_query).then_some(values)
+    Some(values)
+}
+
+/// Percent-decoded, and only escapes decode: a `+` stays a `+`. Bytes that aren't UTF-8, or a control character, are
+/// refused.
+fn decoded(text: &str) -> Option<String> {
+    percent_decode_str(text)
+        .decode_utf8()
+        .ok()
+        .filter(|value| !value.contains(char::is_control))
+        .map(|value| value.into_owned())
 }
 
 /// Exactly one state and one code, each present and non-empty.
