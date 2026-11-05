@@ -158,6 +158,15 @@ public sealed partial class RemoteReleaseInstallTests
     }
 
     [Fact]
+    public async Task This_computers_adapters_failing_to_find_a_release_say_it_was_the_adapters()
+    {
+        SignedFeed(out var shell);
+        var (tools, _, _) = LocalFixture(AppFeed("assembly-v3.2.1", "{\"version\":\"3.2.1\"}"), shell);
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => tools.UpdateAsync(new(true, []), _ => { }, default));
+        Assert.Equal("Adapters: No signed adapter release is available.", failed.Message);
+    }
+
+    [Fact]
     public async Task This_computers_clis_wait_for_its_running_session_and_say_so()
     {
         if (!OperatingSystem.IsLinux()) return;

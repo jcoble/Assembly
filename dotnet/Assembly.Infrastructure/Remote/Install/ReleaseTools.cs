@@ -72,9 +72,12 @@ internal sealed class LocalReleaseTools(RemoteReleaseFeed feed, RemoteReleaseShe
         if (tools.Adapters)
         {
             progress("Updating this computer's adapters…");
-            var verified = await feed.AdaptersForAsync(Target(), ct);
             var script = installer ?? Path.Combine(AppContext.BaseDirectory, "agents-file.sh");
-            try { await shell.RunAsync("", $"set -eu; {RequireTools}; ASSEMBLY_ADAPTER_TAG={Quote(verified.Tag)} ASSEMBLY_ADAPTER_MANIFEST_SHA256={Quote(verified.ManifestSha256)} bash {Quote(script)} {Quote(adapters)} {Quote(agentsFile)}", null, ct); }
+            try
+            {
+                var verified = await feed.AdaptersForAsync(Target(), ct);
+                await shell.RunAsync("", $"set -eu; {RequireTools}; ASSEMBLY_ADAPTER_TAG={Quote(verified.Tag)} ASSEMBLY_ADAPTER_MANIFEST_SHA256={Quote(verified.ManifestSha256)} bash {Quote(script)} {Quote(adapters)} {Quote(agentsFile)}", null, ct);
+            }
             catch (CallFailed failed) { throw new CallFailed($"Adapters: {failed.Message}", failed.Reason); }
             updateProgress?.Piece(UpdateProgress.ThisMachine);
         }
