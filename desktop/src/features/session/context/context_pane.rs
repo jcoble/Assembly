@@ -1,6 +1,6 @@
 //! `ContextPane` owns the drawer's Context tab, four cards in a scrolling column: the selected session's agent settings
-//! and its context usage (session_cards.rs), the files its tool calls touched, newest first, each with its lines added
-//! and removed, and the images its prompts carried (attachments_section.rs). Replaces SessionContextPanel.svelte.
+//! and its context usage (session_cards.rs), the files its calls and prompts named, newest first, each with a count
+//! and its lines added and removed (files_touched.rs), and the images its prompts carried (attachments_section.rs). Replaces SessionContextPanel.svelte.
 //! Like it, the tab reads the lists (`rows/files`, `rows/attachments`) and the session's total (`rows/tokens`) when
 //! it's shown, and again when another session is picked while it's shown, and doesn't follow the live rows: Chat
 //! already does, and nobody watches these lists while they change. The two cards above follow the session's live facts
@@ -10,8 +10,7 @@ use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
 use serde::Deserialize;
 use serde_json::json;
@@ -20,8 +19,6 @@ use crate::core::state::selected_session::SelectedSession;
 use crate::features::session::client::session_client::{CallError, SessionClient};
 use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::context::live_facts::LiveFacts;
-use crate::section_card::SectionCard;
-use gpui_kit::assets::IconName;
 use listing::Listing;
 
 /// The layout's name for the tab (default_layout.rs).
@@ -33,6 +30,12 @@ pub struct FileTouched {
     pub path: String,
     pub added: i64,
     pub removed: i64,
+    /// How many calls and prompts named it; an older remote doesn't send it.
+    #[serde(default)]
+    pub count: i64,
+    /// The name an attached image was attached with; only those have one.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -162,6 +165,8 @@ impl ContextPane {
             self.files = Listing::Failed("The selected session source is unavailable.".into());
             self.attachments =
                 Listing::Failed("The selected session source is unavailable.".into());
+            // Nothing will read the total, so it reads as answered with none rather than "Reading…" for good.
+            self.total = Some(None);
             return;
         }
         self.context_scope = Some(scope.clone());
@@ -353,115 +358,12 @@ fn no_session(cx: &App) -> impl IntoElement {
         ))
 }
 
-impl ContextPane {
-    fn files_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (muted, success, danger) = (theme.muted_foreground, theme.success, theme.danger);
-        let note = |id: &'static str, text: SharedString| {
-            div()
-                .debug_selector(move || id.into())
-                .px_2()
-                .text_color(muted)
-                .child(text)
-        };
-        let body = match &self.files {
-            Listing::Reading => note("context-note-reading", "Reading this session…".into()),
-            Listing::Failed(why) => note(
-                "context-note-failed",
-                format!("Couldn't read files: {why}").into(),
-            ),
-            Listing::Read(files) if files.is_empty() => note(
-                "context-note-empty",
-                "No files yet. Files this session edits are listed here, newest first.".into(),
-            ),
-            Listing::Read(files) => v_flex().children(files.iter().zip(names(files)).map(
-                |(file, (name, folder))| {
-                    let selector = format!("touched-file-{}", file.path);
-                    h_flex()
-                        .debug_selector(move || selector)
-                        .h(px(28.))
-                        .px_2()
-                        .gap_2()
-                        .child(div().min_w_0().truncate().child(name.to_string()))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                // A path's end says more than its start.
-                                .text_ellipsis_start()
-                                .text_color(muted)
-                                .child(folder.to_string()),
-                        )
-                        .when(file.added > 0, |row| {
-                            row.child(
-                                div()
-                                    .flex_none()
-                                    .text_color(success)
-                                    .child(format!("+{}", file.added)),
-                            )
-                        })
-                        .when(file.removed > 0, |row| {
-                            row.child(
-                                div()
-                                    .flex_none()
-                                    .text_color(danger)
-                                    .child(format!("-{}", file.removed)),
-                            )
-                        })
-                },
-            )),
-        };
-        let count = match &self.files {
-            Listing::Read(files) => files.len(),
-            _ => 0,
-        };
-        SectionCard::new(IconName::Files, "Files touched")
-            .count(count)
-            .child(body)
-    }
-}
-
-/// `rows/files`' answer, or why it couldn't be read.
-fn touched(answer: Result<serde_json::Value, CallError>) -> Listing<FileTouched> {
-    match answer.and_then(|list| {
-        serde_json::from_value(list).map_err(|error| CallError::Failed(error.to_string()))
-    }) {
-        Ok(list) => Listing::Read(list),
-        Err(error) => Listing::Failed(error.reason()),
-    }
-}
-
-/// Each file's name and its folder below the folder all the files share, which is usually the session's checkout: an
-/// agent sends whole paths. A lone file shows no folder.
-fn names(files: &[FileTouched]) -> Vec<(&str, &str)> {
-    fn folder(path: &str) -> &str {
-        path.rsplit_once('/').map_or("", |(folder, _)| folder)
-    }
-    let mut shared = files.first().map_or("", |file| folder(&file.path));
-    for file in files {
-        while !shared.is_empty()
-            && !file
-                .path
-                .strip_prefix(shared)
-                .is_some_and(|rest| rest.starts_with('/'))
-        {
-            shared = folder(shared);
-        }
-    }
-    files
-        .iter()
-        .map(|file| {
-            let rest = file.path[shared.len()..].trim_start_matches('/');
-            let (folder, name) = rest.rsplit_once('/').unwrap_or(("", rest));
-            (name, folder)
-        })
-        .collect()
-}
-
 #[path = "attachments_section.rs"]
 mod attachments_section;
 use attachments_section::attached;
+#[path = "files_touched.rs"]
+mod files_touched;
+use files_touched::{names, touched};
 #[path = "listing.rs"]
 mod listing;
 #[path = "session_cards.rs"]

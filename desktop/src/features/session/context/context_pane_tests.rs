@@ -110,6 +110,8 @@ fn file(path: &str, added: i64, removed: i64) -> FileTouched {
         path: path.into(),
         added,
         removed,
+        count: 0,
+        name: None,
     }
 }
 

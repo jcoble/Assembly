@@ -296,7 +296,9 @@ fn a_failed_total_leaves_the_lists(cx: &mut TestAppContext) {
         Listing::Read(vec![FileTouched {
             path: "src/a.rs".into(),
             added: 1,
-            removed: 0
+            removed: 0,
+            count: 0,
+            name: None
         }])
     );
     assert_eq!(images, Listing::Read(vec![]));
@@ -425,7 +427,9 @@ fn a_refused_total_marks_the_source_changed_and_keeps_the_lists(cx: &mut TestApp
         Listing::Read(vec![FileTouched {
             path: "src/a.rs".into(),
             added: 1,
-            removed: 0
+            removed: 0,
+            count: 0,
+            name: None
         }])
     );
     assert_eq!(total, Some(None));
