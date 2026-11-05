@@ -28,7 +28,7 @@ fn need(id: &str, state: &str) -> EngineItem {
     item(
         "needs_me",
         id,
-        json!({"sessionId":"s","kind":"question","state":state,"createdMs":1,"answeredMs":MIDNIGHT + 1}),
+        json!({"sessionId":"s","forOwner":true,"kind":"question","state":state,"createdMs":1,"answeredMs":MIDNIGHT + 1}),
     )
 }
 
@@ -199,4 +199,37 @@ fn offline_group_header_and_disabled_actions() {
     );
     assert_eq!(heading(true, None), "Workbox Test · offline");
     assert_eq!(heading(false, Some(at(4, 14))), "Workbox Test");
+}
+
+#[test]
+fn a_stopped_run_is_a_card_on_needs_you_and_is_why_the_tab_opens() {
+    let data = BoardData::of(
+        &[],
+        &[],
+        &[
+            item(
+                "run",
+                "r",
+                json!({"state":"running","activeStepIds":[],"paused":false,"reference":false,"startedMs":1}),
+            ),
+            item(
+                "step",
+                "failed",
+                json!({"runId":"r","name":"failed","kind":"command","state":"failed","attempt":1,"maxAttempts":2,"required":1,"ruleSkippable":0,
+                    "labelPresent":"Checks","labelPast":"Checked","badges":[],"scopeGranted":false,"closed":false,"dependencies":[],"needsMeIds":[],"needsOwner":true}),
+            ),
+        ],
+        &[],
+    );
+    assert_eq!(first_tab(&data, BoardTab::Sessions), BoardTab::Needs);
+    let sections = tab_sections(&data, BoardTab::Needs, MIDNIGHT, None, &[]);
+    let rows = entries(&sections, BoardTab::Needs, &BoardPrefs::default());
+    assert_eq!(
+        rows,
+        [Entry::Run(EngineKey {
+            machine: "m".into(),
+            kind: "run".into(),
+            id: "r".into()
+        })]
+    );
 }

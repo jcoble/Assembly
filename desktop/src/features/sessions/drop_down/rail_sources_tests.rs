@@ -138,8 +138,8 @@ async fn remote_child_outside_the_sql_rail_page_uses_the_one_discovered_source_s
         assert_eq!(children[0].key.id, "child-off-page");
         assert_eq!(
             pane.read(cx).engine_watches.len(),
-            4,
-            "one shared sessions/needs lease per actual source"
+            6,
+            "one shared sessions/needs/runs lease per actual source"
         );
     });
     drop(pane);

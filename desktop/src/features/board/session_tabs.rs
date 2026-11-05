@@ -38,7 +38,17 @@ pub fn default_tab(open_questions: usize, has_run: bool) -> SessionTab {
 }
 
 /// A question outranks what it's doing, since that's what the owner can act on.
-pub fn row_chip(session: &SessionItem, open_owner_questions: usize) -> (String, Tone) {
+pub fn row_chip(
+    session: &SessionItem,
+    open_owner_questions: usize,
+    stopped_steps: usize,
+) -> (String, Tone) {
+    if stopped_steps > 0 {
+        return (
+            super::board_sections::heading(open_owner_questions + stopped_steps),
+            Tone::Warning,
+        );
+    }
     if open_owner_questions > 0 {
         let plural = if open_owner_questions == 1 { "" } else { "s" };
         return (
@@ -103,7 +113,7 @@ pub fn task_label(url: &str) -> SharedString {
 fn open_owner_questions(session: &SessionKey, data: &BoardData) -> usize {
     data.needs
         .values()
-        .filter(|need| need.state == "open" && need.for_owner() && need.session == *session)
+        .filter(|need| need.state == "open" && need.for_owner && need.session == *session)
         .count()
 }
 
@@ -120,7 +130,11 @@ pub fn session_entry(
     let key = card_key(&session.key);
     let run = data.run_of(session);
     let steps = run.map(|run| data.steps_of(run)).unwrap_or_default();
-    let (chip, tone) = row_chip(session, open_owner_questions(&session.session_key(), data));
+    let (chip, tone) = row_chip(
+        session,
+        open_owner_questions(&session.session_key(), data),
+        data.stopped_steps_of(&session.session_key()),
+    );
     let prs = data.prs_for(session);
     let machine = machine_label(&session.key.machine, feed, cx);
     let task = session

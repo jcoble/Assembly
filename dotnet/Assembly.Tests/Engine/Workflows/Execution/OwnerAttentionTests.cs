@@ -2,6 +2,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Runs;
 using Assembly.Engine.Reading;
 using Assembly.Engine.Workflows.Runs;
 using Assembly.Infrastructure.Phone;
@@ -63,6 +64,19 @@ public sealed class OwnerAttentionTests
             f.Core.Number("SELECT version FROM engine_run"), 0, 2000);
         Assert.True(f.Core.Apply(retry, new RetryWorkflowStep(f.Step)).Applied);
         Assert.False(Row(f, "step", f.Step).GetProperty("needsOwner").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Ending_the_run_sends_its_stopped_step_again_so_nobody_keeps_counting_it()
+    {
+        using var f = await FailedWith(attempts: 2);
+        var before = f.Core.Number("SELECT version FROM engine_step WHERE id=$id", new SqlArg("$id", f.Step));
+        var cancel = new CommandContext(Guid.NewGuid(), f.Core.Machine, new(ActorKind.Window, "owner"), f.Run,
+            f.Core.Number("SELECT version FROM engine_run"), 0, 2000);
+        Assert.True(f.Core.Apply(cancel, new CancelRun()).Applied);
+        Assert.False(Row(f, "step", f.Step).GetProperty("needsOwner").GetBoolean());
+        Assert.True(f.Core.Number("SELECT version FROM engine_step WHERE id=$id", new SqlArg("$id", f.Step)) > before);
+        Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_event WHERE kind='step.changed' AND entity_id=$id AND entity_version=(SELECT version FROM engine_step WHERE id=$id)", new SqlArg("$id", f.Step)));
     }
 
     [Fact]

@@ -1,5 +1,5 @@
 //! What each Board tab lists, chosen from the shared engine rows. These pick and order; they hold nothing and fetch nothing.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::core::engine::engine_items::{NeedItem, PrItem, SessionItem};
 use crate::core::engine::workflow_items::{RunItem, StepItem};
@@ -87,6 +87,40 @@ impl BoardData {
             .collect()
     }
 
+    fn stopped_in(&self, run: &RunItem) -> bool {
+        self.steps
+            .iter()
+            .any(|step| step.needs_owner && step.machine == run.machine && step.run_id == run.id)
+    }
+
+    /// Steps of the session's runs that the engine says are stopped until the person moves them.
+    pub fn stopped_steps_of(&self, session: &SessionKey) -> usize {
+        self.steps
+            .iter()
+            .filter(|step| {
+                step.needs_owner
+                    && step.machine == session.machine
+                    && step.owner_session_id.as_ref() == Some(&session.id)
+            })
+            .count()
+    }
+
+    /// Whether the run reads as needing the person: an open question of theirs on a step, or a stopped step.
+    pub fn run_needs_owner(&self, run: &RunItem) -> bool {
+        self.stopped_in(run)
+            || self.steps_of(run).iter().any(|step| {
+                step.needs_me_ids.iter().any(|id| {
+                    self.needs
+                        .get(&EngineKey {
+                            machine: run.machine.clone(),
+                            kind: "needs_me".into(),
+                            id: id.clone(),
+                        })
+                        .is_some_and(|need| need.state == "open" && need.for_owner)
+                })
+            })
+    }
+
     /// PRs of the session's run, or that it owns itself.
     pub fn prs_for(&self, session: &SessionItem) -> Vec<&PrItem> {
         self.prs
@@ -101,7 +135,7 @@ impl BoardData {
 }
 
 fn is_owner_question(need: &NeedItem) -> bool {
-    need.for_owner()
+    need.for_owner
 }
 
 fn settled_ms(need: &NeedItem) -> i64 {
@@ -145,6 +179,16 @@ pub fn badge_count(data: &BoardData) -> usize {
         .values()
         .filter(|need| need.state == "open" && is_owner_question(need))
         .count()
+        + data.steps.iter().filter(|step| step.needs_owner).count()
+}
+
+/// Runs with a step stopped until the person moves it, oldest first. Their cards carry the control.
+pub fn stopped_runs(data: &BoardData) -> Vec<EngineKey> {
+    sorted_by(
+        data.runs.values().filter(|run| data.stopped_in(run)),
+        |run| (run.started_ms.unwrap_or(0), run.key()),
+        |run| run.key(),
+    )
 }
 
 pub fn badge_label(count: usize) -> Option<String> {
@@ -168,14 +212,22 @@ fn is_top_level(session: &SessionItem) -> bool {
     session.parent_id.is_none()
 }
 
-/// Top-level sessions that are starting, working, or own an unfinished run. Idle ones with nothing open stay on the rail.
+/// Top-level sessions that are starting, working, or own an unfinished run, and any session waiting on a question.
+/// Idle ones with nothing open stay on the rail.
 pub fn live_top_level(data: &BoardData) -> Vec<EngineKey> {
+    let asking = data
+        .needs
+        .values()
+        .filter(|need| need.state == "open" && is_owner_question(need))
+        .map(|need| need.session.clone())
+        .collect::<HashSet<_>>();
     sorted_by(
         data.sessions.values().filter(|session| {
-            is_top_level(session)
-                && !matches!(session.state.as_str(), "ended" | "foreign" | "handing_off")
-                && (matches!(session.state.as_str(), "starting" | "running")
-                    || has_unfinished_run(data, session))
+            !matches!(session.state.as_str(), "ended" | "foreign" | "handing_off")
+                && (asking.contains(&session.session_key())
+                    || is_top_level(session)
+                        && (matches!(session.state.as_str(), "starting" | "running")
+                            || has_unfinished_run(data, session)))
         }),
         |session| (session.created_ms.unwrap_or(0), session.key.clone()),
         |session| session.key.clone(),
@@ -250,7 +302,7 @@ pub fn summary_counts(data: &BoardData, midnight_ms: i64) -> (usize, usize, usiz
     let live = data.runs.values().filter(|run| !is_terminal(run));
     let waiting = live
         .clone()
-        .filter(|run| run.state == "waiting" || run.paused)
+        .filter(|run| run.state == "waiting" || run.paused || data.run_needs_owner(run))
         .count();
     (
         live.count() - waiting,

@@ -6,8 +6,8 @@ use gpui_kit::App;
 
 use super::board_prefs::{BoardPrefs, BoardTab};
 use super::board_queries::{
-    BoardData, answered_today, by_machine, done_runs_today, done_today, live_runs, live_top_level,
-    open_owner_questions,
+    BoardData, answered_today, badge_count, by_machine, done_runs_today, done_today, live_runs,
+    live_top_level, open_owner_questions, stopped_runs,
 };
 use crate::core::engine::{EngineFeed, EngineKey};
 use crate::core::socket::client::SocketClient;
@@ -17,6 +17,8 @@ use crate::inline_field::DATE_TIME_SHOWN;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Section {
     Open(Vec<EngineKey>),
+    /// Runs stopped until the person moves a step.
+    Stopped(Vec<EngineKey>),
     Answered(Vec<EngineKey>),
     Live(Vec<(String, Vec<EngineKey>)>),
     Done(Vec<EngineKey>),
@@ -53,7 +55,12 @@ pub fn tab_sections(
                     .filter(|key| !shown_open.contains(*key))
                     .cloned(),
             );
-            vec![Section::Open(listed), Section::Answered(answered)]
+            let stopped = stopped_runs(data);
+            let mut sections = vec![Section::Open(listed), Section::Answered(answered)];
+            if !stopped.is_empty() {
+                sections.insert(0, Section::Stopped(stopped));
+            }
+            sections
         }
         BoardTab::Workflows => vec![
             Section::Live(by_machine(live_runs(data), local)),
@@ -68,7 +75,7 @@ pub fn tab_sections(
 
 /// The tab to show on opening: Needs you when any are open, else the last one used.
 pub fn first_tab(data: &BoardData, last: BoardTab) -> BoardTab {
-    if open_owner_questions(data).is_empty() {
+    if badge_count(data) == 0 {
         last
     } else {
         BoardTab::Needs
@@ -118,8 +125,9 @@ pub fn entries(sections: &[Section], tab: BoardTab, prefs: &BoardPrefs) -> Vec<E
     let mut rows = Vec::new();
     for section in sections {
         match section {
+            Section::Stopped(keys) => rows.extend(keys.iter().cloned().map(Entry::Run)),
             Section::Open(keys) => {
-                if keys.is_empty() {
+                if keys.is_empty() && rows.is_empty() {
                     rows.push(Entry::Nothing("Nothing needs you"));
                 }
                 rows.extend(keys.iter().map(row));
