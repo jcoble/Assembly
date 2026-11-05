@@ -226,7 +226,7 @@ fn oauth_route(url: &url::Url) -> ExternalRoute {
     for (key, value) in url.query_pairs() {
         let slot = match key.as_ref() {
             "state" => &mut state,
-            "claimCode" => &mut code,
+            "code" => &mut code,
             _ => return ExternalRoute::Unsupported,
         };
         if slot.is_some() || value.is_empty() {
