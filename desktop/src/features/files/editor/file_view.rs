@@ -138,7 +138,8 @@ impl FileView {
                         };
                         (key, source)
                     });
-                return file_link::open(intent.path, machine, from, cx);
+                let jump = (intent.line, intent.column);
+                return file_link::open(intent.path, machine, from, jump, cx);
             }
             let Some(handle) = cx
                 .active_window()

@@ -263,6 +263,32 @@ async fn a_remote_file_opens_on_a_session_on_that_machine(cx: &mut TestAppContex
     );
 }
 
+// Restored from review: a relative link is only the session's when it's for the session's machine.
+#[gpui::test]
+async fn a_file_on_another_machine_says_which(cx: &mut TestAppContext) {
+    let mut h = harness(cx);
+    h.connect();
+    h.select("s1", None);
+    h.link("x.cs", Some("Box")).await;
+    assert_eq!(h.shown(), ["That file is on Box."]);
+    h.select("s1", Some("Box"));
+    h.link("x.cs", None).await;
+    assert_eq!(
+        h.shown().last().map(String::as_str),
+        Some("That file is on this Mac.")
+    );
+    h.link("x.cs", Some("Other")).await;
+    assert_eq!(
+        h.shown().last().map(String::as_str),
+        Some("That file is on Other.")
+    );
+    assert!(h.opened().is_empty());
+    assert!(
+        h.owner.lock().unwrap().asked.is_empty(),
+        "the machine is checked before asking"
+    );
+}
+
 #[gpui::test]
 async fn a_path_outside_the_folder_opens_by_machine_and_path_comparing_whole_components(
     cx: &mut TestAppContext,

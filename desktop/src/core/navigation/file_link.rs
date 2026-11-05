@@ -47,24 +47,33 @@ pub(crate) fn names_its_own_place(path: &str) -> bool {
     Path::new(path).is_absolute() || path.starts_with('~')
 }
 
-/// Opens `path` from a link. `machine` is the route machine the link names, `None` for this machine; `from` is the
-/// session the link came with, if any.
+/// A line and column to open at.
+pub type Jump = (Option<u32>, Option<u32>);
+
+/// Opens `path` from a link, at `jump` when given. `machine` is the route machine the link names, `None` for this
+/// machine; `from` is the session the link came with, if any.
 pub fn open(
     path: String,
     machine: Option<String>,
     from: Option<(SessionKey, ExpectedRowSource)>,
+    jump: Jump,
     cx: &mut App,
 ) {
     if !names_its_own_place(&path) {
         let Some((key, source)) = from else {
             return show_notice("Select a session to open this file.".into(), cx);
         };
+        // A relative path is only in this session's checkout when the link is for the session's machine.
+        if machine != source.route_machine {
+            let on = machine.as_deref().unwrap_or("this Mac");
+            return show_notice(format!("That file is on {on}."), cx);
+        }
         return cx.dispatch_action(&OpenFile {
             session_id: key.id,
             path,
             expected_source: Some(source),
-            line: None,
-            column: None,
+            line: jump.0,
+            column: jump.1,
             pinned: true,
             outside: None,
         });
@@ -99,7 +108,8 @@ pub fn open(
             let inside_of = match hint {
                 Some(hint) => match hint.await {
                     Outcome::Ok(owner) => Some(owner.remote_session_id).filter(|id| !id.is_empty()),
-                    // A session with no folder to compare against can't hold the file: it opens outside.
+                    // A session with no folder to compare against can't hold the file, so it opens outside, which
+                    // means locked until Edit anyway: the safe default when the session can't say.
                     Outcome::Failed(_) => None,
                     Outcome::Aborted => return Outcome::Aborted,
                 },
@@ -131,7 +141,7 @@ pub fn open(
         if let Some(earlier) = earlier {
             earlier.await;
         }
-        cx.update(|cx| answered(answer, machine, from, at, cx))
+        cx.update(|cx| answered(answer, machine, from, at, jump, cx))
     });
     cx.default_global::<Asking>().last = Some(task);
 }
@@ -141,6 +151,7 @@ fn answered(
     machine: Option<String>,
     from: Option<(SessionKey, ExpectedRowSource)>,
     at: Selection,
+    jump: Jump,
     cx: &mut App,
 ) {
     let selected = SelectedSession::global(cx).read(cx);
@@ -164,19 +175,21 @@ fn answered(
             session_id: key.id,
             path: file,
             expected_source: Some(source),
-            line: None,
-            column: None,
+            line: jump.0,
+            column: jump.1,
             pinned: true,
             outside: None,
         },
         None => {
+            // An outside answer's `file` is a bare file name and its `checkoutRoot` the real absolute parent folder,
+            // which is "/" for a file at the top, so the join never doubles the slash.
             let real = format!("{}/{file}", owner.checkout_root.trim_end_matches('/'));
             OpenFile {
                 session_id: String::new(),
                 path: real.clone(),
                 expected_source: None,
-                line: None,
-                column: None,
+                line: jump.0,
+                column: jump.1,
                 pinned: true,
                 outside: Some(OutsideFile {
                     machine,

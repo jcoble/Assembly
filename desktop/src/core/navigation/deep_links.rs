@@ -19,7 +19,7 @@ pub fn handle_route(route: ExternalRoute, cx: &mut App) {
         ExternalRoute::File { path, machine } => {
             let selected = SelectedSession::global(cx).read(cx);
             let from = selected.key().cloned().zip(selected.source().cloned());
-            file_link::open(path, machine, from, cx)
+            file_link::open(path, machine, from, (None, None), cx)
         }
         ExternalRoute::NotionOAuth { state, claim_code } => {
             tasks_pane::receive_sign_in(state, claim_code, cx)
