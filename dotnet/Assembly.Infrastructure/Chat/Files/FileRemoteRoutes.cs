@@ -19,6 +19,7 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
         internal Action? EnsureCurrent;
         internal ExpectedSource? Source;
         internal volatile bool Closed;
+        internal RemoteMachine.OwnerConnectionBinding? Owner; // A target route's connection, fixed when it's made.
     }
     private readonly object gate = new();
     private readonly Dictionary<(string Connection, string Machine), Route> routes = [];
@@ -46,6 +47,8 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
         if (json.TryGetProperty("relayScope", out var relayed) && relayed.ValueKind != JsonValueKind.Null)
             return (false, default!); // An admitted remote scope executes only this server's existing local producer.
         if (HasTarget(json, out var targetMachine) && targetMachine is null) return (false, default!); // This machine's file.
+        // Checked here because the remote's bad_args on a forwarded owner call means an older remote.
+        if (targetMachine is not null) FilesFeature.RequireTargetAlone(Text(json, "session"), Text(json, "path"));
         var expected = json.TryGetProperty("expectedSource", out var asserted) && asserted.ValueKind != JsonValueKind.Null
             ? asserted.Deserialize(FilesJson.Default.ExpectedSource) : null;
         var expectedOwner = json.TryGetProperty("expectedOwner", out var ownerValue) && ownerValue.ValueKind != JsonValueKind.Null
@@ -66,11 +69,7 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
             machineOwner = await TargetOwner(targetMachine, call.Cancellation);
             if (expectedOwner is not null && expectedOwner.Machine != machineOwner.Engine)
                 throw new CallFailed("The file owner changed. Reopen the file.", "source_changed");
-            lock (gate)
-            {
-                var key = (call.Connection, "path:" + machineOwner.Engine);
-                if (!routes.TryGetValue(key, out route)) routes.Add(key, route = new Route());
-            }
+            route = TargetRoute((call.Connection, "path:" + machineOwner.Engine), machineOwner.Binding, call.Closed);
         }
         else if (json.TryGetProperty("session", out var session))
         {
@@ -139,7 +138,9 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
             try
             {
                 try { answer = await route.Channel.CallAsync(method, JsonSerializer.SerializeToElement(scoped, input), bulk, ct); }
-                catch (CallFailed failed) when (machineOwner is not null && method == "owner" && failed.Reason == "bad_args")
+                // An older build reads a target as a null session: it refuses that as bad arguments or, with the source
+                // this relay sends, as source_changed. A current remote captures no source for a target (plan ruling 3).
+                catch (CallFailed failed) when (machineOwner is not null && method == "owner" && failed.Reason is "bad_args" or "source_changed")
                 { throw Older(targetMachine!); }
                 if (machineOwner is not null && method == "owner" &&
                     (!answer.TryGetProperty("file", out var file) || file.ValueKind == JsonValueKind.Null)) throw Older(targetMachine!);
@@ -191,6 +192,24 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
             throw;
         }
         finally { route.Gate.Release(); }
+    }
+
+    /// <summary>The route for this connection's path targets on one engine. A route opened on an earlier connection to that
+    /// engine can't serve this one, so it's forgotten: a write already sent on it stays uncertain, and this call opens a new
+    /// one. A socket already closed gets no route, since its <see cref="Close"/> would never remove it.</summary>
+    private Route TargetRoute((string, string) key, RemoteMachine.OwnerConnectionBinding owner, CancellationToken closed)
+    {
+        Route? stale = null;
+        Route route;
+        lock (gate)
+        {
+            closed.ThrowIfCancellationRequested();
+            if (routes.TryGetValue(key, out var held) && ReferenceEquals(held.Owner, owner)) return held;
+            stale = held;
+            routes[key] = route = new Route { Owner = owner };
+        }
+        if (stale is not null) Forget(stale);
+        return route;
     }
 
     /// <summary>The connected owner of a saved machine named by a path target, or that machine's not-connected words.</summary>
@@ -267,6 +286,9 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
         }
         if (route.Channel is not null) CloseChannel(route);
     }
+
+    private static string? Text(JsonElement args, string name) =>
+        args.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     private static bool HasTarget(JsonElement args, out string? machine)
     {

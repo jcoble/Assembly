@@ -22,6 +22,13 @@ internal sealed partial class FilesFeature
         return (owner.CheckoutRoot, owner.File!);
     }
 
+    /// <summary>A target call names no session and no path: the target holds its file.</summary>
+    internal static void RequireTargetAlone(string? session, string? path)
+    {
+        if (session is not null) throw new CallBadArguments("A file call names a session or a target, one of them.");
+        if (path is not null) throw new CallBadArguments("A target names its own file; the call sends no path.");
+    }
+
     private static void RequireOneTarget(string? session, PathTarget? target)
     {
         if ((session is null) == (target is null)) throw new CallBadArguments("A file call names a session or a target, one of them.");

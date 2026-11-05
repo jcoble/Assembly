@@ -6,7 +6,10 @@ using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Common;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Infrastructure.Engine.Sessions;
+using Assembly.Tests.Draft.Base.Chat;
 using Assembly.Infrastructure.Chat.Files;
 using Assembly.Tests.Infrastructure.Remote;
 
@@ -27,6 +30,8 @@ public sealed class FileRemotePathTests : IAsyncLifetime
     private readonly ConcurrentDictionary<string, int> _remoteCalls = new();
     private FileOwner _macOwners = null!;
     private Func<FileOwnership>? _olderOwner;
+    private Func<string, Task>? _remoteWriting;
+    private readonly TaskCompletionSource _scopeClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _profileCommitted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _releaseProfile = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private IDisposable _beforeConnections = null!;
@@ -46,7 +51,8 @@ public sealed class FileRemotePathTests : IAsyncLifetime
         ICallRegistry? macCalls = null;
         _hosts.Mac.AdditionalFeatures = calls => macCalls = calls;
         _hosts.Remote.AdditionalFeatures = calls => new FilesFeature(_hosts.Remote.Sessions,
-            new FileOwner(_hosts.Remote.Sessions, _hosts.Remote.Fixture.Db), _remoteWork).Register(new RemoteFiles(calls, this));
+            new FileOwner(_hosts.Remote.Sessions, _hosts.Remote.Fixture.Db), _remoteWork, sources: new SessionRowSources(_hosts.Remote.Fixture.Db,
+                _hosts.Remote.Sessions, new MachineSet(new FakeMachine(null, _hosts.Remote.Sessions)))).Register(new RemoteFiles(calls, this));
         await _hosts.Start();
         await _hosts.StartMirror();
         _macOwners = new FileOwner(_hosts.Mac.Sessions, _hosts.Mac.Fixture.Db);
@@ -175,18 +181,119 @@ public sealed class FileRemotePathTests : IAsyncLifetime
         await update.WaitAsync(Wait);
     }
 
+    /// <summary>"source": what a build from before path targets really does (read at 46806060). It takes the target call as
+    /// a null session, and its source capture refuses that session with these words and this code.</summary>
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task An_older_remote_says_it_is_older(bool refuses)
+    [InlineData("source")]
+    [InlineData("bad_args")]
+    [InlineData("no_file")]
+    public async Task An_older_remote_says_it_is_older(string shape)
     {
-        _olderOwner = refuses
-            ? () => throw new CallBadArguments("files/owner: JSON deserialization for type 'ObserveRoot' was missing required properties: session.")
-            : () => new FileOwnership("remote-engine", "/", "", null);
+        _olderOwner = shape switch
+        {
+            "source" => () => throw new CallFailed("The selected row source changed.", "source_changed"),
+            "bad_args" => () => throw new CallBadArguments("files/owner: The JSON value could not be converted."),
+            _ => () => new FileOwnership("remote-engine", "/", "", null),
+        };
         using var normal = await OpenAsync();
         var answer = await CallAsync(normal, 1, "owner", $$$"""{"target":{"path":"{{{Target}}}","machine":"{{{Remote}}}"}}""");
         Assert.Equal("remote_older", Code(answer));
         Assert.Equal("workbox-test's Assembly is older and can't open files outside a session yet.", Message(answer));
+    }
+
+    [Theory]
+    [InlineData("\"session\":\"s\",")]
+    [InlineData("\"path\":\"a.txt\",")]
+    public async Task A_malformed_target_call_is_bad_arguments_and_is_never_forwarded(string extra)
+    {
+        using var normal = await OpenAsync();
+        using var bulk = await OpenAsync(bulk: true);
+        var target = $$$"""{{{extra}}}"target":{"path":"{{{Target}}}","machine":"{{{Remote}}}"}""";
+        if (!extra.Contains("path"))
+        {
+            var answer = await CallAsync(normal, 1, "owner", "{" + target + "}");
+            Assert.Equal("bad_args", Code(answer));
+            Assert.Equal(0, Calls("owner"));
+        }
+        var read = await CallAsync(bulk, 2, "read", "{" + target + "}");
+        Assert.Equal("bad_args", Code(read));
+        Assert.Equal(0, Calls("read"));
+    }
+
+    [Fact]
+    public async Task A_reconnect_to_the_same_engine_opens_a_new_route_and_the_next_call_works()
+    {
+        using var normal = await OpenAsync();
+        using var bulk = await OpenAsync(bulk: true);
+        var target = $$$"""{"path":"{{{Target}}}","machine":"{{{Remote}}}"}""";
+        Result(await CallAsync(normal, 1, "owner", $$"""{"target":{{target}}}"""));
+        Result(await CallAsync(bulk, 2, "read", $$"""{"target":{{target}}}"""));
+        var scopes = Calls("openScope");
+        await ReconnectAsync();
+        Assert.Equal("a.txt", Result(await CallAsync(normal, 3, "owner", $$"""{"target":{{target}}}""")).GetProperty("file").GetString());
+        Assert.Equal("old", Result(await CallAsync(bulk, 4, "read", $$"""{"target":{{target}}}""")).GetProperty("content").GetString());
+        Assert.True(Calls("openScope") > scopes);
+    }
+
+    [Fact]
+    public async Task A_write_sent_before_a_reconnect_stays_uncertain_and_the_next_call_works()
+    {
+        using var bulk = await OpenAsync(bulk: true);
+        var target = $$$"""{"path":"{{{Target}}}","machine":"{{{Remote}}}"}""";
+        var upload = await StagedAsync(bulk, target, "new");
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _remoteWriting = async method =>
+        {
+            if (method != "commitSave") return;
+            reached.TrySetResult();
+            await release.Task;
+        };
+        try
+        {
+            var commit = CallAsync(bulk, 8, "commitSave", $$"""{"upload":"{{upload}}"}""");
+            await reached.Task.WaitAsync(Wait);
+            await ReconnectAsync();
+            var answer = await commit;
+            Assert.Equal("uncertain", Code(answer));
+        }
+        finally { release.TrySetResult(); }
+        _remoteWriting = null;
+        Assert.NotEqual(JsonValueKind.Null, Result(await CallAsync(bulk, 9, "read", $$"""{"target":{{target}}}""")).GetProperty("revision").ValueKind);
+    }
+
+    [Fact]
+    public async Task Compare_by_path_target_is_forwarded_to_the_remote()
+    {
+        using var bulk = await OpenAsync(bulk: true);
+        var upload = await StagedAsync(bulk, $$$"""{"path":"{{{Target}}}","machine":"{{{Remote}}}"}""", "new");
+        var compared = Result(await CallAsync(bulk, 8, "compare", $$"""{"upload":"{{upload}}"}"""));
+        Assert.Equal(await FileSave.RevisionAsync(Target, default), compared.GetProperty("diskRevision").GetString());
+        Assert.Equal(1, Calls("compare"));
+    }
+
+    [Fact]
+    public async Task DropSave_by_path_target_ends_the_upload_on_the_remote()
+    {
+        using var bulk = await OpenAsync(bulk: true);
+        var upload = await StagedAsync(bulk, $$$"""{"path":"{{{Target}}}","machine":"{{{Remote}}}"}""", "new");
+        Assert.NotEmpty(Stages());
+        Assert.True(Result(await CallAsync(bulk, 8, "dropSave", $$"""{"upload":"{{upload}}"}""")).GetProperty("accepted").GetBoolean());
+        Assert.Equal(1, Calls("dropSave"));
+        Assert.Empty(Stages());
+        Assert.Equal("old", await File.ReadAllTextAsync(Target));
+    }
+
+    [Fact]
+    public async Task Closing_the_socket_closes_the_target_route_s_scope_on_the_remote()
+    {
+        var bulk = await OpenAsync(bulk: true);
+        await StagedAsync(bulk, $$$"""{"path":"{{{Target}}}","machine":"{{{Remote}}}"}""", "new");
+        Assert.NotEmpty(Stages());
+        await bulk.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        bulk.Dispose();
+        await _scopeClosed.Task.WaitAsync(Wait);
+        Assert.Empty(Stages());
     }
 
     [Fact]
@@ -197,6 +304,30 @@ public sealed class FileRemotePathTests : IAsyncLifetime
         Assert.Equal(_macOwners.ResolvePath(new PathTarget(Target), default).Machine, owner.GetProperty("machine").GetString());
         Assert.NotEqual(await RemoteEngine(), owner.GetProperty("machine").GetString());
         Assert.Equal(0, Calls("owner"));
+    }
+
+    private string[] Stages() => Directory.GetFiles(_folder.FullName, ".assembly-save-*");
+
+    /// <summary>A save on the remote that has its bytes and awaits its commit.</summary>
+    private async Task<string> StagedAsync(WebSocket bulk, string target, string text)
+    {
+        var begun = Result(await CallAsync(bulk, 6, "beginSave",
+            $$"""{"target":{{target}},"expectedRevision":"{{await FileSave.RevisionAsync(Target, default)}}","size":{{text.Length}}}"""));
+        var upload = begun.GetProperty("upload").GetString()!;
+        Result(await CallAsync(bulk, 7, "saveChunk",
+            $$"""{"upload":"{{upload}}","offset":0,"data":"{{Convert.ToBase64String(Encoding.UTF8.GetBytes(text))}}"}"""));
+        return upload;
+    }
+
+    /// <summary>Drops the remote's sockets; its machine connects again to the same engine, as a new owner connection.</summary>
+    private async Task ReconnectAsync()
+    {
+        var before = await _hosts.Connections.CaptureProjectOwnerAsync(Remote, default);
+        _hosts.Remote.BulkEndpoint.DropAll();
+        _hosts.Remote.Endpoint.DropAll();
+        _hosts.Remote.Commit(1);
+        await _hosts.Reached(_hosts.Remote.Through);
+        Assert.NotSame(before.Binding, (await _hosts.Connections.CaptureProjectOwnerAsync(Remote, default)).Binding);
     }
 
     private int Calls(string method) => _remoteCalls.GetValueOrDefault(method);
@@ -256,20 +387,23 @@ public sealed class FileRemotePathTests : IAsyncLifetime
     {
         public void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
             Func<TArgs, CallContext, Task<TResult>> handler, bool bulk = false) =>
-            inner.Read(feature, method, args, result, (value, call) =>
+            inner.Read(feature, method, args, result, async (value, call) =>
             {
                 test._remoteCalls.AddOrUpdate(method, 1, (_, count) => count + 1);
-                if (method == "owner" && test._olderOwner is { } older) return Task.FromResult((TResult)(object)older());
-                return handler(value, call);
+                if (method == "owner" && test._olderOwner is { } older) return (TResult)(object)older();
+                var answer = await handler(value, call);
+                if (method == "closeScope") test._scopeClosed.TrySetResult();
+                return answer;
             }, bulk);
 
         public void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
             Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null,
             Action<TArgs, CallContext>? failed = null, bool bulk = false) =>
-            inner.Write(feature, method, args, result, (value, call) =>
+            inner.Write(feature, method, args, result, async (value, call) =>
             {
                 test._remoteCalls.AddOrUpdate(method, 1, (_, count) => count + 1);
-                return handler(value, call);
+                if (test._remoteWriting is { } writing) await writing(method);
+                return await handler(value, call);
             }, order, failed, bulk);
 
         public void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Action<string, TValue, IWriteScope> save) => inner.Save(feature, value, save);
