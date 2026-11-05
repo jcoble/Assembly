@@ -89,6 +89,7 @@ internal sealed partial class FilesFeature
                     var forwarded = await owner.remoteRoutes.Invoke(method, value, args, result, admitted, bulk, write: true);
                     if (forwarded.Forwarded) { source?.Confirm(write: true); return _ => forwarded.Result; }
                 }
+                owner.RequireViewWritable(value, args, call);
                 using var bound = owner.Bind(value, args, admitted);
                 var apply = await handler(value, bound?.Context ?? admitted);
                 source?.Confirm(write: true);

@@ -18,6 +18,7 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
     internal static bool Supports(string? action) => action is "fetch" or "pull" or "push" or "publish" or "createPr" or "review" or "reply" or "comment" or "merge" or "draftCommitMessage" or "draftPr" or "draftReview";
     internal void RequireSession(string session)
     {
+        if (FolderView.IsView(session)) return;
         var actual = sessions.Get(session) ?? throw new CallFailed("unknown session");
         if (!string.IsNullOrEmpty(actual.Machine)) throw new CallFailed("This session is owned by another machine.");
     }

@@ -60,6 +60,7 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
             sessionId = session.GetString() ?? throw new CallBadArguments("A file session is required.");
             ownership = owners.Resolve(sessionId, call.Cancellation, expectedOwner);
             if (owners.IsLocal(ownership, call.Cancellation)) return (false, default!);
+            if (expected is null && FolderView.IsView(sessionId)) expected = owners.ViewSource(ownership.Machine, call.Cancellation);
             if (expected is null || expected.Machine != ownership.Machine || expected.Generation <= 0 ||
                 expected.RouteMachine is not { Length: > 0 })
                 throw new CallFailed("Reopen this file from its actual source before using remote files.", "source_changed");

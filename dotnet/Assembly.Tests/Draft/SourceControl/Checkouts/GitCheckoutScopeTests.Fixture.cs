@@ -7,6 +7,7 @@ using Assembly.Application.Common;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Git;
+using Assembly.Application.Common.Projects;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Infrastructure.Chat.SourceControl;
 using Assembly.Infrastructure.Git;
@@ -18,8 +19,14 @@ namespace Assembly.Tests.Draft.SourceControl;
 public sealed partial class GitCheckoutScopeTests
 {
     private static readonly JsonSerializerOptions Wire = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private sealed class StubProjects(Dictionary<string, (string Machine, string Root)> projects) : IProjectRoots
+    {
+        public ProjectRoot? Find(string id) => projects.TryGetValue(id, out var p) ? new(id, p.Machine, p.Root, false) : null;
+        public ProjectRoot? Find(IReadScope scope, string id) => Find(id);
+    }
     private sealed class Fixture : IAsyncDisposable
     {
+        internal readonly Dictionary<string, (string Machine, string Root)> Projects = [];
         internal readonly string Home = Directory.CreateTempSubdirectory("git-inspection-").FullName;
         internal string Root => Path.Combine(Home, "own");
         internal string Linked => Path.Combine(Home, "linked");
@@ -54,14 +61,14 @@ public sealed partial class GitCheckoutScopeTests
                 f.Hosts.Mac.AdditionalFeatures = calls => { local = calls; f.Dispatcher = (SocketDispatcher)calls; };
                 f.Hosts.Remote.AdditionalFeatures = calls =>
                 {
-                    var routes = new SourceControlFeature(f.Hosts.Remote.Sessions, f.Hosts.Remote.Fixture.Db, f._remoteOperations, null, null, f.Git);
+                    var routes = new SourceControlFeature(f.Hosts.Remote.Sessions, f.Hosts.Remote.Fixture.Db, f._remoteOperations, null, null, f.Git, new StubProjects([]));
                     routes.Register(new ReadRegistry(calls, f, oldOwner));
                     new SourceControlWrites(f.Hosts.Remote.Sessions, f.Git, new CheckoutWrites(), TimeProvider.System, routes).Register(calls);
                 };
                 await f.Hosts.Start(); await f.Hosts.StartMirror();
                 var localGit = remote ? f._desktopGit : f.Git;
                 var localRoutes = new SourceControlFeature(f.Hosts.Mac.Sessions, f.Hosts.Mac.Fixture.Db, f._localOperations, f.Hosts.Mac.Forwarder,
-                    f.Hosts.Connections, localGit);
+                    f.Hosts.Connections, localGit, new StubProjects(f.Projects));
                 localRoutes.Register(new ReadRegistry(local, f));
                 new SourceControlWrites(f.Hosts.Mac.Sessions, localGit, new CheckoutWrites(), TimeProvider.System, localRoutes).Register(local);
                 f.Session = f.Owner.Sessions.Create("fixture", "", workingFolder: f.Root).SessionId;

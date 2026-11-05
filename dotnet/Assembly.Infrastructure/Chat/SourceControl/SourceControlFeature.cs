@@ -1,8 +1,10 @@
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Git;
+using Assembly.Application.Common.Projects;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat.SourceControl;
+using Assembly.Infrastructure.Chat;
 using Assembly.Infrastructure.Git;
 using Assembly.Application.Common.Database;
 using Assembly.Infrastructure.Engine;
@@ -11,8 +13,10 @@ using Assembly.Infrastructure.Remote;
 namespace Assembly.Infrastructure.Chat.SourceControl;
 
 /// <summary>Reads a session's git status, file diffs and branch diff over the socket from its local folder.</summary>
-internal sealed partial class SourceControlFeature(SessionStore sessions, IAppDatabase db, GitOperations operations, MachineForward? forward, RemoteConnections? connections, IGit git) : IFeature
+internal sealed partial class SourceControlFeature(SessionStore sessions, IAppDatabase db, GitOperations operations, MachineForward? forward, RemoteConnections? connections, IGit git, IProjectRoots? projects = null) : IFeature
 {
+    private readonly FolderViews views = new(db, projects);
+
     public void Register(ICallRegistry calls)
     {
         calls = Route(calls);

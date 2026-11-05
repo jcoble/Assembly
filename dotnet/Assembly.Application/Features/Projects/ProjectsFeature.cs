@@ -21,6 +21,8 @@ internal sealed class ProjectsFeature(ProjectStore store, Func<string, IProjectF
             (a, c) => { var p = Live(a.ProjectId); return Folders(p.Machine).InspectAsync(p.RootPath, c.Cancellation); });
         calls.Read("projects", "refs", ProjectsJson.Default.ProjectRefsArgs, ProjectsJson.Default.RefPage,
             (a, c) => { var p = Live(a.ProjectId); return Folders(p.Machine).RefsAsync(p.RootPath, a.CheckoutPath, a.Filter, a.After, a.Limit, c.Cancellation); });
+        calls.Read("projects", "worktrees", ProjectsJson.Default.ProjectIdArgs, ProjectsJson.Default.FolderWorktrees,
+            async (a, c) => { var p = Live(a.ProjectId); return new FolderWorktrees(await Folders(p.Machine).WorktreesAsync(p.RootPath, c.Cancellation)); });
         calls.Write("projects", "add", ProjectsJson.Default.ProjectPathArgs, ProjectsJson.Default.ProjectAddResult, async (a, c) =>
         {
             var inspected = await Folders(a.Machine).InspectAsync(a.Path, c.Cancellation);

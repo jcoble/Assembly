@@ -41,6 +41,11 @@ internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, Check
             (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => git.InitAsync(root, call.Cancellation)), args => args.Session);
         calls.Write("git", "createBranch", GitWritesJson.Default.BranchArgs, GitWritesJson.Default.GitWriteResult,
             (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitBranches(cli).CreateAsync(root, args.Name, args.ExpectedHead, call.Cancellation)), args => args.Session);
+        // A session's branch is the Engine's to change; a viewed folder has no session to tell.
+        calls.Write("git", "switchBranch", GitWritesJson.Default.BranchArgs, GitWritesJson.Default.GitWriteResult,
+            (args, call) => FolderView.IsView(args.Session)
+                ? Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitBranches(cli).SwitchAsync(root, args.Name, call.Cancellation))
+                : throw new CallFailed("forbidden"), args => args.Session);
         calls.Write("git", "stash", GitWritesJson.Default.StashArgs, GitWritesJson.Default.GitWriteResult,
             (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitStashes(cli, time).StashAsync(root, args.Session, args.Message, args.IncludeUntracked, call.Cancellation)), args => args.Session);
         calls.Write("git", "applyStash", GitWritesJson.Default.StashShaArgs, GitWritesJson.Default.GitWriteResult,
@@ -64,7 +69,7 @@ internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, Check
     }
     internal static string RequireRoot(SessionStore sessions, string session, string? expectedRoot, bool required)
     {
-        if (sessions.Get(session) is not { Machine: null }) throw ChangedRoot();
+        if (!FolderView.IsView(session) && sessions.Get(session) is not { Machine: null }) throw ChangedRoot();
         var actual = Path.GetFullPath(SessionPaths.RootOf(sessions, session));
         if (expectedRoot is null)
         {

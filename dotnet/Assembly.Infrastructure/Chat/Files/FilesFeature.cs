@@ -1,4 +1,6 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Common;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Calls;
@@ -98,6 +100,13 @@ internal sealed partial class FilesFeature(SessionStore sessions, FileOwner owne
         }, order: args => "files:" + SessionPaths.ResolveFile(LocalRoot(args.Session, CancellationToken.None, args.ExpectedOwner), args.Path));
         calls.Closed(uploads.Close);
         calls.Closed(reads.Close);
+    }
+
+    private void RequireViewWritable<T>(T args, JsonTypeInfo<T> type, CallContext call)
+    {
+        var json = JsonSerializer.SerializeToElement(args, type);
+        if (json.TryGetProperty("session", out var session) && session.GetString() is { } id && FolderView.IsView(id))
+            owners.RequireViewWritable(id, call.Cancellation);
     }
 
     private string LocalRoot(string session, CancellationToken ct, FileOwnership? expected = null)
