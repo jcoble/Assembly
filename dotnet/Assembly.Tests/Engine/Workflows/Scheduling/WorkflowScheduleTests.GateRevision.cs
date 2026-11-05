@@ -4,6 +4,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.NeedsMe;
+using Assembly.Engine.Reading;
 using Assembly.Engine.Workflows.Definitions;
 using Assembly.Engine.Workflows.Runs;
 using Assembly.Infrastructure.Engine.Workflows;
@@ -105,6 +106,19 @@ public sealed partial class WorkflowScheduleTests
         Assert.NotEqual(need, reopened);
         var approved = Answer(f, reopened, "\"approve\""); Assert.True(approved.Applied, approved.Error);
         Assert.Equal("succeeded", f.Core.Text("SELECT state FROM engine_step WHERE id=$id", new SqlArg("$id", Gate(f))));
+    }
+
+    [Fact]
+    public void A_gate_asks_its_prompt_and_its_row_can_say_when_it_closed()
+    {
+        using var f = new Fixture(prompt: "Work", yaml: GatedFlow);
+        var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
+        var need = OpenGate(f);
+        Assert.Equal("Ship it?", f.Core.Text("SELECT text FROM engine_needs_me WHERE id=$id", new SqlArg("$id", need)));
+        Assert.Equal("Ship it?", f.Core.Text("SELECT json_extract(presentation_json,'$.title') FROM engine_needs_me WHERE id=$id", new SqlArg("$id", need)));
+        var row = new EngineReader(f.Core.Db, f.Core.Machine).Entity("needs_me", need, default)!.Value;
+        Assert.Equal(1500, row.GetProperty("createdMs").GetInt64());
+        Assert.Equal(1500, row.GetProperty("updatedMs").GetInt64());
     }
 
     private const string TwoGatesFlow = """

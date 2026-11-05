@@ -32,11 +32,11 @@ internal static class DisplayQueries
 
     internal static string Json(string kind)
     {
-        if (kind == "workflow_settings") return "json_object('entityKind','workflow_settings','id',t.id,'version',t.version,'mutedUntil',t.muted_until)";
+        if (kind == "workflow_settings") return "json_object('entityKind','workflow_settings','id',t.id,'version',t.version,'machine',t.machine,'mutedUntil',t.muted_until)";
         // Step 5 Task 1b permits structured permission/form answers only with their recorded presentation.
         // An arbitrary historical object has no display contract; never publish it as an answered body.
         if (kind == "needs_me") return """
-            json_object('entityKind','needs_me','id',t.id,'version',t.version,'machine',t.machine,
+            json_object('entityKind','needs_me','id',t.id,'version',t.version,'machine',t.machine,'createdMs',t.created_ms,'updatedMs',t.updated_ms,
                 'sessionId',t.session_id,'runId',t.run_id,'stepId',t.step_id,'addresseeSessionId',t.addressee_session_id,
                 'addresseeMachine',(SELECT s.machine FROM engine_session s WHERE s.id=t.addressee_session_id),
                 'chatRowId',t.chat_row_id,'kind',t.kind,'text',NULL,

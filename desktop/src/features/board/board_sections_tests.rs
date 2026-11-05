@@ -115,6 +115,7 @@ fn answered_row_stays_until_mouse_leaves_or_reopen() {
 
 #[test]
 fn header_text_counts() {
+    assert_eq!(heading(1), "1 needs you");
     assert_eq!(heading(3), "3 need you");
     assert_eq!(heading(0), "Nothing needs you");
     assert_eq!(summary((3, 1, 5)), "3 running · 1 waiting · 5 done today");
