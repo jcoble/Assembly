@@ -484,6 +484,35 @@ public sealed partial class SessionRailTests : IDisposable
         return id;
     }
 
+    // A lost or ended session's last turn stays "started" for good, and a running row redraws the window every second.
+    [Theory]
+    [InlineData(false, "lost")]
+    [InlineData(false, "ended")]
+    [InlineData(true, "lost")]
+    [InlineData(true, "ended")]
+    public void ASessionThatIsGoneIsNotRunningWhateverItsLastTurnSaid(bool remote, string state)
+    {
+        var session = Parent("codex", machine: remote ? "workbox-test" : null);
+        if (remote)
+            _database.Writer.Write("test.known-owner", scope => scope.Execute("""
+                INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
+                    activity_state,parent_id,holder,epoch,cancel_requested,account_context,managed_checkout)
+                SELECT s.session_id,0,m.machine,s.created_at,s.updated_at,s.agent,NULL,s.repo_url,COALESCE(s.title,''),'foreign',
+                    'idle',NULL,m.machine,0,0,'',0
+                FROM session_info s JOIN engine_mirror_row m ON m.entity_kind='session' AND m.entity_id=s.session_id
+                WHERE s.session_id=$id;
+                UPDATE engine_mirror_row AS m SET row_json=json_set(row_json,
+                    '$.provider',s.agent,'$.folder',s.repo_url,'$.updatedMs',s.updated_at)
+                FROM session_info s WHERE m.entity_kind='session' AND m.entity_id=s.session_id AND s.session_id=$id;
+                """, new Assembly.Application.Common.Database.SqlArg("$id", session)));
+        Running(session);
+        Assert.True(Entry(Read(), session).Running);
+        _database.Writer.Write("test.session-gone", scope => scope.Execute(remote
+            ? "UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.state',$state) WHERE entity_kind='session' AND entity_id=$id"
+            : "UPDATE engine_session SET state=$state WHERE id=$id", new("$state", state), new("$id", session)));
+        Assert.False(Entry(Read(), session).Running);
+    }
+
     private void Running(string session) => Rows(session, (null, RowKind.Turn, new { state = "started" }));
 
     private void Asking(string session)
