@@ -39,8 +39,10 @@ internal static class ToolSummary
     }
 
     /// <summary>
-    /// A relative path joined onto the call's own <c>workdir</c>, else its <c>cwd</c>, when that folder is absolute; a leading
-    /// <c>./</c> is dropped because a path with a <c>.</c> component can't be opened. Anything else is unchanged.
+    /// A relative path joined onto the call's own <c>workdir</c>, else its <c>cwd</c>, when that folder is absolute. The join
+    /// is folded lexically, since a path with a <c>.</c> or <c>..</c> component can't be opened: <c>/w/app</c> and
+    /// <c>../lib/a.rs</c> give <c>/w/lib/a.rs</c>. A join that would climb above <c>/</c> is no path at all. Anything else
+    /// is unchanged.
     /// </summary>
     public static string? InFolder(string? path, JsonElement? input)
     {
@@ -50,12 +52,27 @@ internal static class ToolSummary
         {
             if (!fields.TryGetProperty(key, out var value) || value.ValueKind != JsonValueKind.String || value.GetString() is not { Length: > 0 } folder)
                 continue;
-            if (!System.IO.Path.IsPathRooted(folder))
-                return path;
-            while (path.StartsWith("./", StringComparison.Ordinal))
-                path = path[2..];
-            return System.IO.Path.Join(folder, path);
+            return System.IO.Path.IsPathRooted(folder) ? Folded(folder + '/' + path) : path;
         }
         return path;
+    }
+
+    /// <summary>An absolute path with its <c>.</c> parts dropped and each <c>..</c> taking off the part before it, or null
+    /// when a <c>..</c> has nothing left to take off.</summary>
+    private static string? Folded(string path)
+    {
+        var parts = new List<string>();
+        foreach (var part in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (part == ".")
+                continue;
+            if (part != "..")
+                parts.Add(part);
+            else if (parts.Count == 0)
+                return null;
+            else
+                parts.RemoveAt(parts.Count - 1);
+        }
+        return "/" + string.Join('/', parts);
     }
 }

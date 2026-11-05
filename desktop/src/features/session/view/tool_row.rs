@@ -10,7 +10,7 @@ use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use crate::core::intents::open_file::OpenFile;
 use crate::core::socket::row_source::ExpectedRowSource;
@@ -91,7 +91,8 @@ pub fn line_summary(tool: &ToolPayload) -> Option<String> {
 }
 
 /// The file a tool line's summary names, which opens as a link: a file call's summary that is its path, or the path as
-/// the call gave it before the backend joined it onto the call's folder. A folder or a search pattern isn't one.
+/// the call gave it before the backend joined it onto the call's folder and folded its `.` and `..` parts. A folder or a
+/// search pattern isn't one, nor a path that still holds a `.` or `..` part, which can't open.
 pub fn shown_path(tool: &ToolPayload) -> Option<&str> {
     let path = tool.path.as_deref()?;
     let summary = tool
@@ -102,7 +103,26 @@ pub fn shown_path(tool: &ToolPayload) -> Option<&str> {
         tool.kind.as_deref(),
         Some("read" | "edit" | "delete" | "move")
     );
-    (file_kind && (summary == path || Path::new(path).ends_with(summary))).then_some(path)
+    let plain = Path::new(path)
+        .components()
+        .all(|part| !matches!(part, Component::CurDir | Component::ParentDir));
+    let joined = !Path::new(summary).has_root() && ends_in(path, summary);
+    (file_kind && plain && (summary == path || joined)).then_some(path)
+}
+
+/// Whether `path` ends in the relative `summary` once that's folded as the backend folds a join: `.` dropped, each
+/// `..` taking off the part before it, and a `..` with nothing before it dropped, since it climbed into the call's
+/// folder. `../lib/./a.rs` is folded to `lib/a.rs`.
+fn ends_in(path: &str, summary: &str) -> bool {
+    let mut parts: Vec<&std::ffi::OsStr> = Vec::new();
+    for part in Path::new(summary).components() {
+        match part {
+            Component::Normal(name) => parts.push(name),
+            Component::ParentDir => _ = parts.pop(),
+            _ => {}
+        }
+    }
+    !parts.is_empty() && Path::new(path).ends_with(parts.iter().collect::<PathBuf>())
 }
 
 /// A run that failed (not one the user denied, which didn't run): its line reads "Failed to run" and it opens to its

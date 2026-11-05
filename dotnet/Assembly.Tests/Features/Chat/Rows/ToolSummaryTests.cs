@@ -47,13 +47,27 @@ public sealed class ToolSummaryTests
     }
 
     [Fact]
-    public void A_leading_dot_slash_is_dropped_when_joining_and_dot_dot_is_left_alone()
+    public void A_joined_path_drops_its_dot_parts_and_folds_its_dot_dot_parts()
     {
         Assert.Equal("/repo/src/a.rs", ToolSummary.Path(Input("""{"file_path":"./src/a.rs","workdir":"/repo"}""")));
         Assert.Equal("/repo/src/a.rs", ToolSummary.Path(Input("""{"file_path":"././src/a.rs","workdir":"/repo"}""")));
-        Assert.Equal("/repo/../a.rs", ToolSummary.Path(Input("""{"file_path":"../a.rs","workdir":"/repo"}""")));
+        Assert.Equal("/w/lib/a.rs", ToolSummary.Path(Input("""{"file_path":"../lib/a.rs","workdir":"/w/app"}""")));
+        Assert.Equal("/w/lib/a.rs", ToolSummary.Path(Input("""{"file_path":"src/../../lib/./a.rs","workdir":"/w/app/"}""")));
+        Assert.Equal("/a.rs", ToolSummary.Path(Input("""{"file_path":"../a.rs","workdir":"/repo"}""")));
         Assert.Equal("./src/a.rs", ToolSummary.Path(Input("""{"file_path":"./src/a.rs"}""")));
     }
+
+    [Fact]
+    public void A_joined_path_that_would_climb_above_the_top_folder_is_no_path()
+    {
+        Assert.Null(ToolSummary.Path(Input("""{"file_path":"../../a.rs","workdir":"/repo"}""")));
+        Assert.Null(ToolSummary.Path(Input("""{"file_path":"../a.rs","workdir":"/"}""")));
+        Assert.Null(LinePath(new ToolCallFields(Input: Input("""{"workdir":"/repo"}"""), Paths: ["../../b.rs"])));
+    }
+
+    [Fact]
+    public void An_absolute_path_keeps_its_dot_dot_parts_since_only_the_join_is_folded()
+        => Assert.Equal("/repo/../a.rs", ToolSummary.Path(Input("""{"file_path":"/repo/../a.rs","workdir":"/w"}""")));
 
     [Fact]
     public void A_relative_folder_leaves_the_path_unchanged()

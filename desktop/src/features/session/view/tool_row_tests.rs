@@ -252,6 +252,41 @@ fn a_tool_row_path_is_a_file_link_for_its_session(cx: &mut gpui::TestAppContext)
     });
 }
 
+// Brief item 2: the backend folds a joined `..`, so `../lib/a.rs` run in /w/app comes as /w/lib/a.rs with its summary
+// as the call gave it, and that's a link to the folded path. A path still holding `.` or `..` (an older backend's join)
+// never is one, and a call whose join would climb above `/` comes with no path and draws no link.
+#[gpui::test]
+fn a_joined_path_that_climbed_out_of_its_folder_links_to_the_folded_path(
+    cx: &mut gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        for summary in ["../lib/a.rs", "./../lib/./a.rs", "../app/../lib/a.rs"] {
+            let row = read_row("/w/lib/a.rs", summary, Some("S"));
+            let action = opens(&row, cx).expect("the folded path is a link");
+            assert!(action.partial_eq(&opening("S", "/w/lib/a.rs")), "{summary}");
+        }
+        let unfolded = read_row("/w/app/../lib/a.rs", "../lib/a.rs", Some("S"));
+        assert!(
+            opens(&unfolded, cx).is_none(),
+            "an unfolded join is no link"
+        );
+        let climbed = super::ToolRow {
+            tool: serde_json::from_value(json!({
+                "name": "Tool", "state": "completed", "hasDetail": true, "kind": "read",
+                "summary": "../../a.rs",
+            }))
+            .unwrap(),
+            ..read_row("/x", "/x", Some("S"))
+        };
+        assert!(opens(&climbed, cx).is_none(), "no path, no link");
+        assert_eq!(
+            climbed.line(None, cx).summary.as_deref(),
+            Some("../../a.rs")
+        );
+    });
+}
+
 #[gpui::test]
 fn a_folder_or_a_search_pattern_is_not_a_file_link(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
