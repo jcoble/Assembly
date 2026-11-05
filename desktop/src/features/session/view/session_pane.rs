@@ -43,6 +43,8 @@ pub struct SessionPane {
     open_serial: u64,
     pending_open: Option<opening::PendingOpen>,
     active_open_serial: Option<u64>,
+    /// The machine behind this session stopped answering; it opens again when the machine does.
+    source_lost: bool,
     active_reopen: Option<(
         crate::core::intents::session_open::SessionOpenRequest,
         AnyWindowHandle,
@@ -190,7 +192,7 @@ impl SessionPane {
     /// timeline measures only that one again.
     fn on_rows(&mut self, event: RowUpdate, cx: &mut Context<Self>) {
         match event {
-            RowUpdate::Refused { code: _, message } => {
+            RowUpdate::Refused { code, message } => {
                 self.composer
                     .update(cx, |composer, cx| composer.invalidate_source(cx));
                 self._page = None;
@@ -198,10 +200,17 @@ impl SessionPane {
                 self.held = None;
                 self._loads.clear();
                 self.loading = false;
-                self.status = message.into();
+                if code == "source_changed" && self.is_remote() {
+                    self.source_lost = true;
+                    self.status = SharedString::default();
+                    self.tell_offline(cx);
+                } else {
+                    self.status = message.into();
+                }
                 cx.notify();
             }
             RowUpdate::Jump { seq } => {
+                self.source_lost = false;
                 if !self.read_only {
                     self.composer
                         .update(cx, |composer, cx| composer.recover_pending(cx));

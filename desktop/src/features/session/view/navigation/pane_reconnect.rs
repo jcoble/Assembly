@@ -29,6 +29,23 @@ impl SessionPane {
             cx.notify();
             return;
         }
+        self.queue_reopen(active, cx);
+    }
+
+    /// The session's machine is answering again after it took the session's source with it.
+    pub(in crate::features::session::view) fn reopen_lost_source(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(active) = self.active_open_serial
+            && self.pending_open.is_none()
+            && self.reopen_queued.is_none()
+        {
+            self.queue_reopen(active, cx);
+        }
+    }
+
+    fn queue_reopen(&mut self, active: u64, cx: &mut Context<Self>) {
         let Some((mut request, window)) = self.active_reopen.clone() else {
             return;
         };

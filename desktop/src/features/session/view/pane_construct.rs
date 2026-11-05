@@ -90,6 +90,7 @@ impl SessionPane {
             pending_open: None,
             active_open_serial: None,
             active_reopen: None,
+            source_lost: false,
             reopen_queued: None,
             read_only: false,
             active_provider: None,

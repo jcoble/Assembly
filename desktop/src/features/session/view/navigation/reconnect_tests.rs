@@ -1,6 +1,8 @@
 //! Actual navigator recovery uses descriptor/page/workspace completion, never a connection-ready flag.
 use super::test_navigation::{NavigationFixture, NavigationHost};
+use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::state::selected_session::SelectedSession;
+use crate::features::session::client::session_client::RowUpdate;
 use gpui::TestAppContext;
 #[gpui::test]
 async fn same_owner_reconnect_reprepares_before_config_or_warm_and_newer_selection_wins(
@@ -130,4 +132,51 @@ async fn replacement_engine_cannot_retarget_the_visible_session_or_restart_confi
             "owner"
         );
     });
+}
+#[gpui::test]
+async fn a_remote_machine_going_away_is_no_error_and_its_session_reopens_when_it_answers(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    cx.update(gpui_kit::init);
+    cx.update(SelectedSession::init);
+    let (host, cx) = cx.add_window_view(|_, _| NavigationHost::default());
+    let mut nav = cx.update(|window, cx| NavigationFixture::new(false, window, cx));
+    nav.operational();
+    host.update(cx, |host, cx| {
+        host.pane = Some(nav.pane.clone());
+        cx.notify();
+    });
+    nav.ready(cx).await;
+    nav.request_engine("a", cx).await;
+    nav.calls_at_least("warm", 1).await;
+    cx.run_until_parked();
+    let lost = || RowUpdate::Refused {
+        code: "source_changed".into(),
+        message: "The selected row source changed.".into(),
+    };
+    nav.pane.update(cx, |pane, cx| pane.on_rows(lost(), cx));
+    nav.pane.read_with(cx, |pane, _| {
+        assert_eq!(
+            pane.status.as_ref(),
+            "The selected row source changed.",
+            "this machine's own source changing is still reported"
+        );
+    });
+    let targets = nav
+        .calls()
+        .iter()
+        .filter(|call| call["method"] == "open_target")
+        .count();
+    nav.pane.update(cx, |pane, cx| {
+        pane.row_source = Some(ExpectedRowSource {
+            machine: "owner".into(),
+            generation: 3,
+            route_machine: Some("lane".into()),
+        });
+        pane.status = Default::default();
+        pane.on_rows(lost(), cx);
+        assert_eq!(pane.status.as_ref(), "", "a machine going away is no error");
+    });
+    nav.calls_at_least("open_target", targets + 1).await;
 }
