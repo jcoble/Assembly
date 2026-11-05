@@ -94,12 +94,15 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
             var unpacked = Path.Combine(stage, "new");
             Directory.CreateDirectory(unpacked);
             var archive = Path.Combine(stage, "app.tar.gz");
-            await feed.DownloadAppAsync(release, archive, ct, done => updateProgress?.Download(UpdateProgress.ThisMachine, "app", done, release.Bytes));
+            await feed.DownloadAppAsync(release, archive, ct, done => updateProgress?.Download(UpdateProgress.ThisMachine, "app", done, release.Bytes), Timed);
             progress($"Checking Assembly {version}…");
+            var unpacking = Stopwatch.GetTimestamp();
             await UnpackAsync(archive, unpacked, ct);
             File.Delete(archive);
             var fresh = Path.Combine(unpacked, Bundle);
-            _staged = new(version, stage, fresh, Inspect(fresh, version));
+            var program = Inspect(fresh, version);
+            Timed("unpack", unpacking);
+            _staged = new(version, stage, fresh, program);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -125,7 +128,9 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
             while (true)
             {
                 progress(WaitingWords);
+                var waiting = Stopwatch.GetTimestamp();
                 await idle(ct);
+                Timed("wait for idle", waiting);
                 // The window is already quitting, and installs it.
                 if (Interlocked.CompareExchange(ref _handedOver, 1, 0) != 0) return;
                 var callOff = await HandOverAsync(staged, null, ct);
@@ -196,8 +201,13 @@ internal sealed partial class AppUpdate(AppLocation location, RemoteReleaseFeed 
         var planFile = Path.Combine(staged.Stage, "plan.json");
         var plan = AppSwapPlan.For(location, staged.Fresh, staged.Program, staged.Stage, staged.Version, copy, windowPid()) with { Check = check };
         await File.WriteAllBytesAsync(planFile, JsonSerializer.SerializeToUtf8Bytes(plan, AppSwapJson.Default.AppSwapPlan), ct);
-        return await startHelper(Path.Combine(staged.Fresh, BackendFolder, BackendName), planFile, ct);
+        var starting = Stopwatch.GetTimestamp();
+        var callOff = await startHelper(Path.Combine(staged.Fresh, BackendFolder, BackendName), planFile, ct);
+        Timed("helper start", starting);
+        return callOff;
     }
+
+    private void Timed(string stage, long since) => UpdateTiming.Note(location.Folder, stage, since);
 
     // A signed older archive must not pass as this version: that would be a downgrade.
     private static string Inspect(string app, string version)

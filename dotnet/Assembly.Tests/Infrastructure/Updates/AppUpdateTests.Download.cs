@@ -102,4 +102,19 @@ public sealed partial class AppUpdateTests
         var plan = AppSwapPlan.For(new(App, home, Path.Combine(home, "assembly.db"), "1.0.0"), "fresh", "program", "stage", "2.0.0", "backup", Environment.ProcessId);
         Assert.Equal(TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(plan.AcknowledgeSeconds));
     }
+
+    internal static string[] TimedStages(string folder) => [.. File.ReadAllLines(Path.Combine(folder, UpdateTiming.LogName))
+        .Select(line => System.Text.RegularExpressions.Regex.Match(line, @"update timing: (.+) \d+ ms$"))
+        .Select(match => match.Success ? match.Groups[1].Value : "unreadable line")];
+
+    [Fact]
+    public async Task Each_stage_up_to_the_quit_is_timed_in_the_update_log()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var update = Update(Feed(Package("2.0.0")));
+        await update.StageAsync("2.0.0", _ => { }, default);
+        await update.RestartAsync(_ => { }, default);
+
+        Assert.Equal(["download", "verify", "unpack", "wait for idle", "helper start"], TimedStages(Path.Combine(_root, "home/app-update")));
+    }
 }

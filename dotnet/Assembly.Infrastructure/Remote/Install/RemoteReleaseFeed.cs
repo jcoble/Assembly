@@ -93,9 +93,10 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
     }
 
     /// <summary>Downloads the app's archive to a file and checks it against the pinned key.</summary>
-    internal async Task DownloadAppAsync(AppRelease app, string file, CancellationToken ct, Action<long>? received = null)
+    internal async Task DownloadAppAsync(AppRelease app, string file, CancellationToken ct, Action<long>? received = null, Action<string, long>? timed = null)
     {
         ReleaseDigest digest;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, app.ArchiveUrl);
@@ -121,7 +122,10 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
         }
         catch (HttpRequestException error) { throw Failure($"Could not download Assembly {app.Version}: {error.Message}", "release_unavailable"); }
         if (new FileInfo(file).Length != app.Bytes) throw Failure($"The download of Assembly {app.Version} was incomplete.", "release_invalid");
+        timed?.Invoke("download", started);
+        var verifying = System.Diagnostics.Stopwatch.GetTimestamp();
         RemoteReleaseTrust.Verify(digest, Encoding.UTF8.GetBytes(app.Signature), publicKey);
+        timed?.Invoke("verify", verifying);
     }
 
     /// <summary>The newest signed adapters for one platform, for this machine's own install.</summary>

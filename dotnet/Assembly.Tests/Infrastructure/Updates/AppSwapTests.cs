@@ -87,6 +87,18 @@ public sealed class AppSwapTests : IDisposable
     }
 
     [Fact]
+    public async Task The_helper_times_each_of_its_stages_in_the_update_log()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var (plan, window, backend) = Prepared(Acknowledges);
+        End(window); End(backend);
+
+        Assert.Equal(0, await AppSwap.RunAsync(plan).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        Assert.Equal(["old app quit", "backup", "swap", "first start"], AppUpdateTests.TimedStages(Folder));
+    }
+
+    [Fact]
     public async Task It_waits_for_exactly_the_old_app_then_swaps_and_finishes_once_the_new_one_answers()
     {
         if (!OperatingSystem.IsLinux()) return;

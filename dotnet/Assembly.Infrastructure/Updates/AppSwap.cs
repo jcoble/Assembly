@@ -84,10 +84,12 @@ internal static partial class AppSwap
     private static async Task<int> InstallAsync(AppSwapPlan plan)
     {
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(plan.QuitSeconds));
+        var quitting = Stopwatch.GetTimestamp();
         try
         {
             await ExitOf(plan.WindowPid, plan.WindowStart, limit.Token);
             await ExitOf(plan.BackendPid, plan.BackendStart, limit.Token);
+            UpdateTiming.Note(plan.Folder, "old app quit", quitting);
         }
         catch (OperationCanceledException)
         {
@@ -116,8 +118,12 @@ internal static partial class AppSwap
         listener.Listen(1);
         try
         {
+            var copying = Stopwatch.GetTimestamp();
             CopyDatabase(plan);
+            UpdateTiming.Note(plan.Folder, "backup", copying);
+            var swapping = Stopwatch.GetTimestamp();
             Exchange(plan.Fresh, plan.App);
+            UpdateTiming.Note(plan.Folder, "swap", swapping);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -133,8 +139,11 @@ internal static partial class AppSwap
         {
             // A window's backend takes the home itself, so it's free from here until this has to go back.
             if (plan.Check is null) await home.DisposeAsync();
+            var starting = Stopwatch.GetTimestamp();
             child = plan.Check is null ? Launch(plan) : Check(plan);
-            if (plan.Check is null ? await AcknowledgedAsync(listener, child, plan) : await CheckedAsync(child, plan))
+            var started = plan.Check is null ? await AcknowledgedAsync(listener, child, plan) : await CheckedAsync(child, plan);
+            UpdateTiming.Note(plan.Folder, plan.Check is null ? "first start" : "check start", starting);
+            if (started)
             {
                 File.Delete(address);
                 if (plan.Check is null) Remove(plan.Stage);
@@ -194,8 +203,10 @@ internal static partial class AppSwap
             if (File.Exists(mark))
             {
                 using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(plan.AcknowledgeSeconds));
+                var waiting = Stopwatch.GetTimestamp();
                 try { await await Task.WhenAny(HearAsync(listener, plan.Version, limit.Token), ExitOf(plan.BackendPid, plan.BackendStart, limit.Token)); }
                 catch (OperationCanceledException) { }
+                UpdateTiming.Note(plan.Folder, "next launch's first start", waiting);
             }
         }
         File.Delete(address);
