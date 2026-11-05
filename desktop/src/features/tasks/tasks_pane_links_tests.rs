@@ -266,3 +266,19 @@ fn the_tab_comes_forward_only_when_it_opens_a_task(cx: &mut TestAppContext) {
     assert_eq!(opened_task(&pane, cx).as_deref(), Some(ID));
     assert!(open(cx), "a task brings the tab forward");
 }
+
+// Review fix 9: a Notion page that turns out not to be a task opens in the browser and leaves the tab where it was.
+#[gpui::test]
+async fn a_notion_page_that_is_no_task_leaves_the_tab_where_it_was(cx: &mut TestAppContext) {
+    let (_backend, asked) = backend(cx, Settings::Held);
+    let (pane, dock, cx) = docked(cx);
+    cx.update(|_, cx| pane.update(cx, |pane, cx| pane.settings_pushed(settings(true), cx)));
+    let url = format!("https://www.notion.so/Plan-{HEX}");
+    follow(&url, cx);
+    round_trip("ping", cx).await;
+    round_trip("ping", cx).await;
+    assert_eq!(asked.lock().unwrap().len(), 1, "the page was read");
+    assert_eq!(cx.opened_url().as_deref(), Some(url.as_str()));
+    let open = cx.read(|cx| dock.read(cx).is_dock_open(DockPlacement::Right));
+    assert!(!open, "the drawer stays shut");
+}

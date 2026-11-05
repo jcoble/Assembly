@@ -39,7 +39,10 @@ impl TasksPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        Self::show(window, cx);
+        // A page that may not be a task comes forward only once its read shows it is one.
+        if fallback.is_none() {
+            Self::show(window, cx);
+        }
         let seed = self.seed(&source);
         let token = self.state.select(source.clone());
         self.page_fallback = fallback;
@@ -117,7 +120,9 @@ impl TasksPane {
                 if !self.state.detail_result(token, detail.clone()) {
                     return;
                 }
-                self.page_fallback = None;
+                if self.page_fallback.take().is_some() {
+                    Self::show(window, cx);
+                }
                 if let Some(view) = &self.detail {
                     view.update(cx, |view, cx| view.detail_arrived(&detail, window, cx));
                 }

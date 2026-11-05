@@ -329,3 +329,28 @@ async fn with_a_session_a_link_to_its_own_repository_opens_through_the_session(
     assert_eq!(read["session"], "s1");
     assert_eq!(read["number"], 9);
 }
+
+// Review fix 7: with the tab set to one project, a link to another project's repository moves the tab to that project
+// and opens there, as the old `openLink` found the project by repository whatever the tab showed.
+#[gpui::test]
+async fn with_the_tab_on_a_project_a_link_to_another_project_moves_there(cx: &mut TestAppContext) {
+    let other = json!({
+        "id":FAR,"machine":"far","rootPath":"/far/b","title":"b","repoKey":"github.com/a/b","createdAt":1,
+    });
+    let mut fake = fake(cx, json!([holder(LANE, "lane"), other]), Source::Answers);
+    let window = cx.add_empty_window();
+    let pane = pane_with_projects(&mut fake, window).await;
+    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_project(Some(LANE.into()), cx)));
+    follow(&pane, "a/b", 3, window);
+    until("the read", &mut fake.changes, &fake.changed, || {
+        window.run_until_parked();
+        !calls(&fake.seen, "pr").is_empty()
+    })
+    .await;
+    assert_eq!(calls(&fake.seen, "pr")[0]["projectId"], FAR);
+    window.update(|_, cx| {
+        let pane = pane.read(cx);
+        assert_eq!(pane.project.as_deref(), Some(FAR));
+        assert_eq!(pane.failure, None);
+    });
+}

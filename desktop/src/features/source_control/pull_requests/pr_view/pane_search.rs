@@ -17,7 +17,10 @@ impl PrPane {
             return self.select_pr(Some(target.repository), target.number, cx);
         }
         match target.clone().among(&self.project_repositories(cx)) {
-            Some(found) => self.select_in_project(found.repository, found.number, cx),
+            Some(found) => {
+                self.follow_to_holder(&found.repository, cx);
+                self.select_in_project(found.repository, found.number, cx)
+            }
             None => {
                 self.missing_link = Some((
                     format!(
@@ -28,6 +31,23 @@ impl PrPane {
                 ));
             }
         }
+    }
+    /// A tab set to a project that doesn't hold `repository` moves to the one that does, or to all local projects when
+    /// several do, so the project that answers is the link's, whatever the tab showed.
+    fn follow_to_holder(&mut self, repository: &str, cx: &mut Context<Self>) {
+        let Some(chosen) = self.project.clone() else {
+            return;
+        };
+        let Some(projects) = &self.projects else {
+            return;
+        };
+        let rows = projects.read(cx).rows();
+        if holders(rows, Some(&chosen), Some(repository), false).is_ok() {
+            return;
+        }
+        let mut holding = holders(rows, None, Some(repository), false).unwrap_or_default();
+        let next = (holding.len() == 1).then(|| holding.remove(0).id);
+        self.select_project(next, cx);
     }
     fn project_repositories(&self, cx: &App) -> Vec<String> {
         let Some(projects) = &self.projects else {
