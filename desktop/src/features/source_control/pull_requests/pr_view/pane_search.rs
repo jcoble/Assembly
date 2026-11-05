@@ -2,16 +2,22 @@
 use super::*;
 
 impl PrPane {
-    /// A pull request named by a link, pasted here or followed from anywhere. A session's link is checked against the
-    /// backend's actual origin before any detail is displayed; otherwise the repository must be a project here, or the
-    /// tab says so and offers the page on GitHub.
+    /// A pull request named by a link, pasted here or followed from anywhere, as the old `openLink` did. A link to the
+    /// followed session's own repository (its list shows it) opens through the session, checked against the backend's
+    /// actual origin. Any other opens through the project holding its repository, or the tab says no project does and
+    /// offers the page on GitHub.
     pub(super) fn open_linked(&mut self, target: PrTarget, cx: &mut Context<Self>) {
         self.missing_link = None;
-        if self.session.is_some() {
+        let listed = self.queue.read(cx).page.items.iter();
+        let sessions = self.session.is_some()
+            && listed
+                .map(|pr| &pr.repository)
+                .any(|repository| repository.eq_ignore_ascii_case(&target.repository));
+        if sessions {
             return self.select_pr(Some(target.repository), target.number, cx);
         }
-        match target.clone().among(&self.known_repositories(cx)) {
-            Some(target) => self.select_pr(Some(target.repository), target.number, cx),
+        match target.clone().among(&self.project_repositories(cx)) {
+            Some(found) => self.select_in_project(found.repository, found.number, cx),
             None => {
                 self.missing_link = Some((
                     format!(
@@ -23,18 +29,15 @@ impl PrPane {
             }
         }
     }
-    fn known_repositories(&self, cx: &App) -> Vec<String> {
-        let mut known = self.scope.clone();
-        let listed = self.queue.read(cx).page.items.iter();
-        known.extend(listed.map(|pr| pr.repository.clone()));
-        if let Some(projects) = &self.projects {
-            let rows = projects.read(cx).rows();
-            known.extend(
-                rows.iter()
-                    .filter_map(|project| project.github_repository().map(String::from)),
-            );
-        }
-        known
+    fn project_repositories(&self, cx: &App) -> Vec<String> {
+        let Some(projects) = &self.projects else {
+            return Vec::new();
+        };
+        let rows = projects.read(cx).rows();
+        rows.iter()
+            .filter(|project| project.removed_at.is_none())
+            .filter_map(|project| project.github_repository().map(String::from))
+            .collect()
     }
     /// Typing searches after a short pause; a link waits for Enter.
     pub(super) fn search_after_pause(&mut self, text: String, cx: &mut Context<Self>) {

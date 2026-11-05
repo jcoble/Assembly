@@ -242,3 +242,90 @@ async fn a_followed_link_to_a_project_s_repository_opens_it_whatever_its_case(
     assert_eq!(calls(&fake.seen, "pr")[0]["projectId"], LANE);
     window.update(|_, cx| assert_eq!(pane.read(cx).missing_link, None));
 }
+
+/// A tab following session "s1", whose list shows o/r, with o/r and a/b each held by a project.
+async fn following_s1(
+    cx: &mut TestAppContext,
+) -> (Fake, &mut gpui::VisualTestContext, gpui::Entity<PrPane>) {
+    let other = json!({
+        "id":FAR,"machine":"far","rootPath":"/far/b","title":"b","repoKey":"github.com/a/b","createdAt":1,
+    });
+    let mut fake = fake(cx, json!([holder(LANE, "lane"), other]), Source::Answers);
+    let window = cx.add_empty_window();
+    let pane = pane_following(Some("s1"), &mut fake, window).await;
+    window.update(|_, cx| {
+        let listed =
+            crate::features::source_control::pull_requests::pull_request::PullRequestSummary {
+                repository: "o/r".into(),
+                number: 7,
+                ..Default::default()
+            };
+        let queue = pane.read(cx).queue.clone();
+        queue.update(cx, |queue, _| queue.page.items = vec![listed]);
+    });
+    (fake, window, pane)
+}
+
+fn follow(
+    pane: &gpui::Entity<PrPane>,
+    repo: &str,
+    number: u64,
+    window: &mut gpui::VisualTestContext,
+) {
+    let intent = OpenPullRequests {
+        session_id: None,
+        repo: Some(repo.into()),
+        number: Some(number),
+    };
+    window.update(|_, cx| pane.update(cx, |pane, cx| pane.apply_intent(intent, cx)));
+}
+
+// Review fix 1: with a session followed, a link to another project's repository opens through that project, not the
+// session, as the old `openLink` did.
+#[gpui::test]
+async fn with_a_session_a_link_to_another_project_opens_through_that_project(
+    cx: &mut TestAppContext,
+) {
+    let (mut fake, window, pane) = following_s1(cx).await;
+    follow(&pane, "A/B", 3, window);
+    until("the read", &mut fake.changes, &fake.changed, || {
+        window.run_until_parked();
+        !calls(&fake.seen, "pr").is_empty()
+    })
+    .await;
+    let read = calls(&fake.seen, "pr").remove(0);
+    assert_eq!(read["projectId"], FAR);
+    assert_eq!(read["session"], Value::Null);
+    window.update(|_, cx| assert_eq!(pane.read(cx).session.as_deref(), Some("s1")));
+}
+
+#[gpui::test]
+async fn with_a_session_a_link_to_a_repository_that_is_no_project_says_so(cx: &mut TestAppContext) {
+    let (fake, window, pane) = following_s1(cx).await;
+    follow(&pane, "x/y", 1, window);
+    window.run_until_parked();
+    window.update(|_, cx| {
+        let pane = pane.read(cx);
+        let (_, link) = pane.missing_link.clone().expect("the notice");
+        assert_eq!(link, "https://github.com/x/y/pull/1");
+        assert!(pane.opening.is_none() && pane.detail.is_none());
+    });
+    assert!(calls(&fake.seen, "pr").is_empty());
+    assert!(calls(&fake.seen, "resolve_source").is_empty());
+}
+
+#[gpui::test]
+async fn with_a_session_a_link_to_its_own_repository_opens_through_the_session(
+    cx: &mut TestAppContext,
+) {
+    let (mut fake, window, pane) = following_s1(cx).await;
+    follow(&pane, "o/r", 9, window);
+    until("the read", &mut fake.changes, &fake.changed, || {
+        window.run_until_parked();
+        !calls(&fake.seen, "pr").is_empty()
+    })
+    .await;
+    let read = calls(&fake.seen, "pr").remove(0);
+    assert_eq!(read["session"], "s1");
+    assert_eq!(read["number"], 9);
+}

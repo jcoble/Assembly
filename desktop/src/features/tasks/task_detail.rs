@@ -9,6 +9,7 @@ use gpui_kit::*;
 use serde_json::Value;
 
 use crate::core::intents::open_url::OpenInBrowser;
+use crate::core::navigation::web_links::notion_web_page;
 use crate::inline_field::{
     ChoiceOption, FieldValue, InlineField, SaveFailure, SaveRequest, SaveRequested,
 };
@@ -188,10 +189,7 @@ impl TaskDetailView {
     /// The address to open the page at: the list's, or the page's own.
     pub(super) fn page_url(&self) -> String {
         if self.seed.url.is_empty() {
-            format!(
-                "https://www.notion.so/{}",
-                self.source.page_id.replace('-', "")
-            )
+            notion_web_page(&self.source.page_id)
         } else {
             self.seed.url.clone()
         }

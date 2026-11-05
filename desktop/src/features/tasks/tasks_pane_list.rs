@@ -35,11 +35,6 @@ impl TasksPane {
         if connected && (changed || first) {
             self.read_first(cx);
         }
-        if let Some(link) = self.waiting_link.take() {
-            Self::in_window(cx, move |pane, window, cx| {
-                pane.open_link(&link, window, cx)
-            });
-        }
         cx.notify();
     }
 

@@ -3,7 +3,7 @@
 
 use super::task_export::NotionTaskRef;
 use crate::core::navigation::external_urls::{ExternalRoute, canonical_notion_id, parse_external};
-use crate::core::navigation::web_links::{notion_page, pull_request};
+use crate::core::navigation::web_links::{notion_page, notion_web_page, pull_request};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskRoute {
@@ -84,9 +84,4 @@ fn web_route(url: &url::Url, context: &RouteContext) -> TaskRoute {
         };
     }
     TaskRoute::Web(url.to_string())
-}
-
-/// A task's page on the Notion website, as the old app opened a task link with no connection.
-pub fn notion_web_page(page_id: &str) -> String {
-    format!("https://app.notion.com/p/{}", page_id.replace('-', ""))
 }

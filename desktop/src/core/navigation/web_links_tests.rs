@@ -85,3 +85,29 @@ fn other_hosts_and_shapes_are_not_notion_pages() {
         assert_eq!(notion_page(&parsed(&address)), None, "{address}");
     }
 }
+
+// Review fix 4: one rule for credentials, the same as a task page's links: a link carrying them is no page of the app's.
+#[test]
+fn a_link_carrying_a_user_name_or_password_is_neither() {
+    for address in [
+        "https://me@github.com/o/r/pull/7",
+        "https://me:pw@github.com/o/r/pull/7",
+    ] {
+        assert_eq!(pull_request(&parsed(address)), None, "{address}");
+    }
+    for address in [
+        format!("https://me@www.notion.so/{HEX}"),
+        format!("https://me:pw@acme.notion.site/{HEX}"),
+    ] {
+        assert_eq!(notion_page(&parsed(&address)), None, "{address}");
+    }
+}
+
+// Review fix 5: the one builder for a page's address on the web, for a task link and Open in Notion alike.
+#[test]
+fn a_page_s_web_address_is_its_id_on_app_notion_com() {
+    assert_eq!(
+        super::web_links::notion_web_page(ID),
+        format!("https://app.notion.com/p/{HEX}")
+    );
+}

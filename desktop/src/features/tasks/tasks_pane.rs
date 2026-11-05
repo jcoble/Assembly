@@ -24,8 +24,8 @@ use super::notion_client::NotionClient;
 use super::notion_setup::NotionSetup;
 use super::task_detail::TaskDetailView;
 use super::task_export::*;
-use super::task_navigation::notion_web_page;
 use super::tasks_state::*;
+use crate::core::navigation::web_links::notion_web_page;
 
 #[cfg(test)]
 #[path = "tasks_pane_links_tests.rs"]
@@ -53,8 +53,9 @@ pub struct TasksPane {
     detail: Option<Entity<TaskDetailView>>,
     /// A Notion page that may not be a task in this source; opened in the browser if it isn't.
     page_fallback: Option<String>,
-    /// A link that came before the tab knew whether Notion is connected; followed once it does.
-    waiting_link: Option<String>,
+    /// The one link that came before the tab knew whether Notion is connected, asking the backend; a newer link
+    /// replaces it, and dropping it cancels the question.
+    waiting_link: Option<Task<()>>,
     /// The session a task was opened from.
     task_session: Option<SessionKey>,
     refreshing: bool,
@@ -94,7 +95,7 @@ impl TasksPane {
         });
     }
 
-    /// Runs once the current update is over, on the window's pane, with the tab brought forward.
+    /// Runs once the current update is over, on the window's pane. Opening a task brings the tab forward.
     fn in_window(
         cx: &mut App,
         act: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
@@ -114,7 +115,6 @@ impl TasksPane {
                     window.push_notification(Notification::warning(NO_TAB), cx);
                     return;
                 };
-                Self::show(window, cx);
                 pane.update(cx, |pane, cx| act(pane, window, cx));
             });
         });

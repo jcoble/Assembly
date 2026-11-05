@@ -7,7 +7,7 @@ use super::external_urls::canonical_notion_id;
 /// `github.com/<owner>/<repo>/pull/<n>`, http or https, with or without `www.`, and any trailing path, query or
 /// fragment: the repository as `owner/repo` and the number.
 pub fn pull_request(url: &url::Url) -> Option<(String, u64)> {
-    if !web(url) || !matches!(url.host_str()?, "github.com" | "www.github.com") {
+    if !plain_web(url) || !matches!(url.host_str()?, "github.com" | "www.github.com") {
         return None;
     }
     let mut parts = url.path_segments()?;
@@ -40,7 +40,9 @@ pub fn notion_page(url: &url::Url) -> Option<String> {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
     });
-    if !web(url) || !(site || matches!(host, "notion.so" | "www.notion.so" | "app.notion.com")) {
+    if !plain_web(url)
+        || !(site || matches!(host, "notion.so" | "www.notion.so" | "app.notion.com"))
+    {
         return None;
     }
     let last = url.path_segments()?.next_back()?;
@@ -53,6 +55,15 @@ pub fn notion_page(url: &url::Url) -> Option<String> {
     })
 }
 
-fn web(url: &url::Url) -> bool {
+/// A Notion page's address on the web, as the old app built it for a task link.
+pub fn notion_web_page(page_id: &str) -> String {
+    format!("https://app.notion.com/p/{}", page_id.replace('-', ""))
+}
+
+/// http or https with no user name or password: a link carrying credentials is never one of the app's own pages,
+/// wherever it comes from.
+fn plain_web(url: &url::Url) -> bool {
     matches!(url.scheme(), "http" | "https")
+        && url.username().is_empty()
+        && url.password().is_none()
 }

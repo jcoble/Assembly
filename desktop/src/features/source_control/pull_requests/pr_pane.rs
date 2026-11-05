@@ -37,6 +37,8 @@ struct Selected {
     row: Option<PullRequestSummary>,
     /// The tab the person is on; the page keeps it once it can read.
     on_changes: bool,
+    /// A link to another repository than the session's: its project answers, not the session.
+    by_project: bool,
 }
 struct OpenPane(Option<WeakEntity<PrPane>>);
 impl Global for OpenPane {}
@@ -327,6 +329,19 @@ impl PrPane {
             listed_local: false,
             row: None,
             on_changes: false,
+            by_project: false,
+        };
+        self.open_pr(wanted, cx);
+    }
+    /// Opens through the project holding `repository`, even while the tab follows a session.
+    fn select_in_project(&mut self, repository: String, number: u64, cx: &mut Context<Self>) {
+        let wanted = Selected {
+            repository: Some(repository),
+            number,
+            listed_local: false,
+            row: None,
+            on_changes: false,
+            by_project: true,
         };
         self.open_pr(wanted, cx);
     }
@@ -337,6 +352,7 @@ impl PrPane {
             listed_local: self.project.is_none(),
             row: Some(row),
             on_changes: false,
+            by_project: false,
         };
         self.open_pr(wanted, cx);
     }
@@ -354,9 +370,10 @@ impl PrPane {
             listed_local,
             row,
             on_changes,
+            by_project,
         } = wanted.clone();
         self.failure = None;
-        if let Some(id) = self.session.clone() {
+        if let Some(id) = self.session.clone().filter(|_| !by_project) {
             let source = selected_source(Some(&id), cx);
             let owner = PrOwner::Session { id, source };
             self.open_detail(owner, repository, number, row, on_changes, cx);

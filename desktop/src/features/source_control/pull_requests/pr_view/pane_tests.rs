@@ -210,7 +210,17 @@ async fn pane_with_projects(
     fake: &mut Fake,
     window: &mut gpui::VisualTestContext,
 ) -> gpui::Entity<PrPane> {
-    let pane = window.update(|window, cx| cx.new(|cx| PrPane::new(None, window, cx)));
+    pane_following(None, fake, window).await
+}
+
+/// The tab following `session`, or none, once the projects are in.
+async fn pane_following(
+    session: Option<&str>,
+    fake: &mut Fake,
+    window: &mut gpui::VisualTestContext,
+) -> gpui::Entity<PrPane> {
+    let session = session.map(String::from);
+    let pane = window.update(|window, cx| cx.new(|cx| PrPane::new(session, window, cx)));
     until("the project rows", &mut fake.changes, &fake.changed, || {
         window.run_until_parked();
         window.update(|_, cx| {

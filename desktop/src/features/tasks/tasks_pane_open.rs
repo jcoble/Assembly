@@ -39,6 +39,7 @@ impl TasksPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        Self::show(window, cx);
         let seed = self.seed(&source);
         let token = self.state.select(source.clone());
         self.page_fallback = fallback;
@@ -146,13 +147,31 @@ impl TasksPane {
     }
 
     /// A link on a task page, or from outside. Where a Notion link goes depends on whether Notion is connected, which
-    /// the tab knows once its first settings arrive; a link before that waits for them.
+    /// the tab knows once it has the settings; before that it asks the backend, and the link waits for the answer. The
+    /// question always ends: a backend that isn't connected fails it at once, and a dropped connection ends it. With no
+    /// answer the link goes where it goes with Notion not connected.
     pub(super) fn open_link(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.start(cx);
         if self.state.settings.is_none() && SocketClient::try_global(cx).is_some() {
-            self.waiting_link = Some(url.to_string());
+            let asking = self.client.settings(cx);
+            let url = url.to_string();
+            self.waiting_link = Some(cx.spawn_in(window, async move |pane, cx| {
+                let answer = asking.await;
+                _ = pane.update_in(cx, |pane, window, cx| {
+                    pane.waiting_link = None;
+                    if let Ok(settings) = answer
+                        && pane.state.settings.is_none()
+                    {
+                        pane.settings_pushed(settings, cx);
+                    }
+                    pane.route_link(&url, window, cx);
+                });
+            }));
             return;
         }
+        self.route_link(url, window, cx);
+    }
+
+    fn route_link(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
         let context = RouteContext {
             source: self.state.source(),
         };
