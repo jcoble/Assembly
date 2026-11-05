@@ -92,6 +92,7 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
     /// <summary>Downloads the app's archive to a file and checks it against the pinned key.</summary>
     internal async Task DownloadAppAsync(AppRelease app, string file, CancellationToken ct, Action<long>? received = null)
     {
+        ReleaseDigest digest;
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, app.ArchiveUrl);
@@ -103,19 +104,21 @@ internal sealed partial class RemoteReleaseFeed(HttpClient http, string publicKe
             {
                 var buffer = new byte[81920];
                 long total = 0;
+                digest = new ReleaseDigest();
                 int count;
                 while ((count = await body.ReadAsync(buffer, ct)) > 0)
                 {
                     total += count;
                     if (total > app.Bytes) throw Failure($"The download of Assembly {app.Version} is larger than its release says.", "release_invalid");
                     await output.WriteAsync(buffer.AsMemory(0, count), ct);
+                    digest.Add(buffer.AsSpan(0, count));
                     received?.Invoke(total);
                 }
             }
         }
         catch (HttpRequestException error) { throw Failure($"Could not download Assembly {app.Version}: {error.Message}", "release_unavailable"); }
         if (new FileInfo(file).Length != app.Bytes) throw Failure($"The download of Assembly {app.Version} was incomplete.", "release_invalid");
-        RemoteReleaseTrust.Verify(await File.ReadAllBytesAsync(file, ct), Encoding.UTF8.GetBytes(app.Signature), publicKey);
+        RemoteReleaseTrust.Verify(digest, Encoding.UTF8.GetBytes(app.Signature), publicKey);
     }
 
     /// <summary>The newest signed adapters for one platform, for this machine's own install.</summary>
