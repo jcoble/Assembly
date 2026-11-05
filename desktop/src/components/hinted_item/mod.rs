@@ -1,5 +1,5 @@
 //! A menu row that says more when the pointer rests on it: its hint, or, when it can't run, why not.
-//! The row is drawn under its id and its hover text under `<id>-hint: <text>`.
+//! The row is drawn under its id and its hover text under `<id>-hint: <text>`; those debug selectors exist for tests.
 
 use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::component::tooltip::Tooltip;
@@ -37,8 +37,8 @@ impl HintedItem {
     }
 
     /// Why the row can't run: it stays visible, does nothing when clicked, and says this instead of its hint.
-    pub fn disabled_reason(mut self, reason: Option<impl Into<SharedString>>) -> Self {
-        self.disabled_reason = reason.map(Into::into);
+    pub fn disabled_reason(mut self, reason: Option<SharedString>) -> Self {
+        self.disabled_reason = reason;
         self
     }
 
