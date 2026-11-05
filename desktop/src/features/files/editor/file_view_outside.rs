@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 
 #[cfg(test)]
 #[path = "file_view_outside_tests.rs"]
-mod tests;
+pub(super) mod tests;
 
 pub(crate) struct Outside {
     pub file: OutsideFile,

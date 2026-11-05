@@ -16,6 +16,8 @@ mod closing;
 mod conflict;
 #[path = "file_view_editor.rs"]
 mod editor;
+#[path = "file_view_lock.rs"]
+mod lock;
 #[path = "file_view_outside.rs"]
 mod outside;
 #[path = "file_view_panel.rs"]
@@ -403,6 +405,9 @@ impl FileView {
     }
 
     fn toggle_history(&mut self, cx: &mut Context<Self>) {
+        if !self.has_history() {
+            return;
+        }
         self.history_shown = !self.history_shown;
         if self.history.is_none() {
             self.history = Some(cx.new(|_| {

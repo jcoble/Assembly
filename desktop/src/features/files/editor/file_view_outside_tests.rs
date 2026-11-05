@@ -19,37 +19,44 @@ use gpui::{TestAppContext, VisualTestContext};
 use gpui_kit::component::dock::{
     BasePanel, DockArea, PanelBuildContext, PanelHandle, PanelRegistry,
 };
-use gpui_kit::{AppContext as _, Context, Entity, IntoElement, Render, WeakEntity, Window, div};
+use gpui_kit::{
+    AnyView, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
+    Styled as _, WeakEntity, Window, div,
+};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
-struct Host;
+/// The test window's root: it draws the file view a test shows, as its tab would.
+pub(crate) struct Host {
+    shown: Option<AnyView>,
+}
 impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
+        div().size_full().children(self.shown.clone())
     }
 }
 
 /// Each files call's method and arguments, in the order sent.
-type Calls = Arc<Mutex<Vec<(String, Value)>>>;
+pub(crate) type Calls = Arc<Mutex<Vec<(String, Value)>>>;
 /// A test's answer to a files call: its result, or an error's code and message.
-type Answer = Box<dyn FnMut(&str, &Value) -> Result<Value, (&'static str, &'static str)> + Send>;
+pub(crate) type Answer =
+    Box<dyn FnMut(&str, &Value) -> Result<Value, (&'static str, &'static str)> + Send>;
 
-const ENGINE: &str = "engine-1";
+pub(crate) const ENGINE: &str = "engine-1";
 
-fn hosts() -> OutsideFile {
+pub(crate) fn hosts() -> OutsideFile {
     OutsideFile {
         machine: None,
         path: "/etc/hosts".into(),
     }
 }
 
-fn owner() -> Value {
+pub(crate) fn owner() -> Value {
     json!({"machine": ENGINE, "checkoutRoot": "/etc", "remoteSessionId": "", "file": "hosts"})
 }
 
 /// The answers a backend gives an outside file that opens and saves.
-fn answers(method: &str, _: &Value) -> Result<Value, (&'static str, &'static str)> {
+pub(crate) fn answers(method: &str, _: &Value) -> Result<Value, (&'static str, &'static str)> {
     Ok(match method {
         "owner" => owner(),
         "read" => {
@@ -61,14 +68,15 @@ fn answers(method: &str, _: &Value) -> Result<Value, (&'static str, &'static str
     })
 }
 
-struct Stage<'a> {
-    cx: &'a mut VisualTestContext,
+pub(crate) struct Stage<'a> {
+    pub cx: &'a mut VisualTestContext,
     calls: Calls,
+    host: Entity<Host>,
     _backend: FakeBackend,
     _dock: Entity<DockArea>,
 }
 
-fn stage(cx: &mut TestAppContext, mut answer: Answer) -> Stage<'_> {
+pub(crate) fn stage(cx: &mut TestAppContext, mut answer: Answer) -> Stage<'_> {
     let calls = Calls::default();
     let seen = calls.clone();
     let backend = FakeBackend::start(move |frame| {
@@ -100,7 +108,7 @@ fn stage(cx: &mut TestAppContext, mut answer: Answer) -> Stage<'_> {
         SocketClient::start(endpoint.clone(), cx);
         SocketClient::start_bulk(endpoint, cx);
     });
-    let (_, cx) = cx.add_window_view(|_, _| Host);
+    let (host, cx) = cx.add_window_view(|_, _| Host { shown: None });
     let dock = cx.update(|window, cx| {
         let dock = cx.new(|cx| DockArea::new("outside-files", Some(2), window, cx));
         CenterPanes::init(&dock, cx);
@@ -110,13 +118,14 @@ fn stage(cx: &mut TestAppContext, mut answer: Answer) -> Stage<'_> {
     Stage {
         cx,
         calls,
+        host,
         _backend: backend,
         _dock: dock,
     }
 }
 
 impl Stage<'_> {
-    fn open(&mut self, session: &str, path: &str, outside: Option<OutsideFile>) {
+    pub(crate) fn open(&mut self, session: &str, path: &str, outside: Option<OutsideFile>) {
         let intent = OpenFile {
             session_id: session.into(),
             path: path.into(),
@@ -131,13 +140,13 @@ impl Stage<'_> {
         self.cx.run_until_parked();
     }
 
-    fn tab(&mut self, alias: &str) -> Entity<FileView> {
+    pub(crate) fn tab(&mut self, alias: &str) -> Entity<FileView> {
         self.cx
             .update(|_, cx| CenterPanes::find::<FileView>(alias, cx))
             .expect("the file's tab")
     }
 
-    async fn until(
+    pub(crate) async fn until(
         &mut self,
         view: &Entity<FileView>,
         what: &str,
@@ -157,7 +166,7 @@ impl Stage<'_> {
     }
 
     /// Waits until the file's text is read, then puts it in its editor, as drawing the tab does.
-    async fn loaded(&mut self, view: &Entity<FileView>) {
+    pub(crate) async fn loaded(&mut self, view: &Entity<FileView>) {
         self.until(view, "the file's text", |view| {
             view.text.content().is_some() && !view.text.is_loading()
         })
@@ -166,7 +175,7 @@ impl Stage<'_> {
         self.cx.run_until_parked();
     }
 
-    fn sent(&self, method: &str) -> Vec<Value> {
+    pub(crate) fn sent(&self, method: &str) -> Vec<Value> {
         let calls = self.calls.lock().unwrap();
         calls
             .iter()
@@ -176,7 +185,7 @@ impl Stage<'_> {
     }
 
     /// Types `text` over the file's whole draft.
-    fn edit(&mut self, view: &Entity<FileView>, text: &'static str) {
+    pub(crate) fn edit(&mut self, view: &Entity<FileView>, text: &'static str) {
         view.update_in(self.cx, |view, window, cx| {
             let editor = view.editor.as_ref().expect("the file's editor");
             editor
@@ -185,9 +194,23 @@ impl Stage<'_> {
             view.editor_changed(window, cx);
         });
     }
+
+    /// Draws `view` as the window's content, as its tab would be drawn.
+    pub(crate) fn show(&mut self, view: &Entity<FileView>) {
+        let shown = AnyView::from(view.clone());
+        self.host.update(self.cx, |host, cx| {
+            host.shown = Some(shown);
+            cx.notify();
+        });
+        self.draw();
+    }
+
+    pub(crate) fn draw(&mut self) {
+        self.cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
 }
 
-fn hosts_document() -> DocumentKey {
+pub(crate) fn hosts_document() -> DocumentKey {
     DocumentKey {
         machine: ENGINE.into(),
         checkout_root: "/etc".into(),
@@ -195,7 +218,7 @@ fn hosts_document() -> DocumentKey {
     }
 }
 
-fn target() -> Value {
+pub(crate) fn target() -> Value {
     json!({"path": "/etc/hosts", "machine": null})
 }
 

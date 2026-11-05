@@ -9,6 +9,8 @@ mod features;
 #[allow(dead_code)]
 #[path = "components/inline_field/mod.rs"]
 mod inline_field;
+#[path = "components/notice_strip/mod.rs"]
+mod notice_strip;
 
 use std::cell::{Cell, OnceCell};
 use std::path::PathBuf;

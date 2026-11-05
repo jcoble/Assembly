@@ -31,7 +31,8 @@ impl FileView {
     }
 
     pub(super) fn save_document_at(&mut self, revision: Option<String>, cx: &mut Context<Self>) {
-        if self.saving.is_some() {
+        // A locked file saves nothing until Edit anyway: not the button, the shortcut, Overwrite or the guard.
+        if self.saving.is_some() || self.locked {
             return;
         }
         if revision.is_none()
