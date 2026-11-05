@@ -55,6 +55,11 @@ pub fn notion_page(url: &url::Url) -> Option<String> {
     })
 }
 
+/// Typed or pasted text that is a web address, http or https with no credentials, as every link here is read.
+pub fn web_address(text: &str) -> Option<url::Url> {
+    url::Url::parse(text.trim()).ok().filter(plain_web)
+}
+
 /// A Notion page's address on the web, as the old app built it for a task link.
 pub fn notion_web_page(page_id: &str) -> String {
     format!("https://app.notion.com/p/{}", page_id.replace('-', ""))

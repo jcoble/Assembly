@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::TestAppContext;
-use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::{
     Context, IntoElement, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point,
     Render, VisualTestContext, Window, div, prelude::*,
@@ -31,9 +31,13 @@ impl Render for Host {
             .debug_selector(|| "target".into())
             .context_menu(move |menu, _, _| {
                 let clicks = clicks.clone();
-                let item = HintedItem::new("copy", "Copy")
-                    .disabled_reason(reason.map(Into::into))
-                    .on_click(move |_, _| clicks.set(clicks.get() + 1));
+                let item = HintedItem::new("copy", "Copy");
+                // A row that can run is built as its callers build one: with a bare `None`.
+                let item = match reason {
+                    Some(reason) => item.disabled_reason(Some(reason.into())),
+                    None => item.disabled_reason(None),
+                }
+                .on_click(move |_, _| clicks.set(clicks.get() + 1));
                 menu.item(if hint {
                     item.hint("Puts the link on the clipboard")
                 } else {
@@ -156,28 +160,11 @@ fn a_row_that_cant_run_ignores_its_click(cx: &mut TestAppContext) {
     assert_eq!(clicks.get(), 0);
 }
 
+// The bare `None` a caller writes when its row can always run: the row runs on a real click.
 #[gpui::test]
-fn a_bare_none_reason_leaves_the_row_running(cx: &mut TestAppContext) {
-    cx.update(gpui_kit::init);
-    let clicks = Rc::new(Cell::new(0));
-    let clicked = clicks.clone();
-    let item: PopupMenuItem = HintedItem::new("copy", "Copy")
-        .disabled_reason(None)
-        .on_click(move |_, _| clicked.set(clicked.get() + 1))
-        .into();
-    let PopupMenuItem::ElementItem {
-        disabled, handler, ..
-    } = item
-    else {
-        panic!("an element row");
-    };
-    assert!(!disabled);
-    let (_, cx) = cx.add_window_view(|_, _| Host {
-        clicks: clicks.clone(),
-        hint: false,
-        reason: None,
-    });
-    cx.update(|window, cx| handler.expect("a click")(&Default::default(), window, cx));
+fn a_row_built_with_a_bare_none_reason_runs_its_click(cx: &mut TestAppContext) {
+    let (clicks, row, cx) = open_and_rest(false, None, cx);
+    click(row, MouseButton::Left, cx);
     assert_eq!(clicks.get(), 1);
 }
 

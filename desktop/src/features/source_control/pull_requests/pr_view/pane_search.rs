@@ -1,5 +1,6 @@
 //! The pull request pane's search: typing searches after a short pause, a link waits for Enter.
 use super::*;
+use crate::core::navigation::web_links::web_address;
 
 impl PrPane {
     /// A pull request named by a link, pasted here or followed from anywhere, as the old `openLink` did. A link to the
@@ -62,7 +63,7 @@ impl PrPane {
     /// Typing searches after a short pause; a link waits for Enter.
     pub(super) fn search_after_pause(&mut self, text: String, cx: &mut Context<Self>) {
         self.search_wait = None;
-        if text.trim().starts_with("https://") {
+        if web_address(&text).is_some() {
             return;
         }
         self.search_wait = Some(cx.spawn(async move |pane, cx| {
@@ -77,7 +78,7 @@ impl PrPane {
     }
     pub(super) fn search(&mut self, text: String, cx: &mut Context<Self>) {
         self.search_wait = None;
-        if text.trim().starts_with("https://") {
+        if web_address(&text).is_some() {
             match PrTarget::parse_url(&text) {
                 Ok(target) => self.open_linked(target, cx),
                 Err(error) => {
