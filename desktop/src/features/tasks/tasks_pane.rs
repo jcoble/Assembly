@@ -323,7 +323,7 @@ pub fn handle_external(route: ExternalRoute, cx: &mut App) {
 const ROW_HEIGHT: f32 = 64.;
 const NO_TAB: &str = "The Tasks tab isn't open in this window.";
 const NOT_CONNECTED: &str = "Connect Notion to open tasks.";
-const NOT_OPENABLE: &str = "Assembly can't open that link.";
+pub(crate) const NOT_OPENABLE: &str = "Assembly can't open that link.";
 const NO_SESSION: &str = "Select a session to open this file.";
 
 impl EventEmitter<PanelEvent> for TasksPane {}

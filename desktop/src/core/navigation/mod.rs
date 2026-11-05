@@ -8,3 +8,4 @@ pub mod external_urls;
 mod external_urls_shapes_tests;
 #[cfg(test)]
 mod external_urls_tests;
+mod waiting_session_link;

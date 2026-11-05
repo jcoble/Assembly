@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::TestAppContext;
-use gpui_kit::{AppContext as _, Entity, VisualTestContext};
+use gpui_kit::{App, AppContext as _, Entity, Global, VisualTestContext};
 use serde_json::json;
 
 use super::test_navigation::{NavigationFixture, NavigationHost};
@@ -25,6 +25,17 @@ type Opens = Rc<RefCell<Vec<OpenSession>>>;
 
 const NOT_CONNECTED: &str = "That session is on Box, which this app isn't connected to.";
 
+struct Recorder(Opens);
+
+impl Global for Recorder {}
+
+/// The last action listener registered is the only one that runs, so this goes on again after anything that registers
+/// the real one.
+fn record_opens(cx: &mut App) {
+    let heard = cx.global::<Recorder>().0.clone();
+    cx.on_action(move |intent: &OpenSession, _| heard.borrow_mut().push(intent.clone()));
+}
+
 /// A window that can show notices, with `OpenSession` recorded instead of carried out.
 fn window(cx: &mut TestAppContext) -> (Entity<NavigationHost>, Opens, &mut VisualTestContext) {
     cx.executor().allow_parking();
@@ -33,7 +44,8 @@ fn window(cx: &mut TestAppContext) -> (Entity<NavigationHost>, Opens, &mut Visua
     cx.update(|cx| {
         gpui_kit::init(cx);
         SelectedSession::init(cx);
-        cx.on_action(move |intent: &OpenSession, _| heard.borrow_mut().push(intent.clone()));
+        cx.set_global(Recorder(heard));
+        record_opens(cx);
     });
     let host = Rc::new(RefCell::new(None));
     let made = host.clone();
@@ -50,7 +62,11 @@ fn window(cx: &mut TestAppContext) -> (Entity<NavigationHost>, Opens, &mut Visua
 
 /// The app becomes ready: Chat exists and both sockets are up.
 async fn ready(host: &Entity<NavigationHost>, cx: &mut VisualTestContext) -> NavigationFixture {
-    let mut nav = cx.update(|window, cx| NavigationFixture::new(false, window, cx));
+    let mut nav = cx.update(|window, cx| {
+        let nav = NavigationFixture::new(false, window, cx);
+        record_opens(cx);
+        nav
+    });
     host.update(cx, |host, cx| {
         host.pane = Some(nav.pane.clone());
         cx.notify();
@@ -388,4 +404,30 @@ async fn a_link_still_refused_after_a_minute_gives_the_last_refusal(cx: &mut Tes
     cx.update(|_, cx| Machines::change_holding(box_machine(true, true), cx));
     cx.run_until_parked();
     assert_eq!(opens.borrow().len(), count, "the link was dropped");
+}
+
+#[gpui::test]
+async fn a_change_during_an_open_is_tried_after_its_answer(cx: &mut TestAppContext) {
+    let (host, opens, cx) = window(cx);
+    let _nav = ready(&host, cx).await;
+    hold_machines(true, true, cx);
+    link("s1", Some("Box"), cx);
+    cx.update(|_, cx| Machines::change_holding(box_machine(true, true), cx));
+    cx.run_until_parked();
+    assert_eq!(opens.borrow().len(), 1, "one open at a time");
+    answer(&last(&opens), refused("source_changed"), cx);
+    assert_eq!(opens.borrow().len(), 2);
+    assert_eq!(shown(cx), Vec::<String>::new());
+}
+
+#[gpui::test]
+async fn an_open_still_out_when_the_minute_ends_gets_its_answer(cx: &mut TestAppContext) {
+    let (host, opens, cx) = window(cx);
+    let _nav = ready(&host, cx).await;
+    hold_machines(true, true, cx);
+    link("s1", Some("Box"), cx);
+    advance(61, cx);
+    assert_eq!(shown(cx), Vec::<String>::new());
+    answer(&last(&opens), refused("source_changed"), cx);
+    assert_eq!(shown(cx), [NOT_CONNECTED], "no more waiting");
 }

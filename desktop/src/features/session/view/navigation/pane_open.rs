@@ -60,6 +60,13 @@ impl ConnectionCut {
             && self.bulk.read(cx).connection_generation() == Some(self.bulk_generation)
     }
 }
+impl SessionPane {
+    /// A link can try its session: Chat exists and both sockets are up.
+    pub(crate) fn can_open_links(cx: &App) -> bool {
+        ConnectionCut::capture(cx).is_ok()
+            && crate::core::ui::center_panes::CenterPanes::find::<Self>("Chat", cx).is_some()
+    }
+}
 pub(super) struct PendingOpen {
     pub checked_engine: Option<crate::core::engine::EngineItem>,
     pub classify_online: bool,
