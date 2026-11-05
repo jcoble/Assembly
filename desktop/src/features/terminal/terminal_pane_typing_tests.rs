@@ -109,3 +109,22 @@ async fn control_alt_and_named_keys_stay_with_the_pane_and_end_a_composition(
 fn writes_len(terminals: &Terminals) -> usize {
     terminals.of("write").len()
 }
+
+#[gpui::test]
+async fn a_held_key_repeats_rather_than_opening_the_accent_menu(cx: &mut TestAppContext) {
+    use gpui_kit::InputHandler as _;
+    let mut open = open(cx, Terminals::default(), false).await;
+    open.until("the shell started", |_, pane| following(pane))
+        .await;
+    composing(&mut open, "´");
+    let pane = open.pane.clone();
+    let (press_and_hold, composition) = open.cx.update(|window, cx| {
+        let mut input = super::super::ime::terminal_input(gpui_kit::Bounds::default(), pane);
+        (
+            input.apple_press_and_hold_enabled(),
+            input.marked_text_range(window, cx),
+        )
+    });
+    assert!(!press_and_hold, "a held key would open the accent menu");
+    assert_eq!(composition, Some(0..1), "the rest isn't handed on");
+}
