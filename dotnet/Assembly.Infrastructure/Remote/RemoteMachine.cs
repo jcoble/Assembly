@@ -14,6 +14,7 @@ using Assembly.Infrastructure.Machines;
 using Assembly.Application.Features.Chat;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
+using Microsoft.Data.Sqlite;
 
 namespace Assembly.Infrastructure.Remote;
 
@@ -59,6 +60,8 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
 
     internal string[] FollowedSessions => _follower.FollowedSessions;
 
+    private const int PrimaryKeyTaken = 1555; // SQLITE_CONSTRAINT_PRIMARYKEY
+
     // A subagent's session, made on the remote by its parent's session, is known here from its parent's row.
     private void AddSubagentSession(string parentSessionId, StoredRow row)
     {
@@ -66,8 +69,16 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
             || _sessionStore.Get(parentSessionId) is not { } parent)
             return;
         var agent = row.Payload.TryGetProperty("agent", out var named) && named.GetString() is { } helperAgent ? helperAgent : parent.Agent;
-        _sessionStore.Add(childId, agent, parent.RepoUrl, _name, parentSessionId,
-            helper: row.Payload.TryGetProperty("helper", out var helper) && helper.ValueKind == JsonValueKind.True);
+        try
+        {
+            _sessionStore.Add(childId, agent, parent.RepoUrl, _name, parentSessionId,
+                helper: row.Payload.TryGetProperty("helper", out var helper) && helper.ValueKind == JsonValueKind.True);
+        }
+        // The machine's mirror recorded this session since the look-up above, and what it recorded stays.
+        catch (SqliteException error) when (error.SqliteExtendedErrorCode == PrimaryKeyTaken)
+        {
+            return;
+        }
         if (row.Payload.GetProperty("title").GetString() is { } title)
             _sessionStore.SetTitle(childId, title, "prompt");
     }

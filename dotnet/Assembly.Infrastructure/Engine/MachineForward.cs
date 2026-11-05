@@ -82,7 +82,9 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
         }
         catch (MachineUnreachable) when (feature == "engine" && method is "session_title" or "session_title_chunk" or "entities")
         { throw new Assembly.Application.Common.Calls.CallFailed(method == "entities" ? "entities_changed" : "title_changed"); }
-        catch (Exception error) when (error is WebSocketException or IOException or HttpRequestException or ObjectDisposedException)
+        // Losing the machine socket aborts the bulk socket, whose pending read then ends cancelled though this call wasn't.
+        catch (Exception error) when (error is WebSocketException or IOException or HttpRequestException or ObjectDisposedException ||
+            error is OperationCanceledException && !ct.IsCancellationRequested)
         {
             throw new MachineUnreachable(remote.Name!, $"{remote.Name}: machine socket closed", error);
         }
