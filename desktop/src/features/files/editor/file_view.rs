@@ -23,6 +23,7 @@ mod saving;
 #[path = "file_view_workspace.rs"]
 mod workspace;
 use super::file_text::FileText;
+use crate::core::intents::open_file::OpenFile;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::preferences::Preferences;
@@ -118,6 +119,29 @@ impl FileView {
             let view = cx.new(|cx| FileView::new(session.clone(), path.clone(), cx));
             CenterPanes::remember(key(&session, &path), PanelId::from(view.entity_id()), cx);
             panel_handle(view)
+        });
+        // Global, so a link is heard wherever focus is and with no window active. It's the intent's only listener.
+        cx.on_action(|intent: &OpenFile, cx| {
+            let intent = intent.clone();
+            let Some(handle) = cx
+                .active_window()
+                .or_else(|| cx.windows().into_iter().next())
+            else {
+                return;
+            };
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, cx| {
+                    Self::open_at(
+                        intent.session_id,
+                        intent.path,
+                        (intent.line, intent.column),
+                        intent.pinned,
+                        intent.expected_source,
+                        window,
+                        cx,
+                    )
+                });
+            });
         });
     }
 

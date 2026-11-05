@@ -1,6 +1,6 @@
 //! A file link opens through the selected session, the only way the backend reads a file, or says why it can't. The
 //! selection stays as it is and nothing waits: the one call asks for the folder, and its answer is the end of the link.
-//! A newer link that gets as far as asking replaces one still asking, which drops that call.
+//! Every link's call goes out when it arrives and each waits for the one before, so files open in the order they came.
 
 use std::path::Path;
 
@@ -16,8 +16,10 @@ use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::state::selected_session::SelectedSession;
 use crate::features::files::entry::FileOwnership;
 
+/// The newest link's task, which holds the one before it until that has finished.
+#[derive(Default)]
 struct Asking {
-    _call: Task<()>,
+    last: Option<Task<()>>,
 }
 
 impl Global for Asking {}
@@ -41,11 +43,15 @@ pub fn open(path: String, machine: Option<String>, cx: &mut App) {
         json!({ "session": key.id, "expectedSource": source }),
         None,
     );
+    let earlier = cx.default_global::<Asking>().last.take();
     let asking = cx.spawn(async move |cx| {
         let answer = owner.await;
+        if let Some(earlier) = earlier {
+            earlier.await;
+        }
         cx.update(|cx| answered(answer, &path, key, source, cx))
     });
-    cx.set_global(Asking { _call: asking });
+    cx.default_global::<Asking>().last = Some(asking);
 }
 
 fn answered(
