@@ -30,6 +30,58 @@ public sealed partial class EngineSocketTests
         Assert.Equal(10000, _f.Number("SELECT muted_until FROM engine_workflow_settings"));
     }
     [Fact]
+    public async Task A_window_retries_a_stuck_step_through_the_socket()
+    {
+        _f.SeedSession("owner"); _f.SeedRun(ownerSessionId: "owner", state: "running"); _f.SeedStep(state: "waiting", attempt: 1);
+        _f.Db.Writer.Write("test.stuck", s => s.Execute("UPDATE engine_run SET definition_hash='workflow'; UPDATE engine_step SET kind='agent',outcome_reason='session_lost',attempt_in_generation=1"));
+        using var socket = await Open();
+        var result = await Command(socket, new RetryWorkflowStep("step"), "r");
+        Assert.True(result.Applied, result.Error);
+        Assert.Equal("pending", _f.State("engine_step", "step"));
+        Assert.Equal(1, _f.Number("SELECT generation FROM engine_step"));
+    }
+    private void SeedGateWithWorkBefore()
+    {
+        _f.SeedSession("owner"); _f.SeedRun(ownerSessionId: "owner", state: "running");
+        _f.SeedStep("work", state: "succeeded"); _f.SeedStep("gate", maxAttempts: 2);
+        _f.Db.Writer.Write("test.gate", s => s.Execute("""
+            UPDATE engine_run SET definition_hash='workflow',setup_state='ready';
+            UPDATE engine_step SET kind='agent',definition_key='work' WHERE id='work';
+            UPDATE engine_step SET kind='gate',definition_key='gate' WHERE id='gate';
+            INSERT INTO engine_step_dependency(step_id,dependency_id,optional) VALUES('gate','work',0);
+            INSERT INTO engine_workflow_snapshot(id,version,machine,created_ms,updated_ms,run_id,schema_version,definition_hash,input_hash,snapshot_json)
+            VALUES('r',1,$machine,1000,1000,'r',1,'workflow','inputs','{"snapshot":{"definition":{"steps":{"work":{"id":"work","kind":"agent","needs":[]},"gate":{"id":"gate","kind":"gate","gate":"Approve","needs":["work"]}}}}}');
+            """, new Assembly.Application.Common.Database.SqlArg("$machine", _f.Machine)));
+        Assert.Equal(1, _f.Db.Writer.Write("test.open-gate", s => WorkflowGates.OpenReady(s, _f.Machine, 1000)));
+    }
+    [Fact]
+    public async Task A_window_revises_a_gate_through_resolve_need_and_the_text_goes_to_the_work_before_it()
+    {
+        SeedGateWithWorkBefore();
+        Assert.Equal("[\"approve\",\"revise\",\"deny\"]", _f.Text("SELECT options_json FROM engine_needs_me"));
+        Assert.Equal("choice", _f.Text("SELECT json_extract(presentation_json,'$.inputMode') FROM engine_needs_me"));
+        Assert.Equal("revise", _f.Text("SELECT json_extract(presentation_json,'$.options[1].id') FROM engine_needs_me"));
+        var need = _f.Text("SELECT id FROM engine_needs_me")!;
+        using var socket = await Open();
+        var answer = JsonSerializer.SerializeToElement(new { choice = "revise", text = "Smaller schema" });
+        var result = await Command(socket, new Assembly.Engine.NeedsMe.ResolveNeed("answered", answer), need, 1);
+        Assert.True(result.Applied, result.Error);
+        Assert.Equal("Smaller schema", _f.Text("SELECT json_extract(safe_body_json,'$.text') FROM engine_workflow_history WHERE kind='gate_revised'"));
+        Assert.Equal("work", _f.Text("SELECT json_extract(safe_body_json,'$.targetStepId') FROM engine_workflow_history WHERE kind='gate_revised'"));
+        Assert.Equal("redo_pending", _f.Text("SELECT dispatch_state FROM engine_step WHERE id='work'"));
+    }
+    [Fact]
+    public async Task A_phone_cannot_revise_a_gate()
+    {
+        SeedGateWithWorkBefore();
+        _overrideTitlePeer = true; _titlePeer = new PhonePeer("controls-phone");
+        using var socket = await Open();
+        var answer = JsonSerializer.SerializeToElement(new { choice = "revise", text = "From the phone" });
+        var result = await Command(socket, new Assembly.Engine.NeedsMe.ResolveNeed("answered", answer), _f.Text("SELECT id FROM engine_needs_me")!, 1);
+        Assert.Equal("forbidden", result.Error);
+        Assert.Equal("open", _f.Text("SELECT state FROM engine_needs_me"));
+    }
+    [Fact]
     public async Task Phone_cannot_submit_system_checks_or_gate_decisions_but_can_pause_resume_and_mute()
     {
         _f.SeedSession("owner"); _f.SeedRun(ownerSessionId: "owner", state: "running"); _f.SeedStep();

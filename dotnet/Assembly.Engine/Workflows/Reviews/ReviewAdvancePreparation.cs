@@ -45,11 +45,12 @@ public static partial class ReviewTransitions
             var affected = s.Query("""
                 WITH RECURSIVE affected(id) AS (
                     SELECT $target UNION SELECT d.step_id FROM engine_step_dependency d JOIN affected a ON d.dependency_id=a.id
-                ) SELECT st.id,st.generation,st.attempt,COALESCE(a.execution_epoch,st.authority_epoch,0),st.kind
+                ) SELECT st.id,st.generation,CASE WHEN a.generation<st.generation THEN 0 ELSE st.attempt END,COALESCE(a.execution_epoch,st.authority_epoch,0),st.kind
                   FROM engine_step st LEFT JOIN engine_step_attempt a ON a.step_id=st.id AND a.attempt=st.attempt
                   WHERE st.run_id=$run AND st.id IN affected ORDER BY st.id
                 """, r => new WorkflowExecutionFence(r.Text(0), checked((int)r.Long(1)), checked((int)r.Long(2)), r.Long(3)),
                 new SqlArg("$target", c.EntityId), new("$run", target.Run));
+            // An attempt from an earlier generation was released when that generation advanced; nothing has run in this one.
             if (affected.Any(row => row.Attempt > 0 && !released(s, row))) return Refuse("executor_quiescence_required");
             if (s.QueryFirst("""
                 SELECT COUNT(*) FROM engine_outbox o JOIN engine_step st ON st.id=json_extract(o.payload_json,'$.stepId') OR st.session_id=o.session_id

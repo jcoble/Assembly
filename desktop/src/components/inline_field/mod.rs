@@ -7,7 +7,7 @@ mod form_state;
 mod kinds;
 mod layout;
 mod state;
-pub use editor::ChoiceOption;
+pub use editor::{ChoiceOption, DATE_TIME_SHOWN};
 pub use field::{FieldRule, FieldValue, InlineField, SaveRequested, init};
 pub use form::{FormSaveRequested, InlineForm};
 pub use form_state::{FormFailure, FormRule, FormValues};

@@ -43,7 +43,8 @@ public sealed partial class EngineCommands
         var spec = snapshot.Snapshot.Definition.Steps[key];
         var values = TemplateValues(scope, snapshot, w.RunId, w.StepId, w.Generation);
         if (spec.Condition is not null && !WorkflowTemplates.Condition(spec.Condition, values)) return null;
-        var prompt = WorkflowTemplates.Render(snapshot.Snapshot.Prompts[spec.Prompt!], values);
+        var template = snapshot.Snapshot.Prompts[spec.Prompt!];
+        var prompt = ReviewTransitions.WithOwnerRevision(scope, w.RunId, w.StepId, w.Generation, template, WorkflowTemplates.Render(template, values));
         if (string.IsNullOrWhiteSpace(prompt)) throw new InvalidOperationException("workflow_prompt_empty");
         var tuple = new[] { w.Machine, w.RunId, w.StepId, w.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture), w.NextAttempt.ToString(System.Globalization.CultureInfo.InvariantCulture) };
         var predecessor = latest?.CommandId;

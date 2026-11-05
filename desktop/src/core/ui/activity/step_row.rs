@@ -100,6 +100,7 @@ pub fn step_view(step: &StepItem, now_ms: i64) -> StepView {
         (None, None) => StepRight::None,
     };
     StepView {
+        actions: Vec::new(),
         key: step.id.clone().into(),
         mark,
         label: row.label.into(),

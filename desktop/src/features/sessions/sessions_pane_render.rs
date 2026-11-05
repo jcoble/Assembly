@@ -1,5 +1,6 @@
 //! `SessionsPane`'s panel traits (name, title, focus) and its render: the header, filters, search and rail list.
 use super::*;
+use crate::activity::{DotChip, Tone};
 
 impl EventEmitter<PanelEvent> for SessionsPane {}
 
@@ -30,7 +31,7 @@ impl Panel for SessionsPane {
 impl Render for SessionsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
-        let (warning, border) = (cx.theme().warning, cx.theme().border.opacity(0.6));
+        let border = cx.theme().border.opacity(0.6);
         let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
         let pane = cx.entity().downgrade();
         let on_view: OnView = Rc::new(move |view, _: &mut Window, cx: &mut App| {
@@ -70,19 +71,7 @@ impl Render for SessionsPane {
                             .mt(px(-2.))
                             .pr(px(12.))
                             .pb(px(8.))
-                            .child(
-                                h_flex()
-                                    .h(px(18.))
-                                    .px(px(7.))
-                                    .gap(px(4.))
-                                    .rounded_full()
-                                    .bg(warning.opacity(0.12))
-                                    .text_role(TextRole::Meta, cx)
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(warning)
-                                    .child(div().size(px(6.)).rounded_full().bg(warning))
-                                    .child(words),
-                            )
+                            .child(DotChip::new(words, Tone::Warning))
                     })),
             )
             // Above the list, which takes all the height there is and would push this out of the window.

@@ -1,6 +1,7 @@
 //! What each tab lists, in the order it draws, and the words above it.
 use std::collections::HashSet;
 
+use chrono::{Local, TimeZone};
 use gpui_kit::App;
 
 use super::board_prefs::{BoardPrefs, BoardTab};
@@ -11,6 +12,7 @@ use super::board_queries::{
 use crate::core::engine::{EngineFeed, EngineKey};
 use crate::core::socket::client::SocketClient;
 use crate::core::state::machines::Machines;
+use crate::inline_field::DATE_TIME_SHOWN;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Section {
@@ -160,13 +162,25 @@ pub fn entries(sections: &[Section], tab: BoardTab, prefs: &BoardPrefs) -> Vec<E
     rows
 }
 
-/// A machine's heading. Its rows stay listed while it's offline, and nothing about it is guessed.
-pub fn group_heading(name: &str, offline: bool) -> String {
-    if offline {
-        format!("{name} · offline")
-    } else {
-        name.to_owned()
+/// A machine's heading. Its rows stay listed while it's offline, and nothing about it is guessed: a machine that doesn't
+/// say since when is just offline.
+pub fn group_heading(name: &str, offline: bool, since_ms: Option<i64>, midnight_ms: i64) -> String {
+    if !offline {
+        return name.to_owned();
     }
+    let since = since_ms.and_then(|ms| Local.timestamp_millis_opt(ms).single().map(|at| (ms, at)));
+    match since {
+        Some((ms, at)) if ms >= midnight_ms => {
+            format!("{name} · offline since {}", at.format("%H:%M"))
+        }
+        Some((_, at)) => format!("{name} · offline since {}", at.format(DATE_TIME_SHOWN)),
+        None => format!("{name} · offline"),
+    }
+}
+
+/// When a machine's engine stopped answering, as the machines list has it.
+pub fn offline_since(machine: &str, feed: &EngineFeed, cx: &App) -> Option<i64> {
+    Machines::offline_since(feed.machine_name(machine)?, cx)
 }
 
 /// "This Mac" for the local engine, a saved remote's own name, or the engine's id until one is known.

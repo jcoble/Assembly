@@ -14,6 +14,7 @@ use gpui_kit::component::popover::Popover;
 use gpui_kit::*;
 
 use super::{drawer_buttons, top_tabs};
+use crate::activity::{DotChip, Tone};
 use crate::core::engine::{EngineChanged, EngineFeed};
 use crate::core::intents::open_settings::OpenSettings;
 use crate::features::board::ToggleBoard;
@@ -102,6 +103,11 @@ impl TopBar {
     }
 
     #[cfg(test)]
+    pub(crate) fn badge_words(&self) -> Option<SharedString> {
+        self.badge.clone()
+    }
+
+    #[cfg(test)]
     pub(crate) fn board_reader(&self) -> Option<WeakEntity<BoardPanel>> {
         self.board.as_ref().map(Entity::downgrade)
     }
@@ -152,13 +158,15 @@ impl Render for TopBar {
                             }),
                     )
             });
-        let trigger = Button::new("board")
-            .ghost()
-            .small()
-            .label(match &self.badge {
-                Some(count) => format!("Board · {count}"),
-                None => "Board".to_owned(),
-            });
+        let trigger = Button::new("board").ghost().small().label("Board");
+        let trigger = match self.badge.clone() {
+            Some(count) => trigger.child(
+                div()
+                    .debug_selector(|| "board-badge".into())
+                    .child(DotChip::new(count, Tone::Warning)),
+            ),
+            None => trigger,
+        };
         let trigger = trigger.tooltip("Build Board");
         // A weak capture prevents the kit's retained content builder from keeping a dismissed Board alive.
         let board = self.board.as_ref().map(Entity::downgrade);

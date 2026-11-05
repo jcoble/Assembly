@@ -72,6 +72,14 @@ impl Machines {
         })
     }
 
+    /// When the machine `name` stopped answering, while it's offline.
+    pub fn offline_since(name: &str, cx: &App) -> Option<i64> {
+        let machines = Machines::try_global(cx)?;
+        (machines.read(cx).machines())
+            .find(|held| held.name.as_deref() == Some(name) && held.didnt_answer())
+            .and_then(|held| held.offline_since_ms)
+    }
+
     fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
         match update {
             Update::State(items) => replace(&mut self.machines, items),

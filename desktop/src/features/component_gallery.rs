@@ -10,8 +10,9 @@ use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
 use crate::activity::{
-    ActivitySection, CardBody, LinkChip, NeedsCard, NeedsState, RunRow, SessionRowValues,
-    StatusChip, StepMark, StepRight, StepView, Tone, format_elapsed, session_row, step_list,
+    ActivitySection, CardBody, DotChip, LinkChip, NeedsCard, NeedsState, RunRow, SessionRowValues,
+    StatusChip, StepAction, StepMark, StepRight, StepView, Tone, format_elapsed, session_row,
+    step_list,
 };
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::row_drop_down::{GrowingBody, RowDropDowns};
@@ -394,6 +395,7 @@ impl Render for ComponentGallery {
             .flex_wrap()
             .gap_2()
             .children(tones.map(|(label, tone)| StatusChip::new(label, tone)))
+            .child(DotChip::new("3", Tone::Warning))
             .child(LinkChip::new(
                 "gallery-link",
                 IconName::GitPullRequest,
