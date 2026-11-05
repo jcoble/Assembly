@@ -38,7 +38,7 @@ pub struct SessionOpenResult {
 
 impl SessionOpenResult {
     /// The answer to an open someone asked for. One that was cancelled no longer stands: what replaced it answers too.
-    pub fn from_a_person(&self) -> bool {
+    pub fn is_from_a_person(&self) -> bool {
         !self.request_id.starts_with(LINK_REQUEST)
             && !self.request_id.starts_with(RECONNECT_REQUEST)
             && !matches!(&self.result, Err(refusal) if refusal.code == "cancelled")

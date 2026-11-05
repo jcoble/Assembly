@@ -140,7 +140,7 @@ impl WaitingSessionLink {
     fn answered(&mut self, event: &SessionOpenResult, cx: &mut Context<Self>) {
         if self.opening.as_ref() != Some(&event.request_id) {
             // A person's open wins. Any other that was out has finished, so this link may try.
-            return if event.from_a_person() {
+            return if event.is_from_a_person() {
                 end(None, cx)
             } else {
                 self.try_open(cx)
