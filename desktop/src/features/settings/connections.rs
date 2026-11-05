@@ -518,9 +518,6 @@ fn field(
 #[path = "connections_tests.rs"]
 mod tests;
 
-/// The one button, on each card with something behind. It updates everything behind on every machine, in development and
-/// from a release: where it comes from is the backend's to decide.
-
 /// On each remote: runs the one check now and installs nothing. Its answer is on the card, from the machines topic.
 const CHECK: &str = "Check for updates";
 

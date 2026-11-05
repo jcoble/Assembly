@@ -12,6 +12,8 @@ use crate::core::ui::access::control_ids::machine_button as machine_button_id;
 use crate::features::remote_install::restart_button::WORDS as RESTART;
 use crate::features::remote_install::updates::{update_figure, update_offered};
 
+/// The one button, on each card with something behind. It updates everything behind on every machine, in development and
+/// from a release: where it comes from is the backend's to decide.
 const UPDATE: &str = "Update everything";
 const CANCEL: &str = "Cancel";
 
