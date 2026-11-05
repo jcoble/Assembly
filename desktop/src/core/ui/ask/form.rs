@@ -6,7 +6,7 @@ use std::str::FromStr as _;
 pub struct AskForm;
 
 impl AskForm {
-    /// The first required field still empty, by its label. Continue waits for it; a choice's free-text answer fills it.
+    /// The first required field still empty, by its label. Continue waits for it.
     pub fn missing(
         ask: &AskPayload,
         picked: &Map<String, Value>,
@@ -14,9 +14,8 @@ impl AskForm {
     ) -> Option<String> {
         let fields = ask.schema.as_ref().and_then(AskSchema::of)?;
         let filled = |name: &str, field: &AskField| {
-            let other = format!("{name}_custom");
             let typed = texts.iter().any(|(text, value)| {
-                (text == name || *text == other)
+                text == name
                     && match field.input() {
                         AskInput::Secret => !value.is_empty(),
                         _ => !value.trim().is_empty(),

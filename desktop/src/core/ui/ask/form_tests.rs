@@ -18,7 +18,7 @@ fn submit_sends_what_was_picked_and_typed_leaving_out_the_empty_fields() {
 }
 
 #[test]
-fn an_empty_required_field_is_named_and_a_choices_free_text_fills_it() {
+fn an_empty_required_field_is_named() {
     use super::form::AskForm;
     use super::payload::AskPayload;
     let ask: AskPayload = serde_json::from_value(json!({
@@ -44,8 +44,6 @@ fn an_empty_required_field_is_named_and_a_choices_free_text_fills_it() {
         AskForm::missing(&ask, &picked, &typed).as_deref(),
         Some("zone")
     );
-    let other = vec![typed[0].clone(), ("zone_custom".into(), "north".into())];
-    assert_eq!(AskForm::missing(&ask, &picked, &other), None);
 }
 
 fn typed_ask() -> super::payload::AskPayload {

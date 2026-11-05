@@ -236,25 +236,42 @@ async fn a_number_field_refuses_words_where_the_person_is(cx: &mut TestAppContex
     );
 }
 
-// The provider's "Other" is the question's own free-text answer, not a question after it.
-#[gpui::test]
-async fn other_is_the_free_text_answer_of_its_question(cx: &mut TestAppContext) {
-    let ask = ask(
-        &["question_0"],
+fn with_other(required: &[&str]) -> AskPayload {
+    ask(
+        required,
         json!({
             "question_0": { "type": "string", "oneOf": [
                 { "const": "Postgres", "title": "Postgres" }, { "const": "SQLite", "title": "SQLite" },
             ] },
             "question_0_custom": { "type": "string", "title": "Other" },
         }),
-    );
-    let (form, sent, cx) = opened(&ask, cx);
+    )
+}
+
+// The provider's "Other" is the question's own free-text answer, not a question after it.
+#[gpui::test]
+async fn other_is_the_free_text_answer_of_its_question(cx: &mut TestAppContext) {
+    let (form, sent, cx) = opened(&with_other(&[]), cx);
     assert_eq!(cx.update(|_, cx| form.read(cx).state.read(cx).total()), 1);
     type_in(&form, "MySQL", cx);
     press_continue(&form, cx);
     assert_eq!(
         *sent.borrow(),
         [json!({ "action": "accept", "content": { "question_0_custom": "MySQL" } })]
+    );
+}
+
+// The backend refuses an accept without a required field, so the text doesn't replace it.
+#[gpui::test]
+async fn other_on_a_required_question_still_answers_the_required_field(cx: &mut TestAppContext) {
+    let (form, sent, cx) = opened(&with_other(&["question_0"]), cx);
+    type_in(&form, "MySQL", cx);
+    press_continue(&form, cx);
+    assert_eq!(
+        *sent.borrow(),
+        [
+            json!({ "action": "accept", "content": { "question_0": "Postgres", "question_0_custom": "MySQL" } })
+        ]
     );
 }
 
@@ -278,7 +295,7 @@ async fn enter_in_a_text_field_does_what_continue_does(cx: &mut TestAppContext) 
     cx.run_until_parked();
     assert_eq!(current(&form, cx), "second");
     assert!(sent.borrow().is_empty());
-    focus(&form, cx);
+    // Moved on by keyboard, the next text field is ready: the second Enter leaves it empty and sends.
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert_eq!(

@@ -178,8 +178,14 @@ impl AskQuestionnaire {
                 AskInput::Many(_) => {
                     picked.insert(question.name.clone(), json!(chosen.collect::<Vec<_>>()));
                 }
-                AskInput::One(_) => {
-                    if let Some(choice) = chosen.into_iter().next() {
+                AskInput::One(ref choices) => {
+                    // Typing "Other" clears the kit's pick, but the backend holds a required field to the schema, so
+                    // it still goes on its first choice, as it did before, with the typed text beside it.
+                    let held = chosen.into_iter().next().or_else(|| {
+                        let first = choices.first().filter(|_| question.required)?;
+                        Some(first.value.clone())
+                    });
+                    if let Some(choice) = held {
                         picked.insert(question.name.clone(), json!(choice));
                     }
                 }
@@ -192,19 +198,25 @@ impl AskQuestionnaire {
         (picked, texts)
     }
 
-    /// Enter in a text field does what Continue does, whether or not the field is filled.
+    /// Enter in a text field does what Continue does, whether or not the field is filled. The kit's own Enter takes X11's
+    /// for an unfinished composition, because it carries no character, and does nothing.
     fn enter(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keys = &event.keystroke;
         if keys.key != "enter"
             || keys.modifiers.number_of_modifiers() != 0
             || event.is_held
-            || keys.is_ime_in_progress()
             || !self.state.read(cx).is_current_input_focused(window)
         {
             return;
         }
         window.prevent_default();
         self.advance(window, cx);
+    }
+
+    fn is_text_only(&self, name: &str) -> bool {
+        (self.questions.iter()).any(|question| {
+            question.name == name && matches!(question.input, AskInput::Text | AskInput::Secret)
+        })
     }
 
     fn button(&self, action: &str, label: &'static str) -> Button {
@@ -331,11 +343,21 @@ fn submitted(
     window: &mut Window,
     cx: &mut Context<AskQuestionnaire>,
 ) -> Subscription {
-    cx.subscribe_in(state, window, |form, _, event, window, cx| {
-        if matches!(event, QuestionnaireEvent::Submit(_)) {
-            form.finish(window, cx);
-        }
-    })
+    cx.subscribe_in(
+        state,
+        window,
+        |form, state, event, window, cx| match event {
+            QuestionnaireEvent::Submit(_) => form.finish(window, cx),
+            // Moving on by keyboard lands in a text-only question ready to type.
+            QuestionnaireEvent::CurrentItemChanged {
+                current: Some(current),
+                ..
+            } if form.is_text_only(current) => {
+                state.update(cx, |state, cx| state.focus_input(current, window, cx));
+            }
+            _ => {}
+        },
+    )
 }
 
 /// The kit refuses a schema that repeats a choice; an agent's is not to be trusted that far.
