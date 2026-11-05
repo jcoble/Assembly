@@ -37,6 +37,7 @@ internal sealed partial class RemoteMachine
                 _socketFailure = null;
                 InvalidateEngine();
                 _socket = socket;
+                _socketOpenedAt = _time.GetTimestamp();
                 BeginSessionPublications(socket);
                 SocketOpened?.Invoke();
                 return socket;
@@ -302,6 +303,7 @@ internal sealed partial class RemoteMachine
     }
     private CancellationTokenSource? _socketWaiting;
     private static readonly TimeSpan SocketMaxBackoff = TimeSpan.FromSeconds(5);
+    private long _socketOpenedAt;
 
     private async Task SocketLoopAsync()
     {
@@ -312,7 +314,6 @@ internal sealed partial class RemoteMachine
             try
             {
                 socket = await ConnectSocketAsync(_socketStop.Token);
-                backoff = TimeSpan.FromSeconds(1);
                 _status.Reachable(_name);
                 _follower.Resume();
                 while (true)
@@ -411,6 +412,8 @@ internal sealed partial class RemoteMachine
                 finally { _socketSend.Release(); }
                 await titleDrain;
             }
+            // Connecting proves little: a peer in a crash loop connects too. One that outlived the longest wait has earned a quick return.
+            if (socket is not null && _time.GetElapsedTime(_socketOpenedAt) >= SocketMaxBackoff) backoff = TimeSpan.FromSeconds(1);
             using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(_socketStop.Token))
             {
                 Volatile.Write(ref _socketWaiting, waiting);

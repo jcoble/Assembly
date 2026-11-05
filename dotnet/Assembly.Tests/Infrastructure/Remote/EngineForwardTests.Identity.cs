@@ -118,19 +118,64 @@ public sealed partial class EngineForwardTests
         finally { release.TrySetResult(); }
     }
 
+    private static RemoteMachine OnFakeClock(TwoHosts h, Microsoft.Extensions.Time.Testing.FakeTimeProvider clock, LiveHub hub) =>
+        new("returning", h.Remote.Address, "isolated-token", hub, SessionStore.Open(h.Mac.Fixture.Db, h.Mac.Fixture.Time, "/isolated"), TextWriter.Null,
+            new MachineStatus(h.Mac.Topics, []), topics: h.Mac.Topics, time: clock);
+
+    /// <summary>Moves the fake clock until the machine opens its socket again, and says how long that took on that clock.</summary>
+    private static async Task<TimeSpan> NextOpen(TwoHosts h, Microsoft.Extensions.Time.Testing.FakeTimeProvider clock, System.Threading.Channels.Channel<DateTimeOffset> opens, DateTimeOffset since, bool dropNew)
+    {
+        using var limit = new CancellationTokenSource(Wait);
+        while (true)
+        {
+            if (opens.Reader.TryRead(out var at)) return at - since;
+            if (dropNew) h.Remote.Endpoint.DropAll();
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            await Task.WhenAny(opens.Reader.WaitToReadAsync().AsTask(), Task.Delay(5)).WaitAsync(limit.Token);
+        }
+    }
+
     [Fact]
-    public async Task A_lost_socket_that_had_worked_comes_back_quickly_however_many_times()
+    public async Task A_remote_that_connects_and_drops_is_tried_less_and_less_often()
     {
         await using var h = await Started();
-        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        using var hub = new LiveHub(RowStore.Open(h.Mac.Fixture.Db));
+        await using var machine = OnFakeClock(h, clock, hub);
+        var opens = System.Threading.Channels.Channel.CreateUnbounded<DateTimeOffset>();
+        machine.SocketOpened += () => opens.Writer.TryWrite(clock.GetUtcNow());
+        await machine.ProbeAsync(default);
+        var last = await opens.Reader.ReadAsync().AsTask().WaitAsync(Wait);
+        var gap = TimeSpan.Zero;
+        for (var flap = 0; flap < 5; flap++)
+        {
+            gap = await NextOpen(h, clock, opens, last, dropNew: true);
+            last += gap;
+        }
+        // Each of these lived no time at all. Resetting on connect kept this at about 1 s for good.
+        Assert.True(gap >= TimeSpan.FromSeconds(4), $"still retrying after {gap}");
+    }
+
+    [Fact]
+    public async Task A_lost_socket_that_had_proved_itself_comes_back_quickly_however_many_times()
+    {
+        await using var h = await Started();
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        using var hub = new LiveHub(RowStore.Open(h.Mac.Fixture.Db));
+        await using var machine = OnFakeClock(h, clock, hub);
+        var opens = System.Threading.Channels.Channel.CreateUnbounded<DateTimeOffset>();
+        machine.SocketOpened += () => opens.Writer.TryWrite(clock.GetUtcNow());
+        await machine.ProbeAsync(default);
+        await opens.Reader.ReadAsync().AsTask().WaitAsync(Wait);
         for (var loss = 1; loss <= 5; loss++)
         {
+            clock.Advance(TimeSpan.FromSeconds(6));
+            var lost = clock.GetUtcNow();
             h.Remote.Endpoint.DropAll();
-            h.Remote.Commit(loss);
-            await h.Reached(h.Remote.Through);
+            var back = await NextOpen(h, clock, opens, lost, dropNew: false);
+            // A backoff that kept growing would be at 5 s by now.
+            Assert.True(back < TimeSpan.FromSeconds(4), $"loss {loss} took {back}");
         }
-        // The old backoff never reset, so these five took 1+2+4+8+16 s.
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(15), $"took {clock.Elapsed}");
     }
 
     [Fact]
