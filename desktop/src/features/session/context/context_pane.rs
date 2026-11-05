@@ -27,6 +27,9 @@ use listing::Listing;
 /// The layout's name for the tab (default_layout.rs).
 const CONTEXT: &str = "Context";
 
+/// Why Chat stops reading a session whose owner a Context read found replaced.
+const SOURCE_CHANGED: &str = "The Context session source changed.";
+
 /// One file, as `rows/files` sends it (RowsFeature.cs).
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct FileTouched {
@@ -221,7 +224,7 @@ impl ContextPane {
                     return;
                 }
                 if refused {
-                    pane.refuse_source(&scope, cx);
+                    pane.refuse_source(&scope, SOURCE_CHANGED.into(), cx);
                 }
                 pane.files = touched(files);
                 pane.take_attachments(attachments_serial, attachments, false, cx);
@@ -235,6 +238,13 @@ impl ContextPane {
         self.read_tokens(tokens_scope, cx);
     }
 
+    /// Drops every read going and forgets the scope, so no answer is kept.
+    fn stop_reading(&mut self) {
+        (self._read, self._open, self._tokens, self._attachments) = (None, None, None, None);
+        self.context_scope = None;
+        self.read_serial += 1;
+    }
+
     /// Whether an answer from read `serial` of `scope` is still wanted.
     fn current(&self, serial: u64, scope: &ContextScope) -> bool {
         self.read_serial == serial
@@ -244,16 +254,19 @@ impl ContextPane {
                 .is_some_and(|held| held.same(scope))
     }
 
-    /// The owner was replaced: nothing more is read or opened from this source.
-    fn refuse_source(&mut self, scope: &ContextScope, cx: &mut Context<Self>) {
+    /// The owner was replaced: nothing more is read or opened from this source, the thumbnails' queue included.
+    fn refuse_source(&mut self, scope: &ContextScope, reason: String, cx: &mut Context<Self>) {
         if let Some(held) = self.context_scope.as_mut() {
             held.valid = false;
+        }
+        if let Some(thumbnails) = self.thumbnails.as_mut() {
+            thumbnails.stop();
         }
         if let Some(source) = &scope.source {
             crate::features::session::view::session_pane::SessionPane::refuse_image_source(
                 &scope.session,
                 source,
-                "The Context session source changed.".into(),
+                reason,
                 cx,
             );
         }
@@ -285,7 +298,7 @@ impl ContextPane {
     /// A thumbnail's read was refused because the owner was replaced: the queue has stopped, and nothing more is read.
     pub(super) fn thumbnail_source_changed(&mut self, cx: &mut Context<Self>) {
         if let Some(scope) = self.context_scope.clone() {
-            self.refuse_source(&scope, cx);
+            self.refuse_source(&scope, SOURCE_CHANGED.into(), cx);
         }
         cx.notify();
     }
@@ -304,7 +317,7 @@ impl ContextPane {
                     return;
                 }
                 if matches!(&answer, Err(CallError::Refused { code, .. }) if code == "source_changed") {
-                    pane.refuse_source(&scope, cx);
+                    pane.refuse_source(&scope, SOURCE_CHANGED.into(), cx);
                 }
                 pane.total = Some(answer.ok().and_then(|answer| answer["total"].as_i64()));
                 cx.notify();
@@ -365,22 +378,22 @@ impl BasePanel for ContextPane {
     }
 
     /// The kit tells the tab when it's shown (its pill picked, or the drawer opened on it) and when it's hidden.
+    /// A tab moved to another group hears `true` again with no `false` between, so a show also releases what the last
+    /// show drew, here where the window being updated is known.
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.active = active;
+        if let Some(thumbnails) = self.thumbnails.as_mut() {
+            thumbnails.clear(Some(window), cx);
+        }
         match active {
             true => self.read(cx),
-            false => {
-                self._read = None;
-                self._open = None;
-                self._tokens = None;
-                self._attachments = None;
-                self.context_scope = None;
-                self.read_serial += 1;
-                if let Some(thumbnails) = self.thumbnails.as_mut() {
-                    thumbnails.clear(Some(window), cx);
-                }
-            }
+            false => self.stop_reading(),
         }
+    }
+
+    /// Taken out of the dock, as a layout load does: the kit sends no `set_active(false)`, so this is the hide.
+    fn on_removed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_active(false, window, cx);
     }
 }
 

@@ -418,6 +418,9 @@ mod action_tests;
 #[path = "tests/session_pane_activity_tests.rs"]
 mod activity_tests;
 #[cfg(test)]
+#[path = "../context/context_refusal_tests.rs"]
+mod context_refusal_tests;
+#[cfg(test)]
 #[path = "../context/live_facts_tests.rs"]
 mod live_facts_tests;
 #[cfg(test)]

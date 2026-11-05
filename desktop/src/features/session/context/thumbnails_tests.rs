@@ -21,15 +21,19 @@ use crate::core::state::selected_session::SelectedSession;
 use crate::features::session::client::fake_client::FakeClient;
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::context::context_pane::ContextPane;
+use crate::features::session::context::live_facts::LiveFacts;
 
-const NEW: &str = "/h/attachments/s1/b0.png";
-const OLD: &str = "/h/attachments/s1/9f.png";
+pub(super) const NEW: &str = "/h/attachments/s1/b0.png";
+pub(super) const OLD: &str = "/h/attachments/s1/9f.png";
 
 /// The pane with thumbnails, in a kit root.
-fn open(cx: &mut TestAppContext) -> (Entity<ContextPane>, FakeClient, &mut VisualTestContext) {
+pub(super) fn open(
+    cx: &mut TestAppContext,
+) -> (Entity<ContextPane>, FakeClient, &mut VisualTestContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         SelectedSession::init(cx);
+        LiveFacts::init(cx);
     });
     let client = FakeClient::default();
     let fake = client.clone();
@@ -40,11 +44,11 @@ fn open(cx: &mut TestAppContext) -> (Entity<ContextPane>, FakeClient, &mut Visua
     (pane, client, cx)
 }
 
-fn draw(cx: &mut VisualTestContext) {
+pub(super) fn draw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
-fn png(width: u32, height: u32) -> Vec<u8> {
+pub(super) fn png(width: u32, height: u32) -> Vec<u8> {
     let mut bytes = Vec::new();
     image::RgbaImage::new(width, height)
         .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
@@ -53,12 +57,12 @@ fn png(width: u32, height: u32) -> Vec<u8> {
 }
 
 /// `attachments/read`'s answer holding the whole image in one piece.
-fn piece(bytes: &[u8]) -> Value {
+pub(super) fn piece(bytes: &[u8]) -> Value {
     json!({ "data": STANDARD.encode(bytes), "size": bytes.len(), "mime": "image/png" })
 }
 
 /// The file names `attachments/read` was asked for, in order.
-fn image_reads(client: &FakeClient) -> Vec<String> {
+pub(super) fn image_reads(client: &FakeClient) -> Vec<String> {
     (client.calls().into_iter())
         .filter(|(call, _)| call == "attachments/read")
         .map(|(_, args)| args["name"].as_str().unwrap_or_default().to_string())
@@ -66,7 +70,7 @@ fn image_reads(client: &FakeClient) -> Vec<String> {
 }
 
 /// The two prompts' images, newest prompt first.
-fn two_images() -> Value {
+pub(super) fn two_images() -> Value {
     json!({ "prompts": [
         format!("again\nAttached image: {NEW} (new.png)"),
         format!("look\nAttached image: {OLD} (shot.png)"),
@@ -74,7 +78,7 @@ fn two_images() -> Value {
 }
 
 /// Queues the tab's three reads, which come before any image's, and picks s1.
-fn pick_s1(images: Value, client: &FakeClient, cx: &mut VisualTestContext) {
+pub(super) fn pick_s1(images: Value, client: &FakeClient, cx: &mut VisualTestContext) {
     queue_lists(images, client);
     cx.update(|_, cx| {
         SelectedSession::global(cx)
@@ -83,25 +87,25 @@ fn pick_s1(images: Value, client: &FakeClient, cx: &mut VisualTestContext) {
 }
 
 /// The answers to the tab's reads of the files, the images and the total.
-fn queue_lists(images: Value, client: &FakeClient) {
+pub(super) fn queue_lists(images: Value, client: &FakeClient) {
     client.queue_answer(Ok(json!([])));
     client.queue_answer(Ok(images));
     client.queue_answer(Ok(json!({})));
 }
 
 /// Shows the tab; the caller has queued its reads.
-fn show(pane: &Entity<ContextPane>, cx: &mut VisualTestContext) {
+pub(super) fn show(pane: &Entity<ContextPane>, cx: &mut VisualTestContext) {
     pane.update_in(cx, |pane, window, cx| pane.set_active(true, window, cx));
     cx.run_until_parked();
     draw(cx);
 }
 
-fn hide(pane: &Entity<ContextPane>, cx: &mut VisualTestContext) {
+pub(super) fn hide(pane: &Entity<ContextPane>, cx: &mut VisualTestContext) {
     pane.update_in(cx, |pane, window, cx| pane.set_active(false, window, cx));
     cx.run_until_parked();
 }
 
-fn thumbnail(
+pub(super) fn thumbnail(
     pane: &Entity<ContextPane>,
     path: &str,
     cx: &mut VisualTestContext,
@@ -114,11 +118,11 @@ fn thumbnail(
 }
 
 /// Whether the element with this selector was drawn.
-fn drawn(cx: &mut VisualTestContext, selector: String) -> bool {
+pub(super) fn drawn(cx: &mut VisualTestContext, selector: String) -> bool {
     cx.debug_bounds(selector.leak()).is_some()
 }
 
-fn in_atlas(image: &RenderImage, cx: &mut VisualTestContext) -> bool {
+pub(super) fn in_atlas(image: &RenderImage, cx: &mut VisualTestContext) -> bool {
     cx.update(|window, _| window.has_image_atlas_entry(image))
 }
 

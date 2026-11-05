@@ -12,6 +12,12 @@ use serde_json::json;
 
 use crate::features::session::client::session_client::{CallError, SessionClient};
 
+/// The part of a path or URL after its last slash or backslash: an attached image's file name in the store, or a
+/// repo's last name.
+pub fn last_part(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
 /// Reads a session's attached image piece by piece (`attachments/read`), by its file name in the store. Chat's chips
 /// and the Context tab open images this way, and the Context tab's thumbnails read them the same way, with no window.
 pub async fn read_image(

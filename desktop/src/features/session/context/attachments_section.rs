@@ -17,7 +17,7 @@ use crate::activity::{StatusChip, Tone};
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::composer::attachment::Attachment;
 use crate::features::session::context::live_facts::DraftImage;
-use crate::features::session::view::lightbox::{open_lightbox, read_image};
+use crate::features::session::view::lightbox::{last_part, open_lightbox, read_image};
 use crate::section_card::SectionCard;
 use gpui_kit::assets::IconName;
 
@@ -174,7 +174,7 @@ impl ContextPane {
                     return;
                 }
                 if matches!(&answer, Err(CallError::Refused { code, .. }) if code == "source_changed") {
-                    pane.refuse_source(&scope, cx);
+                    pane.refuse_source(&scope, super::SOURCE_CHANGED.into(), cx);
                 }
                 pane.take_attachments(attachments_serial, answer, true, cx);
                 cx.notify();
@@ -218,26 +218,34 @@ impl ContextPane {
             return;
         };
         let serial = self.read_serial;
-        let file = path
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or_default()
-            .to_string();
+        let file = last_part(&path).to_string();
         let client = self.client.clone();
         self.open_failed = None;
         cx.notify();
         self._open = Some(cx.spawn_in(window, async move |pane, cx| {
-            let image = read_image(client, scope.session.clone(), file, scope.source.clone(), cx).await;
+            let image = read_image(
+                client,
+                scope.session.clone(),
+                file,
+                scope.source.clone(),
+                cx,
+            )
+            .await;
             pane.update_in(cx, |pane, window, cx| {
-                if pane.read_serial!=serial||pane.context_scope.as_ref()!=Some(&scope)||!pane.active{return;}
+                if pane.read_serial != serial
+                    || pane.context_scope.as_ref() != Some(&scope)
+                    || !pane.active
+                {
+                    return;
+                }
                 match image {
-                    Ok(image)=>open_lightbox(image,name.into(),window,cx),
-                    Err(error)=>{
+                    Ok(image) => open_lightbox(image, name.into(), window, cx),
+                    Err(error) => {
                         if matches!(&error,CallError::Refused{code,..} if code=="source_changed") {
-                            if let Some(held)=pane.context_scope.as_mut(){held.valid=false;}
-                            if let Some(source)=&scope.source{crate::features::session::view::session_pane::SessionPane::refuse_image_source(&scope.session,source,error.reason(),cx);}
+                            pane.refuse_source(&scope, error.reason(), cx);
                         }
-                        pane.open_failed=Some(error.reason());cx.notify();
+                        pane.open_failed = Some(error.reason());
+                        cx.notify();
                     }
                 }
             })
