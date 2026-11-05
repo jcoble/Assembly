@@ -45,7 +45,7 @@ internal static class WorkflowRunTransitions
         if (owner is null) return Refuse(context, "bad_args");
         if (owner.Parent is not null || owner.Reserved) return Refuse(context, "owner_reserved");
         if (owner.Machine != context.Machine || owner.Holder != "local" || owner.State is "foreign" or "ended" or "handing_off") return Refuse(context, "owner_reserved");
-        if (scope.QueryFirst("SELECT COUNT(*) FROM projects WHERE id=$id AND machine=$machine AND root_path=$root AND removed_at IS NULL",
+        if (scope.QueryFirst("SELECT COUNT(*) FROM projects WHERE id=$id AND machine IN ($machine,'local') AND root_path=$root AND removed_at IS NULL",
             r => r.Long(0), new SqlArg("$id", body.ProjectId), new("$machine", context.Machine), new("$root", body.ProjectRoot)) != 1)
             return Refuse(context, "project_not_found");
         if (!TryTaskUrl(request.Task, out var taskUrl)) return Refuse(context, "bad_args");

@@ -120,7 +120,7 @@ public sealed class AuthReadTests
             using var snapshot = f.Runtime.Reader.Snapshot(topic, null, default);
             var items = snapshot.ReadNext().Items;
             if (topic == "runs")
-                Assert.Equal("{\"entityKind\":\"workflow_settings\",\"id\":\"workflow-settings\",\"version\":0,\"mutedUntil\":null}", Assert.Single(items).GetRawText());
+                Assert.Equal("{\"entityKind\":\"workflow_settings\",\"id\":\"workflow-settings\",\"version\":0,\"machine\":\"" + f.Runtime.Machine + "\",\"mutedUntil\":null}", Assert.Single(items).GetRawText());
             else Assert.Empty(items);
             var page = f.Runtime.Reader.Since(topic, null, 0, default); Assert.Empty(page.Events); Assert.Equal(f.Runtime.Reader.HighWatermark(default), page.Through);
         }

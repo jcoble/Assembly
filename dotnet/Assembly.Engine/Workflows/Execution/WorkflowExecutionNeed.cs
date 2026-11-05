@@ -134,6 +134,32 @@ public static partial class WorkflowExecutionNeeds
         ORDER BY created_ms DESC,rowid DESC LIMIT 1
         """, r => r.Text(0), new SqlArg("$payload", effect.Payload.GetRawText()), new("$hash", CommandStepTransitions.Digest(effect.Payload.GetRawText()))) ?? "ask";
 
+    /// <summary>A command approval whose work is being redone. One that never ran is settled here, so nothing can launch it;
+    /// one with a process behind it stops the way a cancel does, and the redo waits until it has.</summary>
+    internal static void CloseForRedo(IWriteScope s, CommandContext c, string need, string reason)
+    {
+        var row = s.QueryFirst("""
+            SELECT n.execution_json,o.state,o.payload_json FROM engine_needs_me n
+            JOIN engine_outbox o ON o.id=json_extract(n.execution_json,'$.effectId') WHERE n.id=$need
+            """, r => (Binding: r.Text(0), State: r.Text(1), Payload: r.Text(2)), new SqlArg("$need", need));
+        var binding = JsonSerializer.Deserialize(row.Binding!, WorkflowNeedJson.Default.WorkflowExecutionNeed)!;
+        var i = JsonSerializer.Deserialize(row.Payload!, WorkflowExecutionJson.Default.CommandExecutionIntent)!;
+        if (binding.Reason != "policy")
+        {
+            if (row.State is "inflight" or "unavailable" or "uncertain") Cancel(s, c, i, binding.EffectId, reason);
+            return;
+        }
+        s.Execute("""
+            UPDATE engine_workflow_policy SET decision='closed',version=version+1,updated_ms=$now WHERE need_id=$need;
+            UPDATE engine_outbox SET version=version+CASE WHEN state='inflight' THEN 0 ELSE 1 END,updated_ms=$now,
+              state=CASE WHEN state='inflight' THEN state ELSE 'failed' END,last_error=$reason,next_ms=NULL WHERE id=$effect;
+            UPDATE engine_step_attempt SET cancel_requested=1,reason=$reason,state='cancelled',ended_ms=$now,gate_state='settled'
+              WHERE step_id=$step AND attempt=$attempt;
+            UPDATE engine_step SET outcome_reason=$reason,version=version+1,updated_ms=$now WHERE id=$step;
+            """, new("$now", c.NowMs), new("$need", need), new("$reason", reason), new("$effect", binding.EffectId),
+            new("$step", i.StepId), new("$attempt", i.Attempt));
+    }
+
     private static void Cancel(IWriteScope s, CommandContext c, CommandExecutionIntent i, string effect, string reason) => s.Execute("""
         UPDATE engine_outbox SET version=version+CASE WHEN state='inflight' THEN 0 ELSE 1 END,updated_ms=$now,
           state=CASE WHEN state='inflight' THEN state WHEN $reason='policy_denied' THEN 'failed' ELSE 'unavailable' END,last_error=$reason,next_ms=NULL WHERE id=$effect;

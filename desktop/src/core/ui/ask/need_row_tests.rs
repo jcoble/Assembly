@@ -114,6 +114,16 @@ fn need_controls_only_join_the_actual_machine_wide_needs_scope() {
 }
 
 #[test]
+fn a_question_closed_by_a_revision_says_why_and_claims_no_answer() {
+    let mut need = need(Some("text"));
+    need.state = "superseded".into();
+    assert!(matches!(
+        super::need_row::settled_state(&need, false),
+        NeedRowState::Closed { state } if state.as_ref() == "Closed: the work it follows is being redone"
+    ));
+}
+
+#[test]
 fn cancelled_and_dismissed_needs_do_not_claim_an_answer_and_phone_origin_is_not_inferred() {
     use super::need_row::settled_state;
     let mut need = need(Some("text"));

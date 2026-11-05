@@ -78,6 +78,7 @@ pub fn first_tab(data: &BoardData, last: BoardTab) -> BoardTab {
 pub fn heading(need_count: usize) -> String {
     match need_count {
         0 => "Nothing needs you".to_owned(),
+        1 => "1 needs you".to_owned(),
         count => format!("{count} need you"),
     }
 }

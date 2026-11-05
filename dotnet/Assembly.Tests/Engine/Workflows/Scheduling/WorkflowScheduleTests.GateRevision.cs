@@ -4,6 +4,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.NeedsMe;
+using Assembly.Engine.Reading;
 using Assembly.Engine.Workflows.Definitions;
 using Assembly.Engine.Workflows.Runs;
 using Assembly.Infrastructure.Engine.Workflows;
@@ -107,6 +108,29 @@ public sealed partial class WorkflowScheduleTests
         Assert.Equal("succeeded", f.Core.Text("SELECT state FROM engine_step WHERE id=$id", new SqlArg("$id", Gate(f))));
     }
 
+    [Fact]
+    public void A_gate_asks_its_prompt_and_its_row_can_say_when_it_closed()
+    {
+        using var f = new Fixture(prompt: "Work", yaml: GatedFlow);
+        var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
+        var need = OpenGate(f);
+        Assert.Equal("Ship it?", f.Core.Text("SELECT text FROM engine_needs_me WHERE id=$id", new SqlArg("$id", need)));
+        Assert.Equal("Ship it?", f.Core.Text("SELECT json_extract(presentation_json,'$.title') FROM engine_needs_me WHERE id=$id", new SqlArg("$id", need)));
+        var row = new EngineReader(f.Core.Db, f.Core.Machine).Entity("needs_me", need, default)!.Value;
+        Assert.Equal(1500, row.GetProperty("createdMs").GetInt64());
+        Assert.Equal(1500, row.GetProperty("updatedMs").GetInt64());
+    }
+
+    [Fact]
+    public void A_new_run_tells_clients_about_every_step_before_any_of_them_moves()
+    {
+        using var f = new Fixture(prompt: "Work", yaml: GatedFlow);
+        var steps = f.Core.Db.Query("SELECT id FROM engine_step", r => r.Text(0), default);
+        Assert.True(steps.Count > 1);
+        var announced = f.Core.Db.Query("SELECT entity_id FROM engine_event WHERE kind='step.changed'", r => r.Text(0), default);
+        Assert.Equal(steps.Order(), announced.Order());
+    }
+
     private const string TwoGatesFlow = """
         name: Two gates
         steps:
@@ -142,27 +166,88 @@ public sealed partial class WorkflowScheduleTests
 
     private static int Advance(Fixture f) => new WorkflowAdvancementPreparation(f.Core.Db, f.Commands, f.Core.Machine, f.Core.Time).AdvancePending(default);
 
+    private static string StateOf(Fixture f, string need) => f.Core.Text("SELECT state FROM engine_needs_me WHERE id=$id", new SqlArg("$id", need))!;
+
+    private static void RerunAndAskBothAgain(Fixture f)
+    {
+        Assert.Equal(1, Advance(f));
+        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE state<>'pending'"));
+        var again = f.Apply(f.Prepare(3000)); Finish(f, again.SessionId!, 2, 1);
+        OpenGate(f, 2);
+        Assert.Equal(2, f.Core.Number("SELECT COUNT(*) FROM engine_needs_me WHERE state='open'"));
+    }
+
     [Fact]
-    public void A_revision_with_another_approval_open_is_refused_and_both_stay_open_until_that_one_is_answered()
+    public void A_revision_closes_another_open_approval_and_the_rerun_asks_it_again()
     {
         using var f = new Fixture(prompt: "Work", yaml: TwoGatesFlow);
         var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
         OpenGate(f, 2);
         var (revised, other) = (NeedOf(f, "first"), NeedOf(f, "second"));
 
-        Assert.Equal("other_gate_open", Answer(f, revised, RevisionOf("Smaller")).Error);
-        Assert.Equal(2, f.Core.Number("SELECT COUNT(*) FROM engine_needs_me WHERE state='open'"));
-        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind IN ('gate_revised','redo_requested')"));
-        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE dispatch_state='redo_pending'"));
+        var answered = Answer(f, revised, RevisionOf("Smaller")); Assert.True(answered.Applied, answered.Error);
+        Assert.Equal("superseded", StateOf(f, other));
+        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_needs_me WHERE id=$id AND (answer_json IS NOT NULL OR answered_ms IS NOT NULL)", new SqlArg("$id", other)));
+        Assert.Equal("work_redone", f.Core.Text("""
+            SELECT json_extract(h.safe_body_json,'$.reason') FROM engine_workflow_history h JOIN engine_step st ON st.id=h.step_id
+            WHERE h.kind='workflow_decision' AND json_extract(h.safe_body_json,'$.decision')='closed' AND st.definition_key='second'
+            """));
+        Assert.Equal("running", f.Core.Text("SELECT state FROM engine_run"));
+
+        Assert.Equal("already_resolved", Answer(f, other, "\"approve\"").Error);
+        Assert.Equal("waiting", f.Core.Text("SELECT state FROM engine_step WHERE definition_key='second'"));
+
+        RerunAndAskBothAgain(f);
+        var askedAgain = NeedOf(f, "second");
+        Assert.NotEqual(other, askedAgain);
+        Assert.Equal("superseded", StateOf(f, other));
+        Assert.True(Answer(f, askedAgain, "\"approve\"").Applied);
+        Assert.True(Answer(f, NeedOf(f, "first"), "\"approve\"").Applied);
+        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE state<>'succeeded'"));
+    }
+
+    [Fact]
+    public void An_approval_answered_before_the_revision_stays_answered_and_is_asked_again_after_the_rerun()
+    {
+        using var f = new Fixture(prompt: "Work", yaml: TwoGatesFlow);
+        var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
+        OpenGate(f, 2);
+        var (revised, other) = (NeedOf(f, "first"), NeedOf(f, "second"));
 
         Assert.True(Answer(f, other, "\"approve\"").Applied);
         var answered = Answer(f, revised, RevisionOf("Smaller")); Assert.True(answered.Applied, answered.Error);
-        Assert.Equal(1, Advance(f));
-        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE state<>'pending'"));
+        Assert.Equal("answered", StateOf(f, other));
+        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_needs_me WHERE state='superseded'"));
+        RerunAndAskBothAgain(f);
+    }
 
-        var second = f.Apply(f.Prepare(3000)); Finish(f, second.SessionId!, 2, 1);
-        OpenGate(f, 2);
-        Assert.Equal(2, f.Core.Number("SELECT COUNT(*) FROM engine_needs_me WHERE state='open'"));
+    [Theory]
+    [InlineData("\"approve\"")]
+    [InlineData("{\"choice\":\"revise\",\"text\":\"Other words\"}")]
+    public async Task Two_windows_answering_at_once_end_with_one_clean_result(string otherAnswer)
+    {
+        for (var round = 0; round < 5; round++)
+        {
+            using var f = new Fixture(prompt: "Work", yaml: TwoGatesFlow);
+            var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
+            OpenGate(f, 2);
+            var (revised, other) = (NeedOf(f, "first"), NeedOf(f, "second"));
+
+            using var start = new Barrier(2);
+            var revising = Task.Run(() => { start.SignalAndWait(); return Answer(f, revised, RevisionOf("Smaller")); });
+            var answering = Task.Run(() => { start.SignalAndWait(); return Answer(f, other, otherAnswer); });
+            var answers = await Task.WhenAll(revising, answering);
+
+            // The writer takes them in turn: a revision closes the other, and an approval or another revision before it stands.
+            var (revision, otherResult) = (answers[0], answers[1]);
+            var bothRevise = otherAnswer.Contains("revise", StringComparison.Ordinal);
+            Assert.True(bothRevise ? revision.Applied != otherResult.Applied : revision.Applied, revision.Error);
+            if (!revision.Applied) Assert.Equal("already_resolved", revision.Error);
+            if (!otherResult.Applied) Assert.Equal("already_resolved", otherResult.Error);
+            Assert.Equal(otherResult.Applied ? "answered" : "superseded", StateOf(f, other));
+            Assert.Equal(revision.Applied ? "answered" : "superseded", StateOf(f, revised));
+            RerunAndAskBothAgain(f);
+        }
     }
 
     [Fact]

@@ -59,7 +59,7 @@ pub fn view(step: &StepItem, now_ms: i64) -> StepRowView {
         detail: step.detail.clone(),
         explanation: step.explanation.clone(),
         progress: step.progress,
-        attempt: step.attempt,
+        attempt: step.attempt_in_generation.unwrap_or(step.attempt),
         max_attempts: step.max_attempts,
         required_scope: step.required_scope.clone(),
         scope_granted: step.scope_granted,

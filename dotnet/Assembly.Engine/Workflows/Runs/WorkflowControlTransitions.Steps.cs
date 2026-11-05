@@ -101,7 +101,6 @@ internal static partial class WorkflowControlTransitions
                 if (text.Length > 32768) return Refuse("bad_args");
                 // A gate nothing earlier can answer stays open rather than acknowledge and repeat the same question.
                 if (WorkflowGateRevision.Target(s, id!) is not { } target) return Refuse("revision_target_undefined");
-                if (WorkflowGateRevision.AnotherOpenApproval(s, id!, target)) return Refuse("other_gate_open");
                 return Revise(s, c, run, new(id!, step.Version, step.Attempt, step.Generation), new(need.Id, need.Version), target, text);
             }
         }
@@ -126,7 +125,6 @@ internal static partial class WorkflowControlTransitions
               scope_granted=CASE WHEN $state='pending' THEN 0 ELSE scope_granted END,
               session_id=CASE WHEN $state='pending' THEN NULL ELSE session_id END,
               authority_session_id=CASE WHEN $state='pending' THEN NULL ELSE authority_session_id END,
-              authority_machine=CASE WHEN $state='pending' THEN NULL ELSE authority_machine END,
               authority_epoch=CASE WHEN $state='pending' THEN NULL ELSE authority_epoch END,
               receipt_id=CASE WHEN $state='pending' THEN NULL ELSE receipt_id END,
               proof_json=CASE WHEN $state='pending' THEN NULL ELSE proof_json END,

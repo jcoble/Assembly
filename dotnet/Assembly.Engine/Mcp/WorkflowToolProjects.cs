@@ -5,11 +5,12 @@ namespace Assembly.Engine.Mcp;
 
 public static class WorkflowToolProjects
 {
+    // The desktop adds a project on this machine under the name "local", never the engine's machine id.
     public static ProjectRecord Resolve(IReadScope scope, string machine, string callerSessionId, string? project)
     {
         var matches = scope.Query("""
             SELECT p.id,p.machine,p.root_path,p.title,p.repo_key,p.pinned_at,p.removed_at,p.created_at,p.last_used_at
-            FROM projects p WHERE p.machine=$machine AND p.removed_at IS NULL AND (
+            FROM projects p WHERE p.machine IN ($machine,'local') AND p.removed_at IS NULL AND (
               ($project IS NOT NULL AND (p.root_path=$project OR p.title=$project)) OR
               ($project IS NULL AND p.id=(SELECT project_id FROM engine_session WHERE id=$session)))
             LIMIT 2

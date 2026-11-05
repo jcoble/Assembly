@@ -15,7 +15,7 @@ public static class WorkflowGates
     {
         var ready = s.Query($"""
             SELECT st.id,st.version,st.attempt,st.generation,st.run_id,r.owner_session_id,owner.epoch,
-              json_extract(snap.snapshot_json,'$.snapshot.definition.steps.' || st.definition_key || '.gate')
+              json_extract(snap.snapshot_json,'$.snapshot.definition.steps.' || st.definition_key || '.gate.prompt')
             FROM engine_step st JOIN engine_run r ON r.id=st.run_id JOIN engine_session owner ON owner.id=r.owner_session_id
             JOIN engine_workflow_snapshot snap ON snap.run_id=r.id
             WHERE r.machine=$machine AND r.state IN ('queued','running','needs_me') AND r.paused=0 AND r.setup_state='ready'
