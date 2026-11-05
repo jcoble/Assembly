@@ -101,8 +101,10 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
             row => row.Text(0), CancellationToken.None, new SqlArg("$machine", machine))
             ?? throw new KeyNotFoundException("Unknown remote engine machine");
         return _active.TryGetValue(name, out var active) ? active.Machine
-            : throw new MachineUnreachable(name, $"{name}: machine socket is disconnected");
+            : throw Disconnected(name);
     }
+
+    internal static MachineUnreachable Disconnected(string name) => new(name, $"{name}: machine socket is disconnected");
 
     internal RemoteCliProfile? CliLocator(IAppDatabase db, string machine, CancellationToken ct)
     {

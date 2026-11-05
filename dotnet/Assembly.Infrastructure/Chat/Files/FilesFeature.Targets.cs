@@ -29,7 +29,7 @@ internal sealed partial class FilesFeature
 
     /// <summary>The session of a call that works on a session's whole folder; a path target can't name one.</summary>
     private static string SessionOnly(string? session, PathTarget? target) => target is not null
-        ? throw new CallFailed("that call needs a session", "bad_args")
+        ? throw new CallBadArguments("that call needs a session")
         : session ?? throw new CallBadArguments("A file session is required.");
 
     /// <summary>A path target can name any file this backend's user can read, so only the owner may send one.</summary>

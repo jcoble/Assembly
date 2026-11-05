@@ -3,6 +3,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
@@ -159,6 +160,15 @@ public sealed class FilesPathRoutedSocketTests : IAsyncLifetime
         Assert.Null(_routes.Order(Save(null), FilesJson.Default.BeginSave));
         Assert.Equal("files-path:box:/x/a.txt", _routes.Order(Save("box"), FilesJson.Default.BeginSave));
         Assert.Null(_routes.Order(new BeginSave("s", "a.txt", revision, 0), FilesJson.Default.BeginSave));
+    }
+
+    [Fact]
+    public async Task The_routes_refuse_a_non_owner_peer_with_the_forbidden_code()
+    {
+        var phone = new CallContext(CancellationToken.None, "phone", Peer: new PhonePeer("phone"));
+        var refused = await Assert.ThrowsAsync<CallFailed>(() => _routes.Invoke("owner", new ObserveRoot("s"),
+            FilesJson.Default.ObserveRoot, FilesJson.Default.FileOwnership, phone, bulk: false, write: false));
+        Assert.Equal("forbidden", refused.Reason);
     }
 
     private static JsonElement Result(string answer) => JsonDocument.Parse(answer).RootElement.GetProperty("result");

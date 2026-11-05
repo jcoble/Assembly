@@ -23,7 +23,8 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
     private readonly object gate = new();
     private readonly Dictionary<(string Connection, string Machine), Route> routes = [];
     private readonly Dictionary<(string Connection, string Kind, string Id), Route> resources = [];
-    private readonly record struct ReadKey(string Connection, string Session, string Path, string Revision);
+    // Scope is the read's session, or "path:" + machine for a path target, whose Path is then the target's own path.
+    private readonly record struct ReadKey(string Connection, string Scope, string Path, string Revision);
     private readonly Dictionary<ReadKey, Route> readRoutes = [];
 
     internal string? Order<T>(T args, JsonTypeInfo<T> type)
@@ -40,7 +41,7 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
     internal async Task<(bool Forwarded, TResult Result)> Invoke<TArgs, TResult>(string method, TArgs args,
         JsonTypeInfo<TArgs> input, JsonTypeInfo<TResult> output, CallContext call, bool bulk, bool write)
     {
-        if (call.Peer is not OwnerPeer) throw new CallFailed("forbidden");
+        if (call.Peer is not OwnerPeer) throw new CallFailed("forbidden", "forbidden");
         var json = JsonSerializer.SerializeToElement(args, input);
         if (json.TryGetProperty("relayScope", out var relayed) && relayed.ValueKind != JsonValueKind.Null)
             return (false, default!); // An admitted remote scope executes only this server's existing local producer.
@@ -52,11 +53,24 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
         Route? route;
         FileOwnership? ownership = null;
         string? sessionId = null;
+        RemoteConnections.ProjectOwner? machineOwner = null;
         if (method == "release")
         {
             var key = ReadIdentity(call.Connection, json, json.GetProperty("revision").GetString()!);
             lock (gate) readRoutes.TryGetValue(key, out route);
             if (route is null) return (false, default!); // Local snapshots retain their existing root-independent release.
+        }
+        else if (targetMachine is not null)
+        {
+            // A path target names its machine by route name; that machine's own path rule runs on it (ruling 13).
+            machineOwner = await TargetOwner(targetMachine, call.Cancellation);
+            if (expectedOwner is not null && expectedOwner.Machine != machineOwner.Engine)
+                throw new CallFailed("The file owner changed. Reopen the file.", "source_changed");
+            lock (gate)
+            {
+                var key = (call.Connection, "path:" + machineOwner.Engine);
+                if (!routes.TryGetValue(key, out route)) routes.Add(key, route = new Route());
+            }
         }
         else if (json.TryGetProperty("session", out var session))
         {
@@ -96,11 +110,19 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
                 throw new CallFailed("The file source changed. Reopen the file.", "source_changed");
             if (route.Channel is null)
             {
-                if (ownership is null) throw new CallFailed("Unknown remote file resource.");
-                var captured = await Capture(ownership, expected!, ct);
-                route.Channel = await captured.Owner.Machine.OpenFilesAsync(captured.Owner.Binding, captured.Live, ct);
-                route.EnsureCurrent = captured.EnsureCurrent;
-                route.Source = expected;
+                if (machineOwner is { } opened)
+                {
+                    route.Channel = await opened.Machine.OpenFilesAsync(opened.Binding, null, ct);
+                    route.EnsureCurrent = () => RequireMachine(opened);
+                }
+                else
+                {
+                    if (ownership is null) throw new CallFailed("Unknown remote file resource.");
+                    var captured = await Capture(ownership, expected!, ct);
+                    route.Channel = await captured.Owner.Machine.OpenFilesAsync(captured.Owner.Binding, captured.Live, ct);
+                    route.EnsureCurrent = captured.EnsureCurrent;
+                    route.Source = expected;
+                }
                 if (route.Closed || call.Closed.IsCancellationRequested)
                 {
                     CloseChannel(route);
@@ -116,7 +138,11 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
             JsonElement answer;
             try
             {
-                answer = await route.Channel.CallAsync(method, JsonSerializer.SerializeToElement(scoped, input), bulk, ct);
+                try { answer = await route.Channel.CallAsync(method, JsonSerializer.SerializeToElement(scoped, input), bulk, ct); }
+                catch (CallFailed failed) when (machineOwner is not null && method == "owner" && failed.Reason == "bad_args")
+                { throw Older(targetMachine!); }
+                if (machineOwner is not null && method == "owner" &&
+                    (!answer.TryGetProperty("file", out var file) || file.ValueKind == JsonValueKind.Null)) throw Older(targetMachine!);
                 if (method != "release") ensureCurrent();
                 if (ownership is not null && owners.Resolve(sessionId!, ct) != ownership)
                     throw new CallFailed("The file owner or checkout changed.", "source_changed");
@@ -134,7 +160,7 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
                 {
                     var key = ReadIdentity(call.Connection, json, answer.GetProperty("revision").GetString()!);
                     foreach (var old in readRoutes.Where(pair => ReferenceEquals(pair.Value, route) &&
-                        pair.Key.Connection == key.Connection && pair.Key.Session == key.Session && pair.Key.Path == key.Path)
+                        pair.Key.Connection == key.Connection && pair.Key.Scope == key.Scope && pair.Key.Path == key.Path)
                         .Select(pair => pair.Key).ToArray()) readRoutes.Remove(old);
                     if (answer.GetProperty("nextOffset").ValueKind != JsonValueKind.Null) readRoutes[key] = route;
                 }
@@ -166,6 +192,26 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
         }
         finally { route.Gate.Release(); }
     }
+
+    /// <summary>The connected owner of a saved machine named by a path target, or that machine's not-connected words.</summary>
+    private async Task<RemoteConnections.ProjectOwner> TargetOwner(string name, CancellationToken ct)
+    {
+        if (connections.ByName(name) is null) throw RemoteConnections.Disconnected(name);
+        try { return await connections.CaptureProjectOwnerAsync(name, ct); }
+        catch (CallFailed failed) when (failed.Reason == "project_owner_changed") { throw RemoteConnections.Disconnected(name); }
+    }
+
+    /// <summary>The owner fence for a path target's route, in words about files; the fence's own speak of adding a project.</summary>
+    private void RequireMachine(RemoteConnections.ProjectOwner owner)
+    {
+        try { connections.RequireProjectOwner(owner, CancellationToken.None); }
+        catch (CallFailed failed) when (failed.Reason == "project_owner_changed")
+        { throw new CallFailed($"{owner.Profile.Name}'s connection changed. Reopen the file.", "project_owner_changed"); }
+    }
+
+    /// <summary>A remote whose files calls don't know path targets yet (plan ruling 3).</summary>
+    private static CallFailed Older(string machine) =>
+        new($"{machine}'s Assembly is older and can't open files outside a session yet.", "remote_older");
 
     private sealed record Target(RemoteConnections.ProjectOwner Owner, EngineMirror.LiveMirrorBinding Live, Action EnsureCurrent);
     private async Task<Target> Capture(FileOwnership ownership, ExpectedSource expected, CancellationToken ct)
@@ -242,21 +288,25 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
         return kind is not null && args.TryGetProperty(kind, out var id) && id.GetString() is { } value ? (kind, value) : null;
     }
 
-    private static ReadKey ReadIdentity(string connection, JsonElement args, string revision) =>
-        new(connection, args.GetProperty("session").GetString()!, args.GetProperty("path").GetString()!, revision);
+    private static ReadKey ReadIdentity(string connection, JsonElement args, string revision) => HasTarget(args, out var machine)
+        ? new(connection, "path:" + machine, args.GetProperty("target").GetProperty("path").GetString()!, revision)
+        : new(connection, args.GetProperty("session").GetString()!, args.GetProperty("path").GetString()!, revision);
+
+    /// <summary>The remote end resolves a forwarded path as its own (plan ruling 10).</summary>
+    private static PathTarget? OnRemote(PathTarget? target) => target is null ? null : target with { Machine = null };
 
     private static T WithScope<T>(T args, string scope, ExpectedSource source)
     {
         object scoped = args switch
         {
-            ObserveRoot a => a with { RelayScope = scope, ExpectedSource = source },
+            ObserveRoot a => a with { RelayScope = scope, ExpectedSource = source, Target = OnRemote(a.Target) },
             UnobserveRoot a => a with { RelayScope = scope, ExpectedSource = source },
             FilesFeature.ListArgs a => a with { RelayScope = scope, ExpectedSource = source },
             SearchArgs a => a with { RelayScope = scope, ExpectedSource = source },
             ReleaseSearch a => a with { RelayScope = scope, ExpectedSource = source },
-            FilesFeature.ReadArgs a => a with { RelayScope = scope, ExpectedSource = source },
-            FilesFeature.ReleaseArgs a => a with { RelayScope = scope, ExpectedSource = source },
-            BeginSave a => a with { RelayScope = scope, ExpectedSource = source },
+            FilesFeature.ReadArgs a => a with { RelayScope = scope, ExpectedSource = source, Target = OnRemote(a.Target) },
+            FilesFeature.ReleaseArgs a => a with { RelayScope = scope, ExpectedSource = source, Target = OnRemote(a.Target) },
+            BeginSave a => a with { RelayScope = scope, ExpectedSource = source, Target = OnRemote(a.Target) },
             SaveChunk a => a with { RelayScope = scope, ExpectedSource = source },
             CommitSave a => a with { RelayScope = scope, ExpectedSource = source },
             DropSave a => a with { RelayScope = scope, ExpectedSource = source },
