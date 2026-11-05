@@ -55,9 +55,10 @@ changed several files lists each with its own lines. A path inside the session's
 file, as are `~/a` and the home path. A file only a shell call or a prompt named is listed while it's a file on the
 session's machine, so a pattern, a flag's value or a removed file isn't; a file an edit named stays when it's gone; a
 folder and the session's own folder never list. A remote session's list comes from its machine; from this machine's
-copy of its rows nothing is checked on disk. A click on a file, inside the session's folder or outside it alike, opens
-it through the normal open with the session and the source it was listed from; an attached image opens full size, as
-in Attachments. The tab reads the list when it's shown and when another session is picked while it's
+copy of its rows nothing is checked on disk. A click on a file inside the session's folder opens it through the normal
+open with the session and the source it was listed from; an attached image opens full size, as in Attachments. A file
+outside the folder looks like any other row, but its click is held until TSK-1388 lands, and hovering it shows its
+path and that it opens once files outside the session's folder can be opened. The tab reads the list when it's shown and when another session is picked while it's
 shown, and doesn't follow the live rows, as the old app's didn't, so a remote session picked before its rows are
 copied here can list too few until the tab is shown again. With nothing listed it says files the session reads or
 edits are listed there; a read that fails or is cancelled says why. A read inside a script (`python x.py`) isn't seen.

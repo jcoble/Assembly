@@ -1,10 +1,14 @@
 //! The Context tab's Files touched card: each file the session's calls and prompts named, newest first, by name with
 //! its folder muted, a count chip when more than one call or prompt named it, and its lines added and removed. A click
-//! opens a file through the normal open (`OpenFile`), inside the session's folder or outside it alike, and an attached
-//! image full size, as the Attachments card does.
+//! opens a file inside the session's folder through the normal open (`OpenFile`) and an attached image full size, as
+//! the Attachments card does. A file outside the folder looks the same, but its click is held until TSK-1388 lands
+//! (`held_until_outside_opener`).
+
+use std::path::{Component, Path};
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::list::ListItem;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -48,6 +52,7 @@ impl ContextPane {
                         let selector = format!("touched-file-{}", file.path);
                         let chip = format!("touched-count-{}", file.path);
                         let clicked = file.clone();
+                        let held = held_until_outside_opener(file);
                         let line =
                             h_flex()
                                 .w_full()
@@ -96,6 +101,11 @@ impl ContextPane {
                             .debug_selector(move || selector)
                             .text_role(TextRole::Body, cx)
                             .cursor_pointer()
+                            .when_some(held, |row, note| {
+                                row.tooltip(move |window, cx| {
+                                    Tooltip::new(note.clone()).build(window, cx)
+                                })
+                            })
                             .on_click(cx.listener(move |pane, _, window, cx| {
                                 pane.open_touched(&clicked, window, cx)
                             }))
@@ -119,6 +129,9 @@ impl ContextPane {
         let Some(scope) = self.context_scope.as_ref().filter(|scope| scope.valid) else {
             return;
         };
+        if held_until_outside_opener(file).is_some() {
+            return;
+        }
         if let Some(name) = &file.name {
             // As the Attachments card: a remote session's image opens only through its captured source.
             if self.machine.is_none() || scope.source.is_some() {
@@ -138,6 +151,29 @@ impl ContextPane {
             cx,
         );
     }
+}
+
+/// TSK-1388 hold: the normal open can't save a file outside the session's folder, so until the outside-file opener
+/// lands such a row's click does nothing and its hover gives this note. A row is outside when it isn't an attached image
+/// and its path is whole (absolute or `~/`) or climbs out (`..`); `rows/files` sends a path inside the folder relative.
+/// When the opener lands, delete this function and its two uses.
+pub(super) fn held_until_outside_opener(file: &FileTouched) -> Option<String> {
+    let path = Path::new(&file.path);
+    let outside = file.name.is_none()
+        && (path.is_absolute()
+            || file.path.starts_with("~/")
+            || path.components().any(|part| {
+                matches!(
+                    part,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            }));
+    outside.then(|| {
+        format!(
+            "{} — opens once files outside the session's folder can be opened",
+            file.path
+        )
+    })
 }
 
 /// What a row says and how: its name (an attached image's name when it has one), its folder, and their colours. Every
