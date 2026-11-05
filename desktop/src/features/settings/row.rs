@@ -11,7 +11,7 @@ pub struct Row {
     pub keywords: &'static str,
 }
 
-pub const ROWS: [Row; 14] = [
+pub const ROWS: [Row; 15] = [
     Row {
         id: "theme",
         section: "appearance",
@@ -99,6 +99,14 @@ pub const ROWS: [Row; 14] = [
         title: "Line height",
         description: "Line spacing multiplier (relative to font size).",
         keywords: "spacing leading",
+    },
+    Row {
+        id: "terminal-cursor-blink",
+        section: "terminal",
+        card: "Behaviour",
+        title: "Cursor blink",
+        description: "Pulse the terminal cursor when idle.",
+        keywords: "caret flash",
     },
     Row {
         id: "machines",

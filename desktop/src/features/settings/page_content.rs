@@ -7,6 +7,7 @@ use gpui_kit::component::input::Input;
 use gpui_kit::component::label::Label;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::slider::Slider;
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -19,8 +20,9 @@ use super::search;
 use super::section::Section;
 use super::settings_page::SettingsPage;
 use crate::core::state::appearance::{
-    CODE_FONT, EDITOR_FONT, EDITOR_FONT_SIZE, EDITOR_LINE_HEIGHT, NumberSetting, TERMINAL_FONT,
-    TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, THEME, UI_FONT, UI_FONT_SIZE, UI_LINE_HEIGHT,
+    Appearance, CODE_FONT, EDITOR_FONT, EDITOR_FONT_SIZE, EDITOR_LINE_HEIGHT, NumberSetting,
+    TERMINAL_CURSOR_BLINK, TERMINAL_FONT, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, THEME, UI_FONT,
+    UI_FONT_SIZE, UI_LINE_HEIGHT,
 };
 use crate::core::state::preferences::Preferences;
 use crate::core::theme::theme_id::ThemeId;
@@ -144,6 +146,7 @@ impl SettingsPage {
         let control = match row.id {
             "machines" => return self.machines(cx),
             "session-depth-limit" => return self.depth_row(label, cx),
+            "terminal-cursor-blink" => return cursor_blink_row(row, label, cx),
             "theme" => {
                 let current = Preferences::read(cx, |appearance| appearance.theme());
                 let choices = ThemeId::ALL
@@ -230,6 +233,25 @@ impl SettingsPage {
             .child(label)
             .child(control)
     }
+}
+
+/// The terminal's cursor blink, a switch on the right that saves at once.
+fn cursor_blink_row(row: &'static Row, label: impl IntoElement, cx: &App) -> Div {
+    let on = Preferences::read(cx, Appearance::terminal_cursor_blink);
+    h_flex()
+        .px_4()
+        .py_3()
+        .gap_4()
+        .justify_between()
+        .child(label)
+        .child(
+            Switch::new(row.id)
+                .accessibility_label(row.title)
+                .checked(on)
+                .on_change(|checked, _, cx| {
+                    Preferences::save(TERMINAL_CURSOR_BLINK, json!(*checked), cx)
+                }),
+        )
 }
 
 fn font_choices(fonts: &[SharedString], current: &str) -> Vec<(Value, SharedString, bool)> {

@@ -248,8 +248,7 @@ impl TerminalPane {
         self._follow = Some(cx.spawn(async move |pane, cx| {
             let opened = TerminalLink::open(&session, size, cx).await;
             let subscription = pane.update(cx, |pane, cx| {
-                let followed = opened.and_then(|(link, started, before)| {
-                    pane.grid.feed(&before);
+                let followed = opened.and_then(|(link, started)| {
                     let subscription = link.follow(cx)?;
                     pane.link = Some(link);
                     // A reused shell may have another size, and the pane may have measured itself meanwhile.
