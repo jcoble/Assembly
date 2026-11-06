@@ -227,6 +227,7 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
                         if (tunnel is RemoteTunnel ssh) ssh.Exited += () => scoped.Unreachable(name, "ssh tunnel exited");
                         var remote = new RemoteMachine(name, opened.Config.Address, opened.Config.Token, _hub, _sessions, _log, scoped, _turnEnded, _topics,
                             connectionIdentity: $"{profile.Ssh.Length}:{profile.Ssh}{profile.Port}:{profile.TokenFile.Length}:{profile.TokenFile}", acceptanceEngine: _acceptanceEngine);
+                        if (tunnel is RemoteTunnel returning) returning.Forwarding += remote.ConnectNow;
                         var mirror = new EngineMirror(remote, _writer, TimeProvider.System, _log, _mirrored);
                         var cli = new CliRefresh();
                         lock (_gate) _cliRefresh[name] = cli;

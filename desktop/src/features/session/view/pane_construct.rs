@@ -1,5 +1,7 @@
 //! Building a `SessionPane`: its composer, header, timeline, row renderer and the subscriptions it keeps.
 use super::*;
+use crate::core::state::selected_session::SelectedSession;
+use crate::features::session::context::live_facts::LiveFacts;
 
 impl SessionPane {
     pub fn new(client: Rc<dyn SessionClient>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -74,6 +76,20 @@ impl SessionPane {
                 }
                 ComposerEvent::Accepted { .. } => {}
                 ComposerEvent::PendingChanged => pane.refresh(Change::Nothing, cx),
+                ComposerEvent::SourceLost(key)
+                    if pane.session.as_ref() == Some(&key.id)
+                        && (pane.row_source.as_ref())
+                            .is_some_and(|source| source.machine == key.machine) =>
+                {
+                    pane.on_rows(
+                        crate::features::session::client::session_client::RowUpdate::Refused {
+                            code: "source_changed".into(),
+                            message: "The selected row source changed.".into(),
+                        },
+                        cx,
+                    )
+                }
+                ComposerEvent::SourceLost(_) => {}
             }),
             cx.subscribe(&timeline, |pane, _, TimelineEvent::NearTop, cx| {
                 pane.load_older(cx)
@@ -82,7 +98,14 @@ impl SessionPane {
                 pane.tell_offline(cx);
                 cx.notify()
             }),
+            cx.observe(&composer, |pane, _, cx| pane.publish_live(cx)),
+            cx.on_release({
+                let publisher = cx.entity_id();
+                move |_, cx| LiveFacts::clear(publisher, cx)
+            }),
         ];
+        let selected = SelectedSession::try_global(cx)
+            .map(|selected| cx.observe(&selected, |pane, _, cx| pane.publish_live(cx)));
         let machines = cx.observe_global::<GlobalMachines>(|pane, cx| pane.follow_machines(cx));
         let mut pane = SessionPane {
             client,
@@ -90,6 +113,9 @@ impl SessionPane {
             pending_open: None,
             active_open_serial: None,
             active_reopen: None,
+            source_lost: false,
+            source_reopens: 0,
+            unheard: None,
             reopen_queued: None,
             read_only: false,
             active_provider: None,
@@ -114,6 +140,7 @@ impl SessionPane {
             reveal: None,
             revealed_at: Instant::now(),
             frame_asked: false,
+            _reveal_tick: None,
             now: None,
             live_since: None,
             reading: HashMap::new(),
@@ -128,7 +155,7 @@ impl SessionPane {
             retry_first: None,
             status: SharedString::default(),
             _rows: None,
-            _selected: None,
+            _selected: selected,
             _page: None,
             _loads: HashMap::new(),
             _writes: HashMap::new(),

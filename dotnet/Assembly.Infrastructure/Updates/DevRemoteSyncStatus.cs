@@ -7,7 +7,7 @@ namespace Assembly.Infrastructure.Updates;
 internal sealed class DevRemoteSyncStatus : IDisposable
 {
     internal const string Variable = "ASSEMBLY_DEV_REMOTE_SYNC_STATUS";
-    private const string Machine = "workbox-test";
+    internal const string Machine = "workbox-test";
     private readonly FileSystemWatcher _watcher;
     private readonly MachineStatus _status;
     private readonly string _path;

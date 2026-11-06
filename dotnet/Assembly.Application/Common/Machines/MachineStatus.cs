@@ -12,19 +12,30 @@ namespace Assembly.Application.Common.Machines;
 /// first probe answers or fails (until then it's neither up nor down). <paramref name="Backend"/> is what a remote's
 /// last welcome said it runs. <paramref name="Updates"/> is the update check's last answer; the one update's progress or
 /// failure is <paramref name="UpdateNote"/>. <paramref name="OfflineSinceMs"/> is when a remote stopped answering, kept
-/// through later failures and cleared when it answers.
+/// through later failures and cleared when it answers. <paramref name="Restarting"/> and <paramref name="RestartNote"/> are
+/// Restart to Update's own, apart from this machine's tools: what a press is doing or waiting for, or why it failed.
+/// <paramref name="CantUpdate"/> is why this app won't install or update anything on this machine.
+/// <paramref name="UpdatePercent"/> is the one figure across everything in the run, and <paramref name="UpdateCancellable"/>
+/// whether it can still be called off: only until an install starts.
 /// </summary>
 public sealed record MachineItem(string? Name, string Kind, bool Reachable, string? Reason, bool Checked, string? Ssh = null, int? Port = null, string? TokenFile = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] RemoteBackend? Backend = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] IReadOnlyList<UpdateItem>? Updates = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Updating = false,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? UpdateNote = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] long? OfflineSinceMs = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Quit = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] long? OfflineSinceMs = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? RestartReady = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Restarting = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? RestartNote = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? CantUpdate = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int? UpdatePercent = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool UpdateCancellable = false);
 
 /// <summary>One piece the update check looked at: <paramref name="Kind"/> is desktop, backend, adapter or cli.</summary>
 public sealed record UpdateItem(string Kind, string Name, string? Current, string? Wanted, string State)
 {
-    public const string Behind = "behind", Unknown = "unknown", UpToDate = "current";
+    public const string Behind = "behind", Unknown = "unknown", UpToDate = "current", Newer = "newer";
 }
 
 /// <summary>
@@ -124,7 +135,24 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes, T
     }
 
     /// <summary>Whether the one update is running, and what it's doing or why it failed.</summary>
-    public void Updating(string? machine, bool updating, string? note) => Change(machine, item => item with { Updating = updating, UpdateNote = note });
+    public void Updating(string? machine, bool updating, string? note) => Change(machine, item => updating
+        ? item with { Updating = true, UpdateNote = note }
+        : item with { Updating = false, UpdateNote = note, UpdatePercent = null, UpdateCancellable = false });
+
+    /// <summary>The run's one figure on a machine that's part of it.</summary>
+    public void UpdateFigure(string? machine, int? percent, bool cancellable) => Change(machine, item => item with { UpdatePercent = percent, UpdateCancellable = cancellable });
+
+    /// <summary>Which new version of the app is waiting for someone to press Restart to Update.</summary>
+    public void RestartReady(string? version) => Change(null, item => item with { RestartReady = version });
+
+    /// <summary>Whether a press of Restart to Update is under way, and what it's doing or why it failed.</summary>
+    public void Restarting(bool restarting, string? note) => Change(null, item => item with { Restarting = restarting, RestartNote = note });
+
+    /// <summary>A machine this app does update after all, whatever it's saved with.</summary>
+    public void MayUpdate(string machine) => Change(machine, item => item with { CantUpdate = null });
+
+    /// <summary>Asks the window to quit: a new version of the app is ready to take over.</summary>
+    public void QuitWindow() => Change(null, item => item with { Quit = true });
 
     private void Change(string? machine, Func<MachineItem, MachineItem> change)
     {

@@ -31,6 +31,7 @@ pub(super) fn open(
                 ComposerEvent::Sending => "sending".to_string(),
                 ComposerEvent::Accepted { receipt, .. } => format!("queued {}", receipt.session_id),
                 ComposerEvent::PendingChanged => "pending".into(),
+                ComposerEvent::SourceLost(_) => "source lost".into(),
             })
         })
     });

@@ -19,7 +19,7 @@ use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
 use crate::core::state::machines::GlobalMachines;
 use crate::core::theme::grow::{GROW, faded};
-use crate::core::ui::ask::form::AskForm;
+use crate::core::ui::ask::ask_questionnaire::AskQuestionnaire;
 use crate::core::ui::expand_row::ExpandRow;
 #[cfg(test)]
 use crate::features::session::client::session_client::RowsSink;
@@ -43,6 +43,10 @@ pub struct SessionPane {
     open_serial: u64,
     pending_open: Option<opening::PendingOpen>,
     active_open_serial: Option<u64>,
+    /// The machine behind this session stopped answering; it opens again when the machine does.
+    source_lost: bool,
+    source_reopens: u8,
+    unheard: Option<SharedString>,
     active_reopen: Option<(
         crate::core::intents::session_open::SessionOpenRequest,
         AnyWindowHandle,
@@ -67,8 +71,8 @@ pub struct SessionPane {
     plan_open: bool,
     /// When each row that arrived live since the session opened came in, by item key, so it fades in once.
     fresh: HashMap<String, Instant>,
-    /// Each open question's form, by ask id, made when its card is first drawn.
-    forms: HashMap<String, AskForm>,
+    /// The form of the question above the composer, by ask id, so what's typed outlives each draw.
+    forms: HashMap<String, Entity<AskQuestionnaire>>,
     /// What each item keeps while off screen, by item key.
     kept: HashMap<String, Kept>,
     /// What each row's buttons call: this pane's `on_action`.
@@ -82,6 +86,7 @@ pub struct SessionPane {
     revealed_at: Instant,
     /// A frame is asked for the reveal's next step.
     frame_asked: bool,
+    _reveal_tick: Option<Task<()>>,
     /// The backend clock's last second while a turn runs, which the "Working for" line counts by.
     now: Option<i64>,
     /// The run going now and when it started: its turn row's time, or when the pane first saw it, as the web does,
@@ -120,13 +125,14 @@ pub struct SessionPane {
     _writes: HashMap<String, Task<()>>,
     /// The newest seq told to the backend as read, for the open session.
     read_to: i64,
-    /// The selected session, followed once the pane is registered.
+    /// The selected session, followed from construction so this pane publishes its live facts when its session is
+    /// picked and clears them when another is (context/pane_live.rs).
     _selected: Option<Subscription>,
     /// Hears the machines list start, then follows it, for the open session's machine (pane_machine.rs).
     _machines_started: Subscription,
     _machines: Option<Subscription>,
-    /// The composer's events and the timeline's scrolling.
-    _heard: [Subscription; 3],
+    /// The composer's events and changes, the timeline's scrolling, the header and the pane's own release.
+    _heard: [Subscription; 5],
 }
 
 impl SessionPane {
@@ -189,8 +195,11 @@ impl SessionPane {
     /// Takes a rows event: a `Jump` drops what's held and loads the page again; a row updates its item and the
     /// timeline measures only that one again.
     fn on_rows(&mut self, event: RowUpdate, cx: &mut Context<Self>) {
+        if !matches!(event, RowUpdate::Refused { .. } | RowUpdate::Jump { .. }) {
+            self.source_reopens = 0;
+        }
         match event {
-            RowUpdate::Refused { code: _, message } => {
+            RowUpdate::Refused { code, message } => {
                 self.composer
                     .update(cx, |composer, cx| composer.invalidate_source(cx));
                 self._page = None;
@@ -198,10 +207,17 @@ impl SessionPane {
                 self.held = None;
                 self._loads.clear();
                 self.loading = false;
-                self.status = message.into();
+                if code == "source_changed" && self.is_remote() {
+                    self.source_lost = true;
+                    self.status = SharedString::default();
+                    self.tell_offline(cx);
+                } else {
+                    self.status = message.into();
+                }
                 cx.notify();
             }
             RowUpdate::Jump { seq } => {
+                self.source_lost = false;
                 if !self.read_only {
                     self.composer
                         .update(cx, |composer, cx| composer.recover_pending(cx));
@@ -251,12 +267,13 @@ impl SessionPane {
         }
         match change {
             // A reply, tool or card changing in place in a run that isn't folded changes no entry: only its row
-            // draws again, so a streaming reply never rebuilds the timeline.
+            // draws again, so a streaming reply never rebuilds the timeline. An ask also holds or frees the composer.
             Change::Updated(at)
-                if self.view.items[at]
-                    .run_id
-                    .as_ref()
-                    .is_none_or(|run| !self.folds.contains_key(run)) =>
+                if !matches!(self.view.items[at].kind, ItemKind::Ask { .. })
+                    && self.view.items[at]
+                        .run_id
+                        .as_ref()
+                        .is_none_or(|run| !self.folds.contains_key(run)) =>
             {
                 self.redraw(at, cx)
             }
@@ -356,6 +373,7 @@ impl SessionPane {
             composer.set_locked(lock, cx);
         });
         self.tell_read(running, cx);
+        self.publish_live(cx);
         cx.notify();
     }
 
@@ -380,6 +398,8 @@ mod actions;
 mod construct;
 #[path = "pane_expand.rs"]
 mod expand;
+#[path = "../context/pane_live.rs"]
+mod live;
 #[path = "pane_machine.rs"]
 mod machine;
 #[path = "pane_pages.rs"]
@@ -413,6 +433,12 @@ mod action_tests;
 #[cfg(test)]
 #[path = "tests/session_pane_activity_tests.rs"]
 mod activity_tests;
+#[cfg(test)]
+#[path = "../context/context_refusal_tests.rs"]
+mod context_refusal_tests;
+#[cfg(test)]
+#[path = "../context/live_facts_tests.rs"]
+mod live_facts_tests;
 #[cfg(test)]
 #[path = "tests/session_pane_real_switch_tests.rs"]
 mod real_switch_tests;

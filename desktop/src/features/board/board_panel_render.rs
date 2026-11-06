@@ -10,7 +10,7 @@ impl Render for BoardPanel {
             self.rebuild(cx);
         }
         let muted = cx.theme().muted_foreground;
-        let open = open_owner_questions(&self.data).len();
+        let open = badge_count(&self.data);
         let counts = summary_counts(&self.data, local_midnight_ms());
         let mutes = self.mutes(cx);
         let note = mute_note(&mutes);

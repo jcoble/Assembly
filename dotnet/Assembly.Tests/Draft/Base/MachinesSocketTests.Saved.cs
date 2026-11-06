@@ -67,7 +67,7 @@ public sealed partial class MachinesSocketTests
         await CallAsync(socket, 1, "machines", "set", """{"name":"saved","ssh":"host"}""");
         var saved = await ReadAsync(socket);
         Assert.Contains("\"port\":9797", saved);
-        Assert.Contains("\"tokenFile\":\".config/assembly-dotnet/env\"", saved);
+        Assert.Contains("\"tokenFile\":\".config/assembly-host/env\"", saved);
         await CallAsync(socket, 2, "machines", "connect", """{"machine":"saved"}""");
         Assert.Contains("\"reachable\":true", await ReadAsync(socket));
         await CallAsync(socket, 3, "machines", "disconnect", """{"name":"saved"}""");

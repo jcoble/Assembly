@@ -61,7 +61,6 @@ jobs:
           (cd desktop && cargo build --locked --release --bin assembly-desktop)
           dotnet publish dotnet/Assembly.Desktop -c Release -r osx-arm64 --self-contained \
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
-            -p:NuGetLockFilePath=obj/release.packages.lock.json \
             "-p:SourceRevisionId=$GITHUB_SHA" -o "$RUNNER_TEMP/desktop-publish"
 
       - name: Package the app
@@ -100,7 +99,6 @@ jobs:
         run: |
           dotnet publish dotnet/Assembly.Remote -c Release -r linux-x64 --self-contained \
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
-            -p:NuGetLockFilePath=obj/release.packages.lock.json \
             "-p:SourceRevisionId=$GITHUB_SHA" -o "$RUNNER_TEMP/remote-publish"
           node scripts/remote-backend-release.ts "$VERSION" "$RUNNER_TEMP/remote-publish/Assembly.Remote" remote-backend-release
 

@@ -113,5 +113,5 @@ public sealed class MachineStore
         ORDER BY child;
         """, row => row.Text(0), CancellationToken.None, new SqlArg("$name", name));
 
-    public static MachineItem Item(SavedMachine profile) => new(profile.Name, "remote", false, "not checked yet", false, profile.Ssh, profile.Port, profile.TokenFile);
+    public static MachineItem Item(SavedMachine profile) => new(profile.Name, "remote", false, "not checked yet", false, profile.Ssh, profile.Port, profile.TokenFile, CantUpdate: profile.CantUpdate);
 }

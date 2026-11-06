@@ -47,6 +47,7 @@ test('the bundle runs the window, finds its backend and themes, and carries no l
   assert.equal(statSync(path.join(f.contents, 'Resources/backend/Assembly.Desktop')).mode & 0o777, 0o755);
   assert.deepEqual(JSON.parse(readFileSync(path.join(f.contents, 'Resources/backend/packaged.json'), 'utf8')), PACKAGED_CONFIG);
   assert.throws(() => statSync(path.join(f.contents, 'Resources/backend/lane.json')), { code: 'ENOENT' });
+  assert.equal(statSync(path.join(f.contents, 'Resources/backend/agents-file.sh')).mode & 0o777, 0o755);
   assert.ok(statSync(path.join(f.contents, 'Resources/icon.icns')).size > 0);
   assert.ok(statSync(path.join(f.contents, 'Resources/themes')).isDirectory());
 });

@@ -94,6 +94,8 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         var ran = Shape(await ApiTests.ReadUntilTurnEndsAsync(box));
 
         await RowsPageAsync(_desktop!, DesktopToken, sessionId);
+        // Rows are copied one at a time and a delta stays until its message lands, so compare once the whole turn is here.
+        await Until(async () => (await RowsAsync(_desktop!, DesktopToken, sessionId)).Any(row => row.GetProperty("seq").GetInt64() == ran[^1].Item1));
         using var desktop = await OpenLiveAsync(_desktop!, DesktopToken, sessionId, after: 0);
 
         Assert.Equal(ran, Shape(await ApiTests.ReadUntilTurnEndsAsync(desktop)));

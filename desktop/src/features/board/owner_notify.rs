@@ -117,7 +117,7 @@ impl OwnerNotify {
         let mut open = HashSet::new();
         for need in needs
             .iter()
-            .filter(|need| need.state == "open" && need.for_owner())
+            .filter(|need| need.state == "open" && need.for_owner)
         {
             open.insert(need.key.clone());
             if !self.seen.insert(need.key.clone()) || !self.baselined.contains(&need.key.machine) {

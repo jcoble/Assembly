@@ -212,6 +212,8 @@ impl WorkspaceCoordinator {
             "The workspace open was cancelled; the current workspace remains open.".into(),
             cx,
         );
+        // Only its navigator cancels it, having moved on (most often to a newer session): it ends quietly.
+        self.status = None;
     }
     fn refuse(&mut self, reason: String, cx: &mut Context<Self>) {
         if !self.active_request {
@@ -460,6 +462,9 @@ impl WorkspaceCoordinator {
 #[cfg(test)]
 #[path = "workspace_coordinator_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "workspace_coordinator_cancel_tests.rs"]
+mod workspace_coordinator_cancel_tests;
 
 #[cfg(test)]
 #[path = "workspace_rootless_tests.rs"]
@@ -489,10 +494,6 @@ mod layout_tests;
 #[cfg(test)]
 #[path = "workspace_outside_tests.rs"]
 mod outside_tests;
-
-#[cfg(test)]
-#[path = "workspace_outside_drafts_tests.rs"]
-mod outside_drafts_tests;
 
 #[cfg(test)]
 #[path = "workspace_outside_save_tests.rs"]

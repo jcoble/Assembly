@@ -4,6 +4,8 @@ using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Messages;
+using Assembly.Engine.Persistence;
+using Assembly.Engine.Providers;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Workflows.Runs;
@@ -56,6 +58,40 @@ public sealed partial class EngineCommands
         var frozen = WorkflowPreparation.Freeze(new DispatchBody(context, admission, predecessor, session, message, checkoutFingerprint, prompt,
             Convert.ToHexStringLower(SHA256.HashData(bytes)), bytes.LongLength, key, snapshot.Request.Task is { } task && task.TryGetProperty("url", out var url) ? url.GetString() : null), default);
         return new(frozen.Body, frozen.Envelope, this, frozen.Context);
+    }
+
+    /// <summary>A step that can't start because of its provider or model stops here with the reason, for the person to see and retry.
+    /// Nothing tries it again on its own or picks another model. A provider nobody has checked gets checked first: the step
+    /// stays pending, and the check's commit wakes the worker to decide again. False when the step wasn't stopped.</summary>
+    public bool BlockUnavailableStep(IWriteScope scope, string stepId, long nowMs)
+    {
+        if (ReadWorkflowAdmission(scope, stepId) is not { Ready: false, Reason: var admission, Witness: var w }) return false;
+        var reason = admission;
+        if (reason == "provider_unchecked")
+        {
+            if (CheckProviderFor(scope, stepId, w, nowMs)) return false;
+            reason = "provider_check_failed";
+        }
+        if (WorkflowBlockedWords.Of(reason, w) is not { } words) return false;
+        var context = new CommandContext(Guid.NewGuid(), _machine, new(ActorKind.System, "engine.worker"), stepId, w.StepVersion, w.OwnerEpoch, nowMs);
+        var version = scope.QueryFirst("""
+            UPDATE engine_step SET state='failed',outcome_reason=$reason,explanation=$words,ended_ms=$now,version=version+1,updated_ms=$now
+            WHERE id=$step AND state='pending' RETURNING version
+            """, r => r.Long(0), new SqlArg("$reason", reason), new("$words", words), new("$now", nowMs), new("$step", stepId));
+        List<EventDraft> events = [new("step.changed", "step", stepId, version, false, new(null, w.RunId, stepId, w.OwnerId, "failed", null))];
+        events.AddRange(RunTransitions.Recompute(scope, context with { EntityId = w.RunId }, w.RunId));
+        EngineJournal.Commit(scope, context, version, w.OwnerEpoch, events, []);
+        return true;
+    }
+
+    private bool CheckProviderFor(IWriteScope scope, string stepId, DispatchEligibility w, long nowMs)
+    {
+        scope.Execute("UPDATE engine_step SET dispatch_state='pending' WHERE id=$step AND dispatch_state=$recheck",
+            new("$step", stepId), new("$recheck", WorkflowBlockedWords.Recheck));
+        var target = new ConfiguredProviderTarget(w.Provider, w.AccountContext).Id;
+        var version = scope.QueryFirst("SELECT version FROM engine_provider WHERE id=$id", r => (long?)r.Long(0), new SqlArg("$id", target)) ?? 0;
+        var context = new CommandContext(Guid.NewGuid(), _machine, new(ActorKind.System, "engine.worker"), target, version, 0, nowMs);
+        return ProviderTransitions.Apply(scope, context, new CheckProvider(), _isConfiguredProvider).Applied;
     }
 
     internal CommandResult ApplyWorkflowDispatchStages(IWriteScope scope, CommandContext context, PreparedWorkflowDispatch prepared)

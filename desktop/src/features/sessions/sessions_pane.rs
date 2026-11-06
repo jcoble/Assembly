@@ -35,6 +35,7 @@ use crate::core::state::sessions::GlobalSessions;
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::sessions as ids;
 use crate::core::ui::filter_pills::{FilterGroup, FilterOption, FilterPills, FilterPillsChanged};
+use crate::core::ui::provider_name::provider_name;
 
 const RAIL_TOPIC: &str = "sessionRail";
 /// The pills' picks among the backend's preferences.
@@ -131,24 +132,23 @@ impl SessionsPane {
             )
         });
         let engine = crate::core::engine::EngineFeed::global(cx);
-        let engine_changed = cx.subscribe(
-            &engine,
-            |pane, _, changed: &crate::core::engine::EngineChanged, cx| {
-                if changed
-                    .scopes
-                    .iter()
-                    .any(|scope| matches!(scope.topic.as_str(), "sessions" | "needs_me"))
-                    || changed
+        let engine_changed =
+            cx.subscribe(
+                &engine,
+                |pane, _, changed: &crate::core::engine::EngineChanged, cx| {
+                    if changed.scopes.iter().any(|scope| {
+                        matches!(scope.topic.as_str(), "sessions" | "needs_me" | "runs")
+                    }) || changed
                         .keys
                         .iter()
-                        .any(|key| matches!(key.kind.as_str(), "session" | "needs_me"))
-                {
-                    let read = pane.rail.changed();
-                    pane.send(read, cx);
-                }
-                cx.notify();
-            },
-        );
+                        .any(|key| matches!(key.kind.as_str(), "session" | "needs_me" | "step"))
+                    {
+                        let read = pane.rail.changed();
+                        pane.send(read, cx);
+                    }
+                    cx.notify();
+                },
+            );
         let (drops, dropdowns) = Self::dropdowns(cx);
         let mut heard = vec![
             dropdowns,
@@ -445,6 +445,15 @@ pub fn empty_line(state: Option<&ConnectionState>) -> &'static str {
     }
 }
 
+/// What the empty column says. While an update finishes, the window's notice says why there's no backend.
+pub fn empty_words(state: Option<&ConnectionState>, update_finishing: bool) -> &'static str {
+    if update_finishing {
+        ""
+    } else {
+        empty_line(state)
+    }
+}
+
 /// The saved provider and location picks in the `preferences` topic's first update, its state.
 pub fn saved_filters(update: &Update) -> Option<(Vec<String>, Vec<String>, Vec<String>)> {
     let Update::State(items) = update else {
@@ -460,13 +469,9 @@ pub fn saved_filters(update: &Update) -> Option<(Vec<String>, Vec<String>, Vec<S
 pub fn provider_options(agents: &[String], picked: &[String]) -> Vec<FilterOption> {
     let extra = picked.iter().filter(|pick| !agents.contains(pick));
     (agents.iter().chain(extra))
-        .map(|agent| {
-            let mut letters = agent.chars();
-            let first = letters.next().map(|first| first.to_uppercase());
-            FilterOption {
-                value: agent.clone(),
-                label: first.into_iter().flatten().chain(letters).collect(),
-            }
+        .map(|agent| FilterOption {
+            value: agent.clone(),
+            label: provider_name(agent),
         })
         .collect()
 }

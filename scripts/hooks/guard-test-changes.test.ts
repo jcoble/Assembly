@@ -124,3 +124,24 @@ test('input it cannot read is refused', () => {
   assert.equal(result.status, 2);
   assert.match(result.stderr, /refusing/);
 });
+
+test("moving a test into another changed test file is not a removal", () => inRepo(write => {
+  const file_path = write("desktop/src/big_tests.rs", rust);
+  write("desktop/src/split_tests.rs", rust);
+  assert.equal(send({ file_path, old_string: rust, new_string: "" }).status, 0);
+}));
+
+test("a same-named test with a different expected value elsewhere does not excuse a removal", () => inRepo(write => {
+  const file_path = write("desktop/src/big_tests.rs", rust);
+  write("desktop/src/split_tests.rs", rust.replace("\"a\"", "\"b\""));
+  assert.equal(send({ file_path, old_string: rust, new_string: "" }).status, 2);
+}));
+
+test("the same test in a file git has no change for does not excuse a removal", () => inRepo(write => {
+  const file_path = write("desktop/src/big_tests.rs", rust);
+  const other = write("desktop/src/split_tests.rs", rust);
+  const root = dirname(dirname(dirname(other)));
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "add", "."], { cwd: root });
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "x"], { cwd: root });
+  assert.equal(send({ file_path, old_string: rust, new_string: "" }).status, 2);
+}));

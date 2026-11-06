@@ -1,64 +1,174 @@
 //! What the update check found, from the `machines` topic, and the one button that updates it. Nothing here checks or
 //! polls: the backend checks at start and at each remote's hello, and pushes the answer.
 
-use crate::activity::{StatusChip, Tone};
+use crate::core::socket::client::SocketClient;
 use crate::core::state::machine::{Machine, UpdateItem};
 use crate::core::state::machines::Machines;
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
-
-use super::TITLE;
-use super::deploy_form::DeployForm;
+use serde_json::{Value, json};
 
 fn machine_name(machine: &Machine) -> &str {
     machine.name.as_deref().unwrap_or("This machine")
 }
 
-fn item_words(item: &UpdateItem) -> String {
-    match (&item.current, &item.wanted) {
-        (Some(current), Some(wanted)) if current != wanted => {
-            format!("{} {current} → {wanted}", item.name)
-        }
-        (Some(current), _) => format!("{} {current}", item.name),
-        (None, Some(wanted)) => format!("{} → {wanted}", item.name),
-        (None, None) => item.name.clone(),
-    }
+/// What's ahead of what this app wants, which nothing here downgrades.
+pub(crate) fn newer_words(item: &UpdateItem) -> Option<String> {
+    let (current, wanted) = (item.current.as_ref()?, item.wanted.as_ref()?);
+    (item.state == "newer").then(|| {
+        let side = if item.kind == "backend" {
+            "this app's "
+        } else {
+            ""
+        };
+        format!("{} {current}, newer than {side}{wanted}", item.name)
+    })
+}
+
+/// The card's update button: for what's behind or running, and also while a new app waits to restart, whose tools still update.
+pub(crate) fn update_offered(machine: &Machine) -> bool {
+    machine.offered().next().is_some() || machine.updating
+}
+
+/// What the one Update button says, or `None` when it says its usual words.
+pub(crate) fn update_figure(machine: &Machine) -> Option<String> {
+    (machine.update_percent)
+        .filter(|_| machine.updating)
+        .map(|percent| format!("Updating {percent}%"))
 }
 
 /// One sentence for the notice at app start, or `None` when nothing is behind.
 pub fn behind_words<'a>(machines: impl Iterator<Item = &'a Machine>) -> Option<String> {
     let found: Vec<String> = machines
-        .filter(|machine| machine.behind().next().is_some())
+        .filter(|machine| machine.offered().next().is_some())
         .map(|machine| {
-            let names: Vec<&str> = machine.behind().map(|item| item.name.as_str()).collect();
+            let names: Vec<&str> = machine.offered().map(|item| item.name.as_str()).collect();
             format!("{}: {}", machine_name(machine), names.join(", "))
         })
         .collect();
     (!found.is_empty()).then(|| format!("Behind on {}.", found.join("; ")))
 }
 
-/// Says once what's behind each time that changes, in the place a person sees when the app starts.
+/// What a check with nothing behind found. "Nothing is behind" is only said when every piece was read: one that wasn't
+/// isn't known to be current. No check yet says nothing.
+fn checked_words(machine: &Machine) -> Option<String> {
+    if machine.updates.is_empty() {
+        return None;
+    }
+    let unread: Vec<&str> = (machine.updates.iter())
+        .filter(|item| item.state == "unknown")
+        .map(|item| item.name.as_str())
+        .collect();
+    Some(if unread.is_empty() {
+        "Nothing is behind".to_string()
+    } else {
+        format!("Couldn't read {}", unread.join(", "))
+    })
+}
+
+/// Where the machine is, how it answered, then its backend and what's behind, all as information.
+pub(crate) fn row_status(machine: &Machine, reached: &str, status: &str) -> String {
+    let mut parts = vec![reached.to_string(), status.to_string()];
+    // What a machine that isn't answering last said about its versions may no longer be true.
+    if machine.reachable {
+        parts.extend(machine.backend_note());
+        parts.extend(machine.updates.iter().filter_map(newer_words));
+    }
+    parts.extend(machine.cant_update.clone());
+    if machine.restarting {
+        parts.push(
+            machine
+                .restart_note
+                .clone()
+                .unwrap_or("Restarting…".to_string()),
+        );
+    } else {
+        parts.extend(machine.restart_note.clone());
+    }
+    let behind: Vec<&str> = machine.offered().map(|item| item.name.as_str()).collect();
+    if machine.updating {
+        parts.push(
+            machine
+                .update_note
+                .clone()
+                .unwrap_or("Updating…".to_string()),
+        );
+    } else if let Some(note) = &machine.update_note {
+        parts.push(note.clone());
+    } else if let Some(version) = &machine.restart_ready {
+        parts.push(format!(
+            "Assembly {version} installs when you quit, or now with Restart to Update"
+        ));
+        if !behind.is_empty() {
+            parts.push(format!("{} behind", behind.join(", ")));
+        }
+    } else if machine.reachable {
+        if behind.is_empty() {
+            parts.extend(checked_words(machine));
+        } else {
+            parts.push(format!("{} behind", behind.join(", ")));
+        }
+    }
+    parts.join(" · ")
+}
+
+/// The notice's whole text, naming the button every app has: its card in Settings.
+pub fn behind_notice(words: &str) -> String {
+    format!("{words} Use Update everything in Settings to update them.")
+}
+
+/// What the notice says now, or `None` when there's nothing to say.
+fn notice_words<'a>(machines: impl Iterator<Item = &'a Machine>) -> Option<String> {
+    let machines: Vec<&Machine> = machines.collect();
+    let ready = (machines.iter())
+        .find(|machine| machine.name.is_none())
+        .and_then(|machine| machine.restart_ready.as_ref());
+    match ready {
+        Some(version) => Some(format!(
+            "Assembly {version} is ready. It installs when you quit, or now with Restart to Update."
+        )),
+        None => behind_words(machines.into_iter()).map(|words| behind_notice(&words)),
+    }
+}
+
+/// Says once what's behind or ready each time that changes, in the place a person sees when the app starts. Each notice
+/// replaces the one before, so an update that's ready doesn't sit beside the toast that said it was behind.
 pub fn tell_when_behind(cx: &mut App) {
     let Some(machines) = Machines::try_global(cx) else {
         return;
     };
     let mut last = None;
+    // Held for the app's life, and set once: the window coming up is only said once.
+    let mut said_started: Option<Task<()>> = None;
     let heard = cx.observe(&machines, move |machines, cx| {
-        let words = behind_words(machines.read(cx).machines());
+        if machines.read(cx).machines().any(|machine| machine.quit) {
+            cx.quit();
+            return;
+        }
+        // An update that just replaced this app is waiting to hear its window came up.
+        if said_started.is_none() && !cx.windows().is_empty() {
+            let call = SocketClient::global(cx).read(cx).call::<Value>(
+                "updates",
+                "appStarted",
+                json!({}),
+                None,
+            );
+            said_started = Some(cx.background_spawn(async move {
+                _ = call.await;
+            }));
+        }
+        let words = notice_words(machines.read(cx).machines());
         if words == last {
             return;
         }
         last = words.clone();
-        let (Some(words), Some(window)) = (words, cx.windows().into_iter().next()) else {
+        let (Some(text), Some(window)) = (words, cx.windows().into_iter().next()) else {
             return;
         };
-        let text = format!("{words} Use {TITLE} to update them.");
         cx.defer(move |cx| {
             _ = window.update(cx, |_, window, cx| {
-                window.push_notification(Notification::warning(text), cx)
+                window.push_notification(Notification::warning(text).id::<BehindNotice>(), cx)
             });
         });
     });
@@ -71,78 +181,6 @@ struct BehindNotice {
 }
 
 impl Global for BehindNotice {}
-
-impl DeployForm {
-    fn machine_updates(&self, machine: &Machine, cx: &App) -> Div {
-        let chips = machine.updates.iter().map(|item| {
-            let tone = match item.state.as_str() {
-                "behind" => Tone::Warning,
-                "current" => Tone::Success,
-                _ => Tone::Neutral,
-            };
-            StatusChip::new(item_words(item), tone)
-        });
-        v_flex()
-            .gap_1()
-            .child(
-                div()
-                    .text_role(TextRole::Body, cx)
-                    .child(machine_name(machine).to_string()),
-            )
-            .child(h_flex().flex_wrap().gap_1().children(chips))
-            .children(machine.update_note.clone().map(|note| {
-                div()
-                    .text_role(TextRole::Meta, cx)
-                    .text_color(cx.theme().muted_foreground)
-                    .child(note)
-            }))
-    }
-
-    pub(super) fn updates_section(&self, cx: &mut Context<Self>) -> Div {
-        let machines: Vec<Machine> = Machines::try_global(cx)
-            .map(|machines| machines.read(cx).machines().cloned().collect())
-            .unwrap_or_default();
-        let updating = machines.iter().any(|machine| machine.updating);
-        let behind = machines
-            .iter()
-            .any(|machine| machine.behind().next().is_some());
-        let label = if updating {
-            "Updating…"
-        } else if behind {
-            "Update everything behind"
-        } else {
-            "Nothing is behind"
-        };
-        v_flex()
-            .gap_2()
-            .child(
-                div()
-                    .text_role(TextRole::Body, cx)
-                    .font_weight(FontWeight::MEDIUM)
-                    .child("What each machine has"),
-            )
-            .children(
-                machines
-                    .iter()
-                    .map(|machine| self.machine_updates(machine, cx)),
-            )
-            .children(self.update_error.clone().map(|error| {
-                div()
-                    .text_role(TextRole::Body, cx)
-                    .text_color(cx.theme().danger)
-                    .child(error)
-            }))
-            .child(
-                h_flex().child(
-                    Button::new("remote-install:update-everything")
-                        .primary()
-                        .label(label)
-                        .disabled(updating || !behind)
-                        .on_click(cx.listener(|form, _, _, cx| form.update_everything(cx))),
-                ),
-            )
-    }
-}
 
 #[cfg(test)]
 #[path = "updates_tests.rs"]

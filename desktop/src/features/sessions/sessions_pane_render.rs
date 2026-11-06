@@ -1,6 +1,7 @@
 //! `SessionsPane`'s panel traits (name, title, focus) and its render: the header, filters, search and rail list.
 use super::*;
 use crate::activity::{DotChip, Tone};
+use crate::core::backend::launcher::Launcher;
 use crate::core::ui::access::say;
 
 impl EventEmitter<PanelEvent> for SessionsPane {}
@@ -48,7 +49,7 @@ impl Render for SessionsPane {
         let list = list(self.lines.clone(), self.line_renderer(cx)).flex_1();
         let empty = match self.rail.loaded {
             true => "No sessions here.",
-            false => empty_line(state.as_ref()),
+            false => empty_words(state.as_ref(), Launcher::update_is_finishing(cx)),
         };
         v_flex()
             .key_context("Sessions")

@@ -16,7 +16,7 @@ use super::SessionPane;
 use crate::core::engine::SessionKey;
 use crate::core::intents::open_session::OpenSession;
 use crate::core::state::selected_session::SelectedSession;
-use crate::core::ui::ask::form::AskForm;
+use crate::core::ui::ask::ask_questionnaire::AskQuestionnaire;
 use crate::core::ui::center_panes::CenterPanes;
 use crate::features::session::client::session_client::SessionClient;
 use crate::features::session::client::socket_session_client::SocketSessionClient;
@@ -199,27 +199,36 @@ impl SessionPane {
     }
 
     fn answer_panel(&mut self, window: &mut Window, cx: &mut App) -> Option<AnswerPanel> {
-        let (ask_id, ask, count) = next_answer(&self.view.items)
-            .map(|(ask_id, ask, count)| (ask_id.to_string(), ask.clone(), count))?;
-        if !self.forms.contains_key(&ask_id)
-            && let Some(form) = AskForm::of(&ask, window, cx)
-        {
-            self.forms.insert(ask_id.clone(), form);
-        }
-        let form = self.forms.get(&ask_id).cloned();
-        let on_action = AskRow {
+        let (ask_id, ask, count) = match next_answer(&self.view.items) {
+            Some((ask_id, ask, count)) => (ask_id.to_string(), ask.clone(), count),
+            None => {
+                self.forms.clear();
+                return None;
+            }
+        };
+        let on_answer = AskRow {
             ask_id: ask_id.clone(),
             ask: ask.clone(),
-            form: None,
             on_action: self.on_action.clone(),
         }
-        .on_control();
+        .on_answer();
+        self.forms.retain(|id, _| *id == ask_id);
+        match self.forms.get(&ask_id) {
+            Some(form) => form.update(cx, |form, cx| form.sync(&ask, window, cx)),
+            None => {
+                let key = ask_id.clone();
+                if let Some(form) = AskQuestionnaire::of(key, &ask, on_answer.clone(), window, cx) {
+                    self.forms.insert(ask_id.clone(), form);
+                }
+            }
+        }
+        let form = self.forms.get(&ask_id).cloned();
         Some(AnswerPanel {
             ask_id,
             ask,
             form,
             count,
-            on_action,
+            on_answer,
         })
     }
 }
@@ -232,8 +241,7 @@ impl Render for SessionPane {
             return div().size_full().child(draft).into_any_element();
         }
         if self.reveal.is_some() && !self.frame_asked {
-            self.frame_asked = true;
-            cx.on_next_frame(window, |pane, window, cx| pane.reveal_frame(window, cx));
+            self.ask_reveal_tick(window, cx);
         }
         if !self.growing.is_empty() && !self.grow_asked {
             self.grow_asked = true;

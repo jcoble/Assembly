@@ -30,7 +30,8 @@ test('development bundle contains exact recursive closure, independent hashes an
   const input = await fixture(t);
   await fs.mkdir(path.join(input.publishDir, 'runtimes/linux-x64/native'), { recursive: true });
   const native = path.join(input.publishDir, 'runtimes/linux-x64/native/libsample.so');
-  await fs.writeFile(native, Buffer.from([0, 1, 255]), { mode: 0o764 });
+  await fs.writeFile(native, Buffer.from([0, 1, 255]));
+  await fs.chmod(native, 0o764); // exactly, whatever the umask: CI's is 022
   const result = await writeRemoteBackendPackage(input), bytes = await fs.readFile(input.outputFile);
   assert.equal(result.sha256, hash(bytes)); assert.equal(result.bytes, bytes.length); assert.equal(result.commit, commit);
   const { stdout } = await exec('tar', ['-tzf', input.outputFile]);

@@ -22,6 +22,8 @@ pub struct Seeded {
     pub items: Vec<Value>,
     /// `workflow/run`'s answer.
     pub run: Value,
+    /// `workflow/run` refuses with this code and message instead.
+    pub run_refused: Option<(&'static str, &'static str)>,
     /// The `machines` topic's items, by the name each is kept under.
     pub machines: Vec<Value>,
     pub commands: Vec<Value>,
@@ -62,9 +64,9 @@ fn answer(state: &mut Seeded, frame: &Value) -> Vec<Reply> {
             let kind = topic.trim_end_matches('s');
             let items = (state.items.iter())
                 .filter(|item| {
-                    item["entityKind"]
-                        .as_str()
-                        .is_some_and(|held| held.starts_with(kind))
+                    item["entityKind"].as_str().is_some_and(|held| {
+                        held.starts_with(kind) || (topic == "runs" && held == "step")
+                    })
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -93,7 +95,12 @@ fn answer(state: &mut Seeded, frame: &Value) -> Vec<Reply> {
             result(json!({"items":items,"next":null}))
         }
         (Some("call"), Some("engine"), Some("usage")) => result(json!({"toolCalls":0})),
-        (Some("call"), Some("workflow"), Some("run")) => result(state.run.clone()),
+        (Some("call"), Some("workflow"), Some("run")) => match state.run_refused {
+            Some((code, message)) => vec![Reply::Frame(
+                json!({"t":"error","id":id,"code":code,"message":message,"machine":"Workbox Test"}),
+            )],
+            None => result(state.run.clone()),
+        },
         (Some("call"), Some("fixture"), Some("barrier")) => result(Value::Null),
         _ => vec![],
     }

@@ -55,7 +55,7 @@ async fn the_key_opens_and_closes_the_board(cx: &mut TestAppContext) {
 }
 
 fn owner_need(id: &str) -> Value {
-    json!({"entityKind":"needs_me","id":id,"machine":MACHINE,"version":1,"sessionId":"s","kind":"question","state":"open","text":"Which?","createdMs":1})
+    json!({"entityKind":"needs_me","id":id,"machine":MACHINE,"version":1,"sessionId":"s","forOwner":true,"kind":"question","state":"open","text":"Which?","createdMs":1})
 }
 
 #[gpui::test]

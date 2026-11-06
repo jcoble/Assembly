@@ -14,7 +14,7 @@ function checkout(): { root: string; home: string; run: (extra?: NodeJS.ProcessE
     mkdirSync(join(root, folder), { recursive: true });
   }
   mkdirSync(home);
-  for (const script of ['app-dev.ts', 'seed-dev.ts']) {
+  for (const script of ['app-dev.ts', 'app-dev-remote.ts', 'seed-dev.ts']) {
     copyFileSync(new URL(`./${script}`, import.meta.url), join(root, 'scripts', script));
   }
   writeFileSync(join(root, 'desktop/Cargo.toml'), '');
