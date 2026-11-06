@@ -29,7 +29,7 @@ use crate::core::state::preferences::Preferences;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::ui::spinner::Spinner;
 
-/// The layout's name for the tab (default_layout.rs).
+/// The layout's name for the tab (default_layout.rs), and the pane's key context.
 const TERMINAL: &str = "Terminal";
 
 /// The sizes the backend allows (TerminalHost.cs); the grid keeps to them too, so the two never differ.
@@ -140,6 +140,11 @@ pub struct TerminalPane {
 impl TerminalPane {
     /// Registers the tab under the layout's Terminal name, after the placeholders, since the last registration wins.
     pub fn register(cx: &mut App) {
+        // The window Root binds Tab and Shift-Tab to move the focus; in the terminal they go to the shell (key_down).
+        cx.bind_keys([
+            KeyBinding::new("tab", NoAction, Some(TERMINAL)),
+            KeyBinding::new("shift-tab", NoAction, Some(TERMINAL)),
+        ]);
         register_panel(cx, TERMINAL, |_, window, cx| {
             panel_handle(cx.new(|cx| TerminalPane::new(window, cx)))
         });
@@ -472,6 +477,7 @@ impl Render for TerminalPane {
         };
         let pane = v_flex()
             .id("terminal-pane")
+            .key_context(TERMINAL)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
