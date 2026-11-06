@@ -1,0 +1,109 @@
+using System.Text.Json;
+using Assembly.Application.Common.Engine;
+using System.Text.Json.Serialization;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Sessions;
+using Assembly.Engine.Recording;
+using Assembly.Engine.Reading;
+using Assembly.Engine.Relays;
+using Assembly.Engine.NeedsMe;
+using Assembly.Engine.Handoffs;
+
+namespace Assembly.Infrastructure.Engine;
+
+internal sealed record EngineSnapshotFrame(long Id, string Machine, long Through, IReadOnlyList<JsonElement> Items, bool More,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] CursorAt? At = null)
+{
+    [JsonPropertyOrder(-1)] public string T => "engine_snapshot";
+}
+
+internal sealed record EngineEventsFrame(long Id, string Machine, long After, long Through, IReadOnlyList<EngineEvent> Events, bool More,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<JsonElement>? Rows = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] CursorAt? At = null)
+{
+    [JsonPropertyOrder(-1)] public string T => "engine_events";
+}
+
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true)]
+[JsonSerializable(typeof(ParentNeedPendingArgs))]
+[JsonSerializable(typeof(HandoffIdentity))]
+[JsonSerializable(typeof(HandoffPhaseArgs))]
+[JsonSerializable(typeof(HandoffAdoptArgs))]
+[JsonSerializable(typeof(HandoffSealArgs))]
+[JsonSerializable(typeof(HandoffAck))]
+[JsonSerializable(typeof(ParentNeedPendingPage))]
+[JsonSerializable(typeof(ParentNeedInputArgs))]
+[JsonSerializable(typeof(ParentNeedInputOpened))]
+[JsonSerializable(typeof(ParentNeedInputPartArgs))]
+[JsonSerializable(typeof(ParentNeedUploadArgs))]
+[JsonSerializable(typeof(ParentNeedUploadOpened))]
+[JsonSerializable(typeof(ParentNeedUploadPartArgs))]
+[JsonSerializable(typeof(ParentNeedUploadOffset))]
+[JsonSerializable(typeof(ParentNeedCaptured))]
+[JsonSerializable(typeof(ParentNeedDispatchArgs))]
+[JsonSerializable(typeof(ParentNeedOutcomeArgs))]
+[JsonSerializable(typeof(NeedAnswerRequestDescriptor))]
+[JsonSerializable(typeof(NeedAnswerAck))]
+[JsonSerializable(typeof(bool))]
+[JsonSerializable(typeof(StartTitleBeginArgs))]
+[JsonSerializable(typeof(StartTitleBeginReply))]
+[JsonSerializable(typeof(StartTitlePartArgs))]
+[JsonSerializable(typeof(StartTitleOffsets))]
+[JsonSerializable(typeof(StartTitleCommitArgs))]
+[JsonSerializable(typeof(MachineStartAckArgs))]
+[JsonSerializable(typeof(MachineStartAck))]
+[JsonSerializable(typeof(ForeignTitleSourceOpenArgs))]
+[JsonSerializable(typeof(ForeignTitleSourceOpened))]
+[JsonSerializable(typeof(ForeignTitleSourceChecked))]
+[JsonSerializable(typeof(ForeignTitlePartArgs))]
+[JsonSerializable(typeof(ForeignTitlePart))]
+[JsonSerializable(typeof(ForeignAncestryProofQuery))]
+[JsonSerializable(typeof(ForeignRegisterReceiptQuery))]
+[JsonSerializable(typeof(ForeignTitleRequest))]
+[JsonSerializable(typeof(ForeignTitleAppendArgs))]
+[JsonSerializable(typeof(ForeignTitleOffsets))]
+[JsonSerializable(typeof(ForeignTitleCommitArgs))]
+[JsonSerializable(typeof(ForeignTitleReply))]
+[JsonSerializable(typeof(RelaySourceReadArgs))]
+[JsonSerializable(typeof(RelaySourceOpened))]
+[JsonSerializable(typeof(RelaySourcePartArgs))]
+[JsonSerializable(typeof(RelaySourcePart))]
+[JsonSerializable(typeof(RelaySourceDescriptor))]
+[JsonSerializable(typeof(RelayHandleArgs))]
+[JsonSerializable(typeof(RelaySendRequest))]
+[JsonSerializable(typeof(RelaySendBeginReply))]
+[JsonSerializable(typeof(RelaySendPartArgs))]
+[JsonSerializable(typeof(RelaySendPartAccepted))]
+[JsonSerializable(typeof(RelaySendCommitArgs))]
+[JsonSerializable(typeof(RelaySendAck))]
+[JsonSerializable(typeof(RelayOutcomeArgs))]
+[JsonSerializable(typeof(LegacySessionTitleRef))]
+[JsonSerializable(typeof(LegacySessionTitleStatArgs))]
+[JsonSerializable(typeof(LegacySessionTitleStat))]
+[JsonSerializable(typeof(LegacySessionTitleChunkArgs))]
+[JsonSerializable(typeof(LegacySessionTitleChunk))]
+[JsonSerializable(typeof(SessionTitleReadArgs))]
+[JsonSerializable(typeof(SessionTitleStat))]
+[JsonSerializable(typeof(SessionTitleChunkArgs))]
+[JsonSerializable(typeof(SessionTitleChunk))]
+[JsonSerializable(typeof(OwnerPromptManifest))]
+[JsonSerializable(typeof(OwnerPromptReadArgs))]
+[JsonSerializable(typeof(OwnerPromptPage))]
+[JsonSerializable(typeof(OwnerPromptChunkArgs))]
+[JsonSerializable(typeof(OwnerPromptChunk))]
+[JsonSerializable(typeof(MachineInfo))]
+[JsonSerializable(typeof(WindowCommand))]
+[JsonSerializable(typeof(MachineCommand))]
+[JsonSerializable(typeof(ForeignAncestryArgs))]
+[JsonSerializable(typeof(StartLocationArgs))]
+[JsonSerializable(typeof(StartLocation))]
+[JsonSerializable(typeof(EngineUsageArgs))]
+[JsonSerializable(typeof(EngineEntityArgs))]
+[JsonSerializable(typeof(EngineEntitiesArgs))]
+[JsonSerializable(typeof(EngineEntitiesPage))]
+[JsonSerializable(typeof(UsageTotals))]
+[JsonSerializable(typeof(JsonElement?))]
+[JsonSerializable(typeof(EngineSnapshotFrame))]
+[JsonSerializable(typeof(EngineEventsFrame))]
+internal sealed partial class EngineSocketJson : JsonSerializerContext;

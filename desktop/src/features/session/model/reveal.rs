@@ -3,7 +3,7 @@
 //! pane steps it on each frame while it's behind and stops asking for frames once it has caught up. Ported from
 //! rows/reveal.ts.
 
-use crate::features::session::rows::markdown::{Block, Inline, ListItem};
+use crate::core::ui::markdown::payload::{Block, Inline, ListItem};
 
 /// The steady pace while little is waiting, in characters a second.
 pub const MIN_CPS: f64 = 90.0;

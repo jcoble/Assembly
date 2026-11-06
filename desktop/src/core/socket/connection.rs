@@ -33,6 +33,8 @@ const SENDING: Duration = Duration::from_secs(5);
 
 pub(super) struct Connection {
     pub machine: String,
+    /// Durable Engine identity from welcome.engine; the display host name is a different identity.
+    pub engine_machine: Option<String>,
     writer: WebSocket<Bounded>,
     reader: Option<JoinHandle<()>>,
     /// A send failed and the stream is shut down: the frames after it are dropped, not built.
@@ -65,9 +67,11 @@ impl Connection {
             protocol: PROTOCOL,
         };
         writer.send(text(&hello)).map_err(failed)?;
-        let machine = match writer.read().map_err(failed)? {
+        let (machine, engine_machine) = match writer.read().map_err(failed)? {
             Message::Text(text) => match serde_json::from_str(text.as_str()) {
-                Ok(InFrame::Welcome { machine, .. }) => machine,
+                Ok(InFrame::Welcome {
+                    machine, engine, ..
+                }) => (machine, engine),
                 _ => return Err(failed(format!("expected a welcome, got {text}"))),
             },
             Message::Close(Some(frame)) if matches!(u16::from(frame.code), 4400 | 4401) => {
@@ -84,6 +88,7 @@ impl Connection {
             .map_err(failed)?;
         Ok(Self {
             machine,
+            engine_machine,
             writer,
             reader: Some(reader),
             ended: false,

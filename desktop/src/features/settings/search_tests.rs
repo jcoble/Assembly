@@ -33,11 +33,15 @@ fn an_empty_search_lists_every_section_and_row() {
 fn a_search_keeps_only_the_sections_and_rows_it_matches() {
     assert_eq!(
         ids(&sections("Line HEIGHT"), |section| section.id),
-        ["editor", "terminal"]
+        ["appearance", "editor", "terminal"]
     );
     assert_eq!(
         ids(&rows("line height"), |row| row.id),
-        ["editor-line-height", "terminal-line-height"]
+        [
+            "ui-line-height",
+            "editor-line-height",
+            "terminal-line-height"
+        ]
     );
 }
 
@@ -55,7 +59,8 @@ fn a_search_reads_the_description_keywords_card_and_section() {
         [
             "terminal-font",
             "terminal-font-size",
-            "terminal-line-height"
+            "terminal-line-height",
+            "terminal-cursor-blink"
         ]
     );
 }
@@ -91,7 +96,10 @@ fn a_sections_rows_are_grouped_into_cards() {
         appearance,
         [
             ("Colors", vec!["theme"]),
-            ("Text", vec!["ui-font", "code-font", "ui-font-size"])
+            (
+                "Text",
+                vec!["ui-font", "code-font", "ui-font-size", "ui-line-height"]
+            )
         ]
     );
     let searched: Vec<&str> = cards("size", "appearance")
@@ -99,4 +107,17 @@ fn a_sections_rows_are_grouped_into_cards() {
         .map(|(card, _)| card)
         .collect();
     assert_eq!(searched, ["Text"]);
+}
+
+#[test]
+fn session_limits_are_catalogued_and_searchable_in_agents() {
+    assert_eq!(ids(&rows("depth"), |row| row.id), ["session-depth-limit"]);
+    assert_eq!(
+        ids(&rows("sessions"), |row| row.id),
+        ["session-depth-limit", "session-child-limit"]
+    );
+    assert_eq!(
+        shown("depth", "appearance").map(|section| section.id),
+        Some("agents")
+    );
 }

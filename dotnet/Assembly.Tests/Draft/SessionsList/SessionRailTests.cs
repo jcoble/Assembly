@@ -1,8 +1,10 @@
 using System.Text.Json;
 using Assembly.Application.Common.Topics;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Rows;
+using Assembly.Engine.Persistence;
 using Assembly.Infrastructure.Persistence;
 using Microsoft.Extensions.Time.Testing;
 using static Assembly.Application.Features.Chat.Sessions.SessionsFeature;
@@ -14,7 +16,7 @@ namespace Assembly.Tests.Draft.SessionsList;
 /// totals and paging, project groups in a fixed order, started sessions ordered like any other session, and the invalidations that make a
 /// window read it again.
 /// </summary>
-public sealed class SessionRailTests : IDisposable
+public sealed partial class SessionRailTests : IDisposable
 {
     private readonly TempDatabase _file = new();
     private readonly FakeTimeProvider _time = new(DateTimeOffset.FromUnixTimeMilliseconds(1_000_000));
@@ -22,11 +24,13 @@ public sealed class SessionRailTests : IDisposable
     private readonly AppDatabase _database;
     private readonly SessionStore _sessions;
     private readonly LiveHub _hub;
+    private readonly string _engineMachine;
 
     public SessionRailTests()
     {
         _database = AppDatabase.Open(_file.Path, _time, _topics);
         var rows = RowStore.Open(_database);
+        _engineMachine = EngineSchema.Open(_database, _time.GetUtcNow().ToUnixTimeMilliseconds());
         _sessions = SessionStore.Open(_database, _time, "checkouts");
         _hub = new LiveHub(rows, topics: _topics);
     }
@@ -40,14 +44,60 @@ public sealed class SessionRailTests : IDisposable
         var starter = Parent(machine: remote ? "workbox-test" : null);
         var other = Parent();
         var started = Helper(starter);
+        if (remote)
+        {
+            // Source-derived SQL reader control for an already-known foreign owner, not transfer acceptance proof.
+            _database.Writer.Write("test.known-foreign-family", scope =>
+            {
+                // The actual foreign parent must exist before its linked child (engine_session.parent_id FK).
+                foreach (var id in new[] { starter, started })
+                    scope.Execute("""
+                        INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
+                            activity_state,parent_id,holder,epoch,cancel_requested,account_context,managed_checkout)
+                        SELECT s.session_id,0,m.machine,s.created_at,s.updated_at,s.agent,NULL,'',COALESCE(s.title,''),'foreign',
+                            'idle',s.parent_session_id,m.machine,0,0,'',0
+                        FROM session_info s JOIN engine_mirror_row m ON m.entity_kind='session' AND m.entity_id=s.session_id
+                        JOIN engine_mirror owner ON owner.machine=m.machine AND owner.generation=m.generation
+                            AND owner.name=s.machine AND owner.state='live'
+                        WHERE s.session_id=$id;
+                        """, new Assembly.Application.Common.Database.SqlArg("$id", id));
+                scope.Execute("""
+                    UPDATE engine_mirror_row AS m SET row_json=json_set(m.row_json,
+                        '$.provider',s.agent,'$.folder',s.repo_url,'$.updatedMs',s.updated_at,'$.title',s.title)
+                    FROM session_info s
+                    WHERE m.entity_kind='session' AND m.entity_id=s.session_id AND s.session_id IN ($parent,$child)
+                        AND EXISTS (SELECT 1 FROM engine_mirror owner WHERE owner.machine=m.machine
+                            AND owner.generation=m.generation AND owner.name=s.machine AND owner.state='live');
+                    """, new("$parent", starter), new("$child", started));
+                return 0;
+            });
+        }
         Running(started);
         Asking(started);
         Assert.Equal([started, other, starter], Collect(next => Read(after: next, limit: 1)));
-        Assert.Equal(new RailTotals(1), Read().Totals);
+        // Locally the question is addressed to the session that started it, so the session answers it, not the person.
+        Assert.Equal(new RailTotals(remote ? 1 : 0), Read().Totals);
         Assert.False(Entry(Read(), starter).Running);
-        Assert.False(Entry(Read(), starter).NeedsYou);
         Assert.True(Entry(Read(), started).Running);
-        Assert.True(Entry(Read(), started).NeedsYou);
+        if (remote)
+        {
+            _database.Writer.Write("test.contradict-provider", scope => scope.Execute("""
+                UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.provider','different-provider')
+                WHERE entity_kind='session' AND entity_id=$child;
+                """, new Assembly.Application.Common.Database.SqlArg("$child", started)));
+            var wrongProvider = Entry(Read(), started);
+            Assert.Null(wrongProvider.Source);
+            Assert.Null(wrongProvider.Model);
+            Assert.Equal(new RailTotals(0), Read().Totals);
+            _database.Writer.Write("test.contradict-parent", scope => scope.Execute("""
+                UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.provider',$provider,'$.parentId','different-parent')
+                WHERE entity_kind='session' AND entity_id=$child;
+                """, new("$provider", _sessions.Get(started)!.Agent), new("$child", started)));
+            var wrongParent = Entry(Read(), started);
+            Assert.Null(wrongParent.Source);
+            Assert.Null(wrongParent.Model);
+            Assert.Equal(new RailTotals(0), Read().Totals);
+        }
     }
 
     // Pins: sessions-list#1, sessions-list#6
@@ -133,7 +183,24 @@ public sealed class SessionRailTests : IDisposable
         Running(b);
         var c = Parent("claude", machine: "workbox-test");
         Asking(c);
-        Parent("codex", machine: "workbox-test");
+        var remote = _sessions.Get(c)!;
+        _database.Writer.Write("test.filtered-owner", scope => scope.Execute("""
+            UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.provider',$provider,'$.folder','/recorded/remote','$.updatedMs',$updated)
+            WHERE entity_kind='session' AND entity_id=$id;
+            """, new("$provider", remote.Agent), new("$updated", remote.UpdatedAt), new("$id", c)));
+        var otherRemote = Parent("codex", machine: "workbox-test");
+        _database.Writer.Write("test.known-filtered-owners", scope => scope.Execute("""
+            INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
+                activity_state,parent_id,holder,epoch,cancel_requested,account_context,managed_checkout)
+            SELECT s.session_id,0,m.machine,s.created_at,s.updated_at,s.agent,NULL,s.repo_url,COALESCE(s.title,''),'foreign',
+                'idle',NULL,m.machine,0,0,'',0
+            FROM session_info s JOIN engine_mirror_row m ON m.entity_kind='session' AND m.entity_id=s.session_id
+            WHERE s.session_id IN ($first,$second);
+            UPDATE engine_mirror_row AS m SET row_json=json_set(row_json,
+                '$.provider',s.agent,'$.folder',s.repo_url,'$.title',s.title,'$.updatedMs',s.updated_at)
+            FROM session_info s WHERE m.entity_kind='session' AND m.entity_id=s.session_id
+                AND s.session_id IN ($first,$second);
+            """, new("$first", c), new("$second", otherRemote)));
         var settled = Parent("claude");
         Running(settled);
         _database.Writer.Write("test.mark", scope => { _sessions.Mark(scope, settled, "settled"); return 0; });
@@ -199,7 +266,7 @@ public sealed class SessionRailTests : IDisposable
         // It moves ahead of every row held before it.
         _time.Advance(TimeSpan.FromSeconds(1));
         _sessions.Touch(reader);
-        var moved = Read(groupBy: new(false, false), anchor: reader, above: 130, limit: 200);
+        var moved = Read(groupBy: new(false, false), anchor: reader, after: Cursor(held.Sessions[130]), above: 130, limit: 200);
         Assert.Equal((0, reader), (moved.Start, moved.Sessions[0].SessionId));
 
         // 60 sessions start ahead of it: it stays at the same place in what's read.
@@ -265,14 +332,13 @@ public sealed class SessionRailTests : IDisposable
         var rail = Read();
         Assert.Equal(new RailTotals(0), rail.Totals);
         Assert.True(Entry(rail, answered).Unread);
-        Assert.False(Entry(rail, answered).NeedsYou);
-        Assert.False(Entry(Read(), answered).NeedsYou);
+        Assert.Equal(rail.Totals, Read().Totals);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void AskTargetRefreshesWhileAnotherAskRemainsOpen(bool remote)
+    public void Chat_ask_changes_invalidate_rail_without_creating_engine_needs(bool remote)
     {
         var session = Parent(machine: remote ? "workbox-test" : null);
         var seq = 0L;
@@ -286,14 +352,33 @@ public sealed class SessionRailTests : IDisposable
         Add(null, RowKind.Turn, new { state = "started" });
         Add("a", RowKind.Ask, new { state = "open" });
         Add("b", RowKind.Ask, new { state = "open" });
-        Assert.Equal((session, 2L), (Entry(Read(), session).AskSession, Entry(Read(), session).AskSeq));
+        Assert.Equal(new RailTotals(0), Read().Totals);
 
         _topics.Published.Clear();
         Add("a", RowKind.Ask, new { state = "answered" });
 
         Assert.Contains((RailTopic, (string?)session, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
-        var after = Entry(Read(), session);
-        Assert.Equal((session, 3L), (after.AskSession, after.AskSeq));
+        Assert.Equal(new RailTotals(0), Read().Totals);
+        Assert.True(Entry(Read(), session).Running);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_native_subagent_gives_its_session_something_to_open_on_the_rail(bool remote)
+    {
+        var session = Parent(machine: remote ? "workbox-test" : null);
+        Assert.False(Entry(Read(), session).NativeActivity);
+
+        _topics.Published.Clear();
+        var state = new { state = "completed" };
+        if (remote)
+            Assert.True(_hub.PublishCopy(new StoredRow(session, 1, "run-1", "native", RowKind.Subagent, JsonSerializer.SerializeToElement(state), 1, PrevSeq: 0)));
+        else
+            Rows(session, ("native", RowKind.Subagent, state));
+
+        Assert.Contains((RailTopic, (string?)session, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
+        Assert.True(Entry(Read(), session).NativeActivity);
     }
 
     [Fact]
@@ -309,8 +394,8 @@ public sealed class SessionRailTests : IDisposable
         Asking(helper);
         Assert.Contains((RailTopic, (string?)helper, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
         var rail = Read();
-        Assert.Equal(new RailTotals(1), rail.Totals);
-        Assert.Equal(helper, Entry(rail, helper).AskSession);
+        Assert.Equal(new RailTotals(0), rail.Totals);
+        Assert.Equal(helper, Entry(rail, helper).SessionId);
     }
 
     [Theory]
@@ -329,33 +414,6 @@ public sealed class SessionRailTests : IDisposable
         Assert.Equal([earlier], Sessions(recovered));
         Assert.Equal(0, recovered.Start);
         Assert.Empty(Read(statuses: ["working"], groupBy: groupBy, after: cursor).Sessions);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void RecordedBranchComesFromTheLatestStats(bool remote)
-    {
-        var session = Parent(machine: remote ? "workbox-test" : null);
-        Assert.Null(Entry(Read(), session).Branch);
-        var seq = 0L;
-        void Stats(string? branch, long at)
-        {
-            var payload = JsonSerializer.SerializeToElement(new { status = "completed", branch });
-            if (remote)
-                Assert.True(_hub.PublishCopy(new StoredRow(session, ++seq, "run-1", null, RowKind.Stats, payload, at, PrevSeq: seq - 1)));
-            else
-                _hub.Publish(session, Batch((null, RowKind.Stats, new { status = "completed", branch }), at));
-        }
-        Stats("main", 10);
-        _topics.Published.Clear();
-        Stats("lane/rail", 20);
-        Assert.Contains((RailTopic, (string?)session, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
-        Stats("", 30);
-        Stats(null, 40);
-
-        var entry = Entry(Read(), session);
-        Assert.Equal(("lane/rail", 20L), (entry.Branch, entry.BranchAt));
     }
 
     [Fact]
@@ -388,18 +446,55 @@ public sealed class SessionRailTests : IDisposable
             : _sessions.Add(Guid.NewGuid().ToString(), agent, repo, machine).SessionId;
         if (title is not null)
             _sessions.SetTitle(id, title, "user");
+        RecordEngineSession(id);
         return id;
     }
 
     private string Helper(string parent, string agent = "claude")
     {
         _time.Advance(TimeSpan.FromSeconds(1));
-        return _sessions.Helper(_sessions.Get(parent)!, agent, "helper").SessionId;
+        var id = _sessions.Helper(_sessions.Get(parent)!, agent, "helper").SessionId;
+        RecordEngineSession(id, parent);
+        return id;
+    }
+
+    // A lost or ended session's last turn stays "started" for good, and a running row redraws the window every second.
+    [Theory]
+    [InlineData(false, "lost")]
+    [InlineData(false, "ended")]
+    [InlineData(true, "lost")]
+    [InlineData(true, "ended")]
+    public void ASessionThatIsGoneIsNotRunningWhateverItsLastTurnSaid(bool remote, string state)
+    {
+        var session = Parent("codex", machine: remote ? "workbox-test" : null);
+        if (remote)
+            _database.Writer.Write("test.known-owner", scope => scope.Execute("""
+                INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
+                    activity_state,parent_id,holder,epoch,cancel_requested,account_context,managed_checkout)
+                SELECT s.session_id,0,m.machine,s.created_at,s.updated_at,s.agent,NULL,s.repo_url,COALESCE(s.title,''),'foreign',
+                    'idle',NULL,m.machine,0,0,'',0
+                FROM session_info s JOIN engine_mirror_row m ON m.entity_kind='session' AND m.entity_id=s.session_id
+                WHERE s.session_id=$id;
+                UPDATE engine_mirror_row AS m SET row_json=json_set(row_json,
+                    '$.provider',s.agent,'$.folder',s.repo_url,'$.updatedMs',s.updated_at)
+                FROM session_info s WHERE m.entity_kind='session' AND m.entity_id=s.session_id AND s.session_id=$id;
+                """, new Assembly.Application.Common.Database.SqlArg("$id", session)));
+        Running(session);
+        Assert.True(Entry(Read(), session).Running);
+        _database.Writer.Write("test.session-gone", scope => scope.Execute(remote
+            ? "UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.state',$state) WHERE entity_kind='session' AND entity_id=$id"
+            : "UPDATE engine_session SET state=$state WHERE id=$id", new("$state", state), new("$id", session)));
+        Assert.False(Entry(Read(), session).Running);
     }
 
     private void Running(string session) => Rows(session, (null, RowKind.Turn, new { state = "started" }));
 
-    private void Asking(string session) => Rows(session, ("q1", RowKind.Ask, new { state = "open" }));
+    private void Asking(string session)
+    {
+        Rows(session, ("q1", RowKind.Ask, new { state = "open" }));
+        var facade = _sessions.Get(session)!;
+        if (facade.ParentSessionId is null || facade.Helper) OpenEngineNeed(session, "need:" + session);
+    }
 
     private void Rows(string session, params (string? Item, string Kind, object Payload)[] rows) => _hub.Publish(session, Batch(rows));
 
@@ -425,14 +520,19 @@ public sealed class SessionRailTests : IDisposable
     private static List<string> Collect(Func<RailCursor?, Rail> read)
     {
         var seen = new List<string>();
+        var identities = new HashSet<(string Id, string? Route, ExpectedSource? Source)>();
         RailCursor? next = null;
         do
         {
             var page = read(next);
-            seen.AddRange(page.Sessions.Where(entry => entry.Kind == "session").Select(entry => entry.SessionId));
+            foreach (var entry in page.Sessions.Where(entry => entry.Kind == "session"))
+            {
+                Assert.True(identities.Add((entry.SessionId, entry.Machine, entry.Source)), "A source-qualified rail session repeated across pages.");
+                seen.Add(entry.SessionId);
+            }
             next = page.Next;
         } while (next is not null);
-        Assert.Equal(seen.Count, seen.Distinct().Count());
+        Assert.Equal(seen.Count, identities.Count);
         return seen;
     }
 

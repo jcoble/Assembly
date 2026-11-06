@@ -15,7 +15,7 @@ public sealed partial class ChatSocketTests
     public async Task Other_sessions_and_saves_answer_while_a_send_hangs_on_its_machine()
     {
         var hung = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
-        var other = _sessions.Create("claude", "repo");
+        var other = ReadyParent();
         var turn = new RowBatch();
         turn.Rows.Add(new NewRow("run-9", null, RowKind.Turn, JsonDocument.Parse("""{"state":"started"}""").RootElement.Clone(), 1));
         _hub.Publish(other.SessionId, turn);
@@ -32,7 +32,7 @@ public sealed partial class ChatSocketTests
         Assert.Equal([2, 3, 4], answers.Keys.Order());
         Assert.All(answers.Values, answer => Assert.Contains("\"t\":\"result\"", answer));
         _box.Release();
-        Assert.Contains("\"runId\":\"run-1\"", (await ReadAnswersAsync(socket, 1))[1]);
+        Accepted((await ReadAnswersAsync(socket, 1))[1], hung.SessionId);
     }
 
     [Fact]
@@ -48,11 +48,11 @@ public sealed partial class ChatSocketTests
         // Frames are read in order, so once the save behind it answers, the second send has been queued.
         await CallAsync(socket, 3, "preferences", "set", Save);
         Assert.Equal([3], (await ReadAnswersAsync(socket, 1)).Keys);
-        Assert.Equal([$"send {session.SessionId} one"], _box.Asked);
+        Assert.Equal([$"owner prompt {session.SessionId} one"], _box.Asked);
 
         _box.Release();
         Assert.Equal([1, 2], (await ReadAnswersAsync(socket, 2)).Keys.Order());
-        Assert.Equal([$"send {session.SessionId} one", $"send {session.SessionId} two"], _box.Asked);
+        Assert.Equal([$"owner prompt {session.SessionId} one", $"owner prompt {session.SessionId} two"], _box.Asked);
     }
 
     [Fact]
@@ -61,7 +61,7 @@ public sealed partial class ChatSocketTests
         _box.Hold();
         using var socket = await OpenAsync();
 
-        await CallAsync(socket, 1, "sessions", "create", """{"agent":"claude","repoUrl":"repo","machine":"box"}""");
+        await CallAsync(socket, 1, "sessions", "create", """{"agent":"claude","clientId":"hung_create","machine":"box"}""");
         await _box.Reached.Task.WaitAsync(Wait);
         await CallAsync(socket, 2, "preferences", "set", Save);
 
@@ -74,7 +74,7 @@ public sealed partial class ChatSocketTests
     public async Task A_socket_that_closes_still_runs_the_sends_it_queued()
     {
         var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
-        var local = _sessions.Create("claude", "repo");
+        var local = ReadyParent();
         _box.Hold();
         _here.Hold();
         var socket = await OpenAsync();
@@ -96,7 +96,7 @@ public sealed partial class ChatSocketTests
         _box.Release();
 
         Assert.True(SpinWait.SpinUntil(() => { lock (_box.Asked) return _box.Asked.Count == 2; }, Wait));
-        Assert.Equal($"send {session.SessionId} two", _box.Asked[1]);
+        Assert.Equal($"owner prompt {session.SessionId} two", _box.Asked[1]);
     }
 
     // The next count answers (result or error frames), by id; other frames are skipped.

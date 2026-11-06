@@ -9,6 +9,7 @@ use gpui_kit::{Pixels, SharedString, px};
 use serde_json::Value;
 
 pub use super::number_setting::NumberSetting;
+use crate::core::theme::text::TextRole;
 use crate::core::theme::theme_id::ThemeId;
 
 pub const THEME: &str = "appearance.theme";
@@ -16,6 +17,7 @@ pub const UI_FONT: &str = "appearance.uiFont";
 pub const CODE_FONT: &str = "appearance.codeFont";
 pub const EDITOR_FONT: &str = "editor.fontFamily";
 pub const TERMINAL_FONT: &str = "terminal.fontFamily";
+pub const TERMINAL_CURSOR_BLINK: &str = "terminal.cursorBlink";
 
 /// The ranges are the old app's sliders (SettingsDialog.svelte:932-1017).
 pub const UI_FONT_SIZE: NumberSetting = NumberSetting {
@@ -23,8 +25,17 @@ pub const UI_FONT_SIZE: NumberSetting = NumberSetting {
     min: 11.,
     max: 18.,
     step: 1.,
-    default: 13.,
+    default: 16.,
     unit: "px",
+};
+/// Interface leading; chat keeps its own reading ratio.
+pub const UI_LINE_HEIGHT: NumberSetting = NumberSetting {
+    key: "appearance.uiLineHeight",
+    min: 1.2,
+    max: 1.8,
+    step: 0.05,
+    default: 1.45,
+    unit: "×",
 };
 pub const EDITOR_FONT_SIZE: NumberSetting = NumberSetting {
     key: "editor.fontSize",
@@ -77,8 +88,25 @@ impl Appearance {
         self.saved.insert(key, value);
     }
 
+    /// The saved value for a setting with a type-specific reader.
+    pub(crate) fn saved_value(&self, key: &str) -> Option<&Value> {
+        self.saved.get(key)
+    }
+
+    /// Whether the terminal's cursor blinks; on unless saved off.
+    pub fn terminal_cursor_blink(&self) -> bool {
+        (self.saved.get(TERMINAL_CURSOR_BLINK))
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+    }
+
     pub fn number(&self, setting: &NumberSetting) -> f32 {
         setting.read(self.saved.get(setting.key))
+    }
+
+    /// Text sizes share the interface scale; line height follows the selected role.
+    pub fn ui_text(&self, role: TextRole) -> (Pixels, Pixels) {
+        role.metrics(self.number(&UI_FONT_SIZE), self.number(&UI_LINE_HEIGHT))
     }
 
     pub fn theme(&self) -> ThemeId {

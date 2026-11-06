@@ -2,18 +2,21 @@
 //! ask, a task, a subagent, a note, the line under a turn, an error notice, or a kind it doesn't know by name.
 //! Replaces TimelineItem.svelte and the spike's item_view.rs.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::core::state::preferences::Preferences;
+
 use super::grow::chevron;
-use super::markdown_view::MarkdownView;
 use super::message_meta::MessageMeta;
 use super::sent_message::SentMessage;
 use super::session_action::OnAction;
 use super::subagent_card::SubagentCard;
 use super::task_card::TaskCard;
+use crate::core::ui::markdown::view::MarkdownView;
 use crate::features::session::composer::attachment::Attachment;
 use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::model::kept::Kept;
@@ -30,6 +33,7 @@ pub struct ItemRow {
     pub kept: Kept,
     /// The session the item is in, for its file links.
     pub session: SharedString,
+    pub expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     /// What the copy button under a prompt or a final reply copies; `None` draws no meta line.
     pub copy: Option<SharedString>,
     /// A final reply's turn line ("Worked for 42s · Thu 12:02 PM · model · …"), shown in its meta line.
@@ -45,6 +49,8 @@ pub struct ItemRow {
 impl RenderOnce for ItemRow {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
+        let (chat_size, chat_height) =
+            Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Chat));
         let (muted, danger) = (theme.muted_foreground, theme.danger);
         let key = self.item.key.clone();
         // Each row its own hover group, so its copy button and time show only under the pointer.
@@ -61,7 +67,13 @@ impl RenderOnce for ItemRow {
             })
         };
         let body = match self.item.kind {
-            ItemKind::User { text, at, from } => {
+            ItemKind::User {
+                text,
+                at,
+                from,
+                from_machine,
+                sender_label,
+            } => {
                 let (text, attached) = Attachment::split_lines(&text);
                 let images = attached
                     .into_iter()
@@ -71,12 +83,20 @@ impl RenderOnce for ItemRow {
                     .items_end()
                     .gap_1()
                     .when_some(self.checkout.clone(), |column, checkout| {
-                        column.child(div().w_full().text_xs().text_color(muted).child(checkout))
+                        column.child(
+                            div()
+                                .w_full()
+                                .text_role(TextRole::Meta, cx)
+                                .text_color(muted)
+                                .child(checkout),
+                        )
                     })
                     .child(SentMessage {
                         key: key.clone(),
                         text,
                         sender: from,
+                        sender_machine: from_machine,
+                        sender_label,
                         images,
                         open: self.kept.open,
                         on_action: self.on_action.clone(),
@@ -92,7 +112,8 @@ impl RenderOnce for ItemRow {
                 .child(div().text_color(rgb(0xe2e2e2)).child(MarkdownView {
                     id: key.clone().into(),
                     blocks,
-                    session: self.session.clone(),
+                    session: Some(self.session.clone()),
+                    expected_source: self.expected_source.clone(),
                 }))
                 .children(meta(at, self.copy.clone(), self.turn.clone(), true))
                 .into_any_element(),
@@ -103,7 +124,7 @@ impl RenderOnce for ItemRow {
                 match Notice::of_error(&message, code.as_deref()) {
                     Some(notice) => v_flex()
                         .gap_1()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .child(
                             div()
                                 .font_weight(FontWeight::MEDIUM)
@@ -125,23 +146,24 @@ impl RenderOnce for ItemRow {
             }
             .into_any_element(),
             ItemKind::Subagent { subagent, .. } => SubagentCard {
+                key: key.clone(),
                 subagent,
                 on_action: self.on_action.clone(),
             }
             .into_any_element(),
             ItemKind::Note { text } => div()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .italic()
                 .text_color(muted)
                 .child(text)
                 .into_any_element(),
             ItemKind::Stats { stats } => v_flex()
-                .text_xs()
+                .text_role(TextRole::Meta, cx)
                 .text_color(muted)
                 .child(turn_line(Some(&stats), None, self.now))
                 .into_any_element(),
             ItemKind::Other { kind } => div()
-                .text_xs()
+                .text_role(TextRole::Meta, cx)
                 .text_color(muted)
                 .child(format!("[{kind}]"))
                 .into_any_element(),
@@ -153,8 +175,8 @@ impl RenderOnce for ItemRow {
             .mx_auto()
             .px_4()
             // The reading style, the mock's `.reply`: 13.5 px at 1.6; a line that sets its own size keeps the proportion.
-            .text_size(px(13.5))
-            .line_height(relative(1.6))
+            .text_size(chat_size)
+            .line_height(chat_height)
             .child(body)
     }
 }
@@ -167,7 +189,7 @@ pub fn thinking_title(done: bool, grown: f32, cx: &App) -> AnyElement {
     h_flex()
         .h(px(22.))
         .gap_2()
-        .text_size(px(13.))
+        .text_role(TextRole::Body, cx)
         .text_color(muted)
         .child(Icon::new(Glyph::Lightbulb).size(px(14.)).text_color(faint))
         .child(if done { "Thought" } else { "Thinking" })
@@ -183,7 +205,7 @@ pub fn thinking_body(text: SharedString, cx: &App) -> AnyElement {
         .pl(px(15.))
         .border_l_1()
         .border_color(theme.border)
-        .text_sm()
+        .text_role(TextRole::Body, cx)
         .text_color(theme.muted_foreground)
         .child(text)
         .into_any_element()

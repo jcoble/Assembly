@@ -4,13 +4,13 @@
 
 use serde::Deserialize;
 
-use super::ask::AskPayload;
-use super::markdown::Block;
 use super::plan::PlanItem;
 use super::subagent::SubagentPayload;
 use super::task::TaskPayload;
 use super::tool::ToolPayload;
 use super::turn_stats::TurnStats;
+use crate::core::ui::ask::payload::AskPayload;
+use crate::core::ui::markdown::payload::Block;
 
 pub use crate::core::socket::row::Row;
 
@@ -27,6 +27,10 @@ pub enum RowBody {
     User {
         text: String,
         from: Option<String>,
+        #[serde(rename = "fromMachine", default)]
+        from_machine: Option<String>,
+        #[serde(rename = "senderLabel", default)]
+        sender_label: Option<String>,
     },
     /// `text` is only this delta's new raw text; the view draws `blocks` from block `from` on.
     Delta {
@@ -57,6 +61,11 @@ pub enum RowBody {
     Context {
         used: i64,
         size: i64,
+        /// Only what the agent reported; absent means not reported, never zero.
+        #[serde(default, rename = "inputTokens")]
+        input_tokens: Option<i64>,
+        #[serde(default, rename = "outputTokens")]
+        output_tokens: Option<i64>,
     },
     #[serde(skip)]
     Other {

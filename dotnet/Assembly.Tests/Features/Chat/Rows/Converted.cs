@@ -46,9 +46,9 @@ internal sealed class Converted
     public IReadOnlyList<string> ItemOrder() =>
         Rows.Select((row, index) => row.ItemId ?? $"#{index}:{row.Kind}").Distinct().ToList();
 
-    /// <summary>The detail the store would hold for an item once every detail is applied, null keeping what was there.</summary>
+    /// <summary>The detail the store would hold for an item once every detail is applied, null keeping what was there unless replaced.</summary>
     public ToolDetail Detail(string itemId) =>
-        Details.Where(detail => detail.ItemId == itemId).Aggregate(new ToolDetail(itemId), (stored, next) => new ToolDetail(itemId,
+        Details.Where(detail => detail.ItemId == itemId).Aggregate(new ToolDetail(itemId), (stored, next) => next.Replace ? next : new ToolDetail(itemId,
             next.Input ?? stored.Input, next.Output ?? stored.Output, next.Diff ?? stored.Diff, next.Path ?? stored.Path));
 
     public static string Text(NewRow row, string property) => row.Payload.GetProperty(property).GetString()!;

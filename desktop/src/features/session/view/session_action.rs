@@ -9,34 +9,60 @@ use serde_json::Value;
 #[derive(Clone)]
 pub enum SessionAction {
     /// Open or close a finished turn's fold, by its run id.
-    ToggleFold { run_id: String },
+    ToggleFold {
+        run_id: String,
+    },
     /// Open or close a tool call, thinking or a long prompt, by item key; opening a tool call reads its detail
     /// (`rows/tool`).
-    Toggle { key: String },
+    Toggle {
+        key: String,
+    },
     /// Load the first page again after it failed.
     RetryPage,
+    /// Retry a failed owner prompt with its original immutable payload.
+    RetryPrompt {
+        client_id: String,
+    },
     /// Open or close the plan's list of steps.
     TogglePlan,
     /// Show an open tool call's whole diff, by item key.
-    ShowAllDiff { key: String },
-    /// Pick a choice in an open question's form: the field's one choice, or one more of many (picked again, it's
-    /// taken off).
-    Pick {
-        ask_id: String,
-        field: String,
-        value: String,
-        many: bool,
+    ShowAllDiff {
+        key: String,
     },
-    /// Send an open question's form as it's filled in.
-    SubmitAsk { ask_id: String },
     /// `send/answer`: the option's `{ optionId }` or the form's `{ action, content }`.
-    Answer { ask_id: String, answer: Value },
+    Answer {
+        ask_id: String,
+        answer: Value,
+    },
     /// `send/stopTask`: a task, or a subagent by its session id.
-    StopTask { task: String },
+    StopTask {
+        task: String,
+    },
+    StopEngineChild {
+        key: String,
+        session_id: String,
+    },
+    StopNative {
+        key: String,
+        payload_session_id: String,
+    },
     /// Opens another session: a subagent's, a parent, or the one that sent a prompt (lane g0-host's intent).
-    OpenSession { session_id: String },
+    OpenSender {
+        key: crate::core::engine::SessionKey,
+    },
+    /// A persisted card reference. Payload identity is correlation, never the resolved child identity.
+    OpenNative {
+        key: String,
+        payload_session_id: String,
+    },
+    /// Engine helper cards resolve only through the source-qualified canonical parent/child edge.
+    OpenEngineChild {
+        session_id: String,
+    },
     /// Reads an attached image (`attachments/read`) and opens it full size.
-    ShowImage { name: String },
+    ShowImage {
+        name: String,
+    },
 }
 
 /// What a row calls with an action; the pane gives each row a clone.

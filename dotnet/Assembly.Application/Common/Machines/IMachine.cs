@@ -1,3 +1,5 @@
+using Assembly.Application.Common.Images;
+using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Application.Features.Chat;
 using Assembly.Application.Features.Chat.Rows;
@@ -15,22 +17,11 @@ public interface IMachine
     /// <summary>The name a session records for this machine; null for the machine the routes run on.</summary>
     string? Name { get; }
 
-    /// <summary>The agents a new session on this machine can run, as (id, name).</summary>
-    Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken);
+    /// <summary>The safe configured targets a new session on this machine can run.</summary>
+    Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken);
 
     /// <summary>Asks whether the machine answers, recording what it finds; this machine always does.</summary>
     Task ProbeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken);
-
-    /// <summary>A helper session under <paramref name="parent"/>, which may be on another machine, in its repo.</summary>
-    Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Starts a turn, or sends the text into the one running, and returns the run id; null if the running turn
-    /// can't take it. A resend with the same <paramref name="clientId"/> answers the first send's run id.
-    /// </summary>
-    Task<string?> SendAsync(SessionInfo session, string text, string? clientId, CancellationToken cancellationToken);
 
     /// <summary>Stops the run. False if the session isn't running it.</summary>
     Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken);
@@ -46,6 +37,9 @@ public interface IMachine
     /// <summary>Stores the image where the agent can read it and returns its path there.</summary>
     Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken);
 
+    /// <summary>Reads one bounded image piece from the session's owning machine.</summary>
+    Task<AttachmentPiece> ReadAttachmentAsync(SessionInfo session, string name, long offset, CancellationToken cancellationToken);
+
     /// <summary>
     /// The session's config: the options its agent reported (before its first session, the ones the agent's
     /// latest new session had, if any), and the values chosen for it.
@@ -53,10 +47,13 @@ public interface IMachine
     Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken);
 
     /// <summary>Chooses a value for one of the session's config options, and returns its config after.</summary>
-    Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken);
+    Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken, string? targetId = null);
 
-    /// <summary>Answers one of the session's open asks (its card row). False if it isn't open or the answer doesn't fit.</summary>
-    Task<bool> AnswerAsync(SessionInfo session, string askId, System.Text.Json.JsonElement answer, CancellationToken cancellationToken);
+    /// <summary>Reads the configured agent's actual metadata without creating an Assembly session.</summary>
+    Task<ComposerCatalogue> DiscoverConfigAsync(string agent, string targetId, string cwd, CancellationToken cancellationToken);
+
+    /// <summary>Observes this session's native metadata without sending a prompt.</summary>
+    Task<SessionConfig> WarmConfigAsync(SessionInfo session, string targetId, CancellationToken cancellationToken);
 
     /// <summary>A webview opened the session: a remote machine brings its rows up to date here. Nothing to do locally.</summary>
     void Watch(SessionInfo session);

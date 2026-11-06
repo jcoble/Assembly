@@ -2,11 +2,12 @@
 //! its loaded sessions newest first, copied, so a redraw finds each row's session without a search. Every session has
 //! its own checkout, so there's no worktree level under it.
 
-use crate::core::state::session_item::SessionItem;
+use crate::core::state::session_item::{NO_PROJECT, SessionItem};
 use crate::features::sessions::list_entries::project_label;
 
 #[derive(Clone, Debug)]
 pub struct ProjectGroup {
+    /// Empty for bare sessions, which share one group on each machine.
     pub folder: String,
     pub machine: Option<String>,
     /// Newest first.
@@ -19,13 +20,18 @@ impl ProjectGroup {
         let mut groups: Vec<ProjectGroup> = Vec::new();
         for item in items {
             let machine = item.machine.clone().filter(|machine| !machine.is_empty());
+            let folder = if item.is_bare {
+                ""
+            } else {
+                item.repo_url.as_str()
+            };
             match groups
                 .iter_mut()
-                .find(|group| group.folder == item.repo_url && group.machine == machine)
+                .find(|group| group.folder == folder && group.machine == machine)
             {
                 Some(group) => group.sessions.push(item.clone()),
                 None => groups.push(ProjectGroup {
-                    folder: item.repo_url.clone(),
+                    folder: folder.to_owned(),
                     machine,
                     sessions: vec![item.clone()],
                 }),
@@ -36,9 +42,14 @@ impl ProjectGroup {
 
     /// Its header's name, as the sessions column's project header says it: "owner/repo · Workbox Test".
     pub fn label(&self) -> String {
+        let name = if self.folder.is_empty() {
+            NO_PROJECT
+        } else {
+            project_label(&self.folder)
+        };
         match &self.machine {
-            Some(machine) => format!("{} · {machine}", project_label(&self.folder)),
-            None => project_label(&self.folder).to_string(),
+            Some(machine) => format!("{name} · {machine}"),
+            None => name.to_string(),
         }
     }
 

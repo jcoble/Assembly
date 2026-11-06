@@ -12,7 +12,7 @@ use gpui_kit::{Entity, Modifiers, VisualTestContext};
 use gpui_kit::{ListOffset, px};
 use serde_json::{Value, json};
 
-use super::{SessionsPane, empty_line, needs_words, provider_options, saved_filters};
+use super::{SessionsPane, empty_line, empty_words, needs_words, provider_options, saved_filters};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
@@ -172,6 +172,12 @@ fn an_empty_column_says_what_the_connection_is_doing() {
     );
 }
 
+#[test]
+fn while_an_update_finishes_the_empty_column_leaves_the_words_to_its_notice() {
+    assert_eq!(empty_words(None, true), "");
+    assert_eq!(empty_words(None, false), "The backend isn't running.");
+}
+
 fn open(cx: &mut TestAppContext) -> (Entity<SessionsPane>, &mut VisualTestContext) {
     cx.update(gpui_kit::init);
     cx.update(SelectedSession::init);
@@ -200,24 +206,35 @@ fn selected(cx: &mut VisualTestContext) -> Option<String> {
     })
 }
 
-/// The pane takes `answer` as its read's.
+/// The pane takes `answer` as its read's: the one already out if the rail topic started one, or a new one.
 fn answer(pane: &Entity<SessionsPane>, answer: RailPage, cx: &mut VisualTestContext) {
     pane.update(cx, |pane, cx| {
-        let (id, _) = pane.rail.changed().unwrap();
+        let id = pane
+            .rail
+            .reading_id()
+            .unwrap_or_else(|| pane.rail.changed().unwrap().0);
         pane.answer(id, Outcome::Ok(answer), cx);
     });
     draw(cx);
 }
 
 #[gpui::test]
-fn filtered_out_selection_stays_open(cx: &mut TestAppContext) {
+async fn filtered_out_selection_stays_open(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     let (pane, cx) = open(cx);
+    let mut nav = cx.update(|window, cx| {
+        crate::features::session::view::session_pane::test_navigation::NavigationFixture::new(
+            false, window, cx,
+        )
+    });
+    nav.ready(cx).await;
     answer(
         &pane,
         page(vec![test_entry("a", "/r"), test_entry("b", "/r")]),
         cx,
     );
     click("session-a", cx);
+    nav.opened("a", cx).await;
     assert_eq!(selected(cx).as_deref(), Some("a"));
     // Running no longer lists it: the session stays open.
     answer(&pane, page(vec![test_entry("b", "/r")]), cx);
@@ -226,17 +243,25 @@ fn filtered_out_selection_stays_open(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn filter_clears_on_escape_and_selection(cx: &mut TestAppContext) {
+async fn filter_clears_on_escape_and_selection(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     let (pane, cx) = open(cx);
+    let mut nav = cx.update(|window, cx| {
+        crate::features::session::view::session_pane::test_navigation::NavigationFixture::new(
+            false, window, cx,
+        )
+    });
+    nav.ready(cx).await;
     answer(&pane, page(vec![test_entry("a", "/r")]), cx);
     let typed = |pane: &Entity<SessionsPane>, cx: &mut VisualTestContext| {
         pane.update_in(cx, |pane, window, cx| {
             pane.filter
                 .update(cx, |input, cx| input.set_value("notes", window, cx));
             let read = pane.rail.set_filter("notes");
-            pane.send(read, cx);
+            pane.send(read.clone(), cx);
             assert_eq!(pane.rail.filter, "notes");
-        });
+            read.expect("the changed filter starts its correlated read")
+        })
     };
     let cleared = |pane: &Entity<SessionsPane>, cx: &mut VisualTestContext| {
         pane.read_with(cx, |pane, cx| {
@@ -249,9 +274,14 @@ fn filter_clears_on_escape_and_selection(cx: &mut TestAppContext) {
     pane.update_in(cx, |pane, window, cx| pane.clear_filter(window, cx));
     cleared(&pane, cx);
     // Picking a session.
-    typed(&pane, cx);
-    answer(&pane, page(vec![test_entry("a", "/r")]), cx);
+    let (filtered, _) = typed(&pane, cx);
+    // Answer the request already sent by typing; changed() correctly coalesces while it is pending.
+    pane.update(cx, |pane, cx| {
+        pane.answer(filtered, Outcome::Ok(page(vec![test_entry("a", "/r")])), cx)
+    });
+    draw(cx);
     click("session-a", cx);
+    nav.opened("a", cx).await;
     assert_eq!(selected(cx).as_deref(), Some("a"));
     cleared(&pane, cx);
 }
@@ -381,152 +411,6 @@ fn changing_the_view_starts_at_the_top(cx: &mut TestAppContext) {
     }
 }
 
-// Pins: sessions-list#7
-#[test]
-fn set_picks_sends_one_read_with_providers_locations_and_statuses() {
-    let mut rail = Rail::default();
-    let (_, args) = rail.set_picks(
-        vec!["claude".into()],
-        vec!["local".into()],
-        vec!["working".into()],
-    );
-    assert_eq!(args["providers"], json!(["claude"]));
-    assert_eq!(args["locations"], json!(["local"]));
-    assert_eq!(args["statuses"], json!(["working"]));
-    assert!(rail.changed().is_none(), "the one read is out");
-}
-
-// Pins: sessions-list#7
-#[test]
-fn saved_filters_reads_the_rail_filters_preference() {
-    let saved = json!({"provider": ["claude"], "location": ["local"]});
-    let state = Update::State(vec![
-        ("theme".into(), json!({"key": "theme", "value": "dark"})),
-        (
-            "rail.filters".into(),
-            json!({"key": "rail.filters", "value": saved}),
-        ),
-    ]);
-    assert_eq!(
-        saved_filters(&state),
-        Some((vec!["claude".into()], vec!["local".into()], vec![]))
-    );
-    assert_eq!(saved_filters(&Update::State(Vec::new())), None);
-}
-
-// Pins: sessions-list#7
-#[test]
-fn a_saved_pick_not_yet_in_agents_still_shows() {
-    let options = provider_options(&["claude".into()], &["codex".into()]);
-    let shown: Vec<_> = (options.iter())
-        .map(|option| (option.value.as_str(), option.label.as_str()))
-        .collect();
-    assert_eq!(shown, [("claude", "Claude"), ("codex", "Codex")]);
-}
-
-// Pins: sessions-list#6
-#[test]
-fn view_options_reach_the_rail_read() {
-    let mut rail = Rail::default();
-    let (_, args) = rail.set_view(View {
-        group_by: GroupBy {
-            status: true,
-            project: false,
-        },
-        sort: Sort::Name,
-        dir: Dir::Desc,
-    });
-    assert_eq!(args["groupBy"], json!({"status": true, "project": false}));
-    assert_eq!(args["sort"], "name");
-    assert_eq!(args["dir"], "desc");
-}
-
-// Pins: sessions-list#6
-#[test]
-fn saved_view_is_restored_into_the_rail() {
-    let state = Update::State(vec![(
-        "rail.view".into(),
-        json!({"key": "rail.view", "value": {
-            "groupBy": {"status": true, "project": false}, "sort": "name", "dir": "desc"
-        }}),
-    )]);
-    assert_eq!(
-        saved_view(&state),
-        View {
-            group_by: GroupBy {
-                status: true,
-                project: false,
-            },
-            sort: Sort::Name,
-            dir: Dir::Desc,
-        }
-    );
-    assert_eq!(saved_view(&Update::State(vec![])), View::default());
-}
-
-// Pins: sessions-list#7
-#[test]
-fn status_picks_are_saved_with_the_filters() {
-    let saved = json!({"provider": ["claude"], "location": ["local"], "status": ["settled"]});
-    let state = Update::State(vec![(
-        "rail.filters".into(),
-        json!({"key": "rail.filters", "value": saved}),
-    )]);
-    assert_eq!(
-        saved_filters(&state),
-        Some((
-            vec!["claude".into()],
-            vec!["local".into()],
-            vec!["settled".into()]
-        ))
-    );
-}
-
-// Pins: sessions-list#9
-#[test]
-fn folding_settled_sends_one_read() {
-    let mut rail = Rail::default();
-    let (first, _) = rail.changed().unwrap();
-    rail.finish(
-        first,
-        Outcome::Ok(page(vec![
-            test_entry("above", "/r"),
-            test_entry("settled-row", "/r"),
-        ])),
-    );
-    rail.look_at(Some("settled-row".into()));
-    let (_, args) = rail.toggle_fold("settled".into(), "section:settled".into());
-    assert_eq!(args["folded"], json!(["settled"]));
-    assert!(rail.changed().is_none(), "the one read is out");
-}
-
-// Pins: sessions-list#9
-#[test]
-fn folding_a_group_keeps_its_header_in_the_page() {
-    let mut rail = Rail::default();
-    let (first, _) = rail.changed().unwrap();
-    let header = RailEntry {
-        kind: "project".into(),
-        header: 1,
-        ..test_entry("project:::/r", "/r")
-    };
-    rail.finish(
-        first,
-        Outcome::Ok(page(vec![
-            test_entry("above", "/q"),
-            header,
-            test_entry("member", "/r"),
-        ])),
-    );
-    // The header is at the top, so the row in view is its first member, which folding removes.
-    rail.look_at(Some("member".into()));
-    let (_, args) = rail.toggle_fold("::/r".into(), "project:::/r".into());
-    assert_eq!(
-        (&args["anchor"], &args["above"]),
-        (&json!("project:::/r"), &json!(1))
-    );
-}
-
 // Pins: sessions-list#10
 #[test]
 fn the_needs_total_reads_as_words_above_zero() {
@@ -534,3 +418,24 @@ fn the_needs_total_reads_as_words_above_zero() {
     assert_eq!(needs_words(1).as_deref(), Some("1 needs you"));
     assert_eq!(needs_words(3).as_deref(), Some("3 need you"));
 }
+
+#[gpui::test]
+fn the_draft_says_when_it_has_no_chat_pane_and_a_second_press_keeps_the_same_one(
+    cx: &mut TestAppContext,
+) {
+    let (pane, cx) = open(cx);
+    pane.update_in(cx, |pane, window, cx| pane.show_draft(window, cx));
+    let first = pane.read_with(cx, |pane, _| {
+        pane.creating.as_ref().map(|(form, _)| form.clone())
+    });
+    assert!(first.is_some());
+    pane.read_with(cx, |pane, _| assert!(pane.row_error.is_some()));
+    pane.update_in(cx, |pane, window, cx| pane.show_draft(window, cx));
+    let second = pane.read_with(cx, |pane, _| {
+        pane.creating.as_ref().map(|(form, _)| form.clone())
+    });
+    assert_eq!(first, second);
+}
+
+#[path = "sessions_pane_picks_tests.rs"]
+mod picks_tests;

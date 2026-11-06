@@ -96,12 +96,28 @@ public sealed partial class ChatSocketTests
         await SendAsync(socket, """{"t":"sub","id":1,"topic":"sessions"}""");
         await ReadAsync(socket);
 
-        await CallAsync(socket, 2, "sessions", "create", """{"agent":"claude","repoUrl":"repo"}""");
+        await CallAsync(socket, 2, "sessions", "create", JsonSerializer.Serialize(
+            new SessionsFeature.CreateArgs("claude", "published_create", ExpectedSource: new(_engine.Machine, 0, null)),
+            SessionsJson.Default.CreateArgs));
 
         using var change = JsonDocument.Parse(await ReadAsync(socket));
         Assert.Equal("change", change.RootElement.GetProperty("t").GetString());
         var made = change.RootElement.GetProperty("key").GetString();
-        Assert.Equal($$$"""{"t":"result","id":2,"result":{"sessionId":"{{{made}}}"}}""", await ReadAsync(socket));
+        var frame = await ReadAsync(socket);
+        while (true)
+        {
+            using var pushed = JsonDocument.Parse(frame);
+            if (pushed.RootElement.GetProperty("t").GetString() != "change") break;
+            Assert.Equal(1, pushed.RootElement.GetProperty("sub").GetInt32());
+            Assert.Equal(made, pushed.RootElement.GetProperty("key").GetString());
+            frame = await ReadAsync(socket);
+        }
+        using var answer = JsonDocument.Parse(frame);
+        Assert.Equal("result", answer.RootElement.GetProperty("t").GetString());
+        Assert.Equal(2, answer.RootElement.GetProperty("id").GetInt32());
+        Assert.Equal(made, answer.RootElement.GetProperty("result").GetProperty("sessionId").GetString());
+        Assert.Equal(JsonValueKind.Null, answer.RootElement.GetProperty("result").GetProperty("checkoutOperationId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, answer.RootElement.GetProperty("result").GetProperty("projectId").ValueKind);
     }
 
     [Fact]
@@ -110,7 +126,7 @@ public sealed partial class ChatSocketTests
         _box.Down = true;
         using var socket = await OpenAsync();
 
-        await CallAsync(socket, 1, "sessions", "create", """{"agent":"claude","repoUrl":"repo","machine":"box"}""");
+        await CallAsync(socket, 1, "sessions", "create", """{"agent":"claude","clientId":"down_create","machine":"box"}""");
 
         Assert.Equal("""{"t":"error","id":1,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
     }
@@ -195,10 +211,10 @@ public sealed partial class ChatSocketTests
     {
         using var socket = await OpenAsync();
 
-        await CallAsync(socket, 1, "sessions", "create", """{"agent":"claude","repoUrl":"repo","machine":"nope"}""");
+        await CallAsync(socket, 1, "sessions", "create", """{"agent":"claude","clientId":"unknown_machine","machine":"nope"}""");
         Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"unknown machine"}""", await ReadAsync(socket));
-        await CallAsync(socket, 2, "sessions", "create", """{"agent":"codex","repoUrl":"repo"}""");
-        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"this machine has no agent codex"}""", await ReadAsync(socket));
+        await CallAsync(socket, 2, "sessions", "create", """{"agent":"codex","clientId":"unknown_agent"}""");
+        Assert.Equal("""{"t":"error","id":2,"code":"bad_args","message":"The agent is not configured on this owner."}""", await ReadAsync(socket));
 
         Assert.Equal(["agents"], _here.Asked);
         Assert.Empty(_box.Asked);
@@ -207,17 +223,26 @@ public sealed partial class ChatSocketTests
     [Fact]
     public async Task Sessions_create_with_a_parent_makes_a_helper_with_its_title_or_Helper()
     {
-        var parent = _sessions.Create("claude", "repo");
+        var parent = ReadyParent();
+        var parentLocation = _sessions.Location(parent);
+        Assert.NotNull(parentLocation);
+        var parentFolder = parentLocation.Folder;
+        Assert.Equal(_home.FullName, parentFolder);
         using var socket = await OpenAsync();
 
-        await CallAsync(socket, 1, "sessions", "create",
-            $$"""{"agent":"claude","repoUrl":"repo","parentSessionId":"{{parent.SessionId}}","title":"Look"}""");
+        await CallAsync(socket, 1, "sessions", "create", JsonSerializer.Serialize(
+            new SessionsFeature.CreateArgs("claude", "child_titled", ParentSessionId: parent.SessionId, Title: "Look",
+                ExpectedSource: new(_engine.Machine, 0, null)), SessionsJson.Default.CreateArgs));
         var titled = _sessions.Get(Result(await ReadAsync(socket)).GetProperty("sessionId").GetString()!)!;
-        await CallAsync(socket, 2, "sessions", "create", $$"""{"agent":"claude","repoUrl":"repo","parentSessionId":"{{parent.SessionId}}"}""");
+        await CallAsync(socket, 2, "sessions", "create", JsonSerializer.Serialize(
+            new SessionsFeature.CreateArgs("claude", "child_untitled", ParentSessionId: parent.SessionId,
+                ExpectedSource: new(_engine.Machine, 0, null)), SessionsJson.Default.CreateArgs));
         var untitled = _sessions.Get(Result(await ReadAsync(socket)).GetProperty("sessionId").GetString()!)!;
 
         Assert.Equal((parent.SessionId, true, "Look"), (titled.ParentSessionId, titled.Helper, titled.Title));
         Assert.Equal((parent.SessionId, true, "Session"), (untitled.ParentSessionId, untitled.Helper, untitled.Title));
-        Assert.Equal(["agents", "helper", "agents", "helper"], _here.Asked);
+        Assert.Equal(["agents", "agents"], _here.Asked);
+        Assert.Equal(parentFolder, titled.WorkingFolder);
+        Assert.Equal(parentFolder, untitled.WorkingFolder);
     }
 }

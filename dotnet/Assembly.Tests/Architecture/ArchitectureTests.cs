@@ -7,8 +7,7 @@ namespace Assembly.Tests.Architecture;
 
 /// <summary>
 /// The layout's rules (plan section 4): the core in layers, every other part one folder per feature. It reads the
-/// built assemblies for what they reference and the source tree for the rest. There are no exceptions. The page's
-/// rule (no feature folder imports another) joins in C1, when chat's page folders move under lib/chat/.
+/// built assemblies for what they reference and the retained .NET and native source trees for the rest.
 /// </summary>
 public sealed partial class ArchitectureTests
 {
@@ -35,6 +34,7 @@ public sealed partial class ArchitectureTests
     [Theory]
     [InlineData("Assembly.Domain")]
     [InlineData("Assembly.Application")]
+    [InlineData("Assembly.Engine")]
     public void The_core_uses_no_sqlite_web_server_or_process(string name)
     {
         var references = Load(name).GetReferencedAssemblies().Select(reference => reference.Name!).ToList();
@@ -47,6 +47,7 @@ public sealed partial class ArchitectureTests
     [Theory]
     [InlineData("Assembly.Domain")]
     [InlineData("Assembly.Application")]
+    [InlineData("Assembly.Engine")]
     public void The_core_opens_no_files(string name)
     {
         // Files on disk are an outside system: Infrastructure and the hosts open them and hand the core a stream or text.
@@ -58,6 +59,7 @@ public sealed partial class ArchitectureTests
     [Theory]
     [InlineData("Assembly.Domain")]
     [InlineData("Assembly.Application")]
+    [InlineData("Assembly.Engine")]
     public void The_core_makes_no_native_calls(string name)
     {
         // Native calls go in Infrastructure. A LibraryImport's generated stub is a DllImport, so this catches both.
@@ -72,6 +74,12 @@ public sealed partial class ArchitectureTests
     }
 
     [Fact]
+    public void Engine_references_application_contracts_and_domain_proofs()
+    {
+        Assert.Equal(["Assembly.Application", "Assembly.Domain"], OurReferences("Assembly.Engine"));
+    }
+
+    [Fact]
     public void Infrastructure_references_no_host()
     {
         var references = OurReferences("Assembly.Infrastructure");
@@ -82,6 +90,7 @@ public sealed partial class ArchitectureTests
     [Theory]
     [InlineData("Assembly.Domain")]
     [InlineData("Assembly.Application")]
+    [InlineData("Assembly.Engine")]
     [InlineData("Assembly.Infrastructure")]
     public void Every_file_s_namespace_matches_its_folder(string project)
     {
@@ -118,15 +127,97 @@ public sealed partial class ArchitectureTests
     [Fact]
     public void No_folder_holds_more_than_the_limit()
     {
-        var crowded = new[] { Path.Combine(Root, "dotnet"), Path.Combine(Root, "app", "src") }
+        Assert.Empty(FindCrowdedFolders(Root));
+    }
+
+    [Fact]
+    public void The_root_is_found_without_the_old_app_folder()
+    {
+        var scratch = Directory.CreateTempSubdirectory("assembly-architecture-");
+        try
+        {
+            var repoRoot = scratch.FullName;
+            Directory.CreateDirectory(Path.Combine(repoRoot, "dotnet"));
+            File.WriteAllText(Path.Combine(repoRoot, "dotnet", "Assembly.slnx"), "<Solution />");
+            Directory.CreateDirectory(Path.Combine(repoRoot, "desktop", "src"));
+            var nested = Path.Combine(repoRoot, "dotnet", "Assembly.Tests", "bin");
+            Directory.CreateDirectory(nested);
+            // An old-layout decoy must not hide the retained root above it.
+            Directory.CreateDirectory(Path.Combine(nested, "dotnet"));
+            Directory.CreateDirectory(Path.Combine(nested, "app"));
+
+            Assert.False(Directory.Exists(Path.Combine(repoRoot, "app")));
+            Assert.Equal(repoRoot, FindRoot(nested));
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("dotnet/Assembly.slnx")]
+    [InlineData("desktop/src")]
+    public void Both_retained_root_markers_are_required(string missing)
+    {
+        var scratch = Directory.CreateTempSubdirectory("assembly-architecture-");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(scratch.FullName, "dotnet"));
+            var solution = Path.Combine(scratch.FullName, "dotnet", "Assembly.slnx");
+            var native = Path.Combine(scratch.FullName, "desktop", "src");
+            if (missing != "dotnet/Assembly.slnx")
+                File.WriteAllText(solution, "<Solution />");
+            if (missing != "desktop/src")
+                Directory.CreateDirectory(native);
+
+            Assert.Throws<InvalidOperationException>(() => FindRoot(scratch.FullName));
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("dotnet", "Assembly.Sample")]
+    [InlineData("desktop", "src")]
+    public void Retained_folders_allow_thirty_files_and_reject_thirty_one(string top, string sub)
+    {
+        var scratch = Directory.CreateTempSubdirectory("assembly-architecture-");
+        try
+        {
+            var repoRoot = scratch.FullName;
+            Directory.CreateDirectory(Path.Combine(repoRoot, "dotnet"));
+            Directory.CreateDirectory(Path.Combine(repoRoot, "desktop", "src"));
+            var folder = Directory.CreateDirectory(Path.Combine(repoRoot, top, sub)).FullName;
+            for (var index = 0; index < MaxFilesPerFolder; index++)
+                File.WriteAllText(Path.Combine(folder, $"file{index}"), "");
+            foreach (var skipped in new[] { "bin", "obj", "node_modules" })
+            {
+                var generated = Directory.CreateDirectory(Path.Combine(folder, skipped)).FullName;
+                for (var index = 0; index <= MaxFilesPerFolder; index++)
+                    File.WriteAllText(Path.Combine(generated, $"file{index}"), "");
+            }
+
+            Assert.Empty(FindCrowdedFolders(repoRoot));
+            File.WriteAllText(Path.Combine(folder, "overflow"), "");
+            Assert.Equal([$"{Path.GetRelativePath(repoRoot, folder)}: 31"], FindCrowdedFolders(repoRoot));
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
+    private static List<string> FindCrowdedFolders(string root) =>
+        new[] { Path.Combine(root, "dotnet"), Path.Combine(root, "desktop", "src") }
             .SelectMany(top => Directory.EnumerateDirectories(top, "*", SearchOption.AllDirectories).Prepend(top))
             .Where(folder => !Skipped(folder))
             .Select(folder => (folder, count: Directory.GetFiles(folder).Length))
             .Where(folder => folder.count > MaxFilesPerFolder)
-            .Select(folder => $"{Relative(folder.folder)}: {folder.count}")
+            .Select(folder => $"{Path.GetRelativePath(root, folder.folder)}: {folder.count}")
             .ToList();
-        Assert.Empty(crowded);
-    }
 
     private static System.Reflection.Assembly Load(string name) => System.Reflection.Assembly.Load(new AssemblyName(name));
 
@@ -185,10 +276,11 @@ public sealed partial class ArchitectureTests
 
     private static string Relative(string path) => Path.GetRelativePath(Root, path);
 
-    private static string FindRoot()
+    private static string FindRoot(string? start = null, [System.Runtime.CompilerServices.CallerFilePath] string source = "")
     {
-        for (var folder = new DirectoryInfo(AppContext.BaseDirectory); folder is not null; folder = folder.Parent)
-            if (Directory.Exists(Path.Combine(folder.FullName, "dotnet")) && Directory.Exists(Path.Combine(folder.FullName, "app")))
+        for (var folder = new DirectoryInfo(start ?? Path.GetDirectoryName(source)!); folder is not null; folder = folder.Parent)
+            if (File.Exists(Path.Combine(folder.FullName, "dotnet", "Assembly.slnx"))
+                && Directory.Exists(Path.Combine(folder.FullName, "desktop", "src")))
                 return folder.FullName;
         throw new InvalidOperationException("The repo root isn't above the test's folder.");
     }

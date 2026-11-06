@@ -1,9 +1,13 @@
 //! The right side of the Settings page: the shown section's title, then its rows in their cards,
 //! each row a title and one-line description with its control on the right, or its slider underneath.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::Button;
+use gpui_kit::component::input::Input;
+use gpui_kit::component::label::Label;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::slider::Slider;
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -16,8 +20,9 @@ use super::search;
 use super::section::Section;
 use super::settings_page::SettingsPage;
 use crate::core::state::appearance::{
-    CODE_FONT, EDITOR_FONT, EDITOR_FONT_SIZE, EDITOR_LINE_HEIGHT, NumberSetting, TERMINAL_FONT,
-    TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, THEME, UI_FONT, UI_FONT_SIZE,
+    Appearance, CODE_FONT, EDITOR_FONT, EDITOR_FONT_SIZE, EDITOR_LINE_HEIGHT, NumberSetting,
+    TERMINAL_CURSOR_BLINK, TERMINAL_FONT, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, THEME, UI_FONT,
+    UI_FONT_SIZE, UI_LINE_HEIGHT,
 };
 use crate::core::state::preferences::Preferences;
 use crate::core::theme::theme_id::ThemeId;
@@ -47,7 +52,7 @@ impl SettingsPage {
         let Some(section) = shown else {
             return column.child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(theme.muted_foreground)
                     .child(format!("Nothing matches “{}”.", query.trim())),
             );
@@ -56,7 +61,7 @@ impl SettingsPage {
         let mut column = column.child(
             h_flex()
                 .h(px(32.))
-                .text_size(px(15.))
+                .text_role(TextRole::Title, cx)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(theme.foreground)
                 .child(section.label),
@@ -65,7 +70,7 @@ impl SettingsPage {
             column = column.child(
                 div()
                     .pt_2()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(theme.danger)
                     .child(failure),
             );
@@ -93,7 +98,7 @@ impl SettingsPage {
                         .pt_5()
                         .pb_1p5()
                         .px_1()
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(theme.muted_foreground)
                         .child(card),
                 )
@@ -102,22 +107,20 @@ impl SettingsPage {
         column
     }
 
-    fn row(&self, row: &'static Row, cx: &mut Context<Self>) -> Div {
+    pub(super) fn row(&self, row: &'static Row, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let label = v_flex()
             .gap_0p5()
             .min_w_0()
             .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.foreground)
-                    .child(row.title),
+                Label::new(row.title)
+                    .text_role(TextRole::Body, cx)
+                    .text_color(theme.foreground),
             )
             .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(row.description),
+                Label::new(row.description)
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(theme.muted_foreground),
             );
         let number = number_row(row.id).map(|number| number.key);
         let slider = self
@@ -125,7 +128,7 @@ impl SettingsPage {
             .iter()
             .find(|(setting, _)| number == Some(setting.key));
         if let Some((setting, state)) = slider {
-            let value = Preferences::read(cx, |appearance| appearance.number(setting));
+            let value = SettingsPage::setting_value(*setting, cx);
             return v_flex().px_4().py_3().gap_3().child(label).child(
                 h_flex()
                     .gap_4()
@@ -134,7 +137,7 @@ impl SettingsPage {
                         div()
                             .w(px(44.))
                             .text_right()
-                            .text_xs()
+                            .text_role(TextRole::Meta, cx)
                             .text_color(theme.muted_foreground)
                             .child(setting.label(value)),
                     ),
@@ -142,6 +145,8 @@ impl SettingsPage {
         }
         let control = match row.id {
             "machines" => return self.machines(cx),
+            "session-depth-limit" => return self.depth_row(label, cx),
+            "terminal-cursor-blink" => return cursor_blink_row(row, label, cx),
             "theme" => {
                 let current = Preferences::read(cx, |appearance| appearance.theme());
                 let choices = ThemeId::ALL
@@ -182,11 +187,10 @@ impl SettingsPage {
                 menu(row.id, shown, choices, key)
             }
         };
-        h_flex()
+        v_flex()
             .px_4()
             .py_3()
-            .gap_4()
-            .justify_between()
+            .gap_2()
             .child(label)
             .child(div().w(CONTROL_WIDTH).flex_none().child(control))
     }
@@ -196,12 +200,58 @@ impl SettingsPage {
 fn number_row(id: &str) -> Option<NumberSetting> {
     Some(match id {
         "ui-font-size" => UI_FONT_SIZE,
+        "ui-line-height" => UI_LINE_HEIGHT,
         "editor-font-size" => EDITOR_FONT_SIZE,
         "editor-line-height" => EDITOR_LINE_HEIGHT,
         "terminal-font-size" => TERMINAL_FONT_SIZE,
         "terminal-line-height" => TERMINAL_LINE_HEIGHT,
+        "session-child-limit" => crate::core::state::sessions_settings::CHILD_LIMIT,
         _ => return None,
     })
+}
+
+impl SettingsPage {
+    fn depth_row(&self, label: impl IntoElement, cx: &App) -> Div {
+        let theme = cx.theme();
+        let mut control = v_flex()
+            .w(CONTROL_WIDTH)
+            .gap_1()
+            .child(Input::new(&self.depth).small());
+        if let Some(error) = self.depth_error {
+            control = control.child(
+                div()
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(theme.danger)
+                    .child(error),
+            );
+        }
+        h_flex()
+            .px_4()
+            .py_3()
+            .gap_4()
+            .justify_between()
+            .child(label)
+            .child(control)
+    }
+}
+
+/// The terminal's cursor blink, a switch on the right that saves at once.
+fn cursor_blink_row(row: &'static Row, label: impl IntoElement, cx: &App) -> Div {
+    let on = Preferences::read(cx, Appearance::terminal_cursor_blink);
+    h_flex()
+        .px_4()
+        .py_3()
+        .gap_4()
+        .justify_between()
+        .child(label)
+        .child(
+            Switch::new(row.id)
+                .accessibility_label(row.title)
+                .checked(on)
+                .on_change(|checked, _, cx| {
+                    Preferences::save(TERMINAL_CURSOR_BLINK, json!(*checked), cx)
+                }),
+        )
 }
 
 fn font_choices(fonts: &[SharedString], current: &str) -> Vec<(Value, SharedString, bool)> {
@@ -249,7 +299,7 @@ fn menu(
 fn note(text: &'static str, cx: &App) -> impl IntoElement {
     div()
         .pt_2()
-        .text_xs()
+        .text_role(TextRole::Meta, cx)
         .text_color(cx.theme().muted_foreground)
         .child(text)
 }

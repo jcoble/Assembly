@@ -18,6 +18,7 @@ public sealed class SessionRailGroupTests : IDisposable
     {
         _database = AppDatabase.Open(_file.Path, _time, new SilentTopics());
         RowStore.Open(_database);
+        global::Assembly.Engine.Persistence.EngineSchema.Open(_database, _time.GetUtcNow().ToUnixTimeMilliseconds());
         _sessions = SessionStore.Open(_database, _time, "checkouts");
     }
     // Pins: sessions-list#7

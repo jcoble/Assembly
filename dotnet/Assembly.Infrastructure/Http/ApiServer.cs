@@ -1,4 +1,7 @@
 using System.Net;
+using System.Text.Json;
+using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Database;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Routing;
@@ -8,6 +11,7 @@ using Microsoft.Extensions.Logging;
 
 using Assembly.Infrastructure.Mcp;
 using Assembly.Infrastructure.Socket;
+using Assembly.Infrastructure.Engine;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
@@ -30,44 +34,44 @@ public static class ApiServer
         builder.Services.Configure<HostOptions>(host => host.ShutdownTimeout = ShutdownTimeout);
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, port));
 
+        services.Mcp?.AddServices(builder.Services);
         var app = builder.Build();
         // Kestrel waits for open connections when it stops, and the webview's live sockets never close on their
         // own: close them as stopping starts.
         app.Lifetime.ApplicationStopping.Register(services.Hub.CloseSubscriptions);
         app.UseWebSockets();
         app.Use(new TokenGuard(services.Token).InvokeAsync);
-        new InfoRoutes(services.Machines).Map(app);
-        new SessionRoutes(services.SessionStore, services.Machines).Map(app);
-        new RowRoutes(services.Hub, services.SessionStore, services.Machines).Map(app);
-        new RunRoutes(services.Hub, services.SessionStore, services.Machines, TimeProvider.System).Map(app);
-        new OutboxRoutes(services.SessionStore).Map(app);
-        new AttachmentRoutes(services.SessionStore, services.Machines, services.Attachments).Map(app);
-        new ConfigRoutes(services.SessionStore, services.Machines).Map(app);
-        if (services.Helpers is not null)
-            new McpRoutes(services.Helpers, services.Board).Map(app);
-        app.Map("/live", context =>
-        {
-            if (services.SessionStore.Get(context.Request.Query["session"].ToString()) is { } session)
-                services.Machines.Named(session.Machine)?.Watch(session);
-            return LiveSocket.HandleAsync(context, services.Hub);
-        });
+        services.Mcp?.Map(app);
         if (services is { Writer: { } writer, Topics: { } topics })
         {
-            var calls = new SocketDispatcher(writer, topics, TimeProvider.System, app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Assembly.Calls"));
+            var calls = new SocketDispatcher(writer, topics, TimeProvider.System, app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Assembly.Calls"),
+                services.Engine is { } engine ? new EngineSocketStream(engine) : null);
             foreach (var feature in services.Features ?? [])
                 feature.Register(calls);
-            var socket = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System);
-            var bulk = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, bulk: true);
-            var terminal = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, terminal: true);
+            var socket = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, engineMachine: services.Engine?.Machine);
+            var bulk = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, bulk: true, engineMachine: services.Engine?.Machine);
+            var terminal = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, terminal: true, engineMachine: services.Engine?.Machine);
             app.Lifetime.ApplicationStopping.Register(terminal.CloseAll);
             app.Lifetime.ApplicationStopping.Register(socket.CloseAll);
             app.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
-            dropSockets = () =>
+            Action drop = () =>
             {
                 socket.DropAll();
                 bulk.DropAll();
                 terminal.DropAll();
             };
+            dropSockets = drop;
+            calls.Write("diagnostics", "drop", SocketJson.Default.JsonElement, SocketJson.Default.JsonElement, (_, call) =>
+            {
+                if (call.Peer is not OwnerPeer) throw new CallFailed("Only the authenticated owner can drop sockets.");
+                return Task.FromResult<Func<IWriteScope, JsonElement>>(scope =>
+                {
+                    // Keep the control on the normal mutation queue; a rolled-back save must not close sockets.
+                    scope.AfterCommit(drop);
+                    using var empty = JsonDocument.Parse("{}");
+                    return empty.RootElement.Clone();
+                });
+            });
             // Each is an exact route: /socket/other reaches neither.
             app.Map("/socket", socket.HandleAsync);
             app.Map("/socket/bulk", bulk.HandleAsync);

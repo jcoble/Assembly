@@ -1,0 +1,143 @@
+use serde_json::{Value, json};
+
+use super::{one_line, outcome, permission_choices, settled};
+use crate::core::ui::ask::controls::asked;
+use crate::core::ui::ask::payload::AskPayload;
+
+fn ask(state: &str, answer: Option<Value>) -> AskPayload {
+    serde_json::from_value(json!({
+        "kind": "permission",
+        "state": state,
+        "options": [
+            { "optionId": "allow", "name": "Allow once", "kind": "allow_once" },
+            { "optionId": "deny", "name": "No", "kind": "reject_once" },
+        ],
+        "answer": answer,
+    }))
+    .unwrap()
+}
+
+// Pins: g0-session#16
+#[test]
+fn a_settled_card_shows_what_it_was_answered_with() {
+    assert_eq!(
+        outcome(&ask("answered", Some(json!({ "optionId": "allow" })))),
+        "Allow once"
+    );
+    assert_eq!(
+        outcome(&ask("answered", Some(json!({ "optionId": "gone" })))),
+        "gone"
+    );
+    assert_eq!(outcome(&ask("cancelled", None)), "Cancelled");
+    assert_eq!(
+        outcome(&ask("answered", Some(json!({ "action": "decline" })))),
+        "Skipped"
+    );
+    let form = json!({ "action": "accept", "content": { "color": "red", "sizes": ["s", "m"], "color_custom": "" } });
+    assert_eq!(outcome(&ask("answered", Some(form))), "red; s, m");
+    assert_eq!(
+        outcome(&ask(
+            "answered",
+            Some(json!({ "action": "accept", "content": {} }))
+        )),
+        "Answered"
+    );
+}
+
+// Opened again once answered, a question shows what it asked: each field, its hint and its choices.
+// Pins: g0-session#16
+#[test]
+fn a_settled_question_still_says_what_it_asked() {
+    let question: AskPayload = serde_json::from_value(json!({
+        "kind": "question",
+        "state": "answered",
+        "options": [],
+        "answer": { "action": "accept", "content": { "color": "red" } },
+        "schema": { "type": "object", "properties": {
+            "color": { "type": "string", "title": "Color", "description": "Pick one", "enum": ["red", "blue"] },
+            "note": { "type": "string" }
+        } }
+    }))
+    .unwrap();
+    assert_eq!(
+        asked(&question),
+        [
+            (
+                "Color".to_string(),
+                Some("Pick one".to_string()),
+                "red, blue".to_string()
+            ),
+            ("note".to_string(), None, String::new()),
+        ]
+    );
+    assert!(
+        asked(&ask("answered", None)).is_empty(),
+        "a permission has no fields"
+    );
+}
+
+// Pins: g0-session#16
+#[test]
+fn an_answered_permission_reads_allowed_or_denied() {
+    let allowed = ask("answered", Some(json!({ "optionId": "allow" })));
+    assert_eq!(settled(&allowed), "Allowed");
+    let denied = ask("answered", Some(json!({ "optionId": "deny" })));
+    assert_eq!(settled(&denied), "Denied");
+    assert_eq!(settled(&ask("cancelled", None)), "Cancelled");
+    let skipped = ask("answered", Some(json!({ "action": "decline" })));
+    assert_eq!(settled(&skipped), "Skipped");
+}
+
+// An approval for a multi-line command (a heredoc) is one line, as a tool line is: its first line, ending in "…".
+// Pins: g0-session#16
+#[test]
+fn a_multi_line_title_shows_its_first_line() {
+    assert_eq!(
+        one_line("cat > here.txt <<EOF\nalpha\nbeta\nEOF"),
+        "cat > here.txt <<EOF…"
+    );
+    assert_eq!(one_line("ls -la\n"), "ls -la");
+    assert_eq!(one_line("Write notes.txt"), "Write notes.txt");
+}
+
+// Pins: g0-session#16
+#[test]
+fn a_permission_offers_deny_then_allow() {
+    let ask: AskPayload = serde_json::from_value(json!({
+        "kind": "permission",
+        "state": "open",
+        "options": [
+            { "optionId": "yes", "name": "Yes", "kind": "allow_once" },
+            { "optionId": "always", "name": "Yes, and don't ask again", "kind": "allow_always" },
+            { "optionId": "no", "name": "No", "kind": "reject_once" },
+        ],
+    }))
+    .unwrap();
+    let words = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        (pairs.iter())
+            .map(|(id, label)| (id.to_string(), label.to_string()))
+            .collect()
+    };
+    assert_eq!(
+        permission_choices(&ask.options),
+        words(&[
+            ("no", "Deny"),
+            ("always", "Always allow this session"),
+            ("yes", "Allow once")
+        ])
+    );
+}
+
+#[test]
+fn a_settled_card_never_shows_a_password() {
+    let ask: AskPayload = serde_json::from_value(json!({
+        "kind": "question", "state": "answered", "options": [],
+        "schema": { "properties": {
+            "token": { "type": "string", "format": "password" },
+            "agree": { "type": "boolean" },
+        } },
+        "answer": { "action": "accept", "content": { "token": "s3cret", "agree": true } },
+    }))
+    .unwrap();
+    assert_eq!(outcome(&ask), "true");
+}

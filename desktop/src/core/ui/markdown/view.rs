@@ -1,0 +1,358 @@
+//! `MarkdownView` draws a reply's blocks as styled text runs, with links and file links clickable (the open URL and
+//! open file intents, lane g0-host) and code blocks in the theme's mono font. It only lays out what the backend
+//! parsed. Replaces chat/Text.svelte, chat/markdown/CodeBlock.svelte and the spike's session/markdown.rs.
+
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use std::ops::Range;
+
+use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::*;
+
+use crate::core::intents::open_file::OpenFile;
+use crate::core::intents::open_url::OpenUrl;
+use crate::core::socket::row_source::ExpectedRowSource;
+use crate::core::ui::markdown::payload::{Block, Inline};
+
+#[derive(IntoElement)]
+pub struct MarkdownView {
+    /// The item's key: its links' element ids start with it.
+    pub id: SharedString,
+    pub blocks: Vec<Block>,
+    /// The session its file links open in, empty with none selected; absent for content from outside any session, which
+    /// has no file links.
+    pub session: Option<SharedString>,
+    /// Source captured with this content; never refreshed from the current selection at click time.
+    pub expected_source: Option<ExpectedRowSource>,
+}
+
+impl RenderOnce for MarkdownView {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let mut draw = Draw {
+            id: &self.id,
+            session: self.session.as_deref(),
+            expected_source: self.expected_source.as_ref(),
+            next: 0,
+            cx,
+        };
+        draw.blocks(&self.blocks)
+    }
+}
+
+/// How a run of text is marked; nested parts add to their parent's marks.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Marks {
+    pub bold: bool,
+    pub italic: bool,
+    pub strike: bool,
+    pub code: bool,
+    pub link: bool,
+}
+
+/// Where a clicked link goes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LinkTarget {
+    Url(String),
+    File(String),
+}
+
+impl LinkTarget {
+    /// Whether it can open from content shown in `session`; see `action`.
+    pub fn opens(&self, session: Option<&str>) -> bool {
+        match self {
+            Self::Url(_) => true,
+            Self::File(path) => {
+                session.is_some_and(|session| OpenFile::link(session, path, None).is_some())
+            }
+        }
+    }
+
+    /// What a click does. Content from outside any session (`None`: pull request text, whose site-relative links aren't
+    /// files) has no file links; a session's content has them as `OpenFile::link` allows.
+    fn action(
+        &self,
+        session: Option<&str>,
+        expected_source: Option<&ExpectedRowSource>,
+    ) -> Option<Box<dyn Action>> {
+        match self {
+            Self::Url(url) => Some(Box::new(OpenUrl { url: url.clone() })),
+            Self::File(path) => {
+                let open = OpenFile::link(session?, path, expected_source.cloned())?;
+                Some(Box::new(open))
+            }
+        }
+    }
+}
+
+/// One paragraph's parts as one string, the marked ranges in it, and each link's range and target.
+#[derive(Debug, Default, PartialEq)]
+pub struct Runs {
+    pub text: String,
+    pub marked: Vec<(Range<usize>, Marks)>,
+    pub links: Vec<(Range<usize>, LinkTarget)>,
+}
+
+impl Runs {
+    pub fn of(parts: &[Inline]) -> Runs {
+        let mut runs = Runs::default();
+        runs.add(parts, Marks::default());
+        runs
+    }
+
+    fn add(&mut self, parts: &[Inline], marks: Marks) {
+        for part in parts {
+            match part {
+                Inline::Text { value } => self.push(value, marks),
+                Inline::Code { value } => self.push(
+                    value,
+                    Marks {
+                        code: true,
+                        ..marks
+                    },
+                ),
+                Inline::Strong { parts } => self.add(
+                    parts,
+                    Marks {
+                        bold: true,
+                        ..marks
+                    },
+                ),
+                Inline::Emphasis { parts } => self.add(
+                    parts,
+                    Marks {
+                        italic: true,
+                        ..marks
+                    },
+                ),
+                Inline::Strike { parts } => self.add(
+                    parts,
+                    Marks {
+                        strike: true,
+                        ..marks
+                    },
+                ),
+                Inline::Link { href, parts } => {
+                    self.link(parts, marks, LinkTarget::Url(href.clone()))
+                }
+                Inline::FileLink { path, parts } => {
+                    self.link(parts, marks, LinkTarget::File(path.clone()))
+                }
+            }
+        }
+    }
+
+    fn link(&mut self, parts: &[Inline], marks: Marks, target: LinkTarget) {
+        let start = self.text.len();
+        self.add(
+            parts,
+            Marks {
+                link: true,
+                ..marks
+            },
+        );
+        if self.text.len() > start {
+            self.links.push((start..self.text.len(), target));
+        }
+    }
+
+    fn push(&mut self, value: &str, marks: Marks) {
+        let start = self.text.len();
+        self.text.push_str(value);
+        if marks != Marks::default() && !value.is_empty() {
+            self.marked.push((start..self.text.len(), marks));
+        }
+    }
+}
+
+/// One reply's drawing: `next` numbers its clickable paragraphs, so each has its own element id.
+struct Draw<'a> {
+    id: &'a str,
+    session: Option<&'a str>,
+    expected_source: Option<&'a ExpectedRowSource>,
+    next: usize,
+    cx: &'a App,
+}
+
+impl Draw<'_> {
+    fn blocks(&mut self, list: &[Block]) -> Div {
+        let mut column = v_flex().gap_2();
+        for block in list {
+            column = column.child(self.block(block));
+        }
+        column
+    }
+
+    fn block(&mut self, block: &Block) -> AnyElement {
+        let theme = self.cx.theme();
+        match block {
+            Block::Paragraph { parts } => self.text(parts),
+            Block::Heading { level, parts } => div()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_role(
+                    match level {
+                        1 => TextRole::Display,
+                        2 => TextRole::Heading,
+                        _ => TextRole::Title,
+                    },
+                    self.cx,
+                )
+                .child(self.text(parts))
+                .into_any_element(),
+            Block::Code { value, .. } => div()
+                .p_2()
+                .rounded(theme.radius)
+                .bg(theme.muted)
+                .font_family(theme.mono_font_family.clone())
+                .text_role(TextRole::Meta, self.cx)
+                .overflow_x_hidden()
+                .child(value.strip_suffix('\n').unwrap_or(value).to_string())
+                .into_any_element(),
+            Block::Quote { blocks } => {
+                let (border, muted) = (theme.border, theme.muted_foreground);
+                div()
+                    .pl_3()
+                    .border_l_2()
+                    .border_color(border)
+                    .text_color(muted)
+                    .child(self.blocks(blocks))
+                    .into_any_element()
+            }
+            Block::List { ordered, items } => {
+                let muted = theme.muted_foreground;
+                let mut list = v_flex().gap_1();
+                for (at, item) in items.iter().enumerate() {
+                    let marker = match (item.task, item.checked, ordered) {
+                        (true, true, _) => "☑".to_string(),
+                        (true, false, _) => "☐".to_string(),
+                        (false, _, true) => format!("{}.", at + 1),
+                        (false, _, false) => "•".to_string(),
+                    };
+                    // It shrinks to the row, so a long item wraps instead of running past the column.
+                    let body = v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap_1()
+                        .child(self.text(&item.parts))
+                        .child(self.blocks(&item.blocks));
+                    list = list.child(
+                        h_flex()
+                            .items_start()
+                            .gap_2()
+                            .child(div().text_color(muted).child(marker))
+                            .child(body),
+                    );
+                }
+                list.into_any_element()
+            }
+            Block::Table { headers, rows } => {
+                // One grid for the whole table, so every row shares the same columns and long cells wrap. The mock's
+                // `.mtable`: 10 px corners and 12.5 px text.
+                let (border, radius) = (theme.border, px(10.));
+                let columns = rows
+                    .iter()
+                    .map(Vec::len)
+                    .chain([headers.len()])
+                    .max()
+                    .unwrap_or(0);
+                let mut table = div()
+                    .grid()
+                    .grid_cols(columns as u16)
+                    .border_1()
+                    .border_color(border)
+                    .rounded(radius)
+                    .overflow_hidden()
+                    .text_role(TextRole::Meta, self.cx);
+                // A header row of blank cells is no header, so it draws no header band.
+                let has_header = headers
+                    .iter()
+                    .any(|cell| !Runs::of(cell).text.trim().is_empty());
+                let lines = has_header
+                    .then_some((headers, true))
+                    .into_iter()
+                    .chain(rows.iter().map(|row| (row, false)));
+                for (line, (cells, header)) in lines.enumerate() {
+                    for at in 0..columns {
+                        let cell = cells.get(at).map(Vec::as_slice).unwrap_or_default();
+                        table = table.child(self.table_cell(cell, header, line > 0));
+                    }
+                }
+                table.into_any_element()
+            }
+            Block::Rule => div().h(px(1.)).bg(theme.border).into_any_element(),
+        }
+    }
+
+    /// A short row's missing cells come in empty, so the cells after them stay in their columns. A row under another
+    /// has a rule over it, and the header row a band a shade lighter than the panel (the mock's `#19191b`).
+    fn table_cell(&mut self, cell: &[Inline], header: bool, ruled: bool) -> Div {
+        let theme = self.cx.theme();
+        let (band, rule) = (theme.muted.opacity(0.35), theme.table_row_border);
+        div()
+            .min_w_0()
+            .px(px(10.))
+            .py(px(6.))
+            .when(ruled, |cell| cell.border_t_1().border_color(rule))
+            .when(header, |cell| {
+                cell.font_weight(FontWeight::SEMIBOLD).bg(band)
+            })
+            .child(self.text(cell))
+    }
+
+    /// One paragraph's text with its marks; its links open their URL or file when clicked.
+    fn text(&mut self, parts: &[Inline]) -> AnyElement {
+        let Runs {
+            text,
+            marked,
+            links,
+        } = Runs::of(parts);
+        let links: Vec<_> = links
+            .into_iter()
+            .filter(|(_, target)| target.opens(self.session))
+            .collect();
+        let theme = self.cx.theme();
+        let highlights = marked
+            .into_iter()
+            .map(|(range, marks)| {
+                let clickable = marks.link
+                    && links
+                        .iter()
+                        .any(|(link, _)| link.start <= range.start && link.end >= range.end);
+                let style = HighlightStyle {
+                    font_weight: marks.bold.then_some(FontWeight::BOLD),
+                    font_style: marks.italic.then_some(FontStyle::Italic),
+                    strikethrough: marks.strike.then_some(StrikethroughStyle {
+                        thickness: px(1.),
+                        color: None,
+                    }),
+                    // The mock's inline code chip (#1a1a1c); a highlight can't change the face or draw an edge.
+                    background_color: marks.code.then_some(theme.muted.opacity(0.7)),
+                    color: clickable.then_some(theme.link),
+                    ..HighlightStyle::default()
+                };
+                (range, style)
+            })
+            .collect::<Vec<_>>();
+        let styled = StyledText::new(text).with_highlights(highlights);
+        if links.is_empty() {
+            return styled.into_any_element();
+        }
+        self.next += 1;
+        let (ranges, targets): (Vec<_>, Vec<_>) = links.into_iter().unzip();
+        let session = self.session.map(str::to_owned);
+        let expected_source = self.expected_source.cloned();
+        let id = ElementId::Name(format!("{}:{}", self.id, self.next).into());
+        InteractiveText::new(id, styled)
+            .on_click(ranges, move |at, window, cx| {
+                if let Some(action) =
+                    targets[at].action(session.as_deref(), expected_source.as_ref())
+                {
+                    window.dispatch_action(action, cx);
+                }
+            })
+            .into_any_element()
+    }
+}
+
+#[cfg(test)]
+#[path = "view_tests.rs"]
+mod tests;

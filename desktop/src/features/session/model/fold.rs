@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::item::{Item, ItemKind};
-use crate::features::session::rows::ask::AskPayload;
+use crate::core::ui::ask::payload::AskPayload;
 use crate::features::session::rows::tool::ToolState;
 use crate::features::session::rows::turn_stats::TurnStats;
 

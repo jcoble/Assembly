@@ -20,7 +20,9 @@ use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
 use crate::core::socket::real_backend::RealBackend;
-use crate::core::socket::real_backend_cancel_tests::backend_with_stub;
+use crate::core::socket::real_backend_cancel_tests::{
+    add_project, backend_with_stub, stub_session,
+};
 use crate::core::socket::test_wait::until;
 use crate::core::state::selected_session::SelectedSession;
 
@@ -37,6 +39,7 @@ async fn selected_session(cx: &mut TestAppContext, files: &[&str]) -> (RealBacke
         SelectedSession::init(cx);
         let socket = SocketClient::start(backend.endpoint(), cx);
         let heard = cx.observe(&socket, move |_, _| _ = tell.unbounded_send(()));
+        SocketClient::start_bulk(backend.endpoint(), cx);
         (socket, heard)
     });
     until("connected", &mut changes, &changed, || {
@@ -50,9 +53,15 @@ async fn selected_session(cx: &mut TestAppContext, files: &[&str]) -> (RealBacke
                 .call::<Value>("sessions", method, args, None)
         })
     };
-    let Outcome::Ok(created) =
-        call("create", json!({ "agent": "stub", "repoUrl": repo }), cx).await
-    else {
+    let adding = cx.read(|cx| {
+        socket
+            .read(cx)
+            .call::<Value>("projects", "add", add_project(&repo), None)
+    });
+    let Outcome::Ok(added) = adding.await else {
+        panic!("the project wasn't added");
+    };
+    let Outcome::Ok(created) = call("create", stub_session(&added), cx).await else {
         panic!("the session wasn't made");
     };
     let id = created["sessionId"].as_str().unwrap().to_string();
@@ -166,7 +175,7 @@ async fn the_tree_loads_when_shown_and_opens_folders_one_at_a_time(cx: &mut Test
     pane.update_in(cx, |pane, window, cx| {
         BasePanel::set_active(pane, true, window, cx)
     });
-    settled(&pane, cx, |pane| pane.loads.is_empty()).await;
+    settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
         assert_eq!(
             shape(pane),
@@ -174,7 +183,7 @@ async fn the_tree_loads_when_shown_and_opens_folders_one_at_a_time(cx: &mut Test
         );
     });
     pane.update(cx, |pane, cx| pane.clicked("src".into(), true, cx));
-    settled(&pane, cx, |pane| pane.loads.is_empty()).await;
+    settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
         assert_eq!(
             shape(pane),
@@ -201,6 +210,9 @@ async fn search_finds_names_and_a_newer_search_replaces_the_older(cx: &mut TestA
     )
     .await;
     let (pane, cx) = cx.add_window_view(SearchPane::new);
+    pane.update_in(cx, |pane, window, cx| {
+        BasePanel::set_active(pane, true, window, cx)
+    });
     pane.update(cx, |pane, cx| {
         pane.search("lib".into(), DEBOUNCE, cx);
         pane.search("MAIN".into(), Duration::ZERO, cx);
@@ -229,7 +241,7 @@ async fn a_folder_made_after_the_tab_was_shown_loads_when_shown_again(cx: &mut T
     pane.update_in(cx, |pane, window, cx| {
         BasePanel::set_active(pane, true, window, cx)
     });
-    settled(&pane, cx, |pane| pane.loads.is_empty()).await;
+    settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
         assert_eq!(
             shape(pane),
@@ -241,7 +253,7 @@ async fn a_folder_made_after_the_tab_was_shown_loads_when_shown_again(cx: &mut T
         BasePanel::set_active(pane, false, window, cx);
         BasePanel::set_active(pane, true, window, cx);
     });
-    settled(&pane, cx, |pane| pane.loads.is_empty()).await;
+    settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
         assert_eq!(shape(pane), [".git/ -", ".gitignore", "readme.md"])
     });
@@ -249,7 +261,7 @@ async fn a_folder_made_after_the_tab_was_shown_loads_when_shown_again(cx: &mut T
 
 // Pins: files#11, files#12, files#15
 #[gpui::test]
-async fn a_file_reads_its_first_part_then_the_rest_and_closing_drops_the_read(
+async fn a_file_reads_a_complete_coherent_buffer_and_closing_drops_the_read(
     cx: &mut TestAppContext,
 ) {
     let big: Vec<String> = (0..20_000)
@@ -270,18 +282,16 @@ async fn a_file_reads_its_first_part_then_the_rest_and_closing_drops_the_read(
         BasePanel::set_active(view, true, window, cx)
     });
     settled(&view, cx, |view| view.loading.is_none()).await;
-    let first = view.read_with(cx, |view, _| {
+    view.read_with(cx, |view, cx| {
         assert_eq!(view.text.line_count, 20_000);
-        assert_eq!(view.text.lines[0], big[0]);
-        view.text.lines.len()
+        let expected = big.join("\n") + "\n";
+        let actual = view
+            .document_snapshot(cx)
+            .map(|snapshot| snapshot.text)
+            .or_else(|| view.text.content().map(String::from))
+            .expect("complete coherent source");
+        assert_eq!(actual, expected);
     });
-    assert!(first < 20_000, "a part, not the whole file");
-    view.update(cx, |view, cx| {
-        let offset = view.text.more(first).expect("another part");
-        view.load_part(offset, cx);
-    });
-    settled(&view, cx, |view| view.loading.is_none()).await;
-    view.read_with(cx, |view, _| assert_eq!(view.text.lines, big));
     view.update(cx, |view, cx| {
         let offset = view.text.start();
         view.load_part(offset, cx);
@@ -293,5 +303,45 @@ async fn a_file_reads_its_first_part_then_the_rest_and_closing_drops_the_read(
             view.loading.is_none(),
             "closing drops the read, which cancels its call"
         );
+    });
+}
+
+#[gpui::test]
+async fn a_tool_changing_the_folder_reloads_the_tree_with_its_open_folders_kept(
+    cx: &mut TestAppContext,
+) {
+    let (_backend, root) = selected_session(cx, &["src/main.rs", "readme.md"]).await;
+    let session = cx.read(|cx| {
+        SelectedSession::global(cx)
+            .read(cx)
+            .session_id()
+            .unwrap()
+            .to_string()
+    });
+    let (pane, cx) = cx.add_window_view(|_, cx| FilesPane::new(cx));
+    pane.update_in(cx, |pane, window, cx| {
+        BasePanel::set_active(pane, true, window, cx)
+    });
+    settled(&pane, cx, |pane| !pane.is_loading()).await;
+    pane.update(cx, |pane, cx| pane.clicked("src".into(), true, cx));
+    settled(&pane, cx, |pane| !pane.is_loading()).await;
+    fs::write(Path::new(&root).join("src/added.rs"), "").unwrap();
+    fs::remove_file(Path::new(&root).join("readme.md")).unwrap();
+    cx.update(|_, cx| crate::core::state::folder_touched::FolderTouched::touch("another", cx));
+    cx.run_until_parked();
+    pane.read_with(cx, |pane, _| {
+        assert!(shape(pane).contains(&"readme.md".into()))
+    });
+    cx.update(|_, cx| crate::core::state::folder_touched::FolderTouched::touch(&session, cx));
+    settled(&pane, cx, |pane| {
+        !pane.is_loading() && shape(pane).contains(&"  added.rs".into())
+    })
+    .await;
+    pane.read_with(cx, |pane, _| {
+        assert_eq!(
+            shape(pane),
+            [".git/ -", "src/ v", "  added.rs", "  main.rs", ".gitignore"]
+        );
+        assert_eq!(pane.selected.as_deref(), Some("src"));
     });
 }

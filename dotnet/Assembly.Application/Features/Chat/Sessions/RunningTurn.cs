@@ -1,4 +1,7 @@
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Agents.Auth;
+using Assembly.Application.Common.Acp.Messages;
+using Assembly.Application.Features.Chat.Rows;
 
 namespace Assembly.Application.Features.Chat.Sessions;
 
@@ -6,6 +9,23 @@ namespace Assembly.Application.Features.Chat.Sessions;
 internal sealed class RunningTurn(string runId, StageTimes stages)
 {
     public string RunId { get; } = runId;
+    public TaskCompletionSource<SendResult> Inserted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Assembly.Application.Common.Engine.UserRowReference? UserRow { get; set; }
+    public OwningSendAdmission? Delivery { get; set; }
+    public Assembly.Domain.Rows.AuthRetryExecution? RetryExecution { get; set; }
+    public SessionObservation? Observation { get; set; }
+    public long StartedAt { get; set; }
+    public TurnCost Cost { get; set; } = new(null);
+    public PromptRun? Prompt { get; set; }
+    public string? ProviderMessageId { get; set; }
+    public bool FeedCompleted { get; set; }
+    internal Assembly.Domain.Rows.AuthTerminalProof? AuthBinding { get; set; }
+    internal Assembly.Domain.Rows.AuthTerminalProof? AuthFinalProof { get; set; }
+    internal long AuthTerminalSeq { get; set; }
+    internal bool AuthRequired { get; set; }
+    public bool TerminalObserved { get; set; }
+    public decimal? TerminalCost { get; set; }
+
 
     public StageTimes Stages { get; } = stages;
 
@@ -14,6 +34,7 @@ internal sealed class RunningTurn(string runId, StageTimes stages)
 
     /// <summary>Set under the host's lock once the session is open.</summary>
     public OpenSession? Session { get; set; }
+    internal AuthOpenAttempt? OpenAttempt { get; set; }
 
     /// <summary>Set once the turn's open has finished, whether the session opened or the turn ended without one.</summary>
     public TaskCompletionSource Opened { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

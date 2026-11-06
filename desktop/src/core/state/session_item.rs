@@ -3,12 +3,24 @@
 
 use serde::Deserialize;
 
+/// What a session in no project is filed under.
+pub const NO_PROJECT: &str = "No project";
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionItem {
     pub session_id: String,
     pub agent: String,
     pub repo_url: String,
+    /// The project it was started in; older repository sessions may also have no project id.
+    #[serde(default)]
+    pub project_id: Option<String>,
+    /// Classified by the owning backend, which knows its actual home.
+    #[serde(default)]
+    pub is_bare: bool,
+    /// Existing owning-machine paths; a remote root is never resolved on this Mac.
+    pub root: Option<String>,
+    pub checkout_root: Option<String>,
     pub title: Option<String>,
     pub machine: Option<String>,
     /// Set on a started session (on the list) and a native subagent (not on it).
@@ -31,7 +43,7 @@ pub struct SessionItem {
 }
 
 impl SessionItem {
-    /// The session's title, or its repo or folder when it has none yet ("owner/repo" for a GitHub URL).
+    /// The session's title, or its repo/folder; bare sessions use the untitled-session label.
     pub fn title(&self) -> String {
         match self
             .title
@@ -40,6 +52,7 @@ impl SessionItem {
             .filter(|title| !title.is_empty())
         {
             Some(title) => title.to_string(),
+            None if self.is_bare => "Untitled session".to_string(),
             None => self
                 .repo_url
                 .strip_prefix("https://github.com/")

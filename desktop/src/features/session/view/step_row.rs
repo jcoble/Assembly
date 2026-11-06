@@ -2,12 +2,13 @@
 //! runs, then its kind's 14 px icon, faint, or a check or a cross once done, a still dot for one left unfinished), its
 //! title and summary (in the code face), the chevron after them for a step that opens, faint, and at the right its line
 //! counts and how long it ran. A failed step reads in the danger colour.
-//! The running step's title shimmers. A tool call's line is one, in the timeline and in a running turn's activity
+//! The running step's title shimmers once as it starts. A tool call's line is one, in the timeline and in a running turn's activity
 //! card; a workflow run's steps can be drawn with it too. Section 11's StepRow.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::spinner::Spinner;
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::shimmer::ShimmerText;
-use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -32,6 +33,8 @@ pub struct StepRow {
     pub glyph: Option<Glyph>,
     pub title: SharedString,
     pub summary: Option<SharedString>,
+    /// What clicking the summary does, drawn as a link: a tool call's file. The click doesn't reach the row under it.
+    pub summary_action: Option<Box<dyn Action>>,
     /// After the summary: a tool call's line counts.
     pub tags: Vec<AnyElement>,
     /// How long it ran, in ms; `None` where times aren't shown.
@@ -61,28 +64,47 @@ impl RenderOnce for StepRow {
             StepState::Unfinished => mark(Glyph::Dot, muted),
         };
         let title = if self.state == StepState::Running {
+            // Once, when it starts: the kit's shimmer moves on every display frame, and a step can run for hours.
             ShimmerText::new(self.title)
                 .id(SharedString::from(format!("{}:shimmer", self.id)))
+                .once(true)
                 .into_any_element()
         } else {
             div().child(self.title).into_any_element()
         };
+        let summary = div()
+            .min_w_0()
+            .truncate()
+            .font_family(theme.mono_font_family.clone())
+            .text_role(TextRole::Meta, cx)
+            .child(self.summary.unwrap_or_default());
+        let summary = match self.summary_action {
+            None => summary.into_any_element(),
+            Some(action) => {
+                let id = SharedString::from(format!("{}:summary", self.id));
+                summary
+                    .id(id.clone())
+                    .debug_selector(move || id.to_string())
+                    .text_color(theme.link)
+                    .cursor_pointer()
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        window.dispatch_action(action.boxed_clone(), cx);
+                    })
+                    .into_any_element()
+            }
+        };
+        let line = self.id.clone();
         h_flex()
             .id(self.id)
+            .debug_selector(move || line.to_string())
             .h(px(22.))
             .gap_2()
-            .text_size(px(13.))
+            .text_role(TextRole::Body, cx)
             .text_color(if failed { theme.danger } else { muted })
             .child(sign)
             .child(div().flex_none().child(title))
-            .child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .font_family(theme.mono_font_family.clone())
-                    .text_size(px(12.))
-                    .child(self.summary.unwrap_or_default()),
-            )
+            .child(summary)
             .children(
                 (self.chevron.map(chevron))
                     .map(|chevron| chevron.text_color(if failed { theme.danger } else { faint })),
@@ -92,11 +114,16 @@ impl RenderOnce for StepRow {
                 h_flex()
                     .flex_none()
                     .gap_2()
-                    .text_size(px(12.))
+                    .text_role(TextRole::Meta, cx)
                     .children(self.tags),
             )
             .when_some(self.took_ms, |line, ms| {
-                line.child(div().flex_none().text_xs().child(worked_for(ms)))
+                line.child(
+                    div()
+                        .flex_none()
+                        .text_role(TextRole::Meta, cx)
+                        .child(worked_for(ms)),
+                )
             })
     }
 }

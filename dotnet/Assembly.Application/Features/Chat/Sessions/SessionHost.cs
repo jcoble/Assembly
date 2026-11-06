@@ -4,7 +4,7 @@ using Assembly.Application.Common;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
-using Assembly.Application.Common.Acp.V1;
+using Assembly.Application.Common.Acp.V2;
 using Assembly.Application.Common.Calls;
 using Assembly.Domain.Events;
 using Assembly.Application.Features.Chat.Rows;
@@ -12,6 +12,7 @@ using Assembly.Domain.Rows;
 using Assembly.Domain.Sessions;
 
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Engine;
 namespace Assembly.Application.Features.Chat.Sessions;
 
 /// <summary>
@@ -33,14 +34,17 @@ public sealed partial class SessionHost : IPermissionPolicy
     private readonly TextWriter _log;
     private readonly BackgroundWork _work;
     private readonly RowConverter _converter = new();
+    private readonly ISessionFeed? _feed;
     private readonly Lock _gate = new();
     // Held from a turn's open to its close, so a quick next send resumes only once the session is closed.
     private readonly SemaphoreSlim _session = new(1, 1);
     private RunningTurn? _turn;
     // The last turn's work, which goes on past its end rows until its session is closed.
     private Task _lastTurn = Task.CompletedTask;
-    // Sends with a clientId that haven't answered yet, by that id, with their text. Guarded by _gate.
-    private readonly Dictionary<string, (string Text, Task<string?> Send)> _sending = [];
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Text, string? Label, string? FromSessionId,
+        Task<SendResult> Send, string? EffectId, string RunId, IReadOnlyList<string> AttachmentIds)> _sending = new();
+    private (OwningSendAdmission Delivery, UserRowReference? User, Task Done)? _lastDelivery;
+    private readonly Dictionary<string, (string Text, string? Label, string? FromSessionId, Task<SteerDeliveryResult> Send)> _steering = [];
     // The asks waiting for the user, by id. Guarded by _gate.
     private readonly Dictionary<string, OpenAsk> _asks = [];
 
@@ -65,18 +69,20 @@ public sealed partial class SessionHost : IPermissionPolicy
     /// <summary>A self-started run with no word from the agent this long, no tool running and no task open, ends.</summary>
     public const long QuietMs = 30_000;
 
-    private sealed record OpenAsk(AskPayload Card, TaskCompletionSource<JsonElement> Answer);
+    private sealed record OpenAsk(AskPayload Card, TaskCompletionSource<JsonElement> Answer,
+        SessionObservation? Observation, JsonRpcRequestContext? Request, string AcpSessionId);
 
     /// <summary>How long a turn that ended with a tool call still running keeps its session for a task to show up.</summary>
     public const long TaskGraceMs = 2_000;
 
     private sealed record KeptSession(OpenSession Session, ChannelReader<SessionNotification> Updates, Task Pump,
-        CancellationTokenSource Ticking, Task Ticks, long TasksDueBy);
+        CancellationTokenSource Ticking, Task Ticks, long TasksDueBy, SessionObservation? Observation, RunningTurn ReleaseTurn);
 
     public SessionHost(string sessionId, LiveHub hub, SessionStore sessionStore, SessionOpener opener, TimeProvider time, TextWriter log,
         BackgroundWork work, Func<bool>? startedWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null,
-        SessionTitler? titler = null)
+        SessionTitler? titler = null, ISessionFeed? feed = null)
     {
+        _feed = feed;
         _sessionClosed = sessionClosed;
         _titler = titler;
         _startedWorking = startedWorking ?? (() => false);
@@ -88,7 +94,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         _time = time;
         _log = log;
         _work = work;
-        _subagents = new Subagents(sessionStore, hub);
+        _subagents = new Subagents();
     }
 
     public string? ActiveRunId
@@ -110,156 +116,26 @@ public sealed partial class SessionHost : IPermissionPolicy
         }
     }
 
-    /// <summary>Starts a turn and returns its run id, or null if one is already running.</summary>
-    public string? Send(string text, string? clientId = null)
-    {
-        RunningTurn turn;
-        KeptSession? kept;
-        lock (_gate)
-        {
-            if (_turn is not null)
-                return null;
-            // A session kept open for background work takes the prompt as it is.
-            (kept, _kept) = (_kept, null);
-            turn = _turn = new RunningTurn(Guid.NewGuid().ToString(), new StageTimes(_time)) { Session = kept?.Session };
-            Apply(new TurnStarted(Now(), turn.RunId, text, clientId));
-        }
+    public Task<PermissionOutcome> DecideAsync(RequestPermissionRequest request, CancellationToken cancellationToken) =>
+        DecideAsync(request, cancellationToken, null, null);
 
-        _sessionStore.Touch(_sessionId);
-        _lastTurn = turn.Done = Task.Run(() => RunAsync(turn, text, kept));
-        return turn.RunId;
-    }
-
-    /// <summary>
-    /// Sends <paramref name="text"/> into the running turn, through the agent's <c>_session/steering</c>, and returns
-    /// that turn's run id; with no turn running, starts one. Null when the turn can't take it: its session isn't open
-    /// yet, or the agent doesn't steer. A send with a <paramref name="clientId"/> already sent in this session answers
-    /// that send's run id, or waits for it while it's still going, and never starts a second turn or steer.
-    /// </summary>
-    public async Task<string?> SteerAsync(string text, string? clientId, CancellationToken cancellationToken)
-    {
-        if (clientId is null)
-            return await SteerOnceAsync(text, null, cancellationToken);
-        Task<string?> sending;
-        TaskCompletionSource<string?>? mine = null;
-        lock (_gate)
-        {
-            if (_sending.TryGetValue(clientId, out var going))
-            {
-                SameText(clientId, going.Text, text);
-                sending = going.Send;
-                _log.WriteLine($"send {clientId}: joined in-flight send");
-            }
-            else if (_hub.UserRowOfClient(_sessionId, clientId) is { } row)
-            {
-                SameText(clientId, row.Text, text);
-                return row.RunId;
-            }
-            else
-            {
-                mine = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
-                _sending[clientId] = (text, sending = mine.Task);
-            }
-        }
-
-        if (mine is not null)
-            return await SendOnceAsync(text, clientId, mine, cancellationToken);
-        try
-        {
-            // Its own token: a retry that gives up doesn't cancel the send it waits on.
-            return await sending.WaitAsync(cancellationToken);
-        }
-        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
-        {
-            // The send it joined failed, timed out or was cancelled, maybe after its request went out: it sends
-            // nothing more. A row says the message landed; otherwise it answers that failure.
-            lock (_gate)
-                if (_hub.UserRowOfClient(_sessionId, clientId) is { } row)
-                    return row.RunId;
-            if (error is OperationCanceledException)
-                throw new CallFailed("this message's first send was cut off; it may have reached the agent");
-            throw;
-        }
-    }
-
-    // The one send of a clientId in flight. It leaves the map before it answers, so a later send looks at the rows.
-    private async Task<string?> SendOnceAsync(string text, string clientId, TaskCompletionSource<string?> mine, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var runId = await SteerOnceAsync(text, clientId, cancellationToken);
-            lock (_gate)
-                _sending.Remove(clientId);
-            mine.SetResult(runId);
-            return runId;
-        }
-        catch (Exception error)
-        {
-            lock (_gate)
-                _sending.Remove(clientId);
-            mine.SetException(error);
-            throw;
-        }
-    }
-
-    // A clientId names one message: the same id with other text is refused.
-    private void SameText(string clientId, string sent, string text)
-    {
-        if (sent == text)
-            return;
-        _log.WriteLine($"Warning: session {_sessionId}: clientId {clientId} was sent again with other text");
-        throw new CallFailed("clientId already used for another message");
-    }
-
-    private async Task<string?> SteerOnceAsync(string text, string? clientId, CancellationToken cancellationToken)
-    {
-        RunningTurn? turn;
-        lock (_gate)
-            turn = _turn;
-        if (turn is null)
-            return Send(text, clientId);
-        if (turn.Session is not { } session || !session.Adapter.Init.CanSteer)
-            return null;
-
-        SteerResponse steered;
-        try
-        {
-            steered = await session.Adapter.Link.Client.SteerAsync(session.AcpSessionId, text, cancellationToken);
-        }
-        catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
-        {
-            return null;
-        }
-
-        switch (steered.Outcome)
-        {
-            case "injected":
-                // Taken, so it's saved on its turn even if that turn has just ended.
-                lock (_gate)
-                    Apply(new TurnSteered(Now(), turn.RunId, text, clientId));
-                _sessionStore.Touch(_sessionId);
-                return turn.RunId;
-            case "promptRequired":
-                // The turn ended as the message went: it starts the next one, once this one's session is closed.
-                await turn.Done.WaitAsync(cancellationToken);
-                return Send(text, clientId);
-            default:
-                return null;
-        }
-    }
-
-    public async Task<PermissionOutcome> DecideAsync(RequestPermissionRequest request, CancellationToken cancellationToken)
+    private async Task<PermissionOutcome> DecideAsync(RequestPermissionRequest request, CancellationToken cancellationToken,
+        SessionObservation? observed, JsonRpcRequestContext? context, Func<bool>? providerGone = null)
     {
         var options = request.Options.Select(option => new AskOption(option.OptionId, option.Name, option.Kind)).ToList();
-        var card = new AskPayload("permission", "open", Titled(request.SessionId, request.ToolTitle), null, ToolCallId(request.ToolCall), options, null, null);
-        var answer = await AskAsync(card, cancellationToken);
+        var card = new AskPayload("permission", "open", Titled(request.SessionId, request.Title), request.Description, ToolCallId(request.ToolCall), options, null, null);
+        var answer = await AskAsync(card, cancellationToken, observed, context, providerGone, request.SessionId, request);
         return PermissionOutcome.Selected(answer.GetProperty("optionId").GetString()!);
     }
 
-    public async Task<ElicitationResponse> ElicitAsync(ElicitationRequest request, CancellationToken cancellationToken)
+    public Task<ElicitationResponse> ElicitAsync(ElicitationRequest request, CancellationToken cancellationToken) =>
+        ElicitAsync(request, cancellationToken, null, null);
+
+    private async Task<ElicitationResponse> ElicitAsync(ElicitationRequest request, CancellationToken cancellationToken,
+        SessionObservation? observed, JsonRpcRequestContext? context, Func<bool>? providerGone = null)
     {
-        var card = new AskPayload("question", "open", Titled(request.SessionId, null), request.Message, request.ToolCallId, null, request.RequestedSchema.Clone(), null);
-        var answer = await AskAsync(card, cancellationToken);
+        var card = new AskPayload("question", "open", Titled(request.SessionId ?? "", null), request.Message, request.ToolCallId, null, request.RequestedSchema.Clone(), null);
+        var answer = await AskAsync(card, cancellationToken, observed, context, providerGone, request.SessionId ?? "");
         return new ElicitationResponse(answer.GetProperty("action").GetString()!,
             answer.TryGetProperty("content", out var content) ? content.Clone() : default);
     }
@@ -270,29 +146,150 @@ public sealed partial class SessionHost : IPermissionPolicy
     /// </summary>
     public bool Answer(string askId, JsonElement answer)
     {
-        OpenAsk? ask;
         lock (_gate)
-            _asks.TryGetValue(askId, out ask);
-        var fits = ask?.Card.Kind switch
+            return _asks.TryGetValue(askId, out var ask) && FitsAnswer(ask.Card, answer)
+                && ask.Answer.TrySetResult(answer.Clone());
+    }
+
+    /// <summary>Captures the original live provider request without accepting or changing its answer.</summary>
+    public ProviderAnswerBinding? CaptureProviderAnswerBinding(string askId)
+    {
+        lock (_gate) return CaptureProviderAnswerBindingLocked(askId, out _);
+    }
+
+    private ProviderAnswerBinding? CaptureProviderAnswerBindingLocked(string askId, out OpenAsk? ask)
+    {
+        if (!_asks.TryGetValue(askId, out ask) || ask.Answer.Task.IsCompleted ||
+            ask.Observation is not { } observed || ask.Request is not { } request) return null;
+        return new(_sessionId, askId, request.ProviderRequestId, observed, ask.AcpSessionId);
+    }
+
+    /// <summary>Captures one actual open request without completing it or entering a writer.</summary>
+    public PreparedProviderAnswer? PrepareProviderAnswer(string askId, JsonElement answer)
+    {
+        lock (_gate)
+        {
+            var binding = CaptureProviderAnswerBindingLocked(askId, out var ask);
+            if (binding is null) return null;
+            if (ask!.Card.Kind == "permission" && answer.ValueKind == JsonValueKind.String)
+                answer = JsonSerializer.SerializeToElement(new Dictionary<string, JsonElement> { ["optionId"] = answer.Clone() },
+                    SessionsJson.Default.DictionaryStringJsonElement);
+            if (!FitsAnswer(ask.Card, answer)) return null;
+            return new(binding, answer.Clone());
+        }
+    }
+
+    internal bool AnswerProviderRequest(ProviderAnswerBinding binding, JsonElement answer)
+    {
+        lock (_gate)
+            return binding.SessionId == _sessionId && _asks.TryGetValue(binding.ChatRowId, out var ask) &&
+                ask.Request?.ProviderRequestId == binding.ProviderRequestId && ask.Observation == binding.Observation &&
+                binding.Observation.SessionId == _sessionId && ask.AcpSessionId == binding.AcpSessionId &&
+                FitsAnswer(ask.Card, answer) && ask.Answer.TrySetResult(answer.Clone());
+    }
+
+    internal bool CancelProviderRequest(string providerRequestId, ProviderTerminalBinding binding)
+    {
+        lock (_gate)
+            return binding.SessionId == _sessionId && _asks.TryGetValue(binding.ChatRowId, out var ask) &&
+                ask.Request?.ProviderRequestId == providerRequestId && ask.Observation is { } observed &&
+                observed.SessionId == _sessionId && observed.Epoch == binding.Epoch && observed.RunId == binding.RunId &&
+                observed.StepId == binding.StepId && observed.Attempt == binding.Attempt && ask.Answer.TrySetCanceled();
+    }
+
+    private static bool FitsAnswer(AskPayload card, JsonElement answer)
+    {
+        if (answer.ValueKind != JsonValueKind.Object) return false;
+        return card.Kind switch
         {
             "permission" => answer.TryGetProperty("optionId", out var option) && option.ValueKind == JsonValueKind.String
-                            && ask.Card.Options!.Any(o => o.OptionId == option.GetString()),
-            "question" => answer.TryGetProperty("action", out var action) && action.GetString() is "accept" or "decline" or "cancel"
-                          && (!answer.TryGetProperty("content", out var content) || content.ValueKind == JsonValueKind.Object),
+                            && card.Options!.Any(o => o.OptionId == option.GetString()),
+            "question" => answer.TryGetProperty("action", out var action) && action.ValueKind == JsonValueKind.String
+                          && action.GetString() is "accept" or "decline" or "cancel"
+                          && (!answer.TryGetProperty("content", out var content) || content.ValueKind == JsonValueKind.Object)
+                          && (action.GetString() != "accept" || FitsForm(card.Schema, answer)),
             _ => false,
         };
-        return fits && ask!.Answer.TrySetResult(answer.Clone());
+    }
+
+    private static bool FitsForm(JsonElement? requested, JsonElement answer)
+    {
+        if (requested is null || requested.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return true;
+        var schema = requested.Value;
+        if (schema.ValueKind != JsonValueKind.Object) return false;
+        if (schema.TryGetProperty("type", out var type) && (type.ValueKind != JsonValueKind.String || type.GetString() != "object")) return false;
+        var hasContent = answer.TryGetProperty("content", out var content);
+        if (schema.TryGetProperty("required", out var required))
+        {
+            if (required.ValueKind != JsonValueKind.Array || required.EnumerateArray().Any(name =>
+                name.ValueKind != JsonValueKind.String || !hasContent || !content.TryGetProperty(name.GetString()!, out _))) return false;
+        }
+        if (!hasContent) return true;
+        var hasProperties = schema.TryGetProperty("properties", out var properties);
+        if (hasProperties && properties.ValueKind != JsonValueKind.Object) return false;
+        foreach (var property in content.EnumerateObject())
+        {
+            if (!hasProperties || !properties.TryGetProperty(property.Name, out var field))
+            {
+                if (schema.TryGetProperty("additionalProperties", out var extra) && extra.ValueKind == JsonValueKind.False) return false;
+                continue;
+            }
+            if (field.ValueKind != JsonValueKind.Object) return false;
+            if (field.TryGetProperty("type", out var fieldType) && fieldType.ValueKind != JsonValueKind.String) return false;
+            if (fieldType.ValueKind == JsonValueKind.String && fieldType.GetString() == "array")
+            {
+                if (property.Value.ValueKind != JsonValueKind.Array || !field.TryGetProperty("items", out var items) ||
+                    items.ValueKind != JsonValueKind.Object || !property.Value.EnumerateArray().All(value => FitsChoice(items, value))) return false;
+            }
+            else if (!FitsChoice(field, property.Value)) return false;
+        }
+        return true;
+    }
+
+    private static bool FitsChoice(JsonElement field, JsonElement value)
+    {
+        if (field.TryGetProperty("type", out var kind) && kind.ValueKind == JsonValueKind.String)
+        {
+            if (kind.GetString() == "boolean") return value.ValueKind is JsonValueKind.True or JsonValueKind.False;
+            if (kind.GetString() == "integer") return value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out _);
+            if (kind.GetString() == "number") return value.ValueKind == JsonValueKind.Number;
+        }
+        if (value.ValueKind != JsonValueKind.String) return false;
+        if (field.TryGetProperty("type", out var type) && (type.ValueKind != JsonValueKind.String || type.GetString() != "string")) return false;
+        if (field.TryGetProperty("enum", out var options))
+            return options.ValueKind == JsonValueKind.Array && options.EnumerateArray().Any(option => JsonElement.DeepEquals(option, value));
+        if (field.TryGetProperty("oneOf", out var choices) || field.TryGetProperty("anyOf", out choices))
+            return choices.ValueKind == JsonValueKind.Array && choices.EnumerateArray().Any(option => option.ValueKind == JsonValueKind.Object &&
+                option.TryGetProperty("const", out var id) && JsonElement.DeepEquals(id, value));
+        return true;
     }
 
     // Shows the card and waits for its answer; a cancel settles the card as cancelled and goes on up.
-    private async Task<JsonElement> AskAsync(AskPayload card, CancellationToken cancellationToken)
+    private async Task<JsonElement> AskAsync(AskPayload card, CancellationToken cancellationToken,
+        SessionObservation? observed, JsonRpcRequestContext? request, Func<bool>? providerGone, string acpSessionId,
+        RequestPermissionRequest? permission = null)
     {
         var askId = Guid.NewGuid().ToString();
-        var ask = new OpenAsk(card, new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously));
+        var ask = new OpenAsk(card, new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously), observed, request, acpSessionId);
         lock (_gate)
         {
             _asks[askId] = ask;
-            Apply(new AskChanged(Now(), askId, card));
+            if (_feed is not null && request is null) _log.WriteLine("engine feed: provider_request_context_missing");
+            try
+            {
+                var prepared = observed is null || request is null ? null : _feed?.PrepareAsked(observed, askId, card, request);
+                var batch = new RowBatch();
+                if (permission is not null)
+                    foreach (var change in _updateReader.ReadPermission(permission, Now()))
+                        Apply(change, batch);
+                Apply(new AskChanged(Now(), askId, card), batch);
+                _hub.Publish(_sessionId, batch, prepared);
+            }
+            catch
+            {
+                _asks.Remove(askId);
+                throw;
+            }
         }
 
         JsonElement? answer = null;
@@ -307,7 +304,11 @@ public sealed partial class SessionHost : IPermissionPolicy
             lock (_gate)
             {
                 _asks.Remove(askId);
-                Apply(new AskChanged(Now(), askId, card with { State = answer is null ? "cancelled" : "answered", Answer = answer }));
+                var prepared = observed is null || request is null ? null : _feed?.PrepareSettled(observed, askId,
+                    answer is null ? "cancelled" : "answered", answer,
+                    answer is not null ? "manual_answered" : providerGone?.Invoke() == true ? "provider_gone" : "turn_cancelled");
+                Apply(new AskChanged(Now(), askId, card with { State = answer is null ? "cancelled" : "answered", Answer = answer }),
+                    observe: prepared);
             }
         }
     }
@@ -358,24 +359,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         if (subagent)
             return await StopSubagentAsync(taskId, cancellationToken);
 
-        OpenSession? session;
-        lock (_gate)
-        {
-            if (!_tasks.TryGetValue(taskId, out var task) || !task.CanStop)
-                return false;
-            session = _turn?.Session ?? _kept?.Session;
-        }
-
-        if (session is null)
-            return false;
-        try
-        {
-            return (await session.Adapter.Link.Client.StopTaskAsync(session.AcpSessionId, taskId, cancellationToken)).Stopped;
-        }
-        catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
-        {
-            return false;
-        }
+        return false; // Generic tool work has no standard ACP v2 current-work cancellation.
     }
 
     /// <summary>Stops a subagent's current work (<c>session/cancel</c> with its child session id); its parent goes on.</summary>
@@ -431,132 +415,15 @@ public sealed partial class SessionHost : IPermissionPolicy
         {
             _shuttingDown = true;
             _turn?.Stopping.Cancel();
+            if (_kept is { } kept && (_turn is null || _turn.SelfStarted))
+            {
+                if (_turn is { SelfStarted: true })
+                    EndSelfRun(new TurnEnded(Now(), "cancelled", null));
+                _kept = null;
+                _lastTurn = Task.Run(() => CloseKeptAsync(kept, lost: false));
+            }
             return _lastTurn;
         }
-    }
-
-    private async Task RunAsync(RunningTurn turn, string text, KeptSession? kept)
-    {
-        // The ticker and the update pump last as long as the session: a kept session hands its own on.
-        var ticking = kept?.Ticking ?? new CancellationTokenSource();
-        var ticks = kept?.Ticks ?? TickAsync(ticking.Token);
-        var session = kept?.Session;
-        var updates = kept?.Updates;
-        var pump = kept?.Pump ?? Task.CompletedTask;
-        var lost = false;
-        var held = kept is not null;
-        Func<long, AgentEvent> end;
-        try
-        {
-            if (session is null)
-            {
-                await _session.WaitAsync(turn.Stopping.Token);
-                held = true;
-                session = await _opener.OpenAsync(_sessionId, text, turn.Stages, turn.Stopping.Token);
-                updates = session.Adapter.Updates.For(session.AcpSessionId);
-                session.Adapter.Link.Client.SetSessionPolicy(session.AcpSessionId, this);
-                lock (_gate)
-                {
-                    turn.Session = session;
-                    _titlePending |= session.Titled;
-                    turn.Opened.TrySetResult();
-                    Apply(new AgentStarted(Now(), session.Resumed, session.SavedCost, session.Model));
-                }
-
-                pump = PumpAsync(updates);
-            }
-            // A stop that lands between here and the prompt reaching the agent is lost; the turn then runs to its end.
-            if (turn.Stopping.IsCancellationRequested)
-            {
-                end = at => new TurnEnded(at, "cancelled", null);
-            }
-            else
-            {
-                var response = await session.Adapter.Link.Client.PromptAsync(session.AcpSessionId, text, CancellationToken.None);
-                turn.Stages.Mark("answer");
-                end = at => UpdateReader.TurnEnd(response, at);
-            }
-        }
-        catch (OperationCanceledException) when (turn.Stopping.IsCancellationRequested)
-        {
-            end = at => new TurnEnded(at, "cancelled", null);
-        }
-        catch (JsonRpcException error)
-        {
-            end = at => UpdateReader.TurnFailure(error, at);
-        }
-        catch (IOException) when (session is not null)
-        {
-            // The pipe closed under the prompt: the adapter is gone, whether or not its exit has been seen yet.
-            // Its process group is killed as it exits, and the next send starts a new adapter.
-            lost = true;
-            end = at => new AgentLost(at);
-        }
-        catch (Exception error)
-        {
-            end = at => new TurnFailed(at, error.Message, null);
-        }
-
-        decimal? sessionCost;
-        var keep = false;
-        var toolsOpen = false;
-        var title = false;
-        lock (_gate)
-        {
-            try
-            {
-                // Everything the agent sent before its answer has arrived by now, so it goes in before the end.
-                if (session is not null && updates is not null)
-                {
-                    session.Adapter.Updates.Flush();
-                    Drain(updates);
-                }
-
-                // A tool call still running as the turn ends may be work the agent moved to the background
-                // and tells us of only after its answer (Codex's async_task_spawned can follow the prompt's result).
-                toolsOpen = _converter.HasOpenTools;
-                var ended = end(Now());
-                Apply(ended);
-                title = _titlePending && ended is TurnEnded { StopReason: not "cancelled" };
-                if (title)
-                    _titlePending = false;
-            }
-            catch (Exception error)
-            {
-                Console.Error.WriteLine($"session {_sessionId}: the turn's end wasn't saved: {error.Message}");
-            }
-            finally
-            {
-                // Even if saving the end failed, the session takes sends again.
-                sessionCost = _converter.SessionCost;
-                _turn = null;
-                turn.Opened.TrySetResult();
-                // Background work still going keeps the session, and with it the work, alive.
-                var working = _tasks.Count > 0 || _subagents.AnyRunning || _startedWorking();
-                keep = session is not null && updates is not null && !lost && !_shuttingDown && (working || toolsOpen);
-                if (keep)
-                    _kept = new KeptSession(session!, updates!, pump, ticking, ticks, TasksDueBy: working ? 0 : Now() + TaskGraceMs);
-            }
-        }
-
-        _turnEnded?.Invoke(_sessionId);
-        if (title && _titler is { } titler)
-            _work.Start($"title {_sessionId}", stopping => titler.TitleAsync(_sessionId, text, turn.RunId, stopping));
-        if (keep)
-        {
-            _log.WriteLine($"session {_sessionId} run {turn.RunId}: {turn.Stages}");
-            _log.WriteLine($"session {_sessionId}: session kept open for background work");
-            return;
-        }
-
-        if (session is not null)
-            await CloseAsync(session, turn.Stages, sessionCost, lost, pump);
-        if (held)
-            _session.Release();
-        _log.WriteLine($"session {_sessionId} run {turn.RunId}: {turn.Stages}");
-        await ticking.CancelAsync();
-        await ticks;
-        ticking.Dispose();
     }
 
     // Called with the lock held.
@@ -567,7 +434,18 @@ public sealed partial class SessionHost : IPermissionPolicy
             Apply(started);
     }
 
-    private void Apply(AgentEvent agentEvent) => _hub.Publish(_sessionId, _converter.Apply(agentEvent));
+    private void Apply(AgentEvent agentEvent, RowBatch? collector = null, Action<Assembly.Application.Common.Database.IWriteScope>? observe = null, AuthTerminalProof? authProof = null)
+    {
+        var batch = _converter.Apply(agentEvent);
+        if (authProof is not null) DecorateAuthTerminal(batch, authProof);
+        if (collector is null) _hub.Publish(_sessionId, batch, observe);
+        else
+        {
+            collector.Rows.AddRange(batch.Rows);
+            collector.Details.AddRange(batch.Details);
+            collector.Terminals.AddRange(batch.Terminals);
+        }
+    }
 
     private long Now() => _time.GetUtcNow().ToUnixTimeMilliseconds();
 
@@ -580,6 +458,140 @@ public sealed partial class SessionHost : IPermissionPolicy
         catch (Exception error) when (error is IOException or ObjectDisposedException)
         {
             // The agent is gone, so the turn is ending anyway.
+        }
+    }
+
+    private RunningTurn? _handoffExecution;
+    private RunningTurn? _handoffCompleted;
+
+    /// <summary>In-process physical ownership only. Public ACP identity is not a provider-native file witness.</summary>
+    internal sealed class HandoffReleaseCapture(SessionHost owner, RunningTurn turn, OpenSession session, long generation)
+    {
+        internal SessionHost Owner { get; } = owner;
+        internal RunningTurn Turn { get; } = turn;
+        internal OpenSession Session { get; } = session;
+        internal long Generation { get; } = generation;
+        public SessionObservation Observation { get; } = turn.Observation!;
+        public string SessionId => Observation.SessionId;
+        public long Epoch => Observation.Epoch;
+        public string AcpSessionId => Session.AcpSessionId;
+        public string OperationId => Turn.RunId;
+    }
+
+    // Called under the host gate at the actual successful open, before the turn's open is published.
+    private void RememberHandoffExecution(RunningTurn turn)
+    {
+        _handoffExecution = turn;
+        _handoffCompleted = null;
+    }
+
+    // A lost execution or a failed cleanup must never become positive disposal evidence.
+    private void MarkHandoffExecutionCompleted(RunningTurn turn, bool clean)
+    {
+        lock (_gate)
+            if (clean && ReferenceEquals(_handoffExecution, turn)) _handoffCompleted = turn;
+    }
+
+    internal HandoffReleaseCapture? CaptureHandoffRelease(long expectedEpoch, string expectedAcpSessionId)
+    {
+        lock (_gate)
+        {
+            if (!HandoffIdle() || _handoffExecution is not { Session: { } session, Observation: { } observed } turn ||
+                !ReferenceEquals(_handoffCompleted, turn) || observed.SessionId != _sessionId || observed.Epoch != expectedEpoch ||
+                session.AcpSessionId != expectedAcpSessionId) return null;
+            return new(this, turn, session, _warmGeneration);
+        }
+    }
+
+    internal async Task ReleaseForHandoffAsync(HandoffReleaseCapture capture, CancellationToken ct)
+    {
+        lock (_gate) RequireHandoffCapture(capture);
+        await capture.Turn.Done.WaitAsync(ct);
+        lock (_gate) RequireHandoffCapture(capture);
+        // Retire accepts the exact instance; a newer adapter is neither selected nor stopped by this capture.
+        var disposed = await capture.Session.Pool.RetireAsync(capture.Session.Adapter, capture.AcpSessionId);
+        if (!disposed) throw new CallFailed("Exact adapter disposal is unconfirmed.", "handoff_disposal_unconfirmed");
+        // Retirement must never dispose a shared adapter that another execution still owns.
+        await capture.Session.Adapter.Link.Exited.WaitAsync(ct);
+        await capture.Session.Adapter.Updates.Completion.WaitAsync(ct);
+        lock (_gate) RequireHandoffCapture(capture);
+    }
+
+    private bool HandoffIdle() => !_shuttingDown && _turn is null && _kept is null && _warm is null &&
+        _asks.Count == 0 && _tasks.Count == 0 && !_subagents.AnyRunning && !_startedWorking();
+
+    private void RequireHandoffCapture(HandoffReleaseCapture capture)
+    {
+        if (!ReferenceEquals(capture.Owner, this) || !ReferenceEquals(_handoffExecution, capture.Turn) ||
+            !ReferenceEquals(_handoffCompleted, capture.Turn) || !ReferenceEquals(capture.Turn.Session, capture.Session) ||
+            capture.Generation != _warmGeneration || !HandoffIdle())
+            throw new CallFailed("The captured handoff execution changed.", "handoff_execution_changed");
+    }
+
+    internal async Task<string> ResumeForHandoffAsync(string expectedAcpSessionId, Action validate, CancellationToken ct)
+    {
+        lock (_gate)
+            if (!HandoffIdle()) throw new CallFailed("The session has another execution.", "handoff_execution_changed");
+        await _session.WaitAsync(ct);
+        try
+        {
+            long generation;
+            lock (_gate)
+            {
+                if (!HandoffIdle()) throw new CallFailed("The session has another execution.", "handoff_execution_changed");
+                generation = Interlocked.Increment(ref _warmGeneration);
+            }
+            validate();
+            var publicId = await _opener.ResumeForHandoffAsync(_sessionId, expectedAcpSessionId, new StageTimes(_time), ct, validate);
+            lock (_gate)
+                if (!HandoffIdle() || generation != _warmGeneration)
+                    throw new CallFailed("The session execution changed during resume.", "handoff_execution_changed");
+            return publicId;
+        }
+        finally { _session.Release(); }
+    }
+    internal SessionMaintenanceAttempt TryAcquireMaintenance()
+    {
+        if (!_session.Wait(0)) return new(null, "busy");
+        lock (_gate)
+        {
+            if (_shuttingDown || _turn is not null || _kept is not null || _warm is not null || _asks.Count != 0 ||
+                _tasks.Values.Any(task => task.Running) || _subagents.AnyRunning || _startedWorking())
+            {
+                _session.Release();
+                return new(null, "busy");
+            }
+            return new(new MaintenanceLease(this, _session), null);
+        }
+    }
+
+    internal Task<NativeResumeEvidence> ResumeNativeForMaintenanceAsync(string publicId, string folder, Action validate, CancellationToken ct) =>
+        _opener.Native.ResumeAsync(_sessionId, publicId, folder, validate, ct);
+
+    private sealed class MaintenanceLease(SessionHost owner, SemaphoreSlim session) : ISessionMaintenanceLease
+    {
+        private int _disposed;
+        public NativeResumeEvidence? ResumeEvidence { get; private set; }
+        public async Task<bool> ProbeResumeAsync(string providerSessionId, string folder, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            try
+            {
+                ResumeEvidence = await owner._opener.Native.ResumeAsync(owner._sessionId, providerSessionId, folder,
+                    () => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this), ct);
+                return true;
+            }
+            catch (Exception error) when (error is not OperationCanceledException and not OutOfMemoryException)
+            {
+                owner._log.WriteLine($"Native resume refused: {error.GetType().Name}");
+                return false;
+            }
+        }
+        public ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0) session.Release();
+            return ValueTask.CompletedTask;
         }
     }
 }

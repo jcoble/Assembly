@@ -21,11 +21,14 @@ pub struct AgentConfig {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigOption {
+    /// ACP 2 sends `configId`; a session saved before it holds `id`.
+    #[serde(rename = "configId", alias = "id")]
     pub id: String,
     pub name: String,
     pub category: Option<String>,
     #[serde(rename = "type")]
     pub kind: String,
+    #[serde(default, deserialize_with = "menu_value")]
     pub current_value: Option<String>,
     #[serde(default)]
     pub options: Vec<ConfigChoice>,
@@ -36,4 +39,73 @@ pub struct ConfigChoice {
     pub value: String,
     pub name: String,
     pub description: Option<String>,
+}
+
+impl AgentConfig {
+    pub fn menus(&self) -> Vec<(&ConfigOption, &str)> {
+        self.options
+            .iter()
+            .flatten()
+            .filter(|option| option.kind == "select" && !option.options.is_empty())
+            .map(|option| {
+                (
+                    option,
+                    option
+                        .current_value
+                        .as_deref()
+                        .filter(|value| option.offered(value))
+                        .or_else(|| {
+                            self.choices
+                                .get(&option.id)
+                                .map(String::as_str)
+                                .filter(|value| option.offered(value))
+                        })
+                        .unwrap_or(""),
+                )
+            })
+            .collect()
+    }
+}
+/// A menu's value is text; another kind's (an on/off option's `false`) isn't a menu value, so it reads as none.
+fn menu_value<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(input)? {
+        serde_json::Value::String(value) => Some(value),
+        _ => None,
+    })
+}
+
+impl ConfigOption {
+    pub fn model(&self) -> bool {
+        self.category.as_deref() == Some("model") || self.id == "model"
+    }
+    pub fn effort(&self) -> bool {
+        matches!(self.category.as_deref(), Some("thought_level" | "effort"))
+            || matches!(self.id.as_str(), "effort" | "reasoning_effort")
+    }
+    /// How much the agent may do without asking: its mode, or an approval policy by name.
+    pub fn approval(&self) -> bool {
+        self.category.as_deref() == Some("mode")
+            || matches!(
+                self.id.as_str(),
+                "mode" | "approval_policy" | "approvalPolicy"
+            )
+    }
+    pub fn offered(&self, value: &str) -> bool {
+        self.options.iter().any(|choice| choice.value == value)
+    }
+}
+
+/// Safe configured-target metadata advertised by the actual owning machine.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTarget {
+    pub id: String,
+    pub name: String,
+    pub target_id: Option<String>,
+    pub account_context: Option<String>,
+    pub provider_target_id: Option<String>,
+}
+#[derive(Deserialize)]
+pub struct AgentList {
+    pub agents: Vec<AgentTarget>,
 }

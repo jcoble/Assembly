@@ -1,11 +1,15 @@
 using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Features.Chat.Rows;
 
 namespace Assembly.Application.Common.Calls;
 
 /// <summary>Where a feature lists its calls, saves and topics (plan 5.2).</summary>
 public interface ICallRegistry
 {
+    // Unknown metadata must refuse a forwarded call; a registry never assumes a read.
+    CallKind? KindOf(string feature, string method) => null;
+
     // A bulk call is served only on /socket/bulk, and every other call only on /socket.
     void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, CallContext, Task<TResult>> handler, bool bulk = false);
@@ -37,10 +41,22 @@ public interface ICallRegistry
     // A terminal topic is served only on /socket/terminal, every other topic only on /socket.
     void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<TItem, string> key, Func<string?, CallContext, IReadOnlyList<TItem>> state, bool terminal = false);
 
+    // opened runs after registration, outside Topics' lock. source captures the exact delivery epoch, in memory,
+    // before state or a change is prepared. That same guard travels with its queued frame; it is never recaptured at send.
+    void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<TItem, string> key,
+        Func<string?, CallContext, IReadOnlyList<TItem>> state, Action<string, CallContext> opened,
+        Func<string?, CallContext, IExpectedSourceGuard?> source) =>
+        throw new NotSupportedException("This registry does not support source-bound topics.");
+
     // A topic of rows in seq order (5.1, 5.7), keyed by session, which a sub must name. Its state gets the key and the
     // sub's `after` and gives the seq the rows after it continue from, then those rows as JSON; the state frame carries
     // that seq, each row goes out as a `rows` frame, and so does every row published on the topic after. opened runs
     // with the key once the subscription is registered, outside the Topics lock, so it may take other locks or start work.
     void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
         Action<string, CallContext>? opened = null);
+
+    // Registries that do not implement source-bound rows must refuse their registration, never ignore its guard.
+    void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
+        Action<string, CallContext>? opened, IRowSourceBindings sources) =>
+        throw new NotSupportedException("This registry does not support source-bound rows.");
 }

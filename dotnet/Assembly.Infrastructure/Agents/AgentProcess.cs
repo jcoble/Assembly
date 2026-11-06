@@ -1,3 +1,4 @@
+using Assembly.Infrastructure.Common.Processes;
 using System.Diagnostics;
 using Assembly.Application.Common.Acp;
 using Assembly.Infrastructure.Transcript;
@@ -38,6 +39,7 @@ public sealed class AgentProcess : IAsyncDisposable
         };
         foreach (var argument in command.Arguments)
             start.ArgumentList.Add(argument);
+        if (command.ReplaceEnvironment) start.Environment.Clear();
         foreach (var (name, value) in command.Environment ?? new Dictionary<string, string>())
             start.Environment[name] = value;
 

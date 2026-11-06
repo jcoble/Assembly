@@ -21,7 +21,9 @@ const GIT_SAYS: &str = "fatal: not a git repository (or any of the parent direct
 #[derive(Default)]
 struct Seen {
     reads: Vec<(String, Value)>,
+    picked: Vec<Value>,
     cancels: Vec<Value>,
+    session_subscription: Value,
 }
 
 impl Seen {
@@ -43,12 +45,34 @@ fn backend(seen: Arc<Mutex<Seen>>, heard: UnboundedSender<()>) -> FakeBackend {
         let id = frame["id"].clone();
         let mut seen = seen.lock().unwrap();
         let replies = match (frame["t"].as_str(), frame["method"].as_str()) {
+            (Some("sub"), _) if frame["topic"] == "sessions" => {
+                seen.session_subscription = id.clone();
+                vec![Reply::Frame(
+                    json!({"t":"state","sub":id,"items":[["s1",session_item("s1","idle")]]}),
+                )]
+            }
+            (Some("call"), Some("test_state")) => {
+                let item = session_item(
+                    frame["args"]["session"].as_str().unwrap(),
+                    frame["args"]["state"].as_str().unwrap(),
+                );
+                vec![
+                    Reply::Frame(
+                        json!({"t":"change","sub":seen.session_subscription,"key":frame["args"]["session"],"item":item}),
+                    ),
+                    Reply::Frame(json!({"t":"result","id":id,"result":{}})),
+                ]
+            }
+            (Some("call"), Some("test_barrier")) => {
+                vec![Reply::Frame(json!({"t":"result","id":id,"result":{}}))]
+            }
             (Some("call"), Some("list")) => {
                 let session = frame["args"]["session"]
                     .as_str()
                     .unwrap_or_default()
                     .to_string();
                 seen.reads.push((session.clone(), id.clone()));
+                seen.picked.push(frame["args"]["checkoutPath"].clone());
                 match session.as_str() {
                     "slow" => Vec::new(),
                     "dropped" => vec![Reply::Drop],
@@ -203,7 +227,22 @@ async fn hiding_the_tab_stops_the_read_on_the_backend(cx: &mut TestAppContext) {
     open.show(false);
     open.until("slow read cancelled", |seen, _| !seen.cancels.is_empty())
         .await;
+    open.read.update(open.cx, |read, cx| read.refresh(cx));
+    let barrier = open.cx.update(|cx| {
+        SocketClient::global(cx)
+            .read(cx)
+            .call::<Value>("test", "test_barrier", json!({}), None)
+    });
+    assert!(matches!(
+        barrier.await,
+        crate::core::socket::outcome::Outcome::Ok(_)
+    ));
     let seen = open.seen.lock().unwrap();
+    assert_eq!(
+        seen.reads.len(),
+        1,
+        "a hidden refresh must not dispatch a new read"
+    );
     assert_eq!(seen.cancels, vec![seen.reads[0].1.clone()]);
 }
 
@@ -242,4 +281,126 @@ async fn a_dropped_connection_says_so_instead_of_reading_forever(cx: &mut TestAp
         Shown::Failed("The connection dropped.".into())
     );
     assert!(!open.cx.update(|cx| open.read.read(cx).reading()));
+}
+
+fn session_item(session: &str, state: &str) -> Value {
+    json!({"sessionId":session,"agent":"fixture","repoUrl":"/owned","title":null,"machine":null,"parentSessionId":null,"acpSessionId":null,"updatedAt":1,"activeRunId":null,"state":state})
+}
+impl Open<'_> {
+    async fn session_state(&mut self, session: &str, state: &str) {
+        let call = self.cx.update(|cx| {
+            SocketClient::global(cx).read(cx).call::<Value>(
+                "test",
+                "test_state",
+                json!({"session":session,"state":state}),
+                None,
+            )
+        });
+        let _ = call.await;
+        let cx = &mut *self.cx;
+        until(
+            "session state applied",
+            &mut self.changes,
+            &self.changed,
+            || {
+                cx.run_until_parked();
+                cx.update(|cx| {
+                    crate::core::state::sessions::Sessions::try_global(cx)
+                        .unwrap()
+                        .read(cx)
+                        .items()
+                        .iter()
+                        .any(|item| item.session_id == session && item.state == state)
+                })
+            },
+        )
+        .await;
+    }
+}
+// Pins: g9#10, g9#26
+#[gpui::test]
+async fn a_running_selected_turn_ending_refreshes_once_only_while_shown(cx: &mut TestAppContext) {
+    let mut open = open(cx);
+    open.cx
+        .update(crate::core::state::sessions::Sessions::start);
+    open.read
+        .update(open.cx, |read, cx| read.refresh_on_settle(cx));
+    open.select(Some("s1"));
+    open.show(true);
+    open.until("initial read", |seen, shown| {
+        seen.reads.len() == 1 && matches!(shown, Shown::Read(_))
+    })
+    .await;
+    open.session_state("s1", "running").await;
+    assert_eq!(open.seen.lock().unwrap().reads.len(), 1);
+    open.session_state("s1", "idle").await;
+    open.until("turn settled refresh", |seen, _| seen.reads.len() == 2)
+        .await;
+    open.session_state("s1", "idle").await;
+    assert_eq!(open.seen.lock().unwrap().reads.len(), 2);
+    open.session_state("another-session", "running").await;
+    open.session_state("another-session", "failed").await;
+    assert_eq!(open.seen.lock().unwrap().reads.len(), 2);
+    open.show(false);
+    open.session_state("s1", "running").await;
+    open.session_state("s1", "waiting").await;
+    assert_eq!(open.seen.lock().unwrap().reads.len(), 2);
+    open.show(true);
+    open.until("shown fresh", |seen, _| seen.reads.len() == 3)
+        .await;
+    open.session_state("s1", "running").await;
+    open.select(Some("s2"));
+    open.until("new selection", |seen, _| seen.reads.len() == 4)
+        .await;
+    open.session_state("s1", "idle").await;
+    assert_eq!(
+        open.seen.lock().unwrap().sessions(),
+        vec!["s1", "s1", "s1", "s2"]
+    );
+}
+
+impl Open<'_> {
+    fn touch(&mut self, session: &str) {
+        self.cx
+            .update(|cx| crate::core::state::folder_touched::FolderTouched::touch(session, cx));
+        self.cx.run_until_parked();
+    }
+}
+
+#[gpui::test]
+async fn a_tool_changing_the_selected_session_s_folder_reads_it_again_mid_turn(
+    cx: &mut TestAppContext,
+) {
+    let mut open = open(cx);
+    open.read
+        .update(open.cx, |read, cx| read.refresh_on_settle(cx));
+    open.select(Some("s1"));
+    open.show(true);
+    open.until("initial read", |seen, shown| {
+        seen.reads.len() == 1 && matches!(shown, Shown::Read(_))
+    })
+    .await;
+    open.touch("s1");
+    open.until("touched read", |seen, _| seen.reads.len() == 2)
+        .await;
+    open.touch("another-session");
+    assert_eq!(open.seen.lock().unwrap().reads.len(), 2);
+    open.show(false);
+    open.touch("s1");
+    assert_eq!(open.seen.lock().unwrap().reads.len(), 2);
+}
+
+#[gpui::test]
+async fn the_git_panel_s_own_write_is_not_read_again(cx: &mut TestAppContext) {
+    let mut open = open(cx);
+    open.read
+        .update(open.cx, |read, cx| read.refresh_on_settle(cx));
+    open.select(Some("s1"));
+    open.show(true);
+    open.until("initial read", |seen, _| seen.reads.len() == 1)
+        .await;
+    open.cx
+        .update(|cx| crate::core::state::folder_touched::FolderTouched::git_panel_wrote("s1", cx));
+    open.cx.run_until_parked();
+    assert_eq!(open.seen.lock().unwrap().reads.len(), 1);
 }

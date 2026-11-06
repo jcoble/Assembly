@@ -1,6 +1,7 @@
 //! `TaskCard` draws background work: its name, state and a Stop button while it runs and can stop (`send/stopTask`).
 //! Its state shows as a still mark; nothing animates. Replaces chat/Task.svelte.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -26,19 +27,21 @@ pub fn card(cx: &App) -> Div {
         .rounded(theme.radius)
         .border_1()
         .border_color(theme.border)
-        .text_sm()
+        .text_role(TextRole::Body, cx)
 }
 
 /// A Stop button that sends `send/stopTask` with `task`.
 pub fn stop_button(id: String, task: String, on_action: OnAction) -> Button {
+    stop_action_button(id, SessionAction::StopTask { task }, on_action)
+}
+
+/// The same card button; the owning pane validates a native row reference before resolving its Stop target.
+pub fn stop_action_button(id: String, action: SessionAction, on_action: OnAction) -> Button {
     Button::new(SharedString::from(id))
         .ghost()
         .compact()
         .label("Stop")
-        .on_click(move |_, window, cx| {
-            let task = task.clone();
-            on_action(SessionAction::StopTask { task }, window, cx)
-        })
+        .on_click(move |_, window, cx| on_action(action.clone(), window, cx))
 }
 
 impl RenderOnce for TaskCard {
@@ -63,7 +66,7 @@ impl RenderOnce for TaskCard {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(cx.theme().muted_foreground)
                         .child(self.task.state.clone()),
                 )

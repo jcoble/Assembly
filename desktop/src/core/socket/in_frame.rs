@@ -7,9 +7,28 @@ use serde_json::Value;
 #[derive(Debug, Deserialize)]
 #[serde(tag = "t", rename_all = "lowercase")]
 pub(super) enum InFrame {
+    #[serde(rename = "engine_snapshot")]
+    EngineSnapshot {
+        id: u64,
+        machine: String,
+        through: i64,
+        items: Vec<Value>,
+        more: bool,
+        at: Option<super::engine_update::CursorAt>,
+    },
+    #[serde(rename = "engine_events")]
+    EngineEvents {
+        id: u64,
+        machine: String,
+        after: i64,
+        through: i64,
+        events: Vec<Value>,
+        at: Option<super::engine_update::CursorAt>,
+    },
     Welcome {
         protocol: u32,
         machine: String,
+        engine: Option<String>,
     },
     Result {
         id: u64,

@@ -1,4 +1,7 @@
+using Assembly.Application.Features.Chat.Sessions.Configuration;
 using System.Threading.Channels;
+using System.Text.Json;
+using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.Messages;
 
 using Assembly.Application.Common.Agents;
@@ -8,24 +11,35 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// Splits one adapter's <c>session/update</c> stream by session, since every session's ACP session shares the adapter.
 /// Updates for a session nobody has asked for yet wait in its own queue. Updates for a session that was closed and
 /// not resumed are dropped, so they never reach its next turn. A session resumed on the same ACP id is open again from
-/// the client's <see cref="SessionNotification.Resumed"/> marker on, which sits in pipe order where the agent's answer
-/// came, so what the agent sent before its answer is still dropped and what it sent after is kept. <see cref="Flush"/> moves what has arrived so far,
-/// so a turn's end can take every update the agent sent before its answer. A subagent's child session, once its
-/// parent announces it (<c>subagent_update</c>), is read with its parent: its updates go to the parent's queue.
+/// the client's synchronous resume-response callback, so what the agent sent before its answer is still dropped and what it sent after is kept. <see cref="Flush"/> moves what has arrived so far,
+/// so a turn's end can take every update the agent sent before its answer. Provider Task tools are display updates under their existing session.
 /// </summary>
 internal sealed class UpdateRouter
 {
     private readonly ChannelReader<SessionNotification> _all;
+    private readonly AcpClient? _client;
     private readonly Dictionary<string, Channel<SessionNotification>> _acpSessions = [];
     private readonly HashSet<string> _closedAcpSessions = [];
-    // Each announced child session's root session: the queue its updates go to.
-    private readonly Dictionary<string, string> _parents = [];
     private readonly Lock _gate = new();
     private bool _closed;
 
-    public UpdateRouter(ChannelReader<SessionNotification> all)
+    public UpdateRouter(AcpClient client) : this(client.Updates, client) { }
+    public UpdateRouter(ChannelReader<SessionNotification> all) : this(all, null) { }
+
+    public void Resume(string sessionId)
+    {
+        lock (_gate)
+        {
+            Flush();
+            _closedAcpSessions.Remove(sessionId);
+        }
+    }
+
+    private UpdateRouter(ChannelReader<SessionNotification> all, AcpClient? client)
     {
         _all = all;
+        _client = client;
+        if (client is not null) client.SessionResumed += Resume;
         Completion = PumpAsync();
     }
 
@@ -39,19 +53,44 @@ internal sealed class UpdateRouter
             return Queue(acpSessionId).Reader;
     }
 
+    // Metadata consumers run before the normal update pump for this scope. Keep all replay/text/tool updates in order.
+    internal ConfigObservation Metadata(string nativeId, JsonElement responseOptions, string? responseCommands)
+    {
+        lock (_gate)
+        {
+            Flush();
+            var retained = new List<SessionNotification>();
+            var options = responseOptions;
+            var commands = responseCommands;
+            var queue = Queue(nativeId);
+            while (queue.Reader.TryRead(out var update))
+            {
+                if (update.Kind == "available_commands_update" && update.Update.TryGetProperty("availableCommands", out var available))
+                {
+                    if (responseCommands is null) commands = available.GetRawText();
+                }
+                else if (update.Kind == "config_option_update" && update.Update.TryGetProperty("configOptions", out var changed))
+                {
+                    // A complete ACP2 response follows the preceding notifications and is authoritative.
+                    if (responseOptions.ValueKind != JsonValueKind.Array) options = changed.Clone();
+                }
+                else retained.Add(update);
+            }
+            if (_closed) _acpSessions[nativeId] = queue = Channel.CreateUnbounded<SessionNotification>();
+            foreach (var update in retained) queue.Writer.TryWrite(update);
+            if (_closed) queue.Writer.TryComplete();
+            return new ConfigObservation(options, commands);
+        }
+    }
+
     public void Flush()
     {
         lock (_gate)
         {
             while (_all.TryRead(out var update))
             {
-                var target = _parents.GetValueOrDefault(update.SessionId, update.SessionId);
-                if (update.Kind == "subagent_update" && update.Update.TryGetProperty("sessionId", out var child)
-                    && child.GetString() is { Length: > 0 } childId && childId != target)
-                    _parents[childId] = target;
-                if (update.Kind == SessionNotification.ResumedKind)
-                    _closedAcpSessions.Remove(target);
-                else if (_closedAcpSessions.Contains(target))
+                var target = update.SessionId;
+                if (_closedAcpSessions.Contains(target))
                     Console.Error.WriteLine($"session {update.SessionId}: dropped a {update.Kind} that came after it was closed");
                 else
                     Queue(target).Writer.TryWrite(update);
@@ -60,7 +99,7 @@ internal sealed class UpdateRouter
     }
 
     /// <summary>The session is closed: its queue completes, and goes. What arrived before it is read first, so a resume
-    /// answer that came before the close can't open the session again after it.</summary>
+    /// response callback that came before the close can't open the session again after it.</summary>
     public void Forget(string acpSessionId)
     {
         lock (_gate)
@@ -97,6 +136,7 @@ internal sealed class UpdateRouter
             // The adapter is gone; its sessions' queues end below.
         }
 
+        if (_client is not null) _client.SessionResumed -= Resume;
         lock (_gate)
         {
             _closed = true;

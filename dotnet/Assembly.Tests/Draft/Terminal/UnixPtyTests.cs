@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Terminals;
 using Assembly.Application.Features.Terminal;
 using Assembly.Infrastructure.Terminal;
 
@@ -158,6 +159,38 @@ public sealed class UnixPtyTests
         await ReadToEndAsync(pty);
 
         await GoneAsync(child);
+    }
+
+    [Fact]
+    public async Task A_direct_program_uses_only_its_captured_environment_while_ordinary_pty_requests_keep_overlay_behavior()
+    {
+        var key = "ASSEMBLY_P10_LATE_" + Guid.NewGuid().ToString("N");
+        var captured = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
+            .ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value);
+        var prior = Environment.GetEnvironmentVariable(key);
+        const string value = "SYNTHETIC_LATE_VALUE";
+        const string printSelected = "print exists $ENV{$ARGV[0]} ? $ENV{$ARGV[0]} : \"ABSENT\"";
+        Environment.SetEnvironmentVariable(key, value);
+        try
+        {
+            await using var host = new TerminalHost(new UnixPtyStarter(), new RecordingTopics(), TimeProvider.System,
+                (null, "the configured account login shell is unavailable"));
+            IProgramTerminals programs = host;
+            var terminal = await programs.StartProgramAsync(new ProgramStart("/usr/bin/perl", ["-e", printSelected, key],
+                captured, Path.GetTempPath(), "signin:synthetic-environment"), default);
+            using var output = new MemoryStream();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await foreach (var piece in programs.OutputAsync(terminal.Id, timeout.Token)) output.Write(piece.Span);
+            Assert.Equal(0, await programs.ExitedAsync(terminal.Id, timeout.Token));
+            Assert.Equal("ABSENT", Encoding.UTF8.GetString(output.ToArray()));
+
+            // A plain request still overlays its map on the current process environment.
+            await using var ordinary = new UnixPtyStarter().Start(new PtyRequest("/usr/bin/perl", ["-e", printSelected, key],
+                Path.GetTempPath(), captured, 96, 28));
+            Assert.Equal(value, Encoding.UTF8.GetString(await ReadToEndAsync(ordinary)));
+            Assert.Equal(0, await ordinary.Exited.WaitAsync(timeout.Token));
+        }
+        finally { Environment.SetEnvironmentVariable(key, prior); }
     }
 
     private static IPty Start(string script, int cols = 80, int rows = 24, bool interactive = false) =>

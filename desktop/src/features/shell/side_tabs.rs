@@ -1,12 +1,11 @@
-//! The sessions column's tabs, drawn as the old app drew them (Jesse 2026-10-27: "make these more like the ones in the
-//! old app, same with left side"). The sessions column had no tabs in the old app, so its are the old top tab row's text
-//! chips (TopTabRow.svelte), 30 px high, as the kit's tab bar and the chat's title are, so the column tops line up. The
-//! drawer draws no tabs: its pane buttons sit in the title row (drawer_buttons.rs).
-//! A click shows that tab's pane. A tab drags its pane elsewhere and takes one dropped on it, as the kit's do, and a
-//! row too narrow for its tabs scrolls, as the old top tab row did.
+//! The sessions column uses the kit's outline tabs. Selection and pane drag/drop stay owned by the dock.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::side_tab;
 use gpui_kit::component::dock::{DragPanel, TabGroupContext};
-use gpui_kit::component::{ActiveTheme as _, h_flex};
+use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -30,21 +29,21 @@ fn tabs(group: &TabGroupContext, cx: &App) -> Vec<(usize, &'static str, bool)> {
 
 /// One tab's root: a click shows its pane, a drag carries it out (unless the group may not be rearranged, as the kit
 /// asks), and a pane dropped on it joins the group there.
-fn tab(group: &TabGroupContext, ix: usize, name: &'static str, cx: &App) -> Stateful<Div> {
+fn tab(group: &TabGroupContext, ix: usize, name: &'static str, cx: &App) -> Tab {
     let drag = group
         .is_draggable()
         .then(|| group.drag_panel(ix, cx))
         .flatten();
     let drop_target = cx.theme().tokens.drop_target;
     let (select, drop) = (group.clone(), group.clone());
-    div()
-        .id(name)
+    Tab::new()
+        .label(name)
+        .control(side_tab(name), name)
         .debug_selector(move || format!("side-tab-{name}"))
-        .flex_none()
-        .flex()
-        .items_center()
-        .cursor_pointer()
-        .on_click(move |_, window, cx| select.select_tab(ix, window, cx))
+        .on_click(move |_, window, cx| {
+            select.select_tab(ix,window,cx);
+            crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
+        })
         .when_some(drag, |tab, drag| {
             tab.on_drag(drag, move |drag, offset, _, cx| {
                 cx.stop_propagation();
@@ -57,6 +56,7 @@ fn tab(group: &TabGroupContext, ix: usize, name: &'static str, cx: &App) -> Stat
             tab.drag_over::<DragPanel>(move |tab, _, _, _| tab.bg(drop_target))
                 .on_drop(move |drag: &DragPanel, window, cx| {
                     drop.drop_panel(drag.clone(), Some(ix), true, window, cx);
+                    crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
                 })
         })
 }
@@ -76,6 +76,7 @@ fn end(group: &TabGroupContext, cx: &App) -> Stateful<Div> {
                 .on_drop(move |drag: &DragPanel, window, cx| {
                     let ix = (drag.source() == group.node()).then_some(last);
                     group.drop_panel(drag.clone(), ix, false, window, cx);
+                    crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
                 })
         })
 }
@@ -93,40 +94,30 @@ impl Render for Preview {
             .rounded(px(6.))
             .bg(cx.theme().secondary)
             .text_color(cx.theme().foreground)
-            .text_size(px(13.))
+            .text_role(TextRole::Body, cx)
             .child(self.0)
     }
 }
 
-/// The sessions column's text chips: 6 px corners, the shown one on `secondary`, the others dimmer until hovered.
+/// The kit supplies the outline shape, selected state, hover, keyboard navigation and horizontal overflow.
 pub(super) fn chips(group: &TabGroupContext, _: &mut Window, cx: &mut App) -> AnyElement {
     let tabs = tabs(group, cx);
     if tabs.is_empty() {
         return Empty.into_any_element();
     }
-    let theme = cx.theme();
-    let (foreground, secondary, accent) = (theme.foreground, theme.secondary, theme.accent);
-    h_flex()
-        .id("side-tabs")
+    let selected = tabs.iter().position(|(_, _, shown)| *shown).unwrap_or(0);
+    TabBar::new("side-tabs")
+        .outline()
+        .small()
         .h(BAR_HEIGHT)
-        .min_w_0()
-        .overflow_x_scroll()
         .px_2()
-        .gap_1()
-        .children(tabs.into_iter().map(|(ix, name, shown)| {
-            tab(group, ix, name, cx)
-                .h(BAR_HEIGHT)
-                .px_3()
-                .rounded(px(6.))
-                .text_size(px(13.))
-                .child(name)
-                .map(|chip| match shown {
-                    true => chip.bg(secondary).text_color(foreground),
-                    false => chip
-                        .text_color(foreground.opacity(0.7))
-                        .hover(|chip| chip.bg(accent).text_color(foreground)),
-                })
-        }))
-        .child(end(group, cx))
+        .selected_index(selected)
+        .children(
+            tabs.into_iter()
+                .map(|(ix, name, _)| tab(group, ix, name, cx)),
+        )
+        // The kit mounts its trailing space only when a suffix or overflow menu is present.
+        .suffix(Empty)
+        .last_empty_space(end(group, cx))
         .into_any_element()
 }

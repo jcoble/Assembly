@@ -18,6 +18,10 @@ using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Workflows.Contracts;
 using Assembly.Infrastructure.Mcp;
 using Assembly.Tests.Draft.Base.Chat;
+using Assembly.Engine.Mcp;
+using Assembly.Engine.Mcp.Tools;
+using Assembly.Engine.Sessions;
+using Assembly.Infrastructure.Engine;
 
 namespace Assembly.Tests.Draft.Board;
 
@@ -28,7 +32,7 @@ public sealed class BoardToolsTests
     public async Task ReportStoresOrderedStepsAndAttempts()
     {
         await using var host = new BoardSocketTests.Host();
-        var session = host.Sessions.Create("codex", "project");
+        var session = host.Sessions.CreateReady("codex", "project");
         var steps = BoardQueryTests.Fixture.Steps();
         var report = host.F.Report() with { Steps = steps };
         var input = JsonSerializer.SerializeToElement(report, WorkflowJson.Default.BoardUpdateArgs);
@@ -62,23 +66,27 @@ public sealed class BoardToolsTests
     public async Task RapidAnswersEachStartTheirOwnTurn()
     {
         await using var host = new BoardSocketTests.Host();
-        var session = host.Sessions.Create("codex", "project");
+        var session = host.Sessions.CreateReady("codex", "project");
         var args = Enumerable.Range(1, 3).Select(i => host.F.Answer("q" + i)).ToArray();
         foreach (var answer in args)
             host.Tools.Update(session.SessionId, host.F.Report(question: host.F.Ask(answer.QuestionKey)));
-        await host.Tools.AnswerAsync(args[0], CancellationToken.None);
+        var firstDelivery = host.Tools.AnswerAsync(args[0], CancellationToken.None);
         var agent = await host.Launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
+        Assert.False(firstDelivery.IsCompleted);
+        await agent.InsertAsync(prompt, "prompt-" + prompt.GetProperty("id").GetRawText());
+        await firstDelivery;
         var later = args.Skip(1).Select(a => host.Tools.AnswerAsync(a, CancellationToken.None)).ToArray();
         for (var i = 0; i < 3; i++)
         {
-            await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+            await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
             // Each turn closes before another opens; any steering request fails here.
             await agent.CloseAsync();
             if (i == 2) break;
             await agent.OpenAsync();
             prompt = await agent.ReadAsync("session/prompt");
+            await agent.InsertAsync(prompt, "prompt-" + prompt.GetProperty("id").GetRawText());
         }
         await Task.WhenAll(later).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.All(host.F.Detail().Questions, q => Assert.Equal("delivered", q.DeliveryState));
@@ -110,12 +118,18 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("codex", "project");
+        var session = sessions.CreateReady("codex", "project");
         await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask(kind: kind)));
         tools.Update(session.SessionId, f.Report(question: f.Ask("q2")));
         var args = f.Answer(value: new(answerKind, text));
-        await tools.AnswerAsync(args, CancellationToken.None);
+        var delivering = tools.AnswerAsync(args, CancellationToken.None);
+        var agent = await host.Launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        Assert.False(delivering.IsCompleted);
+        await agent.InsertAsync(prompt, "prompt-" + prompt.GetProperty("id").GetRawText());
+        await delivering;
         Assert.Equal(1, Assert.Single(f.Page().Items).QuestionCount);
         var message = Assert.Single(host.Rows.RowsAfter(session.SessionId, 0), row => row.Kind == "user").Payload.GetProperty("text").GetString();
         var identity = $"""question "q1" (task "task", generation 1, answer key "{args.AnswerKey}")""";
@@ -126,6 +140,8 @@ public sealed class BoardToolsTests
             _ => $"Answer to {identity}: {text}"
         }, message);
         Assert.Equal("delivered", f.Detail().Questions.Single(q => q.QuestionKey == "q1").DeliveryState);
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
+        await agent.CloseAsync();
     }
 
     [Fact]
@@ -148,11 +164,17 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("claude", "project");
+        var session = sessions.CreateReady("claude", "project");
         await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask()));
         var args = f.Answer();
-        var accepted = await tools.AnswerAsync(args, CancellationToken.None);
+        var delivering = tools.AnswerAsync(args, CancellationToken.None);
+        var agent = await host.Launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        Assert.False(delivering.IsCompleted);
+        await agent.InsertAsync(prompt, "prompt-" + prompt.GetProperty("id").GetRawText());
+        var accepted = await delivering;
         Assert.Equal(Assert.Single(f.Detail().Questions).DeliveryClientId,
             Assert.Single(host.Rows.RowsAfter(session.SessionId, 0), row => row.Kind == "user").Payload.GetProperty("clientId").GetString());
         Assert.Equal(accepted, await tools.AnswerAsync(args, CancellationToken.None));
@@ -160,6 +182,8 @@ public sealed class BoardToolsTests
         await Assert.ThrowsAsync<CallFailed>(() => tools.AnswerAsync(f.Answer(), CancellationToken.None));
         await Assert.ThrowsAsync<CallFailed>(() => tools.AnswerAsync(args with { Answer = new("text", "Different") }, CancellationToken.None));
         Assert.Equal("board-answer/" + args.AnswerKey, Assert.Single(f.Detail().Questions).DeliveryClientId);
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
+        await agent.CloseAsync();
     }
 
     [Fact]
@@ -168,7 +192,7 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("codex", "project");
+        var session = sessions.CreateReady("codex", "project");
         host.Registry.For(session.SessionId).Send("held");
         using var hostStop = new CancellationTokenSource();
         using var caller = new CancellationTokenSource();
@@ -206,7 +230,7 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("claude", "project");
+        var session = sessions.CreateReady("claude", "project");
         await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask()));
         var a = f.Answer();
@@ -239,7 +263,7 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("codex", "project");
+        var session = sessions.CreateReady("codex", "project");
         f.Transitions.Update(session.SessionId, "project", f.Report(question: f.Ask()));
         var args = f.Answer();
         var acceptance = f.Transitions.Answer(args).Acceptance;
@@ -273,7 +297,7 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("claude", "project");
+        var session = sessions.CreateReady("claude", "project");
         host.Registry.For(session.SessionId).Send("held");
         using var hostStop = new CancellationTokenSource();
         await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, hostStop.Token);
@@ -293,7 +317,7 @@ public sealed class BoardToolsTests
         await using var host = new BoardSocketTests.Host();
         var f = host.F;
         var sessions = host.Sessions;
-        var session = sessions.Create("codex", "project");
+        var session = sessions.CreateReady("codex", "project");
         host.Registry.For(session.SessionId).Send("held");
         await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask()));
@@ -304,34 +328,66 @@ public sealed class BoardToolsTests
         var agent = await host.Launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
+        await agent.OpenAsync();
+        var answerPrompt = await agent.ReadAsync("session/prompt");
+        Assert.False(sending.IsCompleted);
+        await agent.InsertAsync(answerPrompt, "prompt-" + answerPrompt.GetProperty("id").GetRawText());
         await sending;
         tools.Update(session.SessionId, f.Report(question: f.Ask(generation: 1)));
         var revision = f.Detail().Task.Revision;
         f.Transitions.Settle(args, "delivered", "late");
         Assert.Equal(revision, f.Detail().Task.Revision);
         Assert.Equal("none", Assert.Single(f.Detail().Questions).DeliveryState);
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
+        await agent.CloseAsync();
     }
 
     [Fact]
     public async Task TokenOwnsTaskAndHelperCannotReport()
     {
         using var f = new BoardQueryTests.Fixture();
-        var sessions = SessionStore.Open(f.Db, f.Time, "unused");
+        var checkouts = f.Folder;
+        var sessions = SessionStore.Open(f.Db, f.Time, checkouts);
         var launcher = new FakeLauncher();
         using var hub = new LiveHub(RowStore.Open(f.Db));
         await using var work = new BackgroundWork(f.Time, TextWriter.Null);
-        await using var registry = new SessionRegistry(hub, sessions, launcher, f.Time, TextWriter.Null, work);
+        var tokens = new McpTokens();
+        var endpoint = new McpEndpointReady(tokens);
+        var limits = new SessionLimits(() => 1, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, limits,
+            cutover: new(f.Db, sessions, launcher, checkouts, f.Time), effectsReady: endpoint.Ready);
+        await using var registry = new SessionRegistry(hub, sessions, launcher, f.Time, TextWriter.Null, work,
+            feed: new EngineFeed(runtime, TextWriter.Null, f.Time), mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens));
         var machines = new MachineSet(new FakeMachine(null, sessions));
-        registry.Helpers.Delivery.Machines = machines;
         await using var tools = new BoardTools(sessions, registry, f.Transitions, f.Queries, CancellationToken.None);
+        var gate = new McpGate(runtime, limits, f.Time);
+        var sdk = new McpServerHost(tokens, new(runtime, gate, f.Time),
+            [new BoardUpdateTool(gate, tools), new StartSessionTool(gate, () => launcher.Agents.Select(a => a.Id).ToArray(), Directory.Exists),
+                new ListSessionsTool(gate)]);
         await using var app = ApiServer.Build(new ApiServices(hub, sessions, machines, new AttachmentStore("unused"),
-            "host-token", registry.Helpers, f.Db.Writer, f.Topics, [new WorkflowCalls(f.Queries, tools.AnswerAsync)], tools), 0, out _);
+            "host-token", sdk, f.Db.Writer, f.Topics, [new WorkflowCalls(f.Queries, tools.AnswerAsync)], tools, Engine: runtime), 0, out _);
+        app.Lifetime.ApplicationStopping.Register(endpoint.Stop);
         await app.StartAsync();
         var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
-        registry.Helpers.Tokens.Url = new Uri(address, "/mcp").ToString();
-        var parent = sessions.Create("codex", "project");
+        endpoint.Listening(address);
+        var parent = sessions.CreateReady("codex", "project");
+        async Task Start(string sessionId)
+        {
+            var effectId = f.Db.QueryFirst("SELECT id FROM engine_outbox WHERE kind='start' AND session_id=$session",
+                r => r.Text(0), default, new Assembly.Application.Common.Database.SqlArg("$session", sessionId))!;
+            var context = new Assembly.Engine.Contracts.CommandContext(Guid.NewGuid(), runtime.Machine,
+                new(Assembly.Engine.Contracts.ActorKind.System, "worker"), effectId, 0, 0, 1000);
+            Assert.True(runtime.Submit(context, new Assembly.Engine.Effects.ClaimEffect()).Applied);
+            var payload = f.Db.QueryFirst("SELECT payload_json FROM engine_outbox WHERE id=$id", r => r.Text(0), default,
+                new Assembly.Application.Common.Database.SqlArg("$id", effectId))!;
+            var effect = new Assembly.Engine.Effects.Effect(effectId, "start", sessionId, null, JsonDocument.Parse(payload).RootElement, 1);
+            var receipt = await new AdapterEffects(f.Db, registry, sessions, RowStore.Open(f.Db)).ExecuteAsync(effect, default);
+            Assert.True(runtime.Submit(context with { CommandId = Guid.NewGuid(), ExpectedVersion = 1 },
+                new Assembly.Engine.Effects.CompleteEffect(receipt)).Applied);
+        }
+        await Start(parent.SessionId);
         registry.For(parent.SessionId).Send("start");
         var agent = await launcher.NextAsync();
         var opening = await agent.StartAsync();
@@ -343,10 +399,15 @@ public sealed class BoardToolsTests
             using var client = new HttpClient { BaseAddress = address };
             using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+            request.Headers.Accept.ParseAdd("application/json, text/event-stream");
             request.Content = new StringContent($$"""{"jsonrpc":"2.0","id":1,"method":"{{method}}","params":{{parameters}}}""", Encoding.UTF8, "application/json");
             using var response = await client.SendAsync(request);
             response.EnsureSuccessStatusCode();
-            return JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("result").Clone();
+            var body = await response.Content.ReadAsStringAsync();
+            if (response.Content.Headers.ContentType?.MediaType == "text/event-stream")
+                body = body.Split('\n').Single(line => line.StartsWith("data: ", StringComparison.Ordinal))[6..];
+            using var result = JsonDocument.Parse(body);
+            return result.RootElement.GetProperty("result").Clone();
         }
         Assert.Contains("bad_args", (await Request("tools/call", """{"name":"board_update"}""", token)).GetRawText());
         var args = JsonSerializer.Serialize(f.Report(), WorkflowJson.Default.BoardUpdateArgs);
@@ -358,13 +419,15 @@ public sealed class BoardToolsTests
             Assert.True((await Request("tools/call", """{"name":"board_update","arguments":""" + forged + "}", token))
                 .GetProperty("isError").GetBoolean());
         }
-        var foreign = sessions.Create("claude", "project");
+        var foreign = sessions.CreateReady("claude", "project");
         Assert.Throws<CallFailed>(() => tools.Update(foreign.SessionId, f.Report()));
         tools.Update(foreign.SessionId, f.Report("foreign"));
         var foreignArgs = JsonSerializer.Serialize(f.Report("foreign"), WorkflowJson.Default.BoardUpdateArgs);
         Assert.Contains("not_owner", (await Request("tools/call",
             """{"name":"board_update","arguments":""" + foreignArgs + "}", token)).GetRawText());
         var helper = sessions.Helper(parent, "claude", "Helper");
+        Directory.CreateDirectory(sessions.Root(helper)!);
+        await Start(helper.SessionId);
         registry.For(helper.SessionId).Send("helper");
         var helperAgent = await launcher.NextAsync();
         var helperOpen = await helperAgent.StartAsync(acpSessionId: "helper");
@@ -376,8 +439,8 @@ public sealed class BoardToolsTests
         Assert.Contains(list.GetProperty("tools").EnumerateArray(), x => x.GetProperty("name").GetString() == "start_session");
         var helperList = await Request("tools/call", """{"name":"list_sessions","arguments":{}}""", helperToken);
         Assert.False(helperList.GetProperty("isError").GetBoolean());
-        await helperAgent.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await helperAgent.FinishAsync(helperPrompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await app.StopAsync();
     }
 }

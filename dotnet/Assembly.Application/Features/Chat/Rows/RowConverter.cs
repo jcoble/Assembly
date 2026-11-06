@@ -1,7 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Assembly.Domain.Events;
-using Assembly.Application.Features.Chat.Helpers;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Application.Features.Chat.Rows.Context;
 using Assembly.Application.Features.Chat.Rows.Markdown;
 using Assembly.Domain.Markdown;
 using Assembly.Domain.Rows;
@@ -19,8 +20,9 @@ public sealed class RowConverter
     public const long CoalesceMs = 100;
 
     private readonly OrderedDictionary<string, OpenTool> _tools = new();
-    // This turn's finished tool calls, so an update that arrives after the end adds nothing.
-    private readonly HashSet<string> _finishedTools = [];
+    // Completed calls still accept explicit late patches under their original run.
+    private readonly Dictionary<string, OpenTool> _finishedTools = [];
+    private readonly HashSet<string> _retainedTools = [];
     // Tools a turn's end marked failed while they were still running, by id.
     private readonly Dictionary<string, OpenTool> _endedTools = [];
     // How many times each agent message id has been opened, so text or thinking that resumes after a tool is its own item.
@@ -31,23 +33,38 @@ public sealed class RowConverter
     private StreamingText? _message;
     private string? _messageAgentId;
     private StreamingText? _thinking;
+    private string? _thinkingAgentId;
+    private readonly Dictionary<string, List<(string Item, string? Run)>> _messageItems = [];
+    private readonly Dictionary<string, string> _replacedText = [];
+    private readonly Dictionary<string, List<(string Item, string? Run)>> _thoughtItems = [];
+    private readonly Dictionary<string, string> _replacedThought = [];
     private decimal? _sessionCost;
+    // The checkout or worktree the agent's last open ran in, for tool paths that name no folder.
+    private string? _folder;
     private int _unnamedItems;
     // The run each background task started in, so its later rows stay with it after that run ends.
     private readonly Dictionary<string, string?> _taskRuns = new();
     // The run each subagent's row went into first.
     private readonly Dictionary<string, string?> _subagentRuns = new();
     // The last context pair written, and in which run: an unchanged report adds no row.
-    private (string? RunId, long Used, long Size)? _context;
+    private (string? RunId, long Used, long Size, long? InputTokens, long? OutputTokens)? _context;
 
     /// <summary>The session's total cost as the agent last reported it, or null before any report.</summary>
     public decimal? SessionCost => _sessionCost;
 
     /// <summary>Whether this session made the tool call, still running or finished this turn.</summary>
-    public bool KnowsTool(string toolCallId) => _tools.ContainsKey(toolCallId) || _finishedTools.Contains(toolCallId);
+    public bool KnowsTool(string toolCallId) => _tools.ContainsKey(toolCallId) || _finishedTools.ContainsKey(toolCallId);
 
     /// <summary>Whether a tool call is still running.</summary>
     public bool HasOpenTools => _tools.Count > 0;
+
+    internal IReadOnlyList<StoredRow> CommitStarted(TurnStarted started,
+        Func<RowBatch, IReadOnlyList<StoredRow>> commit, Func<bool> committed)
+    {
+        var prior = _turn;
+        try { return commit(Apply(started)); }
+        catch { if (!committed()) _turn = prior; throw; }
+    }
 
     public RowBatch Apply(AgentEvent agentEvent)
     {
@@ -63,6 +80,20 @@ public sealed class RowConverter
                 Add(batch, null, RowKind.Turn, new TurnPayload("started", started.Reason), RowJsonContext.Rows.TurnPayload, started.At);
                 break;
             case TaskChanged task:
+                if (task.ToolCallId is { } retained)
+                {
+                    if (task.Running) _retainedTools.Add(retained);
+                    else
+                    {
+                        _retainedTools.Remove(retained);
+                        // Session loss/close stops retained work without claiming a provider completion.
+                        if (task.State == "stopped" && _tools.Remove(retained, out var abandoned))
+                        {
+                            WriteTool(batch, abandoned, task.At, failed: true);
+                            _endedTools[retained] = abandoned;
+                        }
+                    }
+                }
                 var runId = _taskRuns.TryGetValue(task.TaskId, out var startedIn) ? startedIn : _taskRuns[task.TaskId] = _turn?.RunId ?? _lastRunId;
                 var payload = new TaskPayload(task.Name, task.State, task.CanStop, task.ToolCallId);
                 batch.Rows.Add(new NewRow(runId, $"task:{task.TaskId}", RowKind.Task,
@@ -86,8 +117,11 @@ public sealed class RowConverter
                     CloseThinking(batch, steered.At);
                     CloseMessage(batch, steered.At);
                 }
+                var steeredPaths = PromptPaths.Of(steered.Text);
                 batch.Rows.Add(new NewRow(steered.RunId, null, RowKind.User, JsonSerializer.SerializeToElement(
-                    new UserPayload(steered.Text, MessageFrame.SenderOf(steered.Text), steered.ClientId), RowJsonContext.Rows.UserPayload), steered.At));
+                    new UserPayload(steered.Text, steered.FromSessionId, steered.ClientId, SenderLabel: steered.SenderLabel,
+                        ItemId: steered.UserItemId, AttachmentIds: steered.AttachmentIds, FromMachine: steered.FromMachine,
+                        Named: NullIfEmpty(steeredPaths.Named), Attached: NullIfEmpty(steeredPaths.Attached)), RowJsonContext.Rows.UserPayload), steered.At));
                 break;
             case TextChunk chunk:
                 AddText(batch, chunk);
@@ -97,6 +131,9 @@ public sealed class RowConverter
                 break;
             case ToolCallChanged change:
                 ChangeTool(batch, change);
+                break;
+            case TerminalChanged terminal:
+                batch.Terminals.Add(terminal);
                 break;
             case PlanChanged plan:
                 var items = plan.Entries.Select(entry => new PlanItem(entry.Text, entry.Status)).ToList();
@@ -114,6 +151,7 @@ public sealed class RowConverter
                 // The session's agent sums its cost itself. A new session starts from zero; a resumed one goes on
                 // from the total saved at its last clean close, or from a total the rows never saw.
                 _sessionCost = started.Resumed ? started.SavedCost : null;
+                _folder = started.Folder ?? _folder;
                 _turn?.AgentStarted(started.Resumed, started.SavedCost);
                 if (_turn is not null)
                     _turn.Model = started.Model;
@@ -144,13 +182,37 @@ public sealed class RowConverter
     private void StartTurn(RowBatch batch, TurnStarted started)
     {
         _turn = new OpenTurn(started.RunId, started.At, _sessionCost);
-        Add(batch, null, RowKind.User, new UserPayload(started.Text, MessageFrame.SenderOf(started.Text), started.ClientId), RowJsonContext.Rows.UserPayload, started.At);
+        var paths = PromptPaths.Of(started.Text);
+        Add(batch, null, RowKind.User, new UserPayload(started.Text, started.FromSessionId, started.ClientId, SenderLabel: started.SenderLabel,
+            ItemId: started.UserItemId, AttachmentIds: started.AttachmentIds, FromMachine: started.FromMachine,
+            Named: NullIfEmpty(paths.Named), Attached: NullIfEmpty(paths.Attached)), RowJsonContext.Rows.UserPayload, started.At);
         Add(batch, null, RowKind.Turn, new TurnPayload("started"), RowJsonContext.Rows.TurnPayload, started.At);
     }
+
+    private static IReadOnlyList<T>? NullIfEmpty<T>(IReadOnlyList<T> list) => list.Count == 0 ? null : list;
 
     private void AddText(RowBatch batch, TextChunk chunk)
     {
         CloseThinking(batch, chunk.At);
+        if (_turn is not null) _turn.FirstTextAt ??= chunk.At;
+        if (chunk.MessageId is { } native && (chunk.Replace || _replacedText.ContainsKey(native)))
+        {
+            var text = chunk.Replace ? chunk.Text : _replacedText[native] + chunk.Text;
+            _replacedText[native] = text;
+            if (!_messageItems.TryGetValue(native, out var items))
+                _messageItems[native] = items = [(SegmentId(native, ""), _turn?.RunId ?? _lastRunId)];
+            // Every segment belongs to the native message being replaced. Clear its earlier display copies
+            // in this same batch, so live upserts and current-row reads cannot retain obsolete text.
+            if (chunk.Replace)
+                foreach (var prior in items.SkipLast(1))
+                    batch.Rows.Add(new NewRow(prior.Run, prior.Item, RowKind.Message,
+                        JsonSerializer.SerializeToElement(new MessagePayload(SafeMarkdown.Parse(""), ""), RowJsonContext.Rows.MessagePayload), chunk.At));
+            var item = items[^1];
+            if (_messageAgentId == native) _message = null;
+            batch.Rows.Add(new NewRow(item.Run, item.Item, RowKind.Message,
+                JsonSerializer.SerializeToElement(new MessagePayload(SafeMarkdown.Parse(text), text), RowJsonContext.Rows.MessagePayload), chunk.At));
+            return;
+        }
         if (_message is not null && chunk.MessageId is not null && chunk.MessageId != _messageAgentId)
             CloseMessage(batch, chunk.At);
         if (_message is null)
@@ -158,6 +220,7 @@ public sealed class RowConverter
         if (_turn is not null)
             _turn.FirstTextAt ??= chunk.At;
 
+        if (chunk.MessageId is { } id) RememberSegment(_messageItems, id, _message.ItemId);
         _message.Append(chunk.Text);
         if (_message.IsDue(chunk.At))
             SendDelta(batch, chunk.At);
@@ -166,7 +229,29 @@ public sealed class RowConverter
     private void AddThought(RowBatch batch, ThoughtChunk chunk)
     {
         CloseMessage(batch, chunk.At);
-        _thinking ??= new StreamingText(SegmentId(chunk.MessageId, ":thinking"));
+        if (chunk.MessageId is { } native && (chunk.Replace || _replacedThought.ContainsKey(native)))
+        {
+            var text = chunk.Replace ? chunk.Text : _replacedThought[native] + chunk.Text;
+            _replacedThought[native] = text;
+            if (!_thoughtItems.TryGetValue(native, out var items))
+                _thoughtItems[native] = items = [(SegmentId(native, ":thinking"), _turn?.RunId ?? _lastRunId)];
+            // Every segment belongs to the native message being replaced. Clear its earlier display copies
+            // in this same batch, so live upserts and current-row reads cannot retain obsolete text.
+            if (chunk.Replace)
+                foreach (var prior in items.SkipLast(1))
+                    batch.Rows.Add(new NewRow(prior.Run, prior.Item, RowKind.Thinking,
+                        JsonSerializer.SerializeToElement(new ThinkingPayload("", Done: true), RowJsonContext.Rows.ThinkingPayload), chunk.At));
+            var item = items[^1];
+            if (_thinking?.ItemId == item.Item) _thinking = null;
+            batch.Rows.Add(new NewRow(item.Run, item.Item, RowKind.Thinking,
+                JsonSerializer.SerializeToElement(new ThinkingPayload(text, Done: false), RowJsonContext.Rows.ThinkingPayload), chunk.At));
+            return;
+        }
+        if (_thinking is not null && chunk.MessageId is not null && chunk.MessageId != _thinkingAgentId)
+            CloseThinking(batch, chunk.At);
+        if (_thinking is null)
+            (_thinking, _thinkingAgentId) = (new StreamingText(SegmentId(chunk.MessageId, ":thinking")), chunk.MessageId);
+        if (chunk.MessageId is { } id) RememberSegment(_thoughtItems, id, _thinking.ItemId);
         _thinking.Append(chunk.Text);
         if (_thinking.IsDue(chunk.At))
             SendThinking(batch, chunk.At);
@@ -174,23 +259,25 @@ public sealed class RowConverter
 
     private void ChangeTool(RowBatch batch, ToolCallChanged change)
     {
-        if (_finishedTools.Contains(change.ToolCallId))
-            return;
+        if (_finishedTools.Remove(change.ToolCallId, out var finished))
+            _tools[change.ToolCallId] = finished;
         // A tool the turn's end failed may still finish (a backgrounded command); any other word on it after the end
         // (Codex's bare update for a command stopped as the turn ended) leaves it as it ended.
         if (_endedTools.TryGetValue(change.ToolCallId, out var ended))
         {
-            if (change.Fields.Status is not ("completed" or "failed"))
+            var newProvider = change.Fields.AcpSessionId is { } current && ended.AcpSessionId is { } previous && current != previous;
+            if (!newProvider && change.Fields.Status is not ("completed" or "failed" or "cancelled"))
                 return;
             _endedTools.Remove(change.ToolCallId);
-            _tools[change.ToolCallId] = ended;
+            if (!newProvider) _tools[change.ToolCallId] = ended;
         }
-        if (change.Started || !_tools.ContainsKey(change.ToolCallId))
+        if (!_tools.TryGetValue(change.ToolCallId, out var known)
+            || change.Fields.AcpSessionId is { } provider && known.AcpSessionId is { } prior && provider != prior)
         {
             // What the agent said before it reached for a tool is a finished message.
             CloseMessage(batch, change.At);
             CloseThinking(batch, change.At);
-            _tools[change.ToolCallId] = new OpenTool(change.ToolCallId);
+            _tools[change.ToolCallId] = new OpenTool(change.ToolCallId, _turn?.RunId ?? _lastRunId, _folder);
             if (_turn is not null)
                 _turn.ToolCalls++;
         }
@@ -200,8 +287,9 @@ public sealed class RowConverter
         WriteTool(batch, tool, change.At, failed: false);
         if (tool.IsDone)
         {
+            tool.ReleaseCompletedSnapshot();
             _tools.Remove(tool.ItemId);
-            _finishedTools.Add(tool.ItemId);
+            _finishedTools[tool.ItemId] = tool;
         }
     }
 
@@ -210,14 +298,21 @@ public sealed class RowConverter
         // A run's end closes what it left open: the message keeps its text, thinking is done, and a tool still running failed.
         CloseThinking(batch, at);
         CloseMessage(batch, at);
-        foreach (var tool in _tools.Values)
+        foreach (var tool in _tools.Values.ToArray())
         {
+            if (_retainedTools.Contains(tool.ItemId)) continue;
             WriteTool(batch, tool, at, failed: true);
             _endedTools[tool.ItemId] = tool;
+            _tools.Remove(tool.ItemId);
         }
-        _tools.Clear();
-        _finishedTools.Clear();
         _segments.Clear();
+        foreach (var (id, text) in _replacedThought)
+        {
+            var item = _thoughtItems[id][^1];
+            if (item.Run == _turn?.RunId)
+                batch.Rows.Add(new NewRow(item.Run, item.Item, RowKind.Thinking,
+                    JsonSerializer.SerializeToElement(new ThinkingPayload(text, Done: true), RowJsonContext.Rows.ThinkingPayload), at));
+        }
 
         if (error is not null)
             Add(batch, null, RowKind.Error, error, RowJsonContext.Rows.ErrorPayload, at);
@@ -253,8 +348,9 @@ public sealed class RowConverter
     {
         if (_message is null)
             return;
-        var blocks = SafeMarkdown.Parse(_message.Text);
-        Add(batch, _message.ItemId, RowKind.Message, new MessagePayload(blocks), RowJsonContext.Rows.MessagePayload, at);
+        var text = _message.Text;
+        var blocks = SafeMarkdown.Parse(text);
+        Add(batch, _message.ItemId, RowKind.Message, new MessagePayload(blocks, text), RowJsonContext.Rows.MessagePayload, at);
         _message = null;
     }
 
@@ -264,13 +360,15 @@ public sealed class RowConverter
             return;
         Add(batch, _thinking.ItemId, RowKind.Thinking, new ThinkingPayload(_thinking.Text, Done: true), RowJsonContext.Rows.ThinkingPayload, at);
         _thinking = null;
+        _thinkingAgentId = null;
     }
 
     private void WriteTool(RowBatch batch, OpenTool tool, long at, bool failed)
     {
         var (line, detail) = tool.TakeChanges(failed);
         if (line is not null)
-            Add(batch, tool.ItemId, RowKind.Tool, line, RowJsonContext.Rows.ToolPayload, at);
+            batch.Rows.Add(new NewRow(tool.RunId, tool.ItemId, RowKind.Tool,
+                JsonSerializer.SerializeToElement(line, RowJsonContext.Rows.ToolPayload), at));
         if (detail is not null)
             batch.Details.Add(detail);
     }
@@ -285,16 +383,23 @@ public sealed class RowConverter
         return segment == 1 ? key : $"{key}:{segment}";
     }
 
+    private void RememberSegment(Dictionary<string, List<(string Item, string? Run)>> map, string native, string item)
+    {
+        if (!map.TryGetValue(native, out var items)) map[native] = items = [];
+        var segment = (item, _turn?.RunId ?? _lastRunId);
+        if (items.Count == 0 || items[^1] != segment) items.Add(segment);
+    }
+
     private string NextUnnamed() => $"{_turn?.RunId}:{++_unnamedItems}";
 
     // One context item per run, so the newest page holds the latest one.
     private void AddContext(RowBatch batch, UsageReported usage)
     {
         if (usage is not { Used: { } used, Size: { } size } || size <= 0 || (_turn?.RunId ?? _lastRunId) is not { } runId
-            || _context == (runId, used, size))
+            || _context == (runId, used, size, usage.InputTokens, usage.OutputTokens))
             return;
-        _context = (runId, used, size);
-        Add(batch, $"context:{runId}", RowKind.Context, new ContextPayload(used, size), RowJsonContext.Rows.ContextPayload, usage.At);
+        _context = (runId, used, size, usage.InputTokens, usage.OutputTokens);
+        Add(batch, $"context:{runId}", RowKind.Context, new ContextPayload(used, size, usage.InputTokens, usage.OutputTokens), RowJsonContext.Rows.ContextPayload, usage.At);
     }
 
     private void Add<T>(RowBatch batch, string? itemId, string kind, T payload, JsonTypeInfo<T> type, long at) =>

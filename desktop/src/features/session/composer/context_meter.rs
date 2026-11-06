@@ -1,4 +1,4 @@
-//! `ContextMeter` is how full the agent's context window is, for the composer's ring and its hint ("51,285 of
+//! `ContextMeter` is how full the agent's context window is, for the composer's gauge and its hint ("51,285 of
 //! 1,000,000 (5%)"), from the newest `context` row. Not the window's performance meter (lane g0-host). Replaces
 //! contextMeter.ts.
 
@@ -7,11 +7,15 @@ pub struct ContextMeter {
     /// Shares of the window, rounded: what's left and what's spent.
     pub left: u8,
     pub used: u8,
-    /// What the ring paints: what's left, but never more than 90 once anything is spent.
+    /// What's left as the gauge reads it: never more than 90 once anything is spent, so its slice always shows.
     pub arc: u8,
     pub warm: bool,
     pub hot: bool,
-    pub detail: String,
+    /// The gauge's hover: "51,285 of 1,000,000 (5%)".
+    pub headline: String,
+    /// The hover's In and Out rows, exact, or `None` when the agent didn't report one.
+    pub input: Option<String>,
+    pub output: Option<String>,
 }
 
 impl ContextMeter {
@@ -32,13 +36,22 @@ impl ContextMeter {
             },
             warm: left <= 25,
             hot: left <= 10,
-            detail: format!(
-                "{left}% context left · {} of {} ({}%)",
+            headline: format!(
+                "{} of {} ({}%)",
                 thousands(used),
                 thousands(size),
                 100 - left
             ),
+            input: None,
+            output: None,
         })
+    }
+
+    /// Adds the counts the agent reported; one it didn't stays absent rather than reading as zero.
+    pub fn with_tokens(mut self, input: Option<i64>, output: Option<i64>) -> ContextMeter {
+        self.input = input.filter(|count| *count >= 0).map(thousands);
+        self.output = output.filter(|count| *count >= 0).map(thousands);
+        self
     }
 }
 
@@ -46,7 +59,7 @@ impl ContextMeter {
 const MIN_SPENT_ARC: f64 = 10.0;
 
 /// 1,000,000.
-fn thousands(n: i64) -> String {
+pub(crate) fn thousands(n: i64) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, digit) in digits.chars().enumerate() {

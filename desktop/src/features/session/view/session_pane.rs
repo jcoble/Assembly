@@ -13,20 +13,19 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
-
-use super::ask_row::AskForm;
 use super::grow::{grow, turn};
 use super::header::Header;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
 use crate::core::state::machines::GlobalMachines;
 use crate::core::theme::grow::{GROW, faded};
+use crate::core::ui::ask::ask_questionnaire::AskQuestionnaire;
 use crate::core::ui::expand_row::ExpandRow;
-use crate::features::session::client::session_client::{
-    CallError, RowUpdate, RowsSink, SessionClient,
-};
+#[cfg(test)]
+use crate::features::session::client::session_client::RowsSink;
+use crate::features::session::client::session_client::{RowUpdate, SessionClient};
 use crate::features::session::composer::composer_view::{Composer, ComposerEvent};
+use crate::features::session::composer::shape::pending_answer;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::entries::{Entry, entry_key};
 use crate::features::session::model::fold::Fold;
@@ -37,15 +36,32 @@ use crate::features::session::model::reveal::Reveal;
 use crate::features::session::model::session_view::{SessionView, key_of};
 use crate::features::session::model::turn_line::latest_branch;
 use crate::features::session::rows::row::Row;
-use crate::features::session::rows::row_page::RowPage;
 use crate::features::session::rows::tool::ToolState;
 
 pub struct SessionPane {
     client: Rc<dyn SessionClient>,
+    open_serial: u64,
+    pending_open: Option<opening::PendingOpen>,
+    active_open_serial: Option<u64>,
+    /// The machine behind this session stopped answering; it opens again when the machine does.
+    source_lost: bool,
+    source_reopens: u8,
+    unheard: Option<SharedString>,
+    active_reopen: Option<(
+        crate::core::intents::session_open::SessionOpenRequest,
+        AnyWindowHandle,
+    )>,
+    reopen_queued: Option<u64>,
+    read_only: bool,
+    active_provider: Option<String>,
+    _source_connections: Vec<Subscription>,
+    active_source_cut: Option<opening::ConnectionCut>,
     focus: FocusHandle,
+    draft: Option<AnyView>,
     session: Option<String>,
+    row_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     view: SessionView,
-    /// The run sent from here, or the page's active run on open, until its turn row arrives.
+    /// The real run from a pushed user row, or the page's active run on open, until its turn row arrives.
     known_run: Option<String>,
     /// Each finished run's fold, by run id, as of the last refresh.
     folds: HashMap<String, Fold>,
@@ -55,8 +71,8 @@ pub struct SessionPane {
     plan_open: bool,
     /// When each row that arrived live since the session opened came in, by item key, so it fades in once.
     fresh: HashMap<String, Instant>,
-    /// Each open question's form, by ask id, made when its card is first drawn.
-    forms: HashMap<String, AskForm>,
+    /// The form of the question above the composer, by ask id, so what's typed outlives each draw.
+    forms: HashMap<String, Entity<AskQuestionnaire>>,
     /// What each item keeps while off screen, by item key.
     kept: HashMap<String, Kept>,
     /// What each row's buttons call: this pane's `on_action`.
@@ -70,6 +86,7 @@ pub struct SessionPane {
     revealed_at: Instant,
     /// A frame is asked for the reveal's next step.
     frame_asked: bool,
+    _reveal_tick: Option<Task<()>>,
     /// The backend clock's last second while a turn runs, which the "Working for" line counts by.
     now: Option<i64>,
     /// The run going now and when it started: its turn row's time, or when the pane first saw it, as the web does,
@@ -108,141 +125,22 @@ pub struct SessionPane {
     _writes: HashMap<String, Task<()>>,
     /// The newest seq told to the backend as read, for the open session.
     read_to: i64,
-    /// The selected session, followed once the pane is registered.
+    /// The selected session, followed from construction so this pane publishes its live facts when its session is
+    /// picked and clears them when another is (context/pane_live.rs).
     _selected: Option<Subscription>,
     /// Hears the machines list start, then follows it, for the open session's machine (pane_machine.rs).
     _machines_started: Subscription,
     _machines: Option<Subscription>,
-    /// The composer's events and the timeline's scrolling.
-    _heard: [Subscription; 3],
+    /// The composer's events and changes, the timeline's scrolling, the header and the pane's own release.
+    _heard: [Subscription; 5],
 }
 
 impl SessionPane {
-    pub fn new(client: Rc<dyn SessionClient>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let pane = cx.weak_entity();
-        let on_action: OnAction = {
-            let pane = pane.clone();
-            Rc::new(move |action, window, cx| {
-                pane.update(cx, |pane, cx| pane.on_action(action, window, cx))
-                    .ok();
-            })
-        };
-        let render_row: RenderRow = Rc::new(move |entry, last, window, cx| {
-            let Some(pane) = pane.upgrade() else {
-                return div().into_any_element();
-            };
-            let (row, fresh, fold, space) = pane.update(cx, |pane, cx| {
-                pane.make_form(entry, window, cx);
-                (
-                    pane.row(entry, cx),
-                    pane.fresh_key(entry),
-                    pane.open_fold_of(entry),
-                    pane.space_under(entry),
-                )
-            });
-            let row = match fresh {
-                Some(key) => fade_in(key, row, window, cx),
-                None => row,
-            };
-            // The space under a row by what it is (pane_rows.rs), inside the row so it grows with it.
-            let row = div()
-                .when(!last, |row| row.pb(space))
-                .child(row)
-                .into_any_element();
-            // A fold's work grows in place as the fold opens and shuts.
-            match fold {
-                Some((key, open, toggled_at)) => {
-                    let grown = turn(open, toggled_at, window, cx);
-                    let faded = faded(grown.0);
-                    grow(
-                        format!("{key}:fold-grow").into(),
-                        grown,
-                        open,
-                        faded,
-                        row,
-                        window,
-                        cx,
-                    )
-                }
-                None => row,
-            }
-        });
-        let timeline = cx.new(|cx| Timeline::new(render_row, cx));
-        let composer = cx.new(|cx| Composer::new(client.clone(), window, cx));
-        let header = cx.new(|_| Header::default());
-        let heard = [
-            cx.subscribe(&composer, |pane, _, event, cx| match event {
-                ComposerEvent::Sending => pane
-                    .timeline
-                    .update(cx, |timeline, cx| timeline.follow(FollowEvent::Send, cx)),
-                ComposerEvent::Sent { session, run_id }
-                    if pane.session.as_ref() == Some(session) =>
-                {
-                    pane.known_run = Some(run_id.clone());
-                    pane.refresh(Change::Nothing, cx);
-                }
-                // A session left before its send answered gets its run from its rows when it's open again.
-                ComposerEvent::Sent { .. } => {}
-            }),
-            cx.subscribe(&timeline, |pane, _, TimelineEvent::NearTop, cx| {
-                pane.load_older(cx)
-            }),
-            cx.observe(&header, |pane, _, cx| {
-                pane.tell_offline(cx);
-                cx.notify()
-            }),
-        ];
-        let machines = cx.observe_global::<GlobalMachines>(|pane, cx| pane.follow_machines(cx));
-        let mut pane = SessionPane {
-            client,
-            focus: cx.focus_handle(),
-            session: None,
-            view: SessionView::default(),
-            known_run: None,
-            folds: HashMap::new(),
-            open_folds: HashSet::new(),
-            kept: HashMap::new(),
-            fresh: HashMap::new(),
-            forms: HashMap::new(),
-            plan_open: false,
-            on_action,
-            header,
-            timeline,
-            composer,
-            reveal: None,
-            revealed_at: Instant::now(),
-            frame_asked: false,
-            now: None,
-            live_since: None,
-            reading: HashMap::new(),
-            expands: HashMap::new(),
-            open_asks: HashSet::new(),
-            growing: HashSet::new(),
-            grow_asked: false,
-            _clock: None,
-            held: None,
-            loading: false,
-            failed_before: None,
-            retry_first: None,
-            status: SharedString::default(),
-            _rows: None,
-            _selected: None,
-            _page: None,
-            _loads: HashMap::new(),
-            _writes: HashMap::new(),
-            read_to: 0,
-            _heard: heard,
-            _machines_started: machines,
-            _machines: None,
-        };
-        pane.follow_machines(cx);
-        pane
-    }
-
     /// Shows a session: subscribes to its rows first, then, on the `Jump` that says its seq, loads the page below
     /// `seq + 1`, so the page and the live rows never overlap. A session with no rows yet (a new one) is ready at
     /// once, empty, so its first message sends.
-    pub fn open(&mut self, session: String, window: &mut Window, cx: &mut Context<Self>) {
+    #[cfg(test)]
+    pub(super) fn open(&mut self, session: String, window: &mut Window, cx: &mut Context<Self>) {
         if self.session.as_ref() == Some(&session) {
             return;
         }
@@ -252,6 +150,7 @@ impl SessionPane {
         self._page = None;
         self._loads.clear();
         self.view = SessionView::default();
+        self.row_source = None;
         self.read_to = 0;
         self.held = Some(Vec::new());
         self.open_folds.clear();
@@ -275,7 +174,11 @@ impl SessionPane {
         let sink: RowsSink = Box::new(move |event, cx| {
             pane.update(cx, |pane, cx| pane.on_rows(event, cx)).ok();
         });
-        self._rows = Some(self.client.subscribe_rows(&session, None, sink, cx));
+        self._rows =
+            Some(
+                self.client
+                    .subscribe_rows(&session, None, self.row_source.as_ref(), sink, cx),
+            );
         self.session = Some(session.clone());
         self.header
             .update(cx, |header, cx| header.show(Some(session.clone()), cx));
@@ -285,26 +188,40 @@ impl SessionPane {
         self.composer.update(cx, |composer, cx| {
             composer.set_session(Some(session), window, cx)
         });
+        self.tell_offline(cx);
         self.refresh(Change::Nothing, cx);
-    }
-
-    /// Loads the page above what's loaded, when the timeline nears its top and one isn't already loading.
-    pub fn load_older(&mut self, cx: &mut Context<Self>) {
-        let Some(before) = self.view.oldest.filter(|_| {
-            self.view.has_before && !self.loading && self.failed_before != self.view.oldest
-        }) else {
-            return;
-        };
-        self.loading = true;
-        self.refresh(Change::Nothing, cx);
-        self.load_page(before, false, cx);
     }
 
     /// Takes a rows event: a `Jump` drops what's held and loads the page again; a row updates its item and the
     /// timeline measures only that one again.
     fn on_rows(&mut self, event: RowUpdate, cx: &mut Context<Self>) {
+        if !matches!(event, RowUpdate::Refused { .. } | RowUpdate::Jump { .. }) {
+            self.source_reopens = 0;
+        }
         match event {
+            RowUpdate::Refused { code, message } => {
+                self.composer
+                    .update(cx, |composer, cx| composer.invalidate_source(cx));
+                self._page = None;
+                self._rows = None;
+                self.held = None;
+                self._loads.clear();
+                self.loading = false;
+                if code == "source_changed" && self.is_remote() {
+                    self.source_lost = true;
+                    self.status = SharedString::default();
+                    self.tell_offline(cx);
+                } else {
+                    self.status = message.into();
+                }
+                cx.notify();
+            }
             RowUpdate::Jump { seq } => {
+                self.source_lost = false;
+                if !self.read_only {
+                    self.composer
+                        .update(cx, |composer, cx| composer.recover_pending(cx));
+                }
                 self._page = None;
                 self.view = SessionView::default();
                 self.read_to = 0;
@@ -316,6 +233,7 @@ impl SessionPane {
                     timeline.set_entries(Vec::new(), None, cx)
                 });
                 self.load_page(seq + 1, true, cx);
+                self.refresh(Change::Nothing, cx);
             }
             RowUpdate::Row(row) => match &mut self.held {
                 Some(held) => held.push(*row),
@@ -325,6 +243,7 @@ impl SessionPane {
     }
 
     fn apply_live(&mut self, row: &Row, cx: &mut Context<Self>) {
+        self.observe_prompt_row(row);
         // What the row's reply showed before it, so the reveal goes on from there.
         let key = key_of(row);
         let before = self
@@ -336,7 +255,28 @@ impl SessionPane {
                 ItemKind::Message { blocks, .. } if item.key == key => Some(Reveal::chars(blocks)),
                 _ => None,
             });
+        let tool_before = self
+            .view
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match &item.kind {
+                ItemKind::Tool { tool, .. } if item.key == key => Some(tool.state),
+                _ => None,
+            });
         let change = self.view.apply(row);
+        let changed_at = match change {
+            Change::Appended => self.view.items.len().checked_sub(1),
+            Change::Updated(at) => Some(at),
+            _ => None,
+        };
+        if let Some(ItemKind::Tool { tool, .. }) = changed_at
+            .and_then(|at| self.view.items.get(at))
+            .map(|item| &item.kind)
+            && tool.just_touched_folder(tool_before)
+        {
+            crate::core::state::folder_touched::FolderTouched::touch(&row.session_id, cx);
+        }
         if let (Change::Appended, Some(item)) = (change, self.view.items.last()) {
             let now = Instant::now();
             self.fresh
@@ -348,12 +288,13 @@ impl SessionPane {
         }
         match change {
             // A reply, tool or card changing in place in a run that isn't folded changes no entry: only its row
-            // draws again, so a streaming reply never rebuilds the timeline.
+            // draws again, so a streaming reply never rebuilds the timeline. An ask also holds or frees the composer.
             Change::Updated(at)
-                if self.view.items[at]
-                    .run_id
-                    .as_ref()
-                    .is_none_or(|run| !self.folds.contains_key(run)) =>
+                if !matches!(self.view.items[at].kind, ItemKind::Ask { .. })
+                    && self.view.items[at]
+                        .run_id
+                        .as_ref()
+                        .is_none_or(|run| !self.folds.contains_key(run)) =>
             {
                 self.redraw(at, cx)
             }
@@ -374,74 +315,6 @@ impl SessionPane {
         }
     }
 
-    /// Loads the page below `before`; `first` on open, when the page also says the run going now.
-    pub(super) fn load_page(&mut self, before: i64, first: bool, cx: &mut Context<Self>) {
-        let Some(session) = self.session.clone() else {
-            return;
-        };
-        let args = json!({ "session": session, "before": before, "limit": PAGE_ROWS });
-        let call = self.client.call(
-            "rows",
-            "page",
-            args,
-            Some(&format!("rows/page:{session}")),
-            cx,
-        );
-        self._page = Some(cx.spawn(async move |pane, cx| {
-            let answer = call.await;
-            pane.update(cx, |pane, cx| pane.on_page(answer, before, first, cx))
-                .ok();
-        }));
-    }
-
-    fn on_page(
-        &mut self,
-        answer: Result<Value, CallError>,
-        before: i64,
-        first: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.loading = false;
-        let page = answer.and_then(|page| {
-            serde_json::from_value::<RowPage>(page)
-                .map_err(|error| CallError::Failed(error.to_string()))
-        });
-        self.status = match &page {
-            Ok(_) | Err(CallError::Aborted) => SharedString::default(),
-            Err(CallError::Unreachable { machine }) => format!("{machine} is offline").into(),
-            Err(
-                CallError::NotFound(message)
-                | CallError::BadArgs(message)
-                | CallError::Failed(message)
-                | CallError::Timeout(message),
-            ) => format!("Couldn't load the session: {message}").into(),
-        };
-        let Ok(page) = page else {
-            // A failed first page keeps the live rows waiting for Try again or the next `Jump`'s page; an older one
-            // isn't asked for again by itself.
-            if first {
-                self.retry_first = Some(before);
-            } else {
-                self.failed_before = Some(before);
-            }
-            self.refresh(Change::Nothing, cx);
-            return;
-        };
-        self.failed_before = None;
-        if first {
-            self.retry_first = None;
-            // What the backend says runs now, so a run that ended while the socket was away stops counting.
-            self.known_run = page.active_run_id;
-        }
-        self.view.prepend_page(page.rows, page.has_before);
-        if first {
-            for row in self.held.take().unwrap_or_default() {
-                self.view.apply(&row);
-            }
-        }
-        self.refresh(Change::Nothing, cx);
-    }
-
     /// Draws the item at `at` again, measured again, with the entries as they are.
     fn redraw(&mut self, at: usize, cx: &mut Context<Self>) {
         let key = entry_key(&self.view.items[at], self.live_run());
@@ -457,6 +330,7 @@ impl SessionPane {
     /// Works the timeline's entries out again from the view, and tells the composer the run going now and the newest
     /// context report.
     fn refresh(&mut self, change: Change, cx: &mut Context<Self>) {
+        let pending_changed = self.sync_pending(cx);
         let active = self.view.active_run(self.known_run.as_deref());
         let folds = Fold::all(&self.view.items, &self.view.stats, active.as_deref());
         // An item changed in place is measured again, and a running turn's card on any change: a step can arrive in
@@ -475,6 +349,9 @@ impl SessionPane {
                 .map(|entry| (entry.key(items), entry))
                 .collect();
             timeline.set_entries(keyed, changed.as_deref(), cx);
+            for key in pending_changed {
+                timeline.redraw_row(&key, cx);
+            }
         });
         // The turn row's time once it's loaded (the backend's clock, as the steps' are); until then when the pane first
         // saw the run, on the backend clock if it's ticking.
@@ -506,17 +383,18 @@ impl SessionPane {
             (false, true) => (self._clock, self.now, self.plan_open) = (None, None, false),
             _ => {}
         }
-        let context = self.view.context.map(|(_, used, size)| (used, size));
+        let context = self.view.context;
         let running = active.is_some();
         let branch = latest_branch(&self.view.stats);
-        let messages = !self.view.items.is_empty();
+        let lock = pending_answer(&self.view.items);
         self.composer.update(cx, |composer, cx| {
             composer.set_running(active, cx);
             composer.set_context(context, cx);
             composer.set_branch(branch, cx);
-            composer.set_messages(messages, cx);
+            composer.set_locked(lock, cx);
         });
         self.tell_read(running, cx);
+        self.publish_live(cx);
         cx.notify();
     }
 
@@ -537,10 +415,16 @@ impl SessionPane {
 
 #[path = "pane_actions.rs"]
 mod actions;
+#[path = "pane_construct.rs"]
+mod construct;
 #[path = "pane_expand.rs"]
 mod expand;
+#[path = "../context/pane_live.rs"]
+mod live;
 #[path = "pane_machine.rs"]
 mod machine;
+#[path = "pane_pages.rs"]
+mod pages;
 #[path = "pane_read.rs"]
 mod read;
 #[path = "pane_render.rs"]
@@ -565,23 +449,80 @@ fn fade_in(key: String, row: AnyElement, window: &mut Window, cx: &mut App) -> A
 const PAGE_ROWS: usize = 100;
 
 #[cfg(test)]
-#[path = "session_pane_action_tests.rs"]
+#[path = "tests/session_pane_action_tests.rs"]
 mod action_tests;
 #[cfg(test)]
-#[path = "session_pane_activity_tests.rs"]
+#[path = "tests/session_pane_activity_tests.rs"]
 mod activity_tests;
 #[cfg(test)]
-#[path = "session_pane_real_switch_tests.rs"]
+#[path = "../context/context_refusal_tests.rs"]
+mod context_refusal_tests;
+#[cfg(test)]
+#[path = "../context/live_facts_tests.rs"]
+mod live_facts_tests;
+#[cfg(test)]
+#[path = "tests/session_pane_real_switch_tests.rs"]
 mod real_switch_tests;
 #[cfg(test)]
-#[path = "session_pane_reveal_tests.rs"]
+#[path = "tests/session_pane_reveal_tests.rs"]
 mod reveal_tests;
 #[cfg(test)]
-#[path = "session_pane_switch_tests.rs"]
+#[path = "tests/session_pane_switch_tests.rs"]
 mod switch_tests;
 #[cfg(test)]
-#[path = "session_pane_tests.rs"]
+#[path = "tests/session_pane_tests.rs"]
 mod tests;
 #[cfg(test)]
-#[path = "session_pane_write_tests.rs"]
+#[path = "tests/session_pane_write_tests.rs"]
 mod write_tests;
+
+#[cfg(test)]
+#[path = "tests/session_open_native_tests.rs"]
+mod open_native_tests;
+#[cfg(test)]
+#[path = "tests/session_open_refusal_tests.rs"]
+mod open_refusal_tests;
+#[cfg(test)]
+#[path = "tests/session_open_tests.rs"]
+mod open_tests;
+#[path = "navigation/pane_open.rs"]
+mod opening;
+#[path = "navigation/pane_open_read.rs"]
+mod opening_read;
+
+#[path = "navigation/pane_workspace.rs"]
+mod workspace;
+
+#[path = "navigation/pane_discovery.rs"]
+mod discovery;
+#[cfg(test)]
+#[path = "tests/session_route_tests.rs"]
+mod route_tests;
+
+#[path = "navigation/chat_codec.rs"]
+pub(super) mod chat_codec;
+#[cfg(test)]
+#[path = "navigation/chat_codec_tests.rs"]
+mod chat_codec_tests;
+
+#[path = "navigation/helper_stop.rs"]
+mod helper_stop;
+#[cfg(test)]
+#[path = "tests/helper_stop_tests.rs"]
+mod helper_stop_tests;
+
+#[cfg(test)]
+#[path = "navigation/navigation_switch_tests.rs"]
+mod navigation_switch_tests;
+#[cfg(test)]
+#[path = "navigation/test_navigation.rs"]
+pub(crate) mod test_navigation;
+
+#[cfg(test)]
+#[path = "navigation/deep_link_session_tests.rs"]
+mod deep_link_session_tests;
+#[path = "navigation/pane_reconnect.rs"]
+mod reconnect;
+#[cfg(test)]
+#[path = "navigation/reconnect_tests.rs"]
+mod reconnect_tests;

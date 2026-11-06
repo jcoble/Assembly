@@ -2,3 +2,8 @@
 #   <blob id of the file's new content, or "deleted"> <path>
 # `scripts/check-pinned.sh approve <path>` prints the line for a file as it is in the working tree.
 422cf8b453ecd357ffc3de3c282548333c51d0c3 scripts/lint.sh by:move-thread runs every lint.d check instead of the stub (Jesse 2026-10-26 20:42 "bring all the checks over"; plan B10a)
+# TSK-1651: Jesse's recorded "y to all" covers app/ retirement; reviewed plan names these exact removals.
+# https://app.notion.com/p/40b394b0689d819eb4f2ea766f961932
+deleted app/test/pinned/README.md by:jesse
+deleted app/scripts/guards.sh by:jesse
+deleted app/scripts/guards-allowed.txt by:jesse

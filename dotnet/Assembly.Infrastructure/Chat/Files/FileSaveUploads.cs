@@ -1,0 +1,190 @@
+using System.Security.Cryptography;
+using Assembly.Application.Common.Calls;
+using Assembly.Application.Features.Chat.SourceControl;
+using Assembly.Infrastructure.Git;
+
+namespace Assembly.Infrastructure.Chat.Files;
+
+/// <summary>Four bounded private staging files per connection. A failed operation or closed owner ends its upload.</summary>
+public sealed class FileSaveUploads
+{
+    private sealed class Upload(string id, string connection, string root, BeginSave args, string stage, long? replyId)
+    {
+        public readonly string Id = id;
+        public readonly long? ReplyId = replyId;
+        public readonly string Connection = connection;
+        public readonly string Root = root;
+        public readonly BeginSave Args = args;
+        public readonly string Stage = stage;
+        public readonly SemaphoreSlim Gate = new(1);
+        public long Offset;
+        public volatile bool Ended;
+        public readonly CancellationTokenSource Closing = new();
+    }
+    private readonly object gate = new();
+    private readonly Dictionary<string, Upload> uploads = [];
+
+    public Task<BegunSave> BeginAsync(string root, BeginSave args, string connection, CancellationToken ct, long? replyId = null)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (args.Size < 0 || args.Size > FileRead.MaxBytes || args.ExpectedRevision is null || args.ExpectedRevision.Length != 64)
+            throw new CallFailed("invalid save size or base revision");
+        var full = SessionPaths.ResolveFile(root, args.Path!);
+        if (Directory.Exists(full)) throw new CallFailed("the target is a directory");
+        // A deleted target can still be compared with its retained draft; commit never recreates it.
+        var id = Guid.NewGuid().ToString("N");
+        var stage = Path.Combine(Path.GetDirectoryName(full)!, ".assembly-save-" + id);
+        lock (gate)
+        {
+            if (uploads.Values.Count(upload => upload.Connection == connection) >= 4)
+                throw new CallFailed("four file uploads are already open on this connection");
+            try
+            {
+                using var stream = new FileStream(stage, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(stage, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+            catch (Exception e) when (Unwritable(e))
+            {
+                throw new CallFailed("That folder can't be written, so the file wasn't saved.", "not_writable");
+            }
+            uploads.Add(id, new Upload(id, connection, root, args, stage, replyId));
+        }
+        return Task.FromResult(new BegunSave(id));
+    }
+
+    /// <summary>A stage the folder refused: no permission, or a read-only file system (EROFS, which .NET raises as an
+    /// <see cref="IOException"/> carrying the errno; 30 on Linux and macOS).</summary>
+    internal static bool Unwritable(Exception e) => e is UnauthorizedAccessException or IOException { HResult: ReadOnlyFileSystem };
+
+    private const int ReadOnlyFileSystem = 30;
+
+    public async Task AppendAsync(SaveChunk args, string connection, CancellationToken ct)
+    {
+        var upload = Find(args.Upload, connection);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, upload.Closing.Token);
+        ct = linked.Token;
+        try { await upload.Gate.WaitAsync(ct); }
+        catch { Drop(id: upload.Id, connection); throw; }
+        try
+        {
+            if (upload.Ended) throw new CallFailed("this save upload has ended");
+            ct.ThrowIfCancellationRequested();
+            if (args.Data.Length > FileRead.ChunkBytes || args.Offset != upload.Offset ||
+                args.Data.Length > upload.Args.Size - upload.Offset)
+                throw new CallFailed("invalid save chunk size or offset");
+            await using var stream = new FileStream(upload.Stage, FileMode.Open, FileAccess.Write, FileShare.None,
+                64 * 1024, FileOptions.Asynchronous);
+            stream.Position = upload.Offset;
+            await stream.WriteAsync(args.Data, ct);
+            await stream.FlushAsync(ct);
+            upload.Offset += args.Data.Length;
+        }
+        catch { End(upload); throw; }
+        finally { FinishTurn(upload); }
+    }
+
+    internal async Task<SaveResult> CommitAsync(string id, string connection, CancellationToken ct,
+        Action<BeginSave, string>? validateOwner = null)
+    {
+        var upload = Find(id, connection);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, upload.Closing.Token);
+        ct = linked.Token;
+        try { await upload.Gate.WaitAsync(ct); }
+        catch { Drop(id: upload.Id, connection); throw; }
+        try
+        {
+            if (upload.Ended || upload.Offset != upload.Args.Size) throw new CallFailed("the save upload is not complete");
+            ct.ThrowIfCancellationRequested();
+            // Before the stage is read: a folder that moved took the stage with it.
+            validateOwner?.Invoke(upload.Args, upload.Root);
+            return await FileSave.CommitStageAsync(upload.Root, upload.Args.Path!, upload.Args.ExpectedRevision, upload.Stage, ct,
+                validateOwner is null ? null : () => validateOwner(upload.Args, upload.Root));
+        }
+        finally { End(upload); FinishTurn(upload); }
+    }
+
+    internal async Task<FileComparison> CompareAsync(string id, string connection, CancellationToken ct,
+        Action<BeginSave, string>? validateOwner = null)
+    {
+        var upload = Find(id, connection);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, upload.Closing.Token);
+        ct = linked.Token;
+        try { await upload.Gate.WaitAsync(ct); }
+        catch { Drop(upload.Id, connection); throw; }
+        try
+        {
+            if (upload.Ended || upload.Offset != upload.Args.Size) throw new CallFailed("the draft upload is not complete");
+            ct.ThrowIfCancellationRequested();
+            validateOwner?.Invoke(upload.Args, upload.Root);
+            var full = SessionPaths.ResolveFile(upload.Root, upload.Args.Path!);
+            if (Directory.Exists(full)) throw new CallFailed("the target is a directory");
+            // Hash these exact captured bytes, never a second read of a changing disk file.
+            byte[]? disk = File.Exists(full) ? await FileRead.CaptureAsync(upload.Root, upload.Args.Path!, ct) : null;
+            var revision = disk is null ? null : Convert.ToHexStringLower(SHA256.HashData(disk));
+            await using var stream = new FileStream(upload.Stage, FileMode.Open, FileAccess.Read, FileShare.None,
+                64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            if (stream.Length != upload.Args.Size) throw new CallFailed("the draft upload size changed");
+            var draft = new byte[checked((int)upload.Args.Size)];
+            await stream.ReadExactlyAsync(draft, ct);
+            var diff = await new GitTextPatch(new GitCli()).ReadAsync(upload.Args.Path!, null,
+                disk is null ? (ReadOnlyMemory<byte>?)null : new ReadOnlyMemory<byte>(disk), new ReadOnlyMemory<byte>(draft), ct);
+            ct.ThrowIfCancellationRequested();
+            validateOwner?.Invoke(upload.Args, upload.Root);
+            return new FileComparison(revision, diff);
+        }
+        catch { End(upload); throw; }
+        // Success retains this same owned stage for normal release, without consuming or committing it.
+        finally { FinishTurn(upload); }
+    }
+
+    public void Drop(string id, string connection)
+    {
+        Upload? upload;
+        lock (gate)
+        {
+            if (!uploads.TryGetValue(id, out upload) || upload.Connection != connection) return;
+            upload.Ended = true;
+            uploads.Remove(id);
+        }
+        upload.Closing.Cancel();
+        if (upload.Gate.Wait(0)) FinishTurn(upload);
+    }
+
+    internal string? OrderKey(string id)
+    {
+        lock (gate) return uploads.TryGetValue(id, out var upload)
+            ? "files:" + SessionPaths.ResolveFile(upload.Root, upload.Args.Path!) : null;
+    }
+
+    internal void FailedBegin(string connection, long? replyId)
+    {
+        string? id;
+        lock (gate) id = uploads.Values.FirstOrDefault(upload => upload.Connection == connection && upload.ReplyId == replyId)?.Id;
+        if (id is not null) Drop(id, connection);
+    }
+
+    public void Close(string connection)
+    {
+        string[] ids;
+        lock (gate) ids = uploads.Values.Where(upload => upload.Connection == connection).Select(upload => upload.Id).ToArray();
+        foreach (var id in ids) Drop(id, connection);
+    }
+
+    private Upload Find(string id, string connection)
+    {
+        lock (gate)
+            return uploads.TryGetValue(id, out var upload) && upload.Connection == connection && !upload.Ended
+                ? upload : throw new CallFailed("unknown save upload on this connection");
+    }
+
+    private void End(Upload upload)
+    {
+        lock (gate) { upload.Ended = true; uploads.Remove(upload.Id); }
+    }
+
+    private static void FinishTurn(Upload upload)
+    {
+        try { if (upload.Ended && File.Exists(upload.Stage)) File.Delete(upload.Stage); }
+        finally { upload.Gate.Release(); }
+    }
+}

@@ -97,7 +97,10 @@ impl LayoutStore {
             return default_state();
         };
         match serde_json::from_value::<DockAreaState>(value) {
-            Ok(state) if state.version == Some(LAYOUT_VERSION) => state,
+            Ok(mut state) if state.version == Some(LAYOUT_VERSION) => {
+                super::retired_board::remove_saved_panel(&mut state);
+                state
+            }
             Ok(state) => {
                 eprintln!(
                     "shell: the saved layout is version {:?}, not {LAYOUT_VERSION}, so the default opens",
@@ -114,14 +117,25 @@ impl LayoutStore {
 
     /// Saves the frame's layout once this update has settled, so the changes that follow from it (a tab click reaches
     /// the dock later in the same update) save with it; more changes before then add nothing.
-    pub fn save_soon(&mut self, cx: &mut Context<Frame>) {
+    pub fn save_soon(&mut self, window: &mut Window, cx: &mut Context<Frame>) {
         if self.save.is_some() {
             return;
         }
-        self.save = Some(cx.spawn(async move |frame, cx| {
-            _ = frame.update(cx, |frame, cx| {
+        self.save = Some(cx.spawn_in(window,async move |frame, cx| {
+            _ = frame.update_in(cx, |frame,window,cx| {
                 frame.layout.save = None;
                 let state = frame.dock().read(cx).dump(cx);
+                let state=if let Some(coordinator)=crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::try_global(cx) {
+                    let prepared=coordinator.read(cx).layout_to_save(&state,window,cx);
+                    match prepared {
+                        Ok(Some(state))=>state,
+                        Ok(None)=>return, // Await the same canonical CAS owner's confirmation; keep old persisted metadata.
+                        Err(error)=>{
+                            coordinator.update(cx,|view,cx|{view.status=Some(format!("Not saved: {error}"));cx.notify();});
+                            return;
+                        }
+                    }
+                }else{state};
                 match serde_json::to_value(state) {
                     Ok(layout) => frame.layout.writing = Some((frame.layout.write)(layout, cx)),
                     Err(error) => {

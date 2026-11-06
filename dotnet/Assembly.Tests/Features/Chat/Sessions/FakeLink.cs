@@ -2,7 +2,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
-using Assembly.Remote.Smoke;
+using Assembly.Remote.Record;
 using Assembly.Tests.Core.Acp;
 using Assembly.Infrastructure.Transcript;
 
@@ -26,14 +26,11 @@ internal sealed class FakeLink : IAgentLink
 
     /// <summary>Answers <c>initialize</c>, then <see cref="OpenAsync"/>.</summary>
     public async Task<JsonElement> StartAsync(
-        bool canResume = true, string acpSessionId = AcpSessionId, bool canSteer = true, bool canRename = false, string? configOptions = null)
+        string acpSessionId = AcpSessionId, bool canSteer = true, string? configOptions = null)
     {
         var initialize = await ReadAsync("initialize");
-        var sessions = canResume ? ""","sessionCapabilities":{"resume":{},"close":{}}""" : "";
         var steering = canSteer ? "\"steering\":{\"supported\":true}" : "";
-        var rename = canRename ? "\"jetbrains\":{\"air\":{\"version\":1,\"capabilities\":[\"sessionRename\"]}}" : "";
-        var meta = string.Join(',', new[] { steering, rename }.Where(part => part.Length > 0));
-        await _agent.ReplyAsync(initialize, $$$"""{"protocolVersion":1,"agentCapabilities":{"loadSession":true{{{sessions}}}},"authMethods":[],"_meta":{{{{meta}}}}}""");
+        await _agent.ReplyAsync(initialize, $$$"""{"protocolVersion":2,"capabilities":{"session":{}},"authMethods":[],"_meta":{{{{steering}}}}}""");
         return await OpenAsync(acpSessionId, configOptions);
     }
 
@@ -83,9 +80,29 @@ internal sealed class FakeLink : IAgentLink
 
     public Task ReplyAsync(JsonElement request, string resultJson) => _agent.ReplyAsync(request, resultJson);
 
+    /// <summary>Inserts the prompt and ends its foreground work using real v2 wire messages.</summary>
+    public async Task FinishAsync(JsonElement request, string idleFields)
+    {
+        var session = request.GetProperty("params").GetProperty("sessionId").GetString()!;
+        var id = "prompt-" + request.GetProperty("id").GetRawText();
+        await InsertAsync(request, id);
+        await UpdateAsync("{\"sessionUpdate\":\"state_update\",\"state\":\"idle\"," + idleFields.TrimStart('{'), session);
+    }
+
+    public async Task InsertAsync(JsonElement request, string providerMessageId)
+    {
+        var session = request.GetProperty("params").GetProperty("sessionId").GetString()!;
+        await UpdateAsync(JsonSerializer.Serialize(new { sessionUpdate = "user_message", messageId = providerMessageId, content = Array.Empty<object>() }), session);
+        await UpdateAsync("""{"sessionUpdate":"state_update","state":"running"}""", session);
+        await _agent.ReplyAsync(request, JsonSerializer.Serialize(new { messageId = providerMessageId }));
+    }
+
     /// <summary>The agent asks the client (<c>session/request_permission</c>, <c>elicitation/create</c>) as request <paramref name="id"/>.</summary>
     public Task RequestAsync(int id, string method, string paramsJson) =>
         _agent.SendAsync($$$"""{"jsonrpc":"2.0","id":{{{id}}},"method":"{{{method}}}","params":{{{paramsJson}}}}""");
+
+    public Task RequestAsync(string id, string method, string paramsJson) =>
+        _agent.SendAsync($$$"""{"jsonrpc":"2.0","id":{{{JsonSerializer.Serialize(id)}}},"method":"{{{method}}}","params":{{{paramsJson}}}}""");
 
     public Task<JsonElement> NextMessageAsync() => _agent.ReadAsync();
 

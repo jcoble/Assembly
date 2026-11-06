@@ -20,7 +20,7 @@ fn nothing_saved_gives_the_defaults() {
     assert_eq!(appearance.code_font(), DEFAULT_CODE_FONT);
     assert_eq!(appearance.editor_font(), DEFAULT_CODE_FONT);
     assert_eq!(appearance.terminal_font(), DEFAULT_CODE_FONT);
-    assert_eq!(appearance.number(&UI_FONT_SIZE), 13.);
+    assert_eq!(appearance.number(&UI_FONT_SIZE), 16.);
     assert_eq!(appearance.number(&EDITOR_FONT_SIZE), 13.);
     assert_eq!(appearance.number(&EDITOR_LINE_HEIGHT), 20.);
     assert_eq!(appearance.number(&TERMINAL_FONT_SIZE), 15.);
@@ -77,7 +77,7 @@ fn a_reset_or_a_value_that_doesnt_read_gives_the_default() {
     assert_eq!(appearance.theme(), ThemeId::Assembly);
     assert_eq!(appearance.code_font(), DEFAULT_CODE_FONT);
     assert_eq!(appearance.editor_font(), DEFAULT_CODE_FONT);
-    assert_eq!(appearance.number(&UI_FONT_SIZE), 13.);
+    assert_eq!(appearance.number(&UI_FONT_SIZE), 16.);
     assert_eq!(appearance.number(&EDITOR_FONT_SIZE), 13.);
 }
 
@@ -114,4 +114,87 @@ fn the_terminal_draws_in_its_own_font_size_and_line_spacing() {
         (font.as_ref(), size, line_height),
         ("Fira Code", px(14.), px(21.))
     );
+}
+
+#[test]
+fn ui_line_height_defaults_to_1_45_and_clamps() {
+    assert!((Appearance::default().number(&UI_LINE_HEIGHT) - 1.45).abs() < 1e-5);
+    let low = saved(&[(UI_LINE_HEIGHT.key, json!(0.5))]);
+    let high = saved(&[(UI_LINE_HEIGHT.key, json!(3.0))]);
+    assert_eq!(low.number(&UI_LINE_HEIGHT), 1.2);
+    assert_eq!(high.number(&UI_LINE_HEIGHT), 1.8);
+}
+
+#[test]
+fn text_roles_scale_with_the_interface_size() {
+    use crate::core::theme::text::TextRole;
+    let appearance = saved(&[
+        (UI_FONT_SIZE.key, json!(16)),
+        (UI_LINE_HEIGHT.key, json!(1.5)),
+    ]);
+    for (role, base) in [
+        (TextRole::Meta, 13.),
+        (TextRole::Body, 14.),
+        (TextRole::Title, 15.),
+        (TextRole::Chat, 16.),
+        (TextRole::Heading, 18.),
+        (TextRole::Display, 20.),
+    ] {
+        let (size, height) = appearance.ui_text(role);
+        let expected = 16. * base / 16.;
+        assert!((size - px(expected)).abs() < px(0.001));
+        let line_height = if role == TextRole::Chat { 1.6 } else { 1.5 };
+        assert!((height - px(expected * line_height)).abs() < px(0.001));
+    }
+}
+
+#[test]
+fn role_size_follows_the_interface_size() {
+    use crate::core::theme::text::{TextRole, kit_size};
+    use gpui_kit::component::{Size, StyleSized as _};
+    use gpui_kit::{Styled as _, div};
+    for (interface, expected) in [(16, 14.), (13, 11.375), (18, 15.75)] {
+        let appearance = saved(&[(UI_FONT_SIZE.key, json!(interface))]);
+        let size = kit_size(appearance.ui_text(TextRole::Body).0);
+        assert!(
+            matches!(size, Size::Size(_)),
+            "the kit reads it as a custom size"
+        );
+        let mut text = div().input_text_size(size);
+        let drawn = text
+            .text_style()
+            .font_size
+            .expect("the kit sets a text size");
+        assert_eq!(drawn, px(expected).into());
+    }
+}
+
+#[test]
+fn chat_line_height_keeps_its_reading_ratio() {
+    use crate::core::theme::text::TextRole;
+    let compact = saved(&[(UI_LINE_HEIGHT.key, json!(1.2))]);
+    let roomy = saved(&[(UI_LINE_HEIGHT.key, json!(1.8))]);
+    assert_eq!(
+        compact.ui_text(TextRole::Chat),
+        roomy.ui_text(TextRole::Chat)
+    );
+    assert_ne!(
+        compact.ui_text(TextRole::Meta),
+        roomy.ui_text(TextRole::Meta)
+    );
+}
+
+#[test]
+fn interface_leading_keeps_its_half_tenth_in_the_slider_label() {
+    assert_eq!(UI_LINE_HEIGHT.label(1.45), "1.45×");
+    assert_eq!(TERMINAL_LINE_HEIGHT.label(1.2), "1.2×");
+}
+
+#[test]
+fn cursor_blink_reads_true_by_default_and_a_saved_false() {
+    assert!(Appearance::default().terminal_cursor_blink());
+    assert!(!saved(&[(TERMINAL_CURSOR_BLINK, json!(false))]).terminal_cursor_blink());
+    assert!(saved(&[(TERMINAL_CURSOR_BLINK, json!(true))]).terminal_cursor_blink());
+    // A reset value reads as its default.
+    assert!(saved(&[(TERMINAL_CURSOR_BLINK, Value::Null)]).terminal_cursor_blink());
 }

@@ -1,7 +1,7 @@
 //! A reply copies as markdown, ported from app/test/fold.test.ts.
 
 use super::markdown_text::markdown_of;
-use crate::features::session::rows::markdown::{Block, Inline, ListItem};
+use crate::core::ui::markdown::payload::{Block, Inline, ListItem};
 
 fn text(value: &str) -> Inline {
     Inline::Text {

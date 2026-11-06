@@ -1,4 +1,5 @@
 use crate::core::socket::update::Update;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
@@ -10,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
 use super::sessions_pane::header_button;
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::sessions as ids;
 
 pub const VIEW_KEY: &str = "rail.view";
 
@@ -98,6 +101,7 @@ pub fn view_options(view: View, on_view: OnView, cx: &App) -> impl IntoElement {
         .anchor(Anchor::TopRight)
         .trigger(
             header_button(Button::new("rail-view-button"), cx)
+                .control(ids::VIEW_OPTIONS, "View options")
                 .icon(gpui_kit::assets::IconName::ListFilter)
                 .tooltip("View options"),
         )
@@ -157,7 +161,7 @@ pub fn view_options(view: View, on_view: OnView, cx: &App) -> impl IntoElement {
                 .w(px(250.))
                 .p_2()
                 .gap_2()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .text_color(theme.foreground)
                 .child("Group by")
                 .child(

@@ -1,8 +1,10 @@
 //! The session pane's rows: each entry of the timeline drawn from the view, the folds and what each item keeps.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::time::Instant;
 
-use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::component::{ActiveTheme as _, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::SessionPane;
@@ -12,12 +14,55 @@ use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::model::markdown_text::markdown_of;
 use crate::features::session::model::turn_line::{checkout_line, turn_line};
 use crate::features::session::view::activity_card::ActivityCard;
-use crate::features::session::view::ask_row::AskForm;
 use crate::features::session::view::item_row::{CHAT_COLUMN, ItemRow};
 use crate::features::session::view::plan_card::current_step;
+use crate::features::session::view::sent_message::SentMessage;
+use crate::features::session::view::session_action::SessionAction;
 use crate::features::session::view::turn_fold_row::TurnFoldRow;
 
 impl SessionPane {
+    pub(super) fn observe_prompt_row(&mut self, row: &crate::features::session::rows::row::Row) {
+        if row.kind == "user"
+            && row.payload["from"].is_null()
+            && row.payload["clientId"].is_string()
+            && let Some(run) = &row.run_id
+        {
+            self.known_run = Some(run.clone());
+        }
+    }
+
+    /// Reconciles local pending presentations with the selected owner's confirmed user rows.
+    pub(super) fn sync_pending(&mut self, cx: &mut Context<Self>) -> Vec<String> {
+        let mut changed = Vec::new();
+        if let Some(session) = &self.session {
+            self.composer.update(cx, |composer, _| {
+                for client in &self.view.user_clients {
+                    composer.delivered(session, client);
+                }
+                self.view.retain_pending(
+                    &composer
+                        .pending(session)
+                        .iter()
+                        .map(|pending| pending.client_id().to_string())
+                        .collect(),
+                );
+                for pending in composer.pending(session) {
+                    let key = format!("pending:{}", pending.client_id());
+                    if self.view.pending.get(&key) != Some(&pending.state) {
+                        changed.push(key);
+                    }
+                    self.view.pending_prompt(
+                        pending.client_id(),
+                        pending.text(),
+                        &pending.state,
+                        pending.at,
+                    );
+                }
+            });
+        }
+        changed
+    }
+
     /// For an item in an open fold's work: its key, whether the fold is opening (or shutting), and when it was toggled.
     pub(super) fn open_fold_of(&self, entry: &Entry) -> Option<(String, bool, Option<Instant>)> {
         let Entry::Item(at) = entry else { return None };
@@ -38,8 +83,59 @@ impl SessionPane {
             .now
             .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
         match entry {
-            Entry::Loading => line("Loading older messages…", muted),
+            Entry::Loading => line("Loading older messages…", muted, cx),
             Entry::Item(at) => {
+                if let Some(state) = self.view.pending.get(&self.view.items[*at].key) {
+                    let item = &self.view.items[*at];
+                    if let ItemKind::User { text, .. } = &item.kind {
+                        let (text, attached) =
+                            crate::features::session::composer::attachment::Attachment::split_lines(
+                                text,
+                            );
+                        return v_flex()
+                            .gap_1()
+                            .child(SentMessage {
+                                key: item.key.clone(),
+                                text,
+                                sender: None,
+                                sender_machine: None,
+                                sender_label: None,
+                                images: attached
+                                    .into_iter()
+                                    .map(|(path, name, _)| (path, name))
+                                    .collect(),
+                                open: self.kept.get(&item.key).is_some_and(|kept| kept.open),
+                                on_action: self.on_action.clone(),
+                            })
+                            .child(line(state.clone(), muted, cx))
+                            .when(state.starts_with("Failed:"), |column| {
+                                let on_action = self.on_action.clone();
+                                let client_id = self
+                                    .view
+                                    .pending_client(&item.key)
+                                    .unwrap_or_default()
+                                    .to_string();
+                                column.child(
+                                    div()
+                                        .id(SharedString::from(format!("{}:retry", item.key)))
+                                        .text_role(TextRole::Meta, cx)
+                                        .text_color(cx.theme().link)
+                                        .cursor_pointer()
+                                        .child("Retry")
+                                        .on_click(move |_, window, cx| {
+                                            on_action(
+                                                SessionAction::RetryPrompt {
+                                                    client_id: client_id.clone(),
+                                                },
+                                                window,
+                                                cx,
+                                            );
+                                        }),
+                                )
+                            })
+                            .into_any_element();
+                    }
+                }
                 // Only a row that opens in place needs its own copy, for the pane's `&mut` while it's made.
                 let opens = matches!(
                     self.view.items[*at].kind,
@@ -49,7 +145,8 @@ impl SessionPane {
                     .then(|| self.view.items[*at].clone())
                     .and_then(|item| self.expand_of(&item, None, cx));
                 let item = &self.view.items[*at];
-                if self.line_moved(item) {
+                // An open ask is answered in the composer's box; its line comes once it's settled.
+                if self.line_moved(item) || open_ask(item) {
                     return div().into_any_element();
                 }
                 let mut shown = item.clone();
@@ -62,6 +159,7 @@ impl SessionPane {
                     item: shown,
                     kept: self.kept.get(&item.key).cloned().unwrap_or_default(),
                     session: self.session.clone().unwrap_or_default().into(),
+                    expected_source: self.row_source.clone(),
                     copy: self.copy_text(item),
                     turn: self.turn_of(item, now),
                     checkout: self.checkout(item),
@@ -115,21 +213,6 @@ impl SessionPane {
         }
     }
 
-    /// Makes an open question's form the first time its card is drawn: its text fields need the window.
-    pub(super) fn make_form(&mut self, entry: &Entry, window: &mut Window, cx: &mut App) {
-        let Entry::Item(at) = entry else { return };
-        let Some(ItemKind::Ask { ask_id, ask }) = self.view.items.get(*at).map(|item| &item.kind)
-        else {
-            return;
-        };
-        if ask.state != "open" || self.forms.contains_key(ask_id) {
-            return;
-        }
-        if let Some(form) = AskForm::of(ask, window, cx) {
-            self.forms.insert(ask_id.clone(), form);
-        }
-    }
-
     /// The space under a row: 5 between a turn's steps and under a shut turn's line (the mock's 27 px `.tl` pitch; a
     /// reply adds its own 9 over it), 14 after a reply or a card, 24 after a turn's stats line. A row with a meta line
     /// (a prompt, a final reply) has that line, shown on hover, as its space.
@@ -146,7 +229,7 @@ impl SessionPane {
             Entry::Loading => return px(8.),
             Entry::Working => return px(14.),
         };
-        if self.has_meta(item) {
+        if self.has_meta(item) || open_ask(item) {
             return px(0.);
         }
         px(match &item.kind {
@@ -209,14 +292,18 @@ impl SessionPane {
     }
 }
 
-fn line(text: impl Into<SharedString>, color: Hsla) -> AnyElement {
+fn line(text: impl Into<SharedString>, color: Hsla, cx: &App) -> AnyElement {
     div()
         .w_full()
         .max_w(CHAT_COLUMN)
         .mx_auto()
         .px_4()
-        .text_xs()
+        .text_role(TextRole::Meta, cx)
         .text_color(color)
         .child(text.into())
         .into_any_element()
+}
+
+fn open_ask(item: &Item) -> bool {
+    matches!(&item.kind, ItemKind::Ask { ask, .. } if ask.state == "open")
 }

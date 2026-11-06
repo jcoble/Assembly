@@ -34,8 +34,14 @@ public sealed partial class MachinesSocketTests
         private WebApplication _app = null!;
 
         public Uri Address { get; private set; } = null!;
+        public Uri? SocketBackend { get; set; }
+        public Func<JsonElement, string?>? SocketFailure { get; set; }
+        public string? BackendIdentity { get; set; } = BackendBuild.Identity;
+        public string? Version { get; set; } = BackendBuild.Version;
+        public string? Commit { get; set; } = BackendBuild.Commit;
         public int Format { get; set; } = RowStore.FormatVersion;
         public int AgentsStatus { get; set; } = 200;
+        public string EngineMachine { get; set; } = "stub-engine";
         public int StopStatus { get; set; } = 202;
         public bool Drop { get; set; }
         public bool DropVersion { get; set; }
@@ -53,6 +59,8 @@ public sealed partial class MachinesSocketTests
         public int TitleHits;
         public int SendHits;
         public int ConfigSets;
+        public int DropWelcomes;
+        public Func<string, string, string?>? Reply { get; set; }
         public Func<CancellationToken, Task>? BeforeConfig { get; set; }
         public int LiveOpen { get { lock (_liveOpen) return _liveOpen.Values.Sum(); } }
         // The most /live links any one session had open at once, and each session's first /live link, under _liveOpen.
@@ -70,37 +78,77 @@ public sealed partial class MachinesSocketTests
         private TaskCompletionSource Seen(string session) =>
             _liveSeen.TryGetValue(session, out var seen) ? seen : _liveSeen[session] = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public async Task StartAsync()
+        // Forward to a real backend so successful Engine responses always come from its own journal.
+        private async Task ForwardSocketAsync(WebSocket client, Uri backend, HttpContext context)
+        {
+            using var owner = new ClientWebSocket();
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+            using var replies = new SemaphoreSlim(1);
+            await owner.ConnectAsync(new Uri($"ws://{backend.Authority}{context.Request.Path}"), stop.Token);
+            async Task SendClient(ReadOnlyMemory<byte> bytes)
+            {
+                await replies.WaitAsync(stop.Token);
+                try { await client.SendAsync(bytes, WebSocketMessageType.Text, true, stop.Token); }
+                finally { replies.Release(); }
+            }
+            async Task Copy(WebSocket from, WebSocket to, bool incoming)
+            {
+                var buffer = new byte[64 * 1024];
+                while (!stop.IsCancellationRequested)
+                {
+                    using var message = new MemoryStream();
+                    WebSocketReceiveResult part;
+                    do
+                    {
+                        part = await from.ReceiveAsync(new ArraySegment<byte>(buffer), stop.Token);
+                        if (part.MessageType == WebSocketMessageType.Close) return;
+                        message.Write(buffer, 0, part.Count);
+                    } while (!part.EndOfMessage);
+                    var bytes = message.ToArray();
+                    if (incoming)
+                    {
+                        using var parsed = JsonDocument.Parse(bytes);
+                        var frame = parsed.RootElement;
+                        if (frame.GetProperty("t").GetString() == "call" && SocketFailure?.Invoke(frame) is { } failure)
+                        {
+                            await SendClient(JsonSerializer.SerializeToUtf8Bytes(new
+                            { t = "error", id = frame.GetProperty("id").GetInt64(), code = "failed", message = failure }));
+                            continue;
+                        }
+                        await to.SendAsync(bytes.AsMemory(), WebSocketMessageType.Text, true, stop.Token);
+                    }
+                    else
+                    {
+                        using var parsed = JsonDocument.Parse(bytes);
+                        if (parsed.RootElement.GetProperty("t").GetString() == "welcome")
+                        {
+                            if (!context.Request.Path.Value!.EndsWith("bulk", StringComparison.Ordinal))
+                            { Interlocked.Increment(ref VersionHits); VersionStarted.TrySetResult(); }
+                            if (DropVersion || Interlocked.Decrement(ref DropWelcomes) >= 0) { context.Abort(); return; }
+                        }
+                        await SendClient(bytes);
+                    }
+                }
+            }
+            var outgoing = Copy(client, owner, true);
+            var incoming = Copy(owner, client, false);
+            try { await await Task.WhenAny(outgoing, incoming); }
+            finally
+            {
+                await stop.CancelAsync();
+                owner.Abort();
+                try { await Task.WhenAll(outgoing, incoming); }
+                catch (Exception error) when (error is OperationCanceledException or WebSocketException) { }
+            }
+        }
+
+        public async Task StartAsync(Action<WebApplication>? map = null)
         {
             var builder = WebApplication.CreateSlimBuilder();
             builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
             _app = builder.Build();
             _app.UseWebSockets();
-            _app.MapGet("/version", async (HttpContext context) =>
-            {
-                Interlocked.Increment(ref VersionHits);
-                VersionStarted.TrySetResult();
-                if (DropVersion)
-                {
-                    context.Abort();
-                    return Results.Empty;
-                }
-                if (HangVersion)
-                {
-                    try
-                    {
-                        await Task.Delay(Timeout.Infinite, context.RequestAborted);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        Interlocked.Increment(ref VersionAborted);
-                        VersionCancelled.TrySetResult();
-                        return Results.Empty;
-                    }
-                }
-                return Results.Text($$"""{"formatVersion":{{Format}},"commit":"abc"}""", "application/json");
-            });
             _app.MapGet("/sessions/{id}", () =>
             {
                 Interlocked.Increment(ref TitleHits);
@@ -109,6 +157,11 @@ public sealed partial class MachinesSocketTests
             _app.Map("/socket/{**path}", async (HttpContext context) =>
             {
                 using var socket = await context.WebSockets.AcceptWebSocketAsync();
+                if (SocketBackend is { } backend)
+                {
+                    await ForwardSocketAsync(socket, backend, context);
+                    return;
+                }
                 var subscriptions = new List<string>();
                 async Task Send(string json) => await socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, context.RequestAborted);
                 try
@@ -123,9 +176,41 @@ public sealed partial class MachinesSocketTests
                         switch (json.GetProperty("t").GetString())
                         {
                             case "hello":
-                                await Send("""{"t":"welcome","protocol":1,"machine":"box"}""");
+                                if (!context.Request.Path.Value!.EndsWith("bulk", StringComparison.Ordinal))
+                                {
+                                    Interlocked.Increment(ref VersionHits);
+                                    VersionStarted.TrySetResult();
+                                }
+                                if (DropVersion || Interlocked.Decrement(ref DropWelcomes) >= 0) { context.Abort(); return; }
+                                if (HangVersion)
+                                {
+                                    // The client cancels the hello by closing its owned socket.
+                                    try { await socket.ReceiveAsync(buffer, context.RequestAborted); }
+                                    finally { Interlocked.Increment(ref VersionAborted); VersionCancelled.TrySetResult(); }
+                                    return;
+                                }
+                                await Send($$"""{"t":"welcome","protocol":1,"machine":"box","format":{{Format}},"commit":{{JsonSerializer.Serialize(Commit)}},"backendIdentity":{{JsonSerializer.Serialize(BackendIdentity)}},"version":{{JsonSerializer.Serialize(Version)}},"engine":{{JsonSerializer.Serialize(EngineMachine)}}}""");
                                 break;
                             case "sub":
+                                if (json.TryGetProperty("stream", out var stream) && stream.GetString() == "engine")
+                                {
+                                    await Send(JsonSerializer.Serialize(new
+                                    {
+                                        t = "engine_snapshot",
+                                        id = json.GetProperty("id").GetInt64(),
+                                        machine = EngineMachine,
+                                        through = 0,
+                                        items = Array.Empty<object>(),
+                                        more = false,
+                                        at = (object?)null
+                                    }));
+                                    break;
+                                }
+                                if (json.GetProperty("topic").GetString() == "sessions")
+                                {
+                                    await Send($$"""{"t":"state","sub":{{json.GetProperty("id")}},"items":[]}""");
+                                    break;
+                                }
                                 var session = json.GetProperty("key").GetString()!;
                                 subscriptions.Add(session);
                                 Interlocked.Increment(ref LiveHits);
@@ -139,14 +224,73 @@ public sealed partial class MachinesSocketTests
                                 break;
                             case "unsub":
                                 // This fixture's follower tests only unsubscribe the oldest active session.
-                                Close(subscriptions[0]);
-                                subscriptions.RemoveAt(0);
+                                if (subscriptions.Count > 0) { Close(subscriptions[0]); subscriptions.RemoveAt(0); }
                                 break;
                             case "call":
-                                var after = json.GetProperty("args").GetProperty("after").GetInt64();
-                                var rows = LiveRows.Select(row => JsonDocument.Parse(row).RootElement.GetProperty("row").Clone())
-                                    .Where(row => row.GetProperty("seq").GetInt64() > after).Select(row => row.GetRawText());
-                                await Send("{\"t\":\"result\",\"id\":1,\"result\":{\"rows\":[" + string.Join(',', rows) + "]}}");
+                                var id = json.GetProperty("id");
+                                var method = json.GetProperty("method").GetString();
+                                var feature = json.GetProperty("feature").GetString();
+                                if (feature == "engine" && method == "machine")
+                                {
+                                    await Send(JsonSerializer.Serialize(new { t = "result", id = id.GetInt64(), result = new { machine = EngineMachine, through = 0 } }));
+                                    break;
+                                }
+                                if (feature == "engine")
+                                {
+                                    await Send($$"""{"t":"error","id":{{id}},"code":"not_found","message":"Unknown engine call"}""");
+                                    break;
+                                }
+                                string result;
+                                string? custom;
+                                try { custom = Reply?.Invoke(feature!, method!); }
+                                catch (CallFailed error)
+                                {
+                                    await Send(JsonSerializer.Serialize(new { t = "error", id = id.GetInt64(), code = "failed", message = error.Message }));
+                                    break;
+                                }
+                                if (custom is not null) result = custom;
+                                else if (feature == "machines")
+                                {
+                                    Interlocked.Increment(ref AgentsHits);
+                                    if (Drop) { context.Abort(); return; }
+                                    if (AgentsStatus != 200)
+                                    {
+                                        var code = AgentsStatus is 401 or 403 ? "unreachable" : "failed";
+                                        var message = code == "unreachable" ? "the remote refused this computer's token" : "boom";
+                                        await Send($$"""{"t":"error","id":{{id}},"code":"{{code}}","message":"{{message}}"}""");
+                                        break;
+                                    }
+                                    result = "{\"agents\":[{\"id\":\"claude\",\"name\":\"Claude\",\"targetId\":\"" + new string('a', 64) + "\",\"accountContext\":\"\",\"providerTargetId\":\"claude/\"},{\"id\":\"codex\",\"name\":\"Codex\",\"targetId\":\"" + new string('b', 64) + "\",\"accountContext\":\"\",\"providerTargetId\":\"codex/\"}]}";
+                                }
+                                else if (feature == "config")
+                                {
+                                    if (method == "set") Interlocked.Increment(ref ConfigSets);
+                                    else if (BeforeConfig is not null) await BeforeConfig(context.RequestAborted);
+                                    result = """{"options":[],"choices":{"where":"remote"}}""";
+                                }
+                                else if (feature == "send")
+                                {
+                                    if (method == "send")
+                                    {
+                                        Interlocked.Increment(ref SendHits);
+                                        result = """{"runId":"remote-run"}""";
+                                    }
+                                    else if (StopStatus == 202) result = """{"ok":true}""";
+                                    else
+                                    {
+                                        var message = StopStatus == 404 ? "that run isn't running" : "boom";
+                                        await Send($$"""{"t":"error","id":{{id}},"code":"failed","message":"{{message}}"}""");
+                                        break;
+                                    }
+                                }
+                                else
+                                {
+                                    var after = json.GetProperty("args").GetProperty("after").GetInt64();
+                                    var rows = LiveRows.Select(row => JsonDocument.Parse(row).RootElement.GetProperty("row").Clone())
+                                        .Where(row => row.GetProperty("seq").GetInt64() > after).Select(row => row.GetRawText());
+                                    result = "{\"rows\":[" + string.Join(',', rows) + "]}";
+                                }
+                                await Send($$"""{"t":"result","id":{{id}},"result":{{result}}}""");
                                 break;
                         }
                     }
@@ -154,34 +298,7 @@ public sealed partial class MachinesSocketTests
                 catch (Exception error) when (error is OperationCanceledException or WebSocketException) { }
                 finally { foreach (var session in subscriptions) Close(session); }
             });
-            _app.MapGet("/agents", (HttpContext context) =>
-            {
-                Interlocked.Increment(ref AgentsHits);
-                if (Drop)
-                {
-                    context.Abort();
-                    return Results.Empty;
-                }
-                return AgentsStatus == 200
-                    ? Results.Text("""{"agents":[{"id":"claude","name":"Claude"}]}""", "application/json")
-                    : Results.Text("boom", statusCode: AgentsStatus);
-            });
-            _app.MapGet("/sessions/{id}/config", async (HttpContext context) =>
-            {
-                if (BeforeConfig is not null) await BeforeConfig(context.RequestAborted);
-                return Results.Text("""{"options":[],"choices":{"where":"remote"}}""", "application/json");
-            });
-            _app.MapPost("/sessions/{id}/config", () =>
-            {
-                Interlocked.Increment(ref ConfigSets);
-                return Results.Text("""{"options":[],"choices":{"where":"remote"}}""", "application/json");
-            });
-            _app.MapPost("/sessions/{id}/send", () =>
-            {
-                Interlocked.Increment(ref SendHits);
-                return Results.Text("""{"runId":"remote-run"}""", "application/json");
-            });
-            _app.MapPost("/runs/{id}/stop", () => Results.Text(StopStatus == 500 ? "boom" : "", statusCode: StopStatus));
+            map?.Invoke(_app);
             await _app.StartAsync();
             Address = new Uri(_app.Urls.Single());
         }

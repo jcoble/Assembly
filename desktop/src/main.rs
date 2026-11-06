@@ -1,8 +1,22 @@
 //! Assembly's window in GPUI (GPUI Kit). It draws what the .NET backend computes, over one socket. For now it opens
 //! one empty window and quits when that window closes; the G0 lanes fill in `core` and `features`.
 
+#[allow(dead_code)]
+#[path = "components/activity/mod.rs"]
+mod activity;
 mod core;
 mod features;
+#[path = "components/hinted_item/mod.rs"]
+mod hinted_item;
+#[allow(dead_code)]
+#[path = "components/inline_field/mod.rs"]
+mod inline_field;
+#[path = "components/notice_strip/mod.rs"]
+mod notice_strip;
+#[path = "components/open_project/mod.rs"]
+mod open_project_component;
+#[path = "components/section_card.rs"]
+mod section_card;
 
 use std::cell::{Cell, OnceCell};
 use std::path::PathBuf;
@@ -14,8 +28,9 @@ use futures_channel::oneshot;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
-use crate::core::backend::backend_config::BackendConfig;
+use crate::core::backend::backend_config::{self, BackendConfig};
 use crate::core::backend::launcher::Launcher;
+use crate::core::navigation::external_urls::ExternalUrls;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::endpoint::Endpoint;
@@ -30,58 +45,88 @@ use crate::features::palette::palette_view::PaletteView;
 
 fn main() {
     // On macOS GPUI's default keeps the app running with no window open.
-    gpui_kit::application()
+    let external_urls = ExternalUrls::new();
+    let app = gpui_kit::application()
         // The kit's icons, such as the dock toggles, and the window's own; without them every icon draws blank.
         .with_assets(crate::core::assets::AppAssets)
-        .with_quit_mode(QuitMode::LastWindowClosed)
-        .run(|cx| {
-            gpui_kit::init(cx);
-            features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
-            SelectedSession::init(cx);
-            Preferences::init(cx);
-            features::session::view::session_pane::SessionPane::register(cx);
-            features::sessions::sessions_pane::SessionsPane::register(cx);
-            features::files::files_pane::FilesPane::register(cx);
-            features::files::search_pane::SearchPane::register(cx);
-            features::files::file_view::FileView::register(cx);
-            features::session::context::context_pane::ContextPane::register(cx);
-            features::sessions::history::history_pane::HistoryPane::register(cx);
-            features::source_control::source_control_pane::SourceControlPane::register(cx);
-            features::worktrees::worktrees_pane::WorktreesPane::register(cx);
-            features::changes::changes_pane::ChangesPane::register(cx);
-            features::board::board_pane::BoardPane::register(cx);
-            features::terminal::terminal_pane::TerminalPane::register(cx);
-            let (read_layout, write_layout) = start_backend(cx);
-            PaletteView::init(cx);
-            features::settings::init(cx);
-            features::meter::start_if_on(cx);
-            // The window opens once the theme files have loaded, already in its theme. The kit calls this once, so
-            // the layout's read and write are taken out on that call.
-            let layout = Cell::new(Some((read_layout, write_layout)));
-            theme::init(theme::THEMES_DIR.into(), cx, move |cx| {
-                let Some((read_layout, write_layout)) = layout.take() else {
-                    return;
-                };
-                let options = WindowOptions {
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("Assembly".into()),
-                        ..Default::default()
-                    }),
+        .with_quit_mode(QuitMode::LastWindowClosed);
+    // Registered before the app runs, since the link that launched it arrives right away.
+    let receiver = external_urls.clone();
+    app.on_open_urls(move |urls| receiver.receive(urls));
+    app.run(move |cx| {
+        gpui_kit::init(cx);
+        crate::core::socket::picture_client::register(cx);
+        inline_field::init(cx);
+        features::shell::workspace_preview::register(cx);
+        features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
+        SelectedSession::init(cx);
+        features::session::context::live_facts::LiveFacts::init(cx);
+        Preferences::init(cx);
+        features::session::view::session_pane::SessionPane::register(cx);
+        features::sessions::sessions_pane::SessionsPane::register(cx);
+        features::files::files_pane::FilesPane::register(cx);
+        features::files::search_pane::SearchPane::register(cx);
+        features::files::file_view::FileView::register(cx);
+        features::session::context::context_pane::ContextPane::register(cx);
+        features::sessions::history::history_pane::HistoryPane::register(cx);
+        features::source_control::source_control_pane::SourceControlPane::register(cx);
+        features::source_control::history_pane::HistoryPane::register(cx);
+        features::source_control::pull_requests::pr_pane::PrPane::register(cx);
+        features::projects::new_project_dialog::register(cx);
+        features::worktrees::worktrees_pane::WorktreesPane::register(cx);
+        features::changes::changes_pane::ChangesPane::register(cx);
+        features::board::board_panel::BoardPanel::register(cx);
+        cx.set_app_identity("dev.jcoble.assembly", "Assembly");
+        let engine = core::engine::EngineFeed::global(cx);
+        features::board::owner_notify::OwnerNotify::start(engine, cx);
+        features::terminal::terminal_pane::TerminalPane::register(cx);
+        features::tasks::tasks_pane::TasksPane::register(cx);
+        features::workspaces::init(cx)
+            .expect("one workspace registry after concrete pane registration");
+        let (read_layout, write_layout) = start_backend(cx);
+        PaletteView::init(cx);
+        core::navigation::open_url_handler::register(cx);
+        features::settings::init(cx);
+        features::meter::start_if_on(cx);
+        // The window opens once the theme files have loaded, already in its theme. The kit calls this once, so
+        // the layout's read and write are taken out on that call.
+        let layout = Cell::new(Some((read_layout, write_layout)));
+        let themes = packaged_resources().map_or_else(
+            || theme::THEMES_DIR.into(),
+            |resources| resources.join("themes"),
+        );
+        theme::init(themes, cx, move |cx| {
+            let Some((read_layout, write_layout)) = layout.take() else {
+                return;
+            };
+            let options = WindowOptions {
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Assembly".into()),
                     ..Default::default()
-                };
-                gpui_kit::open_window(options, cx, |window, cx| {
-                    theme::set(ThemeId::DEFAULT, window, cx);
-                    let frame = cx.new(|cx| Frame::new(read_layout, write_layout, window, cx));
-                    cx.new(|cx| WindowRoot::new(frame, window, cx))
-                })
-                .expect("open the window");
-                cx.activate(true);
-            });
+                }),
+                ..Default::default()
+            };
+            gpui_kit::open_window(options, cx, |window, cx| {
+                theme::set(ThemeId::DEFAULT, window, cx);
+                features::workspaces::drafts_guard::guard_close(window, cx);
+                let frame = cx.new(|cx| Frame::new(read_layout, write_layout, window, cx));
+                cx.new(|cx| WindowRoot::new(frame, window, cx))
+            })
+            .expect("open the window");
+            Launcher::tell_if_update_finishing(cx);
+            cx.activate(true);
+            external_urls.start(core::navigation::deep_links::handle_route, cx);
         });
+    });
 }
 
-/// Starts the backend from `ASSEMBLY_BACKEND_DIR`, or the `backend` folder beside the program, and the socket client on
-/// its first ready line. Without a backend the window still opens, in the default layout, and the error says what's
+/// The packaged app's `Contents/Resources`; none when running from a checkout.
+fn packaged_resources() -> Option<PathBuf> {
+    backend_config::packaged_resources(&std::env::current_exe().ok()?)
+}
+
+/// Starts the backend from `ASSEMBLY_BACKEND_DIR`, the packaged app's backend, or the `backend` folder beside the
+/// program, and the socket client on its first ready line. Without a backend the window still opens, in the default layout, and the error says what's
 /// missing. Returns the window layout's read and write, over the backend's preferences.
 fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
     let socket = Rc::new(OnceCell::<Entity<SocketClient>>::new());
@@ -92,6 +137,7 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
     let (give_up, launcher_gave_up) = oneshot::channel::<()>();
     let backend = std::env::var_os("ASSEMBLY_BACKEND_DIR")
         .map(PathBuf::from)
+        .or_else(|| packaged_resources().map(|resources| resources.join("backend")))
         .or_else(|| {
             let program = std::env::current_exe().ok()?;
             Some(program.parent()?.join("backend"))
@@ -127,6 +173,7 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
                             _ = socket.set(client.clone());
                             Sessions::start(cx);
                             Machines::start(cx);
+                            features::remote_install::updates::tell_when_behind(cx);
                             Preferences::start(cx);
                             if let Some(connected) = connected.take() {
                                 _ = connected.send(client);

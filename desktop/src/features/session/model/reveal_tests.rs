@@ -1,7 +1,7 @@
 //! The smooth reveal of a streaming reply, ported from app/test/heights.test.ts.
 
 use super::reveal::{MAX_LAG_MS, MIN_CPS, Reveal};
-use crate::features::session::rows::markdown::{Block, Inline, ListItem};
+use crate::core::ui::markdown::payload::{Block, Inline, ListItem};
 
 fn text(value: &str) -> Inline {
     Inline::Text {

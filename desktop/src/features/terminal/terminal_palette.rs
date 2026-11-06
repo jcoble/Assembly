@@ -84,5 +84,5 @@ const GRAPHITE: Palette = Palette {
 };
 
 #[cfg(test)]
-#[path = "terminal_palette_tests.rs"]
+#[path = "tests/terminal_palette_tests.rs"]
 mod tests;

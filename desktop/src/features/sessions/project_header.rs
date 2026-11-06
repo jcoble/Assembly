@@ -1,8 +1,11 @@
 //! The rail's section and project headers: fold chevron, backend count, project machines and New session.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Named as _;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex};
+use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::*;
 
 /// A project's header line: room for its + button.
@@ -14,7 +17,8 @@ type OnToggle = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 #[derive(IntoElement)]
 pub struct ProjectHeader {
     label: String,
-    repo_url: String,
+    /// The row's key. One repo can head a project row in several sections, and ids must differ between them.
+    key: String,
     machines: Vec<String>,
     count: usize,
     folded: bool,
@@ -25,7 +29,7 @@ pub struct ProjectHeader {
 impl ProjectHeader {
     pub fn new(
         label: String,
-        repo_url: String,
+        key: String,
         machines: Vec<String>,
         count: usize,
         folded: bool,
@@ -34,7 +38,7 @@ impl ProjectHeader {
     ) -> Self {
         ProjectHeader {
             label,
-            repo_url,
+            key,
             machines,
             count,
             folded,
@@ -100,7 +104,7 @@ impl RenderOnce for ProjectHeader {
             .pl(px(7.))
             .pr_1()
             .child(chevron(
-                format!("fold:project:{}", self.repo_url),
+                format!("fold:{}", self.key),
                 self.folded,
                 faint,
                 self.on_toggle,
@@ -113,7 +117,7 @@ impl RenderOnce for ProjectHeader {
                     .rounded(px(5.))
                     .bg(colour.opacity(0.18))
                     .text_color(colour)
-                    .text_size(px(9.5))
+                    .text_role(TextRole::Meta, cx)
                     .font_weight(FontWeight::BOLD)
                     .flex()
                     .items_center()
@@ -124,32 +128,38 @@ impl RenderOnce for ProjectHeader {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_size(px(11.5))
+                    .text_role(TextRole::Meta, cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(muted)
                     .truncate()
                     .child(self.label.to_uppercase()),
             )
-            // The mock's machine chips: 18 px round, on the pill fill.
+            // Which machines it's on, as icons that say so on hover.
             .children(self.machines.into_iter().map(|machine| {
-                h_flex()
+                let local = machine == "local";
+                let name: SharedString = if local {
+                    "This Mac".into()
+                } else {
+                    machine.into()
+                };
+                div()
+                    .id(name.clone())
                     .flex_none()
-                    .h(px(18.))
-                    .px(px(7.))
-                    .rounded_full()
-                    .bg(theme.secondary)
-                    .text_size(px(10.5))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(muted)
-                    .child(if machine == "local" {
-                        "This Mac".to_owned()
-                    } else {
-                        machine
-                    })
+                    .tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
+                    .child(
+                        Icon::new(if local {
+                            IconName::Laptop
+                        } else {
+                            IconName::Server
+                        })
+                        .xsmall()
+                        .text_color(muted),
+                    )
             }))
-            .child(count(self.count, faint))
+            .child(count(self.count, faint, cx))
             .child(
-                Button::new(SharedString::from(format!("project:{}", self.repo_url)))
+                Button::new(SharedString::from(format!("new:{}", self.key)))
+                    .named("New session in this project")
                     .ghost()
                     .xsmall()
                     .icon(IconName::Plus)
@@ -205,18 +215,23 @@ impl RenderOnce for SectionHeader {
             .child(
                 div()
                     .flex_1()
-                    .text_size(px(11.5))
+                    .text_role(TextRole::Meta, cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(muted)
                     .child(self.label),
             )
-            .child(count(self.count, faint))
+            .child(count(self.count, faint, cx))
     }
 }
 
 /// A header's fold chevron, the mock's 14 px faint one.
 fn chevron(id: String, folded: bool, faint: Hsla, on_toggle: OnToggle) -> Button {
     Button::new(SharedString::from(id))
+        .named(if folded {
+            "Expand group"
+        } else {
+            "Collapse group"
+        })
         .ghost()
         .with_size(px(18.))
         .size(px(20.))
@@ -230,10 +245,10 @@ fn chevron(id: String, folded: bool, faint: Hsla, on_toggle: OnToggle) -> Button
 }
 
 /// A header's count, at its right end.
-fn count(count: usize, faint: Hsla) -> Div {
+fn count(count: usize, faint: Hsla, cx: &App) -> Div {
     div()
         .flex_none()
-        .text_size(px(11.5))
+        .text_role(TextRole::Meta, cx)
         .font_weight(FontWeight::MEDIUM)
         .text_color(faint)
         .child(count.to_string())

@@ -1,7 +1,6 @@
 using Assembly.Application.Common.Acp.Messages;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
-using Assembly.Remote.Smoke;
 using Assembly.Application.Common.Acp;
 using Assembly.Infrastructure.Transcript;
 
@@ -51,16 +50,32 @@ public sealed class RecordRun(RecordOptions options)
         using var deadline = new CancellationTokenSource(ScenarioTimeout);
         using var transcript = TranscriptFile.Open(path);
         var agent = AgentConnection.Start(new AgentCommand(options.FileName, options.Arguments, cwd), new AllowOncePolicy(), transcript);
+        Console.WriteLine($"{scenario.Name}: adapter pid {agent.ProcessId}; workspace {cwd}");
+        string? sessionId = null;
+        var updates = new UpdateWatcher(agent.Client.Updates);
         try
         {
-            var updates = new UpdateWatcher(agent.Client.Updates);
-            await agent.Client.InitializeAsync(new Implementation("assembly-backend", "0.1.0"), scenario.Air, deadline.Token);
-            var session = await agent.Client.NewSessionAsync(cwd, deadline.Token);
-            return await scenario.RunAsync(new ScenarioContext(agent, session.SessionId, cwd, updates, deadline.Token));
+            await agent.Client.InitializeAsync(new Implementation("assembly-backend", "0.1.0"), deadline.Token);
+            var session = await agent.Client.NewSessionAsync(new(cwd, []), deadline.Token);
+            sessionId = session.SessionId;
+            return await scenario.RunAsync(new ScenarioContext(agent, session.SessionId, cwd, updates, deadline.Token, session.ConfigOptions, session.AvailableCommands));
         }
         finally
         {
-            await agent.DisposeAsync();
+            try
+            {
+                if (sessionId is not null && !agent.Exited.IsCompleted)
+                {
+                    using var closing = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    await agent.Client.CloseSessionAsync(sessionId, closing.Token);
+                }
+            }
+            finally
+            {
+                await agent.DisposeAsync();
+                await updates.Completion;
+                Console.WriteLine($"{scenario.Name}: adapter pid {agent.ProcessId} exited");
+            }
         }
     }
 }

@@ -12,6 +12,8 @@ test('app:dev prepares the backend and launches GPUI without Tauri or Vite', () 
       mkdirSync(join(root, folder), { recursive: true });
     }
     copyFileSync(new URL('./app-dev.ts', import.meta.url), join(root, 'scripts/app-dev.ts'));
+    copyFileSync(new URL('./app-dev-remote.ts', import.meta.url), join(root, 'scripts/app-dev-remote.ts'));
+    copyFileSync(new URL('./seed-dev.ts', import.meta.url), join(root, 'scripts/seed-dev.ts'));
     writeFileSync(join(root, 'scripts/lane-env.sh'), `
 DATA="$PWD/test-data"
 DESKTOP_PORT=18807
@@ -37,6 +39,8 @@ exit ${tool === 'dotnet' ? '${DOTNET_EXIT:-0}' : '0'}
     const commands = readFileSync(log, 'utf8');
     assert.match(commands, /dotnet publish/);
     assert.match(commands, /cargo run --locked/);
+    // Main and a hand-made lane run on folders the seed never writes to.
+    assert.doesNotMatch(commands, /DevSeed/);
     assert.ok(commands.indexOf('dotnet publish') < commands.indexOf('cargo run'));
     const config = JSON.parse(readFileSync(join(root, 'desktop/target/dev-backend/lane.json'), 'utf8'));
     assert.equal(config.port, 18807);

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common;
 using Microsoft.Extensions.Time.Testing;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
@@ -13,6 +14,47 @@ namespace Assembly.Tests.Features.Chat.Sessions;
 // SessionHostTests, continued: sessions opening, resuming and closing, the shared adapter, stopping and failing.
 public sealed partial class SessionHostTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Reader_state_follows_the_native_session_after_resume(bool resumeFails)
+    {
+        _host.Send("one");
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        var first = await agent.ReadAsync("session/prompt");
+        await agent.UpdateAsync("""{"sessionUpdate":"plan_update","plan":{"type":"items","planId":"p-old","entries":[{"content":"Old plan","status":"pending","priority":"high"}]}}""");
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"reused","title":"Old title","status":"completed"}""");
+        await agent.FinishAsync(first, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+        await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished");
+        await Until(() => _host.ActiveRunId is null);
+
+        _host.Send("two");
+        var resume = await agent.ReadAsync("session/resume");
+        var native = FakeLink.AcpSessionId;
+        if (resumeFails)
+        {
+            await agent.ReplyErrorAsync(resume, -32603, "Transcript missing");
+            native = "new-native";
+            await agent.OpenAsync(native);
+        }
+        else await agent.ReplyAsync(resume, "{}");
+        var second = await agent.ReadAsync("session/prompt");
+        await agent.UpdateAsync("""{"sessionUpdate":"plan_update","plan":{"type":"items","planId":"p-new","entries":[{"content":"New plan","status":"pending","priority":"high"}]}}""", native);
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"reused","status":"in_progress"}""", native);
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"reused","status":"completed"}""", native);
+        await agent.FinishAsync(second, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+        var rows = await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished");
+        var plan = Assert.Single(rows, row => row.Kind == "plan").Payload.GetRawText();
+        Assert.Contains("New plan", plan);
+        Assert.Equal(!resumeFails, plan.Contains("Old plan", StringComparison.Ordinal));
+        var tools = rows.Where(row => row.Kind == "tool").ToArray();
+        Assert.NotEmpty(tools);
+        Assert.All(tools, row => Assert.Equal(resumeFails ? "Tool" : "Old title", row.Payload.GetProperty("name").GetString()));
+    }
+
     [Fact]
     public async Task An_agent_that_does_not_steer_refuses_a_message_mid_turn()
     {
@@ -21,7 +63,7 @@ public sealed partial class SessionHostTests
         await agent.StartAsync(canSteer: false);
         await agent.ReadAsync("session/prompt");
 
-        Assert.Null(await _host.SteerAsync("two", null, CancellationToken.None));
+        Assert.Equal(SteerResult.PromptRequired, await _host.SteerAsync("two", null, null, CancellationToken.None));
     }
 
     [Fact]
@@ -31,7 +73,7 @@ public sealed partial class SessionHostTests
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await Kinds(4);
         await Until(() => _host.ActiveRunId is null);
@@ -44,7 +86,7 @@ public sealed partial class SessionHostTests
         await agent.ReplyAsync(resume, "{}");
         var second = await agent.ReadAsync("session/prompt");
         await agent.TextAsync("fresh", messageId: "fresh");
-        await agent.ReplyAsync(second, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(second, """{"stopReason":"end_turn"}""");
 
         var rows = await Rows(6);
         Assert.Equal(["user", "turn", "delta", "message", "stats", "turn"], rows.Select(row => row.Kind));
@@ -58,7 +100,7 @@ public sealed partial class SessionHostTests
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await Kinds(4);
         await Until(() => _host.ActiveRunId is null);
@@ -69,7 +111,7 @@ public sealed partial class SessionHostTests
         var resume = await agent.ReadAsync("session/resume");
         await agent.ReplyThenTextAsync(resume, "{}", "early", "early");
         var second = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(second, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(second, """{"stopReason":"end_turn"}""");
 
         var rows = await Rows(6);
         Assert.Contains(rows, row => row.ItemId == "early");
@@ -82,7 +124,7 @@ public sealed partial class SessionHostTests
         var agent = await _launcher.NextAsync();
         await agent.StartAsync(configOptions: Options("opus", "low"));
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await Kinds(4);
         await Until(() => _host.ActiveRunId is null);
@@ -103,7 +145,7 @@ public sealed partial class SessionHostTests
         await agent.ReplyAsync(third, $$"""{"configOptions":{{Options("opus", "low", "plan")}}}""");
         var thirdPrompt = await agent.ReadAsync("session/prompt");
         await agent.TextAsync("fresh", messageId: "fresh");
-        await agent.ReplyAsync(thirdPrompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(thirdPrompt, """{"stopReason":"end_turn"}""");
 
         var rows = await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished");
         Assert.Contains(rows, row => row.ItemId == "fresh");
@@ -117,7 +159,7 @@ public sealed partial class SessionHostTests
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await Until(() => _host.ActiveRunId is null);
         // The close's answer is handled before the clock moves, or the jump would time the close out.
@@ -128,7 +170,7 @@ public sealed partial class SessionHostTests
         _host.Send("two");
         await agent.OpenAsync();
         var second = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(second, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(second, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await Until(() => _host.ActiveRunId is null);
         await Until(() => _log.ToString().Split("session close").Length == 3);
@@ -180,7 +222,7 @@ public sealed partial class SessionHostTests
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         await agent.ReadAsync("session/prompt");
-        await agent.UpdateAsync("""{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Terminal","kind":"execute","status":"pending","rawInput":{"command":"sleep 60"}}""");
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","title":"Terminal","kind":"execute","status":"pending","rawInput":{"command":"sleep 60"}}""");
         await Kinds(3);
 
         agent.Crash();
@@ -239,7 +281,7 @@ public sealed partial class SessionHostTests
     [Fact]
     public async Task Sessions_share_one_adapter_initialized_once_and_each_gets_its_own_updates()
     {
-        var other = _sessionStore.Create("claude", "https://github.com/o/r");
+        var other = _sessionStore.CreateReady("claude", "https://github.com/o/r");
         var otherHost = new SessionHost(other.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
         using var otherLive = _hub.Subscribe(other.SessionId, after: 0);
 
@@ -254,8 +296,8 @@ public sealed partial class SessionHostTests
 
         await agent.TextAsync("for one", acpSessionId: "acp-1");
         await agent.TextAsync("for two", acpSessionId: "acp-2");
-        await agent.ReplyAsync(second, """{"stopReason":"end_turn"}""");
-        await agent.ReplyAsync(first, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(second, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(first, """{"stopReason":"end_turn"}""");
 
         Assert.Equal(1, _launcher.Launches);
         Assert.Equal("for one", await MessageTextAsync(_live));
@@ -267,7 +309,7 @@ public sealed partial class SessionHostTests
     [Fact]
     public async Task When_the_shared_adapter_dies_every_turn_on_it_ends_as_lost()
     {
-        var other = _sessionStore.Create("claude", "https://github.com/o/r");
+        var other = _sessionStore.CreateReady("claude", "https://github.com/o/r");
         var otherHost = new SessionHost(other.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
         using var otherLive = _hub.Subscribe(other.SessionId, after: 0);
         _host.Send("one");
@@ -285,16 +327,16 @@ public sealed partial class SessionHostTests
     }
 
     [Fact]
-    public async Task An_agent_that_cannot_resume_gets_a_new_session()
+    public async Task A_v2_agent_resumes_the_existing_provider_session_without_an_AIR_capability()
     {
         _sessionStore.SetAcpSession(_session.SessionId, "old");
         _host.Send("hi");
         var agent = await _launcher.NextAsync();
-        var open = await agent.StartAsync(canResume: false);
+        var open = await agent.StartAsync();
 
-        Assert.Equal("session/new", open.GetProperty("method").GetString());
+        Assert.Equal("session/resume", open.GetProperty("method").GetString());
         await agent.ReadAsync("session/prompt");
-        Assert.Equal(FakeLink.AcpSessionId, _sessionStore.Get(_session.SessionId)!.AcpSessionId);
+        Assert.Equal("old", _sessionStore.Get(_session.SessionId)!.AcpSessionId);
     }
 
     [Fact]
@@ -310,7 +352,7 @@ public sealed partial class SessionHostTests
         Assert.True(_host.Stop(runId));
         var cancel = await agent.ReadAsync("session/cancel");
         Assert.Equal(FakeLink.AcpSessionId, cancel.GetProperty("params").GetProperty("sessionId").GetString());
-        await agent.ReplyAsync(prompt, """{"stopReason":"cancelled"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"cancelled"}""");
 
         var end = await Rows(2);
         Assert.Equal("aborted", end[0].Payload.GetProperty("status").GetString());
@@ -340,7 +382,7 @@ public sealed partial class SessionHostTests
     {
         var getting = _adapter.GetAsync(new StageTimes(_time), CancellationToken.None);
         var agent = await _launcher.NextAsync();
-        await agent.ReplyAsync(await agent.ReadAsync("initialize"), """{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}""");
+        await agent.ReplyAsync(await agent.ReadAsync("initialize"), """{"protocolVersion":2,"capabilities":{},"authMethods":[]}""");
         var running = await getting.WaitAsync(Wait);
         var held = new HeldContext();
         var outer = SynchronizationContext.Current;
@@ -447,5 +489,74 @@ public sealed partial class SessionHostTests
         await agent.UpdateAsync("""{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"context","description":"Show context usage","input":null}]}""");
 
         await Until(() => _sessionStore.Config(_session.SessionId).Commands?.Contains("\"context\"") == true);
+    }
+
+    [Fact]
+    public async Task A_grandchild_s_agent_works_in_the_top_session_s_checkout()
+    {
+        var folder = Directory.CreateTempSubdirectory("assembly-grandchild-folder-").FullName;
+        try
+        {
+            var git = new Assembly.Infrastructure.Git.GitCli();
+            Assert.Equal(0, (await git.RunAsync(folder, ["init", "--quiet"], null, null, default)).ExitCode);
+            await File.WriteAllTextAsync(Path.Combine(folder, "notes.md"), "uncommitted owner draft");
+            using var fixture = new Assembly.Tests.Engine.EngineFixture(limits: new(() => 5, () => 5));
+            var cloneRoot = Path.Combine(folder, "historic-checkouts");
+            var store = SessionStore.Open(fixture.Db, fixture.Time, cloneRoot);
+            var launcher = new FakeLauncher();
+            using var hub = new LiveHub(RowStore.Open(fixture.Db));
+            await using var runtime = Assembly.Infrastructure.Engine.EngineRuntime.Start(fixture.Db, new Assembly.Infrastructure.Topics.Topics(), fixture.Time, fixture.Limits,
+                cutover: new Assembly.Infrastructure.Engine.SessionCutover(fixture.Db, store, launcher, cloneRoot, fixture.Time));
+            void Start(string id, string? parent)
+            {
+                // SOURCE-DERIVED ready Engine records: these are actual Engine children, not manufactured native children.
+                Assert.True(fixture.Db.Writer.Write("test.grandchild-start", scope => runtime.Commands.Apply(scope,
+                    new(Guid.NewGuid(), runtime.Machine, new(Assembly.Engine.Contracts.ActorKind.Window, "owner"), id, 0, 0, 1000),
+                    new Assembly.Engine.Sessions.StartSession("claude", null, folder, id, parent, null, null))).Applied);
+                Assert.True(fixture.Db.Writer.Write("test.grandchild-ready", scope => runtime.Commands.Apply(scope,
+                    new(Guid.NewGuid(), runtime.Machine, new(Assembly.Engine.Contracts.ActorKind.System, "fixture"), id, 1, 0, 1000),
+                    new Assembly.Engine.Sessions.SetSessionState("idle", null, null))).Applied);
+            }
+            Start("parent", null); Start("child", "parent"); Start("grandchild", "child");
+            await using var work = new BackgroundWork(fixture.Time, TextWriter.Null);
+            await using var adapter = new SharedAdapter(launcher, "claude", fixture.Time, TextWriter.Null);
+            var opener = new SessionOpener(store, launcher, _ => adapter);
+            var host = new SessionHost("grandchild", hub, store, opener, fixture.Time, TextWriter.Null, work);
+            Assert.NotNull(host.Send("hi"));
+            var agent = await launcher.NextAsync();
+            var opened = await agent.StartAsync();
+            Assert.Equal(folder, opened.GetProperty("params").GetProperty("cwd").GetString());
+            var prompt = await agent.ReadAsync("session/prompt");
+            Assert.Equal(folder, store.Root(store.Get("parent")!));
+            Assert.Equal(folder, store.Root(store.Get("grandchild")!));
+            Assert.Equal("uncommitted owner draft", await File.ReadAllTextAsync(Path.Combine(folder, "notes.md")));
+            Assert.False(Directory.Exists(cloneRoot));
+            await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
+            await Until(() => host.ActiveRunId is null);
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
+    // Claude's Read names no folder, so its relative path is read against the checkout the session opened in: one
+    // inside stays a session path, one that leaves it becomes absolute.
+    [Fact]
+    public async Task A_relative_tool_path_with_no_folder_on_the_call_joins_the_session_s_checkout()
+    {
+        _host.Send("read it");
+        await Kinds(2);
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        await agent.ReadAsync("session/prompt");
+
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","title":"Read","kind":"read","status":"pending","rawInput":{"file_path":"src/helper.rs"}}""");
+        var tool = (await Rows(1)).Single();
+
+        Assert.Equal("tool", tool.Kind);
+        Assert.Equal("src/helper.rs", tool.Payload.GetProperty("path").GetString());
+
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t2","title":"Read","kind":"read","status":"pending","rawInput":{"file_path":"../outside.rs"}}""");
+        var outside = (await Rows(1)).Single();
+        var parent = Path.GetDirectoryName(_sessionStore.Root(_session)!.TrimEnd('/'))!;
+        Assert.Equal(parent + "/outside.rs", outside.Payload.GetProperty("path").GetString());
     }
 }

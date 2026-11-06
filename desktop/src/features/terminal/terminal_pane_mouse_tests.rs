@@ -10,7 +10,7 @@ use serde_json::json;
 use super::{Open, Terminals, following, open};
 
 /// The window position of a cell's left or right half.
-fn at(open: &mut Open<'_>, column: f32, line: f32) -> gpui_kit::Point<gpui_kit::Pixels> {
+pub(super) fn at(open: &mut Open<'_>, column: f32, line: f32) -> gpui_kit::Point<gpui_kit::Pixels> {
     let (origin, cell) = open
         .pane
         .read_with(open.cx, |pane, _| (pane.origin, pane.cell));
@@ -20,7 +20,7 @@ fn at(open: &mut Open<'_>, column: f32, line: f32) -> gpui_kit::Point<gpui_kit::
     )
 }
 
-fn wheel(open: &mut Open<'_>, lines: f32) {
+pub(super) fn wheel(open: &mut Open<'_>, lines: f32) {
     let position = at(open, 1., 1.);
     open.cx.simulate_event(ScrollEvent {
         position,
@@ -29,7 +29,7 @@ fn wheel(open: &mut Open<'_>, lines: f32) {
     });
 }
 
-fn top_line(open: &mut Open<'_>) -> String {
+pub(super) fn top_line(open: &mut Open<'_>) -> String {
     let text = open.pane.read_with(open.cx, |pane, _| pane.grid.text());
     text.lines().next().unwrap_or_default().to_string()
 }

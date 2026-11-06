@@ -8,6 +8,8 @@ using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
+using Assembly.Infrastructure.Engine;
+using Assembly.Application.Features.Chat.Rows;
 
 namespace Assembly.Infrastructure.Socket;
 
@@ -19,7 +21,7 @@ namespace Assembly.Infrastructure.Socket;
 /// <c>timeout</c>; an exception other than <see cref="CallFailed"/> is logged at Error. A topic's <c>sub</c> gets its
 /// state, then its changes (5.7).
 /// </summary>
-internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, TimeProvider time, ILogger log) : ICallRegistry
+internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, TimeProvider time, ILogger log, EngineSocketStream? engine = null) : ICallRegistry
 {
     // No call runs longer, saves included (plan 5.1). Long work is started by a call and reports on a topic.
     internal static readonly TimeSpan Limit = TimeSpan.FromSeconds(30);
@@ -30,6 +32,9 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     // Each topic, by name.
     private readonly Dictionary<string, TopicFrames> _topics = [];
     private readonly List<Action<string>> _closedHooks = [];
+
+    public CallKind? KindOf(string feature, string method) => _calls.TryGetValue($"{feature}/{method}", out var call)
+        ? call.Writes ? CallKind.Write : call.Bulk ? CallKind.BulkRead : CallKind.Read : null;
 
     public void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, CallContext, Task<TResult>> handler, bool bulk = false) =>
@@ -103,6 +108,20 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
 
     public void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
         Action<string, CallContext>? opened = null) =>
+        RegisterRows(topic, state, opened, null);
+
+    public void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<TItem, string> key,
+        Func<string?, CallContext, IReadOnlyList<TItem>> state, Action<string, CallContext> opened,
+        Func<string?, CallContext, IExpectedSourceGuard?> source) =>
+        _topics.Add(topic, new TopicFrames(NeedsKey: true, (sub, frame, context) =>
+            ([StateFrame(sub, state(frame.Key, context), item, key)], (changed, json) => ChangeFrame(sub, changed, json)),
+            Opened: opened, Source: source));
+
+    public void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
+        Action<string, CallContext>? opened, IRowSourceBindings sources) => RegisterRows(topic, state, opened, sources);
+
+    private void RegisterRows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
+        Action<string, CallContext>? opened, IRowSourceBindings? sources) =>
         _topics.Add(topic, new TopicFrames(NeedsKey: true, (sub, frame, context) =>
         {
             var (seq, rows) = state(frame.Key!, frame.After, context);
@@ -111,18 +130,87 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             var sent = rows.Count > 0 ? Seq(rows[^1]) : seq;
             return ([RowsStateFrame(sub, seq), .. rows.Select(row => RowsFrame(sub, row))],
                 (_, row) => Seq(row) > sent ? RowsFrame(sub, row) : (ReadOnlyMemory<byte>?)null);
-        }, opened));
+        }, opened, Sources: sources));
+
+    internal async Task<ISocketSubscription?> SubscribeAsync(InFrame frame, long id, SocketConnection connection)
+    {
+        if (frame.ExpectedSource is null) return Subscribe(frame, id, connection);
+        if (frame.Stream == "engine" && frame.Topic == "messages")
+            return await SourceBoundEngine.OpenAsync(frame, id, connection, engine, _topics.GetValueOrDefault("rows")?.Sources, time);
+        if (frame.Topic != "rows" || frame.Stream is not null || frame.Key is null || connection.Bulk || connection.Terminal ||
+            connection.Peer is not OwnerPeer || !_topics.TryGetValue(frame.Topic, out var topic) || topic.Sources is null)
+        {
+            connection.Send(Error(id, "source_changed", "Source-bound rows are unavailable.")); return null;
+        }
+        RowSourceBinding? binding = null;
+        SourceBoundRows? subscription = null;
+        using var limit = new CancellationTokenSource(Limit, time);
+        using var capture = CancellationTokenSource.CreateLinkedTokenSource(connection.Closed, limit.Token);
+        try
+        {
+            // Actual owner capture is outside Topics' lock, once for this subscription's entire lifetime.
+            binding = await topic.Sources.CaptureAsync(frame.ExpectedSource, frame.Key, capture.Token);
+            binding.EnsureCurrent();
+            subscription = new(binding, connection, id);
+            if (binding.Remote) { subscription.Start(frame.After); return subscription; }
+            var opened = Subscribe(frame, id, connection, subscription);
+            if (opened is null) subscription.Dispose();
+            return opened;
+        }
+        catch (Exception error) when (error is CallFailed or OperationCanceledException)
+        {
+            subscription?.Dispose();
+            if (subscription is null) binding?.Dispose();
+            connection.Send(Error(id, error is CallFailed failed ? failed.Reason ?? "failed" : "cancelled",
+                "The selected row source is unavailable."));
+            return null;
+        }
+    }
 
     /// <summary>
     /// Subscribes the socket to a <c>sub</c> frame's topic: its state is read and queued, and the subscription registered,
     /// under the Topics lock. Null when there's nothing to subscribe to; the socket has been answered with an error.
     /// </summary>
-    internal TopicSet.Subscription? Subscribe(InFrame frame, long id, SocketConnection connection)
+    internal ISocketSubscription? Subscribe(InFrame frame, long id, SocketConnection connection, SourceBoundRows? bound = null)
     {
+        if (frame.ExpectedSource is not null && bound is null)
+        {
+            connection.Send(Error(id, "source_changed", "The row source was not captured.")); return null;
+        }
+        if (frame.SessionTitleParts is { } titleParts && (titleParts != 1 || connection.Peer is not OwnerPeer ||
+            connection.Bulk || connection.Terminal || frame.Stream is not null || frame.Topic != "sessions"))
+        {
+            connection.Send(Error(id, "bad_args", "sessionTitleParts=1 requires the owner sessions subscription"));
+            return null;
+        }
+        var titlePartsEnabled = frame.SessionTitleParts == 1;
         if (connection.Bulk)
         {
             connection.Send(Error(id, "not_found", "there are no topics on /socket/bulk"));
             return null;
+        }
+        if (frame.Stream is not null)
+        {
+            if (frame.Stream != "engine" || engine is null)
+            {
+                connection.Send(Error(id, "not_found", "Unknown socket stream"));
+                return null;
+            }
+            try
+            {
+                return engine.Subscribe(id, frame.Topic!, frame.Key, frame.After,
+                    (text, from) => connection.Send(Encoding.UTF8.GetBytes(text), from), connection.Closed, connection.Abort, frame.At, frame.Machine);
+            }
+            catch (KeyNotFoundException error)
+            {
+                connection.Send(Error(id, "not_found", error.Message));
+                return null;
+            }
+            catch (ArgumentException error)
+            {
+                connection.Send(Error(id, "bad_args", error.Message));
+                return null;
+            }
         }
         if (!_topics.TryGetValue(frame.Topic!, out var topic))
         {
@@ -139,7 +227,9 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             connection.Send(Error(id, "bad_args", $"{frame.Topic} needs a key"));
             return null;
         }
-        var context = new CallContext(connection.Closed, connection.Id, connection.Closed);
+        var context = new CallContext(connection.Closed, connection.Id, Closed: connection.Closed, ReplyId: id,
+            Peer: connection.Peer, ExpectedSource: frame.ExpectedSource)
+        { SourceGuard = bound?.Source };
         TopicSet.Subscription? self = null;
         Func<string?, string, ReadOnlyMemory<byte>?>? change = null;
         try
@@ -147,17 +237,34 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             var opened = topics.Subscribe(frame.Topic!, frame.Key, subscription =>
             {
                 self = subscription;
+                bound?.EnsureCurrent();
+                if (topic.Source is not null) context.SourceGuard = topic.Source(frame.Key, context);
                 (var snapshot, change) = topic.Open(id, frame, context);
+                var delivery = Delivery(subscription, context.SourceGuard);
+                if (titlePartsEnabled)
+                {
+                    if (snapshot.Count != 1) throw new CallFailed("sessions requires one complete state");
+                    snapshot = [SessionItemWireCodec.Adapt(snapshot[0], connection.EngineMachine ?? "")];
+                }
                 // Thrown inside the lock, so a state that can't go out subscribes nothing.
                 if (snapshot.Any(part => part.Length > SocketConnection.MaxFrame))
                     throw new CallFailed($"{frame.Topic}'s state is over 4 MB");
                 foreach (var part in snapshot)
-                    connection.Send(part, subscription);
+                {
+                    bound?.EnsureCurrent();
+                    connection.Send(part, bound ?? delivery);
+                }
             }, (key, json) =>
             {
+                IExpectedSourceGuard? source;
+                try { bound?.EnsureCurrent(); source = topic.Source?.Invoke(key, context); }
+                catch (Exception error) when (error is CallFailed or OperationCanceledException) { return; }
+                if (topic.Source is not null && source is null) return;
                 if (change!(key, json) is { } changed)
-                    connection.Send(changed, self);
+                    connection.Send(titlePartsEnabled ? SessionItemWireCodec.Adapt(changed, connection.EngineMachine ?? "") : changed,
+                        bound ?? (self is null ? null : Delivery(self, source)));
             });
+            bound?.Attach(opened);
             // Out of the Topics lock: it may take the hub's lock, which comes before Topics, or start work. The sub is
             // registered by now, so one that throws is logged and the sub stays good, as the socket's to unsubscribe.
             try
@@ -168,7 +275,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             {
                 log.LogError(error, "topic {Topic} opened {Key} but its follow-up failed", frame.Topic, frame.Key);
             }
-            return opened;
+            return bound ?? (ISocketSubscription)opened;
         }
         catch (CallFailed error)
         {
@@ -187,7 +294,19 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         }
     }
 
-    internal void Unsubscribe(TopicSet.Subscription subscription) => topics.Unsubscribe(subscription);
+    internal void Unsubscribe(ISocketSubscription subscription) => subscription.Dispose();
+
+    private static ISocketSubscription Delivery(ISocketSubscription subscription, IExpectedSourceGuard? source) =>
+        source is null ? subscription : new TopicDelivery(subscription, source);
+
+    private sealed class TopicDelivery(ISocketSubscription subscription, IExpectedSourceGuard source) : ISocketSubscription, IExpectedSourceGuard
+    {
+        public CancellationToken Closed => subscription.Closed;
+        public CancellationToken Changed => source.Changed;
+        public Task Completion => subscription.Completion;
+        public void EnsureCurrent() => source.EnsureCurrent();
+        public void Dispose() { } // The subscription and producer own their lifetimes; a queued frame owns neither.
+    }
 
     public void Closed(Action<string> connection) => _closedHooks.Add(connection);
 
@@ -210,6 +329,14 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     /// <summary>Runs one <c>call</c> frame to its answer. <paramref name="cancelled"/> is its <c>cancel</c>.</summary>
     internal async Task<ReadOnlyMemory<byte>> AnswerAsync(InFrame frame, long id, SocketConnection connection, CancellationToken cancelled)
     {
+        if (frame.ExpectedSource is not null &&
+            !(frame.Feature == "rows" && frame.Method is ("page" or "subagents" or "files" or "attachments" or "tokens") ||
+                frame.Feature == "sessions" && frame.Method == "read" ||
+                frame.Feature == "attachments" && frame.Method is ("begin" or "read") ||
+                frame.Feature == "send" && frame.Method is ("send" or "answer" or "stop" or "stopTask") ||
+                frame.Feature == "config" && frame.Method is ("get" or "warm" or "set") ||
+                frame.Feature == "engine" && frame.Method is ("owner_prompts" or "owner_prompt_chunk")))
+            return Error(id, "bad_args", "expectedSource requires a supported session call.");
         var name = $"{frame.Feature}/{frame.Method}";
         if ((frame.Feature == "terminal") != connection.Terminal)
             return Error(id, "not_found", frame.Feature == "terminal" ? $"{name} is on /socket/terminal" : $"{name} is on /socket");
@@ -227,6 +354,10 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             return Error(id, "bad_args", $"{name}: {error.Message}");
         }
 
+        if (args is Assembly.Application.Features.Chat.Sessions.SendFeature.StopArgs stop &&
+            (stop.ExpectedSource is not null || frame.ExpectedSource is not null) && string.IsNullOrWhiteSpace(stop.Session))
+            return Error(id, "bad_args", "A source-bound stop requires its session.");
+
         using var scope = log.BeginScope("{Call} {Id} on {Connection}", name, id, connection.Id);
         log.LogDebug("call {Call}", name);
         using var limit = new CancellationTokenSource(Limit, time);
@@ -234,7 +365,9 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         using var token = call.Writes
             ? CancellationTokenSource.CreateLinkedTokenSource(cancelled, limit.Token)
             : CancellationTokenSource.CreateLinkedTokenSource(cancelled, limit.Token, connection.Closed);
-        var context = new CallContext(token.Token, connection.Id, connection.Closed);
+        var context = new CallContext(token.Token, connection.Id, Closed: connection.Closed, ReplyId: id,
+            Peer: connection.Peer, ExpectedSource: frame.ExpectedSource);
+        var sourceTransferred = false;
         try
         {
             // A write joins its key's queue, or else its socket's, now, in arrival order; a read runs off the receive
@@ -242,16 +375,38 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             var result = call.Writes
                 ? await connection.QueueWriteAsync(call.Order?.Invoke(args), () => call.RunAsync(args, context), token.Token)
                 : await Task.Run(() => call.RunAsync(args, context));
-            var answer = Frame(new ResultFrame(id, result), SocketJson.Default.ResultFrame);
+            var answer = Result(id, result);
+            context.SourceGuard?.EnsureCurrent();
+            if (context.SourceGuard is { } source)
+            {
+                connection.BindReplySource(id, source);
+                sourceTransferred = true;
+            }
             return Bounded(answer, id);
+        }
+        catch (KeyNotFoundException error)
+        {
+            return Error(id, "not_found", error.Message);
+        }
+        catch (CallBadArguments error)
+        {
+            return Error(id, "bad_args", error.Message);
         }
         catch (CallFailed error)
         {
-            return Error(id, "failed", error.Message);
+            return Error(id, error.Reason ?? "failed", error.Message);
+        }
+        catch (CallUncertain error)
+        {
+            return Bounded(Frame(new ErrorFrame(id, "uncertain", error.Message, error.Machine), SocketJson.Default.ErrorFrame), id);
         }
         catch (MachineUnreachable error)
         {
-            return Bounded(Frame(new ErrorFrame(id, "unreachable", error.Message, error.Machine), SocketJson.Default.ErrorFrame), id);
+            return Bounded(Frame(new ErrorFrame(id, error.EngineDiffers ? "engine_differs" : "unreachable", error.Message, error.Machine), SocketJson.Default.ErrorFrame), id);
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested && context.SourceGuard?.Changed.IsCancellationRequested == true)
+        {
+            return Error(id, "source_changed", "The selected read source changed.");
         }
         catch (OperationCanceledException) when (limit.IsCancellationRequested)
         {
@@ -266,6 +421,10 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             log.LogError(error, "call {Call} failed", name);
             return Error(id, "failed", $"{name} failed");
         }
+        finally
+        {
+            if (!sourceTransferred) context.SourceGuard?.Dispose();
+        }
     }
 
     /// <summary>
@@ -273,6 +432,9 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     /// pass the 4 MB frame limit. The frames are read as JSON, never put into HTML.
     /// </summary>
     private static readonly JsonWriterOptions Json = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    internal static ReadOnlyMemory<byte> Result(long id, JsonElement result) =>
+        Frame(new ResultFrame(id, result), SocketJson.Default.ResultFrame);
 
     internal static ReadOnlyMemory<byte> Frame<T>(T frame, JsonTypeInfo<T> type)
     {
@@ -395,7 +557,8 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     // published becomes, (key, JSON) to a frame, or null for none.
     private sealed record TopicFrames(bool NeedsKey,
         Func<long, InFrame, CallContext, (IReadOnlyList<ReadOnlyMemory<byte>> State, Func<string?, string, ReadOnlyMemory<byte>?> Change)> Open,
-        Action<string, CallContext>? Opened = null, bool Terminal = false);
+        Action<string, CallContext>? Opened = null, bool Terminal = false, IRowSourceBindings? Sources = null,
+        Func<string?, CallContext, IExpectedSourceGuard?>? Source = null);
 
     private sealed record Call(bool Writes, Func<JsonElement, object?> ReadArgs, Func<object, CallContext, Task<JsonElement>> RunAsync,
         Func<object, string?>? Order = null, bool Bulk = false);

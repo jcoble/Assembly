@@ -1,8 +1,7 @@
-using System.Net.Http.Headers;
 using System.Net.WebSockets;
-using System.Text;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Desktop.Serve;
+using Assembly.Infrastructure.Chat;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Infrastructure.Http;
 using Assembly.Infrastructure.Machines;
@@ -58,37 +57,57 @@ public sealed class BoardRemoteTests
     public async Task A_board_answer_delivered_on_the_remote_has_the_desktop_follow_its_turn()
     {
         using var source = new BoardQueryTests.Fixture();
-        var sessions = SessionStore.Open(source.Db, source.Time, "unused");
+        var checkouts = Directory.CreateTempSubdirectory("board-remote-owner-").FullName;
+        var sessions = SessionStore.Open(source.Db, source.Time, checkouts);
         var rows = RowStore.Open(source.Db);
         using var hub = new LiveHub(rows, topics: source.Topics);
         var launcher = new FakeLauncher();
         await using var work = new BackgroundWork(source.Time, TextWriter.Null);
-        await using var registry = new SessionRegistry(hub, sessions, launcher, source.Time, TextWriter.Null, work);
+        var tokens = new Assembly.Engine.Mcp.McpTokens();
+        var endpoint = new Assembly.Infrastructure.Mcp.McpEndpointReady(tokens);
+        var limits = new Assembly.Engine.Sessions.SessionLimits(() => 1, () => 5);
+        SessionRegistry registry = null!;
+        await using var runtime = Assembly.Infrastructure.Engine.EngineRuntime.Start(source.Db, source.Topics, source.Time, limits,
+            cutover: new(source.Db, sessions, launcher, checkouts, source.Time, owningHome: checkouts), effectsReady: endpoint.Ready,
+            effectsFactory: engine =>
+            {
+                registry = new SessionRegistry(hub, sessions, launcher, source.Time, TextWriter.Null, work,
+                    feed: new Assembly.Infrastructure.Engine.EngineFeed(engine, TextWriter.Null, source.Time),
+                    mcp: Assembly.Infrastructure.Mcp.McpSessionCallbacks.Create(engine, endpoint, tokens));
+                return new Assembly.Infrastructure.Engine.AdapterEffects(source.Db, registry, sessions, rows);
+            });
+        await using var registryOwner = registry;
         var machines = new MachineSet(new LocalMachine(hub, sessions, registry, new AttachmentStore("unused")));
-        registry.Helpers.Delivery.Machines = machines;
         await using var tools = new BoardTools(sessions, registry, source.Transitions, source.Queries, CancellationToken.None);
+        var gate = new Assembly.Engine.Mcp.McpGate(runtime, limits, source.Time);
+        await using var answers = new Assembly.Infrastructure.Engine.Needs.NeedAnswers(gate, runtime, registry, source.Time);
+        var sdk = new Assembly.Infrastructure.Mcp.McpServerHost(tokens, new(runtime, gate, source.Time),
+            [new Assembly.Infrastructure.Mcp.BoardUpdateTool(gate, tools), new Assembly.Engine.Mcp.Tools.ListSessionsTool(gate)]);
         await using var app = ApiServer.Build(new ApiServices(hub, sessions, machines, new AttachmentStore("unused"),
-            "board-test", registry.Helpers, source.Db.Writer, source.Topics,
-            [new WorkflowCalls(source.Queries, tools.AnswerAsync), new RowsFeature(hub, rows, sessions, machines)], tools), 0, out _);
+            "board-test", sdk, source.Db.Writer, source.Topics,
+            [new Assembly.Infrastructure.Engine.EngineCalls(runtime, source.Time, answers),
+                new Assembly.Infrastructure.Engine.MachineCalls(runtime, source.Time, launcher, checkouts, answers),
+                new WorkflowCalls(source.Queries, tools.AnswerAsync), new RowsFeature(hub, rows, sessions, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)),
+                new SessionsFeature(sessions, machines, owningMachine: runtime.Machine, owningHome: checkouts), new MachinesFeature(machines, new MachineStatus(source.Topics, []), () => { }, source.Time)], tools, Engine: runtime), 0, out _);
+        app.Lifetime.ApplicationStopping.Register(endpoint.Stop);
         await app.StartAsync();
         var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
+        endpoint.Listening(address);
         var home = Directory.CreateTempSubdirectory("assembly-board-remote-").FullName;
         try
         {
             await using var desktop = await DesktopBackend.StartAsync(home, "desktop-test", 0, new FakeLauncher(), TextWriter.Null,
                 new RemoteConfig("Workbox Test", address, "board-test"));
-            using var http = new HttpClient { BaseAddress = desktop.Address };
-            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "desktop-test");
-            using var created = await http.PostAsync("/sessions", new StringContent(
-                """{"agent":"codex","repoUrl":"project","machine":"Workbox Test"}""", Encoding.UTF8, "application/json"));
-            created.EnsureSuccessStatusCode();
-            using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
-            var sessionId = body.RootElement.GetProperty("sessionId").GetString()!;
-            tools.Update(sessionId, source.Report(question: source.Ask()));
             using var socket = new ClientWebSocket();
             await socket.ConnectAsync(new UriBuilder(desktop.Address) { Scheme = "ws", Path = "/socket" }.Uri, CancellationToken.None);
             await BoardSocketTests.Send(socket, """{"t":"hello","protocol":1,"token":"desktop-test"}""");
             await BoardSocketTests.Read(socket);
+            await BoardSocketTests.Send(socket, """{"t":"call","id":2,"feature":"sessions","method":"create","args":{"agent":"codex","clientId":"board-remote","machine":"Workbox Test"}}""");
+            var created = await BoardSocketTests.Read(socket);
+            Assert.True(created.GetProperty("t").GetString() == "result", created.GetRawText());
+            Assert.Equal(2, created.GetProperty("id").GetInt32());
+            var sessionId = created.GetProperty("result").GetProperty("sessionId").GetString()!;
+            tools.Update(sessionId, source.Report(question: source.Ask()));
             // Watching the rail does not open a chat or make the machine follow its rows.
             await BoardSocketTests.Send(socket, """{"t":"sub","id":0,"topic":"sessionRail"}""");
             await BoardSocketTests.Read(socket);
@@ -98,7 +117,7 @@ public sealed class BoardRemoteTests
             var agent = await launcher.NextAsync();
             await agent.StartAsync();
             var prompt = await agent.ReadAsync("session/prompt");
-            await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+            await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
             await agent.CloseAsync();
             using var copiedDb = TestDatabase.Open(Path.Combine(home, "assembly.db"));
             var copied = RowStore.Open(copiedDb);

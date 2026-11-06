@@ -13,19 +13,23 @@ using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Infrastructure.Chat.Worktrees;
 using Assembly.Infrastructure.Chat.SourceControl;
 using Assembly.Infrastructure.Git;
+using Assembly.Application.Features.Chat.SourceControl.PullRequests;
 using Assembly.Infrastructure.Persistence;
+using Assembly.Engine.Persistence;
 using Assembly.Infrastructure.Socket;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Draft.SourceControl;
 
 /// <summary>Worktree lists and git status over the socket, using temporary session repositories.</summary>
-public sealed class GitSocketTests : IAsyncLifetime
+public sealed partial class GitSocketTests : IAsyncLifetime
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
     private readonly TempDatabase _file = new();
     private readonly DirectoryInfo _checkouts = Directory.CreateTempSubdirectory("git-socket-");
+    private readonly Assembly.Application.Common.BackgroundWork _gitWork = new(TimeProvider.System, TextWriter.Null);
+    private GitOperations _operations = null!;
     private AppDatabase _db = null!;
     private SessionStore _sessions = null!;
     private WebApplication _app = null!;
@@ -36,16 +40,29 @@ public sealed class GitSocketTests : IAsyncLifetime
         var topics = new TopicSet();
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
         _sessions = SessionStore.Open(_db, TimeProvider.System, _checkouts.FullName);
+        var machine = EngineSchema.Open(_db, TimeProvider.System.GetUtcNow().ToUnixTimeMilliseconds());
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
         new WorktreesFeature(_sessions).Register(calls);
-        new SourceControlFeature(_sessions).Register(calls);
+        _operations = new(_gitWork, topics, TimeProvider.System, machine);
+        var routes = new SourceControlFeature(_sessions, _db, _operations, null, null, new GitCli());
+        routes.Register(calls);
+        new SourceControlWrites(_sessions, new GitCli(), new CheckoutWrites(), TimeProvider.System, routes).Register(calls);
+        var prGit = new GitCli();
+        var prReader = new PullRequestReader(prGit, new SocketGh(), _checkouts.FullName, new GitTextPatch(prGit));
+        var projectRoots = new Assembly.Infrastructure.Projects.ProjectRoots(new Assembly.Application.Features.Projects.ProjectStore(_db, TimeProvider.System));
+        var sources = new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(_db, _sessions,
+            new Assembly.Application.Common.Machines.MachineSet(new Assembly.Tests.Draft.Base.Chat.FakeMachine(null, _sessions)));
+        new PullRequestsFeature(_sessions, prReader, routes, new(_db, projectRoots, sources, machine, prReader, null, null)).Register(calls);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
         _app = builder.Build();
         _app.UseWebSockets();
-        var endpoint = new SocketEndpoint("git-token", calls, "test-machine", TimeProvider.System);
+        var endpoint = new SocketEndpoint("git-token", calls, machine, TimeProvider.System);
         _app.Map("/socket", endpoint.HandleAsync);
+        var bulkEndpoint = new SocketEndpoint("git-token", calls, machine, TimeProvider.System, bulk: true);
+        _app.Map("/socket/bulk", bulkEndpoint.HandleAsync);
+        _app.Lifetime.ApplicationStopping.Register(bulkEndpoint.CloseAll);
         _app.Lifetime.ApplicationStopping.Register(endpoint.CloseAll);
         await _app.StartAsync();
         var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
@@ -56,6 +73,8 @@ public sealed class GitSocketTests : IAsyncLifetime
     {
         await _app.StopAsync();
         await _app.DisposeAsync();
+        await _operations.DisposeAsync();
+        await _gitWork.DisposeAsync();
         _db.Dispose();
         _file.Dispose();
         _checkouts.Delete(recursive: true);
@@ -170,7 +189,13 @@ public sealed class GitSocketTests : IAsyncLifetime
         await CallAsync(socket, 1, feature, method, "nope");
         await AssertErrorAsync(socket, "unknown session");
         await CallAsync(socket, 2, feature, method, elsewhere.SessionId);
-        await AssertErrorAsync(socket, "this session's files are on box, which this window can't show yet");
+        if (feature == "git")
+        {
+            using var refused = JsonDocument.Parse(await ReadAsync(socket));
+            Assert.Equal("error", refused.RootElement.GetProperty("t").GetString());
+            Assert.Equal("source_changed", refused.RootElement.GetProperty("code").GetString());
+        }
+        else await AssertErrorAsync(socket, "this session's files are on box, which this window can't show yet");
         await CallAsync(socket, 3, feature, method, waiting.SessionId);
         await AssertErrorAsync(socket, "this session's folder is made on its first message");
     }

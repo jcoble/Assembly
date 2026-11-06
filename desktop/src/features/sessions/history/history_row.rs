@@ -6,13 +6,14 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::age::age;
-use crate::core::state::selected_session::SelectedSession;
+use crate::core::intents::open_session::OpenSession;
 use crate::core::state::session_item::SessionItem;
 
 /// `now` is the clock's last tick, `None` before the first.
 pub fn history_row(item: &SessionItem, now: Option<i64>, picked: bool, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
     let id = item.session_id.clone();
+    let route_machine = item.machine.clone();
     let (row, title_id, age_id) = (
         format!("history-session-{id}"),
         format!("history-title-{id}"),
@@ -29,9 +30,16 @@ pub fn history_row(item: &SessionItem, now: Option<i64>, picked: bool, cx: &App)
         .cursor_pointer()
         .when(picked, |line| line.bg(theme.secondary))
         .when(!picked, |line| line.hover(|line| line.bg(theme.muted)))
-        .on_click(move |_, _, cx| {
-            let id = id.clone();
-            SelectedSession::global(cx).update(cx, |selected, cx| selected.select(Some(id), cx));
+        .on_click(move |_, window, cx| {
+            window.dispatch_action(
+                Box::new(OpenSession {
+                    id: id.clone(),
+                    route_machine: route_machine.clone(),
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    historical: true,
+                }),
+                cx,
+            );
         })
         .child(
             div()

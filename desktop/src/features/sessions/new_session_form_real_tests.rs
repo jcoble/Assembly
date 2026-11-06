@@ -1,6 +1,7 @@
-//! The new-session form against the real desktop backend (`RealBackend`, whose agents file is empty): what Start
-//! session says when the agent or folder is missing, that a second click waits for the first create, and when the
-//! agents load again.
+//! Real-backend empty-agent refusal and registry draft selection. Valid first-send ownership is exercised in first_send_tests.
+
+use std::cell::Cell;
+use std::rc::Rc;
 
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
@@ -55,64 +56,44 @@ async fn settled(
     .await;
 }
 
-fn type_folder(form: &Entity<NewSessionForm>, folder: &str, cx: &mut VisualTestContext) {
+#[gpui::test]
+async fn first_send_without_an_advertised_agent_preserves_the_draft_and_selects_no_session(
+    cx: &mut TestAppContext,
+) {
+    let Some(backend) = RealBackend::start() else {
+        return;
+    };
+    let (form, cx) = opened(&backend, cx).await;
+    form.read_with(cx, |form, _| assert!(form.agents.is_empty()));
     form.update_in(cx, |form, window, cx| {
-        form.folder
-            .update(cx, |state, cx| state.set_value(folder, window, cx))
+        form.first_send("unsent text".into(), Vec::new(), window, cx)
     });
-}
-
-// Pins: g0-session#31
-#[gpui::test]
-async fn start_session_says_what_is_missing(cx: &mut TestAppContext) {
-    let Some(backend) = RealBackend::start() else {
-        return;
-    };
-    let (form, cx) = opened(&backend, cx).await;
-    form.read_with(cx, |form, _| {
-        assert!(form.agents.is_empty(), "the backend's agents file is empty");
-        assert!(form.error.is_empty(), "{}", form.error);
-    });
-    type_folder(&form, "/repo", cx);
-    form.update(cx, |form, cx| form.create(cx));
-    form.update(cx, |form, _| {
-        assert_eq!(form.error.as_ref(), "Pick an agent and type a folder.");
-        assert!(!form.starting);
-        form.error = Default::default();
-    });
-    type_folder(&form, "  ", cx);
-    form.update(cx, |form, cx| {
-        form.agent = Some("claude".into());
-        form.create(cx);
-    });
-    form.read_with(cx, |form, _| {
-        assert_eq!(form.error.as_ref(), "Pick an agent and type a folder.")
-    });
-}
-
-// The second click picks another agent first: had it sent a create of its own, the answer would name that agent.
-// Pins: g0-session#31
-#[gpui::test]
-async fn a_second_click_waits_for_the_first_create(cx: &mut TestAppContext) {
-    let Some(backend) = RealBackend::start() else {
-        return;
-    };
-    let (form, cx) = opened(&backend, cx).await;
-    type_folder(&form, "/repo", cx);
-    form.update(cx, |form, cx| {
-        form.agent = Some("first".into());
-        form.create(cx);
-        form.agent = Some("second".into());
-        form.create(cx);
-        assert!(form.starting, "Start session waits for the first create");
-    });
-    settled(&form, cx, |form| !form.starting).await;
     form.read_with(cx, |form, _| {
         assert_eq!(
             form.error.as_ref(),
-            "Couldn't start the session: this machine has no agent first"
-        )
+            "Choose ready settings advertised by this machine."
+        );
+        assert!(!form.starting);
+        assert!(form.attempt.is_none());
     });
+    assert!(cx.update(|_, cx| SelectedSession::global(cx).read(cx).key().is_none()));
+}
+#[gpui::test]
+async fn repeated_first_send_cannot_fabricate_a_ready_agent_or_create_an_empty_session(
+    cx: &mut TestAppContext,
+) {
+    let Some(backend) = RealBackend::start() else {
+        return;
+    };
+    let (form, cx) = opened(&backend, cx).await;
+    form.update_in(cx, |form, window, cx| {
+        form.agent = Some("not-advertised".into());
+        form.first_send("same text".into(), Vec::new(), window, cx);
+        form.first_send("same text".into(), Vec::new(), window, cx);
+        assert!(form.attempt.is_none());
+        assert!(!form.starting);
+    });
+    assert!(cx.update(|_, cx| SelectedSession::global(cx).read(cx).key().is_none()));
 }
 
 // A machine with no agents isn't asked again on every machines change; a load the connection dropped is.
@@ -136,24 +117,37 @@ async fn the_agents_load_again_on_a_machines_change_only_after_a_dropped_load(
     settled(&form, cx, |form| !form.loading).await;
 }
 
-// A project header's + fills the form with its folder and machine; the machine's agents load for it.
-// Pins: sessions-list#8
 #[gpui::test]
-async fn a_projects_new_session_fills_its_folder_and_machine(cx: &mut TestAppContext) {
+async fn a_project_selection_keeps_the_registry_copy_and_does_not_invent_remote_ownership(
+    cx: &mut TestAppContext,
+) {
     let Some(backend) = RealBackend::start() else {
         return;
     };
     let (form, cx) = opened(&backend, cx).await;
+    // The agents load and the location read each write the form's one error and either can land last, so the load's
+    // refusal is caught as it lands.
+    let refused = Rc::new(Cell::new(false));
+    let (changed, mut changes) = unbounded();
+    let (seen, tell) = (refused.clone(), changed.clone());
+    let _heard = cx.update(|_, cx| {
+        cx.observe(&form, move |form, cx| {
+            seen.set(seen.get() || form.read(cx).error.contains("unknown machine"));
+            _ = tell.unbounded_send(());
+        })
+    });
+    let project=serde_json::from_value(serde_json::json!({"id":"actual-copy","machine":"Workbox Test","rootPath":"/srv/app","title":"App","repoKey":null,"pinnedAt":null,"removedAt":null,"createdAt":1,"lastUsedAt":null})).unwrap();
     form.update_in(cx, |form, window, cx| {
-        form.fill("/srv/app", Some("Workbox Test".into()), window, cx)
+        form.fill_project(project, window, cx)
     });
-    form.read_with(cx, |form, cx| {
-        assert_eq!(form.folder.read(cx).value(), "/srv/app");
-        assert_eq!(form.machine.as_deref(), Some("Workbox Test"));
-    });
-    // This backend has no such machine, so its agents load fails and says so.
-    settled(&form, cx, |form| !form.loading).await;
     form.read_with(cx, |form, _| {
-        assert!(form.error.contains("unknown machine"), "{}", form.error)
+        assert_eq!(form.selected_project.as_ref().unwrap().id, "actual-copy");
+        assert_eq!(form.machine.as_deref(), Some("Workbox Test"));
+        assert!(form.location_source.is_none());
+        assert!(form.attempt.is_none());
     });
+    until("the agents load's refusal", &mut changes, &changed, || {
+        refused.get()
+    })
+    .await;
 }

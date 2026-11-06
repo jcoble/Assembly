@@ -15,7 +15,18 @@ pub trait SessionClient: 'static {
         &self,
         session: &str,
         after: Option<i64>,
+        expected_source: Option<&crate::core::socket::row_source::ExpectedRowSource>,
         sink: RowsSink,
+        cx: &App,
+    ) -> Subscription;
+
+    /// A known owner prompt's pushed Engine display state.
+    fn subscribe_message(
+        &self,
+        message: &str,
+        machine: Option<&str>,
+        expected_source: Option<&crate::core::socket::row_source::ExpectedRowSource>,
+        sink: MessageSink,
         cx: &App,
     ) -> Subscription;
 
@@ -39,6 +50,8 @@ pub trait SessionClient: 'static {
 pub type ClockSink = Box<dyn FnMut(i64, &mut App)>;
 
 /// Where a rows subscription's events go, on the main thread.
+pub type MessageSink = Box<dyn FnMut(Result<Value, CallError>, &mut App)>;
+
 pub type RowsSink = Box<dyn FnMut(RowUpdate, &mut App)>;
 
 /// Why a call has no result: the backend's error codes (SocketFrames.cs), with its message, or `Aborted` (a newer
@@ -50,10 +63,18 @@ pub enum CallError {
     Failed(String),
     Timeout(String),
     Unreachable { machine: String },
+    Uncertain { machine: String, message: String },
+    Refused { code: String, message: String },
     Aborted,
 }
 
 impl CallError {
+    /// Whether the owner refused the call because the session's source changed, so its captured source is no longer
+    /// valid.
+    pub fn is_source_changed(&self) -> bool {
+        matches!(self, CallError::Refused { code, .. } if code == "source_changed")
+    }
+
     /// Why, in words, for a line under what failed.
     pub fn reason(&self) -> String {
         match self {
@@ -61,6 +82,8 @@ impl CallError {
             | CallError::BadArgs(message)
             | CallError::Failed(message)
             | CallError::Timeout(message) => message.clone(),
+            CallError::Refused { message, .. } => message.clone(),
+            CallError::Uncertain { message, .. } => message.clone(),
             CallError::Unreachable { machine } => format!("{machine} is offline"),
             CallError::Aborted => "it was cancelled".into(),
         }

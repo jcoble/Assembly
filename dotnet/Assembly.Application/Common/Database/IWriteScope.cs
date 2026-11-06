@@ -6,14 +6,13 @@ namespace Assembly.Application.Common.Database;
 /// Inside one write: its reads run on the write connection, so they see the write's own transaction. They take no
 /// token, because a save that has been sent finishes; cancelling one of them would roll back the whole write.
 /// </summary>
-public interface IWriteScope
+public interface IWriteScope : IReadScope
 {
-    List<T> Query<T>(string sql, Func<IRow, T> map, params SqlArg[] args);
-
-    /// <summary>The first row mapped, or default when there's none.</summary>
-    T? QueryFirst<T>(string sql, Func<IRow, T> map, params SqlArg[] args);
-
     int Execute(string sql, params SqlArg[] args);
+
+    /// <summary>Publishes in-memory state after commit, under the writer gate and before topics. A callback failure
+    /// propagates after the database has committed; it cannot roll the transaction back. Callbacks must do no IO.</summary>
+    void AfterCommit(Action publishState);
 
     /// <summary>
     /// Queues a change for the topic's subscribers (see <see cref="Topics.ITopics.Publish"/>). It's sent after the write

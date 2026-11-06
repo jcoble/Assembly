@@ -18,7 +18,7 @@ async fn upload(
     cx: &mut TestAppContext,
 ) -> Result<String, CallError> {
     let fake = client.clone();
-    cx.update(|cx| upload_image(Rc::new(fake), "s1".into(), source, "image/png", cx))
+    cx.update(|cx| upload_image(Rc::new(fake), "s1".into(), source, "image/png", None, cx))
         .await
 }
 

@@ -4,6 +4,7 @@
 //! `set`, `remove`), one call at a time, and the list changes only as the topic says, so nothing shows as saved unless
 //! the backend took it. A call that fails says why on its machine's row, or under the form.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _};
@@ -17,10 +18,15 @@ use super::settings_page::SettingsPage;
 use crate::core::socket::client::SocketClient;
 use crate::core::state::machine::Machine;
 use crate::core::state::machines::Machines;
+use crate::core::ui::access::control_ids::{
+    machine_button as machine_button_id, machine_line, settings as ids,
+};
+use crate::core::ui::access::{Control as _, say};
+use crate::features::remote_install::updates::row_status;
 
 /// What the form shows in a blank port or token file: the backend's defaults (SavedMachine.cs), which it fills in.
 const DEFAULT_PORT: &str = "9797";
-const DEFAULT_TOKEN_FILE: &str = ".config/assembly-dotnet/env";
+const DEFAULT_TOKEN_FILE: &str = ".config/assembly-host/env";
 
 impl SettingsPage {
     /// The form's name, SSH destination, port and token file.
@@ -42,7 +48,7 @@ impl SettingsPage {
             return v_flex()
                 .px_4()
                 .py_3()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .child("The backend isn't running.");
         };
         let listed: Vec<Machine> = machines.read(cx).machines().cloned().collect();
@@ -59,6 +65,8 @@ impl SettingsPage {
         let theme = cx.theme();
         let (dot, status) = if !machine.checked && machine.name.is_some() {
             (theme.muted_foreground, "Checking…".to_string())
+        } else if machine.reachable && machine.reason.is_some() {
+            (theme.warning, machine.reason.clone().unwrap_or_default())
         } else if machine.reachable {
             (theme.success, "Connected".to_string())
         } else {
@@ -75,49 +83,81 @@ impl SettingsPage {
         };
         let label = v_flex()
             .gap_0p5()
-            .flex_1()
             .min_w_0()
             .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.foreground)
-                    .child(machine.name.clone().unwrap_or("This Mac".into())),
+                say(
+                    machine_line(machine.name.as_deref().unwrap_or("local"), "name"),
+                    machine.name.clone().unwrap_or("This Mac".into()),
+                )
+                .text_role(TextRole::Body, cx)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme.foreground),
             )
             .child(
                 h_flex()
                     .gap_1p5()
                     .items_start()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(theme.muted_foreground)
                     .child(div().flex_none().size(px(6.)).rounded_full().bg(dot))
                     .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .whitespace_normal()
-                            .child(format!("{reached} · {status}")),
+                        say(
+                            machine_line(machine.name.as_deref().unwrap_or("local"), "status"),
+                            row_status(&machine, reached, &status),
+                        )
+                        .debug_selector(|| "machine-status".into())
+                        .flex_1()
+                        .min_w_0()
+                        .whitespace_normal(),
                     ),
             );
-        let failure = machine
-            .name
-            .as_ref()
-            .and_then(|name| self.failure_about(Some(name), cx));
+        // This machine's row has no name, but its update button still needs somewhere to say why it failed.
+        let key = machine.name.clone().unwrap_or("local".to_string());
+        let failure = self.failure_about(Some(&key), cx);
+        let updates = self.update_buttons(&machine, &key, cx);
+        let install = install_offered(&machine).then(|| {
+            let name = machine.name.clone().unwrap_or_default();
+            self.machine_button(
+                format!("install-{name}").into(),
+                machine_button_id(&name, "install"),
+                INSTALL,
+            )
+            .primary()
+            .loading(machine.updating)
+            .disabled(machine.updating || self.machine_call.is_some())
+            .on_click(cx.listener(move |page, _, window, cx| {
+                page.machine_call(
+                    Some(name.clone()),
+                    "updates",
+                    "install",
+                    json!({ "machine": name }),
+                    "Couldn't install",
+                    window,
+                    cx,
+                )
+            }))
+        });
         let actions = machine
             .name
             .is_some()
             .then(|| self.machine_actions(machine, cx));
+        // On their own line: a note or a reason can be long, and all of them beside it left it a letter wide.
+        let any = !updates.is_empty() || install.is_some() || actions.is_some();
+        let buttons = any.then(|| {
+            h_flex()
+                .flex_wrap()
+                .justify_end()
+                .gap_2()
+                .children(updates)
+                .children(install)
+                .children(actions)
+        });
         v_flex()
             .px_4()
             .py_3()
             .gap_1p5()
-            .child(
-                h_flex()
-                    .gap_4()
-                    .justify_between()
-                    .child(label)
-                    .children(actions),
-            )
+            .child(label)
+            .children(buttons)
             .children(failure)
     }
 
@@ -141,23 +181,55 @@ impl SettingsPage {
                 "Couldn't connect",
             )
         };
+        let check_name = name.clone();
+        let check = self
+            .machine_button(
+                format!("check-{name}").into(),
+                machine_button_id(&name, "check"),
+                CHECK,
+            )
+            .outline()
+            .disabled(machine.updating || self.machine_call.is_some())
+            .on_click(cx.listener(move |page, _, window, cx| {
+                page.machine_call(
+                    Some(check_name.clone()),
+                    "updates",
+                    "check",
+                    json!({ "machine": check_name }),
+                    "Couldn't check for updates",
+                    window,
+                    cx,
+                )
+            }));
         let about = Some(name.clone());
         let connection = self
-            .machine_button(format!("{method}-{name}").into(), label)
+            .machine_button(
+                format!("{method}-{name}").into(),
+                machine_button_id(&name, method),
+                label,
+            )
             .outline()
             .on_click(cx.listener(move |page, _, window, cx| {
                 let (about, args) = (about.clone(), args.clone());
-                page.machine_call(about, method, args, doing, window, cx)
+                page.machine_call(about, "machines", method, args, doing, window, cx)
             }));
         let edit = self
-            .machine_button(format!("edit-{name}").into(), "Edit")
+            .machine_button(
+                format!("edit-{name}").into(),
+                machine_button_id(&name, "edit"),
+                "Edit",
+            )
             .ghost()
             .disabled(self.machine_call.is_some() || editing)
             .on_click(
                 cx.listener(move |page, _, window, cx| page.edit_machine(&machine, window, cx)),
             );
         let remove = self
-            .machine_button(format!("remove-{name}").into(), "Remove")
+            .machine_button(
+                format!("remove-{name}").into(),
+                machine_button_id(&name, "remove"),
+                "Remove",
+            )
             .ghost()
             .disabled(self.machine_call.is_some() || editing)
             .on_click(
@@ -166,6 +238,7 @@ impl SettingsPage {
         h_flex()
             .gap_1()
             .flex_none()
+            .child(check)
             .child(connection)
             .child(edit)
             .child(remove)
@@ -188,11 +261,11 @@ impl SettingsPage {
             "Add machine"
         };
         let save = self
-            .machine_button("set".into(), save_label)
+            .machine_button("set".into(), ids::MACHINE_SAVE.into(), save_label)
             .primary()
             .on_click(cx.listener(|page, _, window, cx| page.save_machine(window, cx)));
         let cancel = editing.is_some().then(|| {
-            self.machine_button("cancel-edit".into(), "Cancel")
+            self.machine_button("cancel-edit".into(), ids::MACHINE_CANCEL.into(), "Cancel")
                 .ghost()
                 .on_click(cx.listener(|page, _, window, cx| {
                     page.machine_edits.editing = None;
@@ -206,22 +279,34 @@ impl SettingsPage {
             .py_3()
             .gap_3()
             .child(
-                div()
-                    .text_sm()
+                say(ids::MACHINE_FORM_TITLE, title)
+                    .text_role(TextRole::Body, cx)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.foreground)
-                    .child(title),
+                    .text_color(theme.foreground),
             )
             .when(editing.is_none(), |form| {
-                form.child(field("Machine name", name, saving, cx))
+                form.child(self.ssh_picker.select())
+                    .child(field("Machine name", ids::MACHINE_NAME, name, saving, cx))
             })
-            .child(field("SSH destination", ssh, saving, cx))
+            .child(field("SSH destination", ids::MACHINE_SSH, ssh, saving, cx))
+            .children(self.ssh_picker.words(&ssh.read(cx).value()).map(|words| {
+                say(ids::MACHINE_SSH_RESOLVED, words)
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(theme.muted_foreground)
+            }))
             .child(
                 h_flex()
                     .gap_3()
-                    .child(div().w(px(120.)).child(field("Port", port, saving, cx)))
+                    .child(div().w(px(120.)).child(field(
+                        "Port",
+                        ids::MACHINE_PORT,
+                        port,
+                        saving,
+                        cx,
+                    )))
                     .child(div().flex_1().child(field(
                         "Token file on the machine",
+                        ids::MACHINE_TOKEN_FILE,
                         token_file,
                         saving,
                         cx,
@@ -229,29 +314,38 @@ impl SettingsPage {
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(theme.muted_foreground)
-                    .child("A port or token file left empty takes the default shown."),
+                    .child("Port is the one Assembly listens on. A port or token file left empty takes the default shown."),
             )
             .children(failure)
             .child(h_flex().justify_end().gap_2().children(cancel).child(save))
     }
 
     /// The last failed call's reason, in red, when it came from machine `about`'s row, or from the form (`None`).
-    fn failure_about(&self, about: Option<&String>, cx: &App) -> Option<Div> {
+    fn failure_about(&self, about: Option<&String>, cx: &App) -> Option<Stateful<Div>> {
         let (from, why) = self.machine_edits.failure.as_ref()?;
         (from.as_ref() == about).then(|| {
-            div()
-                .text_xs()
+            let id = match about {
+                Some(machine) => machine_line(machine, "error"),
+                None => ids::MACHINE_FORM_ERROR.into(),
+            };
+            say(id, why.clone())
+                .text_role(TextRole::Meta, cx)
                 .text_color(cx.theme().danger)
-                .child(why.clone())
         })
     }
 
     /// A small button that shows its call running, and waits while any machine call runs.
-    fn machine_button(&self, id: SharedString, label: &'static str) -> Button {
+    pub(super) fn machine_button(
+        &self,
+        id: SharedString,
+        tree_id: String,
+        label: &'static str,
+    ) -> Button {
         let running = self.machine_call.as_ref().map(|(running, _)| running);
         Button::new(id.clone())
+            .control(tree_id, label)
             .small()
             .label(label)
             .loading(running == Some(&id))
@@ -279,6 +373,11 @@ impl SettingsPage {
         for field in &self.machine_fields {
             field.update(cx, |field, cx| field.set_value("", window, cx));
         }
+        self.ssh_picker.target = None;
+        self.ssh_picker.failure = None;
+        self.ssh_picker
+            .state
+            .update(cx, |state, cx| state.set_selected_index(None, window, cx));
         cx.notify();
     }
 
@@ -308,7 +407,7 @@ impl SettingsPage {
         }
         let name = edited.unwrap_or(name.to_string());
         match set_args(&name, &ssh, &port, &token_file) {
-            Ok(args) => self.machine_call(None, "set", args, "Not saved", window, cx),
+            Ok(args) => self.machine_call(None, "machines", "set", args, "Not saved", window, cx),
             Err(why) => {
                 self.machine_edits.failure = Some((None, why));
                 cx.notify();
@@ -319,7 +418,9 @@ impl SettingsPage {
     fn remove_machine(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
         let about = Some(name.clone());
         match remove_args(&name) {
-            Ok(args) => self.machine_call(about, "remove", args, "Not removed", window, cx),
+            Ok(args) => {
+                self.machine_call(about, "machines", "remove", args, "Not removed", window, cx)
+            }
             Err(why) => {
                 self.machine_edits.failure = Some((about, why));
                 cx.notify();
@@ -329,9 +430,11 @@ impl SettingsPage {
 
     /// Sends `machines/<method>` for the row of machine `about`, or the form (`None`); the button that sent it is
     /// `<method>-<name>`, or the form's `set`. Once the backend takes the form's save, the form empties.
-    fn machine_call(
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn machine_call(
         &mut self,
         about: Option<String>,
+        feature: &'static str,
         method: &'static str,
         args: Value,
         doing: &'static str,
@@ -345,9 +448,7 @@ impl SettingsPage {
             cx.notify();
             return;
         };
-        let call = socket
-            .read(cx)
-            .call::<Value>("machines", method, args, None);
+        let call = socket.read(cx).call::<Value>(feature, method, args, None);
         let id = match &about {
             Some(name) => format!("{method}-{name}").into(),
             None => method.into(),
@@ -390,18 +491,39 @@ fn confirm_remove(name: String, window: &mut Window, cx: &mut Context<SettingsPa
 }
 
 /// One of the form's inputs, under its label; a `locked` one takes no typing.
-fn field(label: &'static str, state: &Entity<InputState>, locked: bool, cx: &App) -> Div {
+fn field(
+    label: &'static str,
+    id: &'static str,
+    state: &Entity<InputState>,
+    locked: bool,
+    cx: &App,
+) -> Div {
     v_flex()
         .gap_1()
         .child(
             div()
-                .text_xs()
+                .text_role(TextRole::Meta, cx)
                 .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
-        .child(Input::new(state).small().disabled(locked))
+        .child(
+            Input::new(state)
+                .control(id, label)
+                .small()
+                .disabled(locked),
+        )
 }
 
 #[cfg(test)]
 #[path = "connections_tests.rs"]
 mod tests;
+
+/// On each remote: runs the one check now and installs nothing. Its answer is on the card, from the machines topic.
+const CHECK: &str = "Check for updates";
+
+/// The button on a saved machine with no backend answering: it puts one there, and connects.
+const INSTALL: &str = "Install Assembly here";
+
+pub(crate) fn install_offered(machine: &Machine) -> bool {
+    machine.name.is_some() && machine.didnt_answer() && machine.cant_update.is_none()
+}

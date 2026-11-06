@@ -1,5 +1,7 @@
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
+using Assembly.Tests.Fixtures;
+using Assembly.Infrastructure.Persistence;
 using static Assembly.Tests.Features.Chat.Rows.Converted;
 
 namespace Assembly.Tests.Features.Chat.Rows;
@@ -14,7 +16,13 @@ public sealed class EndingTests
         var bash = turn.OfKind(RowKind.Tool)[^1];
         Assert.Equal("failed", Text(bash, "state"));
         Assert.Equal("ls /definitely-not-here-7731", Text(bash, "summary"));
-        Assert.Contains("No such file or directory", turn.Detail(bash.ItemId!).Output);
+        using var file = new TempDatabase();
+        using var database = TestDatabase.Open(file.Path);
+        var store = RowStore.Open(database);
+        var converter = new RowConverter();
+        foreach (var agentEvent in FixtureReplay.Events("acp/tool-fails.jsonl"))
+            store.Commit("session", converter.Apply(agentEvent));
+        Assert.Contains("No such file or directory", store.ToolCall("session", bash.ItemId!)!.Output);
         Assert.Equal("finished", Text(turn.Rows[^1], "state"));
     }
 
@@ -34,8 +42,8 @@ public sealed class EndingTests
         var turn = Fixture("acp/error.jsonl");
         Assert.Equal([RowKind.User, RowKind.Turn, RowKind.Error, RowKind.Stats, RowKind.Turn], turn.Rows.Select(row => row.Kind));
         var error = turn.Last(RowKind.Error);
-        Assert.Equal("Internal error: Session not found", Text(error, "message"));
-        Assert.Equal("-32603", Text(error, "code"));
+        Assert.Equal("Resource not found", Text(error, "message"));
+        Assert.Equal("-32002", Text(error, "code"));
         Assert.Equal("failed", turn.Last(RowKind.Stats).Payload.GetProperty("status").GetString());
         Assert.Equal("failed", Text(turn.Rows[^1], "state"));
     }

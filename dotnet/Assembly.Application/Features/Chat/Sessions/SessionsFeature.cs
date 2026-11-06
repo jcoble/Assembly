@@ -1,7 +1,10 @@
+using Assembly.Application.Common.Engine;
+using Assembly.Application.Common.Projects;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
+using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Sessions;
@@ -26,11 +29,28 @@ internal sealed class SessionsFeature : IFeature
 
     private readonly SessionStore _store;
     private readonly MachineSet _machines;
+    private readonly IRowSourceBindings? _sources;
+    private readonly IProjectRoots? _projects;
+    private readonly string? _owningMachine;
+    private readonly string? _owningHome;
+    private readonly Func<CreateArgs, CallContext, Task<Func<IWriteScope, Created>>>? _remoteCreate;
+    private readonly Func<ByClientArgs, CallContext, Task<ByClientReply>>? _remoteByClient;
+    private readonly IProjectFolders? _remoteFolders;
 
-    public SessionsFeature(SessionStore store, MachineSet machines)
+    public SessionsFeature(SessionStore store, MachineSet machines, IRowSourceBindings? sources = null,
+        IProjectRoots? projects = null, string? owningMachine = null, string? owningHome = null,
+        Func<CreateArgs, CallContext, Task<Func<IWriteScope, Created>>>? remoteCreate = null,
+        Func<ByClientArgs, CallContext, Task<ByClientReply>>? remoteByClient = null, IProjectFolders? remoteFolders = null)
     {
         _store = store;
         _machines = machines;
+        _sources = sources;
+        _projects = projects;
+        _owningMachine = owningMachine;
+        _owningHome = owningHome;
+        _remoteCreate = remoteCreate;
+        _remoteByClient = remoteByClient;
+        _remoteFolders = remoteFolders;
     }
 
     public void Register(ICallRegistry calls)
@@ -64,16 +84,43 @@ internal sealed class SessionsFeature : IFeature
             var bounded = args with { Limit = Math.Clamp(args.Limit, 1, ListLimit) };
             return Task.FromResult(_store.Rail(bounded, call.Cancellation));
         });
-        // Only the database: no order key, as nothing outside it can hang.
-        calls.Write(Topic, "read", SessionsJson.Default.ReadArgs, SessionsJson.Default.Done, (args, _) =>
+        // An explicit receipt captures the actual source before the one database write; legacy calls stay unqualified.
+        calls.Write(Topic, "read", SessionsJson.Default.ReadArgs, SessionsJson.Default.Done, async (args, call) =>
         {
-            if (_store.Get(args.Session) is null)
-                throw new CallFailed("unknown session");
-            return Task.FromResult<Func<IWriteScope, SendFeature.Done>>(scope =>
+            if (args.ExpectedSource is not null && call.ExpectedSource is not null && args.ExpectedSource != call.ExpectedSource)
+                throw new CallBadArguments("The session source arguments contradict the frame.");
+            var expected = args.ExpectedSource ?? call.ExpectedSource;
+            RowSourceBinding? binding = null;
+            if (expected is not null)
             {
+                if (call.Peer is not OwnerPeer) throw new CallFailed("Forbidden.", "forbidden");
+                if (_sources is null) throw new CallFailed("Source-bound session reads are unavailable.", "source_changed");
+                binding = await _sources.CaptureAsync(expected, args.Session, call.Cancellation);
+                call.SourceGuard = binding;
+                call.Cancellation.ThrowIfCancellationRequested();
+                binding.EnsureDisplayCurrent();
+            }
+            var session = _store.Get(args.Session);
+            RequireFacade(session);
+            if (session is null)
+                throw new CallFailed("unknown session");
+            return scope =>
+            {
+                if (binding is not null)
+                {
+                    call.Cancellation.ThrowIfCancellationRequested();
+                    binding.EnsureDisplayCurrent(scope);
+                    RequireFacade(_store.Get(scope, args.Session));
+                }
                 _store.MarkRead(scope, args.Session, args.Seq);
                 return new SendFeature.Done(true);
-            });
+            };
+
+            void RequireFacade(SessionInfo? actual)
+            {
+                if (expected is not null && (actual is null || actual.SessionId != args.Session || actual.Machine != expected.RouteMachine))
+                    throw new CallFailed("The selected session source changed.", "source_changed");
+            }
         });
         calls.Write(Topic, "mark", SessionsJson.Default.MarkArgs, SessionsJson.Default.Done, (args, _) =>
         {
@@ -90,19 +137,130 @@ internal sealed class SessionsFeature : IFeature
         // The machine's work runs before the write, which only answers: the store's own write publishes the new
         // session, so it goes out on this socket before the answer. It's keyed on its machine, so one that hangs holds
         // up only creates there.
+        calls.Read(Topic, "byClient", SessionsJson.Default.ByClientArgs, SessionsJson.Default.ByClientReply, async (args, call) =>
+        {
+            RequireCreateOwner(call);
+            await CaptureCreateSource(args.ExpectedSource, args.Machine, call);
+            SessionStore.ValidateCreateClientId(args.ClientId);
+            if (args.Machine is not null)
+                return _remoteByClient is null ? throw new CallFailed("Remote creation is unavailable.", "configuration_unavailable")
+                    : await _remoteByClient(args, call);
+            call.SourceGuard?.EnsureCurrent();
+            return _store.FindByClient(args.ClientId, call.Cancellation, _owningMachine!);
+        });
         calls.Write(Topic, "create", SessionsJson.Default.CreateArgs, SessionsJson.Default.Created, async (args, call) =>
         {
-            if (args.Agent.Length == 0 || args.RepoUrl.Length == 0)
-                throw new CallFailed("expected an agent and a repoUrl");
-            var machine = _machines.Named(args.Machine) ?? throw new CallFailed("unknown machine");
-            if (!(await machine.AgentsAsync(call.Cancellation)).Any(known => known.Id == args.Agent))
-                throw new CallFailed($"this machine has no agent {args.Agent}");
-            var session = args.ParentSessionId is { } parentId
-                ? await machine.CreateHelperAsync(new SessionInfo(parentId, args.Agent, args.RepoUrl, null, null, 0), args.Agent,
-                    args.Title ?? "Session", call.Cancellation)
-                : await machine.CreateSessionAsync(args.Agent, args.RepoUrl, call.Cancellation);
-            return _ => new Created(session.SessionId);
-        }, args => $"machine {args.Machine}");
+            RequireCreateOwner(call);
+            await CaptureCreateSource(args.ExpectedSource, args.Machine, call);
+            SessionStore.ValidateCreateClientId(args.ClientId);
+            if (args.Machine is not null)
+                return _remoteCreate is null ? throw new CallFailed("Remote creation is unavailable.", "configuration_unavailable")
+                    : await _remoteCreate(args, call);
+            return await PrepareCreate(args, call);
+        }, order: args => CreateOrder(args.ClientId, args.Machine));
+        if (_remoteFolders is not null)
+            calls.Write(Topic, "create_at_root", SessionsJson.Default.CreateAtRootArgs, SessionsJson.Default.Created, async (args, call) =>
+            {
+                RequireCreateOwner(call);
+                if (args.TargetMachine != _owningMachine || string.IsNullOrWhiteSpace(args.FromMachine) ||
+                    args.FromMachine == args.TargetMachine || args.Create is null || args.Create.Machine is not null ||
+                    string.IsNullOrWhiteSpace(args.ProjectId) || args.ProjectId != args.Create.ProjectId ||
+                    string.IsNullOrWhiteSpace(args.CanonicalRoot) || !Path.IsPathFullyQualified(args.CanonicalRoot))
+                    throw new CallBadArguments("The prepared project descriptor is invalid.");
+                await CaptureCreateSource(args.Create.ExpectedSource, null, call);
+                SessionStore.ValidateCreateClientId(args.Create.ClientId);
+                return await PrepareCreate(args.Create, call, async cancellation =>
+                {
+                    var inspected = await _remoteFolders.InspectAsync(args.CanonicalRoot, cancellation);
+                    if (inspected.RootPath != args.CanonicalRoot)
+                        throw new CallFailed("The project root changed.", "source_changed");
+                    return new SessionCreationPreparation(args.TargetMachine, args.FromMachine, args.Create.ClientId,
+                        args.ProjectId, inspected.RootPath);
+                });
+            }, order: args => CreateOrder(args.Create.ClientId, null));
+    }
+
+    private static string CreateOrder(string clientId, string? machine) => "session-create:" + machine + ":" + clientId;
+
+    private async Task CaptureCreateSource(ExpectedSource? expected, string? machine, CallContext call)
+    {
+        if (expected is not null && call.ExpectedSource is not null && expected != call.ExpectedSource)
+            throw new CallBadArguments("The session source arguments contradict the frame.");
+        expected ??= call.ExpectedSource;
+        if (expected is null) return;
+        if (expected.RouteMachine != machine)
+            throw new CallFailed("The selected create source changed.", "source_changed");
+        if (_sources is null) throw new CallFailed("Source-bound creation is unavailable.", "source_changed");
+        call.SourceGuard = await _sources.CaptureEngineAsync(expected, call.Cancellation);
+        call.SourceGuard.EnsureCurrent();
+    }
+
+    private async Task<Func<IWriteScope, Created>> PrepareCreate(CreateArgs args, CallContext call,
+        Func<CancellationToken, Task<SessionCreationPreparation>>? prepare = null)
+    {
+        call.SourceGuard?.EnsureCurrent();
+        var known = _store.FindByClient(args.ClientId, call.Cancellation, _owningMachine!);
+        if (known.SessionId is { } knownId)
+            return scope =>
+            {
+                RequireCreateOwner(call);
+                call.SourceGuard?.EnsureCurrent();
+                var accepted = _store.FindByClient(scope, args.ClientId, _owningMachine!);
+                if (accepted.SessionId != knownId) throw new CallFailed("The owning source changed.", "source_changed");
+                return new Created(knownId, accepted.CheckoutOperationId, accepted.ProjectId, accepted.AcceptedRoot, accepted.Facts);
+            };
+        if (string.IsNullOrWhiteSpace(args.Agent)) throw new CallBadArguments("An agent is required.");
+        using var stop = call.SourceGuard is null ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, call.SourceGuard.Changed);
+        var token = stop?.Token ?? call.Cancellation;
+        var preparation = prepare is null ? null : await prepare(token);
+        var machine = _machines.Named(null) ?? throw new CallFailed("The local owner is unavailable.", "unavailable");
+        var configured = (await machine.AgentsAsync(token)).Any(agent => agent.Id == args.Agent);
+        return scope =>
+        {
+            RequireCreateOwner(call);
+            call.SourceGuard?.EnsureCurrent();
+            if (!ReferenceEquals(_machines.Named(null), machine)) throw new CallFailed("The owner changed.", "source_changed");
+            var accepted = _store.FindByClient(scope, args.ClientId, _owningMachine!);
+            if (accepted.SessionId is not null) return new Created(accepted.SessionId, accepted.CheckoutOperationId, accepted.ProjectId, accepted.AcceptedRoot, accepted.Facts);
+            if (string.IsNullOrWhiteSpace(args.Agent) || !configured) throw new CallBadArguments("The agent is not configured on this owner.");
+            var projectId = args.ProjectId;
+            SessionLocation? parentLocation = null;
+            if (args.ParentSessionId is not null)
+            {
+                var parent = _store.Get(scope, args.ParentSessionId);
+                if (parent is null || parent.Machine is not null) throw new CallFailed("The parent is not owned here.", "wrong_machine");
+                if (projectId is not null && projectId != parent.ProjectId) throw new CallBadArguments("A child inherits its parent's project.");
+                projectId = parent.ProjectId;
+                parentLocation = _store.OwningLocation(scope, args.ParentSessionId);
+                if (parentLocation is null || !parentLocation.Ready) throw new CallFailed("The parent's checkout is not ready.", "checkout_not_ready");
+            }
+            var folder = parentLocation?.Folder ?? preparation?.CanonicalRoot ?? BareSessionFolder.ForHome(_owningHome);
+            if (projectId is not null && preparation is null)
+            {
+                var project = _projects?.Find(scope, projectId);
+                if (project is null || project.Removed || project.Machine != "local")
+                    throw new CallFailed("The selected project is unavailable on this owner.", "wrong_machine");
+                if (parentLocation is null) folder = project.RootPath;
+            }
+            if (string.IsNullOrWhiteSpace(folder) || !Path.IsPathFullyQualified(folder))
+                throw new CallFailed("The owner's home is unavailable.", "configuration_unavailable");
+            var session = _store.Create(scope, args.Agent, args.ClientId, folder, projectId,
+                args.Checkout ?? (projectId is null ? null : new CheckoutIntent("current", null, null)),
+                args.ParentSessionId, args.ParentSessionId is null ? args.Title : args.Title ?? "Session",
+                initialConfig: args.InitialConfig, preparation: preparation);
+            var committed = _store.FindByClient(scope, args.ClientId, _owningMachine!);
+            return new Created(session.SessionId, committed.CheckoutOperationId, committed.ProjectId, committed.AcceptedRoot, committed.Facts);
+        };
+    }
+
+    private void RequireCreateOwner(CallContext call)
+    {
+        if (call.Peer is not OwnerPeer) throw new CallFailed("Forbidden.", "forbidden");
+        call.Cancellation.ThrowIfCancellationRequested();
+        call.Closed.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(_owningMachine))
+            throw new CallFailed("The actual owning Engine is unavailable.", "configuration_unavailable");
     }
 
     /// <summary>
@@ -113,12 +271,26 @@ internal sealed class SessionsFeature : IFeature
 
     internal sealed record Page(IReadOnlyList<SessionItem> Sessions, long? NextBefore, string? NextBeforeId);
 
-    internal sealed record CreateArgs([property: JsonRequired] string Agent, [property: JsonRequired] string RepoUrl, string? Machine = null,
-        string? ParentSessionId = null, string? Title = null);
+    [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+    internal sealed record CreateArgs([property: JsonRequired] string Agent, [property: JsonRequired] string ClientId,
+        string? ProjectId = null, string? Machine = null, CheckoutIntent? Checkout = null,
+        string? ParentSessionId = null, string? Title = null, InitialSessionConfig? InitialConfig = null,
+        ExpectedSource? ExpectedSource = null);
 
-    internal sealed record Created(string SessionId);
+    [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+    internal sealed record ByClientArgs([property: JsonRequired] string ClientId, string? Machine = null, ExpectedSource? ExpectedSource = null);
+    [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+    internal sealed record CreateAtRootArgs([property: JsonRequired] string TargetMachine, [property: JsonRequired] string FromMachine,
+        [property: JsonRequired] CreateArgs Create, [property: JsonRequired] string ProjectId, [property: JsonRequired] string CanonicalRoot);
+    internal sealed record ByClientReply(string? SessionId, string? CheckoutState, string? State, string? CheckoutOperationId = null, string? ProjectId = null, string? AcceptedRoot = null, CreatedSessionFacts? Facts = null);
 
-    internal sealed record ReadArgs([property: JsonRequired] string Session, [property: JsonRequired] long Seq);
+    internal sealed record CreatedSessionFacts(string Machine, string Agent, string? ParentSessionId,
+        string Folder, bool ManagedCheckout, string RepoUrl, bool IsBare = false);
+
+    internal sealed record Created(string SessionId, string? CheckoutOperationId = null, string? ProjectId = null, string? AcceptedRoot = null, CreatedSessionFacts? Facts = null);
+
+    internal sealed record ReadArgs([property: JsonRequired] string Session, [property: JsonRequired] long Seq,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExpectedSource? ExpectedSource = null);
 
     internal sealed record MarkArgs([property: JsonRequired] string Session, [property: JsonRequired] string State);
 
@@ -137,11 +309,15 @@ internal sealed class SessionsFeature : IFeature
 
     /// <summary>
     /// One session's own state and SQL order. <c>Preview</c> is its newest assistant text, cut to 160 characters.
+    /// <c>Source</c> is recorded identity for resolution, not a live source binding or native-history witness.
+    /// <c>NativeActivity</c> says native subagents are recorded on this session, so its row has something to open.
     /// </summary>
     internal sealed record RailEntry(string SessionId, string Kind, string Section, string Agent, string RepoUrl, string Group,
         int Count, IReadOnlyList<string> Machines, string? Title, string? Machine, long UpdatedAt, long? CompletedAt,
-        bool Running, bool NeedsYou, bool Failed, bool Unread, string? AskSession, long? AskSeq, string? Branch,
-        long? BranchAt, string Icon, int SectionIndex, int Header, string Ordering, string? Preview);
+        bool Running, bool Failed, bool Unread, string? Branch,
+        string Icon, int SectionIndex, int Header, string Ordering, string? Preview,
+        string? ParentSessionId, int Depth, long? PinnedAt, long? OrchestratorAt, long? Position, string? Model,
+        string? Worktree, string? LastError, string? ResumeCommand, long? LastSeenMs, ExpectedSource? Source, bool NativeActivity);
 
     internal sealed record Rail(RailTotals Totals, IReadOnlyList<string> Agents, IReadOnlyList<RailEntry> Sessions, RailCursor? Next, int Start = 0);
 

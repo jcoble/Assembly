@@ -376,7 +376,8 @@ test('sweep_dry_run_preserves_registry_and_files', t => {
 
 function installCommitHook(f: ReturnType<typeof setup>, path: string) {
   const hooks = join(f.home, 'commit-hooks'); mkdirSync(hooks);
-  writeFileSync(join(hooks, 'commit-msg'), readFileSync(new URL('../check-commit-msg.sh', import.meta.url)), { mode: 0o755 });
+  // Runs the checkout's script in place, so it finds the scripts/hooks checks beside it.
+  writeFileSync(join(hooks, 'commit-msg'), `#!/bin/sh\nexec '${new URL('../check-commit-msg.sh', import.meta.url).pathname}' "$1"\n`, { mode: 0o755 });
   f.git(path, 'config', 'core.hooksPath', hooks);
 }
 const taskLine = 'Task: TSK-1666 https://app.notion.com/p/40e394b0689d813ba726f42786e4d040';

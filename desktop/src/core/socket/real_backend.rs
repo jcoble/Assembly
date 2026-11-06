@@ -42,8 +42,17 @@ impl RealBackend {
 
     /// As `start`, with the agents file `agents` gives; it gets the backend's folder for any files they need.
     pub fn start_with_agents(agents: impl FnOnce(&Path) -> String) -> Option<Self> {
-        let binary = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../dotnet/Assembly.Desktop/bin/Debug/net10.0/Assembly.Desktop");
+        // Immutable Rust checkouts may use an explicitly supplied, compatible private backend build.
+        let supplied = env::var_os("ASSEMBLY_REAL_BACKEND_BINARY");
+        let binary = supplied.as_ref().map(PathBuf::from).unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../dotnet/Assembly.Desktop/bin/Debug/net10.0/Assembly.Desktop")
+        });
+        assert!(
+            supplied.is_none() || binary.is_file(),
+            "ASSEMBLY_REAL_BACKEND_BINARY is not a built backend: {}",
+            binary.display()
+        );
         if !binary.exists() {
             assert!(
                 env::var_os("ASSEMBLY_REAL_BACKEND").is_none(),

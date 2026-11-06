@@ -14,6 +14,24 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/pinned-guard.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/hooks/merge-guard.ts\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-test-changes.ts\""
+          }
+        ]
       }
     ]
   }

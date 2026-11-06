@@ -1,4 +1,8 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+using Assembly.Application.Common;
+using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.Sessions;
 
@@ -7,36 +11,179 @@ namespace Assembly.Infrastructure.Chat.Files;
 /// <summary>
 /// A session's folder over the socket: <c>files/list</c> answers one folder of it, <c>files/search</c> a page of
 /// the files and folders whose name holds a query, and <c>files/read</c> a part of one file's text. Paths are from the session's folder (its <c>root</c> on the sessions
-/// topic); nothing outside it is read. All are reads, so a cancel, the 30 s limit or the socket closing stops them.
-/// A session on another machine has no folder here yet.
+/// topic). The owner can also name one file by a path target, for <c>owner</c>, <c>read</c>, <c>release</c> and saving; see
+/// <see cref="FileOwner"/>. All are reads, so a cancel, the 30 s limit or the socket closing stops them.
+/// Remote operations retain the selected source and use that owner's scoped existing socket transports.
 /// </summary>
-internal sealed class FilesFeature(SessionStore sessions) : IFeature
+internal sealed partial class FilesFeature(SessionStore sessions, FileOwner owners, BackgroundWork work,
+    FileRemoteRoutes? remote = null, IRowSourceBindings? sources = null) : IFeature
 {
     public const string Feature = "files";
+    private readonly FileRemoteRoutes? remoteRoutes = remote;
+    private readonly IRowSourceBindings? sourceBindings = sources;
+    private readonly BackgroundWork backgroundWork = work;
+    private readonly FileReadSession reads = new();
+    private readonly FileSaveUploads uploads = new();
+    private readonly FileObservations observations = new();
+    private readonly SearchRun searches = new();
 
     public void Register(ICallRegistry calls)
     {
+        RegisterScopes(calls);
+        if (remoteRoutes is not null) calls.Closed(remoteRoutes.Close);
+        calls = new ScopedRegistry(this, calls);
+        calls.Read(Feature, "owner", FilesJson.Default.ObserveRoot, FilesJson.Default.FileOwnership, (args, call) =>
+        {
+            RequireOwner(args.Target, call);
+            RequireOneTarget(args.Session, args.Target);
+            return Task.FromResult(args.Target is { } target
+                ? owners.ResolvePath(target, call.Cancellation, args.ExpectedOwner)
+                : owners.Resolve(args.Session!, call.Cancellation, args.ExpectedOwner));
+        });
+        calls.Read(Feature, "observe", FilesJson.Default.ObserveRoot, FilesJson.Default.ObservedRoot, (args, call) =>
+            Task.FromResult(observations.Observe(LocalRoot(SessionOnly(args.Session, args.Target), call.Cancellation, args.ExpectedOwner), call.Connection, call.Cancellation)));
+        calls.Read(Feature, "unobserve", FilesJson.Default.UnobserveRoot, FilesJson.Default.UnobservedRoot, (args, call) =>
+            Task.FromResult(new UnobservedRoot(observations.Release(args.Lease, call.Connection))));
+        calls.Closed(observations.Close);
         calls.Read(Feature, "list", FilesJson.Default.ListArgs, FilesJson.Default.FileListing, (args, call) =>
-            DirectoryListing.ListAsync(SessionPaths.RootOf(sessions, args.Session), args.Dir, args.IncludeExcluded, call.Cancellation));
-        calls.Read(Feature, "search", FilesJson.Default.SearchArgs, FilesJson.Default.SearchPage, (args, call) =>
-            NameSearch.PageAsync(SessionPaths.RootOf(sessions, args.Session), args.Query, args.Cursor, args.PageSize, call.Cancellation));
+            DirectoryListing.ListAsync(LocalRoot(SessionOnly(args.Session, args.Target), call.Cancellation, args.ExpectedOwner), args.Dir, args.IncludeExcluded, call.Cancellation, args.Descending, args.Cursor));
+        calls.Read(Feature, "search", FilesJson.Default.SearchArgs, FilesJson.Default.SearchResult, (args, call) =>
+            searches.PageAsync(LocalRoot(SessionOnly(args.Session, args.Target), call.Cancellation, args.ExpectedOwner), args, call.Connection, call.Cancellation));
+        calls.Read(Feature, "releaseSearch", FilesJson.Default.ReleaseSearch, FilesJson.Default.UnobservedRoot, (args, call) =>
+        {
+            searches.Release(args.SearchId, call.Connection);
+            return Task.FromResult(new UnobservedRoot(true));
+        });
+        calls.Closed(searches.Close);
         calls.Read(Feature, "read", FilesJson.Default.ReadArgs, FilesJson.Default.FileChunk, (args, call) =>
-            FileRead.ReadAsync(SessionPaths.RootOf(sessions, args.Session), args.Path, args.Offset, call.Cancellation));
+        {
+            RequireOwner(args.Target, call);
+            var (root, path) = LocalTarget(args.Session, args.Target, args.Path, call.Cancellation, args.ExpectedOwner);
+            return reads.ReadAsync(root, path, args.Offset, args.Revision, call.Connection, call.Cancellation, args.Session,
+                args.Target is { } target ? () => RequireSameFile(target, root, path, call.Cancellation) : null);
+        }, bulk: true);
+        calls.Read(Feature, "release", FilesJson.Default.ReleaseArgs, FilesJson.Default.ReleasedRead, (args, call) =>
+        {
+            RequireOwner(args.Target, call);
+            RequireOneTarget(args.Session, args.Target);
+            if (args.Target is null)
+                return Task.FromResult(new ReleasedRead(reads.ReleaseSession(args.Session!,
+                    args.Path ?? throw new CallBadArguments("A file path is required."), args.Revision, call.Connection)));
+            if (args.Path is not null) throw new CallBadArguments("A target names its own file; the call sends no path.");
+            // A release ends this socket's own snapshot by the owner it was read as; the path rule isn't run again.
+            if (args.ExpectedOwner is not { File: { } file } owner)
+                throw new CallBadArguments("A release by target sends the owner it was read as.");
+            return Task.FromResult(new ReleasedRead(reads.Release(owner.CheckoutRoot, file, args.Revision, call.Connection)));
+        }, bulk: true);
+        calls.Write(Feature, "beginSave", FilesJson.Default.BeginSave, FilesJson.Default.BegunSave, async (args, call) =>
+        {
+            call.Closed.ThrowIfCancellationRequested();
+            RequireOwner(args.Target, call);
+            var (root, path) = LocalTarget(args.Session, args.Target, args.Path, call.Cancellation, args.ExpectedOwner);
+            var result = await uploads.BeginAsync(root, args with { Path = path }, call.Connection, call.Cancellation, call.ReplyId);
+            if (call.Closed.IsCancellationRequested) { uploads.Drop(result.Upload, call.Connection); call.Closed.ThrowIfCancellationRequested(); }
+            return _ => result;
+        }, order: OrderOf,
+            failed: (_, call) => uploads.FailedBegin(call.Connection, call.ReplyId), bulk: true);
+        calls.Write(Feature, "saveChunk", FilesJson.Default.SaveChunk, FilesJson.Default.UploadAccepted, async (args, call) =>
+        {
+            call.Closed.ThrowIfCancellationRequested();
+            await uploads.AppendAsync(args, call.Connection, call.Cancellation);
+            return _ => new UploadAccepted(true);
+        }, order: args => uploads.OrderKey(args.Upload), failed: (args, call) => uploads.Drop(args.Upload, call.Connection), bulk: true);
+        calls.Write(Feature, "commitSave", FilesJson.Default.CommitSave, FilesJson.Default.SaveResult, async (args, call) =>
+        {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, call.Closed);
+            var result = await uploads.CommitAsync(args.Upload, call.Connection, linked.Token, (save, root) =>
+            {
+                RequireSameOwner(save, root, call, linked.Token);
+                if (save.Target is null && FolderView.IsView(save.Session!)) owners.RequireViewWritable(save.Session!, linked.Token);
+            });
+            return _ => result;
+        }, order: args => uploads.OrderKey(args.Upload), failed: (args, call) => uploads.Drop(args.Upload, call.Connection), bulk: true);
+        calls.Read(Feature, "compare", FilesJson.Default.CompareFile, FilesJson.Default.FileComparison, async (args, call) =>
+        {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, call.Closed);
+            return await uploads.CompareAsync(args.Upload, call.Connection, linked.Token, (save, root) => RequireSameOwner(save, root, call, linked.Token));
+        }, bulk: true);
+        calls.Write(Feature, "dropSave", FilesJson.Default.DropSave, FilesJson.Default.UploadAccepted, (args, call) =>
+        {
+            uploads.Drop(args.Upload, call.Connection);
+            return Task.FromResult<Func<Assembly.Application.Common.Database.IWriteScope, UploadAccepted>>(_ => new UploadAccepted(true));
+        }, bulk: true);
+        calls.Write(Feature, "action", FilesJson.Default.FileActionArgs, FilesJson.Default.ActionResult, async (args, call) =>
+        {
+            var root = LocalRoot(SessionOnly(args.Session, args.Target), call.Cancellation, args.ExpectedOwner);
+            var result = await FileActions.ExecuteAsync(root, args, call.Cancellation, () =>
+            {
+                if (LocalRoot(args.Session, call.Cancellation, args.ExpectedOwner) != root) throw new CallFailed("the session's checkout changed; no further file action was performed");
+            });
+            return _ => result;
+        }, order: args => "files:" + SessionPaths.ResolveFile(LocalRoot(SessionOnly(args.Session, args.Target), CancellationToken.None, args.ExpectedOwner), args.Path));
+        calls.Closed(uploads.Close);
+        calls.Closed(reads.Close);
     }
 
-    internal sealed record ListArgs([property: JsonRequired] string Session, string Dir = "", bool IncludeExcluded = false);
+    private void RequireViewWritable<T>(T args, JsonTypeInfo<T> type, CallContext call)
+    {
+        var json = JsonSerializer.SerializeToElement(args, type);
+        if (json.TryGetProperty("session", out var session) && session.GetString() is { } id && FolderView.IsView(id))
+            owners.RequireViewWritable(id, call.Cancellation);
+    }
 
-    internal sealed record SearchArgs([property: JsonRequired] string Session, [property: JsonRequired] string Query, int Cursor = 0,
-        int PageSize = 100);
+    private string LocalRoot(string session, CancellationToken ct, FileOwnership? expected = null)
+    {
+        var owner = owners.Resolve(session, ct, expected);
+        if (!owners.IsLocal(owner, ct)) throw new CallFailed("this session's owning machine must perform the file operation");
+        // Preserve the existing session path contract while refusing a stale or foreign ownership projection.
+        if (SessionPaths.RootOf(sessions, session) != owner.CheckoutRoot) throw new CallFailed("the session's checkout changed; reopen it");
+        return owner.CheckoutRoot;
+    }
 
-    internal sealed record ReadArgs([property: JsonRequired] string Session, [property: JsonRequired] string Path, long Offset = 0);
+    internal sealed record ListArgs([property: JsonRequired] string Session, string Dir = "", bool IncludeExcluded = false, bool Descending = false, PageCursor? Cursor = null, string? RelayScope = null, ExpectedSource? ExpectedSource = null, FileOwnership? ExpectedOwner = null, PathTarget? Target = null);
+
+    internal sealed record ReadArgs(string? Session = null, string? Path = null, long Offset = 0,
+        string? Revision = null, string? RelayScope = null, ExpectedSource? ExpectedSource = null, FileOwnership? ExpectedOwner = null, PathTarget? Target = null);
+
+    internal sealed record ReleaseArgs(string? Session, string? Path,
+        [property: JsonRequired] string Revision, string? RelayScope = null, ExpectedSource? ExpectedSource = null, FileOwnership? ExpectedOwner = null, PathTarget? Target = null);
+    internal sealed record ReleasedRead(bool Released);
+    internal sealed record UploadAccepted(bool Accepted);
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(ExpectedSource))]
+[JsonSerializable(typeof(FileScopeOpen))]
+[JsonSerializable(typeof(FileScopeGrant))]
+[JsonSerializable(typeof(FileScopeAttach))]
+[JsonSerializable(typeof(FileScopeClose))]
 [JsonSerializable(typeof(FilesFeature.ListArgs))]
-[JsonSerializable(typeof(FilesFeature.SearchArgs))]
+[JsonSerializable(typeof(SearchArgs))]
+[JsonSerializable(typeof(ReleaseSearch))]
 [JsonSerializable(typeof(FilesFeature.ReadArgs))]
+[JsonSerializable(typeof(FilesFeature.ReleaseArgs))]
+[JsonSerializable(typeof(FilesFeature.ReleasedRead))]
+[JsonSerializable(typeof(BeginSave))]
+[JsonSerializable(typeof(BegunSave))]
+[JsonSerializable(typeof(SaveChunk))]
+[JsonSerializable(typeof(CommitSave))]
+[JsonSerializable(typeof(DropSave))]
+[JsonSerializable(typeof(CompareFile))]
+[JsonSerializable(typeof(FileComparison))]
+[JsonSerializable(typeof(SaveResult))]
+[JsonSerializable(typeof(FilesFeature.UploadAccepted))]
 [JsonSerializable(typeof(FileChunk))]
+[JsonSerializable(typeof(FileActionArgs))]
+[JsonSerializable(typeof(ActionResult))]
+[JsonSerializable(typeof(FileOwnership))]
+[JsonSerializable(typeof(PathTarget))]
+[JsonSerializable(typeof(ObserveRoot))]
+[JsonSerializable(typeof(UnobserveRoot))]
+[JsonSerializable(typeof(ObservedRoot))]
+[JsonSerializable(typeof(UnobservedRoot))]
+[JsonSerializable(typeof(FileEntry))]
 [JsonSerializable(typeof(FileListing))]
-[JsonSerializable(typeof(SearchPage))]
+[JsonSerializable(typeof(NameMatch))]
+[JsonSerializable(typeof(ContentMatch))]
+[JsonSerializable(typeof(SearchResult))]
 internal sealed partial class FilesJson : JsonSerializerContext;

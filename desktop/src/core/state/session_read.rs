@@ -7,9 +7,14 @@ use gpui_kit::*;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+use super::folder_touched::FolderTouched;
 use super::selected_session::SelectedSession;
+use super::sessions::Sessions;
+use super::viewed_project::ViewedProject;
 use crate::core::socket::client::SocketClient;
+use crate::core::socket::error_code::ErrorCode;
 use crate::core::socket::outcome::Outcome;
+use crate::core::socket::row_source::ExpectedRowSource;
 
 /// What the tab shows.
 #[derive(Clone, Debug, PartialEq)]
@@ -26,15 +31,28 @@ pub enum Shown<T> {
 pub struct SessionRead<T> {
     feature: &'static str,
     method: &'static str,
+    /// A newer read on this key cancels the last one, so two owners of the same call each need their own.
+    key: String,
     /// The tab is shown.
     active: bool,
     /// The session what's shown, or the read on its way, is for.
     read_for: Option<String>,
+    source: Option<ExpectedRowSource>,
     shown: Shown<T>,
+    /// Why the shown failure failed, for a next step such as Connect.
+    failure_code: Option<ErrorCode>,
+    /// Counts answers from the backend. A status a write returned through `show` isn't one.
+    answers: u64,
     reading: bool,
     /// The read on its way; dropping it cancels the call on the backend.
     _read: Option<Task<()>>,
     _selected: Subscription,
+    _settled: Option<Subscription>,
+    _touched: Option<Subscription>,
+    settled_state: Option<(String, String)>,
+    /// Reads the viewed folder instead of the session while one is viewed.
+    follows_view: bool,
+    _viewed: Option<Subscription>,
 }
 
 impl<T: DeserializeOwned + 'static> SessionRead<T> {
@@ -48,13 +66,87 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         Self {
             feature,
             method,
+            key: format!("{feature}/{method}"),
             active: false,
             read_for: None,
+            source: None,
             shown: Shown::NoSession,
+            failure_code: None,
+            answers: 0,
             reading: false,
             _read: None,
             _selected: selected,
+            _settled: None,
+            _touched: None,
+            settled_state: None,
+            follows_view: false,
+            _viewed: None,
         }
+    }
+
+    /// For a second owner of the same call.
+    pub fn keyed(mut self, key: &str) -> Self {
+        self.key = key.to_string();
+        self
+    }
+
+    /// For Files' and Git's reads: reads the viewed folder while another project is viewed. Nothing else follows it.
+    pub fn following_view(&mut self, cx: &mut Context<Self>) {
+        self.follows_view = true;
+        let viewed = ViewedProject::global(cx);
+        self._viewed = Some(cx.observe(&viewed, |read, _, cx| {
+            if read.active {
+                read.read(false, cx);
+            }
+        }));
+    }
+
+    /// Refreshes on the selected session's actual running-to-settled transition, and mid-turn when one of its tool
+    /// calls that can change its folder finishes; never polls.
+    pub fn refresh_on_settle(&mut self, cx: &mut Context<Self>) {
+        if self._settled.is_some() {
+            return;
+        }
+        let touched = FolderTouched::global(cx);
+        self._touched = Some(cx.observe(&touched, |read, touched, cx| {
+            let touched = touched.read(cx);
+            let session = touched.session().map(str::to_string);
+            if read.active
+                && !touched.by_git_panel()
+                && session.is_some()
+                && session == read.read_for
+            {
+                read.read(true, cx);
+            }
+        }));
+        let Some(sessions) = Sessions::try_global(cx) else {
+            return;
+        };
+        self.settled_state = Self::selected_state(cx);
+        self._settled = Some(cx.observe(&sessions, |read, _, cx| {
+            let current = Self::selected_state(cx);
+            let ended = match (&read.settled_state, &current) {
+                (Some((prior_id, prior)), Some((id, state))) => {
+                    prior_id == id && prior == "running" && state != "running"
+                }
+                _ => false,
+            };
+            read.settled_state = current;
+            if read.active && ended {
+                read.read(true, cx);
+            }
+        }));
+    }
+    fn selected_state(cx: &App) -> Option<(String, String)> {
+        let selected = SelectedSession::global(cx);
+        let id = selected.read(cx).session_id()?;
+        let sessions = Sessions::try_global(cx)?;
+        sessions
+            .read(cx)
+            .items()
+            .iter()
+            .find(|item| item.session_id == id)
+            .map(|item| (item.session_id.clone(), item.state.clone()))
     }
 
     pub fn shown(&self) -> &Shown<T> {
@@ -66,8 +158,38 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         self.read_for.as_deref()
     }
 
+    pub fn source(&self) -> Option<&ExpectedRowSource> {
+        self.source.as_ref()
+    }
+
+    /// Why the shown failure failed.
+    pub fn failure_code(&self) -> Option<&ErrorCode> {
+        self.failure_code.as_ref()
+    }
+
     pub fn reading(&self) -> bool {
         self.reading
+    }
+
+    pub fn answers(&self) -> u64 {
+        self.answers
+    }
+
+    /// The machine that didn't answer, when that is why the read failed.
+    pub fn unreachable_machine(&self) -> Option<&str> {
+        match &self.failure_code {
+            Some(ErrorCode::Unreachable { machine }) => Some(machine),
+            _ => None,
+        }
+    }
+
+    /// Shows what a write returned with no second read. A read on its way is older, so it stops.
+    pub fn show(&mut self, value: T, cx: &mut Context<Self>) {
+        self.reading = false;
+        self._read = None;
+        self.failure_code = None;
+        self.shown = Shown::Read(value);
+        cx.notify();
     }
 
     /// Shown, it reads again, since what it shows may have changed while hidden; hidden, a read on its way stops.
@@ -85,51 +207,71 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
 
     /// Reads again (a Refresh or Try again button).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.read(true, cx);
+        if self.active {
+            self.read(true, cx);
+        }
     }
 
     /// Reads the selected session, unless it's already shown or on its way and `again` isn't set.
     fn read(&mut self, again: bool, cx: &mut Context<Self>) {
-        let selected = SelectedSession::global(cx)
-            .read(cx)
-            .session_id()
-            .map(String::from);
+        let subject = if self.follows_view {
+            ViewedProject::subject(cx)
+        } else {
+            let selection = SelectedSession::global(cx);
+            let selection = selection.read(cx);
+            selection
+                .session_id()
+                .map(|session| (session.to_string(), selection.source().cloned()))
+        };
+        let (selected, source) = match subject {
+            Some((session, source)) => (Some(session), source),
+            None => (None, None),
+        };
         let Some(session) = selected else {
             self.read_for = None;
             self.reading = false;
             self._read = None;
+            self.source = None;
             self.shown = Shown::NoSession;
             cx.notify();
             return;
         };
-        let same = self.read_for.as_deref() == Some(session.as_str());
+        let same = self.read_for.as_deref() == Some(session.as_str()) && self.source == source;
         if same && !again && !matches!(self.shown, Shown::Failed(_)) {
             return;
         }
         if !same {
             self.shown = Shown::Reading;
         }
+        self.settled_state = Self::selected_state(cx);
         self.read_for = Some(session.clone());
+        self.source = source.clone();
         let Some(socket) = SocketClient::try_global(cx) else {
             self.reading = false;
             self._read = None;
+            self.failure_code = None;
             self.shown = Shown::Failed("The backend isn't running.".into());
             cx.notify();
             return;
         };
         // Keyed, so a newer read answers this one Aborted and cancels it on the backend.
-        let key = format!("{}/{}", self.feature, self.method);
-        let call = socket.read(cx).call::<Value>(
-            self.feature,
-            self.method,
-            json!({ "session": session }),
-            Some(&key),
-        );
+        let args = json!({ "session": session, "expectedSource": source });
+        let call = socket
+            .read(cx)
+            .call::<Value>(self.feature, self.method, args, Some(&self.key));
         self.reading = true;
         self._read = Some(cx.spawn(async move |read, cx| {
             let outcome = call.await;
             _ = read.update(cx, |read, cx| {
+                if read.read_for.as_deref() != Some(session.as_str()) || read.source != source {
+                    return;
+                }
                 read.reading = false;
+                read.answers += 1;
+                read.failure_code = match &outcome {
+                    Outcome::Failed(failure) => Some(failure.code.clone()),
+                    _ => None,
+                };
                 read.shown = match outcome {
                     Outcome::Ok(result) => match serde_json::from_value(result) {
                         Ok(answer) => Shown::Read(answer),

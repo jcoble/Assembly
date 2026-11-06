@@ -1,15 +1,19 @@
-//! The session pane's reveal of a streaming reply: where it starts, one step a frame, and what a reply draws while
+//! The session pane's reveal of a streaming reply: where it starts, one step a tick, and what a reply draws while
 //! it's revealing.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gpui_kit::*;
 
 use super::SessionPane;
+use crate::core::ui::markdown::payload::Block;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::model::reveal::Reveal;
-use crate::features::session::rows::markdown::Block;
+
+/// How often the reveal shows more. Each step draws the whole window, so a reply streaming on a display's own frames
+/// holds up a core on the main thread on a 120 Hz Mac. Twenty a second still reads as typing.
+pub(super) const REVEAL_TICK: Duration = Duration::from_millis(50);
 
 impl SessionPane {
     /// Starts the reveal on a reply that's streaming, or whose final row brought more text, from what it showed
@@ -40,9 +44,20 @@ impl SessionPane {
         self.revealed_at = Instant::now();
     }
 
-    /// One frame of the reveal: steps it by the time since the last, and rests once it has caught up.
+    /// Asks for the reveal's next step, a tick from now. The task is held here, so a closed pane stops it, and it ends
+    /// with its one step: once the reveal has caught up nothing asks again.
+    pub(super) fn ask_reveal_tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.frame_asked = true;
+        self._reveal_tick = Some(cx.spawn_in(window, async move |pane, cx| {
+            cx.background_executor().timer(REVEAL_TICK).await;
+            _ = pane.update_in(cx, |pane, window, cx| pane.reveal_frame(window, cx));
+        }));
+    }
+
+    /// One step of the reveal: steps it by the time since the last, and rests once it has caught up.
     pub(super) fn reveal_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.frame_asked = false;
+        self._reveal_tick = None;
         let Some(reveal) = &mut self.reveal else {
             return;
         };
@@ -66,8 +81,7 @@ impl SessionPane {
         if reveal.shown >= target {
             self.reveal = None;
         } else {
-            self.frame_asked = true;
-            cx.on_next_frame(window, |pane, window, cx| pane.reveal_frame(window, cx));
+            self.ask_reveal_tick(window, cx);
         }
         // Only the streaming row draws again; the timeline's entries stay as they are.
         self.redraw(at, cx);

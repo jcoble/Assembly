@@ -1,4 +1,4 @@
 namespace Assembly.Infrastructure.Chat.Files;
 
-/// <summary>One folder's entries; <c>Truncated</c> when it held more than <see cref="DirectoryListing.Limit"/>.</summary>
-public sealed record FileListing(IReadOnlyList<FileEntry> Entries, bool Truncated);
+/// <summary>One bounded directory page, with a generation-bound continuation when more entries remain.</summary>
+public sealed record FileListing(IReadOnlyList<FileEntry> Entries, bool Truncated, PageCursor? NextCursor = null);

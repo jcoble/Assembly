@@ -1,3 +1,4 @@
+using Assembly.Infrastructure.Chat;
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
@@ -13,7 +14,7 @@ public sealed class TerminalHostTests : IAsyncDisposable
     private readonly TerminalHost _host;
     private readonly string _folder = Directory.CreateTempSubdirectory("assembly-terminal-").FullName;
 
-    public TerminalHostTests() => _host = new TerminalHost(_pty, _topics, new FakeTimeProvider());
+    public TerminalHostTests() => _host = new TerminalHost(_pty, _topics, new FakeTimeProvider(), ("/bin/sh", null), _ => _folder);
 
     [Fact]
     public async Task Each_read_goes_out_as_one_row_with_its_byte_offsets_and_its_bytes_unchanged()
@@ -131,22 +132,22 @@ public sealed class TerminalHostTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task With_no_folder_it_starts_in_the_sessions_folder_or_home_until_the_session_has_one()
+    public async Task An_owned_terminal_uses_the_recorded_folder_and_refuses_a_missing_folder()
     {
         // Pins: terminal#1
-        await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(), id => id == "session-1" ? _folder : null);
+        await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(), ("/bin/sh", null), id => id == "session-1" ? _folder : null);
         await host.StartAsync(new StartArgs(Owner: "session-1"));
-        await host.StartAsync(new StartArgs(" ", Owner: "session-2"));
+        await Assert.ThrowsAsync<CallFailed>(() => host.StartAsync(new StartArgs(" ", Owner: "session-2")));
 
         Assert.Equal(_folder, _pty.Started[0].Request.Cwd);
-        Assert.Equal(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), _pty.Started[1].Request.Cwd);
+        Assert.Single(_pty.Started);
     }
 
     [Fact]
     public async Task A_session_this_machine_doesn_t_run_gets_no_terminal_even_with_a_folder()
     {
         // Pins: terminal#12
-        await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(), _ => throw new CallFailed("on another machine"));
+        await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(), ("/bin/sh", null), _ => throw new CallFailed("on another machine"));
 
         await Assert.ThrowsAsync<CallFailed>(() => host.StartAsync(new StartArgs(_folder, Owner: "remote-1")));
         Assert.Empty(_pty.Started);
@@ -200,8 +201,8 @@ public sealed class TerminalHostTests : IAsyncDisposable
         var remote = sessions.Add("remote", "agent", "https://example.invalid/repo", "workbox-test");
         var helper = sessions.Helper(remote, "agent", "Remote helper");
         var owner = kind == "helper" ? helper.SessionId : kind;
-        await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(),
-            Assembly.Infrastructure.Agents.AdapterLauncher.ExistingFolder(_folder, sessions));
+        await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(), ("/bin/sh", null),
+            Assembly.Infrastructure.Chat.SessionTerminalFolders.ExistingFolder(_folder, sessions));
         await Assert.ThrowsAsync<CallFailed>(() => host.StartAsync(new StartArgs(explicitFolder ? _folder : null, Owner: owner)));
         Assert.Empty(_pty.Started);
     }
@@ -215,8 +216,8 @@ public sealed class TerminalHostTests : IAsyncDisposable
         var top = sessions.Create("agent", "https://example.invalid/repo");
         var nested = sessions.Helper(sessions.Helper(top, "agent", "Helper"), "agent", "Nested helper");
         var topFolder = Directory.CreateDirectory(Path.Combine(_folder, top.SessionId)).FullName;
-        await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(),
-            Assembly.Infrastructure.Agents.AdapterLauncher.ExistingFolder(_folder, sessions));
+        await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(), ("/bin/sh", null),
+            Assembly.Infrastructure.Chat.SessionTerminalFolders.ExistingFolder(_folder, sessions));
 
         await host.StartAsync(new StartArgs(null, Owner: nested.SessionId));
 

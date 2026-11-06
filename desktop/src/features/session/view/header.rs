@@ -4,6 +4,7 @@
 //! draws no tab row over a lone pane, so this button stands in for the one that row had. It follows the `sessions`
 //! topic keyed on the open session. Replaces SessionHeader.svelte.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::dock::DockPlacement;
 use gpui_kit::component::tooltip::Tooltip;
@@ -11,31 +12,44 @@ use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::core::intents::open_session::OpenSession;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::update::Update;
-use crate::core::state::session_item::SessionItem;
+use crate::core::state::session_item::{NO_PROJECT, SessionItem};
 use crate::core::ui::center_panes::CenterPanes;
+use crate::core::{
+    engine::SessionKey,
+    intents::session_open::{SessionOpenRequest, SessionOpenTarget},
+};
 
 /// The project a session is in: its folder's or repo's last name ("Assembly" for `https://github.com/me/Assembly`).
 pub fn project(repo_url: &str) -> &str {
     let url = repo_url.trim_end_matches(['/', '\\']);
     let url = url.strip_suffix(".git").unwrap_or(url);
-    url.rsplit(['/', '\\']).next().unwrap_or(url)
+    super::lightbox::last_part(url)
+}
+
+/// What the header calls the session's project.
+fn project_name(item: &SessionItem) -> &str {
+    if item.is_bare {
+        NO_PROJECT
+    } else {
+        project(&item.repo_url)
+    }
 }
 
 #[derive(Default)]
 pub struct Header {
     /// The open session, once the topic has sent it.
     item: Option<SessionItem>,
+    parent_key: Option<SessionKey>,
     /// Owns the keyed `sessions` subscription; dropping it unsubscribes.
     _feed: Option<Task<()>>,
 }
 
 impl Header {
-    /// The open session's machine, once the topic has sent it; `None` for this one.
-    pub fn machine(&self) -> Option<&str> {
-        (self.item.as_ref()?.machine.as_deref()).filter(|machine| !machine.is_empty())
+    pub(super) fn set_parent(&mut self, parent: Option<SessionKey>, cx: &mut Context<Self>) {
+        self.parent_key = parent;
+        cx.notify();
     }
 
     /// Follows `session`, or shows nothing.
@@ -108,12 +122,12 @@ impl Render for Header {
             .px(px(14.))
             .border_b_1()
             .border_color(border)
-            .text_size(px(13.5))
+            .text_role(TextRole::Body, cx)
             .child(sessions);
         let Some(item) = &self.item else {
             return div().child(row);
         };
-        let parent = item.parent_session_id.clone();
+        let parent = self.parent_key.clone();
         div().child(
             row.child(div().flex_none().w_px().h(px(16.)).bg(theme.border))
                 .child(
@@ -122,7 +136,7 @@ impl Render for Header {
                         .min_w_0()
                         .gap_2()
                         .text_color(faint)
-                        .child(div().flex_none().child(project(&item.repo_url).to_string()))
+                        .child(div().flex_none().child(project_name(item).to_string()))
                         .child(Icon::new(IconName::ChevronRight).size(px(14.)))
                         .child(
                             div()
@@ -137,7 +151,7 @@ impl Render for Header {
                     h_flex()
                         .flex_none()
                         .gap_1()
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(muted)
                         .child(item.place())
                         .when_some(parent, |line, parent| {
@@ -148,8 +162,14 @@ impl Render for Header {
                                     .cursor_pointer()
                                     .child("Parent session")
                                     .on_click(move |_, window, cx| {
-                                        let id = parent.clone();
-                                        window.dispatch_action(Box::new(OpenSession { id }), cx)
+                                        window.dispatch_action(
+                                            Box::new(SessionOpenRequest {
+                                                key: parent.clone(),
+                                                request_id: uuid::Uuid::new_v4().to_string(),
+                                                target: SessionOpenTarget::Engine,
+                                            }),
+                                            cx,
+                                        )
                                     }),
                             )
                         }),
@@ -159,5 +179,5 @@ impl Render for Header {
 }
 
 #[cfg(test)]
-#[path = "header_tests.rs"]
+#[path = "tests/header_tests.rs"]
 mod tests;

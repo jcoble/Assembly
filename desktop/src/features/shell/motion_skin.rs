@@ -7,10 +7,10 @@
 //!   work panel that Frame draws behind them (the design system's "a ground and one panel").
 //! - the sessions column is a raised panel, `RAIL_GAP` in from the window's edges, with the utility strip at its foot,
 //!   as the approved look has it (the design system's look-final/README.md:66); there's no bottom bar.
-//! - the sessions column's tabs are the old app's (side_tabs.rs); the drawer draws none, its pane buttons sitting in
-//!   the title row (drawer_buttons.rs); the chat's title and an open bottom dock's tabs are the kit's.
+//! - the sessions column uses text chips (side_tabs.rs), the drawer uses its compact tool capsule and overflow menu
+//!   (drawer_buttons.rs), and the chat's title and an open bottom dock's tabs are the kit's.
 //! - a closed bottom dock draws nothing along the foot, and the centre reaches over the strip the kit keeps for it;
-//!   Terminal in the title row opens it.
+//!   Terminal in the drawer's overflow menu opens it.
 //!
 //! Every other piece of the skin passes through, the drag edge and its save on release included.
 
@@ -27,7 +27,7 @@ use gpui_kit::component::dock::{
 use gpui_kit::component::v_flex;
 use gpui_kit::*;
 
-use super::side_tabs;
+use super::{drawer_buttons::DrawerButtons, side_tabs};
 
 /// The sessions panel's distance from the window's edge and from the work panel (Frame's `PANEL_GAP`).
 const RAIL_GAP: Pixels = px(8.);
@@ -113,7 +113,7 @@ impl DockAreaRenderer for MotionSkin {
         } else {
             content
         };
-        // A closed bottom dock draws nothing in the strip the kit keeps for it; Terminal in the title row opens it.
+        // A closed bottom dock draws nothing in the strip the kit keeps for it; the tools menu opens Terminal.
         if dock.placement() == DockPlacement::Bottom && !dock.is_open() {
             return Empty.into_any_element();
         }
@@ -167,7 +167,12 @@ impl TabGroupRenderer for Unfilled {
     ) -> AnyElement {
         match side(&self.1, group.node(), cx) {
             Some(DockPlacement::Left) => side_tabs::chips(group, window, cx),
-            Some(DockPlacement::Right) => Empty.into_any_element(),
+            Some(DockPlacement::Right) => match self.1.upgrade() {
+                Some(dock) => DrawerButtons { dock }.into_any_element(),
+                None => Empty.into_any_element(),
+            },
+            // Content tabs live in the top chrome; leave the bottom utility dock's bar in place.
+            None => Empty.into_any_element(),
             _ => self.0.render_tab_bar(group, window, cx),
         }
     }
@@ -229,15 +234,19 @@ fn entering(
         .into_any_element()
 }
 
-/// Which side dock holds the group, if one does. The area isn't being drawn while a group draws its tabs (the group is
+/// Which dock holds the group, if one does. The area isn't being drawn while a group draws its tabs (the group is
 /// its own view), so it can be read; the kit's own tab bar reads it the same way.
 fn side(area: &WeakEntity<DockArea>, node: NodeId, cx: &App) -> Option<DockPlacement> {
     let area = area.upgrade()?;
     let area = area.read(cx);
-    [DockPlacement::Left, DockPlacement::Right]
-        .into_iter()
-        .find(|dock| {
-            area.layout(*dock)
-                .is_some_and(|tree| tree.find_node(node).is_some())
-        })
+    [
+        DockPlacement::Left,
+        DockPlacement::Right,
+        DockPlacement::Bottom,
+    ]
+    .into_iter()
+    .find(|dock| {
+        area.layout(*dock)
+            .is_some_and(|tree| tree.find_node(node).is_some())
+    })
 }

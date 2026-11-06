@@ -6,8 +6,12 @@ using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Rows;
+using Assembly.Infrastructure.Chat;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Remote;
+using Assembly.Infrastructure.Engine;
+using Assembly.Engine.Sessions;
+using Assembly.Tests.Features.Chat.Sessions;
 using Assembly.Infrastructure.Socket;
 using Assembly.Tests.Draft.Base.Chat;
 using Microsoft.AspNetCore.Builder;
@@ -18,10 +22,11 @@ using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Draft.Remote;
 
-public sealed class RemoteRowsSocketTests : IAsyncLifetime
+public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
     private readonly TempDatabase _remoteFile = new();
+    private readonly string _owningHome = Directory.CreateTempSubdirectory("assembly-remote-owner-").FullName;
     private readonly TempDatabase _localFile = new();
     private readonly CountingTime _time = new();
     private readonly TaskCompletionSource _legacy = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -30,10 +35,17 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
     private RowStore _remoteStore = null!;
     private SessionStore _localSessions = null!;
     private RemoteMachine _machine = null!;
+    private EngineRuntime _localEngine = null!;
+    private MachineCalls _ownerMachineCalls = null!;
     private SocketEndpoint _socket = null!, _bulk = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
-    private int _liveHits;
+    private int _liveHits, _sessionHttpHits;
+    private SessionStore _remoteSessions = null!;
+    private FakeMachine _remoteMachine = null!;
+    private Assembly.Application.Common.Engine.NeedAnswerRequest? _remoteAnswer;
+    private MachineStatus _status = null!;
+    private int? _welcomeFormat;
     private readonly TopicSet _localTopics = new();
     private Func<WebSocket, Task>? _bulkRead;
 
@@ -41,23 +53,55 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
     {
         var topics = new TopicSet();
         _remoteDb = AppDatabase.Open(_remoteFile.Path, TimeProvider.System, topics);
-        _localDb = TestDatabase.Open(_localFile.Path);
+        _localDb = AppDatabase.Open(_localFile.Path, TimeProvider.System, _localTopics);
         _remoteStore = RowStore.Open(_remoteDb);
-        _remoteHub = new LiveHub(_remoteStore, topics: topics);
-        _localHub = new LiveHub(RowStore.Open(_localDb), topics: _localTopics);
-        var sessions = SessionStore.Open(_remoteDb, TimeProvider.System, "checkouts");
-        sessions.Add("s", "claude", "https://github.com/o/r", "box");
-        _localSessions = SessionStore.Open(_localDb, TimeProvider.System, "checkouts");
+        var remoteSummaries = SessionSummaries.Load(_remoteStore);
+        _remoteHub = new LiveHub(_remoteStore, topics: topics, summaries: remoteSummaries,
+            summaryChanged: session => _remoteSessions.PublishSummary(session));
+        var localSummaries = SessionSummaries.Load(RowStore.Open(_localDb));
+        _localEngine = EngineRuntime.Start(_localDb, _localTopics, TimeProvider.System, new SessionLimits(() => 5, () => 10));
+        _localHub = new LiveHub(RowStore.Open(_localDb), topics: _localTopics, summaries: localSummaries);
+        var sessions = _remoteSessions = SessionStore.Open(_remoteDb, TimeProvider.System, "checkouts", remoteSummaries);
+        sessions.Add("s", "claude", "https://github.com/o/r", null!);
+        _localSessions = SessionStore.Open(_localDb, TimeProvider.System, "checkouts", localSummaries);
         _localSessions.Add("s", "claude", "https://github.com/o/r", "box");
+        _remoteMachine = new FakeMachine(null, sessions);
+        var machines = new MachineSet(_remoteMachine);
         var calls = new SocketDispatcher(_remoteDb.Writer, topics, TimeProvider.System, NullLogger.Instance);
-        new RowsFeature(_remoteHub, _remoteStore, sessions, new MachineSet(new FakeMachine(null, sessions))).Register(calls);
-        _socket = new SocketEndpoint("token", calls, "box", TimeProvider.System);
-        _bulk = new SocketEndpoint("token", calls, "box", TimeProvider.System, bulk: true);
+        new RowsFeature(_remoteHub, _remoteStore, sessions, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)).Register(calls);
+        var answers = new Assembly.Tests.Infrastructure.Socket.AnswerDoor
+        {
+            Owner = OwnerDoor(sessions, machines, topics),
+            Answer = request =>
+            {
+                _remoteAnswer = request;
+                return Task.FromResult<Func<Assembly.Application.Common.Database.IWriteScope, bool>>(_ => !_remoteMachine.Refuses);
+            }
+        };
+        new SessionsFeature(sessions, machines, owningMachine: _ownerEngine.Machine, owningHome: _owningHome).Register(calls);
+        new Assembly.Infrastructure.Engine.EngineCalls(_ownerEngine, TimeProvider.System, _ownerAnswers).Register(calls);
+        new Assembly.Infrastructure.Engine.Titles.SessionTitleCalls(_ownerEngine, sessions).Register(calls);
+        _ownerMachineCalls = new MachineCalls(_ownerEngine, TimeProvider.System, new FakeLauncher(), _owningHome, _ownerAnswers);
+        _ownerMachineCalls.Register(calls);
+        new SendFeature(sessions, machines, _remoteHub, answers).Register(calls);
+        new ConfigFeature(sessions, machines).Register(calls);
+        new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System).Register(calls);
+        _socket = new SocketEndpoint("token", calls, "box", TimeProvider.System, engineMachine: _ownerEngine.Machine);
+        _bulk = new SocketEndpoint("token", calls, "box", TimeProvider.System, bulk: true, engineMachine: _ownerEngine.Machine);
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0));
         _app = builder.Build();
         _app.UseWebSockets();
-        _app.Map("/socket", _socket.HandleAsync);
+        _app.Map("/socket", async context =>
+        {
+            if (_welcomeFormat is not { } format) await _socket.HandleAsync(context);
+            else
+            {
+                using var socket = await context.WebSockets.AcceptWebSocketAsync();
+                await ReadAsync(socket);
+                await SendAsync(socket, $$"""{"t":"welcome","protocol":1,"format":{{format}}}""");
+            }
+        });
         _app.Map("/socket/bulk", async context =>
         {
             if (_bulkRead is null) await _bulk.HandleAsync(context);
@@ -67,7 +111,12 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
                 await _bulkRead(socket);
             }
         });
-        _app.MapPost("/sessions/s/send", () => new { runId = "run" });
+        _app.Map("/sessions/{**path}", context =>
+        {
+            Interlocked.Increment(ref _sessionHttpHits);
+            context.Response.StatusCode = 410;
+            return Task.CompletedTask;
+        });
         _app.MapGet("/version", () => new { formatVersion = RowStore.FormatVersion });
         _app.Map("/live", context =>
         {
@@ -79,7 +128,9 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
         await _app.StartAsync();
         _address = new Uri(_app.Urls.Single());
         _machine = new RemoteMachine("box", _address, "token", _localHub, _localSessions, TextWriter.Null,
-            new MachineStatus(new TopicSet(), ["box"]));
+            _status = new MachineStatus(new TopicSet(), ["box"]), acceptanceEngine: _localEngine);
+        await _machine.ProbeAsync(CancellationToken.None);
+        await _machine.CallAsync("engine", "machine", JsonSerializer.SerializeToElement(new { }), false, CancellationToken.None);
     }
 
     // Pins: remote#18, remote#8
@@ -98,30 +149,34 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
     public async Task Remote_rows_keep_following_a_turn_the_desktop_started_until_its_rows_arrive()
     {
         var copied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var rail = _localTopics.Subscribe(SessionsFeature.RailTopic, "s", _ => { }, (_, _) => copied.TrySetResult());
+        var localRows = RowStore.Open(_localDb);
+        var rail = _localTopics.Subscribe(SessionsFeature.RailTopic, "s", _ => { }, (_, _) => { if (localRows.LastSeq("s") >= 2) copied.TrySetResult(); });
         _bulkRead = async socket =>
         {
             await ReadAsync(socket);
-            await SendAsync(socket, """{"t":"welcome","protocol":1}""");
-            await ReadAsync(socket);
+            await SendAsync(socket, $$"""{"t":"welcome","protocol":1,"format":{{RowStore.FormatVersion}},"engine":"{{_ownerEngine.Machine}}"}""");
+            using var call = JsonDocument.Parse(await ReadAsync(socket));
             // The catch-up has read no rows. The send's user and started rows arrive afterwards,
             // through the live subscription, even if its empty read response is still in flight.
             var batch = new RowBatch();
-            batch.Rows.Add(new NewRow("run", null, RowKind.User,
-                JsonDocument.Parse("""{"text":"answer"}""").RootElement.Clone(), 1));
-            batch.Rows.Add(new NewRow("run", null, RowKind.Turn,
+            batch.Rows.Add(new NewRow("run-1", null, RowKind.User,
+                JsonDocument.Parse("""{"text":"answer","clientId":"rail-C"}""").RootElement.Clone(), 1));
+            batch.Rows.Add(new NewRow("run-1", null, RowKind.Turn,
                 JsonDocument.Parse("""{"state":"started"}""").RootElement.Clone(), 1));
-            _remoteHub.Publish("s", batch);
-            await SendAsync(socket, """{"t":"result","id":1,"result":{"rows":[]}}""");
+            if (_remoteStore.LastSeq("s") == 0) _remoteHub.Publish("s", batch);
+            await SendAsync(socket, $$$"""{"t":"result","id":{{{call.RootElement.GetProperty("id")}}},"result":{"rows":[]}}""");
         };
         try
         {
             Assert.False(_localHub.HasSubscribers("s"));
-            Assert.Equal("run", await _machine.SendAsync(_localSessions.Get("s")!, "answer", null, CancellationToken.None));
+            await _machine.ProbeAsync(CancellationToken.None);
+            var accepted = await _machine.SendOwnerPromptAsync(new("s", "answer", "rail-C", [], null), CancellationToken.None);
+            Assert.Equal("queued", accepted.State);
+            Assert.Null(accepted.RunId);
             await copied.Task.WaitAsync(Wait);
             Assert.False(_localHub.HasSubscribers("s"));
-            Assert.Equal(new long[] { 1, 2 }, _localHub.RunRows("s", "run").Select(row => row.Seq));
-            Assert.Equal("run", _localHub.OpenRun("s"));
+            Assert.Equal(new long[] { 1, 2 }, _localHub.RunRows("s", "run-1").Select(row => row.Seq));
+            Assert.Equal("run-1", _localHub.OpenRun("s"));
         }
         finally { _localTopics.Unsubscribe(rail); }
     }
@@ -140,6 +195,46 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
         Assert.Equal(new long[] { 6, 7, 8, 9 }, await ReadSeqsAsync(viewer, 4));
         Assert.False(viewer.Rows.TryRead(out _));
         Assert.Equal(0, _liveHits);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_bulk_socket_abort_without_caller_cancellation_keeps_following_the_reconnected_state(bool disposed)
+    {
+        Publish(1, 1);
+        using var viewer = _localHub.Subscribe("s", 0);
+        var frames = System.Threading.Channels.Channel.CreateUnbounded<JsonElement>();
+        var interrupted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var caughtUp = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = 0;
+        async IAsyncEnumerable<JsonElement> Subscribe(string session, long after,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await foreach (var frame in frames.Reader.ReadAllAsync(cancellationToken)) yield return frame;
+        }
+        await using var follower = new RemoteFollower(_localHub, Subscribe, (session, after, cancellationToken) =>
+        {
+            Assert.False(cancellationToken.IsCancellationRequested);
+            if (Interlocked.Increment(ref attempts) == 1)
+            {
+                interrupted.TrySetResult();
+                Exception aborted = disposed ? new ObjectDisposedException("bulk socket") : new OperationCanceledException("bulk socket aborted");
+                return Task.FromException<IReadOnlyList<StoredRow>>(aborted);
+            }
+            var rows = _remoteStore.RowsAfter(session, after);
+            if (rows.Count == 0) caughtUp.TrySetResult();
+            return Task.FromResult<IReadOnlyList<StoredRow>>(rows);
+        }, _ => Task.CompletedTask, _ => Task.CompletedTask, (_, _) => { }, TextWriter.Null);
+        follower.Watch("s");
+        frames.Writer.TryWrite(JsonSerializer.SerializeToElement(new { t = "state", seq = 1 }));
+        await interrupted.Task.WaitAsync(Wait);
+        frames.Writer.TryWrite(JsonSerializer.SerializeToElement(new { t = "state", seq = 1 }));
+        Assert.Equal(new long[] { 1 }, await ReadSeqsAsync(viewer, 1));
+        // The read after the copied row ends catch-up; disposing before it would cancel the token this test pins.
+        await caughtUp.Task.WaitAsync(Wait);
+        Assert.False(viewer.Rows.TryRead(out _));
+        Assert.True(Volatile.Read(ref attempts) >= 2);
     }
 
     // Pins: remote#8
@@ -241,12 +336,19 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
         _socket.CloseAll();
         _bulk.CloseAll();
         await _app.DisposeAsync();
+        await _ownerMachineCalls.DisposeAsync();
+        await _localEngine.DisposeAsync();
+        await _ownerAnswers.DisposeAsync();
+        await _ownerEngine.DisposeAsync();
+        await _ownerHosts.DisposeAsync();
+        await _ownerWork.DisposeAsync();
         _localHub.Dispose();
         _remoteHub.Dispose();
         _localDb.Dispose();
         _remoteDb.Dispose();
         _localFile.Dispose();
         _remoteFile.Dispose();
+        Directory.Delete(_owningHome, true);
     }
 
     private sealed class CountingTime : FakeTimeProvider

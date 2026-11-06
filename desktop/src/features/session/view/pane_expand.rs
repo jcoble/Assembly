@@ -39,6 +39,8 @@ impl SessionPane {
                     took_ms,
                     denied: denied(&self.view.items).contains(item_id.as_str()),
                     on_action: self.on_action.clone(),
+                    session: self.session.clone(),
+                    expected_source: self.row_source.clone(),
                 };
                 fails = took_ms.is_none() && failed_run(tool, row.denied);
                 if !tool.has_detail {
@@ -63,7 +65,6 @@ impl SessionPane {
                 let row = AskRow {
                     ask_id: ask_id.clone(),
                     ask: ask.clone(),
-                    form: self.forms.get(ask_id).cloned(),
                     on_action: self.on_action.clone(),
                 };
                 let body = row.clone();
@@ -106,13 +107,13 @@ impl SessionPane {
                 self.read_detail_if_stale(at, cx);
             }
         }
-        // A question answered since it was last drawn open shrinks shut, whether the answer came live or on a page
-        // loaded after a reconnect; one opened again by hand after that stays open.
+        // A question answered since it was last open is shut, whether the answer came live or on a page loaded after a
+        // reconnect. It was answered in the composer's box, so its line simply arrives; opened by hand, it stays open.
         if let ItemKind::Ask { ask, .. } = &item.kind {
             if ask.state == "open" {
                 self.open_asks.insert(item.key.clone());
             } else if self.open_asks.remove(&item.key) {
-                row.update(cx, |row, cx| row.set_open(false, true, cx));
+                row.update(cx, |row, cx| row.set_open(false, false, cx));
             }
         }
         Some(row.into_any_element())

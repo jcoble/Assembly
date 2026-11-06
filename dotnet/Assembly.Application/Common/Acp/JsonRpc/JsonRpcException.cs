@@ -3,13 +3,14 @@ using System.Text.Json;
 namespace Assembly.Application.Common.Acp.JsonRpc;
 
 /// <summary>A JSON-RPC error, either received from the agent or raised by us to send back.</summary>
-public sealed class JsonRpcException(int code, string message) : Exception(message)
+public sealed class JsonRpcException(int code, string message, JsonElement? data = null) : Exception(message)
 {
     public const int InvalidParams = -32602;
     public const int MethodNotFound = -32601;
     public const int InternalError = -32603;
 
     public int Code { get; } = code;
+    public AcpError Error { get; } = new(code, message, data);
 
     internal static JsonRpcException FromError(JsonElement error)
     {
@@ -19,6 +20,6 @@ public sealed class JsonRpcException(int code, string message) : Exception(messa
         if (error.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object
             && data.TryGetProperty("details", out var details) && details.ValueKind == JsonValueKind.String)
             message = $"{message}: {details.GetString()}";
-        return new JsonRpcException(code, message);
+        return new JsonRpcException(code, message, error.TryGetProperty("data", out var value) ? value.Clone() : null);
     }
 }

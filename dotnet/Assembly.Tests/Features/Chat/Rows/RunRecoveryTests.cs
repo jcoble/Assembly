@@ -58,6 +58,26 @@ public sealed class RunRecoveryTests : IDisposable
     }
 
     [Fact]
+    public void Restart_keeps_user_identity_attachment_order_and_original_saved_markdown()
+    {
+        const string markdown = "## Original heading\n\n[link](https://example.invalid/path) & `code`\n";
+        var converter = new RowConverter();
+        _store.Commit("t", converter.Apply(new TurnStarted(0, "run", "prompt", "client",
+            UserItemId: "original-user-item", AttachmentIds: ["image-b", "image-a"])));
+        _store.Commit("t", converter.Apply(new TextChunk(1, "message", markdown)));
+        var reopened = RowStore.Open(_database);
+        reopened.Commit("t", RunRecovery.Close(reopened.RunRows("t", "run"), RestartedAt));
+        var rows = reopened.RunRows("t", "run");
+        var user = Assert.Single(rows, row => row.Kind == RowKind.User);
+        Assert.Null(user.ItemId);
+        Assert.Equal("original-user-item", user.Payload.GetProperty("itemId").GetString());
+        Assert.Equal(["image-b", "image-a"], user.Payload.GetProperty("attachmentIds").EnumerateArray().Select(value => value.GetString()));
+        Assert.Equal(markdown, Assert.Single(rows, row => row.Kind == RowKind.Message).Payload.GetProperty("text").GetString());
+        using var scope = _database.OpenSnapshot(default);
+        Assert.Equal(user.Seq, reopened.UserDeliveryOfClient(scope, "t", "client")!.Seq);
+    }
+
+    [Fact]
     public void A_message_closed_from_its_deltas_replaces_them()
     {
         var converter = new RowConverter();

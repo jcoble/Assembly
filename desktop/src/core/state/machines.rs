@@ -15,6 +15,8 @@ const TOPIC: &str = "machines";
 pub struct Machines {
     /// In the order they first came, by the topic's key: the name, or "local" for this machine.
     machines: Vec<(String, Machine)>,
+    /// The topic's first state has come, so a name missing from the list isn't coming.
+    loaded: bool,
     /// Owns the `machines` subscription; dropping it unsubscribes.
     _feed: Task<()>,
 }
@@ -37,6 +39,25 @@ impl Machines {
             .map(|state| state.0.clone())
     }
 
+    /// A list holding `items`, that follows nothing, for a view's tests.
+    #[cfg(test)]
+    pub fn start_holding(items: Vec<(String, Value)>, cx: &mut App) {
+        let state = cx.new(|_| Self {
+            machines: Vec::new(),
+            loaded: false,
+            _feed: Task::ready(()),
+        });
+        cx.set_global(GlobalMachines(state));
+        Self::change_holding(items, cx);
+    }
+
+    /// Replaces a held list, as the topic's state does.
+    #[cfg(test)]
+    pub fn change_holding(items: Vec<(String, Value)>, cx: &mut App) {
+        let state = Self::try_global(cx).expect("a held list");
+        state.update(cx, |machines, cx| machines.apply(Update::State(items), cx));
+    }
+
     /// Subscribes to the `machines` topic.
     pub fn new(cx: &mut Context<Self>) -> Self {
         let mut subscription = SocketClient::global(cx).read(cx).subscribe(TOPIC, None);
@@ -52,6 +73,7 @@ impl Machines {
         });
         Self {
             machines: Vec::new(),
+            loaded: false,
             _feed: feed,
         }
     }
@@ -72,9 +94,40 @@ impl Machines {
         })
     }
 
-    fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
+    /// Whether the loaded list has no machine `name`. This machine (`None`) and a list not loaded yet aren't missing.
+    pub fn missing(name: Option<&str>, cx: &App) -> bool {
+        let Some(name) = name else {
+            return false;
+        };
+        Machines::try_global(cx).is_some_and(|machines| {
+            let machines = machines.read(cx);
+            machines.loaded
+                && !machines
+                    .machines()
+                    .any(|held| held.name.as_deref() == Some(name))
+        })
+    }
+
+    /// Whether any remote machine is configured: one with a name. A list not started holds none.
+    pub fn any_remote(cx: &App) -> bool {
+        Machines::try_global(cx)
+            .is_some_and(|machines| machines.read(cx).machines().any(|held| held.name.is_some()))
+    }
+
+    /// When the machine `name` stopped answering, while it's offline.
+    pub fn offline_since(name: &str, cx: &App) -> Option<i64> {
+        let machines = Machines::try_global(cx)?;
+        (machines.read(cx).machines())
+            .find(|held| held.name.as_deref() == Some(name) && held.didnt_answer())
+            .and_then(|held| held.offline_since_ms)
+    }
+
+    pub(crate) fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
         match update {
-            Update::State(items) => replace(&mut self.machines, items),
+            Update::State(items) => {
+                replace(&mut self.machines, items);
+                self.loaded = true;
+            }
             Update::Change { key, item } => read(&mut self.machines, key, item),
         }
         cx.notify();

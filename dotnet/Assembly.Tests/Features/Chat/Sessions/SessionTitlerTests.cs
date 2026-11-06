@@ -13,6 +13,7 @@ namespace Assembly.Tests.Features.Chat.Sessions;
 public sealed class SessionTitlerTests : IAsyncDisposable
 {
     private readonly TempDatabase _db = new();
+    private readonly DirectoryInfo _folder = Directory.CreateTempSubdirectory("assembly-session-title-");
     private readonly FakeTimeProvider _time = new(DateTimeOffset.FromUnixTimeMilliseconds(1_000_000));
     private readonly AppDatabase _database;
     private readonly RowStore _rows;
@@ -32,8 +33,8 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         _database = TestDatabase.Open(_db.Path);
         _rows = RowStore.Open(_database);
         _hub = new LiveHub(_rows);
-        _sessionStore = SessionStore.Open(_database, _time, "checkouts");
-        _session = _sessionStore.Create("claude", "https://github.com/o/r");
+        _sessionStore = SessionStore.Open(_database, _time, _folder.FullName);
+        _session = _sessionStore.Create("claude", "https://github.com/o/r", workingFolder: _folder.FullName);
         _adapter = new SharedAdapter(_launcher, "claude", _time, _log);
         _opener = new SessionOpener(_sessionStore, _launcher, _ => _adapter);
         _work = new BackgroundWork(_time, _log);
@@ -61,6 +62,19 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         Assert.Equal(new string('a', SessionTitler.TitleLength), SessionTitler.Clean(new string('a', 100)));
         Assert.Null(SessionTitler.Clean("  \"\"  \n"));
         Assert.Null(SessionTitler.Clean(null));
+    }
+
+    [Theory]
+    [InlineData(UtilityStatus.Unavailable)]
+    [InlineData(UtilityStatus.Failed)]
+    public async Task A_negative_helper_result_keeps_the_existing_prompt_title(UtilityStatus status)
+    {
+        _model.Status = status;
+        await TurnAsync("Keep this prompt title", "Completed.");
+        await _work.StopAsync(TimeSpan.FromSeconds(5));
+        var titled = _sessionStore.Get(_session.SessionId)!;
+        Assert.Equal("Keep this prompt title", titled.Title);
+        Assert.Equal("prompt", titled.TitleSource);
     }
 
     [Fact]
@@ -97,7 +111,7 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         var prompt = await agent.ReadAsync("session/prompt");
         _sessionStore.SetTitle(_session.SessionId, "Mine", "user");
         await agent.TextAsync("I renamed them.");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await _work.StopAsync(TimeSpan.FromSeconds(5));
 
@@ -114,7 +128,7 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         var prompt = await agent.ReadAsync("session/prompt");
         Assert.True(_host.Stop(runId));
         await agent.ReadAsync("session/cancel");
-        await agent.ReplyAsync(prompt, """{"stopReason":"cancelled"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"cancelled"}""");
         await agent.CloseAsync();
         await _work.StopAsync(TimeSpan.FromSeconds(5));
 
@@ -146,7 +160,7 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         var prompt = await agent.ReadAsync("session/prompt");
         Assert.True(_host.Stop(runId));
         await agent.ReadAsync("session/cancel");
-        await agent.ReplyAsync(prompt, """{"stopReason":"cancelled"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"cancelled"}""");
         await agent.CloseAsync();
 
         await TurnAsync("Fix the titles on the rail, please", "I renamed them.", agent);
@@ -158,17 +172,14 @@ public sealed class SessionTitlerTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task The_agent_is_given_the_helper_title_when_the_session_next_opens()
+    public async Task A_v2_resume_does_not_send_the_removed_AIR_rename_method()
     {
-        var agent = await RenamingTurnAsync(_host, "Fix the titles on the rail");
+        var agent = await ProviderTitledTurnAsync(_host, "Fix the titles on the rail");
         await _work.StopAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("helper", _sessionStore.Get(_session.SessionId)!.TitleSource);
 
         _host.Send("And the tabs");
         await agent.OpenAsync();
-        var rename = await agent.ReadAsync("_session/rename");
-        Assert.Equal("Fix rail titles", rename.GetProperty("params").GetProperty("title").GetString());
-        await agent.ReplyAsync(rename, "{}");
         await EndTurnAsync(agent);
     }
 
@@ -177,7 +188,7 @@ public sealed class SessionTitlerTests : IAsyncDisposable
     {
         var host = new SessionHost(_session.SessionId, _hub, _sessionStore, _opener, _time, _log, _work,
             titler: new SessionTitler(_sessionStore, _rows, new FakeModel(null)));
-        var agent = await RenamingTurnAsync(host, "Fix the titles on the rail");
+        var agent = await ProviderTitledTurnAsync(host, "Fix the titles on the rail");
         await _work.StopAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("prompt", _sessionStore.Get(_session.SessionId)!.TitleSource);
 
@@ -225,7 +236,7 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await _work.StopAsync(TimeSpan.FromSeconds(5));
 
@@ -247,7 +258,7 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         await agent.OpenAsync();
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.UpdateAsync("""{"sessionUpdate":"session_info_update","title":"And the tabs"}""");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
 
         Assert.Equal("Fix rail titles", _sessionStore.Get(_session.SessionId)!.Title);
@@ -269,18 +280,17 @@ public sealed class SessionTitlerTests : IAsyncDisposable
 
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.TextAsync(reply);
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         return agent;
     }
 
     // One turn on an agent that takes a title: the new session is renamed from the first message, then answered.
-    private async Task<FakeLink> RenamingTurnAsync(SessionHost host, string text)
+    private async Task<FakeLink> ProviderTitledTurnAsync(SessionHost host, string text)
     {
         host.Send(text);
         var agent = await _launcher.NextAsync();
-        await agent.StartAsync(canRename: true);
-        await agent.ReplyAsync(await agent.ReadAsync("_session/rename"), "{}");
+        await agent.StartAsync();
         await EndTurnAsync(agent);
         return agent;
     }
@@ -289,7 +299,7 @@ public sealed class SessionTitlerTests : IAsyncDisposable
     {
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.TextAsync("Done.");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
 
@@ -307,11 +317,13 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         _hub.Dispose();
         _database.Dispose();
         _db.Dispose();
+        _folder.Delete(recursive: true);
     }
 
     private sealed class FakeModel(string? answer) : IUtilityModel
     {
         private readonly List<string> _prompts = [];
+        internal UtilityStatus? Status;
 
         public IReadOnlyList<string> Prompts
         {
@@ -322,11 +334,11 @@ public sealed class SessionTitlerTests : IAsyncDisposable
             }
         }
 
-        public Task<string?> CompleteAsync(string prompt, CancellationToken cancellationToken)
+        public Task<UtilityResult> CompleteAsync(string prompt, CancellationToken cancellationToken)
         {
             lock (_prompts)
                 _prompts.Add(prompt);
-            return Task.FromResult(answer);
+            return Task.FromResult(new UtilityResult(Status ?? (answer is null ? UtilityStatus.Failed : UtilityStatus.Succeeded), answer, answer is null ? "fixture_failure" : null));
         }
     }
 }

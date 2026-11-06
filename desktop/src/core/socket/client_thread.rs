@@ -12,9 +12,9 @@
 //!   open, so a backend that welcomes and drops can't make it loop.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -35,6 +35,7 @@ use super::row_update::RowUpdate;
 use super::rows_feed::RowsFeed;
 use super::update::Update;
 
+mod engine;
 mod frames;
 
 const ROWS: &str = "rows";
@@ -61,12 +62,16 @@ pub(super) struct ClientThread {
     states: UnboundedSender<ConnectionState>,
     /// The window's call and subscription ids; a re-subscribe after a gap takes a fresh one.
     ids: Arc<AtomicU64>,
+    engine_machine: Arc<Mutex<Option<String>>>,
+    connection_generation: Arc<Mutex<Option<u64>>>,
+    last_generation: u64,
     calls: HashMap<u64, oneshot::Sender<Outcome<Value>>>,
     /// The newest call per key.
     keys: HashMap<String, u64>,
     /// Keyed topics and rows, by the id on the wire. `handle` is the id the window holds, for `Unsubscribe`.
     topics: HashMap<u64, Topic>,
     rows: HashMap<u64, Rows>,
+    engines: HashMap<u64, super::engine_update::EngineFeed>,
 }
 
 struct Topic {
@@ -81,6 +86,13 @@ struct Rows {
     updates: UnboundedSender<RowUpdate>,
 }
 
+/// What the thread shares with the client that started it.
+pub struct ClientShared {
+    pub ids: Arc<AtomicU64>,
+    pub engine_machine: Arc<Mutex<Option<String>>>,
+    pub connection_generation: Arc<Mutex<Option<u64>>>,
+}
+
 impl ClientThread {
     /// Starts the thread, which opens the socket at once and runs until `Event::Stop`.
     pub fn spawn(
@@ -89,8 +101,13 @@ impl ClientThread {
         events: Receiver<Event>,
         sender: Sender<Event>,
         states: UnboundedSender<ConnectionState>,
-        ids: Arc<AtomicU64>,
+        shared: ClientShared,
     ) -> JoinHandle<()> {
+        let ClientShared {
+            ids,
+            engine_machine,
+            connection_generation,
+        } = shared;
         let mut client = Self {
             endpoint,
             path,
@@ -103,10 +120,14 @@ impl ClientThread {
             reopened: false,
             states,
             ids,
+            engine_machine,
+            connection_generation,
+            last_generation: 0,
             calls: HashMap::new(),
             keys: HashMap::new(),
             topics: HashMap::new(),
             rows: HashMap::new(),
+            engines: HashMap::new(),
         };
         thread::Builder::new()
             .name("socket".into())
@@ -204,11 +225,13 @@ impl ClientThread {
                 id,
                 session_id,
                 after,
+                expected_source,
                 rows,
             } => {
                 let feed = RowsFeed {
                     session_id,
                     last_seq: after,
+                    expected_source,
                 };
                 self.rows.insert(
                     id,
@@ -220,7 +243,85 @@ impl ClientThread {
                 );
                 self.send_rows(id);
             }
+            Event::SubscribeEngine {
+                id,
+                message,
+                machine,
+                expected_source,
+                updates,
+            } => {
+                self.add_engine(
+                    id,
+                    engine::EngineRequest {
+                        topic: "messages".into(),
+                        key: Some(message),
+                        machine,
+                        expected_source,
+                        scoped: false,
+                    },
+                    updates,
+                );
+            }
+            Event::SubscribeEngineScope {
+                id,
+                topic,
+                key,
+                machine,
+                updates,
+            } => {
+                self.add_engine(
+                    id,
+                    engine::EngineRequest {
+                        topic,
+                        key,
+                        machine,
+                        expected_source: None,
+                        scoped: true,
+                    },
+                    updates,
+                );
+            }
+            Event::ResnapshotEngine { handle } => {
+                if let Some(wire) = self.engines.iter().find_map(|(wire, feed)| {
+                    (feed.handle == handle && feed.scoped).then_some(*wire)
+                }) {
+                    self.reset_engine(wire);
+                }
+            }
+            Event::AcknowledgeEngine {
+                handle,
+                wire,
+                through,
+                at,
+            } => {
+                if let Some(feed) = self.engines.get_mut(&wire)
+                    && feed.handle == handle
+                    && feed.scoped
+                    && feed.through.is_some_and(|received| through <= received)
+                    && feed
+                        .acknowledged
+                        .as_ref()
+                        .is_none_or(|(ack, _)| through > *ack)
+                {
+                    feed.acknowledged = Some((through, at));
+                    self.send(&OutFrame::Ack {
+                        id: wire,
+                        stream: "engine",
+                        after: through,
+                    });
+                }
+            }
             Event::Unsubscribe { id } => {
+                if let Some(wire) = self
+                    .engines
+                    .iter()
+                    .find(|(_, feed)| feed.handle == id)
+                    .map(|(wire, _)| *wire)
+                {
+                    self.engines.remove(&wire);
+                    self.send(&OutFrame::Unsub { id: wire });
+                    return;
+                }
                 let wire = self
                     .rows
                     .iter()
@@ -291,7 +392,26 @@ impl ClientThread {
     }
 
     fn close(&mut self) {
+        *self
+            .connection_generation
+            .lock()
+            .expect("connection generation lock") = None;
         self.connection = None;
+        *self.engine_machine.lock().expect("Engine identity lock") = None;
+        // A scoped page queued before disconnect cannot acknowledge the next connection.
+        // Resume only its last applied page, under a new wire generation.
+        for (wire, mut feed) in std::mem::take(&mut self.engines) {
+            feed.snapshot_cut = None;
+            feed.snapshot_items.clear();
+            let wire = if feed.scoped {
+                feed.through = feed.acknowledged.as_ref().map(|(through, _)| *through);
+                feed.at = feed.acknowledged.as_ref().and_then(|(_, at)| at.clone());
+                self.ids.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+            } else {
+                wire
+            };
+            self.engines.insert(wire, feed);
+        }
         self.keys.clear();
         for (_, answer) in self.calls.drain() {
             let _ = answer.send(Outcome::Aborted);
@@ -303,11 +423,23 @@ impl ClientThread {
         match Connection::open(&self.endpoint, self.path, self.sender.clone()) {
             Ok(connection) => {
                 let machine = connection.machine.clone();
+                self.last_generation = self
+                    .last_generation
+                    .checked_add(1)
+                    .expect("socket generation exhausted");
+                *self
+                    .connection_generation
+                    .lock()
+                    .expect("connection generation lock") = Some(self.last_generation);
+                *self.engine_machine.lock().expect("Engine identity lock") =
+                    connection.engine_machine.clone();
                 self.connection = Some(connection);
                 let topics: Vec<u64> = self.topics.keys().copied().collect();
                 topics.into_iter().for_each(|id| self.send_topic(id));
                 let rows: Vec<u64> = self.rows.keys().copied().collect();
                 rows.into_iter().for_each(|id| self.send_rows(id));
+                let engines: Vec<u64> = self.engines.keys().copied().collect();
+                engines.into_iter().for_each(|id| self.send_engine(id));
                 self.set_state(ConnectionState::Connected { machine });
             }
             Err(OpenFailure::Refused(code)) => {
@@ -331,6 +463,7 @@ impl ClientThread {
             topic: &topic,
             key: key.as_deref(),
             after: None,
+            expected_source: None,
         });
     }
 
@@ -338,12 +471,41 @@ impl ClientThread {
         let Some(rows) = self.rows.get(&id) else {
             return;
         };
-        let (session, after) = (rows.feed.session_id.clone(), rows.feed.last_seq);
+        let (session, after, source) = (
+            rows.feed.session_id.clone(),
+            rows.feed.last_seq,
+            rows.feed.expected_source.clone(),
+        );
         self.send(&OutFrame::Sub {
             id,
             topic: ROWS,
             key: Some(&session),
             after,
+            expected_source: source.as_ref(),
+        });
+    }
+
+    fn send_engine(&mut self, id: u64) {
+        let Some(feed) = self.engines.get(&id) else {
+            return;
+        };
+        let (topic, key, machine, after, at, source) = (
+            feed.topic.clone(),
+            feed.key.clone(),
+            feed.machine.clone(),
+            feed.through,
+            feed.at.clone(),
+            feed.expected_source.clone(),
+        );
+        self.send(&OutFrame::EngineSub {
+            id,
+            stream: "engine",
+            expected_source: source.as_ref(),
+            topic: &topic,
+            key: key.as_deref(),
+            machine: machine.as_deref(),
+            after,
+            at: at.as_ref(),
         });
     }
 

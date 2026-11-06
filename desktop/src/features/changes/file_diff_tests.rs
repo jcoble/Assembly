@@ -1,69 +1,45 @@
-//! What the Changes tab makes of a `git/diff` answer: its parts and messages (scm#14, scm#16).
+use super::{CUT, FileDiff};
 
-use serde_json::json;
-
-use super::{FileDiff, Row, widest};
-use crate::features::changes::diff_lines::Kind;
-
+const EDIT: &str = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-a\n+b\n";
 fn diff(staged: &str, unstaged: &str, binary: bool, truncated: bool) -> FileDiff {
-    serde_json::from_value(
-        json!({ "path": "a.rs", "staged": staged, "unstaged": unstaged,
-        "binary": binary, "truncated": truncated }),
-    )
-    .expect("a git/diff answer")
-}
-
-const EDIT: &str = "@@ -1 +1 @@\n-a\n+b\n";
-
-// Pins: scm#14
-#[test]
-fn one_part_has_no_label_and_two_parts_are_each_under_theirs() {
-    let one = diff("", EDIT, false, false).rows();
-    assert!(matches!(one[0], Row::Line(ref line) if line.kind == Kind::Run));
-    assert_eq!(one.len(), 3);
-
-    let both = diff(EDIT, EDIT, false, false).rows();
-    assert_eq!(both[0], Row::Label("Staged".into()));
-    assert_eq!(both[4], Row::Label("Working tree".into()));
-    assert_eq!(both.len(), 8);
+    FileDiff {
+        path: "a.rs".into(),
+        staged: staged.into(),
+        unstaged: unstaged.into(),
+        binary,
+        truncated,
+    }
 }
 
 // Pins: scm#14
 #[test]
-fn a_part_with_no_lines_to_show_has_no_label() {
-    // git's header alone, with nothing under it this tab shows.
-    let rows = diff("diff --git a/a.rs b/a.rs\nindex 1..2\n", EDIT, false, false).rows();
-    assert!(rows.iter().all(|row| !matches!(row, Row::Label(_))));
-    assert_eq!(rows.len(), 3);
-    assert!(
-        diff("diff --git a/a.rs b/a.rs\n", "", false, false)
-            .rows()
-            .is_empty()
+fn staged_and_working_patches_keep_their_identity() {
+    let one_diff = diff("", EDIT, false, false);
+    let one = one_diff.parts();
+    assert_eq!(one.len(), 1);
+    assert_eq!(one[0].0, "Working tree");
+    let both_diff = diff(EDIT, EDIT, false, false);
+    let both = both_diff.parts();
+    assert_eq!(
+        both.iter().map(|part| part.0).collect::<Vec<_>>(),
+        ["Staged", "Working tree"]
     );
+    assert_eq!(both[0].1, EDIT);
 }
 
 // Pins: scm#16
 #[test]
-fn binary_empty_and_cut_diffs_say_so() {
-    const BINARY: &str = "Binary file, so there's no line-by-line comparison.";
-    const CUT: &str = "This diff is too long to show in full; the rest is cut.";
-    let notes = |d: FileDiff| d.notes(&d.rows());
-    assert_eq!(notes(diff("", "", true, false)), [BINARY]);
-    assert_eq!(notes(diff(EDIT, "", true, false)), [BINARY]);
-    assert_eq!(notes(diff("", "", false, false)), ["No changes."]);
+fn binary_empty_and_cut_diffs_say_so_without_losing_a_text_side() {
     assert_eq!(
-        notes(diff("index 1..2\n", "", false, false)),
-        ["No changes."]
+        diff("", "", true, false).notes(),
+        ["Binary file, so there is no line-by-line comparison."]
     );
-    assert!(notes(diff("", EDIT, false, false)).is_empty());
-    assert_eq!(notes(diff("", EDIT, false, true)), [CUT]);
-}
-
-// Pins: scm#15
-#[test]
-fn the_widest_row_is_the_one_with_the_longest_text() {
-    let long = format!("@@ -1 +1 @@\n-a\n+{}\n", "x".repeat(400));
-    let rows = diff("", &long, false, false).rows();
-    assert_eq!(widest(&rows), 2);
-    assert_eq!(widest(&[]), 0);
+    assert_eq!(
+        diff("", "", false, false).notes(),
+        ["No line changes to show."]
+    );
+    assert_eq!(diff("", EDIT, false, true).notes(), [CUT]);
+    let mixed = diff(EDIT, "", true, false);
+    assert_eq!(mixed.parts().len(), 1);
+    assert_eq!(mixed.parts()[0].1, EDIT);
 }

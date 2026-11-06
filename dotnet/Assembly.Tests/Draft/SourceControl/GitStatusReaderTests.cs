@@ -71,7 +71,7 @@ public sealed class GitStatusReaderTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(Root, "tracked"), "staged content");
         await Git(Root, "add", "tracked");
         await File.WriteAllTextAsync(Path.Combine(Root, "tracked"), "edited again");
-        Assert.Equal(new ChangedFile("tracked", null, 'M', 'M'), Assert.Single((await Read()).Files));
+        Assert.Equal(new ChangedFile("tracked", null, 'M', 'M'), Assert.Single((await Read()).Files) with { Revision = null });
     }
 
     // Pins: scm#10
@@ -81,7 +81,7 @@ public sealed class GitStatusReaderTests : IDisposable
         await Init();
         Directory.CreateDirectory(Path.Combine(Root, "new folder"));
         await File.WriteAllTextAsync(Path.Combine(Root, "new folder", "new file"), "new content");
-        Assert.Equal(new ChangedFile("new folder/new file", null, '?', '?'), Assert.Single((await Read()).Files));
+        Assert.Equal(new ChangedFile("new folder/new file", null, '?', '?'), Assert.Single((await Read()).Files) with { Revision = null });
     }
 
     // Pins: scm#10
@@ -90,7 +90,7 @@ public sealed class GitStatusReaderTests : IDisposable
     {
         await Init();
         await Git(Root, "mv", "tracked", "renamed file");
-        Assert.Equal(new ChangedFile("renamed file", "tracked", 'R', '.'), Assert.Single((await Read()).Files));
+        Assert.Equal(new ChangedFile("renamed file", "tracked", 'R', '.'), Assert.Single((await Read()).Files) with { Revision = null });
     }
 
     // Pins: scm#12
@@ -118,5 +118,20 @@ public sealed class GitStatusReaderTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_temp)) Directory.Delete(_temp, recursive: true);
+    }
+
+    [Fact]
+    public async Task The_actual_index_staged_total_survives_the_display_cap_and_returns_zero_after_unstage()
+    {
+        await Init();
+        for (var index = 0; index < 1001; index++) await File.WriteAllTextAsync(Path.Combine(Root, $"file-{index:D4}"), "original");
+        await Git(Root, "add", "."); await Commit("Many files");
+        for (var index = 0; index < 1001; index++) await File.WriteAllTextAsync(Path.Combine(Root, $"file-{index:D4}"), "edited");
+        await Git(Root, "add", "file-1000");
+        var staged = await Read();
+        Assert.Equal(1001, staged.TotalFiles); Assert.Equal(1000, staged.Files.Count); Assert.Equal(1, staged.TotalStaged);
+        Assert.All(staged.Files, file => Assert.Equal('.', file.Index));
+        await Git(Root, "reset", "HEAD", "--", "file-1000");
+        var unstaged = await Read(); Assert.Equal(1001, unstaged.TotalFiles); Assert.Equal(1000, unstaged.Files.Count); Assert.Equal(0, unstaged.TotalStaged);
     }
 }

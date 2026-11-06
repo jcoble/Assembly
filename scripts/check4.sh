@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The four-way check: one turn each for Claude Code and Codex, on this checkout's local backend and on its Workbox
 # Test host, against this commit. It needs both running from this commit: the local backend on DESKTOP_PORT (the window,
-# `shell/assembly.sh start`, or the headless backend without --remote on the workbox) and the host
+# `pnpm app:dev`, or the headless backend without --remote on the workbox) and the host
 # (`dotnet/scripts/workbox.sh serve`). Evidence goes to evidence/<commit>/four-way/: per case its rows and the
 # agent's transcript path and size, and summary.json and summary.md. Commit that folder; a code commit pushed
 # to main without a passing summary for it or a later commit fails CI (scripts/check-evidence.sh).
@@ -46,9 +46,18 @@ fi
 for f in ${features[@]+"${features[@]}"}; do
   [ -x "scripts/features/$f.sh" ] || { echo "no scenario scripts/features/$f.sh (or it isn't executable)" >&2; exit 2; }
 done
+# Refuse stale lanes before profile setup, fixtures, sessions or provider work.
+if [ -z "$(git status --porcelain -- . ':!evidence')" ]; then
+  node scripts/check-remote.ts "$LANE_NAME" "$LANE_NUMBER" HEAD
+fi
 commit=$(git rev-parse HEAD)
 out=evidence/$commit/four-way; [ "$partial" = true ] && out+=-partial
-rm -rf "$out"
+# Keep every previous attempt, including failures, before creating the current receipt.
+if [ -e "$out" ]; then
+  archive="$out.attempt-$(date -u +%Y%m%dT%H%M%S)-$$"
+  mv "$out" "$archive"
+  echo "previous attempt: $archive"
+fi
 mkdir -p "$out"
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -56,19 +65,17 @@ started=$(now)
 local_base=http://127.0.0.1:$DESKTOP_PORT
 box_base=""
 forward_pid=""
+worker_pid=""
 stop_forward() {
+  if [ -n "$worker_pid" ]; then kill "$worker_pid" 2>/dev/null || true; wait "$worker_pid" 2>/dev/null || true; fi
   if [ -n "$forward_pid" ]; then kill "$forward_pid" 2>/dev/null || true; wait "$forward_pid" 2>/dev/null || true; fi
 }
 trap stop_forward EXIT
-# Tokens stay in variables and reach curl on stdin, never in argv, a file or the log.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# Tokens stay in variables and reach socket hello through the environment, never argv, URLs or logs.
 local_token=$(sed -n 's/^ASSEMBLY_TOKEN=//p' "$TOKEN_FILE" 2>/dev/null || true)
 box_token=$(ssh workbox-test "sed -n 's/^ASSEMBLY_TOKEN=//p' ~/$BOX_TOKEN_FILE 2>/dev/null" || true)
-api() { # api local|box METHOD PATH [JSON]
-  local token=$local_token base=$local_base
-  [ "$1" = box ] && token=$box_token base=$box_base
-  printf 'Authorization: Bearer %s\nContent-Type: application/json\n' "$token" \
-    | curl -s --max-time 30 -H @- -X "$2" "$base$3" ${4:+-d "$4"}
-}
 
 # Preflight: both backends answer and run this commit. If not, every case fails with the reason.
 blocked=""
@@ -121,46 +128,31 @@ for agent in claude codex; do
     if [ -n "$blocked" ]; then
       reason=$blocked
     else
-      repo=$repo_local machine_json=""; host=$host_local host_base=$local_base host_token=$local_token
-      [ $where = box ] && repo=$repo_box machine_json=',"machine":"workbox-test"' host=$host_box host_base=$box_base host_token=$box_token
-      session=$(api local POST /sessions "{\"agent\":\"$agent\",\"repoUrl\":\"$repo\"$machine_json}" | jq -r '.sessionId // empty' 2>/dev/null || true)
-      prompt="Run the shell command hostname, then reply with only its output and, on the next line, the word four-way-ok."
-      [ -n "$session" ] && run=$(api local POST "/sessions/$session/send" "$(jq -cn --arg t "$prompt" '{text: $t}')" | jq -r '.runId // empty' 2>/dev/null || true)
-      if [ -z "$session" ]; then reason="the session wasn't created"
-      elif [ -z "$run" ]; then reason="the turn didn't start"
+      repo=$repo_local host=$host_local host_base=$local_base host_token=$local_token host_commit=$local_commit
+      [ $where = box ] && repo=$repo_box host=$host_box host_base=$box_base host_token=$box_token host_commit=$box_commit
+      worker_code=0
+      CHECK4_API=$local_base CHECK4_TOKEN=$local_token CHECK4_AGENT=$agent CHECK4_MACHINE=${name#*-} \
+        CHECK4_REPO=$repo CHECK4_HOST_API=$host_base CHECK4_HOST_TOKEN=$host_token CHECK4_HOST_NAME=$host \
+        CHECK4_COMMIT=$local_commit CHECK4_HOST_COMMIT=$host_commit CHECK4_CASE=$name CHECK4_OUT=$out \
+        CHECK4_FEATURES="$(printf '%s\n' ${features[@]+"${features[@]}"} | jq -R 'select(length > 0)' | jq -s .)" \
+        node scripts/check4-case.ts > "$out/$name.case.json" 2> "$out/$name.case.log" &
+      worker_pid=$!
+      wait "$worker_pid" || worker_code=$?
+      worker_pid=""
+      receipt=$out/$name.case.json
+      if ! jq -e 'type == "object" and (.features | type == "array") and (.reason | type == "string")' "$receipt" >/dev/null 2>&1; then
+        reason="the socket case worker exited $worker_code without a valid receipt (see $name.case.log)"
       else
-        # Each feature scenario runs against this case's session while its turn streams.
-        pids=()
-        for f in ${features[@]+"${features[@]}"}; do
-          CHECK4_API=$local_base CHECK4_TOKEN=$local_token CHECK4_SESSION=$session CHECK4_RUN=$run CHECK4_AGENT=$agent \
-            CHECK4_MACHINE=${name#*-} CHECK4_REPO=$repo CHECK4_HOST_API=$host_base CHECK4_HOST_TOKEN=$host_token \
-            CHECK4_HOST_NAME=$host "scripts/features/$f.sh" > "$out/$name.$f.log" 2>&1 &
-          pids+=($!)
-        done
-        for _ in $(seq 120); do
-          rows=$(api local GET "/sessions/$session/rows?limit=500" || true)
-          state=$(jq -r --arg r "$run" '[.rows[] | select(.runId == $r and .kind == "turn" and .payload.state != "started")][-1].payload.state // empty' <<<"$rows" 2>/dev/null || true)
-          [ -n "$state" ] && [ "$(jq -r '.activeRunId // empty' <<<"$rows")" = "" ] && break
-          sleep 2
-        done
-        jq --arg r "$run" '[.rows[] | select(.runId == $r)]' <<<"$rows" > "$out/$name.rows.json"
-        reply=$(jq -r '[.[] | select(.kind == "message") | .payload | .. | objects | .value? | strings] | join("\n")' "$out/$name.rows.json")
-        sid=$(api "$where" GET "/sessions/$session" | jq -r '.acpSessionId // empty' 2>/dev/null || true)
+        session=$(jq -r '.session' "$receipt")
+        run=$(jq -r '.run' "$receipt")
+        state=$(jq -r '.state' "$receipt")
+        reply=$(jq -r '.reply' "$receipt")
+        sid=$(jq -r '.acpSessionId // empty' "$receipt")
+        reason=$(jq -r '.reason' "$receipt")
+        while IFS= read -r feature_result; do feature_results+=("$feature_result"); done < <(jq -c '.features[]' "$receipt")
+        if [ -z "$reason" ] && [ "$worker_code" != 0 ]; then reason="the socket case worker exited $worker_code"; fi
         [ -n "$sid" ] && IFS=$'\t' read -r tpath tsize < <(transcript "$agent" "$sid" "$where"; echo) || true
-        feature_results=()
-        i=0
-        for f in ${features[@]+"${features[@]}"}; do
-          code=0; wait "${pids[$i]}" || code=$?; i=$((i + 1))
-          feature_results+=("$(jq -cn --arg name "$f" --argjson code "$code" --rawfile log "$out/$name.$f.log" \
-            '{name: $name, pass: ($code == 0), exitCode: $code, steps: ($log | split("\n") | map(select(length > 0)))}')")
-          [ "$code" = 0 ] || failed_feature=${failed_feature:-$f}
-        done
-        if [ "$state" != finished ]; then reason="the turn ended ${state:-never (timed out after 240 s)}"
-        elif ! grep -qF "$host" <<<"$reply"; then reason="the reply doesn't show this machine's hostname ($host)"
-        elif ! grep -qF four-way-ok <<<"$reply"; then reason="the reply doesn't end with four-way-ok"
-        elif [ -z "$tpath" ]; then reason="no $agent transcript found for session ${sid:-unknown}"
-        elif [ -n "${failed_feature:-}" ]; then reason="the $failed_feature scenario failed (see $name.$failed_feature.log)"
-        fi
+        if [ -z "$reason" ] && [ -z "$tpath" ]; then reason="no $agent transcript found for session ${sid:-unknown}"; fi
       fi
     fi
     pass=$([ -z "$reason" ] && echo true || echo false)

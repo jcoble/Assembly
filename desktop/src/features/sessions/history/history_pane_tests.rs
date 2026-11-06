@@ -35,7 +35,7 @@ fn open_with_older(
 
 fn session(id: &str, folder: &str, machine: Option<&str>) -> SessionItem {
     serde_json::from_value(
-        json!({ "sessionId": id, "agent": "claude", "repoUrl": folder, "machine": machine,
+        json!({ "sessionId": id, "agent": "claude", "repoUrl": folder, "projectId": folder, "machine": machine,
         "updatedAt": 1 }),
     )
     .expect("a session item")
@@ -90,10 +90,18 @@ fn projects_start_folded_and_a_click_opens_one_newest_first(cx: &mut TestAppCont
 
 // Pins: g0-shape#15
 #[gpui::test]
-fn a_click_on_a_session_opens_it(cx: &mut TestAppContext) {
+async fn a_click_on_a_session_opens_it(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     let (_pane, cx) = open(Some(two_projects()), cx);
+    let mut nav = cx.update(|window, cx| {
+        crate::features::session::view::session_pane::test_navigation::NavigationFixture::new(
+            false, window, cx,
+        )
+    });
+    nav.ready(cx).await;
     click("history-project-/w/notes", cx);
     click("history-session-s1", cx);
+    nav.opened("s1", cx).await;
     let selected = cx.update(|_, cx| {
         SelectedSession::global(cx)
             .read(cx)
@@ -146,6 +154,35 @@ fn a_tick_draws_each_sessions_age_and_hiding_the_tab_drops_it(cx: &mut TestAppCo
         !drawn("history-age-s3", cx),
         "shown again, it waits for a fresh tick"
     );
+}
+
+/// A tick redraws the window only when an age on screen changes: each redraw is a full frame, once a second for as
+/// long as the tab was shown, with nothing new to show.
+#[gpui::test]
+fn a_tick_redraws_only_when_an_age_on_screen_changes(cx: &mut TestAppContext) {
+    let (pane, cx) = open(Some(two_projects()), cx);
+    let redraws = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counted = redraws.clone();
+    let _heard = cx.update(|_, cx| cx.observe(&pane, move |_, _| counted.set(counted.get() + 1)));
+    let tick = |at: i64, cx: &mut VisualTestContext| {
+        pane.update(cx, |pane, cx| pane.tick(at, cx));
+        cx.run_until_parked();
+    };
+
+    // Each session was updated at 1 ms, so its age says 5m from 5 min 1 ms.
+    tick(5 * 60_000 + 1, cx);
+    assert_eq!(
+        redraws.get(),
+        0,
+        "folded, no age shows, so nothing to redraw"
+    );
+
+    click("history-project-/w/notes", cx);
+    let opened = redraws.get();
+    tick(5 * 60_000 + 1_001, cx);
+    assert_eq!(redraws.get(), opened, "every age still says 5m");
+    tick(6 * 60_000 + 1, cx);
+    assert_eq!(redraws.get(), opened + 1, "they move on to 6m");
 }
 
 // Pins: g0-shape#15

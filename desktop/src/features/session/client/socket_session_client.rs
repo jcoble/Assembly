@@ -20,6 +20,7 @@ impl SessionClient for SocketSessionClient {
         &self,
         session: &str,
         after: Option<i64>,
+        expected_source: Option<&crate::core::socket::row_source::ExpectedRowSource>,
         mut sink: RowsSink,
         cx: &App,
     ) -> Subscription {
@@ -27,11 +28,72 @@ impl SessionClient for SocketSessionClient {
         let Some(socket) = SocketClient::try_global(cx) else {
             return Subscription::new(|| {});
         };
-        let mut rows = socket.read(cx).subscribe_rows(session, after);
+        let mut rows = socket
+            .read(cx)
+            .subscribe_rows(session, after, expected_source);
         // The task owns the topic subscription, so dropping it unsubscribes.
         let task = cx.spawn(async move |cx| {
+            let mut refused = false;
             while let Ok(update) = rows.updates.recv().await {
+                if matches!(&update, super::session_client::RowUpdate::Refused { .. }) {
+                    refused = true;
+                }
                 cx.update(|cx| sink(update, cx));
+            }
+            if !refused {
+                cx.update(|cx| {
+                    sink(
+                        super::session_client::RowUpdate::Refused {
+                            code: "row_stream_ended".into(),
+                            message: "The session row stream ended.".into(),
+                        },
+                        cx,
+                    )
+                });
+            }
+        });
+        Subscription::new(move || drop(task))
+    }
+
+    fn subscribe_message(
+        &self,
+        message: &str,
+        machine: Option<&str>,
+        expected_source: Option<&crate::core::socket::row_source::ExpectedRowSource>,
+        mut sink: super::session_client::MessageSink,
+        cx: &App,
+    ) -> Subscription {
+        use crate::core::socket::engine_update::EngineUpdate;
+        let Some(socket) = SocketClient::try_global(cx) else {
+            return Subscription::new(|| {});
+        };
+        let mut updates =
+            socket
+                .read(cx)
+                .subscribe_engine_message(message, machine, expected_source);
+        let task = cx.spawn(async move |cx| {
+            let mut refused = false;
+            while let Ok(update) = updates.updates.recv().await {
+                let items = match update {
+                    EngineUpdate::Snapshot(items) | EngineUpdate::Events(items) => items,
+                    EngineUpdate::Refused { code, message } => {
+                        refused = true;
+                        cx.update(|cx| sink(Err(CallError::Refused { code, message }), cx));
+                        continue;
+                    }
+                    EngineUpdate::Scoped(_) => continue,
+                };
+                for item in items {
+                    cx.update(|cx| sink(Ok(item), cx));
+                }
+            }
+            if !refused {
+                cx.update(|cx| {
+                    sink(
+                        Err(CallError::Failed("The owner message stream ended.".into())),
+                        cx,
+                    )
+                });
             }
         });
         Subscription::new(move || drop(task))
@@ -45,8 +107,10 @@ impl SessionClient for SocketSessionClient {
         key: Option<&str>,
         cx: &App,
     ) -> Task<Result<Value, CallError>> {
-        let bulk =
-            feature == "attachments" || (feature == "rows" && matches!(method, "page" | "tool"));
+        let bulk = feature == "attachments"
+            || (feature == "rows" && matches!(method, "page" | "tool"))
+            || (feature == "engine"
+                && matches!(method, "session_title_chunk" | "owner_prompt_chunk"));
         let socket = if bulk {
             SocketClient::try_bulk(cx)
         } else {
@@ -84,8 +148,18 @@ fn call_error(failure: CallFailure) -> CallError {
     match failure.code {
         ErrorCode::NotFound => CallError::NotFound(failure.message),
         ErrorCode::BadArgs => CallError::BadArgs(failure.message),
-        ErrorCode::Failed => CallError::Failed(failure.message),
+        ErrorCode::Failed | ErrorCode::ConnectionLost | ErrorCode::TerminalMissing => {
+            CallError::Failed(failure.message)
+        }
         ErrorCode::Timeout => CallError::Timeout(failure.message),
+        ErrorCode::Refused { code } => CallError::Refused {
+            code,
+            message: failure.message,
+        },
+        ErrorCode::Uncertain { machine } => CallError::Uncertain {
+            machine,
+            message: failure.message,
+        },
         ErrorCode::Unreachable { machine } => CallError::Unreachable { machine },
     }
 }

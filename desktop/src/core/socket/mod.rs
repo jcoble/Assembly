@@ -11,6 +11,7 @@
 //! The same client, a second time, holds `/socket/bulk`, which alone carries the large calls (`client.rs`).
 
 pub mod call_failure;
+pub mod checkout_selector;
 pub mod client;
 mod client_thread;
 #[cfg(test)]
@@ -18,6 +19,12 @@ mod client_thread_tests;
 mod connection;
 pub mod connection_state;
 pub mod endpoint;
+#[cfg(test)]
+#[path = "tests/engine_scope_tests.rs"]
+mod engine_scope_tests;
+#[cfg(test)]
+mod engine_tests;
+pub mod engine_update;
 pub mod error_code;
 mod event;
 #[cfg(test)]
@@ -27,6 +34,7 @@ mod open_failure;
 mod out_frame;
 pub mod outcome;
 pub mod pending_call;
+pub mod picture_client;
 #[cfg(test)]
 pub(crate) mod real_backend;
 #[cfg(test)]
@@ -34,13 +42,22 @@ pub(crate) mod real_backend_cancel_tests;
 #[cfg(test)]
 mod real_backend_tests;
 pub mod row;
+pub mod row_source;
+#[cfg(test)]
+#[path = "tests/row_source_tests.rs"]
+mod row_source_tests;
 pub mod row_update;
 mod rows_feed;
 #[cfg(test)]
+#[path = "tests/rows_tests.rs"]
 mod rows_tests;
 #[cfg(test)]
-mod test_client;
+pub(crate) mod test_client;
 #[cfg(test)]
 pub(crate) mod test_wait;
 pub mod topic_subscription;
 pub mod update;
+
+#[cfg(test)]
+#[path = "tests/message_source_tests.rs"]
+mod message_source_tests;

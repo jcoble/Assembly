@@ -26,6 +26,8 @@ internal sealed class UnixPtyStarter : IPtyStarter
             throw new CallFailed(File.Exists(request.Cwd)
                 ? $"This session's folder isn't a folder: {request.Cwd}"
                 : $"This session's folder no longer exists: {request.Cwd}");
+        if (!AccountLoginShell.IsUsable(request.FileName))
+            throw new CallFailed($"The terminal executable is unavailable: {request.FileName}");
         var (master, slavePath) = PtyNative.OpenMaster();
         var slave = -1;
         try
@@ -40,6 +42,8 @@ internal sealed class UnixPtyStarter : IPtyStarter
             var start = new ProcessStartInfo("/usr/bin/perl") { UseShellExecute = false, WorkingDirectory = request.Cwd };
             foreach (var argument in (string[])["-e", Child, "--", slavePath, PtyNative.TiocSctty.ToString(CultureInfo.InvariantCulture), request.FileName, .. request.Arguments])
                 start.ArgumentList.Add(argument);
+            if (request.ReplaceEnvironment)
+                start.Environment.Clear();
             foreach (var (name, value) in request.Environment)
                 start.Environment[name] = value;
             var process = Process.Start(start) ?? throw new IOException("perl didn't start");

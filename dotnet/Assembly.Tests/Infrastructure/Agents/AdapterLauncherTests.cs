@@ -3,6 +3,11 @@ using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Sessions;
+using Assembly.Infrastructure.Engine;
+using Assembly.Infrastructure.Topics;
+using Assembly.Tests.Engine;
 
 namespace Assembly.Tests.Infrastructure.Agents;
 
@@ -17,16 +22,26 @@ public sealed class AdapterLauncherTests : IDisposable
         Directory.CreateDirectory(repo);
         Git(repo, "init", "--quiet");
         Git(repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "--allow-empty", "-m", "start");
-        var launcher = new AdapterLauncher([], Path.Combine(_work, "checkouts"), new UnclaimedPermissions());
-        var parent = new SessionInfo("parent", "claude", repo, null, null, 0);
-        var helper = parent with { SessionId = "helper", Agent = "codex", ParentSessionId = "parent", Helper = true };
+        var checkouts = Path.Combine(_work, "historic-checkouts");
+        using var f = new EngineFixture();
+        var store = SessionStore.Open(f.Db, f.Time, checkouts);
+        var launcher = new AdapterLauncher([], checkouts, new UnclaimedPermissions());
+        await using var runtime = EngineRuntime.Start(f.Db, new Topics(), f.Time, f.Limits,
+            cutover: new SessionCutover(f.Db, store, launcher, checkouts, f.Time));
+        void Start(string id, string? parent) => Assert.True(f.Db.Writer.Write("test.recorded-parent-folder", scope =>
+            runtime.Commands.Apply(scope, new(Guid.NewGuid(), runtime.Machine, new(ActorKind.Window, "owner"), id, 0, 0, 1000),
+                new StartSession("codex", null, repo, id, parent, null, null))).Applied);
+        Start("parent", null); Start("helper", "parent");
+        var parentFolder = store.Root(store.Get("parent")!)!;
+        launcher.ValidateFolder(parentFolder);
+        await File.WriteAllTextAsync(Path.Combine(parentFolder, "notes.md"), "draft");
+        var helperFolder = store.Root(store.Get("helper")!)!;
+        launcher.ValidateFolder(helperFolder);
 
-        var parentFolder = await launcher.CheckoutAsync(parent, new StageTimes(TimeProvider.System), CancellationToken.None);
-        File.WriteAllText(Path.Combine(parentFolder, "notes.md"), "draft");
-        var helperFolder = await launcher.CheckoutAsync(helper, new StageTimes(TimeProvider.System), CancellationToken.None);
-
+        Assert.Equal(repo, parentFolder);
         Assert.Equal(parentFolder, helperFolder);
-        Assert.True(File.Exists(Path.Combine(helperFolder, "notes.md")));
+        Assert.Equal("draft", await File.ReadAllTextAsync(Path.Combine(helperFolder, "notes.md")));
+        Assert.False(Directory.Exists(checkouts)); // Reading/validating the actual existing checkout creates no clone root.
     }
 
     [Fact]

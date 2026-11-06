@@ -10,12 +10,23 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Assembly.Application.Common.Machines;
+using Assembly.Application.Common.Calls;
+using Assembly.Application.Features.Projects;
+using Assembly.Domain.Sessions;
+using Assembly.Engine;
+using Assembly.Engine.Sessions;
+using Assembly.Infrastructure.Chat;
+using Assembly.Infrastructure.Engine;
+using Assembly.Infrastructure.Engine.Sessions;
+using Assembly.Infrastructure.Projects;
+using Assembly.Tests.Engine;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Preferences;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Socket;
+using Assembly.Tests.Infrastructure.Socket;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Draft.Base.Chat;
@@ -37,6 +48,13 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
     private RowStore _rows = null!;
     private SessionSummaries _summaries = null!;
     private SessionStore _sessions = null!;
+    private EngineRuntime _engine = null!;
+    private EngineRuntime _remoteRuntime = null!;
+    private ProjectStore _projects = null!;
+    private EngineFixture _remoteOwner = null!;
+    private SessionStore _remoteSessions = null!;
+    private string _remoteHome = null!;
+    private readonly AnswerDoor _answers = new();
     private FakeMachine _here = null!;
     private FakeMachine _box = null!;
     private AttachmentStore _attachments = null!;
@@ -53,21 +71,50 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         _rows = RowStore.Open(_db);
         _summaries = SessionSummaries.Load(_rows);
         _sessions = SessionStore.Open(_db, _time, "checkouts", _summaries);
+        _projects = new ProjectStore(_db, _time);
+        var roots = new ProjectRoots(_projects);
         _hub = new LiveHub(_rows, topics: topics, summaries: _summaries, summaryChanged: _sessions.PublishSummary);
+        _engine = EngineRuntime.Start(_db, topics, _time, new(() => 5, () => 10),
+            cutover: new SessionCutover(_db, _sessions, _launcher, "checkouts", _time,
+                projectRoots: roots, projectUse: roots, owningHome: _home.FullName),
+            effectsFactory: runtime =>
+            {
+                _work = new(_time, _log);
+                _registry = new(_hub, _sessions, _launcher, _time, _log, _work,
+                    feed: new EngineFeed(runtime, _log, _time));
+                return new AdapterEffects(_db, _registry, _sessions, _rows);
+            }, effectsReady: _providerReady.Task);
+        _remoteOwner = new();
+        _remoteRuntime = EngineRuntime.Start(_remoteOwner.Db, new TopicSet(), _time, _remoteOwner.Limits);
+        _remoteHome = _home.CreateSubdirectory("remote-owner").FullName;
+        _remoteSessions = SessionStore.Open(_remoteOwner.Db, _time, _remoteHome);
+        var remoteCutover = new SessionCutover(_remoteOwner.Db, _remoteSessions, _launcher, _remoteHome,
+            _time, owningHome: _remoteHome);
+        _remoteOwner.Db.Writer.Write("test.remote-schema", scope => { remoteCutover.EnsureSchema(scope); return 0; });
+        remoteCutover.Attach(new EngineCommands(_remoteOwner.Machine, _remoteOwner.Limits,
+            projectStart: remoteCutover.ProjectStart, projectProjection: _remoteSessions), _remoteOwner.Machine);
         var rows = _rows;
         _here = new FakeMachine(null, _sessions);
         _box = new FakeMachine("box", _sessions);
         var machines = new MachineSet(_here, _box);
+        _answers.Answer = request =>
+        {
+            var machine = _sessions.Get(request.Session)?.Machine is null ? _here : _box;
+            if (machine.Down) throw new MachineUnreachable("box", "box is down");
+            return Task.FromResult<Func<Assembly.Application.Common.Database.IWriteScope, bool>>(_ => !machine.Refuses);
+        };
         // On the fake clock, so a test can run a call past its 30 s limit.
         var calls = new SocketDispatcher(_db.Writer, topics, _time, NullLogger.Instance);
-        new SessionsFeature(_sessions, machines).Register(calls);
-        new SendFeature(_sessions, machines, _hub).Register(calls);
-        new RowsFeature(_hub, rows, _sessions, machines).Register(calls);
+        new SessionsFeature(_sessions, machines, new SessionRowSources(_db, _sessions, machines), roots,
+            _engine.Machine, _home.FullName, remoteCreate: PrepareRemoteCreate).Register(calls);
+        new SendFeature(_sessions, machines, _hub, _answers).Register(calls);
+        new RowsFeature(_hub, rows, _sessions, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)).Register(calls);
         new ConfigFeature(_sessions, machines).Register(calls);
         new MachinesFeature(machines, new MachineStatus(topics, ["box"]), () => { }, TimeProvider.System).Register(calls);
         new PreferencesFeature(_db).Register(calls);
         _attachments = new AttachmentStore(Path.Combine(_home.FullName, "attachments"));
-        new AttachmentsFeature(_sessions, machines, _attachments, Staging).Register(calls);
+        _answers.OwnerPrompt = PrepareTransportPrompt;
+        new AttachmentsFeature(_sessions, machines, Staging).Register(calls);
         calls.Closed(connection => _socketClosed.TrySetResult(connection));
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
@@ -92,10 +139,52 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         await _app.StopAsync();
         await _app.DisposeAsync();
         _hub.Dispose();
+        await _engine.DisposeAsync();
+        await _remoteRuntime.DisposeAsync();
+        _remoteOwner.Dispose();
         _db.Dispose();
         _file.Dispose();
         _home.Delete(recursive: true);
     }
+
+    // These legacy unsourced routing/order cases hold the existing fake transport boundary.
+    // The accepted session is still made by a real owning Engine writer. Source receipt proofs use TwoHosts.
+    private async Task<Func<Assembly.Application.Common.Database.IWriteScope, SessionsFeature.Created>> PrepareRemoteCreate(
+        SessionsFeature.CreateArgs args, CallContext call)
+    {
+        if (args.Machine != "box") throw new CallFailed("unknown machine");
+        var known = _remoteSessions.FindByClient(args.ClientId, call.Cancellation, _remoteOwner.Machine);
+        if (known.SessionId is null)
+        {
+            var agents = await _box.AgentsAsync(call.Cancellation);
+            if (!agents.Any(agent => agent.Id == args.Agent)) throw new CallBadArguments("The agent is not configured on this owner.");
+            call.Cancellation.ThrowIfCancellationRequested();
+            _remoteOwner.Db.Writer.Write("test.remote-create", scope => _remoteSessions.Create(scope,
+                args.Agent, args.ClientId, _remoteHome, null, null, initialConfig: args.InitialConfig));
+            known = _remoteSessions.FindByClient(args.ClientId, call.Cancellation, _remoteOwner.Machine);
+        }
+        var accepted = _remoteSessions.Get(known.SessionId!)!;
+        if (_sessions.Get(accepted.SessionId) is null)
+            _sessions.Add(accepted.SessionId, accepted.Agent, accepted.RepoUrl, "box", workingFolder: accepted.WorkingFolder);
+        return _ => new(accepted.SessionId, known.CheckoutOperationId, known.ProjectId);
+    }
+
+    private ProjectRecord CreateProject(string name)
+    {
+        var folder = _home.CreateSubdirectory(name).FullName;
+        return _db.Writer.Write("test.project", scope => _projects.AddOrRestore(scope,
+            "local", folder, name, null).Project);
+    }
+
+    private SessionInfo ReadyParent() => _db.Writer.Write("test.import-parent", scope =>
+    {
+        var id = Guid.NewGuid().ToString("D");
+        var now = _time.GetUtcNow().ToUnixTimeMilliseconds();
+        SessionImport.Import(scope, _engine.Machine, now,
+            [new(id, null, "claude", null, _home.FullName, "Parent", "")]);
+        _sessions.ProjectEngineSession(scope, new(id, "claude", _home.FullName, "Parent", null, now), null, _home.FullName);
+        return _sessions.Get(scope, id)!;
+    });
 
     private string Staging => Path.Combine(_home.FullName, "staging", "attachments");
 

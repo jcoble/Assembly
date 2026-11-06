@@ -3,9 +3,22 @@
 //! `cx.on_action`. The kit runs only the newest global handler for an action, so the owner is the only one that
 //! registers it. Replaces the old app's openFileBus.ts and workbenchNavigation.ts.
 
-pub mod open_branch_diff;
+pub mod open_commit_diff;
 pub mod open_diff;
 pub mod open_file;
+pub mod open_git_history;
 pub mod open_session;
 pub mod open_settings;
+pub mod open_task;
 pub mod open_url;
+
+pub mod open_new_project;
+pub mod open_project;
+
+pub mod open_pull_requests;
+
+pub mod reveal_file_folder;
+
+pub mod session_open;
+#[cfg(test)]
+mod session_open_tests;

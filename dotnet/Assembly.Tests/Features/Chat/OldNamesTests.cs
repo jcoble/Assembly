@@ -73,14 +73,14 @@ public sealed class OldNamesTests : IDisposable
             Assert.Equal([1L, 2L, 3L], rows.RowsAfter("s1", 0).Select(row => row.Seq));
             Assert.Equal("""{"title":"Child","state":"idle","canStop":false,"sessionId":"s2"}""",
                 rows.RowsAfter("s1", 2).Single().Payload.GetRawText());
-            Assert.Equal(new StoredToolCall("ls", "ls -la", "a.txt", null, null), rows.ToolCall("s1", "t"));
+            Assert.Equal(new StoredToolCall("ls", "ls -la", "a.txt", null, null, 5, 0), rows.ToolCall("s1", "t"));
             Assert.Equal("opus", sessions.Config("s1").Choices["model"]);
             Assert.Equal("""[{"name":"context"}]""", sessions.Config("s1").Commands);
             Assert.Equal(("s1", "s2"), (sessions.Message("m1")!.From, sessions.Message("m1")!.To));
             Assert.Equal(1, sessions.MessageCount("s1", "s2"));
             Assert.Equal(3, rows.LastSeq("s1"));
             // The rows' JSON changed with the names, so two machines on either side of the rename don't copy rows.
-            Assert.Equal(4, rows.StoredFormatVersion);
+            Assert.Equal(RowStore.FormatVersion, rows.StoredFormatVersion);
         }
 
         // A second open changes nothing, and the preferences were never touched.
@@ -154,7 +154,7 @@ public sealed class OldNamesTests : IDisposable
         {
             Assert.Equal(["Old one"], sessions.List(before: null, limit: 10).Sessions.Select(session => session.Title));
             Assert.Equal("s1", sessions.Get("s2")!.ParentSessionId);
-            Assert.Equal(4, rows.StoredFormatVersion);
+            Assert.Equal(RowStore.FormatVersion, rows.StoredFormatVersion);
         }
 
         Assert.Equal(renamed, Schema());

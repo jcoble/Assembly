@@ -7,25 +7,29 @@
 //! where it got to (terminal#5). Hiding the tab or picking another session lets go of the view and closes nothing on
 //! the backend; the tab leaving the dock closes the shell (g0-host#9). What's typed goes out one write at a time,
 //! what's typed meanwhile in the next, in order (terminal#2). The backend routes remote sessions to their machine (terminal#12).
+//! What it does as the connection and the shell change, and what it says about them, is in terminal_pane_state.rs.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::mem;
 use std::time::Duration;
 
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
-use gpui_kit::component::{ActiveTheme as _, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::terminal_draw::draw;
-use super::terminal_grid::TerminalGrid;
-use super::terminal_keys::{key_bytes, pasted};
-use super::terminal_link::{Output, TerminalLink};
+use super::terminal_grid::{HoveredLink, TerminalGrid};
+use super::terminal_keys::{key_bytes, left_to_input};
+use super::terminal_link::TerminalLink;
 use super::terminal_palette::palette;
 use crate::core::socket::update::Update;
 use crate::core::state::appearance::Appearance;
 use crate::core::state::preferences::Preferences;
 use crate::core::state::selected_session::SelectedSession;
+use crate::core::ui::spinner::Spinner;
 
-/// The layout's name for the tab (default_layout.rs).
+/// The layout's name for the tab (default_layout.rs), and the pane's key context.
 const TERMINAL: &str = "Terminal";
 
 /// The sizes the backend allows (TerminalHost.cs); the grid keeps to them too, so the two never differ.
@@ -36,7 +40,7 @@ const ROWS: (usize, usize) = (4, 100);
 const FIRST_SIZE: (usize, usize) = (96, 28);
 
 /// How long the cursor shows, then hides, while it blinks (ghostty-web's interval, as the old app had).
-const BLINK: Duration = Duration::from_millis(600);
+const BLINK: Duration = Duration::from_millis(530);
 
 #[derive(Debug, PartialEq)]
 pub enum Shown {
@@ -46,8 +50,12 @@ pub enum Shown {
     Open,
     /// The program ended with this code; its output stays (terminal#7).
     Exited(i32),
-    /// Why there's no terminal: the backend refused.
+    /// Why the terminal stopped, or why there's none: the backend's reason, in the error color.
     Said(String),
+    /// The connection is down; it comes back by itself, and any output stays.
+    Reconnecting,
+    /// The shell isn't there any more; its output stays.
+    Gone,
 }
 
 pub struct TerminalPane {
@@ -61,11 +69,15 @@ pub struct TerminalPane {
     /// The columns and rows the pane has room for, once it has measured itself.
     size: (usize, usize),
     measured: bool,
-    /// Where the grid starts in the window and each cell's size, as last drawn: what the mouse points at.
+    /// Where the grid starts in the window, the room it has and each cell's size, as last drawn: what the mouse
+    /// points at.
     origin: Point<Pixels>,
+    bounds: Bounds<Pixels>,
     cell: Size<Pixels>,
     /// A left-button drag is selecting.
     selecting: bool,
+    /// Where that drag's mouse last was, in the window.
+    dragged_to: Point<Pixels>,
     /// The wheel's movement not yet a whole line.
     wheeled: Pixels,
     link: Option<TerminalLink>,
@@ -76,8 +88,12 @@ pub struct TerminalPane {
     writing: bool,
     /// The shell just opened: the pane takes the focus on its next draw.
     focus_wanted: bool,
-    /// The blinking cursor's half of the blink; it stays shown while the pane hasn't the focus.
+    /// The open under way is a retry, from the timer or a push, not from showing the tab or picking a session.
+    retried: bool,
+    /// The blinking cursor's half of the blink; it stays shown while it doesn't blink.
     cursor_on: bool,
+    /// The pane has the focus, one of the blink's conditions.
+    has_focus: bool,
     _selected: Subscription,
     /// Draws again when the terminal's font or the theme changes.
     _preferences: Option<Subscription>,
@@ -87,13 +103,48 @@ pub struct TerminalPane {
     _follow: Option<Task<()>>,
     _replay: Option<Task<()>>,
     _write: Option<Task<()>>,
-    /// Blinks the cursor while the pane has the focus; dropping it stops the timer.
+    /// The resize on its way, one at a time; dropping it cancels the call.
+    _resize: Option<Task<()>>,
+    /// The size to send when that one is answered.
+    resize_wanted: Option<(usize, usize)>,
+    /// The connection came back: the next draw's size goes to the program.
+    size_unsent: bool,
+    /// While the open waits for the connection: the machines list and the socket, which can each say to try again.
+    reopen: Vec<Subscription>,
+    /// While no push can come: the wait before the next try to open.
+    _retry: Option<Task<()>>,
+    /// The tries to open on that timer so far, for its back-off.
+    retries: usize,
+    /// Blinks the cursor (see `blink_as_needed`); dropping it stops the timer.
     _blink: Option<Task<()>>,
+    /// Scrolls during a drag near the edge or past it; dropping it stops the timer.
+    _autoscroll: Option<Task<()>>,
+    /// The scrollbar's opacity, from 0 to 1.
+    scrollbar_opacity: f32,
+    /// The scrollbar's thumb is held: where the press was, from the grid's top, and the offset then.
+    dragging_bar: Option<(Pixels, usize)>,
+    /// A press on the scrollbar, thumb or track, until its release, which it takes.
+    bar_pressed: bool,
+    /// Fades the scrollbar in, waits and fades it out; it ends once hidden.
+    _scrollbar: Option<Task<()>>,
+    /// The link under the mouse.
+    hovered: Option<HoveredLink>,
+    /// The cell the mouse was last looked at over.
+    hovered_cell: Option<(usize, usize)>,
+    /// A Cmd or Ctrl-click opened a link: its release goes nowhere.
+    link_pressed: bool,
+    /// The composition in progress, kept but not shown or sent (terminal_pane_ime.rs).
+    marked: Option<String>,
 }
 
 impl TerminalPane {
     /// Registers the tab under the layout's Terminal name, after the placeholders, since the last registration wins.
     pub fn register(cx: &mut App) {
+        // The window Root binds Tab and Shift-Tab to move the focus; in the terminal they go to the shell (key_down).
+        cx.bind_keys([
+            KeyBinding::new("tab", NoAction, Some(TERMINAL)),
+            KeyBinding::new("shift-tab", NoAction, Some(TERMINAL)),
+        ]);
         register_panel(cx, TERMINAL, |_, window, cx| {
             panel_handle(cx.new(|cx| TerminalPane::new(window, cx)))
         });
@@ -103,7 +154,11 @@ impl TerminalPane {
         let focus = cx.focus_handle();
         let focused = [
             cx.on_focus(&focus, window, |pane, _, cx| pane.focused(true, cx)),
-            cx.on_blur(&focus, window, |pane, _, cx| pane.focused(false, cx)),
+            // GPUI blurs during a draw, which drops that draw's notify: redraw once it ends, so the steady cursor shows.
+            cx.on_blur(&focus, window, |pane, window, cx| {
+                pane.focused(false, cx);
+                cx.defer_in(window, |_, _, cx| cx.notify());
+            }),
         ];
         Self {
             focus,
@@ -114,23 +169,43 @@ impl TerminalPane {
             size: FIRST_SIZE,
             measured: false,
             origin: Point::default(),
+            bounds: Bounds::default(),
             cell: Size::default(),
             selecting: false,
+            dragged_to: Point::default(),
             wheeled: px(0.),
             link: None,
             held: None,
             typed: Vec::new(),
             writing: false,
             focus_wanted: false,
+            retried: false,
             cursor_on: true,
+            has_focus: false,
             _focused: focused,
-            _preferences: Preferences::try_global(cx)
-                .map(|preferences| cx.observe(&preferences, |_, _, cx| cx.notify())),
+            _preferences: Preferences::try_global(cx).map(|preferences| {
+                cx.observe(&preferences, |pane, _, cx| pane.blink_as_needed(cx))
+            }),
             _selected: cx.observe(&SelectedSession::global(cx), |pane, _, cx| pane.refresh(cx)),
             _follow: None,
             _replay: None,
             _write: None,
+            _resize: None,
+            resize_wanted: None,
+            size_unsent: false,
+            reopen: Vec::new(),
+            _retry: None,
+            retries: 0,
             _blink: None,
+            _autoscroll: None,
+            scrollbar_opacity: 0.,
+            dragging_bar: None,
+            bar_pressed: false,
+            _scrollbar: None,
+            hovered: None,
+            hovered_cell: None,
+            link_pressed: false,
+            marked: None,
         }
     }
 
@@ -151,15 +226,22 @@ impl TerminalPane {
         }
         (self._follow, self._replay, self._write) = (None, None, None);
         (self.link, self.held, self.writing) = (None, None, false);
+        (self._resize, self.resize_wanted, self.size_unsent) = (None, None, false);
+        (self._retry, self.retries, self.retried) = (None, 0, false);
+        (self._autoscroll, self.selecting) = (None, false);
+        (self._scrollbar, self.scrollbar_opacity) = (None, 0.);
+        (self.dragging_bar, self.bar_pressed) = (None, false);
+        (self.hovered, self.hovered_cell, self.link_pressed) = (None, None, false);
+        (self.marked, self.focus_wanted) = (None, false);
+        self.reopen.clear();
         self.typed.clear();
         self.grid = TerminalGrid::new(self.size.0, self.size.1);
         self.session = wanted.clone();
-        self.shown = Shown::Nothing;
-        cx.notify();
+        self.set_shown(Shown::Nothing, cx);
         let Some(_) = wanted else {
             return;
         };
-        self.shown = Shown::Opening;
+        self.set_shown(Shown::Opening, cx);
         self.open(cx);
     }
 
@@ -174,30 +256,20 @@ impl TerminalPane {
         let size = self.size;
         self._follow = Some(cx.spawn(async move |pane, cx| {
             let opened = TerminalLink::open(&session, size, cx).await;
-            let subscription = pane.update(cx, |pane, cx| match opened {
-                Ok((link, started, before)) => {
-                    pane.grid.feed(&before);
-                    let subscription = match link.follow(cx) {
-                        Ok(subscription) => subscription,
-                        Err(why) => {
-                            pane.shown = Shown::Said(why);
-                            cx.notify();
-                            return None;
-                        }
-                    };
+            let subscription = pane.update(cx, |pane, cx| {
+                let followed = opened.and_then(|(link, started)| {
+                    let subscription = link.follow(cx)?;
+                    pane.link = Some(link);
                     // A reused shell may have another size, and the pane may have measured itself meanwhile.
                     if started != pane.size {
-                        link.resize(pane.size, cx);
+                        pane.send_size(cx);
                     }
-                    pane.link = Some(link);
                     // The subscription state starts catch-up, so its arrival cannot cause a second initial read.
-                    Some(subscription)
-                }
-                Err(why) => {
-                    pane.shown = Shown::Said(why);
-                    cx.notify();
-                    None
-                }
+                    Ok(subscription)
+                });
+                followed
+                    .map_err(|failure| pane.call_failed(failure, cx))
+                    .ok()
             });
             let Ok(Some(mut subscription)) = subscription else {
                 return;
@@ -210,69 +282,6 @@ impl TerminalPane {
         }));
     }
 
-    /// Reads the kept output from where the grid got to, then hands on the rows held meanwhile.
-    fn catch_up(&mut self, cx: &mut Context<Self>) {
-        let Some(mut link) = self.link.clone() else {
-            return;
-        };
-        self.held = Some(Vec::new());
-        self._replay = Some(cx.spawn(async move |pane, cx| {
-            let kept = link.replay(cx).await;
-            pane.update(cx, |pane, cx| {
-                match kept {
-                    Ok(bytes) => {
-                        pane.grid.feed(&bytes);
-                        pane.link = Some(link);
-                    }
-                    Err(why) => eprintln!("terminal: its output didn't read: {why}"),
-                }
-                for update in pane.held.take().unwrap_or_default() {
-                    pane.output(update, cx);
-                }
-                cx.notify();
-            })
-            .ok();
-        }));
-    }
-
-    /// One update from the shell's rows: its bytes to the grid, or its exit. A state is a new subscription after a
-    /// reconnect, so output may have come meanwhile: the kept output is read again. A row past a gap waits for that
-    /// read and is handed on after it.
-    fn output(&mut self, update: Update, cx: &mut Context<Self>) {
-        if let Some(held) = &mut self.held {
-            // The read on its way covers what a state stands for.
-            if !matches!(update, Update::State(_)) {
-                held.push(update);
-            }
-            return;
-        }
-        let Some(link) = &mut self.link else {
-            return;
-        };
-        if matches!(update, Update::State(_)) {
-            if self.shown == Shown::Opening {
-                self.shown = Shown::Open;
-                self.focus_wanted = true;
-            }
-            self.catch_up(cx);
-            return;
-        }
-        match link.step(&update) {
-            Ok(output) => {
-                match output {
-                    Some(Output::Bytes(bytes)) => self.grid.feed(&bytes),
-                    Some(Output::Exit(code)) => self.shown = Shown::Exited(code),
-                    None => {}
-                }
-                cx.notify();
-            }
-            Err(()) => {
-                self.catch_up(cx);
-                self.held.get_or_insert_default().push(update);
-            }
-        }
-    }
-
     /// The room the pane has changed: the grid and the program take the new size (terminal#4).
     pub fn resized(&mut self, (cols, rows): (usize, usize), cx: &mut Context<Self>) {
         let size = (cols.clamp(COLS.0, COLS.1), rows.clamp(ROWS.0, ROWS.1));
@@ -283,15 +292,16 @@ impl TerminalPane {
             self.open(cx);
             return;
         }
-        if size == self.size {
-            return;
+        if size != self.size {
+            self.size = size;
+            self.grid.resize(size.0, size.1);
+            self.unhover();
+            self.size_unsent = true;
+            cx.notify();
         }
-        self.size = size;
-        self.grid.resize(size.0, size.1);
-        if let Some(link) = &self.link {
-            link.resize(size, cx);
+        if mem::take(&mut self.size_unsent) {
+            self.send_size(cx);
         }
-        cx.notify();
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -308,27 +318,37 @@ impl TerminalPane {
             }
             return;
         }
-        if self.shown != Shown::Open {
+        // A typed character goes on to the input handler (terminal_pane_ime.rs), which writes it once.
+        if !self.typing() || left_to_input(keystroke) {
             return;
         }
         let bytes = match shortcut("v") {
-            true => (cx.read_from_clipboard().and_then(|item| item.text()))
-                .map(|text| pasted(&text, self.grid.bracketed_paste())),
+            true => self.clipboard_bytes(cx),
             false => key_bytes(keystroke, self.grid.app_cursor()),
         };
         let Some(bytes) = bytes else {
             return;
         };
         cx.stop_propagation();
-        self.grid.scroll_to_bottom();
+        self.send_typed(bytes, cx);
+    }
+
+    /// Typed or pasted bytes go to the shell, and the view returns to the bottom.
+    fn send_typed(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        if self.grid.scroll_to_bottom() {
+            self.show_scrollbar(cx);
+        }
         self.cursor_on = true;
+        // A composition the platform finished without unmarking it (an xkb compose) is over.
+        self.marked = None;
         self.typed.extend(bytes);
         self.write(cx);
     }
 
     /// The pane took or lost the focus, which a program that asked for focus reports hears as `ESC [I` or `ESC [O`.
     fn focused(&mut self, focused: bool, cx: &mut Context<Self>) {
-        self.blink(focused, cx);
+        self.has_focus = focused;
+        self.blink_as_needed(cx);
         if self.shown != Shown::Open || !self.grid.focus_reporting() {
             return;
         }
@@ -337,26 +357,30 @@ impl TerminalPane {
         self.write(cx);
     }
 
-    /// Blinks the cursor while the pane has the focus, and shows it steady otherwise. It draws again only while the
-    /// shell is open, where the cursor shows.
-    fn blink(&mut self, focused: bool, cx: &mut Context<Self>) {
-        self.cursor_on = true;
-        self._blink = focused.then(|| {
-            cx.spawn(async move |pane, cx| {
+    /// Blinks the cursor only while the shell is open, the pane has the focus and the Cursor blink preference is on;
+    /// otherwise no timer runs and the cursor shows steady. A blink already running carries on. GPUI blurs the pane when
+    /// its window deactivates, so another window taking over stops the blink too.
+    pub(super) fn blink_as_needed(&mut self, cx: &mut Context<Self>) {
+        let wanted = self.has_focus
+            && self.shown == Shown::Open
+            && Preferences::read(cx, Appearance::terminal_cursor_blink);
+        if !wanted {
+            (self._blink, self.cursor_on) = (None, true);
+        } else if self._blink.is_none() {
+            self.cursor_on = true;
+            self._blink = Some(cx.spawn(async move |pane, cx| {
                 loop {
                     cx.background_executor().timer(BLINK).await;
                     let blinked = pane.update(cx, |pane, cx| {
                         pane.cursor_on = !pane.cursor_on;
-                        if pane.shown == Shown::Open {
-                            cx.notify();
-                        }
+                        cx.notify();
                     });
                     if blinked.is_err() {
                         return;
                     }
                 }
-            })
-        });
+            }));
+        }
         cx.notify();
     }
 
@@ -374,12 +398,8 @@ impl TerminalPane {
             let written = write.await;
             pane.update(cx, |pane, cx| {
                 pane.writing = false;
-                if let Err(why) = written {
-                    // As the old app: the keys went nowhere, so the terminal stops and says why.
-                    pane.shown = Shown::Said(format!("The terminal didn't take the keys: {why}"));
-                    (pane._follow, pane._replay) = (None, None);
-                    pane.typed.clear();
-                    cx.notify();
+                if let Err(failure) = written {
+                    pane.write_failed(failure, cx);
                     return;
                 }
                 pane.write(cx);
@@ -396,16 +416,6 @@ impl TerminalPane {
     #[cfg(test)]
     fn catching_up(&self) -> bool {
         self.held.is_some()
-    }
-
-    /// The line under the grid, or in its place.
-    fn status(&self) -> Option<String> {
-        match &self.shown {
-            Shown::Opening => Some("Opening terminal…".into()),
-            Shown::Exited(code) => Some(format!("exited with {code}")),
-            Shown::Said(why) => Some(why.clone()),
-            _ => None,
-        }
     }
 }
 
@@ -451,13 +461,23 @@ impl Panel for TerminalPane {
 impl Render for TerminalPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // After the replay, so a program that asked for focus reports hears it has the focus.
-        if self.held.is_none() && mem::take(&mut self.focus_wanted) {
+        // A retried open takes the focus only when nothing else has it, so keys typed elsewhere stay there.
+        let free = !self.retried || window.focused(cx).is_none();
+        if self.held.is_none() && mem::take(&mut self.focus_wanted) && free {
             let focus = self.focus.clone();
             window.defer(cx, move |window, cx| window.focus(&focus, cx));
         }
         let muted = cx.theme().muted_foreground;
+        let opening = self.shown == Shown::Opening;
+        let spinning = opening && !self.retried;
+        let color = if self.error_note() {
+            cx.theme().danger
+        } else {
+            muted
+        };
         let pane = v_flex()
             .id("terminal-pane")
+            .key_context(TERMINAL)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
@@ -467,18 +487,36 @@ impl Render for TerminalPane {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
             .on_mouse_up(MouseButton::Middle, cx.listener(Self::mouse_up))
             .on_mouse_up(MouseButton::Right, cx.listener(Self::mouse_up))
+            .on_mouse_down_out(cx.listener(Self::pressed_outside))
             .on_scroll(cx.listener(Self::wheel))
+            .on_hover(cx.listener(Self::hovered_pane))
+            .when(self.hovered.is_some(), |pane| pane.cursor_pointer())
             .size_full()
-            .text_size(px(13.));
-        let note = |text: SharedString| div().p_2().text_color(muted).child(text);
-        match &self.shown {
-            Shown::Nothing => pane.child(note("Pick a session to open its terminal.".into())),
-            Shown::Said(why) => pane.child(note(why.clone().into())),
-            _ => {
+            .text_role(TextRole::Body, cx)
+            .child(self.input_handler(cx))
+            .when(self.selecting, |pane| pane.child(self.drag_listeners(cx)))
+            .when(self.bar_pressed, |pane| pane.child(self.bar_listeners(cx)));
+        let note = |text: SharedString| {
+            h_flex()
+                .gap_1()
+                .p_2()
+                .text_color(color)
+                .when(spinning, |note| {
+                    note.child(Spinner::new().xsmall().color(muted))
+                })
+                .child(text)
+        };
+        let pane = match (&self.shown, self.status()) {
+            (Shown::Nothing, _) => pane.child(note("Pick a session to open its terminal.".into())),
+            // Stopped with no shell: the note fills the pane.
+            (Shown::Said(_) | Shown::Gone, Some(status)) if self.link.is_none() => {
+                pane.child(note(status.into()))
+            }
+            (_, status) => {
                 let this = cx.entity().downgrade();
-                let fitted = move |(size, origin, cell), cx: &mut App| {
+                let fitted = move |(size, bounds, cell): (_, Bounds<Pixels>, _), cx: &mut App| {
                     this.update(cx, |pane, cx| {
-                        (pane.origin, pane.cell) = (origin, cell);
+                        (pane.origin, pane.bounds, pane.cell) = (bounds.origin, bounds, cell);
                         pane.resized(size, cx);
                     })
                     .ok();
@@ -487,7 +525,7 @@ impl Render for TerminalPane {
                     .then(|| self.grid.cursor())
                     .flatten();
                 let grid = draw(
-                    self.grid.cells(),
+                    self.cells(),
                     (self.size.1, cursor),
                     Preferences::terminal_text(cx),
                     palette(Preferences::read(cx, Appearance::theme)),
@@ -495,23 +533,38 @@ impl Render for TerminalPane {
                     window,
                     cx,
                 );
-                // While opening, the note lies over the grid, so the grid measures the room the shell will have.
-                let opening = self.shown == Shown::Opening;
+                // Until there's a shell, the note lies over the grid, so the grid measures the room the shell will have.
+                let over = opening || self.link.is_none();
+                let grid = div().relative().size_full().child(grid);
+                let grid = grid.children(self.scrollbar(cx));
                 let grid = div().relative().flex_1().min_h_0().p_1().child(grid);
-                match self.status() {
-                    Some(status) if opening => {
+                match status {
+                    Some(status) if over => {
                         pane.child(grid.child(note(status.into()).absolute().top_0().left_0()))
                     }
                     Some(status) => pane.child(grid).child(note(status.into())),
                     None => pane.child(grid),
                 }
             }
-        }
+        };
+        self.with_menu(pane, cx)
     }
 }
 
 #[path = "terminal_pane_mouse.rs"]
 mod mouse;
+
+#[path = "terminal_pane_state.rs"]
+mod state;
+
+#[path = "terminal_pane_select.rs"]
+mod select;
+
+#[path = "terminal_pane_ime.rs"]
+mod ime;
+
+#[path = "terminal_pane_scrollbar.rs"]
+mod scrollbar;
 
 #[cfg(test)]
 #[path = "terminal_pane_tests.rs"]

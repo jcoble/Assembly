@@ -6,7 +6,8 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using Assembly.Application.Common;
-using TopicSet = Assembly.Infrastructure.Topics.Topics;
+using Assembly.Application.Common.Calls;
+using Assembly.Infrastructure.Engine;
 
 namespace Assembly.Infrastructure.Socket;
 
@@ -23,21 +24,25 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     private static long _last;
 
     private readonly CancellationTokenSource _closed = new();
-    private readonly Channel<(ReadOnlyMemory<byte> Frame, TopicSet.Subscription? From)> _outbox =
-        Channel.CreateUnbounded<(ReadOnlyMemory<byte>, TopicSet.Subscription?)>(new() { SingleReader = true });
+    private readonly Channel<(ReadOnlyMemory<byte> Frame, ISocketSubscription? From)> _outbox =
+        Channel.CreateUnbounded<(ReadOnlyMemory<byte>, ISocketSubscription?)>(new() { SingleReader = true });
     private readonly Channel<Func<Task>> _writes = Channel.CreateUnbounded<Func<Task>>(new() { SingleReader = true });
     // The last write queued under each order key, until it ends. Only the receive loop adds one.
     private readonly Dictionary<string, Task> _ordered = [];
     // Each running call's cancel, by its id.
     private readonly ConcurrentDictionary<long, CancellationTokenSource> _running = new();
-    // The running calls' answers, waited for as the socket ends.
+    private readonly ConcurrentDictionary<long, IExpectedSourceGuard> _replySources = new();
+    // Running answers and subscription work, waited for as the socket ends.
     private readonly BackgroundWork _answers = new(time, Console.Error);
     // This socket's subscriptions, by their sub id. Only the receive loop, and then its finally, touch it.
-    private readonly Dictionary<long, TopicSet.Subscription> _subscriptions = [];
+    private readonly Dictionary<long, ISocketSubscription> _subscriptions = [];
     private long _waiting;
     // Why the socket closes, once the receive loop ends; closed after the last answer is sent, since a socket can't
     // send two things at once.
     private (WebSocketCloseStatus Status, string Reason)? _closing;
+
+    public CallPeer? Peer { get; private set; }
+    internal string? EngineMachine { get; private set; }
 
     public string Id { get; } = $"socket-{Interlocked.Increment(ref _last)}";
 
@@ -50,9 +55,10 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     /// <summary>Fires as the socket closes; a read's token is linked to it, a write's isn't.</summary>
     public CancellationToken Closed => _closed.Token;
 
-    public async Task RunAsync(byte[] token, string machine, CancellationToken stopping)
+    public async Task RunAsync(byte[] token, string machine, CancellationToken stopping, string? engineMachine = null)
     {
-        if (!await HelloAsync(token, machine, stopping))
+        EngineMachine = engineMachine;
+        if (!await HelloAsync(token, machine, stopping, engineMachine))
             return;
         // A drop or the host stopping cancels the reads at once, even one the receive loop is busy with (a sub's state).
         using var stopReads = stopping.Register(_closed.Cancel);
@@ -144,7 +150,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     }
 
     // The first frame must be a hello with this protocol and the token; nothing is sent before it.
-    private async Task<bool> HelloAsync(byte[] token, string machine, CancellationToken stopping)
+    private async Task<bool> HelloAsync(byte[] token, string machine, CancellationToken stopping, string? engineMachine)
     {
         string? text;
         try
@@ -164,7 +170,8 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
             await CloseAsync((WebSocketCloseStatus)4401, "unauthorized");
         else
         {
-            await socket.SendAsync(SocketDispatcher.Frame(new WelcomeFrame(Protocol, machine), SocketJson.Default.WelcomeFrame),
+            Peer = new OwnerPeer();
+            await socket.SendAsync(SocketDispatcher.Frame(new WelcomeFrame(Protocol, machine, Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion, BackendBuild.Commit, engineMachine, BackendBuild.Identity, BackendBuild.Version), SocketJson.Default.WelcomeFrame),
                 WebSocketMessageType.Text, endOfMessage: true, stopping);
             return true;
         }
@@ -187,8 +194,11 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
             case { T: "sub", Id: { } id, Topic: not null } sub:
                 if (_subscriptions.ContainsKey(id))
                     Send(SocketDispatcher.Frame(new ErrorFrame(id, "bad_args", $"subscription {id} is already open"), SocketJson.Default.ErrorFrame));
-                else if (calls.Subscribe(sub, id, this) is { } subscription)
+                else if (await calls.SubscribeAsync(sub, id, this) is { } subscription)
+                {
                     _subscriptions[id] = subscription;
+                    _answers.Start($"subscription {id}", _ => subscription.Completion);
+                }
                 return true;
             case { T: "unsub", Id: { } id }:
                 if (_subscriptions.Remove(id, out var unsubscribed))
@@ -198,6 +208,31 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
                 // Never disposed, so a cancel racing the call's end is safe.
                 if (_running.TryGetValue(id, out var running))
                     await running.CancelAsync();
+                return true;
+            case { T: "next", Id: { } id }:
+                try
+                {
+                    if (!_subscriptions.TryGetValue(id, out var pending) || pending is not IEngineSubscription engineSnapshot)
+                        throw new ArgumentException("Unknown engine subscription");
+                    engineSnapshot.Next();
+                }
+                catch (ArgumentException error)
+                {
+                    Send(SocketDispatcher.Frame(new ErrorFrame(id, "bad_args", error.Message), SocketJson.Default.ErrorFrame));
+                }
+                return true;
+            case { T: "ack", Id: { } id } ack:
+                try
+                {
+                    if (ack.Stream != "engine" || ack.After is not { } after ||
+                        !_subscriptions.TryGetValue(id, out var acknowledged) || acknowledged is not IEngineSubscription engine)
+                        throw new ArgumentException("Unknown engine subscription");
+                    engine.Acknowledge(after);
+                }
+                catch (ArgumentException error)
+                {
+                    Send(SocketDispatcher.Frame(new ErrorFrame(id, "bad_args", error.Message), SocketJson.Default.ErrorFrame));
+                }
                 return true;
             default:
                 _closing = ((WebSocketCloseStatus)4400, "not a frame this protocol has");
@@ -210,24 +245,36 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
         using var stopped = stopping.Register(cancel.Cancel);
         try
         {
-            Send(await calls.AnswerAsync(call, id, this, cancel.Token));
+            var answer = await calls.AnswerAsync(call, id, this, cancel.Token);
+            Send(answer, _replySources.TryRemove(id, out var source) ? new SourceBoundReply(id, source) : null);
         }
         finally
         {
+            if (_replySources.TryRemove(id, out var abandoned)) abandoned.Dispose();
             _running.TryRemove(id, out _);
         }
     }
+
+    internal void BindReplySource(long id, IExpectedSourceGuard source)
+    {
+        if (!_replySources.TryAdd(id, source)) throw new CallFailed("The read source was already captured.", "source_changed");
+    }
+
+    internal void Abort() => socket.Abort();
 
     /// <summary>
     /// Queues a frame for the sender and returns at once, so a publish under the writer's lock never waits on a socket.
     /// Answers, states and changes share this one queue, so a write's change goes out before its result. A frame
     /// <paramref name="from"/> a subscription that has closed by its turn isn't sent: a closed tab really stops.
     /// </summary>
-    internal void Send(ReadOnlyMemory<byte> frame, TopicSet.Subscription? from = null)
+    internal void Send(ReadOnlyMemory<byte> frame, ISocketSubscription? from = null)
     {
         // A page that stops reading is closed, and so is one sent a change over 4 MB; it reconnects and loads again.
         if (frame.Length > MaxFrame || Interlocked.Add(ref _waiting, frame.Length) > MaxWaiting)
+        {
             socket.Abort();
+            if (from is SourceBoundReply reply) reply.Dispose();
+        }
         else
             _outbox.Writer.TryWrite((frame, from));
     }
@@ -238,13 +285,31 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
         {
             try
             {
-                if (socket.State == WebSocketState.Open && from is not { Open: false })
-                    await socket.SendAsync(frame, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+                if (from is SourceBoundReply reply)
+                {
+                    try { reply.EnsureCurrent(); }
+                    catch (Exception error) when (error is CallFailed or OperationCanceledException)
+                    {
+                        if (socket.State == WebSocketState.Open)
+                            await socket.SendAsync(reply.Refused, WebSocketMessageType.Text, true, CancellationToken.None);
+                        continue;
+                    }
+                }
+                if (socket.State == WebSocketState.Open && from?.Closed.IsCancellationRequested != true)
+                {
+                    if (from is IExpectedSourceGuard source) source.EnsureCurrent();
+                    await socket.SendAsync(frame, WebSocketMessageType.Text, endOfMessage: true,
+                        from is IExpectedSourceGuard guarded ? guarded.Changed : CancellationToken.None);
+                }
             }
-            catch (Exception error) when (error is WebSocketException or ObjectDisposedException)
+            catch (Exception error) when (error is WebSocketException or ObjectDisposedException or CallFailed or OperationCanceledException)
             {
             }
-            Interlocked.Add(ref _waiting, -frame.Length);
+            finally
+            {
+                if (from is SourceBoundReply reply) reply.Dispose();
+                Interlocked.Add(ref _waiting, -frame.Length);
+            }
         }
     }
 

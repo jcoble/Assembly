@@ -14,4 +14,5 @@ namespace Assembly.Domain.Sessions;
 /// </summary>
 public sealed record SessionInfo(string SessionId, string Agent, string RepoUrl, string? Title, string? AcpSessionId, long UpdatedAt,
     string? Machine = null, decimal? SessionCost = null, string? ParentSessionId = null, bool Helper = false, long ReadSeq = 0,
-    long? CompletedAt = null, long? SettledAt = null, string? TitleSource = null);
+    long? CompletedAt = null, long? SettledAt = null, string? TitleSource = null, string? WorkingFolder = null,
+    string? ProjectId = null, string? CheckoutRoot = null, string? Branch = null, bool IsBare = false);

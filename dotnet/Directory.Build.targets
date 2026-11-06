@@ -1,0 +1,15 @@
+<Project>
+  <!-- One identity implementation for scripts and binaries. No checkout is needed at runtime. -->
+  <Target Name="StampBackendIdentity" BeforeTargets="GetAssemblyAttributes"
+          Condition="'$(MSBuildProjectName)' == 'Assembly.Infrastructure'">
+    <Exec Command="node &quot;$(MSBuildThisFileDirectory)../scripts/dev-remote-identity.ts&quot; &quot;$(MSBuildThisFileDirectory)..&quot;"
+          ConsoleToMSBuild="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="AssemblyBackendStamp" />
+    </Exec>
+    <ItemGroup>
+      <AssemblyMetadata Include="BackendIdentity" Value="$(AssemblyBackendStamp.Split(' ')[0])" />
+      <AssemblyMetadata Include="ReleaseVersion" Value="$(AssemblyBackendStamp.Split(' ')[1])" />
+      <AssemblyMetadata Include="AdapterSources" Value="$(AssemblyBackendStamp.Split(' ')[2])" />
+    </ItemGroup>
+  </Target>
+</Project>

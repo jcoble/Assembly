@@ -127,7 +127,7 @@ public sealed class RowStoreTests : IDisposable
         second.Details.Add(new ToolDetail("t1", Output: "file.txt"));
         _store.Commit("a", second);
 
-        Assert.Equal(new StoredToolCall("ls -la", """{"command":"ls"}""", "file.txt", null, "/tmp"), _store.ToolCall("a", "t1"));
+        Assert.Equal(new StoredToolCall("ls -la", """{"command":"ls"}""", "file.txt", null, "/tmp", 8, 0), _store.ToolCall("a", "t1"));
         Assert.Null(_store.ToolCall("a", "nope"));
     }
 
@@ -326,7 +326,7 @@ public sealed class RowStoreTests : IDisposable
 
         Assert.Null(desktop.ToolCall("a", "t1"));
         desktop.SaveToolDetail("a", new ToolDetail("t1", Input: """{"command":"ls"}""", Output: "a.txt"));
-        Assert.Equal(new StoredToolCall("ls", """{"command":"ls"}""", "a.txt", null, null), desktop.ToolCall("a", "t1"));
+        Assert.Equal(new StoredToolCall("ls", """{"command":"ls"}""", "a.txt", null, null, 5, 0), desktop.ToolCall("a", "t1"));
     }
 
     [Fact]

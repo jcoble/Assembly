@@ -10,6 +10,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Application.Common;
+using Assembly.Application.Common.Machines;
+using Assembly.Infrastructure.Engine.Sessions;
+using Assembly.Tests.Draft.Base.Chat;
+using Assembly.Infrastructure.Chat;
 using Assembly.Infrastructure.Chat.Files;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Socket;
@@ -18,13 +23,14 @@ using TopicSet = Assembly.Infrastructure.Topics.Topics;
 namespace Assembly.Tests.Draft.Files;
 
 /// <summary><c>files/list</c> and <c>files/search</c> over the socket, for sessions whose folders are temp git repos.</summary>
-public sealed class FilesSocketTests : IAsyncLifetime
+public sealed partial class FilesSocketTests : IAsyncLifetime
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
     private readonly TempDatabase _file = new();
     private readonly DirectoryInfo _checkouts = Directory.CreateTempSubdirectory("files-socket-");
     private AppDatabase _db = null!;
+    private readonly BackgroundWork _work = new(TimeProvider.System, TextWriter.Null);
     private SessionStore _sessions = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
@@ -35,7 +41,8 @@ public sealed class FilesSocketTests : IAsyncLifetime
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
         _sessions = SessionStore.Open(_db, TimeProvider.System, _checkouts.FullName);
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
-        new FilesFeature(_sessions).Register(calls);
+        global::Assembly.Engine.Persistence.EngineSchema.Open(_db, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        new FilesFeature(_sessions, new FileOwner(_sessions, _db), _work, sources: new SessionRowSources(_db, _sessions, new MachineSet(new FakeMachine(null, _sessions)))).Register(calls);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
@@ -43,6 +50,9 @@ public sealed class FilesSocketTests : IAsyncLifetime
         _app.UseWebSockets();
         var endpoint = new SocketEndpoint("files-token", calls, "test-machine", TimeProvider.System);
         _app.Map("/socket", endpoint.HandleAsync);
+        var bulk = new SocketEndpoint("files-token", calls, "test-machine", TimeProvider.System, bulk: true);
+        _app.Map("/socket/bulk", bulk.HandleAsync);
+        _app.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
         _app.Lifetime.ApplicationStopping.Register(endpoint.CloseAll);
         await _app.StartAsync();
         var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
@@ -53,6 +63,7 @@ public sealed class FilesSocketTests : IAsyncLifetime
     {
         await _app.StopAsync();
         await _app.DisposeAsync();
+        await _work.DisposeAsync();
         _db.Dispose();
         _file.Dispose();
         _checkouts.Delete(recursive: true);
@@ -74,6 +85,17 @@ public sealed class FilesSocketTests : IAsyncLifetime
         Assert.Equal(["src", "a.txt"], entries.EnumerateArray().Select(entry => entry.GetProperty("path").GetString()));
     }
 
+    [Fact]
+    public async Task A_viewed_folder_lists_with_no_session_there()
+    {
+        var folder = Path.Combine(_checkouts.FullName, "other-project");
+        GitFolder.Fill(folder, "src/", "a.txt");
+        using var socket = await OpenAsync();
+        await CallAsync(socket, 1, "list", $$"""{"session":"{{FolderView.Id("p1", folder)}}","dir":""}""");
+        var entries = JsonDocument.Parse(await ReadAsync(socket)).RootElement.GetProperty("result").GetProperty("entries");
+        Assert.Equal(["src", "a.txt"], entries.EnumerateArray().Select(entry => entry.GetProperty("path").GetString()));
+    }
+
     // Pins: files#11
     [Fact]
     public async Task Read_answers_a_file_s_text()
@@ -82,7 +104,7 @@ public sealed class FilesSocketTests : IAsyncLifetime
         var root = _sessions.Item(session).Root!;
         GitFolder.Fill(root, "src/");
         File.WriteAllText(Path.Combine(root, "src", "a.txt"), "one\ntwo\n");
-        using var socket = await OpenAsync();
+        using var socket = await OpenAsync(bulk: true);
         await CallAsync(socket, 1, "read", $$"""{"session":"{{session.SessionId}}","path":"src/a.txt"}""");
         var result = JsonDocument.Parse(await ReadAsync(socket)).RootElement.GetProperty("result");
         Assert.Equal("one\ntwo\n", result.GetProperty("content").GetString());
@@ -100,10 +122,10 @@ public sealed class FilesSocketTests : IAsyncLifetime
         var root = _sessions.Item(session).Root!;
         GitFolder.Fill(root, "src/Program.cs", "readme.md");
         using var socket = await OpenAsync();
-        await CallAsync(socket, 1, "search", $$"""{"session":"{{session.SessionId}}","query":"prog","cursor":0,"pageSize":10}""");
+        await CallAsync(socket, 1, "search", $$"""{"session":"{{session.SessionId}}","query":"prog","pageSize":10}""");
         var result = JsonDocument.Parse(await ReadAsync(socket)).RootElement.GetProperty("result");
-        Assert.True(result.GetProperty("complete").GetBoolean());
-        Assert.Equal("src/Program.cs", Assert.Single(result.GetProperty("matches").EnumerateArray()).GetProperty("relativePath").GetString());
+        Assert.False(result.GetProperty("more").GetBoolean());
+        Assert.Equal("src/Program.cs", Assert.Single(result.GetProperty("names").EnumerateArray()).GetProperty("relativePath").GetString());
     }
 
     // Pins: files#6, files#10
@@ -160,10 +182,10 @@ public sealed class FilesSocketTests : IAsyncLifetime
         }
     }
 
-    private async Task<ClientWebSocket> OpenAsync()
+    private async Task<ClientWebSocket> OpenAsync(bool bulk = false)
     {
         var socket = new ClientWebSocket();
-        await socket.ConnectAsync(_address, CancellationToken.None);
+        await socket.ConnectAsync(bulk ? new Uri(_address + "/bulk") : _address, CancellationToken.None);
         await SendAsync(socket, """{"t":"hello","token":"files-token","protocol":1}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;

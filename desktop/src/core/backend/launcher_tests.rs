@@ -6,6 +6,9 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
+use gpui_kit::AppContext as _;
+use gpui_kit::component::WindowExt as _;
+
 use super::{BackendConfig, Launcher};
 
 const TOKEN: &str = "0123456789abcdef";
@@ -73,7 +76,9 @@ fn the_ready_line_hands_over_the_token_and_quit_stops_the_backend() {
     );
     let (mut launcher, ready) = launch(config);
     assert_eq!(ready.recv().unwrap(), TOKEN);
+    let started = Instant::now();
     launcher.stop();
+    assert!(started.elapsed() < launcher.config.stop_grace);
     let home = launcher.config.home.clone();
     assert_eq!(read(&launcher.config, "stopped"), "stopped\n");
     assert_eq!(read(&launcher.config, "runs"), "1\n");
@@ -83,6 +88,7 @@ fn the_ready_line_hands_over_the_token_and_quit_stops_the_backend() {
         log.contains("starting") && log.contains("listening on"),
         "{log}"
     );
+    assert!(!log.contains("so it was killed"), "{log}");
 }
 
 #[test]
@@ -163,13 +169,14 @@ fn dropping_the_launcher_stops_the_backend() {
 #[test]
 fn a_backend_with_no_ready_line_in_time_is_stopped() {
     let mut config = fake("late", WAIT_FOR_TERM);
-    config.ready_limit = Duration::from_millis(200);
+    // Long enough for the script to set its trap on a loaded machine, or the stop isn't recorded.
+    config.ready_limit = Duration::from_secs(2);
     let (mut launcher, ready) = launch(config);
     launcher.thread.take().unwrap().join().unwrap();
     assert!(ready.try_recv().is_err());
     assert_eq!(read(&launcher.config, "stopped"), "stopped\n");
     let log = std::fs::read_to_string(launcher.config.home.join("backend.log")).unwrap();
-    assert!(log.contains("no ready line within 200ms"), "{log}");
+    assert!(log.contains("no ready line within 2s"), "{log}");
 }
 
 #[test]
@@ -183,6 +190,10 @@ fn a_backend_that_ignores_sigterm_is_killed_after_the_grace_period_with_its_stra
     let pid = *launcher.pid.lock().unwrap();
     let started = Instant::now();
     launcher.stop();
+    assert!(
+        started.elapsed() >= launcher.config.stop_grace,
+        "the child was killed before its grace period"
+    );
     assert!(
         started.elapsed() < Duration::from_secs(3),
         "{:?}",
@@ -263,4 +274,46 @@ fn the_backend_is_asked_to_exit_when_its_stdin_closes() {
     launcher.thread.take().unwrap().join().unwrap();
     let args = read(&launcher.config, "args");
     assert!(args.contains("--exit-on-stdin-close"), "{args}");
+}
+
+#[test]
+fn a_backend_refused_its_home_means_an_update_is_finishing_and_is_not_started_again() {
+    let (mut launcher, calls) = launch_noting_give_ups(fake("finishing", "exit 75"));
+    launcher.thread.take().unwrap().join().unwrap();
+    assert!(launcher.update_finishing());
+    assert_eq!(calls.try_iter().collect::<Vec<_>>(), [None]);
+    assert_eq!(read(&launcher.config, "runs"), "1\n");
+}
+
+#[test]
+fn another_early_exit_says_nothing_about_an_update() {
+    let (mut launcher, _calls) = launch_noting_give_ups(fake("other-exit", "exit 3"));
+    launcher.thread.take().unwrap().join().unwrap();
+    assert!(!launcher.update_finishing());
+}
+
+#[gpui::test]
+async fn the_window_is_told_the_update_is_finishing_once(cx: &mut gpui::TestAppContext) {
+    cx.executor().allow_parking();
+    let (gave_up, mut heard) = futures_channel::mpsc::unbounded::<()>();
+    let (_, cx) = cx.add_window_view(|window, cx| {
+        gpui_kit::init(cx);
+        let page = cx.new(|_| gpui_kit::EmptyView);
+        gpui_kit::base::Root::new(page, window, cx)
+    });
+    cx.update(|_, cx| {
+        let config = fake("finishing-window", "exit 75");
+        Launcher::start(
+            config,
+            |_, _, _| {},
+            move |_| _ = gave_up.unbounded_send(()),
+            cx,
+        );
+    });
+    _ = heard.recv().await;
+    cx.run_until_parked();
+    // The window that opens after the give-up asks too, and it's still the one notice.
+    cx.update(|_, cx| Launcher::tell_if_update_finishing(cx));
+    cx.run_until_parked();
+    cx.update(|window, cx| assert_eq!(window.notifications(cx).len(), 1));
 }

@@ -4,6 +4,7 @@
 //! as the list changes while it's shown; a line at its end loads the list's next page, Settled's too, as the sessions
 //! column's Settled does once it's opened. The ages count by the backend clock, held only while the tab is shown.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::collections::{HashMap, HashSet};
 
 use gpui_kit::assets::IconName;
@@ -12,6 +13,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use super::age::age;
 use super::history_row::history_row;
 use super::project_group::ProjectGroup;
 use crate::core::clock::backend_clock::BackendClock;
@@ -111,10 +113,29 @@ impl HistoryPane {
         self.clock = Some((clock, heard));
     }
 
-    /// A clock tick redraws the ages: each steps at its own session's minute, so any second can change one.
+    /// A clock tick redraws the ages when one on screen changes: each steps at its own session's minute, so any
+    /// second can change one, but most change none, and each redraw is a whole frame.
     pub(super) fn tick(&mut self, now: i64, cx: &mut Context<Self>) {
+        let before = self.shown_ages();
         self.now = Some(now);
-        cx.notify();
+        if self.shown_ages() != before {
+            cx.notify();
+        }
+    }
+
+    /// The ages the open projects show, as drawn at the last tick.
+    fn shown_ages(&self) -> Vec<String> {
+        let Some(now) = self.now else {
+            return Vec::new();
+        };
+        (self.groups.iter())
+            .filter(|group| self.open.contains(&group.key()))
+            .flat_map(|group| {
+                let shown = self.shown.get(&group.key()).copied().unwrap_or(WINDOW);
+                group.sessions.iter().take(shown)
+            })
+            .map(|item| age(now, item.updated_at))
+            .collect()
     }
 
     fn toggle(&mut self, key: Key, cx: &mut Context<Self>) {
@@ -197,7 +218,7 @@ impl Render for HistoryPane {
             .overflow_y_scroll()
             .p_2()
             .gap_px()
-            .text_size(px(13.));
+            .text_role(TextRole::Body, cx);
         let Some(sessions) = self.sessions.clone() else {
             return pane.child(note(
                 "history-note-waiting",

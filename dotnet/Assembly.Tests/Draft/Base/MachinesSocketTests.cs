@@ -31,6 +31,7 @@ namespace Assembly.Tests.Draft.Base;
 public sealed partial class MachinesSocketTests : IAsyncLifetime
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
+    private const long OfflineSince = 1000;
     private const string Local = """{"name":null,"kind":"local","reachable":true,"reason":null,"checked":true,"ssh":null,"port":null,"tokenFile":null}""";
     private static readonly DateTimeOffset Start = new(2026, 10, 27, 12, 0, 0, TimeSpan.Zero);
 
@@ -56,18 +57,19 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
         _hub = new LiveHub(RowStore.Open(_db), topics: topics);
         _sessions = SessionStore.Open(_db, TimeProvider.System, "checkouts");
-        var status = _status = new MachineStatus(topics, ["box"]);
+        Assembly.Engine.Persistence.EngineSchema.Open(_db, Start.ToUnixTimeMilliseconds());
+        var status = _status = new MachineStatus(topics, ["box"], new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.FromUnixTimeMilliseconds(OfflineSince)));
         _box = new RemoteMachine("box", _stub.Address, "box-token", _hub, _sessions, TextWriter.Null, status);
         status.Profile(new SavedMachine("box", "box"));
         var machines = new MachineSet(new FakeMachine(null, _sessions), _box);
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
         _work = new BackgroundWork(_time, TextWriter.Null);
         _clock = new BackendClock(topics, _time, _work);
-        _db.Writer.Write("test.profile", scope => scope.Execute("CREATE TABLE IF NOT EXISTS saved_machines(name TEXT PRIMARY KEY, ssh TEXT NOT NULL, port INTEGER NOT NULL, token_file TEXT NOT NULL); INSERT INTO saved_machines VALUES ('box', 'box', 9797, '.config/assembly-dotnet/env');"));
+        _db.Writer.Write("test.profile", scope => scope.Execute("CREATE TABLE IF NOT EXISTS saved_machines(name TEXT PRIMARY KEY, ssh TEXT NOT NULL, port INTEGER NOT NULL, token_file TEXT NOT NULL); INSERT INTO saved_machines VALUES ('box', 'box', 9797, '.config/assembly-host/env');"));
         var profiles = new MachineStore(_db);
         var feature = _feature = new MachinesFeature(machines, status, _clock.Start, _time, store: profiles,
             connection: (name, connect, cancel) => _connections.ConnectionAsync(name, connect, cancel));
-        _connections = new RemoteConnections(profiles, machines, status, _hub, _sessions, topics, TextWriter.Null,
+        _connections = new RemoteConnections(profiles, _db.Writer, machines, status, _hub, _sessions, topics, TextWriter.Null,
             feature, open: (profile, cancel) =>
             {
                 cancel.ThrowIfCancellationRequested();
@@ -116,6 +118,8 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     {
         using var socket = await OpenAsync();
         await SubAsync(socket, 1, "machines");
+        await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 2, "machines", "agents", """{"machine":"box"}""");
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
         Assert.Contains("\"result\":", await ReadAsync(socket));
@@ -123,7 +127,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _stub.Drop = true;
         await CallAsync(socket, 3, "machines", "agents", """{"machine":"box"}""");
 
-        Assert.Equal(Change(1, Box(false, "didn't answer")), await ReadAsync(socket));
+        Assert.Equal(Change(1, Box(false, "machine socket closed")), await ReadAsync(socket));
         Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
     }
 
@@ -132,6 +136,8 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     {
         using var socket = await OpenAsync();
         await SubAsync(socket, 1, "machines");
+        await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 2, "machines", "agents", """{"machine":"box"}""");
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
         Assert.Contains("\"result\":", await ReadAsync(socket));
@@ -139,16 +145,23 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         // A change would be queued before the answer.
         await CallAsync(socket, 3, "machines", "agents", """{"machine":"box"}""");
         Assert.Contains("\"result\":", await ReadAsync(socket));
+        _stub.DropVersion = true; // Every later attempt is also down, so nothing can welcome it back during the checks below.
         _stub.Drop = true;
         await CallAsync(socket, 4, "machines", "agents", """{"machine":"box"}""");
-        Assert.Equal(Change(1, Box(false, "didn't answer")), await ReadAsync(socket));
+        Assert.Equal(Change(1, Box(false, "machine socket closed")), await ReadAsync(socket));
         Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
+        // A call only waits while the machine reconnects; the socket's own next attempt is what fails, at the handshake.
+        var handshakeFailure = System.Text.Json.JsonDocument.Parse(await ReadAsync(socket)).RootElement;
+        Assert.Equal("change", handshakeFailure.GetProperty("t").GetString());
+        Assert.False(handshakeFailure.GetProperty("item").GetProperty("reachable").GetBoolean());
         await CallAsync(socket, 5, "machines", "agents", """{"machine":"box"}""");
+        Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
+        await CallAsync(socket, 6, "machines", "agents", """{"machine":"box"}""");
         Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
     }
 
     [Fact]
-    public async Task The_first_tick_after_a_subscribe_checks_the_remote_s_format_and_every_15th_tick_after()
+    public async Task The_first_tick_opens_the_remote_socket_and_later_ticks_reuse_its_welcome()
     {
         using var socket = await OpenAsync();
         await SubAsync(socket, 1, "machines");
@@ -163,8 +176,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
             await TickAsync(socket);
         Assert.Equal(1, _stub.VersionHits);
         await TickAsync(socket);
-        Assert.Equal(Change(1, Box(false, "didn't answer")), await ReadAsync(socket));
-        Assert.Equal(2, _stub.VersionHits);
+        Assert.Equal(1, _stub.VersionHits);
     }
 
     [Fact]
@@ -252,7 +264,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
 
         await SubAsync(socket, 3, "machines");
         _time.Advance(TimeSpan.FromSeconds(1));
-        await Until(() => _stub.VersionHits == 2);
+        Assert.Equal(1, _stub.VersionHits);
     }
 
     [Fact]
@@ -297,6 +309,8 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     {
         using var socket = await OpenAsync();
         await SubAsync(socket, 1, "machines");
+        await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 2, "machines", "agents", """{"machine":"box"}""");
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
         Assert.Contains("\"result\":", await ReadAsync(socket));
@@ -310,7 +324,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_title_read_that_fails_after_a_turn_leaves_the_title_and_the_follower_keeps_copying()
+    public async Task A_turn_does_not_refresh_its_title_over_HTTP_and_the_follower_keeps_copying()
     {
         _sessions.Add("s1", "claude", "https://github.com/o/r", "box");
         _sessions.SetTitle("s1", "kept", "prompt");
@@ -323,7 +337,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _box.WatchRunning(["s1"], []);
 
         await Until(() => _hub.LastSeq("s1") == 2);
-        Assert.Equal(1, _stub.TitleHits);
+        Assert.Equal(0, _stub.TitleHits);
         Assert.Equal("kept", _sessions.Get("s1")!.Title);
     }
 
@@ -333,10 +347,13 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _stub.AgentsStatus = 500;
         using var socket = await OpenAsync();
 
+        await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 1, "machines", "agents", """{"machine":"box"}""");
         var error = await ReadAsync(socket);
         Assert.Contains("\"code\":\"failed\"", error);
-        Assert.Contains("box answered 500: boom", error);
+        Assert.Contains("boom", error);
 
         Assert.Equal(List(2, Box(true, null)), await ListAsync(socket, 2));
     }
@@ -349,6 +366,9 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _stub.AgentsStatus = refused;
         using var socket = await OpenAsync();
 
+        await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 1, "machines", "agents", """{"machine":"box"}""");
         var error = await ReadAsync(socket);
         Assert.Contains("\"code\":\"unreachable\"", error);
@@ -361,6 +381,9 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     public async Task A_transport_failure_is_didnt_answer_and_the_next_answer_is_reachable()
     {
         using var socket = await OpenAsync();
+        await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 1, "machines", "agents", """{"machine":"box"}""");
         Assert.Contains("\"result\":", await ReadAsync(socket));
         Assert.Equal(List(2, Box(true, null)), await ListAsync(socket, 2));
@@ -368,9 +391,12 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _stub.Drop = true;
         await CallAsync(socket, 3, "machines", "agents", """{"machine":"box"}""");
         Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
-        Assert.Equal(List(4, Box(false, "didn't answer")), await ListAsync(socket, 4));
+        Assert.Equal(List(4, Box(false, "machine socket closed")), await ListAsync(socket, 4));
 
         _stub.Drop = false;
+        await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 5, "machines", "agents", """{"machine":"box"}""");
         Assert.Contains("\"result\":", await ReadAsync(socket));
         Assert.Equal(List(6, Box(true, null)), await ListAsync(socket, 6));
@@ -385,6 +411,8 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
 
         for (var id = 1; id <= 4; id += 2)
         {
+            var failure = await Assert.ThrowsAsync<MachineUnreachable>(() => _box.ProbeAsync(CancellationToken.None));
+            Assert.Contains(reason, failure.Message);
             await CallAsync(socket, id, "machines", "agents", """{"machine":"box"}""");
             var error = await ReadAsync(socket);
             Assert.Contains("\"code\":\"unreachable\"", error);
@@ -404,6 +432,8 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _stub.StopStatus = status;
         var session = new SessionInfo("s1", "claude", "https://github.com/o/r", "", null, 0);
 
+        await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         string outcome;
         try
         {
@@ -419,7 +449,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
 
     // Pins: sessions-list#11 (checked is false only before the first probe answers or fails)
     private static string Box(bool reachable, string? reason) =>
-        $$"""{"name":"box","kind":"remote","reachable":{{(reachable ? "true" : "false")}},"reason":{{(reason is null ? "null" : $"\"{reason}\"")}},"checked":{{(reason == "not checked yet" ? "false" : "true")}},"ssh":"box","port":9797,"tokenFile":".config/assembly-dotnet/env"}""";
+        $$"""{"name":"box","kind":"remote","reachable":{{(reachable ? "true" : "false")}},"reason":{{(reason is null ? "null" : $"\"{reason}\"")}},"checked":{{(reason == "not checked yet" ? "false" : "true")}},"ssh":"box","port":9797,"tokenFile":".config/assembly-host/env"{{(!reachable && reason != "not checked yet" ? $",\"offlineSinceMs\":{OfflineSince}" : "")}}}""";
 
     private static string List(long sub, string box) =>
         $$$"""{"t":"state","sub":{{{sub}}},"items":[{"key":"local","item":{{{Local}}}},{"key":"box","item":{{{box}}}}]}""";
@@ -495,7 +525,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
             message.Write(buffer, 0, received.Count);
         }
         while (!received.EndOfMessage);
-        // The error frames escape an apostrophe; compare on one spelling.
-        return Encoding.UTF8.GetString(message.ToArray()).Replace("\\u0027", "'");
+        // The error frames escape an apostrophe; compare on one spelling. The backend a remote runs has its own test.
+        return System.Text.RegularExpressions.Regex.Replace(Encoding.UTF8.GetString(message.ToArray()).Replace("\\u0027", "'"), ",\"backend\":\\{[^}]*\\}", "");
     }
 }

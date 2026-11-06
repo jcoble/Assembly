@@ -34,8 +34,8 @@ public sealed class StatsTests
     }
 
     [Theory]
-    [InlineData("acp/tool-fails.jsonl", 25_962, 1_000_000)]
-    [InlineData("acp/codex-background.jsonl", 30_109, 237_500)]
+    [InlineData("acp/tool-fails.jsonl", 35_062, 1_000_000)]
+    [InlineData("acp/codex-background.jsonl", 22_975, 475_000)]
     public void The_context_window_is_read_from_both_agents_usage_reports(string fixture, long used, long size)
     {
         var last = Converted.Fixture(fixture).Last(RowKind.Context);
@@ -81,6 +81,40 @@ public sealed class StatsTests
             new TurnStarted(60, "run-3", "three"), new AgentLost(70),
         ]);
         Assert.Equal([0.10m, null, null], Costs(turns));
+    }
+
+    [Fact]
+    public void Context_dedup_includes_reported_breakdowns_and_never_borrows_turn_stats()
+    {
+        var turns = Converted.From(
+        [
+            new TurnStarted(0, "run", "prompt"),
+            new UsageReported(1, null, null, 100, 1000, 70, 30),
+            new UsageReported(2, null, null, 100, 1000, 70, 30),
+            new UsageReported(3, null, null, 100, 1000, 70, 31),
+            new UsageReported(4, null, null, 100, 1000, null, 31),
+            new TurnEnded(5, "end_turn", new TokenUsage(900, 800, null, null)),
+            new UsageReported(6, null, null, 100, 1000),
+        ]);
+        var context = turns.OfKind(RowKind.Context).ToArray();
+        Assert.Equal(4, context.Length);
+        Assert.All(context, row => Assert.Equal("context:run", row.ItemId));
+        Assert.Equal(70, context[0].Payload.GetProperty("inputTokens").GetInt64());
+        Assert.Equal(30, context[0].Payload.GetProperty("outputTokens").GetInt64());
+        Assert.Equal(31, context[1].Payload.GetProperty("outputTokens").GetInt64());
+        Assert.False(context[2].Payload.TryGetProperty("inputTokens", out _));
+        Assert.Equal(31, context[2].Payload.GetProperty("outputTokens").GetInt64());
+        Assert.Equal("{\"used\":100,\"size\":1000}", context[3].Payload.GetRawText());
+    }
+
+    [Fact]
+    public void Absent_context_breakdowns_preserve_legacy_row_and_event_json_shape()
+    {
+        var context = Converted.From([new TurnStarted(0, "run", "prompt"), new UsageReported(1, null, null, 100, 1000)]).Last(RowKind.Context);
+        Assert.Equal("{\"used\":100,\"size\":1000}", context.Payload.GetRawText());
+        var report = System.Text.Json.JsonSerializer.SerializeToElement(new UsageReported(1, null, null, 100, 1000));
+        Assert.False(report.TryGetProperty("InputTokens", out _));
+        Assert.False(report.TryGetProperty("OutputTokens", out _));
     }
 
     private static List<decimal?> Costs(Converted turns) =>

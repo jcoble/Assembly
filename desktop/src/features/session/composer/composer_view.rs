@@ -1,10 +1,10 @@
 //! `Composer` owns the draft (a multi-line kit input: Enter sends, Shift-Enter adds a line) and each session's unsent
 //! draft while the window runs. Send is `send/send` with the draft and a clientId, which a retry of the same text
-//! reuses. While a turn runs, a send steers it and a Stop button beside the draft stops it (`send/stop` with the run
-//! id). The ring beside Send shows how much of the agent's context window is left (context_ring.rs), and the agent's
-//! own menus and "/" commands come from its config (composer_config.rs). Images attach by drop, paste or the picker
-//! and upload at once (composer_attach.rs); a send waits until each has uploaded. A sent prompt isn't shown as pending
-//! before its row arrives. Drawn in composer_render.rs. Replaces Composer.svelte.
+//! reuses. While a turn runs, a send steers it and one Stop in Send's place stops it (`send/stop` with the run id). The
+//! gauge shows how full the agent's context window is (capsule/context_gauge.rs), and the agent's settings pills and
+//! "/" commands come from its config (composer_config.rs). Images attach by drop, paste or the picker
+//! and upload at once (composer_attach.rs); a send waits until each has uploaded. A prompt stays pending until its
+//! own pushed user row arrives. Drawn in composer_render.rs. Replaces Composer.svelte.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -13,17 +13,38 @@ use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::*;
 use serde_json::json;
 
-use super::agent_config::AgentConfig;
+use super::agent_config::{AgentConfig, ConfigOption};
+use super::answer_panel::AnswerPanel;
 use super::attachment::{Attachment, AttachmentState};
+use super::config_labels::{approval_label, effort_label, model_label};
+use super::config_pills::{Grouped, shown};
 use super::context_meter::ContextMeter;
+use super::shape::{Lock, hint};
+use crate::core::engine::EngineFeed;
 use crate::features::session::client::session_client::{CallError, SessionClient};
+use crate::features::session::context::live_facts::DraftImage;
+use crate::features::session::model::session_view::ContextReport;
 
 pub struct Composer {
     client: Rc<dyn SessionClient>,
+    start_draft: Option<start::StartDraft>,
+    initial_upload: Option<std::rc::Weak<()>>,
     session: Option<String>,
+    session_key: Option<crate::core::engine::SessionKey>,
+    expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    source_valid: bool,
+    source_serial: u64,
+    /// Identifies this visit, including leaving and returning to the same session.
+    target_generation: u64,
+    owner: Option<(String, Option<String>, String)>,
+    advertised_target: Option<String>,
+    backend_connected: bool,
+    _target: Option<Task<()>>,
+    _warm: Option<Task<()>>,
+    _connection: Option<Subscription>,
     draft: Entity<TextareaState>,
     /// The other sessions' unsent drafts, by session id.
-    drafts: HashMap<String, String>,
+    drafts: HashMap<crate::core::engine::SessionKey, (String, Vec<Attachment>)>,
     attachments: Vec<Attachment>,
     /// Each attachment's upload while it goes, by its id; a chip removed drops its upload.
     uploads: HashMap<u64, Task<()>>,
@@ -47,15 +68,46 @@ pub struct Composer {
     still_offline: bool,
     /// How full the agent's context window is, from the session's newest report.
     meter: Option<ContextMeter>,
-    /// The branch the session's newest turn started on, shown in the footer; `None` before its first turn.
+    /// The branch the session's newest turn started on, shown under the box; `None` before its first turn.
     branch: Option<String>,
-    /// The open session has messages: the draft's hint asks for follow-up changes.
-    messages: bool,
-    /// The draft's hint as last set (`placeholder`).
-    hint: &'static str,
-    /// A failed send's text and clientId, by session: sending that text again reuses the id, so if the first did reach
-    /// the agent the backend answers its run instead of starting another.
-    retry_ids: HashMap<String, (String, String)>,
+    /// The draft's hint as last set.
+    hint: SharedString,
+    /// Content opened the box, and nothing has been sent since (capsule/shape.rs).
+    has_opened: bool,
+    /// The turn has run five seconds, so an empty box goes back to its line.
+    turn_settled: bool,
+    _settle: Option<Task<()>>,
+    /// The pane's width, which decides the box's shape; zero until measured.
+    width: Pixels,
+    /// The add menu is open: its button shows a cross.
+    add_open: bool,
+    /// Files are being dragged over the box.
+    dragging: bool,
+    /// The bound Engine session says its agent reported it can take a steer; unknown reads as no.
+    can_steer: bool,
+    _engine: Subscription,
+    /// The owning agent's name, for the draft's hint and the settings menus.
+    agent_name: Option<SharedString>,
+    /// The agent is waiting on an answer elsewhere, so the draft and its controls hold.
+    locked: Option<Lock>,
+    /// What the agent is waiting on, answered inside the box. The session pane sets it as it draws.
+    answer: Option<AnswerPanel>,
+    /// Settings picks still being written.
+    picking: u32,
+    /// A new session's own controls (composer_start.rs).
+    start_slots: Option<start::StartSlots>,
+    /// Each attached file's picture being read, by its id.
+    previews: HashMap<u64, Task<()>>,
+    /// A saved image being read to open it full size.
+    _opening: Option<Task<()>>,
+    /// A failed send's immutable request: a retry reuses its original receipt identity.
+    retry_ids: HashMap<crate::core::engine::SessionKey, PromptRequest>,
+    pending: HashMap<crate::core::engine::SessionKey, Vec<PendingPrompt>>,
+    _pending_read: Option<Task<()>>,
+    message_subscriptions: HashMap<String, Subscription>,
+    machine: Option<String>,
+    failed_drafts: HashMap<crate::core::engine::SessionKey, (String, Vec<Attachment>)>,
+    delivered: HashMap<crate::core::engine::SessionKey, std::collections::HashSet<String>>,
     /// How many sends this composer has named, for the next clientId.
     named: u64,
     /// Counts each pick's start and answer; a config read that saw it change answers what came before.
@@ -69,20 +121,26 @@ pub struct Composer {
 
 /// What the composer tells the session pane.
 pub enum ComposerEvent {
-    /// A send went out: the timeline puts its prompt at the top once it arrives.
+    /// Local draft intent; the form owns creation and checkout, and the draft remains intact.
+    StartRequested {
+        text: String,
+        images: Vec<StagedAttachment>,
+    },
+    /// A local pending prompt was captured before the call.
     Sending,
-    /// It answered its run id, for the session it was sent to.
-    Sent { session: String, run_id: String },
+    /// The owner committed the prompt. Its provider turn arrives later through rows.
+    Accepted {
+        key: crate::core::engine::SessionKey,
+        receipt: OwnerPromptAccepted,
+    },
+    PendingChanged,
+    /// That session's source moved under a read; the pane owns reopening it, if it still shows that session.
+    SourceLost(crate::core::engine::SessionKey),
 }
-
-/// The draft's hint: "Message" for a new session's first message, the mock's words once it has messages.
-pub fn placeholder(messages: bool) -> &'static str {
-    if messages {
-        "Ask for follow-up changes…"
-    } else {
-        "Message"
-    }
-}
+#[path = "owner_prompt.rs"]
+mod owner_prompt;
+pub use owner_prompt::OwnerPromptAccepted;
+use owner_prompt::{PendingPrompt, PromptRequest};
 
 impl Composer {
     pub fn new(client: Rc<dyn SessionClient>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -90,7 +148,7 @@ impl Composer {
             TextareaState::new(window, cx)
                 .auto_grow(1, DRAFT_ROWS)
                 .submit_on_enter(true)
-                .placeholder(placeholder(false))
+                .placeholder(hint(None, None))
         });
         let enter = cx.subscribe_in(
             &draft,
@@ -103,9 +161,43 @@ impl Composer {
                 _ => {}
             },
         );
+        let backend_connected = crate::core::socket::client::SocketClient::try_global(cx)
+            .map(|socket| {
+                matches!(
+                    socket.read(cx).state(),
+                    crate::core::socket::connection_state::ConnectionState::Connected { .. }
+                )
+            })
+            .unwrap_or(true);
+        let connection = crate::core::socket::client::SocketClient::try_global(cx).map(|socket| {
+            cx.observe(&socket, |composer: &mut Self, socket, cx| {
+                let connected = matches!(
+                    socket.read(cx).state(),
+                    crate::core::socket::connection_state::ConnectionState::Connected { .. }
+                );
+                composer.connection_changed(connected, cx);
+            })
+        });
+        let feed = EngineFeed::global(cx);
+        let engine = cx.observe(&feed, |composer: &mut Self, _, cx| {
+            composer.read_can_steer(cx)
+        });
         Composer {
             client,
+            start_draft: None,
+            initial_upload: None,
             session: None,
+            session_key: None,
+            expected_source: None,
+            source_valid: false,
+            source_serial: 0,
+            target_generation: 0,
+            owner: None,
+            advertised_target: None,
+            backend_connected,
+            _target: None,
+            _warm: None,
+            _connection: connection,
             draft,
             drafts: HashMap::new(),
             attachments: Vec::new(),
@@ -121,9 +213,29 @@ impl Composer {
             still_offline: false,
             meter: None,
             branch: None,
-            messages: false,
-            hint: placeholder(false),
+            hint: hint(None, None).into(),
+            has_opened: false,
+            turn_settled: false,
+            _settle: None,
+            width: px(0.),
+            add_open: false,
+            dragging: false,
+            can_steer: false,
+            _engine: engine,
+            agent_name: None,
+            locked: None,
+            answer: None,
+            picking: 0,
+            start_slots: None,
+            previews: HashMap::new(),
+            _opening: None,
             retry_ids: HashMap::new(),
+            pending: HashMap::new(),
+            _pending_read: None,
+            message_subscriptions: HashMap::new(),
+            machine: None,
+            failed_drafts: HashMap::new(),
+            delivered: HashMap::new(),
             named: 0,
             picks: 0,
             _enter: enter,
@@ -132,52 +244,73 @@ impl Composer {
         }
     }
 
-    /// Points the composer at a session: keeps the draft it leaves and puts back the one it left there.
-    pub fn set_session(
-        &mut self,
-        session: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.session == session {
-            return;
-        }
-        if let Some(left) = self.session.take() {
-            let text = self.draft.read(cx).value().to_string();
-            if !text.is_empty() {
-                self.drafts.insert(left, text);
-            }
-        }
-        let text = session
-            .as_ref()
-            .and_then(|session| self.drafts.remove(session))
-            .unwrap_or_default();
-        self.draft
-            .update(cx, |draft, cx| draft.set_value(text, window, cx));
-        self.session = session;
-        self.attachments.clear();
-        self.uploads.clear();
-        self.slash_selected = None;
-        (self.config, self.error, self._config) = (None, None, None);
-        self.read_config(cx);
-        cx.notify();
-    }
-
     /// The run going now; when one ends, the agent's menus are read again.
     pub fn set_running(&mut self, run: Option<String>, cx: &mut Context<Self>) {
         if self.running != run {
+            let started = self.running.is_none();
             let ended = run.is_none();
             self.running = run;
             if ended {
+                (self.turn_settled, self._settle) = (false, None);
                 self.read_config(cx);
+            } else if started {
+                self.turn_started(cx);
             }
             cx.notify();
         }
     }
 
-    /// The newest context report as (used, size), or `None` before the agent sends one.
-    pub fn set_context(&mut self, context: Option<(i64, i64)>, cx: &mut Context<Self>) {
-        let meter = context.and_then(|(used, size)| ContextMeter::of(used, size));
+    /// The turn now holds the box open, so the sent message's latch lets go; five seconds in, an empty box goes back to
+    /// its line so the reply has the room. Streamed output and steers never restart the count.
+    fn turn_started(&mut self, cx: &mut Context<Self>) {
+        (self.has_opened, self.turn_settled) = (false, false);
+        self._settle = Some(cx.spawn(async move |composer, cx| {
+            cx.background_executor().timer(TURN_SETTLES).await;
+            _ = composer.update(cx, |composer, cx| {
+                composer.turn_settled = true;
+                cx.notify();
+            });
+        }));
+    }
+
+    /// The agent is waiting on an answer elsewhere; the draft and its controls hold until it has one.
+    /// Drawn with the pane that owns the box, so it needs no notify of its own.
+    pub fn set_answer(&mut self, answer: Option<AnswerPanel>) {
+        self.answer = answer;
+    }
+
+    #[cfg(test)]
+    pub fn locked(&self) -> Option<Lock> {
+        self.locked
+    }
+
+    pub fn set_locked(&mut self, lock: Option<Lock>, cx: &mut Context<Self>) {
+        if self.locked != lock {
+            self.locked = lock;
+            cx.notify();
+        }
+    }
+
+    /// What the bound Engine session says now. A session the feed doesn't hold, or an older one that never said, is no.
+    fn read_can_steer(&mut self, cx: &mut Context<Self>) {
+        let can = self.session_key.as_ref().is_some_and(|key| {
+            let feed = EngineFeed::global(cx);
+            feed.read(cx)
+                .session(key)
+                .is_some_and(|session| session.can_steer)
+        });
+        if self.can_steer != can {
+            self.can_steer = can;
+            cx.notify();
+        }
+    }
+
+    /// The newest context report, or `None` before the agent sends one.
+    pub fn set_context(&mut self, context: Option<ContextReport>, cx: &mut Context<Self>) {
+        let meter = context.and_then(|report| {
+            ContextMeter::of(report.used, report.size)
+                .map(|meter| meter.with_tokens(report.input_tokens, report.output_tokens))
+        });
         if self.meter != meter {
             self.meter = meter;
             cx.notify();
@@ -188,14 +321,6 @@ impl Composer {
     pub fn set_branch(&mut self, branch: Option<String>, cx: &mut Context<Self>) {
         if self.branch != branch {
             self.branch = branch;
-            cx.notify();
-        }
-    }
-
-    /// Whether the open session has messages, for the draft's hint (`placeholder`).
-    pub fn set_messages(&mut self, messages: bool, cx: &mut Context<Self>) {
-        if self.messages != messages {
-            self.messages = messages;
             cx.notify();
         }
     }
@@ -216,6 +341,7 @@ impl Composer {
         if self.offline != machine {
             self.offline = machine;
             (self.connecting, self.still_offline) = (None, false);
+            self.refresh_config_target(cx);
             cx.notify();
         }
     }
@@ -246,102 +372,110 @@ impl Composer {
 
     /// Stops the run going now. It goes on if the call fails, so Stop stays to be pressed again.
     fn stop(&mut self, cx: &mut Context<Self>) {
+        if !self.operational() {
+            return;
+        }
         let Some(run) = self.running.clone().filter(|_| self.offline.is_none()) else {
             return;
         };
-        let call = self
-            .client
-            .call("send", "stop", json!({ "runId": run }), None, cx);
-        self._tasks.retain(|task| !task.is_ready());
-        self._tasks.push(cx.spawn(async move |_, _| _ = call.await));
-    }
-
-    /// Sends the draft once every attachment has uploaded; one whose upload failed is removed first.
-    fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self.session.clone() else {
             return;
         };
-        let typed = self.draft.read(cx).value().trim().to_string();
-        if self.offline.is_some()
-            || !self.all_saved()
-            || (typed.is_empty() && self.attachments.is_empty())
-        {
-            return;
-        }
-        let text = Attachment::with_lines(&typed, &self.attachments);
-        let attached = std::mem::take(&mut self.attachments);
-        self.uploads.clear();
-        (self.slash_selected, self.error) = (None, None);
-        self.draft
-            .update(cx, |draft, cx| draft.set_value("", window, cx));
-        cx.emit(ComposerEvent::Sending);
-        let client_id = match self.retry_ids.remove(&session) {
-            Some((was, id)) if was == text => id,
-            _ => {
-                self.named += 1;
-                let ms = chrono::Utc::now().timestamp_millis();
-                format!("{ms}-{}-{}", std::process::id(), self.named)
-            }
-        };
-        let args = json!({ "session": session, "text": text, "clientId": client_id });
-        let call = self.client.call("send", "send", args, None, cx);
+        let source_serial = self.source_serial;
+        let args = self.source_args(json!({"runId":run,"session":session}));
+        let call = self.client.call("send", "stop", args, None, cx);
         self._tasks.retain(|task| !task.is_ready());
-        self._tasks
-            .push(cx.spawn_in(window, async move |composer, cx| {
-                let answer = call.await;
-                composer
-                    .update_in(cx, |composer, window, cx| match answer {
-                        Ok(answer) => {
-                            if let Some(run_id) = answer["runId"].as_str() {
-                                cx.emit(ComposerEvent::Sent {
-                                    session,
-                                    run_id: run_id.to_string(),
-                                });
-                            }
-                        }
-                        // It didn't go out, or the socket closed before it answered (`Aborted`: a send has no key,
-                        // so nothing else takes its place): it comes back to its session's draft with its images,
-                        // unless something new was typed there, and a resend keeps its clientId in case the first
-                        // did land. Images don't follow a draft to another session.
-                        Err(error) => {
-                            if composer.session.as_ref() == Some(&session) {
-                                let hint = if matches!(error, CallError::Unreachable { .. }) {
-                                    " Check Settings > Connections."
-                                } else {
-                                    ""
-                                };
-                                composer.error = Some(
-                                    format!(
-                                        "Couldn't send: {}.{hint}",
-                                        error.reason().trim_end_matches('.')
-                                    )
-                                    .into(),
-                                );
-                                cx.notify();
-                            }
-                            composer
-                                .retry_ids
-                                .insert(session.clone(), (text, client_id));
-                            if composer.session.as_ref() != Some(&session) {
-                                composer.drafts.entry(session).or_insert(typed);
-                            } else if composer.draft.read(cx).value().is_empty()
-                                && composer.attachments.is_empty()
-                            {
-                                composer
-                                    .draft
-                                    .update(cx, |draft, cx| draft.set_value(typed, window, cx));
-                                composer.attachments = attached;
-                                cx.notify();
-                            }
-                        }
-                    })
-                    .ok();
-            }));
+        self._tasks.push(cx.spawn(async move |composer, cx| {
+            if let Err(error) = call.await {
+                let _ = composer.update(cx, |composer, cx| {
+                    if composer.source_serial == source_serial {
+                        composer.source_refused(&error, cx);
+                        composer.error = Some(error.reason().into());
+                        cx.notify();
+                    }
+                });
+            }
+        }));
+    }
+}
+
+/// What the Context tab shows of the composer (context/live_facts.rs).
+impl Composer {
+    /// The model, effort and access mode in the pills' words, grouped as the pills group them; one the agent doesn't
+    /// offer, or has no value for, is `None`.
+    pub fn live_config(&self) -> (Option<String>, Option<String>, Option<String>) {
+        let menus = self.menus().into_iter();
+        let grouped = Grouped::of(
+            menus
+                .map(|(option, current)| (option.clone(), current.to_string()))
+                .collect(),
+        );
+        let word = |slot: Option<(ConfigOption, String)>,
+                    label: fn(&ConfigOption, &str) -> String| {
+            let (option, current) = slot?;
+            let value = shown(&option, &current);
+            (!value.is_empty()).then(|| label(&option, value))
+        };
+        (
+            word(grouped.model, model_label),
+            word(grouped.effort, effort_label),
+            word(grouped.approval, |option, value| {
+                approval_label(Some(option), value)
+            }),
+        )
+    }
+
+    pub fn agent_name(&self) -> Option<SharedString> {
+        self.agent_name.clone()
+    }
+
+    /// The draft's images: the type the file was read as, else its name's; the saved path once uploaded.
+    pub fn draft_images(&self) -> Vec<DraftImage> {
+        (self.attachments.iter())
+            .map(|attachment| DraftImage {
+                id: attachment.id,
+                name: attachment.name.clone(),
+                mime: match &attachment.state {
+                    AttachmentState::Staged { mime, .. } => Some(*mime),
+                    _ => Attachment::mime_of(&attachment.name),
+                },
+                saved_path: match &attachment.state {
+                    AttachmentState::Saved { path } => Some(path.clone()),
+                    _ => None,
+                },
+                preview: attachment.shown_image(),
+            })
+            .collect()
+    }
+
+    /// Types into the draft as a key press would, for other features' tests.
+    #[cfg(test)]
+    pub fn type_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.draft.update(cx, |draft, cx| {
+            draft.set_value(text.to_string(), window, cx)
+        });
+        self.draft_changed(cx);
+    }
+
+    /// An image already saved at `path`, attached to the draft, for other features' tests.
+    #[cfg(test)]
+    pub fn attach_saved(&mut self, name: &str, path: &str, cx: &mut Context<Self>) {
+        self.attached += 1;
+        self.attachments.push(Attachment {
+            id: self.attached,
+            name: name.to_string().into(),
+            size: 1,
+            state: AttachmentState::Saved { path: path.into() },
+            preview: None,
+        });
+        cx.notify();
     }
 }
 
 /// The most lines the draft grows to before it scrolls.
 const DRAFT_ROWS: usize = 10;
+/// How long a new turn holds an empty box open.
+const TURN_SETTLES: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl EventEmitter<ComposerEvent> for Composer {}
 
@@ -349,9 +483,35 @@ impl EventEmitter<ComposerEvent> for Composer {}
 mod attach;
 #[path = "composer_config.rs"]
 mod config;
+#[path = "capsule/footer.rs"]
+mod footer;
 #[path = "composer_render.rs"]
 mod render;
+#[path = "composer_target.rs"]
+mod target;
 
 #[cfg(test)]
 #[path = "composer_view_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "live_config_tests.rs"]
+mod live_config_tests;
+
+#[cfg(test)]
+#[path = "qualified_tests.rs"]
+mod qualified_tests;
+#[path = "composer_selection.rs"]
+mod selection;
+#[path = "composer_send.rs"]
+mod send;
+
+#[path = "composer_start.rs"]
+mod start;
+pub use start::{StagedAttachment, StartSlots};
+#[cfg(test)]
+#[path = "tests/start_tests.rs"]
+mod start_tests;
+
+#[path = "composer_initial.rs"]
+mod initial;

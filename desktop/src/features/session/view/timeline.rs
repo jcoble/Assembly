@@ -1,13 +1,11 @@
 //! `Timeline` owns the virtual list (the kit's MessageScroller, which lays out only the rows on screen and keeps the
 //! reading place when a page goes on top) and the entries it draws.
-//! Where it scrolls is `Follow`'s decision. Each session's reading place is kept in memory, written when the session is
-//! left, never on a draw; G0 doesn't keep it across
-//! relaunches. Replaces the virtualizer half of
-//! Conversation.svelte and session/scroll.ts.
+//! Follow handles live arrivals. The sole workspace codec persists the source-qualified session reading place.
 
-use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::core::state::preferences::Preferences;
+use crate::core::theme::text::TextRole;
 use gpui_kit::component::message_scroller::{MessageScroller, MessageScrollerState};
 use gpui_kit::*;
 
@@ -32,13 +30,10 @@ pub struct Timeline {
     /// The entries on the list, each with its key.
     entries: Rc<Vec<(String, Entry)>>,
     follow: Follow,
-    /// Each session's reading place, by session id: the key of the top row on screen when it was left.
-    places: HashMap<String, String>,
-    /// The reading place to go back to when the session's first page lands, if its row is in it.
-    restore: Option<String>,
     /// The top row on screen when the scroller last changed.
     top: usize,
     _scrolled: Subscription,
+    _appearance: Option<Subscription>,
     /// How many times the entries were worked out again, for tests.
     #[cfg(test)]
     pub builds: usize,
@@ -68,16 +63,32 @@ impl Timeline {
             }
             cx.notify();
         });
+        let appearance = Preferences::try_global(cx).map(|preferences| {
+            let mut metrics = Preferences::read(cx, |appearance| {
+                (appearance.ui_font(), appearance.ui_text(TextRole::Chat))
+            });
+            cx.observe(&preferences, move |timeline, _, cx| {
+                let next = Preferences::read(cx, |appearance| {
+                    (appearance.ui_font(), appearance.ui_text(TextRole::Chat))
+                });
+                if next != metrics {
+                    metrics = next;
+                    timeline.scroller.update(cx, |scroller, cx| {
+                        scroller.remeasure_items(0..timeline.entries.len(), cx);
+                    });
+                    cx.notify();
+                }
+            })
+        });
         Timeline {
             scroller,
             render_row,
             session: None,
             entries: Rc::default(),
             follow: Follow::default(),
-            places: HashMap::new(),
-            restore: None,
             top: 0,
             _scrolled: scrolled,
+            _appearance: appearance,
             #[cfg(test)]
             builds: 0,
         }
@@ -92,21 +103,6 @@ impl Timeline {
         entries: Vec<(String, Entry)>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(left) = self.session.take() {
-            let top = self.scroller.read(cx).logical_scroll_top().item_ix;
-            match self
-                .entries
-                .get(top)
-                .filter(|_| !self.scroller.read(cx).is_following_tail())
-            {
-                Some((key, _)) => self.places.insert(left, key.clone()),
-                None => self.places.remove(&left),
-            };
-        }
-        self.restore = session
-            .as_ref()
-            .and_then(|session| self.places.get(session))
-            .cloned();
         self.session = session;
         self.follow = Follow::default();
         let count = entries.len();
@@ -153,20 +149,42 @@ impl Timeline {
                 scroller.remeasure_items(at..at + 1, cx);
             }
         });
-        // The first page's rows are where the place can come back; one older than them opens at the end, and an older
-        // page that holds it later doesn't jump there. A Working line alone isn't the page.
-        let paged = self
-            .entries
-            .iter()
-            .any(|(_, entry)| matches!(entry, Entry::Item(_)));
-        let restore = self.restore.take_if(|_| paged);
-        if let Some(at) =
-            restore.and_then(|key| self.entries.iter().position(|(entry, _)| *entry == key))
-        {
+        cx.notify();
+    }
+
+    pub(super) fn workspace_place(&self, cx: &App) -> super::session_pane::chat_codec::ChatPlace {
+        let scroller = self.scroller.read(cx);
+        let offset = scroller.logical_scroll_top();
+        super::session_pane::chat_codec::ChatPlace {
+            item_key: self.entries.get(offset.item_ix).map(|(key, _)| key.clone()),
+            // The kit can scroll to a row but not into one, so a place records its row: an offset here would be refused
+            // on restore, and on capture too, which stops every save and session switch while scrolled up.
+            offset: 0.,
+            following: scroller.is_following_tail(),
+        }
+    }
+    pub(super) fn restore_workspace_place(
+        &mut self,
+        place: &super::session_pane::chat_codec::ChatPlace,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if place.following {
+            self.scroller
+                .update(cx, |scroller, cx| scroller.scroll_to_end(cx));
+        } else if let Some(at) = place.item_key.as_ref().and_then(|key| {
+            self.entries
+                .iter()
+                .position(|(candidate, _)| candidate == key)
+        }) {
             self.scroller
                 .update(cx, |scroller, cx| scroller.scroll_to_item(at, cx));
+        } else {
+            // An anchor outside the coherent first page stays at the tail; later paging never jumps the reader.
+            self.scroller
+                .update(cx, |scroller, cx| scroller.scroll_to_end(cx));
         }
         cx.notify();
+        Ok(())
     }
 
     /// Measures and draws one row again, by its key, leaving the entries as they are.

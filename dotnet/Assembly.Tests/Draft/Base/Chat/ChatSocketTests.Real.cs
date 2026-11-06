@@ -32,15 +32,17 @@ public sealed partial class ChatSocketTests
     private SessionRegistry? _registry;
     private WebApplication? _real;
     private Uri _realAddress = null!;
+    private readonly TaskCompletionSource _providerReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private async Task<ClientWebSocket> OpenRealAsync()
     {
         if (_real is null)
         {
-            _work = new BackgroundWork(_time, _log);
-            _registry = new SessionRegistry(_hub, _sessions, _launcher, _time, _log, _work);
             var calls = new SocketDispatcher(_db.Writer, new TopicSet(), _time, _calls);
-            new SendFeature(_sessions, new MachineSet(new LocalMachine(_hub, _sessions, _registry, _attachments)), _hub).Register(calls);
+            var machines = new MachineSet(new LocalMachine(_hub, _sessions, _registry!, _attachments));
+            var door = new Assembly.Infrastructure.Engine.EngineDoor(_engine, _sessions, machines, _attachments, _time, null!);
+            new SendFeature(_sessions, machines, _hub, door).Register(calls);
+            _providerReady.TrySetResult();
             var builder = WebApplication.CreateSlimBuilder();
             builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
@@ -63,10 +65,11 @@ public sealed partial class ChatSocketTests
 
     private async Task StopRealAsync()
     {
-        if (_real is null)
-            return;
-        await _real.StopAsync();
-        await _real.DisposeAsync();
+        if (_real is not null)
+        {
+            await _real.StopAsync();
+            await _real.DisposeAsync();
+        }
         await _registry!.DisposeAsync();
         await _work!.DisposeAsync();
     }

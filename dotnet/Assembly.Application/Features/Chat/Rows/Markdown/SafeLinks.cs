@@ -3,8 +3,9 @@ using Assembly.Domain.Markdown;
 namespace Assembly.Application.Features.Chat.Rows.Markdown;
 
 /// <summary>
-/// Decides what a link becomes. Web links only for http, https, mailto and in-page anchors; workspace paths
-/// and <c>file:</c> links become file links; anything else (javascript:, data:, …) becomes plain text.
+/// Decides what a link becomes. Links only for http, https, mailto, in-page anchors and the app's own
+/// <c>assembly:</c>, which the desktop checks when it's followed; workspace paths and <c>file:</c> links become file
+/// links; anything else (javascript:, data:, …) becomes plain text.
 /// The same rules as Assembly's safe_markdown.rs.
 /// </summary>
 internal static class SafeLinks
@@ -15,16 +16,17 @@ internal static class SafeLinks
         if (trimmed.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
             return FilePath(StripFileScheme(trimmed)) is { } filePath ? new SafeFileLink(filePath, parts) : AsText(parts);
 
-        if (IsWebLink(trimmed) && !HasControlCharacters(trimmed))
+        if (IsAllowedLink(trimmed) && !HasControlCharacters(trimmed))
             return new SafeLink(trimmed, parts);
 
         return FilePath(trimmed) is { } path ? new SafeFileLink(path, parts) : AsText(parts);
     }
 
-    private static bool IsWebLink(string href) =>
+    private static bool IsAllowedLink(string href) =>
         href.StartsWith("http:", StringComparison.OrdinalIgnoreCase)
         || href.StartsWith("https:", StringComparison.OrdinalIgnoreCase)
         || href.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase)
+        || href.StartsWith("assembly:", StringComparison.OrdinalIgnoreCase)
         || href.StartsWith('#');
 
     private static string StripFileScheme(string href) =>

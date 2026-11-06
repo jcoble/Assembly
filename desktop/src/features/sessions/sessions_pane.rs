@@ -1,11 +1,12 @@
 //! `SessionsPane` is the sessions column: a search field (title or project) with view options and New session beside
-//! it, provider, location and status pills, the saved grouping and sort popover, and the backend's explicit
+//! it, provider, status and location pills, the saved grouping and sort popover, and the backend's explicit
 //! section, project and session entries as a virtual list, loading
 //! the next page as the reader nears its end. Every list and total comes from `sessions/rail`, read again whenever
 //! the `sessionRail` topic says a session changed (and at subscribe and each reconnect). A row's menu moves its
 //! session between Working and Done or settles it (`sessions/mark`). It registers under the sessions pane's name,
 //! after the placeholders.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
@@ -23,33 +24,39 @@ use super::new_session_form::NewSessionForm;
 use super::rail_page::{Rail, RailPage, Request};
 use super::view_options::{OnView, VIEW_KEY, View, saved_view, view_options};
 use crate::core::clock::backend_clock::BackendClock;
-use crate::core::clock::tick::Tick;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
 use crate::core::socket::update::Update;
-use crate::core::state::machines::{GlobalMachines, Machines};
+use crate::core::state::machines::GlobalMachines;
+use crate::core::state::preferences::Preferences;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::GlobalSessions;
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::sessions as ids;
 use crate::core::ui::filter_pills::{FilterGroup, FilterOption, FilterPills, FilterPillsChanged};
+use crate::core::ui::provider_name::provider_name;
 
 const RAIL_TOPIC: &str = "sessionRail";
 /// The pills' picks among the backend's preferences.
 const FILTERS_KEY: &str = "rail.filters";
 /// The pills' groups, in order.
 const PROVIDER: usize = 0;
-const LOCATION: usize = 1;
-const STATUS: usize = 2;
+const STATUS: usize = 1;
+const LOCATION: usize = 2;
 
 pub struct SessionsPane {
     focus: FocusHandle,
+    pub(super) drops: Entity<crate::core::ui::row_drop_down::RowDropDowns>,
     /// The new-session form while it's open, with the subscription that closes it once it's made a session.
-    pub(super) creating: Option<(Entity<NewSessionForm>, Subscription)>,
+    pub(super) creating: Option<(Entity<NewSessionForm>, [Subscription; 2])>,
     /// The marks on their way, each until its answer, by `next_mark`.
     pub(super) marking: HashMap<u64, Task<()>>,
     pub(super) next_mark: u64,
-    /// Why the last mark failed, until the next one starts.
-    pub(super) mark_error: Option<SharedString>,
+    /// Why the last mark or open failed, until the next one starts.
+    pub(super) row_error: Option<SharedString>,
+    /// Waits for the answer to the last row opened, so a refusal says why instead of looking like a dead click.
+    opening: Option<Subscription>,
     /// What the column asks for and holds.
     pub(super) rail: Rail,
     /// The read that's out; replacing it drops the older one.
@@ -72,6 +79,13 @@ pub struct SessionsPane {
     /// The last frame drew a running row, so the next tick redraws its running time.
     pub(super) running_drawn: Rc<Cell<bool>>,
     _heard: Vec<Subscription>,
+    pub(super) source_pass: Option<Task<()>>,
+    pub(super) source_serial: u64,
+    pub(super) source_cut: Option<(Entity<SocketClient>, u64, Vec<Option<String>>)>,
+    /// The connection the engine watches were opened on: a new one opens them again.
+    pub(super) source_connection: Option<(Entity<SocketClient>, u64)>,
+    pub(super) engine_watches:
+        HashMap<crate::core::engine::EngineScope, crate::core::engine::EngineWatch>,
     /// The `sessionRail` feed and the backend clock, once the backend's first ready line started the socket.
     feed: Option<(Task<()>, Entity<BackendClock>, Subscription)>,
     /// The socket's and the machines list's observers.
@@ -82,6 +96,8 @@ impl SessionsPane {
     /// Registers the column as the layout's Sessions pane. It runs after the placeholders register, since the last
     /// registration for a name wins.
     pub fn register(cx: &mut App) {
+        super::search_keys::register_search_keys(cx);
+        NewSessionForm::register_projects(cx);
         register_panel(cx, "Sessions", |_, window, cx| {
             panel_handle(cx.new(|cx| SessionsPane::new(window, cx)))
         });
@@ -106,15 +122,37 @@ impl SessionsPane {
         let pills = cx.new(|cx| {
             let provider = FilterGroup::new("Provider", Vec::new());
             FilterPills::new(
+                "sessions",
                 vec![
                     provider,
-                    FilterGroup::new("Location", locations.into()),
                     FilterGroup::new("Status", statuses.into()),
+                    FilterGroup::new("Location", locations.into()),
                 ],
                 cx,
             )
         });
-        let heard = vec![
+        let engine = crate::core::engine::EngineFeed::global(cx);
+        let engine_changed =
+            cx.subscribe(
+                &engine,
+                |pane, _, changed: &crate::core::engine::EngineChanged, cx| {
+                    if changed.scopes.iter().any(|scope| {
+                        matches!(scope.topic.as_str(), "sessions" | "needs_me" | "runs")
+                    }) || changed
+                        .keys
+                        .iter()
+                        .any(|key| matches!(key.kind.as_str(), "session" | "needs_me" | "step"))
+                    {
+                        let read = pane.rail.changed();
+                        pane.send(read, cx);
+                    }
+                    cx.notify();
+                },
+            );
+        let (drops, dropdowns) = Self::dropdowns(cx);
+        let mut heard = vec![
+            dropdowns,
+            engine_changed,
             cx.observe(&SelectedSession::global(cx), |_, _, cx| cx.notify()),
             cx.observe_global::<GlobalSessions>(|pane, cx| pane.follow_backend(cx)),
             cx.observe_global::<GlobalMachines>(|pane, cx| pane.follow_backend(cx)),
@@ -137,12 +175,32 @@ impl SessionsPane {
                 pane.send(Some(read), cx);
             }),
         ];
+        if let Some(preferences) = Preferences::try_global(cx) {
+            let mut metrics = Preferences::read(cx, |appearance| {
+                (appearance.ui_font(), appearance.ui_text(TextRole::Title))
+            });
+            heard.push(cx.observe(&preferences, move |pane, _, cx| {
+                let next = Preferences::read(cx, |appearance| {
+                    (appearance.ui_font(), appearance.ui_text(TextRole::Title))
+                });
+                if next != metrics {
+                    metrics = next;
+                    let top = pane.lines.logical_scroll_top();
+                    let count = pane.entries.len();
+                    pane.lines.remeasure_items(0..count);
+                    pane.lines.scroll_to(top);
+                    cx.notify();
+                }
+            }));
+        }
         let mut pane = SessionsPane {
             focus: cx.focus_handle(),
+            drops,
             creating: None,
             marking: HashMap::new(),
             next_mark: 0,
-            mark_error: None,
+            row_error: None,
+            opening: None,
             rail: Rail::default(),
             reading: None,
             filter,
@@ -155,59 +213,16 @@ impl SessionsPane {
             now: None,
             running_drawn: Rc::default(),
             _heard: heard,
+            source_connection: None,
+            engine_watches: HashMap::new(),
+            source_pass: None,
+            source_serial: 0,
+            source_cut: None,
             feed: None,
             _backend: Vec::new(),
         };
         pane.follow_backend(cx);
         pane
-    }
-
-    /// Once the backend's first ready line has started the socket: subscribes to `sessionRail`, whose state (now and
-    /// after each reconnect) and every change read the rail again, holds the backend clock for the ages, and redraws
-    /// as the connection and the machines change.
-    fn follow_backend(&mut self, cx: &mut Context<Self>) {
-        let Some(socket) = SocketClient::try_global(cx) else {
-            return cx.notify();
-        };
-        if self.feed.is_none() {
-            let mut changes = socket.read(cx).subscribe(RAIL_TOPIC, None);
-            let feed = cx.spawn(async move |pane, cx| {
-                while changes.updates.recv().await.is_ok() {
-                    let heard = pane.update(cx, |pane, cx| {
-                        let read = pane.rail.changed();
-                        pane.send(read, cx);
-                    });
-                    if heard.is_err() {
-                        return;
-                    }
-                }
-            });
-            let clock = cx.new(|cx| {
-                let mut clock = BackendClock::new();
-                clock.hold(cx);
-                clock
-            });
-            let ticks = cx.subscribe(&clock, |pane, _, tick: &Tick, cx| pane.tick(tick.now, cx));
-            self.feed = Some((feed, clock, ticks));
-            let mut preferences = socket.read(cx).subscribe("preferences", None);
-            self.restoring = Some(cx.spawn(async move |pane, cx| {
-                let first = preferences.updates.recv().await.ok();
-                if let Some(first) = first.as_ref() {
-                    let (providers, locations, statuses) = saved_filters(first).unwrap_or_default();
-                    let view = saved_view(first);
-                    pane.update(cx, |pane, cx| {
-                        pane.restore(providers, locations, statuses, view, cx)
-                    })
-                    .ok();
-                }
-            }));
-        }
-        let mut backend = vec![cx.observe(&socket, |_, _, cx| cx.notify())];
-        backend.extend(
-            Machines::try_global(cx).map(|machines| cx.observe(&machines, |_, _, cx| cx.notify())),
-        );
-        self._backend = backend;
-        cx.notify();
     }
 
     /// Whether the column follows the backend's rail topic.
@@ -245,23 +260,6 @@ impl SessionsPane {
             pane.update(cx, |pane, cx| pane.answer(id, outcome, cx))
                 .ok();
         }));
-        cx.notify();
-    }
-
-    pub(super) fn set_view(&mut self, view: View, cx: &mut Context<Self>) {
-        self.lines.scroll_to(ListOffset::default());
-        self.from_start = true;
-        self.save_view(view, cx);
-        let read = self.rail.set_view(view);
-        self.send(Some(read), cx);
-    }
-
-    /// Takes a read's answer, and sends the read it asks for next. The selection is left alone: a session that left
-    /// the current view stays open.
-    pub(super) fn answer(&mut self, id: u64, outcome: Outcome<RailPage>, cx: &mut Context<Self>) {
-        let next = self.rail.finish(id, outcome);
-        self.show_providers(cx);
-        self.send(next, cx);
         cx.notify();
     }
 
@@ -339,18 +337,45 @@ impl SessionsPane {
     }
 
     /// Opens a row's session, and clears the filter, as picking a result did in the old rail.
-    pub(super) fn open(&mut self, session_id: String, window: &mut Window, cx: &mut Context<Self>) {
-        SelectedSession::global(cx)
-            .update(cx, |selected, cx| selected.select(Some(session_id), cx));
+    pub(super) fn open(
+        &mut self,
+        session_id: String,
+        route_machine: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let expected = request_id.clone();
+        let route = route_machine.clone();
+        let session = session_id.clone();
+        self.row_error = None;
+        self.opening = Some(cx.subscribe(
+            &crate::core::state::selected_session::SelectedSession::global(cx),
+            move |pane, _, event: &crate::core::intents::session_open::SessionOpenResult, cx| {
+                if event.request_id != expected {
+                    return;
+                }
+                pane.opening = None;
+                if let Err(error) = &event.result {
+                    eprintln!(
+                        "sessions: {session} on {route:?} didn't open: {}: {}",
+                        error.code, error.message
+                    );
+                    pane.row_error = Some(refusal_words(route.as_deref(), error).into());
+                    cx.notify();
+                }
+            },
+        ));
+        window.dispatch_action(
+            Box::new(crate::core::intents::open_session::OpenSession {
+                id: session_id,
+                route_machine,
+                request_id,
+                historical: false,
+            }),
+            cx,
+        );
         self.clear_filter(window, cx);
-    }
-
-    /// Escape in the filter, or a pick: the filter empties and the rail reads without it.
-    pub(super) fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.filter
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        let read = self.rail.set_filter("");
-        self.send(read, cx);
     }
 
     /// The top line: the search field (the title or project text, which Escape clears), then view options and New
@@ -378,7 +403,12 @@ impl SessionsPane {
                     .size(px(13.))
                     .text_color(theme.muted_foreground.opacity(0.65)),
             )
-            .child(Input::new(&self.filter).small().appearance(false));
+            .child(
+                Input::new(&self.filter)
+                    .small()
+                    .appearance(false)
+                    .control(ids::SEARCH, "Search sessions"),
+            );
         h_flex()
             .pl(px(12.))
             .pr(px(8.))
@@ -386,7 +416,7 @@ impl SessionsPane {
             .pb(px(10.))
             .gap(px(2.))
             .capture_action(
-                cx.listener(|pane, _: &Escape, window, cx| pane.clear_filter(window, cx)),
+                cx.listener(|pane, _: &Escape, window, cx| pane.escape_filter(window, cx)),
             )
             .child(field)
             .child(view_options(self.rail.view_options, on_view, cx))
@@ -415,6 +445,15 @@ pub fn empty_line(state: Option<&ConnectionState>) -> &'static str {
     }
 }
 
+/// What the empty column says. While an update finishes, the window's notice says why there's no backend.
+pub fn empty_words(state: Option<&ConnectionState>, update_finishing: bool) -> &'static str {
+    if update_finishing {
+        ""
+    } else {
+        empty_line(state)
+    }
+}
+
 /// The saved provider and location picks in the `preferences` topic's first update, its state.
 pub fn saved_filters(update: &Update) -> Option<(Vec<String>, Vec<String>, Vec<String>)> {
     let Update::State(items) = update else {
@@ -430,137 +469,11 @@ pub fn saved_filters(update: &Update) -> Option<(Vec<String>, Vec<String>, Vec<S
 pub fn provider_options(agents: &[String], picked: &[String]) -> Vec<FilterOption> {
     let extra = picked.iter().filter(|pick| !agents.contains(pick));
     (agents.iter().chain(extra))
-        .map(|agent| {
-            let mut letters = agent.chars();
-            let first = letters.next().map(|first| first.to_uppercase());
-            FilterOption {
-                value: agent.clone(),
-                label: first.into_iter().flatten().chain(letters).collect(),
-            }
+        .map(|agent| FilterOption {
+            value: agent.clone(),
+            label: provider_name(agent),
         })
         .collect()
-}
-
-impl EventEmitter<PanelEvent> for SessionsPane {}
-
-impl Focusable for SessionsPane {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-
-impl BasePanel for SessionsPane {
-    /// The sessions pane's name in the saved layout (g0-shape's `SESSIONS`).
-    fn panel_name(&self) -> &'static str {
-        "Sessions"
-    }
-
-    /// The sessions column is a permanent pane.
-    fn closable(&self, _cx: &App) -> bool {
-        false
-    }
-}
-
-impl Panel for SessionsPane {
-    fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        "Sessions"
-    }
-}
-
-impl Render for SessionsPane {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
-        let (warning, border) = (cx.theme().warning, cx.theme().border.opacity(0.6));
-        let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
-        let creating = self.creating.is_some();
-        let pane = cx.entity().downgrade();
-        let on_view: OnView = Rc::new(move |view, _: &mut Window, cx: &mut App| {
-            pane.update(cx, |pane, cx| pane.set_view(view, cx)).ok();
-        });
-        let new_session = header_button(Button::new("new-session"), cx)
-            .icon(if creating {
-                IconName::X
-            } else {
-                IconName::Plus
-            })
-            .tooltip(if creating { "Cancel" } else { "New session" })
-            .on_click(cx.listener(|pane, _, window, cx| pane.toggle_form(window, cx)));
-        self.follow_entries(window, cx);
-        self.running_drawn.set(false);
-        let list = list(self.lines.clone(), self.line_renderer(cx)).flex_1();
-        let empty = match self.rail.loaded {
-            true => "No sessions here.",
-            false => empty_line(state.as_ref()),
-        };
-        v_flex()
-            .track_focus(&self.focus)
-            .size_full()
-            .child(self.search(on_view, new_session, cx))
-            // The pills, then a rule across the card, as the mock's `.pills` has.
-            .child(
-                v_flex()
-                    .border_b_1()
-                    .border_color(border)
-                    .child(self.pills.clone())
-                    // Its own line under the pills, so it never covers one: the rows' amber question chip.
-                    .children(needs_words(self.rail.totals.needs).map(|words| {
-                        h_flex()
-                            .justify_end()
-                            .mt(px(-2.))
-                            .pr(px(12.))
-                            .pb(px(8.))
-                            .child(
-                                h_flex()
-                                    .h(px(18.))
-                                    .px(px(7.))
-                                    .gap(px(4.))
-                                    .rounded_full()
-                                    .bg(warning.opacity(0.12))
-                                    .text_size(px(10.5))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(warning)
-                                    .child(div().size(px(6.)).rounded_full().bg(warning))
-                                    .child(words),
-                            )
-                    })),
-            )
-            .children(self.creating.as_ref().map(|(form, _)| form.clone()))
-            .map(|pane| match self.entries.is_empty() {
-                false => pane.child(list),
-                true => pane.child(div().px_3().py_2().text_sm().text_color(muted).child(empty)),
-            })
-            .when_some(self.mark_error.clone(), |pane, error| {
-                pane.child(
-                    div()
-                        .px_3()
-                        .py_1()
-                        .text_sm()
-                        .text_color(danger)
-                        .child(error),
-                )
-            })
-            .when_some(self.rail.error.clone(), |pane, error| {
-                pane.child(
-                    h_flex()
-                        .px_3()
-                        .py_1()
-                        .gap_2()
-                        .text_sm()
-                        .text_color(danger)
-                        .child(error)
-                        .child(
-                            Button::new("retry-rail")
-                                .ghost()
-                                .compact()
-                                .label("Retry")
-                                .on_click(cx.listener(|pane, _, _, cx| {
-                                    let read = pane.rail.changed();
-                                    pane.send(read, cx);
-                                })),
-                        ),
-                )
-            })
-    }
 }
 
 /// The rail's filtered "need you" total in words, or nothing at zero.
@@ -572,6 +485,34 @@ fn needs_words(needs: usize) -> Option<String> {
     }
 }
 
+/// Says why a row didn't open. A row on another machine is refused as `source_changed` when that machine can't be
+/// reached, which reads as nonsense to someone who only clicked a row, so it names the machine instead.
+pub(crate) fn refusal_words(
+    route: Option<&str>,
+    error: &crate::core::engine::EngineRefusal,
+) -> String {
+    match route {
+        _ if error.code == "unknown_engine_session" => NOT_FOUND.into(),
+        Some(machine) if error.code == "source_changed" => not_connected(machine),
+        _ => format!("That session didn't open: {}", error.message),
+    }
+}
+
+const NOT_FOUND: &str = "That session wasn't found. It may have been removed, or the link may be wrong; check the Sessions list.";
+
+/// A session on `machine`, which this app can't reach or doesn't have.
+pub(crate) fn not_connected(machine: &str) -> String {
+    format!("That session is on {machine}, which this app isn't connected to.")
+}
+
+#[cfg(test)]
+#[path = "sessions_pane_refusal_tests.rs"]
+mod refusal_tests;
+#[path = "sessions_pane_render.rs"]
+mod render;
 #[cfg(test)]
 #[path = "sessions_pane_tests.rs"]
 mod tests;
+
+#[path = "drop_down/rail_engine.rs"]
+pub(super) mod engine_rows;

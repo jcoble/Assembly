@@ -11,7 +11,7 @@ pub struct Row {
     pub keywords: &'static str,
 }
 
-pub const ROWS: [Row; 11] = [
+pub const ROWS: [Row; 15] = [
     Row {
         id: "theme",
         section: "appearance",
@@ -43,6 +43,14 @@ pub const ROWS: [Row; 11] = [
         title: "Interface font size",
         description: "Base size for chrome, labels and menus.",
         keywords: "type scale bigger smaller",
+    },
+    Row {
+        id: "ui-line-height",
+        section: "appearance",
+        card: "Text",
+        title: "Interface line height",
+        description: "Space between lines in the session rail and interface.",
+        keywords: "spacing leading rows",
     },
     Row {
         id: "editor-font",
@@ -93,11 +101,35 @@ pub const ROWS: [Row; 11] = [
         keywords: "spacing leading",
     },
     Row {
+        id: "terminal-cursor-blink",
+        section: "terminal",
+        card: "Behaviour",
+        title: "Cursor blink",
+        description: "Pulse the terminal cursor when idle.",
+        keywords: "caret flash",
+    },
+    Row {
         id: "machines",
         section: "connections",
         card: "Remote machines",
         title: "Machines",
         description: "This Mac and the remote machines the backend knows.",
         keywords: "ssh workbox server remote reconnect connect disconnect add edit remove port token",
+    },
+    Row {
+        id: "session-depth-limit",
+        section: "agents",
+        card: "Sessions",
+        title: "Session depth limit",
+        description: "How many levels of sessions started by sessions. 1: a top-level session's children can't start more.",
+        keywords: "depth tree levels nesting",
+    },
+    Row {
+        id: "session-child-limit",
+        section: "agents",
+        card: "Sessions",
+        title: "Sessions each session may run",
+        description: "Unfinished sessions one session may have started at once.",
+        keywords: "children breadth helpers",
     },
 ];

@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Images;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Assembly.Application.Common.Machines;
@@ -135,11 +136,11 @@ public sealed partial class ChatSocketTests
         socket.Dispose();
         await _here.Cancelled.Task.WaitAsync(Wait);
 
-        // Nothing marks the moment a close would drop it too early, so give that half a second to show. The held
-        // commit's own file is there either way, so this watches the chunked upload's.
-        Assert.False(SpinWait.SpinUntil(() => !File.Exists(Path.Combine(Staging, upload)), TimeSpan.FromMilliseconds(500)));
+        await _box.Cancelled.Task.WaitAsync(Wait);
         _box.Release();
-        Assert.True(SpinWait.SpinUntil(() => Directory.GetFiles(Staging).Length == 0, Wait));
+        await _socketClosed.Task.WaitAsync(Wait);
+        Assert.Empty(Directory.GetFiles(Staging));
+        Assert.Null(_box.Saved);
     }
 
     [Fact]
@@ -254,7 +255,7 @@ public sealed partial class ChatSocketTests
         foreach (var file in new[] { left, other, inside })
             File.WriteAllText(file, "x");
 
-        _ = new AttachmentsFeature(_sessions, new MachineSet(_here, _box), _attachments, Staging);
+        _ = new AttachmentsFeature(_sessions, new MachineSet(_here, _box), Staging);
 
         Assert.False(File.Exists(left));
         Assert.True(File.Exists(other));
@@ -264,6 +265,7 @@ public sealed partial class ChatSocketTests
     [Fact]
     public async Task Read_answers_an_attachment_a_piece_at_a_time()
     {
+        _here.Attachments = _attachments;
         var session = _sessions.Create("claude", "repo");
         var image = Png(3 * Mb / 2);
         var name = Path.GetFileName(await _attachments.SaveAsync(session.SessionId, AttachmentImage, image, CancellationToken.None));
@@ -281,8 +283,8 @@ public sealed partial class ChatSocketTests
         Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
     }
 
-    private static readonly Assembly.Application.Features.Chat.Attachments.ImageType AttachmentImage =
-        Assembly.Application.Features.Chat.Attachments.ImageType.ForExtension("png")!;
+    private static readonly Assembly.Application.Common.Images.ImageType AttachmentImage =
+        Assembly.Application.Common.Images.ImageType.ForExtension("png")!;
 
     // A PNG's first bytes, then filler.
     private static byte[] Png(int size)
@@ -322,7 +324,7 @@ public sealed partial class ChatSocketTests
         return result.Clone();
     }
 
-    // Of the attachments calls, only commit reaches the session's machine.
+    // A commit reaches the session's owning machine and drops its upload even when that machine is down.
     [Fact]
     public async Task Commit_to_a_machine_thats_down_is_unreachable_and_drops_the_upload()
     {

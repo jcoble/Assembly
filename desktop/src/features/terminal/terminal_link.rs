@@ -11,7 +11,10 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+use crate::core::socket::call_failure::CallFailure;
 use crate::core::socket::client::SocketClient;
+use crate::core::socket::connection_state::ConnectionState;
+use crate::core::socket::error_code::ErrorCode;
 use crate::core::socket::outcome::Outcome;
 use crate::core::socket::pending_call::PendingCall;
 use crate::core::socket::topic_subscription::TopicSubscription;
@@ -47,52 +50,68 @@ struct OutputPiece {
     data: String,
 }
 
-/// One row of the `terminal` topic (OutputRow.cs): the bytes from `prev_seq` to `seq`, or the exit.
+/// One row of the `terminal` topic (OutputRow.cs): the bytes from `prev_seq` to `seq`, the exit, or why the rows
+/// stopped, which carries no offsets.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OutputRow {
-    seq: i64,
-    prev_seq: i64,
+    seq: Option<i64>,
+    prev_seq: Option<i64>,
     data: Option<String>,
     exit: Option<i32>,
+    unavailable: Option<Availability>,
+}
+
+/// Why a terminal's rows have stopped, as a row's `unavailable` says (OutputRow.cs).
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Availability {
+    ConnectionLost,
+    TerminalMissing,
+    SourceChanged,
 }
 
 /// What the link hands the pane.
+#[derive(Debug, PartialEq)]
 pub enum Output {
     Bytes(Vec<u8>),
     Exit(i32),
+    Unavailable(Availability),
+    /// A row with offsets that adds no bytes: the connection is back and nothing was missed.
+    Caught,
+}
+
+/// Whether a call failed because the connection is down: it comes back by itself.
+pub fn connection_down(failure: &CallFailure) -> bool {
+    matches!(
+        failure.code,
+        ErrorCode::ConnectionLost | ErrorCode::Unreachable { .. }
+    )
+}
+
+/// Whether a call failed because the terminal's source changed.
+pub fn source_changed(failure: &CallFailure) -> bool {
+    matches!(&failure.code, ErrorCode::Refused { code } if code == "source_changed")
 }
 
 impl TerminalLink {
-    /// The session's running shell, or a new one in its folder at this size, with the size it has and the output of
-    /// the shell it replaces, if that one ended: shown above the new one, as before. The backend picks the folder from
-    /// the owner (StartArgs.cs), routes to the machine that owns the session, and drops the ended shell on the start.
+    /// The session's running shell, or a new one in its folder at this size, with the size it has. A shell that ended
+    /// isn't read: the new one starts clean. The backend picks the folder from the owner (StartArgs.cs), routes to the
+    /// machine that owns the session, and drops the ended shell on the start.
     pub async fn open(
         session: &str,
         (cols, rows): (usize, usize),
         cx: &mut AsyncApp,
-    ) -> Result<(Self, (usize, usize), Vec<u8>), String> {
+    ) -> Result<(Self, (usize, usize)), CallFailure> {
         let list: Vec<TerminalInfo> = call(cx, "list", json!({"owner": session})).await?;
-        let (mut running, mut ended) = (None, None);
-        for info in list {
-            if info.owner.as_deref() == Some(session) && info.command.is_none() {
-                match info.exit_code {
-                    None => running = Some(info),
-                    Some(_) => ended = Some(info),
-                }
-            }
-        }
-        let mut before = Vec::new();
+        let running = list.into_iter().find(|info| {
+            info.owner.as_deref() == Some(session)
+                && info.command.is_none()
+                && info.exit_code.is_none()
+        });
         let info = match running {
             Some(info) => info,
             None => {
-                if let Some(ended) = ended {
-                    let mut link = Self {
-                        id: ended.id,
-                        end: 0,
-                    };
-                    before = link.replay(cx).await?;
-                }
                 let args = json!({ "owner": session, "cols": cols, "rows": rows });
                 call::<TerminalInfo>(cx, "start", args).await?
             }
@@ -103,12 +122,11 @@ impl TerminalLink {
                 end: 0,
             },
             (info.cols, info.rows),
-            before,
         ))
     }
 
     /// The output kept so far, read page by page from the start, or from 4 MB before the end when there's more.
-    pub async fn replay(&mut self, cx: &mut AsyncApp) -> Result<Vec<u8>, String> {
+    pub async fn replay(&mut self, cx: &mut AsyncApp) -> Result<Vec<u8>, CallFailure> {
         let mut bytes = Vec::new();
         let mut boundary = None;
         loop {
@@ -121,7 +139,7 @@ impl TerminalLink {
                 self.end = end - REPLAY;
                 continue;
             }
-            let data = decode(&piece.data)?;
+            let data = decode(&piece.data).map_err(failed)?;
             let take = data.len().min((end - piece.offset).max(0) as usize);
             self.end = piece.offset + take as i64;
             bytes.extend_from_slice(&data[..take]);
@@ -129,20 +147,20 @@ impl TerminalLink {
                 return Ok(bytes);
             }
             if take == 0 {
-                return Err("the terminal read made no progress".into());
+                return Err(failed("the terminal read made no progress".into()));
             }
         }
     }
 
     /// The terminal's live rows.
-    pub fn follow(&self, cx: &App) -> Result<TopicSubscription<Update>, String> {
-        let client = SocketClient::try_terminal(cx)
-            .ok_or_else(|| "the backend didn't answer".to_string())?;
+    pub fn follow(&self, cx: &App) -> Result<TopicSubscription<Update>, CallFailure> {
+        let client = SocketClient::try_terminal(cx).ok_or_else(no_answer)?;
         Ok(client.read(cx).subscribe("terminal", Some(&self.id)))
     }
 
-    /// A row from the subscription, as what to hand on: nothing for one already handed on, and `Err(())` for one
-    /// past a gap (output between the replay and the subscription, or during a reconnect), which `replay` fills.
+    /// A row from the subscription, as what to hand on: why the rows stopped, `Caught` for one adding nothing new
+    /// (the empty boundary row after a reconnect, or one already handed on), and `Err(())` for one past a gap (output
+    /// between the replay and the subscription, or during a reconnect), which `replay` fills.
     pub fn step(&mut self, update: &Update) -> Result<Option<Output>, ()> {
         let Update::Change { item, .. } = update else {
             return Ok(None);
@@ -150,20 +168,26 @@ impl TerminalLink {
         let Ok(row) = OutputRow::deserialize(item) else {
             return Ok(None);
         };
-        if row.prev_seq > self.end {
+        if let Some(availability) = row.unavailable {
+            return Ok(Some(Output::Unavailable(availability)));
+        }
+        let (Some(seq), Some(prev_seq)) = (row.seq, row.prev_seq) else {
+            return Ok(None);
+        };
+        if prev_seq > self.end {
             return Err(());
         }
         if let Some(code) = row.exit {
             return Ok(Some(Output::Exit(code)));
         }
-        if row.seq <= self.end {
-            return Ok(None);
+        if seq <= self.end {
+            return Ok(Some(Output::Caught));
         }
         let data = (row.data.as_deref().map(decode))
             .and_then(Result::ok)
             .unwrap_or_default();
-        let skip = (self.end - row.prev_seq) as usize;
-        self.end = row.seq;
+        let skip = (self.end - prev_seq) as usize;
+        self.end = seq;
         Ok(Some(Output::Bytes(
             data.get(skip..).unwrap_or_default().to_vec(),
         )))
@@ -174,47 +198,91 @@ impl TerminalLink {
         &self,
         bytes: &[u8],
         cx: &App,
-    ) -> impl Future<Output = Result<(), String>> + use<> {
+    ) -> impl Future<Output = Result<(), CallFailure>> + use<> {
         let args = json!({ "terminal": self.id, "data": STANDARD.encode(bytes) });
         let write = start::<Value>(cx, "write", args);
-        async move { settle(write.await).map(|_| ()) }
+        async move { settle(write?.await).map(|_| ()) }
     }
 
-    // The socket client owns completion; dropping these replies must not cancel forwarded operations.
-    pub fn resize(&self, (cols, rows): (usize, usize), cx: &App) {
+    /// The program's new size. Dropping the answer cancels the resize, so the pane holds it.
+    pub fn resize(
+        &self,
+        (cols, rows): (usize, usize),
+        cx: &App,
+    ) -> impl Future<Output = Result<(), CallFailure>> + use<> {
         let args = json!({ "terminal": self.id, "cols": cols, "rows": rows });
-        start::<Value>(cx, "resize", args).ignore_reply();
+        let resize = start::<Value>(cx, "resize", args);
+        async move { settle(resize?.await).map(|_| ()) }
     }
 
+    /// Ends the shell. Not held back while the socket connects: the socket sends it once connected, so the shell
+    /// isn't left running. The socket client owns completion; dropping this reply must not cancel the forwarded close.
     pub fn close(&self, cx: &App) {
-        start::<Value>(cx, "close", json!({ "terminal": self.id })).ignore_reply();
+        if let Some(client) = SocketClient::try_terminal(cx) {
+            let args = json!({ "terminal": self.id });
+            (client
+                .read(cx)
+                .call::<Value>("terminal", "close", args, None))
+            .ignore_reply();
+        }
     }
 }
 
-fn start<T: DeserializeOwned>(cx: &App, method: &str, args: Value) -> PendingCall<T> {
-    SocketClient::try_terminal(cx)
-        .expect("the terminal socket is started with the window")
-        .read(cx)
-        .call("terminal", method, args, None)
+/// A call on the terminal socket. One made while that socket isn't connected would fail as plain `failed` if the open
+/// under way fails (client_thread.rs), so it fails here as the connection being down, and the pane opens again on the
+/// socket's push.
+fn start<T: DeserializeOwned>(
+    cx: &App,
+    method: &str,
+    args: Value,
+) -> Result<PendingCall<T>, CallFailure> {
+    let client = SocketClient::try_terminal(cx).ok_or_else(no_answer)?;
+    let client = client.read(cx);
+    if !matches!(client.state(), ConnectionState::Connected { .. }) {
+        return Err(CallFailure {
+            code: ErrorCode::ConnectionLost,
+            message: "the backend isn't connected".into(),
+        });
+    }
+    Ok(client.call("terminal", method, args, None))
 }
 
 async fn call<T: DeserializeOwned>(
     cx: &mut AsyncApp,
     method: &str,
     args: Value,
-) -> Result<T, String> {
-    let call = cx.update(|cx| start(cx, method, args));
+) -> Result<T, CallFailure> {
+    let call = cx.update(|cx| start(cx, method, args))?;
     settle(call.await)
 }
 
-fn settle<T>(outcome: Outcome<T>) -> Result<T, String> {
+/// A call the socket aborted counts as the connection being down.
+fn settle<T>(outcome: Outcome<T>) -> Result<T, CallFailure> {
     match outcome {
         Outcome::Ok(value) => Ok(value),
-        Outcome::Failed(failure) => Err(failure.message),
-        Outcome::Aborted => Err("the backend didn't answer".into()),
+        Outcome::Failed(failure) => Err(failure),
+        Outcome::Aborted => Err(no_answer()),
+    }
+}
+
+fn no_answer() -> CallFailure {
+    CallFailure {
+        code: ErrorCode::ConnectionLost,
+        message: "the backend didn't answer".into(),
+    }
+}
+
+fn failed(message: String) -> CallFailure {
+    CallFailure {
+        code: ErrorCode::Failed,
+        message,
     }
 }
 
 fn decode(data: &str) -> Result<Vec<u8>, String> {
     STANDARD.decode(data).map_err(|error| error.to_string())
 }
+
+#[cfg(test)]
+#[path = "tests/terminal_link_tests.rs"]
+mod tests;

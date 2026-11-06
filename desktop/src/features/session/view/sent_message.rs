@@ -2,9 +2,12 @@
 //! "Attached image:" lines taken off the text) as chips that open the lightbox, and who sent it when another
 //! session did. Replaces SentText.svelte, SentImage.svelte and chat/sender.ts.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+
+use crate::core::state::preferences::Preferences;
 
 use super::session_action::{OnAction, SessionAction};
 
@@ -22,6 +25,8 @@ pub struct SentMessage {
     pub text: String,
     /// The session that sent it, when another one did.
     pub sender: Option<String>,
+    pub sender_machine: Option<String>,
+    pub sender_label: Option<String>,
     /// The attached images its lines name, as (path, name); a click reads one and opens it full size.
     pub images: Vec<(String, String)>,
     pub open: bool,
@@ -44,12 +49,14 @@ pub fn shown(text: &str, open: bool) -> (&str, bool) {
 impl RenderOnce for SentMessage {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
+        let (chat_size, chat_height) =
+            Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Chat));
         let (text, long) = shown(&self.text, self.open);
         let toggle = long.then(|| {
             let (key, on_action) = (self.key.clone(), self.on_action.clone());
             div()
                 .id(SharedString::from(format!("{}:more", self.key)))
-                .text_xs()
+                .text_role(TextRole::Meta, cx)
                 .text_color(theme.link)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| {
@@ -57,22 +64,43 @@ impl RenderOnce for SentMessage {
                 })
                 .child(if self.open { "Show less" } else { "Show more" })
         });
-        let sender = self.sender.clone().map(|session_id| {
-            let on_action = self.on_action.clone();
-            div()
-                .id(SharedString::from(format!("{}:sender", self.key)))
-                .text_xs()
-                .text_color(theme.link)
-                .cursor_pointer()
-                .on_click(move |_, window, cx| {
-                    let session_id = session_id.clone();
-                    on_action(SessionAction::OpenSession { session_id }, window, cx)
-                })
-                .child("From another session")
-        });
+        let sender = self
+            .sender_label
+            .clone()
+            .or_else(|| self.sender.as_ref().map(|_| "From another session".into()))
+            .map(|label| {
+                let node = div()
+                    .debug_selector(|| "sent-message-sender".into())
+                    .id(SharedString::from(format!("{}:sender", self.key)))
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(theme.link)
+                    .child(label);
+                if let Some((machine, session_id)) = self
+                    .sender_machine
+                    .clone()
+                    .filter(|machine| !machine.is_empty())
+                    .zip(self.sender.clone().filter(|id| !id.is_empty()))
+                {
+                    let on_action = self.on_action.clone();
+                    node.cursor_pointer().on_click(move |_, window, cx| {
+                        on_action(
+                            SessionAction::OpenSender {
+                                key: crate::core::engine::SessionKey {
+                                    machine: machine.clone(),
+                                    id: session_id.clone(),
+                                },
+                            },
+                            window,
+                            cx,
+                        )
+                    })
+                } else {
+                    node
+                }
+            });
         let images = self.images.iter().enumerate().map(|(at, (path, name))| {
             let on_action = self.on_action.clone();
-            let file = path.rsplit(['/', '\\']).next().unwrap_or(path).to_string();
+            let file = super::lightbox::last_part(path).to_string();
             div()
                 .id(SharedString::from(format!("{}:image:{at}", self.key)))
                 .px_2()
@@ -80,7 +108,7 @@ impl RenderOnce for SentMessage {
                 .rounded(theme.radius)
                 .border_1()
                 .border_color(theme.border)
-                .text_xs()
+                .text_role(TextRole::Meta, cx)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| {
                     let name = file.clone();
@@ -97,8 +125,8 @@ impl RenderOnce for SentMessage {
                 v_flex()
                     .px(px(16.))
                     .py(px(10.))
-                    .text_size(px(13.5))
-                    .line_height(relative(1.5))
+                    .text_size(chat_size)
+                    .line_height(chat_height)
                     .rounded(BUBBLE_RADIUS)
                     .bg(theme.secondary)
                     .gap_1()
@@ -112,5 +140,5 @@ impl RenderOnce for SentMessage {
 }
 
 #[cfg(test)]
-#[path = "sent_message_tests.rs"]
+#[path = "tests/sent_message_tests.rs"]
 mod tests;

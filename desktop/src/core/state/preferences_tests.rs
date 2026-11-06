@@ -145,3 +145,41 @@ async fn an_older_saves_echo_doesnt_undo_a_newer_edit(cx: &mut TestAppContext) {
     .await;
     assert_eq!(font_size(cx), 18., "the newer edit stays");
 }
+
+#[gpui::test]
+fn page_owned_values_follow_the_existing_preferences_push_topic(cx: &mut TestAppContext) {
+    use crate::core::socket::update::Update;
+    cx.update(Preferences::init);
+    let preferences = cx.read(|cx| Preferences::try_global(cx).unwrap());
+    let key = "composer.providerChoices";
+    cx.update(|cx| {
+        preferences.update(cx, |preferences, cx| {
+            preferences.apply(
+                Update::State(vec![(
+                    key.into(),
+                    json!({"value":{"codex":{"model":"raw-model-α","effort":"medium"}}}),
+                )]),
+                cx,
+            )
+        })
+    });
+    assert_eq!(
+        cx.read(|cx| Preferences::value(key, cx)),
+        Some(json!({"codex":{"model":"raw-model-α","effort":"medium"}}))
+    );
+    cx.update(|cx| {
+        preferences.update(cx, |preferences, cx| {
+            preferences.apply(
+                Update::Change {
+                    key: key.into(),
+                    item: json!({"value":{"codex":{"model":"raw-model-β","effort":"low"}}}),
+                },
+                cx,
+            )
+        })
+    });
+    assert_eq!(
+        cx.read(|cx| Preferences::value(key, cx)),
+        Some(json!({"codex":{"model":"raw-model-β","effort":"low"}}))
+    );
+}

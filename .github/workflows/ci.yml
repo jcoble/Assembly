@@ -1,18 +1,43 @@
-# On every pull request and every push to main (a lane branch's push runs once, as its pull request): the backend
-# builds with no warnings and its tests pass, the app checks, tests and builds, the shell checks and tests, the window
-# (desktop/) builds, tests and passes clippy, every scripts/*.test.sh passes, the app's guards and lint pass, and (on a
-# pull request) each of its own commits passes scripts/check-commit-msg.sh.
+# On a pull request marked ready, every push to main and a manual dispatch (a draft runs only the commit check): the
+# backend builds with no warnings and its tests pass, the window (desktop/) builds, tests and passes clippy, every
+# retained scripts/*.test.sh passes, lint passes, and (on a pull request) each of its own commits passes
+# scripts/check-commit-msg.sh. A change with nothing for the backend skips its job (scripts/ci-changes.ts); these are
+# job conditions, not path filters, so a skipped job still reports success to a required check.
 name: ci
 on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
 # A new push to a pull request cancels its run still going; each main commit gets its own run, never cancelled.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.jobs.outputs.full }}
+      backend: ${{ steps.jobs.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - id: jobs
+        env:
+          EVENT: ${{ github.event_name }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/ci-changes.ts
   dotnet:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.backend == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -25,56 +50,11 @@ jobs:
           dotnet-version: 10.0.x
       - run: dotnet build -warnaserror
       - run: dotnet test --no-build
-  app:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: app
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - run: npm install -g pnpm@11.5.1 && pnpm install --frozen-lockfile
-      - name: Agent runbook behavior
-        run: node --test ../scripts/agent-runbook/runbook.test.ts
-      - run: pnpm check
-      - run: pnpm test
-      - run: pnpm build
-  shell:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: shell
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: shell
-      # The .debs, so a slow mirror only costs apt-get update. Keyed on this file, which holds the package list.
-      - uses: actions/cache@v4
-        with:
-          path: ~/.apt-archives
-          key: apt-shell-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
-          restore-keys: apt-shell-${{ runner.os }}-
-      - name: Install Linux build dependencies
-        timeout-minutes: 10
-        run: |
-          mkdir -p ~/.apt-archives/partial
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Dir::Cache::Archives=$HOME/.apt-archives install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-          sudo chown -R "$USER" ~/.apt-archives
-      # Tauri's build reads the page's folder and the bundled backend's at compile time; the app and dotnet jobs
-      # build the real ones.
-      - run: mkdir -p ../app/build backend
-      - run: cargo check --locked
-      - run: cargo test --locked
   desktop:
     # The GPUI window (desktop/README.md): is formatted, builds, tests and passes clippy with warnings denied. Its guard
     # runs in lint.
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -91,7 +71,6 @@ jobs:
           key: desktop-${{ runner.os }}-${{ hashFiles('desktop/Cargo.lock', 'desktop/rust-toolchain.toml') }}
       # Installs the toolchain and components desktop/rust-toolchain.toml names.
       - run: rustup toolchain install
-      - run: cargo fmt --check
       # The .debs, so a slow mirror only costs apt-get update. Keyed on this file, which holds the package list.
       - uses: actions/cache@v4
         with:
@@ -116,8 +95,16 @@ jobs:
       - run: cargo test --locked
         env:
           ASSEMBLY_REAL_BACKEND: "1"
+      - name: Native launcher shutdown timing
+        run: bash ../scripts/shutdown-timing.test.sh
       - run: cargo clippy --locked --all-targets -- -D warnings
+      # Last and always, so unformatted code reports here without stopping the tests above.
+      - name: cargo fmt --check
+        if: ${{ !cancelled() }}
+        run: cargo fmt --check
   scripts:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -130,13 +117,34 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+      - name: Hook integrity behavior
+        run: node --test scripts/hooks/*.test.ts
+      - name: Agent runbook behavior
+        run: node --test scripts/agent-runbook/runbook.test.ts
+      - name: Every scripts/*.test.ts passes
+        if: ${{ !cancelled() }}
+        run: node --test scripts/*.test.ts
       - name: Every scripts/*.test.sh passes
         run: |
           failed=0
-          for t in scripts/*.test.sh; do echo "== $t"; bash "$t" || failed=1; done
+          # shutdown-timing.test.sh runs in the desktop job with its Rust toolchain and native dependencies, and
+          # remote-cli.test.sh below, since its build can rewrite a lock file and lint-checks.test.sh needs a clean tree.
+          for t in scripts/*.test.sh; do
+            [ "$t" = scripts/shutdown-timing.test.sh ] && continue
+            [ "$t" = scripts/remote-cli.test.sh ] && continue
+            echo "== $t"
+            bash "$t" || failed=1
+          done
           exit $failed
+      - name: The remote CLI's arguments
+        if: ${{ !cancelled() }}
+        run: |
+          dotnet build dotnet/Assembly.Remote/Assembly.Remote.csproj
+          bash scripts/remote-cli.test.sh
   lint:
-    # The app's guards and scripts/lint.sh. They read the checkout, not its history; lint.sh's .NET checks need dotnet.
+    # scripts/lint.sh runs the retained script checks and native desktop guard; its .NET checks need dotnet.
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -144,7 +152,6 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - run: bash app/scripts/guards.sh
       - run: bash scripts/lint.sh
   commits:
     # A pull request's own commits; pushes to main aren't checked, since agent work reaches main through a pull request.
@@ -155,6 +162,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - name: Each commit's message passes scripts/check-commit-msg.sh
         env:
           BASE: ${{ github.event.pull_request.base.sha }}

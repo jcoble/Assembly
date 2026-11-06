@@ -8,11 +8,23 @@ pub enum ErrorCode {
     /// Also a call made while `Disconnected`: it fails at once, as on the page.
     Failed,
     Timeout,
+    /// An actual allowlisted session target refusal; the backend code remains inspectable.
+    Refused {
+        code: String,
+    },
+    /// SocketDispatcher emits this when completion must be reconciled before retry.
+    Uncertain {
+        machine: String,
+    },
     /// The machine the call went to didn't answer. For a send, create or stop the outcome is unknown (plan 5.10):
     /// the `rows` and `sessions` topics tell what happened.
     Unreachable {
         machine: String,
     },
+    /// The connection to the machine that owns a terminal dropped; it comes back by itself.
+    ConnectionLost,
+    /// The terminal isn't on its owner any more.
+    TerminalMissing,
 }
 
 impl ErrorCode {
@@ -22,6 +34,28 @@ impl ErrorCode {
             "not_found" => ErrorCode::NotFound,
             "bad_args" => ErrorCode::BadArgs,
             "timeout" => ErrorCode::Timeout,
+            "source_changed"
+            | "checkout_root_changed"
+            | "checkout_unavailable"
+            | "native_card_changed"
+            | "native_history_unavailable"
+            | "owner_validation_required"
+            | "unknown_engine_session"
+            | "unknown_session"
+            | "nonresumable"
+            | "operation_id_conflict"
+            | "install_busy"
+            | "operation_capacity"
+            | "operation_unknown"
+            | "not_a_path"
+            | "not_full_path"
+            | "not_regular"
+            | "remote_older" => ErrorCode::Refused { code: code.into() },
+            "connection_lost" => ErrorCode::ConnectionLost,
+            "terminal_missing" => ErrorCode::TerminalMissing,
+            "uncertain" => ErrorCode::Uncertain {
+                machine: machine.unwrap_or_default(),
+            },
             "unreachable" => ErrorCode::Unreachable {
                 machine: machine.unwrap_or_default(),
             },
@@ -29,3 +63,7 @@ impl ErrorCode {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/error_code_tests.rs"]
+mod tests;

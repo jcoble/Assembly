@@ -15,7 +15,7 @@ use super::real_backend::RealBackend;
 use super::row_update::RowUpdate;
 use super::test_client::{DEADLINE, TestClient as Client, outcome, updates};
 
-/// An ACP agent that opens sessions and never answers a prompt or a config change. It says "prompted" when a prompt
+/// An ACP v2 agent that opens sessions and never answers a prompt or a config change. It says "prompted" when a prompt
 /// comes and "setting" when a config change does, as message text, so the test waits on rows, not on time.
 const STUB: &str = r#"
 id() { printf '%s' "$1" | sed -n 's/^{"jsonrpc":"2.0","id":\([0-9]*\),.*/\1/p'; }
@@ -23,7 +23,7 @@ answer() { printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$1" "$2"; }
 say() { printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"stub","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"%s"}}}}\n' "$1"; }
 while IFS= read -r line; do
   case "$line" in
-    *'"method":"initialize"'*) answer "$(id "$line")" '{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}' ;;
+    *'"method":"initialize"'*) answer "$(id "$line")" '{"protocolVersion":2,"capabilities":{},"authMethods":[]}' ;;
     *'"method":"session/new"'*) answer "$(id "$line")" '{"sessionId":"stub"}' ;;
     *'"method":"session/prompt"'*) say prompted ;;
     *'"method":"session/set_config_option"'*) say setting ;;
@@ -41,6 +41,16 @@ pub(crate) fn backend_with_stub() -> Option<(RealBackend, String)> {
         json!([{ "id": "stub", "name": "Stub", "command": "sh", "args": [stub] }]).to_string()
     })?;
     Some((backend, repo.expect("the repo")))
+}
+
+/// What `projects/add` takes for the stub's repo: a session starts in a project, not at a folder.
+pub(crate) fn add_project(repo: &str) -> Value {
+    json!({ "machine": "local", "path": repo })
+}
+
+/// What `sessions/create` takes for one new stub session in the project `projects/add` answered with.
+pub(crate) fn stub_session(added: &Value) -> Value {
+    json!({ "agent": "stub", "clientId": uuid::Uuid::new_v4().to_string(), "projectId": added["project"]["id"] })
 }
 
 fn git_repo(folder: &Path) -> String {
@@ -97,12 +107,9 @@ fn dropping_a_config_change_the_agent_never_answers_cancels_it_on_the_backend() 
     assert_eq!(client.state(), ConnectionState::Connecting);
     assert!(matches!(client.state(), ConnectionState::Connected { .. }));
 
-    let (_, created) = client.call_with(
-        "sessions",
-        "create",
-        json!({ "agent": "stub", "repoUrl": repo }),
-        None,
-    );
+    let (_, added) = client.call_with("projects", "add", add_project(&repo), None);
+    let added = answer(outcome(added));
+    let (_, created) = client.call_with("sessions", "create", stub_session(&added), None);
     let created = answer(outcome(created));
     let session = created["sessionId"].as_str().expect("a session id");
     let rows = updates(client.rows_of(session, None));

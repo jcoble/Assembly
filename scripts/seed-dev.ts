@@ -1,0 +1,119 @@
+import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const checkout = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '');
+
+export function parseArgs(args: string[]): { worktree: string; profile: string; ifEmpty: boolean } {
+  let worktree = ''; let profile = ''; let ifEmpty = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if ((arg === '--worktree' || arg === '--profile') && args[i + 1] && !args[i + 1].startsWith('--')) {
+      if (arg === '--worktree') { if (worktree) throw new Error('Duplicate --worktree.'); worktree = args[++i]; }
+      else { if (profile) throw new Error('Duplicate --profile.'); profile = args[++i]; }
+    } else if (arg === '--if-empty' && !ifEmpty) ifEmpty = true;
+    else throw new Error(`Unknown or incomplete argument: ${arg}`);
+  }
+  return { worktree: worktree || checkout, profile, ifEmpty };
+}
+export function safePath(input: string, mustExist = true): string {
+  if (!isAbsolute(input) || input.split(sep).some(part => part === '.' || part === '..')) throw new Error('Expected absolute path without traversal.');
+  const full = resolve(input);
+  for (let at = full;; at = dirname(at)) {
+    try { const stat = lstatSync(at); if (stat.isSymbolicLink()) throw new Error('Symlink paths are refused.'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    if (dirname(at) === at) break;
+  }
+  if (mustExist && !existsSync(full)) throw new Error('Explicit path does not exist.');
+  let ancestor = full;
+  const suffix: string[] = [];
+  while (!existsSync(ancestor)) { suffix.unshift(basename(ancestor)); ancestor = dirname(ancestor); }
+  return join(realpathSync(ancestor), ...suffix);
+}
+export function profileFor(input: string, userHome = homedir()): { root: string; home: string } {
+  const root = realpathSync(safePath(input));
+  for (const marker of ['desktop/Cargo.toml', 'dotnet/Assembly.Desktop/Assembly.Desktop.csproj']) {
+    if (!existsSync(join(root, marker))) throw new Error(`Not an Assembly worktree (missing ${marker}).`);
+  }
+  const key = createHash('sha256').update(root).digest('hex').slice(0, 16);
+  const name = basename(root).replace(/[^a-zA-Z0-9-]/g, '-');
+  return { root, home: safePath(join(userHome, 'assembly-dev', 'worktrees', `${name}-${key}`), false) };
+}
+export function takeLauncherLock(home: string): () => void {
+  safePath(home, false); mkdirSync(home, { recursive: true, mode: 0o700 });
+  const path = join(home, 'launcher.lock');
+  let fd: number;
+  try { fd = openSync(path, 'wx', 0o600); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('Existing launcher.lock: close the isolated app; no lock is removed.'); throw error; }
+  const identity = fstatSync(fd); writeFileSync(fd, JSON.stringify({ launcher: process.pid, purpose: 'dev-seed' }) + '\n');
+  return () => {
+    try { const current = lstatSync(path); if (current.ino === identity.ino && current.dev === identity.dev) unlinkSync(path); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    finally { closeSync(fd); }
+  };
+}
+export function waitForOwnedClose(owned: ReturnType<typeof spawn>): Promise<number> {
+  return new Promise((done, reject) => {
+    let failure: Error | undefined;
+    owned.once('error', error => { failure = error; });
+    owned.once('close', code => failure ? reject(failure) : done(code ?? 1));
+  });
+}
+const help = `Usage: npm run seed:dev [-- --worktree PATH] [--profile PATH] [--if-empty]
+Resets this checkout's dev profile to the same synthetic state: sessions on every provider, projects with real
+small Git repos and worktrees, workflows, Board questions and a saved test machine that is offline.
+Destination: ~/assembly-dev/worktrees/<worktree-name>-<sha256(canonical-path)[0:16]>. Any other --profile is refused.
+Stop the app on that profile first. Installed adapters and agents.json are kept; everything else there is replaced.
+--if-empty does nothing to a profile that already has work or was seeded before. app:dev runs that on each launch.
+It reads no database or backup, uses no network, and signs in to nothing.`;
+export const seedMarker = (home: string) => join(home, 'dev-seed.json');
+// What app:dev calls: a profile already decided on costs a stat, with no build.
+export async function seedIfEmpty(root: string, launcherOwned = false): Promise<void> {
+  if (!existsSync(seedMarker(profileFor(root).home))) await main(['--worktree', root, '--if-empty'], launcherOwned);
+}
+export async function main(args: string[], launcherOwned = false): Promise<void> {
+  if (args.length === 1 && args[0] === '--help') { console.log(help); return; }
+  const options = parseArgs(args); const { root, home } = profileFor(options.worktree);
+  if (options.profile && options.profile !== home) throw new Error(`The seed only writes to ${home}, not ${options.profile}.`);
+  if (launcherOwned && JSON.parse(readFileSync(join(home, 'launcher.lock'), 'utf8')).launcher !== process.pid)
+    throw Error('seed requires the calling launcher lock');
+  console.log(`Dev profile: ${home}`);
+  const release = launcherOwned ? () => {} : takeLauncherLock(home);
+  const environment = { ...process.env, MSBUILDDISABLENODEREUSE: '1', DOTNET_CLI_TELEMETRY_OPTOUT: '1', DOTNET_NOLOGO: '1' };
+  delete environment.ASSEMBLY_REMOTE;
+  let child: ReturnType<typeof spawn> | undefined;
+  let phase: 'build' | 'apply' = 'build';
+  let cancelled: 'SIGINT' | 'SIGTERM' | undefined;
+  const cancel = (signal: 'SIGINT' | 'SIGTERM') => {
+    cancelled = signal;
+    if (phase === 'apply') child?.kill(signal);
+    else console.error('Cancellation requested; waiting for the owned helper build to close.');
+  };
+  const interrupt = () => cancel('SIGINT');
+  const terminate = () => cancel('SIGTERM');
+  process.once('SIGINT', interrupt); process.once('SIGTERM', terminate);
+  const checkCancellation = () => {
+    if (cancelled) throw Object.assign(new Error('Development seed cancelled.'), { exitCode: cancelled === 'SIGINT' ? 130 : 143 });
+  };
+  try {
+    const output = join(root, 'dotnet/Assembly.DevSeed/bin/dev-seed-cli');
+    child = spawn('dotnet', ['build', join(root, 'dotnet/Assembly.DevSeed'), '--configuration', 'Debug', '--output', output, '-v', 'q', '-m:1', '-nr:false', '-p:UseSharedCompilation=false'], { cwd: root, env: environment, stdio: ['ignore', 'inherit', 'inherit'] });
+    const built = await waitForOwnedClose(child);
+    checkCancellation();
+    if (built !== 0) throw new Error(`Development seed helper build failed (${built}).`);
+    phase = 'apply';
+    child = spawn('dotnet', [join(output, 'Assembly.DevSeed.dll')], { cwd: root, env: environment, stdio: ['pipe', 'inherit', 'inherit'] });
+    const applied = waitForOwnedClose(child);
+    child.stdin!.on('error', () => {});
+    child.stdin!.end(JSON.stringify({ canonicalWorktree: root, computedHome: home, mode: options.ifEmpty ? 'if-empty' : 'reset', nowMs: Date.now() }));
+    const code = await applied;
+    checkCancellation();
+    if (code !== 0) throw new Error(`Development seed companion failed (${code}).`);
+  } finally { process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', terminate); release(); }
+}
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main(process.argv.slice(2)).catch(error => { console.error(error.message); process.exitCode = error.exitCode ?? 1; });
+}

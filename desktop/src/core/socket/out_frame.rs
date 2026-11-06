@@ -27,6 +27,29 @@ pub(super) enum OutFrame<'a> {
         key: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         after: Option<i64>,
+        #[serde(rename = "expectedSource", skip_serializing_if = "Option::is_none")]
+        expected_source: Option<&'a super::row_source::ExpectedRowSource>,
+    },
+    #[serde(rename = "sub")]
+    EngineSub {
+        id: u64,
+        #[serde(rename = "expectedSource", skip_serializing_if = "Option::is_none")]
+        expected_source: Option<&'a super::row_source::ExpectedRowSource>,
+        stream: &'static str,
+        topic: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        key: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        after: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        at: Option<&'a super::engine_update::CursorAt>,
+    },
+    Ack {
+        id: u64,
+        stream: &'static str,
+        after: i64,
     },
     Unsub {
         id: u64,

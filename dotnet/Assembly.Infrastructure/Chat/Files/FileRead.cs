@@ -24,22 +24,59 @@ public static class FileRead
 
     public static async Task<FileChunk> ReadAsync(string root, string path, long offset, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var full = SessionPaths.Resolve(root, path);
-        if (Directory.Exists(full))
-            throw new CallFailed("that isn't a file");
-        var file = new FileInfo(full);
-        if (!file.Exists)
-            throw new CallFailed("that file isn't there");
-        var bytes = file.Length > MaxBytes ? null : await File.ReadAllBytesAsync(full, cancellationToken);
-        // Checked again after the read, for a file that grew past the limit in between.
-        if (bytes is null || bytes.Length > MaxBytes)
-            throw new CallFailed(string.Create(CultureInfo.InvariantCulture,
-                $"that file is {Math.Max(file.Length, bytes?.Length ?? 0) / (1024.0 * 1024):0.0#} MiB, more than the {MaxBytes / (1024 * 1024)} MiB this view shows"));
+        var bytes = await CaptureAsync(root, path, cancellationToken);
+        return Chunk(bytes, offset);
+    }
+
+    internal static async Task<byte[]> CaptureAsync(string root, string path, CancellationToken cancellationToken, Action? recheck = null)
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var full = SessionPaths.ResolveFile(root, path);
+            if (Directory.Exists(full))
+                throw new CallFailed("that isn't a file");
+            var before = new FileInfo(full);
+            if (!before.Exists)
+                throw new CallFailed("that file isn't there");
+            var length = before.Length;
+            var modified = before.LastWriteTimeUtc;
+            if (length > MaxBytes)
+                throw TooLarge(length);
+            await using var stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+                64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            // Fixed bound even if another writer grows the file while it is read.
+            var bytes = new byte[(int)length + 1];
+            var count = 0;
+            while (count < bytes.Length)
+            {
+                var read = await stream.ReadAsync(bytes.AsMemory(count), cancellationToken);
+                if (read == 0)
+                    break;
+                count += read;
+            }
+            recheck?.Invoke();
+            var after = new FileInfo(SessionPaths.ResolveFile(root, path));
+            if (after.Exists && after.Length == length && after.LastWriteTimeUtc == modified && count == length)
+            {
+                Array.Resize(ref bytes, count);
+                return bytes;
+            }
+        }
+        throw new CallFailed("revision_changed: the file changed while it was read; try again");
+    }
+
+    private static CallFailed TooLarge(long length) => new(string.Create(CultureInfo.InvariantCulture,
+        $"that file is {length / (1024.0 * 1024):0.0#} MiB, more than the {MaxBytes / (1024 * 1024)} MiB this view shows"));
+
+    internal static FileChunk Chunk(byte[] bytes, long offset, FileChunk? metadata = null)
+    {
         if (offset < 0 || offset > bytes.Length)
             throw new CallFailed("the offset is outside the file");
-        var revision = Convert.ToHexStringLower(SHA256.HashData(bytes));
-        if (bytes.AsSpan().Contains((byte)0) || !Utf8.IsValid(bytes))
+        if (offset < bytes.Length && (bytes[(int)offset] & 0xC0) == 0x80)
+            throw new CallFailed("the offset splits a UTF-8 character");
+        var revision = metadata?.Revision ?? Convert.ToHexStringLower(SHA256.HashData(bytes));
+        if (metadata?.Binary ?? (bytes.AsSpan().Contains((byte)0) || !Utf8.IsValid(bytes)))
             return new FileChunk("", bytes.Length, revision, 0, true, null);
         var start = (int)offset;
         var end = Math.Min(start + ChunkBytes, bytes.Length);
@@ -53,7 +90,7 @@ public static class FileRead
                 while (end > start && (bytes[end] & 0xC0) == 0x80)
                     end--;
         }
-        var lines = bytes.AsSpan().Count((byte)'\n') + (bytes.Length > 0 && bytes[^1] != '\n' ? 1 : 0);
+        var lines = metadata?.LineCount ?? (bytes.AsSpan().Count((byte)'\n') + (bytes.Length > 0 && bytes[^1] != '\n' ? 1 : 0));
         return new FileChunk(Encoding.UTF8.GetString(bytes, start, end - start), bytes.Length, revision, lines, false,
             end < bytes.Length ? end : null);
     }

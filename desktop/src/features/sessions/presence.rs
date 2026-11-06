@@ -16,8 +16,8 @@ pub enum Presence {
 }
 
 impl Presence {
-    pub fn of(entry: &RailEntry) -> Presence {
-        if entry.needs_you {
+    pub fn of(entry: &RailEntry, needs_you: bool) -> Presence {
+        if needs_you {
             Presence::NeedsYou
         } else if entry.running {
             Presence::Working

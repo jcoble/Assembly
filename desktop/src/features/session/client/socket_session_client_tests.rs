@@ -29,7 +29,7 @@ async fn call(feature: &str, method: &str, cx: &mut TestAppContext) -> Result<Va
         .await
 }
 
-// The backend serves attachments/*, rows/page and rows/tool only on /socket/bulk, and every other call only on /socket.
+// Title chunks join the existing large calls on /socket/bulk; title stat stays on /socket.
 #[gpui::test]
 async fn the_large_calls_go_on_the_bulk_socket_and_the_rest_on_the_main_one(
     cx: &mut TestAppContext,
@@ -48,6 +48,10 @@ async fn the_large_calls_go_on_the_bulk_socket_and_the_rest_on_the_main_one(
         ("attachments", "read", "/socket/bulk"),
         ("rows", "page", "/socket/bulk"),
         ("rows", "tool", "/socket/bulk"),
+        ("engine", "session_title_chunk", "/socket/bulk"),
+        ("engine", "owner_prompt_chunk", "/socket/bulk"),
+        ("engine", "owner_prompts", "/socket"),
+        ("engine", "session_title", "/socket"),
         ("send", "send", "/socket"),
         ("config", "get", "/socket"),
     ];
@@ -89,6 +93,11 @@ async fn a_bulk_call_while_the_bulk_socket_is_down_fails_at_once(cx: &mut TestAp
         call("rows", "page", cx).await,
         Err(CallError::Failed(_))
     ));
+    assert!(matches!(
+        call("engine", "session_title_chunk", cx).await,
+        Err(CallError::Failed(_))
+    ));
+    assert_eq!(call("engine", "session_title", cx).await, Ok(json!({})));
     assert_eq!(call("config", "get", cx).await, Ok(json!({})));
 }
 
@@ -129,6 +138,32 @@ fn an_unreachable_machine_says_which_machine() {
         call_error(failure(code)),
         CallError::Unreachable {
             machine: "studio".into()
+        }
+    );
+}
+
+#[test]
+fn uncertainty_preserves_the_backend_message_and_captured_machine() {
+    assert_eq!(
+        call_error(failure(ErrorCode::Uncertain {
+            machine: "owner".into()
+        })),
+        CallError::Uncertain {
+            machine: "owner".into(),
+            message: "the backend's words".into()
+        }
+    );
+}
+
+#[test]
+fn an_open_target_refusal_keeps_the_exact_code_and_backend_message() {
+    assert_eq!(
+        call_error(failure(ErrorCode::Refused {
+            code: "native_history_unavailable".into()
+        })),
+        CallError::Refused {
+            code: "native_history_unavailable".into(),
+            message: "the backend's words".into()
         }
     );
 }

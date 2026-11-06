@@ -3,6 +3,9 @@
 //! goes the fade from the old theme after a switch (theme/fade.rs). It puts the theme and faces Settings saved in
 //! force from the start, and as they change.
 
+use super::intents::reveal_file_folder::RevealFileFolder;
+use crate::features::files::files_pane::FilesPane;
+use gpui_kit::component::Theme;
 use gpui_kit::*;
 
 use super::native_views::views::NativeViews;
@@ -14,6 +17,9 @@ pub struct WindowRoot {
     /// The theme in force; the window opens in the default.
     theme: ThemeId,
     _preferences: Option<Subscription>,
+    /// A theme file sets its own sizes, and the kit's folder watch re-applies one when it changes, so what Settings
+    /// saved goes back on after any change to the theme. `apply_text` writes only a difference, so this settles.
+    _theme: Subscription,
 }
 
 impl WindowRoot {
@@ -23,10 +29,12 @@ impl WindowRoot {
                 root.follow_preferences(window, cx)
             })
         });
+        let _theme = cx.observe_global_in::<Theme>(window, |_, _, cx| theme::apply_text(cx));
         let mut root = Self {
             content: content.into(),
             theme: ThemeId::DEFAULT,
             _preferences,
+            _theme,
         };
         // What arrived before the window was made.
         root.follow_preferences(window, cx);
@@ -46,6 +54,15 @@ impl WindowRoot {
 impl Render for WindowRoot {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .on_action(|action: &RevealFileFolder, window, cx| {
+                FilesPane::reveal_folder(
+                    &action.session_id,
+                    &action.path,
+                    action.expected_source.as_ref(),
+                    window,
+                    cx,
+                )
+            })
             .size_full()
             .child(self.content.clone())
             .child(NativeViews::placer())

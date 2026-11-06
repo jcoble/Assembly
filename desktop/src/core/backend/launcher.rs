@@ -1,6 +1,6 @@
 //! `Launcher` owns the backend child. It starts `Assembly.Desktop serve` with the lane's options, and one thread of
 //! its own reads the child's stdout with blocking reads (no timeout) and appends every line to `<home>/backend.log`,
-//! where the child's stderr goes too (as the old shell did). On the ready line (`listening on <address>`,
+//! where the child's stderr goes too. On the ready line (`listening on <address>`,
 //! dotnet/Assembly.Desktop/Serve/DesktopServe.cs) it reads the token file and hands the token to the window, which
 //! starts or reconnects the socket client (lane g0-socket). That thread owns the `Child` and reaps it when its
 //! output ends.
@@ -10,6 +10,8 @@
 //!   starts it.
 //! - A child that exits before it was ever ready isn't started again: the log says so, and the palette's "Restart
 //!   backend" command starts one when none is running.
+//! - A child that exits with `HOME_IN_USE_EXIT` was refused its home folder: the update helper has it. The window says
+//!   so and to open again; a later launch starts whatever is installed by then. There's no retry here.
 //! - A child that prints no ready line within `ready_limit` (60 s; a hung remote tunnel, say) is stopped, and the
 //!   log says why.
 //! - On quit it sends the child SIGTERM and waits until the thread has reaped it; the backend finishes its queued
@@ -41,6 +43,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use gpui_kit::component::WindowExt as _;
+use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 
 use super::backend_config::BackendConfig;
@@ -52,6 +56,13 @@ actions!(backend, [RestartBackend]);
 /// "Restart backend").
 type Ready = Arc<dyn Fn(Option<String>) + Send + Sync>;
 
+/// `DesktopServe.HomeInUseExit`: the backend was refused its home folder, which the update helper holds while it works.
+const HOME_IN_USE_EXIT: i32 = 75;
+const UPDATE_FINISHING: &str = "Assembly is finishing an update. Open it again in a moment.";
+
+/// The window's one notice about it.
+struct UpdateFinishing;
+
 pub struct Launcher {
     config: Arc<BackendConfig>,
     ready: Ready,
@@ -60,6 +71,8 @@ pub struct Launcher {
     pid: Arc<Mutex<u32>>,
     /// Set on quit, so the thread doesn't start another child.
     quitting: Arc<AtomicBool>,
+    /// Set when the backend refused its home folder, which the update helper holds while it works.
+    update_finishing: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     /// Disconnects when the thread ends, so a stop can wait for it with a deadline.
     thread_done: Option<mpsc::Receiver<()>>,
@@ -97,7 +110,10 @@ impl Launcher {
             while let Ok(token) = receiver.recv().await {
                 cx.update(|cx| match token {
                     Some(token) => on_ready(port, token, cx),
-                    None => on_gave_up(cx),
+                    None => {
+                        on_gave_up(cx);
+                        Self::tell_if_update_finishing(cx);
+                    }
                 });
             }
         }));
@@ -116,6 +132,7 @@ impl Launcher {
             ready,
             pid: Arc::new(Mutex::new(0)),
             quitting: Arc::new(AtomicBool::new(false)),
+            update_finishing: Arc::new(AtomicBool::new(false)),
             thread: None,
             thread_done: None,
             _ready_loop: None,
@@ -123,6 +140,34 @@ impl Launcher {
         };
         launcher.restart_if_stopped();
         launcher
+    }
+
+    /// Tells the first window, if there is one, that the update helper has the home folder. Asked when the launcher gives up
+    /// and again when the window opens, whichever comes second finds both. One id, so it's one notice either way.
+    pub fn tell_if_update_finishing(cx: &mut App) {
+        let (true, Some(window)) = (
+            Self::update_is_finishing(cx),
+            cx.windows().into_iter().next(),
+        ) else {
+            return;
+        };
+        cx.defer(move |cx| {
+            _ = window.update(cx, |_, window, cx| {
+                let note = Notification::warning(UPDATE_FINISHING)
+                    .id::<UpdateFinishing>()
+                    .autohide(false);
+                window.push_notification(note, cx)
+            });
+        });
+    }
+
+    /// Whether the last backend was refused its home because the update helper has it.
+    pub fn update_is_finishing(cx: &App) -> bool {
+        cx.try_global::<Self>().is_some_and(Self::update_finishing)
+    }
+
+    fn update_finishing(&self) -> bool {
+        self.update_finishing.load(Ordering::SeqCst)
     }
 
     /// Starts a backend when none is running; does nothing when one is. The palette's "Restart backend" runs it.
@@ -134,11 +179,12 @@ impl Launcher {
         {
             return;
         }
-        let (config, ready, pid, quitting) = (
+        let (config, ready, pid, quitting, update_finishing) = (
             self.config.clone(),
             self.ready.clone(),
             self.pid.clone(),
             self.quitting.clone(),
+            self.update_finishing.clone(),
         );
         let (done, thread_done) = mpsc::channel();
         self.thread_done = Some(thread_done);
@@ -147,7 +193,7 @@ impl Launcher {
                 .name("backend".into())
                 .spawn(move || {
                     let _done = done;
-                    run(&config, &*ready, &pid, &quitting);
+                    run(&config, &*ready, &pid, &quitting, &update_finishing);
                     if !quitting.load(Ordering::SeqCst) {
                         ready(None);
                     }
@@ -207,7 +253,9 @@ fn run(
     ready: &(dyn Fn(Option<String>) + Send + Sync),
     pid: &Mutex<u32>,
     quitting: &AtomicBool,
+    update_finishing: &AtomicBool,
 ) {
+    update_finishing.store(false, Ordering::SeqCst);
     let log_path = config.home.join("backend.log");
     let log = std::fs::create_dir_all(&config.home)
         .and_then(|_| OpenOptions::new().create(true).append(true).open(&log_path));
@@ -215,8 +263,8 @@ fn run(
         eprintln!("the backend's log {} can't be opened", log_path.display());
         return;
     };
-    // The backend won't start without its agents file. shell/assembly.sh writes the real one (agents-file.sh, which
-    // needs node and pnpm); a window launched on a fresh home gets an empty list, so its backend starts with no agents.
+    // The backend won't start without its agents file. scripts/app-dev.ts writes the real one via agents-file.sh;
+    // a window launched on a fresh home gets an empty list, so its backend starts with no agents.
     let agents = config.home.join("agents.json");
     // create_new leaves a file that's there (or appears meanwhile) as it is.
     let created = OpenOptions::new()
@@ -237,7 +285,8 @@ fn run(
     }
     let mut quick_exits = 0;
     while !quitting.load(Ordering::SeqCst) {
-        let ready_at = run_child(config, &mut log, ready, pid, quitting);
+        let (ready_at, exit) = run_child(config, &mut log, ready, pid, quitting);
+        update_finishing.store(exit == Some(HOME_IN_USE_EXIT), Ordering::SeqCst);
         if quitting.load(Ordering::SeqCst) {
             return;
         }
@@ -265,14 +314,14 @@ fn run(
     }
 }
 
-/// Runs one child to its end; when it printed its ready line, the time it did.
+/// Runs one child to its end; when it printed its ready line, the time it did, and its exit code.
 fn run_child(
     config: &BackendConfig,
     log: &mut File,
     ready: &(dyn Fn(Option<String>) + Send + Sync),
     pid: &Mutex<u32>,
     quitting: &AtomicBool,
-) -> Option<Instant> {
+) -> (Option<Instant>, Option<i32>) {
     let mut command = Command::new(&config.program);
     command
         .arg("serve")
@@ -312,7 +361,7 @@ fn run_child(
                 "the backend {} didn't start: {error}",
                 config.program.display()
             );
-            return None;
+            return (None, None);
         }
     };
     {
@@ -367,8 +416,8 @@ fn run_child(
     }
     wait_for_exit(child_id);
     *pid.lock().unwrap() = 0;
-    _ = child.wait();
-    ready_at
+    let exit = child.wait().ok().and_then(|status| status.code());
+    (ready_at, exit)
 }
 
 fn terminate(pid: u32) {

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- The remote host: runs on the machine with the agent (Workbox). `serve` is the engine plus its API, and
-       smoke, record and rows are the test benches steps 1 and 2 ran there. -->
+       record retains the ACP fixture recording scenarios. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <IsAotCompatible>true</IsAotCompatible>

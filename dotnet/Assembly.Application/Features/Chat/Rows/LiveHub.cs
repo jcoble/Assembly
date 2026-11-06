@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common.Database;
 using System.Threading.Channels;
 using Assembly.Domain.Rows;
 using Assembly.Application.Common.Topics;
@@ -39,14 +40,26 @@ public sealed class LiveHub : IDisposable
     }
 
     /// <summary>Commits the batch, then queues its saved rows for the session's sockets. Returns them as saved.</summary>
-    public IReadOnlyList<StoredRow> Publish(string sessionId, RowBatch batch)
+    public IReadOnlyList<StoredRow> Publish(string sessionId, RowBatch batch, Action<IWriteScope>? observe = null)
     {
-        if (batch.IsEmpty)
+        if (batch.IsEmpty && observe is null)
             return [];
+        IReadOnlyList<StoredRow> saved;
         lock (_gate)
         {
-            var saved = _store.Commit(sessionId, batch);
-            Push(sessionId, saved);
+            saved = _store.Commit(sessionId, batch, observe);
+            if (saved.Count > 0) Push(sessionId, saved);
+        }
+        if (saved.Count > 0) Committed?.Invoke(sessionId, saved);
+        return saved;
+    }
+
+    public IReadOnlyList<StoredRow> PublishRecovered(RecoveredChatTurn recovered, RowBatch batch, Action<IWriteScope>? observe)
+    {
+        lock (_gate)
+        {
+            var saved = _store.CommitRecovered(recovered, batch, observe);
+            if (saved.Count > 0) Push(recovered.SessionId, saved);
             return saved;
         }
     }
@@ -68,6 +81,9 @@ public sealed class LiveHub : IDisposable
     /// under the hub's lock, so a handler only signals.
     /// </summary>
     public event Action<string>? Unwatched;
+
+    /// <summary>Rows this machine produced were saved, outside the hub's lock. A row copied from another machine isn't one.</summary>
+    public event Action<string, IReadOnlyList<StoredRow>>? Committed;
 
     /// <summary>Whether a webview watches the session's rows: its live socket, or a rows sub on the socket.</summary>
     public bool HasSubscribers(string sessionId)
@@ -116,6 +132,11 @@ public sealed class LiveHub : IDisposable
             return _store.RunRows(sessionId, runId);
     }
 
+    internal FinalizedChatReply? TerminalReply(string sessionId, string runId)
+    {
+        lock (_gate) return _store.TerminalReply(sessionId, runId);
+    }
+
     public long LastSeq(string sessionId)
     {
         lock (_gate)
@@ -138,6 +159,11 @@ public sealed class LiveHub : IDisposable
     {
         lock (_gate)
             return _store.UserRowOfClient(sessionId, clientId);
+    }
+
+    internal UserDeliveryRow? UserDeliveryOfClient(string sessionId, string clientId)
+    {
+        lock (_gate) return _store.UserDeliveryOfClient(sessionId, clientId);
     }
 
     public bool RunEnded(string sessionId, string runId)
@@ -194,6 +220,7 @@ public sealed class LiveHub : IDisposable
                 if (!rows.All(subscriber.Queue.Writer.TryWrite))
                     Close(subscriber, new LiveFellBehind());
             }
+        var summaryChanged = _summaries?.Apply(sessionId, rows) == true;
         // Every committed row that can move a session between the rail's tabs, change which ask it shows or its
         // branch tells the rail, whether or not the summary changed: the open ask it shows can change while one stays open.
         if (_topics is not null && rows.Any(row => row.Kind is RowKind.Turn or RowKind.Ask or RowKind.Task or RowKind.Subagent or RowKind.Stats))
@@ -201,7 +228,7 @@ public sealed class LiveHub : IDisposable
                 JsonSerializer.Serialize(new SessionsFeature.RailChange(sessionId), SessionsJson.Default.RailChange));
         // Last, so the rows have gone out whatever the item's write does. Only a row that changes the session's
         // summary sends its list item again, never one per row.
-        if (_summaries?.Apply(sessionId, rows) == true)
+        if (summaryChanged)
             _summaryChanged(sessionId);
     }
 

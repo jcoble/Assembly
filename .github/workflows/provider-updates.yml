@@ -4,13 +4,16 @@ on:
     - cron: '23 8 * * *'
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - '.github/workflows/provider-updates.yml'
       - 'scripts/package-adapters*'
+      - 'scripts/adapters/**'
   pull_request:
     paths:
       - '.github/workflows/provider-updates.yml'
       - 'scripts/package-adapters*'
+      - 'scripts/adapters/**'
 permissions:
   contents: read
 concurrency:
@@ -22,6 +25,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       versions: ${{ steps.versions.outputs.versions }}
+      # Only a scheduled run checks first: a manual run, main and a packaging PR always build.
+      build: ${{ steps.behind.outputs.build || 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -29,11 +34,18 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
-      - run: node --test scripts/package-adapters.test.ts
+      - run: node --test scripts/package-adapters.test.ts scripts/adapters/claude-launcher.test.ts
       - id: versions
         run: node scripts/package-adapters.ts resolve
+      - id: behind
+        if: github.event_name == 'schedule'
+        env:
+          VERSIONS: ${{ steps.versions.outputs.versions }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/package-adapters.ts behind "$VERSIONS"
   package:
     needs: resolve
+    if: needs.resolve.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -55,6 +67,7 @@ jobs:
           node-version: 24
       - name: Package and initialize both adapters from the extracted archive
         env:
+          GH_TOKEN: ${{ github.token }}
           TARGET: ${{ matrix.target }}
           VERSIONS: ${{ needs.resolve.outputs.versions }}
         run: node scripts/package-adapters.ts build "$TARGET" "$VERSIONS" "$RUNNER_TEMP/adapters"
@@ -66,9 +79,10 @@ jobs:
           retention-days: 3
   publish:
     needs: [resolve, package]
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request'
+    if: needs.resolve.outputs.build == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    environment: release
     permissions:
       contents: write
     steps:
@@ -83,6 +97,14 @@ jobs:
           pattern: adapters-*
           merge-multiple: true
           path: adapters
+      - name: Sign each adapter manifest
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          for manifest in adapters/assembly-adapters-*.json; do
+            npm exec --yes --package=@tauri-apps/cli@2.11.2 -- tauri signer sign "$manifest"
+          done
       - name: Publish one complete immutable release
         env:
           GH_TOKEN: ${{ github.token }}

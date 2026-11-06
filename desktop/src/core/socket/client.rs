@@ -5,6 +5,7 @@
 //! A third client on /socket/terminal carries terminal calls and output.
 
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread::JoinHandle;
@@ -16,7 +17,7 @@ use gpui_kit::*;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::client_thread::ClientThread;
+use super::client_thread::{ClientShared, ClientThread};
 use super::connection_state::ConnectionState;
 use super::endpoint::Endpoint;
 use super::event::Event;
@@ -30,17 +31,19 @@ pub struct SocketClient {
     /// Call and subscription ids, shared by every caller so a handle knows its own id to cancel or unsub.
     next_id: Arc<AtomicU64>,
     state: ConnectionState,
+    engine_machine: Arc<Mutex<Option<String>>>,
+    connection_generation: Arc<Mutex<Option<u64>>>,
     /// Brings the client thread's state changes to the entity.
     _states: Task<()>,
     /// Joined on drop, after `Event::Stop`.
     thread: Option<JoinHandle<()>>,
 }
 
-struct GlobalSocket(Entity<SocketClient>);
+pub(crate) struct GlobalSocket(Entity<SocketClient>);
 
 impl Global for GlobalSocket {}
 
-struct GlobalBulk(Entity<SocketClient>);
+pub(crate) struct GlobalBulk(Entity<SocketClient>);
 
 impl Global for GlobalBulk {}
 
@@ -96,13 +99,19 @@ impl SocketClient {
     ) -> Entity<Self> {
         let (events, receiver) = mpsc::channel();
         let (states, mut changes) = unbounded();
+        let engine_machine = Arc::new(Mutex::new(None));
+        let connection_generation = Arc::new(Mutex::new(None));
         let thread = ClientThread::spawn(
             endpoint,
             path,
             receiver,
             events.clone(),
             states,
-            next_id.clone(),
+            ClientShared {
+                ids: next_id.clone(),
+                engine_machine: engine_machine.clone(),
+                connection_generation: connection_generation.clone(),
+            },
         );
         cx.new(|cx| {
             let states = cx.spawn(async move |this, cx| {
@@ -120,11 +129,25 @@ impl SocketClient {
             Self {
                 events,
                 next_id,
+                engine_machine,
+                connection_generation,
                 state: ConnectionState::Connecting,
                 _states: states,
                 thread: Some(thread),
             }
         })
+    }
+
+    /// Actual durable Engine ID from this connection's Welcome, absent while disconnected.
+    /// A display host name or a saved-machine alias is never substituted.
+    pub fn engine_machine(&self) -> Option<String> {
+        self.engine_machine.lock().ok()?.clone()
+    }
+
+    /// This socket's captured open generation, absent during disconnect or handshake.
+    /// A reconnect to the same Engine still replaces this value.
+    pub fn connection_generation(&self) -> Option<u64> {
+        *self.connection_generation.lock().ok()?
     }
 
     pub fn global(cx: &App) -> Entity<Self> {
@@ -196,6 +219,7 @@ impl SocketClient {
         &self,
         session_id: &str,
         after: Option<i64>,
+        expected_source: Option<&super::row_source::ExpectedRowSource>,
     ) -> TopicSubscription<RowUpdate> {
         let id = self.id();
         let (rows, receiver) = unbounded();
@@ -204,7 +228,47 @@ impl SocketClient {
             id,
             session_id,
             after,
+            expected_source: expected_source.cloned(),
             rows,
+        });
+        TopicSubscription::new(id, self.events.clone(), receiver)
+    }
+
+    /// One durable Engine message, with snapshot, replay and cursor acknowledgment.
+    pub fn subscribe_engine_message(
+        &self,
+        message: &str,
+        machine: Option<&str>,
+        expected_source: Option<&super::row_source::ExpectedRowSource>,
+    ) -> TopicSubscription<super::engine_update::EngineUpdate> {
+        let id = self.id();
+        let (updates, receiver) = unbounded();
+        let _ = self.events.send(Event::SubscribeEngine {
+            id,
+            message: message.into(),
+            machine: machine.map(Into::into),
+            expected_source: expected_source.cloned(),
+            updates,
+        });
+        TopicSubscription::new(id, self.events.clone(), receiver)
+    }
+
+    /// Current Engine display state on the existing connection and cursor owner.
+    /// Dropping the returned subscription cancels the scope and its staged snapshot.
+    pub fn subscribe_engine(
+        &self,
+        topic: &str,
+        key: Option<&str>,
+        machine: Option<&str>,
+    ) -> TopicSubscription<super::engine_update::EngineUpdate> {
+        let id = self.id();
+        let (updates, receiver) = unbounded();
+        let _ = self.events.send(Event::SubscribeEngineScope {
+            id,
+            topic: topic.into(),
+            key: key.map(Into::into),
+            machine: machine.map(Into::into),
+            updates,
         });
         TopicSubscription::new(id, self.events.clone(), receiver)
     }

@@ -52,21 +52,33 @@ pub struct RailEntry {
     pub updated_at: i64,
     pub completed_at: Option<i64>,
     pub running: bool,
-    pub needs_you: bool,
     pub failed: bool,
     pub unread: bool,
     pub ordering: String,
-    pub ask_session: Option<String>,
-    pub ask_seq: Option<i64>,
-    /// The newest branch a turn's stats recorded: what it was then, not the checkout now.
+    /// The branch git has checked out in the session's folder, as the Engine records it.
     pub branch: Option<String>,
-    pub branch_at: Option<i64>,
     /// The provider's glyph: a bundled icon's path, picked by the backend.
     pub icon: String,
     pub section_index: usize,
     pub header: usize,
     /// A parent's newest assistant text, cut to 160 characters by the backend.
     pub preview: Option<String>,
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
+    pub depth: u32,
+    pub pinned_at: Option<i64>,
+    pub orchestrator_at: Option<i64>,
+    pub position: Option<i64>,
+    pub model: Option<String>,
+    pub worktree: Option<String>,
+    pub last_error: Option<String>,
+    pub resume_command: Option<String>,
+    pub last_seen_ms: Option<i64>,
+    /// Recorded candidate identity only; opening still resolves and validates the current route.
+    pub source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    /// Native subagents are recorded on this session. Their detail is only read once the row opens.
+    #[serde(default)]
+    pub native_activity: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -120,6 +132,12 @@ pub struct Rail {
 }
 
 impl Rail {
+    /// The read that's out, for a test to answer.
+    #[cfg(test)]
+    pub fn reading_id(&self) -> Option<u64> {
+        self.reading.map(|(id, _)| id)
+    }
+
     /// A change came: read now, or once the read that's out answers.
     pub fn changed(&mut self) -> Option<Request> {
         if self.reading.is_some() {
@@ -326,10 +344,12 @@ fn cursor(entry: &RailEntry, view: View) -> RailCursor {
 /// A parent with nothing going on, for the tests to change.
 #[cfg(test)]
 pub fn test_entry(id: &str, repo_url: &str) -> RailEntry {
-    serde_json::from_value(json!({ "sessionId": id, "kind": "session", "section": "working", "agent": "claude",
+    serde_json::from_value(
+        json!({ "sessionId": id, "kind": "session", "section": "working", "agent": "claude",
         "repoUrl": repo_url, "group": repo_url, "count": 0, "machines": [],
         "title": null, "machine": null, "updatedAt": 1, "completedAt": null, "running": false,
-        "needsYou": false, "failed": false, "unread": false, "ordering": id, "askSession": null, "askSeq": null,
-        "branch": null, "branchAt": null, "icon": "icons/bot.svg", "sectionIndex": 0, "header": 2 }))
+        "failed": false, "unread": false, "ordering": id,
+        "branch": null, "icon": "icons/bot.svg", "sectionIndex": 0, "header": 2 }),
+    )
     .unwrap()
 }

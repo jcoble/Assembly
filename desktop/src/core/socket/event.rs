@@ -33,7 +33,31 @@ pub(super) enum Event {
         id: u64,
         session_id: String,
         after: Option<i64>,
+        expected_source: Option<super::row_source::ExpectedRowSource>,
         rows: UnboundedSender<RowUpdate>,
+    },
+    SubscribeEngine {
+        id: u64,
+        message: String,
+        machine: Option<String>,
+        expected_source: Option<super::row_source::ExpectedRowSource>,
+        updates: UnboundedSender<super::engine_update::EngineUpdate>,
+    },
+    SubscribeEngineScope {
+        id: u64,
+        topic: String,
+        key: Option<String>,
+        machine: Option<String>,
+        updates: UnboundedSender<super::engine_update::EngineUpdate>,
+    },
+    ResnapshotEngine {
+        handle: u64,
+    },
+    AcknowledgeEngine {
+        handle: u64,
+        wire: u64,
+        through: i64,
+        at: Option<super::engine_update::CursorAt>,
     },
     Unsubscribe {
         id: u64,

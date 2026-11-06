@@ -46,6 +46,7 @@ fn chips(composer: &Entity<Composer>, cx: &mut VisualTestContext) -> Vec<(String
             .iter()
             .map(|attachment| {
                 let state = match &attachment.state {
+                    AttachmentState::Staged { .. } => "staged".to_string(),
                     AttachmentState::Uploading => "uploading".to_string(),
                     AttachmentState::Saved { path } => format!("saved {path}"),
                     AttachmentState::Failed(why) => format!("failed {why}"),
@@ -89,7 +90,7 @@ fn a_dropped_image_uploads_and_goes_out_with_the_text(cx: &mut TestAppContext) {
     );
     cx.run_until_parked();
     assert_eq!(chips(&composer, cx)[0].1, "saved /box/shot.png");
-    client.queue_answer(Ok(json!({ "runId": "r1" })));
+    client.queue_owner_accepted();
     type_and_send(&composer, "look", cx);
     assert_eq!(
         sends(&client),
@@ -114,7 +115,7 @@ fn send_waits_until_every_image_has_uploaded(cx: &mut TestAppContext) {
     assert_eq!(draft(&composer, cx), "now", "nothing went out");
     cx.run_until_parked();
     assert!(sends(&client).is_empty());
-    client.queue_answer(Ok(json!({ "runId": "r1" })));
+    client.queue_owner_accepted();
     composer.update_in(cx, |composer, window, cx| composer.send(window, cx));
     cx.run_until_parked();
     assert_eq!(
@@ -212,7 +213,7 @@ fn removing_a_chip_drops_its_upload_and_it_goes_out_with_nothing(cx: &mut TestAp
         chips(&composer, cx).is_empty(),
         "a late answer brings it back"
     );
-    client.queue_answer(Ok(json!({ "runId": "r1" })));
+    client.queue_owner_accepted();
     type_and_send(&composer, "hi", cx);
     assert_eq!(sends(&client), ["hi"]);
 }
@@ -232,7 +233,7 @@ fn a_failed_upload_holds_the_send_until_its_chip_is_removed(cx: &mut TestAppCont
         "it doesn't go out without the image"
     );
     assert_eq!(draft(&composer, cx), "hi");
-    client.queue_answer(Ok(json!({ "runId": "r1" })));
+    client.queue_owner_accepted();
     composer.update_in(cx, |composer, window, cx| {
         let id = composer.attachments[0].id;
         composer.remove_attachment(id, cx);
@@ -259,13 +260,21 @@ fn a_failed_send_brings_its_images_back_and_the_resend_keeps_its_client_id(
         chips(&composer, cx),
         [("shot.png".to_string(), "saved /box/shot.png".to_string())]
     );
-    client.queue_answer(Ok(json!({ "runId": "r1" })));
+    client.queue_owner_accepted();
     composer.update_in(cx, |composer, window, cx| composer.send(window, cx));
     cx.run_until_parked();
     let ids: Vec<_> = (client.calls().into_iter())
         .filter(|(call, _)| call == "send/send")
-        .map(|(_, args)| (args["text"].clone(), args["clientId"].clone()))
+        .map(|(_, args)| {
+            (
+                args["text"].clone(),
+                args["clientId"].clone(),
+                args["attachmentIds"].clone(),
+                args["epoch"].clone(),
+            )
+        })
         .collect();
     assert_eq!(ids.len(), 2);
     assert_eq!(ids[0], ids[1], "the same text with the same clientId");
+    assert_eq!(ids[0].2, json!(["/box/shot.png"]));
 }
