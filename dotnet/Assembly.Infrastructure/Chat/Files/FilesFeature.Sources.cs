@@ -13,8 +13,9 @@ internal sealed partial class FilesFeature
         var json = JsonSerializer.SerializeToElement(args, type);
         if (!json.TryGetProperty("expectedSource", out var expected) || expected.ValueKind == JsonValueKind.Null)
             return null;
-        // Session-less continuations are admitted by their original connection-owned scope, never a new lookup.
-        if (!json.TryGetProperty("session", out var session)) return null;
+        // Session-less continuations are admitted by their original connection-owned scope, never a new lookup; a path
+        // target has no session source to capture and checks its own peer.
+        if (!json.TryGetProperty("session", out var session) || session.ValueKind == JsonValueKind.Null) return null;
         if (call.Peer is not OwnerPeer) throw new CallFailed("forbidden");
         var source = expected.Deserialize(FilesJson.Default.ExpectedSource) ?? throw new CallFailed("source_changed");
         if (sourceBindings is null) throw new CallFailed("The file source cannot be verified.", "source_changed");

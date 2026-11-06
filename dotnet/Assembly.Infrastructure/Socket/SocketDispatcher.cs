@@ -330,7 +330,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     internal async Task<ReadOnlyMemory<byte>> AnswerAsync(InFrame frame, long id, SocketConnection connection, CancellationToken cancelled)
     {
         if (frame.ExpectedSource is not null &&
-            !(frame.Feature == "rows" && frame.Method is ("page" or "subagents" or "files" or "attachments") ||
+            !(frame.Feature == "rows" && frame.Method is ("page" or "subagents" or "files" or "attachments" or "tokens") ||
                 frame.Feature == "sessions" && frame.Method == "read" ||
                 frame.Feature == "attachments" && frame.Method is ("begin" or "read") ||
                 frame.Feature == "send" && frame.Method is ("send" or "answer" or "stop" or "stopTask") ||

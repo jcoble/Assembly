@@ -8,6 +8,7 @@ using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Rows;
+using Assembly.Infrastructure.Chat;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Infrastructure.Engine.Sessions;
 using Assembly.Infrastructure.Machines;
@@ -213,7 +214,7 @@ public sealed class AttachmentSourceTests
                 var machines = new MachineSet(local);
                 var sources = new SessionRowSources(f.Hosts.Remote.Fixture.Db, f.Hosts.Remote.Sessions, machines);
                 new AttachmentsFeature(f.Hosts.Remote.Sessions, machines, Path.Combine(f._home, "remote-staging"), sources).Register(calls);
-                new RowsFeature(f.Hosts.Remote.NeedHub, RowStore.Open(f.Hosts.Remote.Fixture.Db), f.Hosts.Remote.Sessions, machines, sources).Register(calls);
+                new RowsFeature(f.Hosts.Remote.NeedHub, RowStore.Open(f.Hosts.Remote.Fixture.Db), f.Hosts.Remote.Sessions, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), sources).Register(calls);
             };
             f.Hosts.Mac.AdditionalFeatures = calls => macCalls = calls;
             await f.Hosts.Start();
@@ -225,7 +226,7 @@ public sealed class AttachmentSourceTests
             var source = new SessionRowSources(f.Hosts.Mac.Fixture.Db, f.Hosts.Mac.Sessions, f.Machines, f.Hosts.Connections);
             f.Gate = new(macCalls);
             new AttachmentsFeature(f.Hosts.Mac.Sessions, f.Machines, f.Staging, bindings ? source : null).Register(f.Gate);
-            new RowsFeature(f.Hosts.Mac.NeedHub, RowStore.Open(f.Hosts.Mac.Fixture.Db), f.Hosts.Mac.Sessions, f.Machines, bindings ? source : null).Register(f.Gate);
+            new RowsFeature(f.Hosts.Mac.NeedHub, RowStore.Open(f.Hosts.Mac.Fixture.Db), f.Hosts.Mac.Sessions, f.Machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), bindings ? source : null).Register(f.Gate);
             f.Source = new(f.Hosts.Remote.Fixture.Machine, f.Hosts.Mac.Fixture.Number("SELECT generation FROM engine_mirror WHERE machine=$machine", new SqlArg("$machine", f.Hosts.Remote.Fixture.Machine)), "workbox-test");
             return f;
         }

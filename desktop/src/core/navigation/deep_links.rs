@@ -8,6 +8,7 @@ use super::external_urls::{ExternalRoute, parse_external};
 use super::file_link;
 use super::waiting_session_link;
 use crate::core::intents::open_url::OpenUrl;
+use crate::core::state::selected_session::SelectedSession;
 use crate::features::tasks::tasks_pane::{self, NOT_OPENABLE};
 
 /// Carries out a route.
@@ -15,11 +16,16 @@ pub fn handle_route(route: ExternalRoute, cx: &mut App) {
     match route {
         ExternalRoute::Session { id, machine } => waiting_session_link::open(id, machine, cx),
         ExternalRoute::Open { url } => cx.dispatch_action(&OpenUrl { url }),
-        ExternalRoute::File { path, machine } => file_link::open(path, machine, cx),
+        ExternalRoute::File { path, machine } => {
+            let selected = SelectedSession::global(cx).read(cx);
+            let from = selected.key().cloned().zip(selected.source().cloned());
+            file_link::open(path, machine, from, (None, None), cx)
+        }
         ExternalRoute::NotionOAuth { state, claim_code } => {
             tasks_pane::receive_sign_in(state, claim_code, cx)
         }
         ExternalRoute::Task { page_id } => tasks_pane::open_task_link(page_id, cx),
+        ExternalRoute::NotFullPath => show_notice(file_link::NOT_FULL_PATH.into(), cx),
         ExternalRoute::Unsupported => show_notice(NOT_OPENABLE.into(), cx),
     }
 }

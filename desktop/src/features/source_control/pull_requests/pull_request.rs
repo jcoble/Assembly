@@ -1,3 +1,4 @@
+use crate::core::navigation::web_links::pull_request;
 use serde::Deserialize;
 use std::collections::HashSet;
 
@@ -81,44 +82,31 @@ pub struct PrTarget {
     pub number: u64,
 }
 impl PrTarget {
-    pub fn from_url(text: &str, repositories: &[String]) -> Result<Self, String> {
-        let target = Self::parse_url(text)?;
+    /// The same pull request under a project's own spelling of its repository, if one holds it.
+    pub fn among(self, repositories: &[String]) -> Option<Self> {
         let repository = repositories
             .iter()
-            .find(|allowed| allowed.eq_ignore_ascii_case(&target.repository))
-            .cloned()
-            .ok_or("That PR's repository isn't a project in Assembly.")?;
-        Ok(Self {
-            repository,
-            number: target.number,
+            .find(|known| known.eq_ignore_ascii_case(&self.repository))?;
+        Some(Self {
+            repository: repository.clone(),
+            number: self.number,
         })
     }
-    /// A structural target only. The caller must still validate its project or actual checkout origin.
+    /// A structural target only, by the one pull request link parser. The caller must still validate its project or
+    /// actual checkout origin.
     pub fn parse_url(text: &str) -> Result<Self, String> {
-        let url = url::Url::parse(text.trim())
-            .map_err(|_| "Paste a GitHub pull request link.".to_string())?;
-        if url.scheme() != "https"
-            || url.host_str() != Some("github.com")
-            || url.port().is_some()
-            || !url.username().is_empty()
-            || url.password().is_some()
-        {
-            return Err("Paste a GitHub pull request link.".into());
-        }
-        let parts: Vec<_> = url.path().trim_matches('/').split('/').collect();
-        if parts.len() < 4 || parts[2] != "pull" {
-            return Err("Paste a GitHub pull request link.".into());
-        }
-        let number = parts[3]
-            .parse::<u64>()
+        url::Url::parse(text.trim())
             .ok()
-            .filter(|number| *number > 0)
-            .ok_or("Paste a GitHub pull request link.")?;
-        let repo = format!("{}/{}", parts[0], parts[1]);
-        Ok(Self {
-            repository: repo,
-            number,
-        })
+            .and_then(|url| pull_request(&url))
+            .map(|(repository, number)| Self { repository, number })
+            .ok_or_else(|| "Paste a GitHub pull request link.".into())
+    }
+    /// The pull request's page on GitHub.
+    pub fn web_page(&self) -> String {
+        format!(
+            "https://github.com/{}/pull/{}",
+            self.repository, self.number
+        )
     }
 }
 #[derive(Clone, Debug, Deserialize)]

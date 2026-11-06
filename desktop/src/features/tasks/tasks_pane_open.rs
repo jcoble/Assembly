@@ -4,20 +4,17 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 
-use crate::core::intents::open_file::OpenFile;
 use crate::core::intents::open_pull_requests::OpenPullRequests;
-use crate::core::intents::open_url::OpenUrl;
+use crate::core::intents::open_url::OpenInBrowser;
 use crate::core::navigation::deep_links::handle_route;
-use crate::core::state::selected_session::SelectedSession;
+use crate::core::socket::client::SocketClient;
 use crate::features::tasks::notion_client::NotionClient;
 use crate::features::tasks::task_detail::{TaskDetailEvent, TaskDetailView, TaskSeed};
 use crate::features::tasks::task_export::*;
-use crate::features::tasks::task_navigation::{
-    RouteContext, RouteRefused, TaskRoute, passes_on, route_url,
-};
+use crate::features::tasks::task_navigation::{RouteContext, TaskRoute, passes_on, route_url};
 use crate::features::tasks::tasks_state::*;
 
-use super::{NO_SESSION, NOT_CONNECTED, NOT_OPENABLE, TasksPane};
+use super::{NOT_OPENABLE, TasksPane};
 
 impl TasksPane {
     pub(super) fn open_row(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -28,7 +25,6 @@ impl TasksPane {
             data_source_id: row.source_id.clone(),
             page_id: row.page_id.clone(),
         };
-        self.task_session = None;
         self.open_task(source, None, window, cx);
     }
 
@@ -40,6 +36,10 @@ impl TasksPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A page that may not be a task comes forward only once its read shows it is one.
+        if fallback.is_none() {
+            Self::show(window, cx);
+        }
         let seed = self.seed(&source);
         let token = self.state.select(source.clone());
         self.page_fallback = fallback;
@@ -105,6 +105,13 @@ impl TasksPane {
         }));
     }
 
+    /// Brings forward a tab that has just read, or failed to read, a page it held back. It starts first, so coming
+    /// forward doesn't read the page again.
+    fn come_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.start(cx);
+        Self::show(window, cx);
+    }
+
     pub(super) fn detail_read(
         &mut self,
         token: DetailToken,
@@ -117,7 +124,9 @@ impl TasksPane {
                 if !self.state.detail_result(token, detail.clone()) {
                     return;
                 }
-                self.page_fallback = None;
+                if self.page_fallback.take().is_some() {
+                    self.come_forward(window, cx);
+                }
                 if let Some(view) = &self.detail {
                     view.update(cx, |view, cx| view.detail_arrived(&detail, window, cx));
                 }
@@ -130,10 +139,15 @@ impl TasksPane {
                     error.code.as_str(),
                     "notion_source_mismatch" | "notion_http_403" | "notion_http_404"
                 );
-                if let Some(url) = self.page_fallback.take().filter(|_| elsewhere) {
-                    window.dispatch_action(Box::new(OpenUrl { url }), cx);
-                    self.go_back(window, cx);
-                    return;
+                match self.page_fallback.take() {
+                    Some(url) if elsewhere => {
+                        window.dispatch_action(Box::new(OpenInBrowser { url }), cx);
+                        self.go_back(window, cx);
+                        return;
+                    }
+                    // It may be a task Notion couldn't read just now: the tab comes forward to say so.
+                    Some(_) => self.come_forward(window, cx),
+                    None => {}
                 }
                 if let Some(view) = &self.detail {
                     view.update(cx, |view, cx| {
@@ -146,17 +160,41 @@ impl TasksPane {
         cx.notify();
     }
 
-    /// A link on a task page, or from outside.
+    /// A link on a task page, or from outside. Where a Notion link goes depends on whether Notion is connected, which
+    /// the tab knows once it has the settings; before that it asks the backend, and the link waits for the answer. The
+    /// question always ends: a backend that isn't connected fails it at once, and a dropped connection ends it. With no
+    /// answer the link goes where it goes with Notion not connected.
     pub(super) fn open_link(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.state.settings.is_none() && SocketClient::try_global(cx).is_some() {
+            let asking = self.client.settings(cx);
+            let url = url.to_string();
+            self.waiting_link = Some(cx.spawn_in(window, async move |pane, cx| {
+                let answer = asking.await;
+                _ = pane.update_in(cx, |pane, window, cx| {
+                    pane.waiting_link = None;
+                    if let Ok(settings) = answer
+                        && pane.state.settings.is_none()
+                    {
+                        pane.settings_pushed(settings, cx);
+                    }
+                    pane.route_link(&url, window, cx);
+                });
+            }));
+            return;
+        }
+        self.route_link(url, window, cx);
+    }
+
+    fn route_link(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
         let context = RouteContext {
             source: self.state.source(),
         };
         match route_url(url, &context) {
-            Ok(TaskRoute::Task(source)) => self.open_task(source, None, window, cx),
-            Ok(TaskRoute::NotionPage { source, url }) => {
+            Some(TaskRoute::Task(source)) => self.open_task(source, None, window, cx),
+            Some(TaskRoute::NotionPage { source, url }) => {
                 self.open_task(source, Some(url), window, cx)
             }
-            Ok(TaskRoute::PullRequest { repo, number }) => window.dispatch_action(
+            Some(TaskRoute::PullRequest { repo, number }) => window.dispatch_action(
                 Box::new(OpenPullRequests {
                     session_id: None,
                     repo: Some(repo),
@@ -164,54 +202,19 @@ impl TasksPane {
                 }),
                 cx,
             ),
-            Ok(TaskRoute::File { path }) => self.open_file(path, window, cx),
-            Ok(TaskRoute::Web(url)) => window.dispatch_action(Box::new(OpenUrl { url }), cx),
-            Err(refused) => {
-                if let Some(route) = passes_on(url, refused) {
+            // Neither a task nor a pull request, so only the browser is left, and it mustn't come back here.
+            Some(TaskRoute::Web(url)) => {
+                window.dispatch_action(Box::new(OpenInBrowser { url }), cx)
+            }
+            None => {
+                if let Some(route) = passes_on(url) {
                     // This runs while the window is being updated, and a route updates the window itself.
                     cx.defer(move |cx| handle_route(route, cx));
                     return;
                 }
-                let words = match refused {
-                    RouteRefused::NotConnected => NOT_CONNECTED,
-                    RouteRefused::Unsupported => NOT_OPENABLE,
-                };
-                window.push_notification(Notification::warning(words), cx);
+                window.push_notification(Notification::warning(NOT_OPENABLE), cx);
             }
         }
-    }
-
-    /// Against the session the task was opened from, or the selected one. No session, no guess.
-    pub(super) fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
-        let selected = SelectedSession::try_global(cx);
-        let selected = selected.as_ref().map(|selected| selected.read(cx));
-        let session = self
-            .task_session
-            .as_ref()
-            .map(|key| key.id.clone())
-            .or_else(|| {
-                selected
-                    .as_ref()
-                    .and_then(|selected| selected.session_id().map(String::from))
-            });
-        let Some(session_id) = session else {
-            window.push_notification(Notification::warning(NO_SESSION), cx);
-            return;
-        };
-        let expected_source = selected
-            .filter(|selected| selected.session_id() == Some(session_id.as_str()))
-            .and_then(|selected| selected.source().cloned());
-        window.dispatch_action(
-            Box::new(OpenFile {
-                session_id,
-                path,
-                line: None,
-                column: None,
-                pinned: true,
-                expected_source,
-            }),
-            cx,
-        );
     }
 }
 

@@ -147,6 +147,7 @@ impl SearchPane {
                 machine: key.machine.clone(),
                 checkout_root: key.checkout_root.clone(),
                 remote_session_id: key.session_id.clone(),
+                file: None,
             });
         let args = json!({ "session": session, "query": self.query, "mode": self.mode, "searchId": cursor, "pageSize": PAGE, "expectedSource": self.source, "expectedOwner": expected_owner });
         self.searching = Some(cx.spawn(async move |pane, cx| {

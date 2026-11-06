@@ -33,6 +33,8 @@ pub struct StepRow {
     pub glyph: Option<Glyph>,
     pub title: SharedString,
     pub summary: Option<SharedString>,
+    /// What clicking the summary does, drawn as a link: a tool call's file. The click doesn't reach the row under it.
+    pub summary_action: Option<Box<dyn Action>>,
     /// After the summary: a tool call's line counts.
     pub tags: Vec<AnyElement>,
     /// How long it ran, in ms; `None` where times aren't shown.
@@ -70,22 +72,39 @@ impl RenderOnce for StepRow {
         } else {
             div().child(self.title).into_any_element()
         };
+        let summary = div()
+            .min_w_0()
+            .truncate()
+            .font_family(theme.mono_font_family.clone())
+            .text_role(TextRole::Meta, cx)
+            .child(self.summary.unwrap_or_default());
+        let summary = match self.summary_action {
+            None => summary.into_any_element(),
+            Some(action) => {
+                let id = SharedString::from(format!("{}:summary", self.id));
+                summary
+                    .id(id.clone())
+                    .debug_selector(move || id.to_string())
+                    .text_color(theme.link)
+                    .cursor_pointer()
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        window.dispatch_action(action.boxed_clone(), cx);
+                    })
+                    .into_any_element()
+            }
+        };
+        let line = self.id.clone();
         h_flex()
             .id(self.id)
+            .debug_selector(move || line.to_string())
             .h(px(22.))
             .gap_2()
             .text_role(TextRole::Body, cx)
             .text_color(if failed { theme.danger } else { muted })
             .child(sign)
             .child(div().flex_none().child(title))
-            .child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .font_family(theme.mono_font_family.clone())
-                    .text_role(TextRole::Meta, cx)
-                    .child(self.summary.unwrap_or_default()),
-            )
+            .child(summary)
             .children(
                 (self.chevron.map(chevron))
                     .map(|chevron| chevron.text_color(if failed { theme.danger } else { faint })),

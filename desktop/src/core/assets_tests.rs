@@ -49,3 +49,19 @@ fn the_window_has_every_icon_it_draws() {
     assert!(listed.contains(&IconName::House.path()));
     assert!(listed.contains(&IconName::ChevronRight.path()));
 }
+
+// Pins: g0-shape#16
+#[test]
+fn the_context_cards_have_their_heading_icons() {
+    // Session, Context usage, Files touched and Attachments; Files isn't in the kit's default set.
+    for icon in [
+        IconName::Bot,
+        IconName::Gauge,
+        IconName::Files,
+        IconName::Image,
+    ] {
+        let path = icon.path();
+        let svg = AppAssets.load(&path).expect("loads").expect("is there");
+        assert!(svg.starts_with(b"<svg"), "{path} is an SVG");
+    }
+}

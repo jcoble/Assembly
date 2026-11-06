@@ -58,7 +58,7 @@ public sealed partial class SessionHost
                     _titlePending |= session.Titled;
                     turn.Opened.TrySetResult();
                     turn.Cost.AgentStarted(session.Resumed, session.SavedCost);
-                    Apply(new AgentStarted(Now(), session.Resumed, session.SavedCost, session.Model),
+                    Apply(new AgentStarted(Now(), session.Resumed, session.SavedCost, session.Model, session.Folder),
                         observe: turn.Observation is not { } observed ? null : scope =>
                             _feed?.Connected(scope, observed, session.AcpSessionId, session.Adapter.Init.CanSteer));
                 }

@@ -161,8 +161,246 @@ fn cancelled_tool_line_is_neutral_with_and_without_activity_timing(cx: &mut gpui
                 took_ms: timed.then_some(3000),
                 denied,
                 on_action: std::rc::Rc::new(|_, _, _| {}),
+                session: None,
+                expected_source: None,
             };
             assert_eq!(row.line(None, cx).state, expected);
         }
     });
+}
+
+/// A finished call of `kind` on `path`, with `summary` as the backend sent it, in `session`.
+fn call_row(
+    kind: &str,
+    path: &str,
+    summary: Option<&str>,
+    session: Option<&str>,
+) -> super::ToolRow {
+    use crate::core::socket::row_source::ExpectedRowSource;
+    super::ToolRow {
+        key: "R".into(),
+        tool: serde_json::from_value(json!({
+            "name": "Tool", "state": "completed", "hasDetail": true, "kind": kind,
+            "path": path, "summary": summary,
+        }))
+        .unwrap(),
+        kept: crate::features::session::model::kept::Kept::default(),
+        took_ms: None,
+        denied: false,
+        on_action: std::rc::Rc::new(|_, _, _| {}),
+        session: session.map(Into::into),
+        expected_source: Some(ExpectedRowSource {
+            machine: "owner-a".into(),
+            generation: 3,
+            route_machine: Some("route-a".into()),
+        }),
+    }
+}
+
+/// A finished read of `path` whose summary is `summary`.
+fn read_row(path: &str, summary: &str, session: Option<&str>) -> super::ToolRow {
+    call_row("read", path, Some(summary), session)
+}
+
+fn opens(row: &super::ToolRow, cx: &gpui_kit::App) -> Option<Box<dyn gpui_kit::Action>> {
+    row.line(None, cx).summary_action
+}
+
+fn opening(session: &str, path: &str) -> crate::core::intents::open_file::OpenFile {
+    crate::core::intents::open_file::OpenFile {
+        session_id: session.into(),
+        path: path.into(),
+        line: None,
+        column: None,
+        pinned: true,
+        expected_source: read_row("/x", "/x", None).expected_source,
+        outside: None,
+        whole: None,
+    }
+}
+
+#[gpui::test]
+fn a_tool_row_path_is_a_file_link_for_its_session(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        // An absolute path, and a relative one the backend joined onto the call's folder (its summary stays as sent),
+        // on every file kind.
+        for kind in ["read", "edit", "delete", "move"] {
+            for summary in ["/work/src/a.rs", "src/a.rs"] {
+                let row = call_row(kind, "/work/src/a.rs", Some(summary), Some("S"));
+                let action = opens(&row, cx).expect("the path is a link");
+                assert!(
+                    action.partial_eq(&opening("S", "/work/src/a.rs")),
+                    "{kind} {summary}"
+                );
+            }
+        }
+        // With no session an absolute path still goes to the resolver; a relative one has nowhere to open.
+        let alone = opens(&read_row("/work/src/a.rs", "/work/src/a.rs", None), cx);
+        assert!(
+            alone
+                .expect("absolute opens")
+                .partial_eq(&opening("", "/work/src/a.rs"))
+        );
+        assert!(opens(&read_row("src/a.rs", "src/a.rs", None), cx).is_none());
+        assert!(opens(&read_row("src/a.rs", "src/a.rs", Some("S")), cx).is_some());
+        // A line that shows something other than the path isn't a link, nor one with no summary of its own.
+        assert!(opens(&read_row("/work/src/a.rs", "reads the file", Some("S")), cx).is_none());
+        assert!(opens(&call_row("read", "/work/src/a.rs", None, Some("S")), cx).is_none());
+        assert!(opens(&read_row("/work/src/a.rs", "", Some("S")), cx).is_none());
+        // `//host/...` is never a file path.
+        assert!(opens(&read_row("//host/a.rs", "//host/a.rs", Some("S")), cx).is_none());
+    });
+}
+
+// Brief item 2: the backend folds a joined `..`, so `../lib/a.rs` run in /w/app comes as /w/lib/a.rs with its summary
+// as the call gave it, and that's a link to the folded path. A path still holding `.` or `..` (an older backend's join)
+// never is one, and a call whose join would climb above `/` comes with no path and draws no link.
+#[gpui::test]
+fn a_joined_path_that_climbed_out_of_its_folder_links_to_the_folded_path(
+    cx: &mut gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        for summary in ["../lib/a.rs", "./../lib/./a.rs", "../app/../lib/a.rs"] {
+            let row = read_row("/w/lib/a.rs", summary, Some("S"));
+            let action = opens(&row, cx).expect("the folded path is a link");
+            assert!(action.partial_eq(&opening("S", "/w/lib/a.rs")), "{summary}");
+        }
+        let unfolded = read_row("/w/app/../lib/a.rs", "../lib/a.rs", Some("S"));
+        assert!(
+            opens(&unfolded, cx).is_none(),
+            "an unfolded join is no link"
+        );
+        let climbed = super::ToolRow {
+            tool: serde_json::from_value(json!({
+                "name": "Tool", "state": "completed", "hasDetail": true, "kind": "read",
+                "summary": "../../a.rs",
+            }))
+            .unwrap(),
+            ..read_row("/x", "/x", Some("S"))
+        };
+        assert!(opens(&climbed, cx).is_none(), "no path, no link");
+        assert_eq!(
+            climbed.line(None, cx).summary.as_deref(),
+            Some("../../a.rs")
+        );
+    });
+}
+
+// Proof fixes review item 2: a path with no folder on its call that stays inside the session's folder comes back
+// relative and folded, and opens as that session's file; one that leaves it comes back absolute.
+#[gpui::test]
+fn a_session_path_comes_back_relative_inside_its_folder_and_absolute_outside(
+    cx: &mut gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        for summary in ["src/a.rs", "./src/../src/a.rs"] {
+            let action =
+                opens(&read_row("src/a.rs", summary, Some("S")), cx).expect("a session file link");
+            assert!(action.partial_eq(&opening("S", "src/a.rs")), "{summary}");
+        }
+        let left = opens(&read_row("/w/lib/x.rs", "../lib/x.rs", Some("S")), cx)
+            .expect("an absolute link");
+        assert!(left.partial_eq(&opening("S", "/w/lib/x.rs")));
+    });
+}
+
+#[gpui::test]
+fn a_folder_or_a_search_pattern_is_not_a_file_link(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        // An LS of a folder, and a Grep whose pattern happens to end its path.
+        let ls = call_row("search", "/repo/src", Some("/repo/src"), Some("S"));
+        assert!(opens(&ls, cx).is_none());
+        let grep = call_row("search", "/repo/foo", Some("foo"), Some("S"));
+        assert!(opens(&grep, cx).is_none());
+        assert_eq!(grep.line(None, cx).summary.as_deref(), Some("foo"));
+        let other = call_row("other", "/repo/src", Some("/repo/src"), Some("S"));
+        assert!(opens(&other, cx).is_none());
+    });
+}
+
+#[gpui::test]
+fn the_tool_row_still_shows_the_short_path(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        let summary = |row: super::ToolRow| row.line(None, cx).summary.map(|s| s.to_string());
+        let full = "/work/desktop/src/core/ui/markdown/view.rs";
+        assert_eq!(
+            summary(read_row(full, full, Some("S"))).as_deref(),
+            Some("markdown/view.rs")
+        );
+        // A relative path the backend joined onto the call's folder shows its last two parts too.
+        let joined = read_row(full, "desktop/src/core/ui/markdown/view.rs", Some("S"));
+        assert_eq!(summary(joined).as_deref(), Some("markdown/view.rs"));
+        let bare = call_row("read", full, None, Some("S"));
+        assert_eq!(summary(bare).as_deref(), Some("markdown/view.rs"));
+    });
+}
+
+#[gpui::test]
+fn clicking_the_tool_path_does_not_toggle_the_row(cx: &mut gpui::TestAppContext) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use gpui_kit::{
+        AppContext as _, Context, Entity, IntoElement, Modifiers, ParentElement as _, Render,
+        Styled as _, Window,
+    };
+
+    use crate::core::intents::open_file::OpenFile;
+    use crate::core::ui::expand_row::ExpandRow;
+
+    struct Host(Entity<ExpandRow>);
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            gpui_kit::component::v_flex()
+                .size_full()
+                .child(self.0.clone())
+        }
+    }
+
+    let opened: Rc<RefCell<Vec<OpenFile>>> = Rc::default();
+    let heard = opened.clone();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.on_action(move |intent: &OpenFile, _| heard.borrow_mut().push(intent.clone()));
+    });
+    let row = read_row("/work/src/a.rs", "/work/src/a.rs", Some("S"));
+    let (host, cx) = cx.add_window_view(move |_, cx| {
+        let expand = cx.new(|_| {
+            ExpandRow::new(
+                false,
+                move |grown, _, cx| row.line(Some(grown), cx).into_any_element(),
+                |_, _| gpui_kit::div().into_any_element(),
+            )
+        });
+        Host(expand)
+    });
+    cx.run_until_parked();
+    let expand = cx.update(|_, cx| host.read(cx).0.clone());
+    let at = |name: &'static str, cx: &mut gpui::VisualTestContext| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds(name).expect("drawn")
+    };
+    let path = at("R:line:summary", cx);
+    cx.simulate_click(path.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        !cx.update(|_, cx| expand.read(cx).is_open()),
+        "the row stays shut"
+    );
+    let opened_paths: Vec<_> = opened.borrow().iter().map(|o| o.path.clone()).collect();
+    assert_eq!(opened_paths, vec!["/work/src/a.rs".to_string()]);
+    // The rest of the line still opens it.
+    let line = at("R:line", cx);
+    cx.simulate_click(
+        gpui_kit::point(line.left() + gpui_kit::px(4.), line.center().y),
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| expand.read(cx).is_open()));
+    assert_eq!(opened.borrow().len(), 1);
 }
