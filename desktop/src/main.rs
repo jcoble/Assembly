@@ -6,9 +6,13 @@
 mod activity;
 mod core;
 mod features;
+#[path = "components/hinted_item/mod.rs"]
+mod hinted_item;
 #[allow(dead_code)]
 #[path = "components/inline_field/mod.rs"]
 mod inline_field;
+#[path = "components/notice_strip/mod.rs"]
+mod notice_strip;
 #[path = "components/section_card.rs"]
 mod section_card;
 
@@ -102,6 +106,7 @@ fn main() {
             };
             gpui_kit::open_window(options, cx, |window, cx| {
                 theme::set(ThemeId::DEFAULT, window, cx);
+                features::workspaces::drafts_guard::guard_close(window, cx);
                 let frame = cx.new(|cx| Frame::new(read_layout, write_layout, window, cx));
                 cx.new(|cx| WindowRoot::new(frame, window, cx))
             })

@@ -1,5 +1,5 @@
 use super::{CreatePrForm, CreatePrInput, create_failure};
-use crate::core::intents::{open_pull_requests::OpenPullRequests, open_url::OpenUrl};
+use crate::core::intents::{open_pull_requests::OpenPullRequests, open_url::OpenInBrowser};
 use crate::features::source_control::git_action::GitWrites;
 use crate::features::source_control::git_operation::OperationStatus;
 use crate::features::source_control::git_target::GitTarget;
@@ -67,7 +67,9 @@ fn a_created_pr_offers_to_open_it(cx: &mut TestAppContext) {
     let tabs = Rc::new(RefCell::new(Vec::new()));
     let (url_seen, tab_seen) = (urls.clone(), tabs.clone());
     visual.update(|_, cx| {
-        cx.on_action(move |intent: &OpenUrl, _| url_seen.borrow_mut().push(intent.url.clone()));
+        cx.on_action(move |intent: &OpenInBrowser, _| {
+            url_seen.borrow_mut().push(intent.url.clone())
+        });
         cx.on_action(move |intent: &OpenPullRequests, _| {
             tab_seen
                 .borrow_mut()

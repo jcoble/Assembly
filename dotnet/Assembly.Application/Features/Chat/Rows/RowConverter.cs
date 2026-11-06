@@ -39,6 +39,8 @@ public sealed class RowConverter
     private readonly Dictionary<string, List<(string Item, string? Run)>> _thoughtItems = [];
     private readonly Dictionary<string, string> _replacedThought = [];
     private decimal? _sessionCost;
+    // The checkout or worktree the agent's last open ran in, for tool paths that name no folder.
+    private string? _folder;
     private int _unnamedItems;
     // The run each background task started in, so its later rows stay with it after that run ends.
     private readonly Dictionary<string, string?> _taskRuns = new();
@@ -149,6 +151,7 @@ public sealed class RowConverter
                 // The session's agent sums its cost itself. A new session starts from zero; a resumed one goes on
                 // from the total saved at its last clean close, or from a total the rows never saw.
                 _sessionCost = started.Resumed ? started.SavedCost : null;
+                _folder = started.Folder ?? _folder;
                 _turn?.AgentStarted(started.Resumed, started.SavedCost);
                 if (_turn is not null)
                     _turn.Model = started.Model;
@@ -274,7 +277,7 @@ public sealed class RowConverter
             // What the agent said before it reached for a tool is a finished message.
             CloseMessage(batch, change.At);
             CloseThinking(batch, change.At);
-            _tools[change.ToolCallId] = new OpenTool(change.ToolCallId, _turn?.RunId ?? _lastRunId);
+            _tools[change.ToolCallId] = new OpenTool(change.ToolCallId, _turn?.RunId ?? _lastRunId, _folder);
             if (_turn is not null)
                 _turn.ToolCalls++;
         }

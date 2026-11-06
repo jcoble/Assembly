@@ -1,4 +1,5 @@
-//! A menu row that can't run stays visible and says why on a second line, because a disabled row shows no tooltip.
+//! A menu row that can't run stays visible and says why on a second line. An element row can carry a tooltip instead
+//! through `components/hinted_item`; moving these callers onto it is TSK-1633's job.
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::component::{ActiveTheme as _, v_flex};

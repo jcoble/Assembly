@@ -18,6 +18,17 @@ pub struct DocumentKey {
     pub path: String,
 }
 
+impl DocumentKey {
+    /// The name a file's tab is claimed and ordered under: one document, one tab.
+    pub fn identity(&self) -> String {
+        format!(
+            "document:{}",
+            serde_json::to_string(&(&self.machine, &self.checkout_root, &self.path))
+                .expect("document identity")
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TextEdit {
     pub start: usize,

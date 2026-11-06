@@ -7,7 +7,6 @@ use gpui_kit::component::input::Editor;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::json;
 
 impl EventEmitter<PanelEvent> for FileView {}
 
@@ -79,7 +78,7 @@ impl BasePanel for FileView {
         PanelState {
             panel_name: FILE.into(),
             children: Vec::new(),
-            info: PanelInfo::panel(json!({ "session": self.session, "path": self.path })),
+            info: PanelInfo::panel(self.saved_info()),
         }
     }
 }
@@ -133,6 +132,7 @@ impl Render for FileView {
                     .text_role(TextRole::Body, cx)
                     .text_color(muted)
                     .child(self.path.clone())
+                    .children(self.status_words())
                     .when(dirty, |row| row.child("Unsaved"))
                     .child(
                         Button::new("file-save")
@@ -148,7 +148,9 @@ impl Render for FileView {
                                 },
                             )
                             .ghost()
-                            .disabled(self.saving.is_some() || self.document.is_none())
+                            .disabled(
+                                self.saving.is_some() || self.document.is_none() || self.locked,
+                            )
                             .on_click(cx.listener(|view, _, _, cx| view.save_document(cx))),
                     )
                     .child(
@@ -173,7 +175,9 @@ impl Render for FileView {
                         Button::new("file-compare")
                             .ghost()
                             .label("Compare")
-                            .disabled(self.document.is_none() || self.saving.is_some())
+                            .disabled(
+                                self.document.is_none() || self.saving.is_some() || self.locked,
+                            )
                             .on_click(cx.listener(|view, _, _, cx| view.compare_document(cx))),
                     )
                     .when(self.comparison.is_some(), |row| {
@@ -181,24 +185,28 @@ impl Render for FileView {
                             Button::new("file-overwrite")
                                 .ghost()
                                 .label("Overwrite")
-                                .disabled(self.saving.is_some())
+                                .disabled(self.saving.is_some() || self.locked)
                                 .on_click(cx.listener(|view, _, window, cx| {
                                     view.request_overwrite(window, cx)
                                 })),
                         )
                     })
-                    .child(
-                        Button::new("file-history")
-                            .ghost()
-                            .label(if self.history_shown {
-                                "Hide history"
-                            } else {
-                                "History"
-                            })
-                            .disabled(self.document.is_none())
-                            .on_click(cx.listener(|view, _, _, cx| view.toggle_history(cx))),
-                    ),
+                    .when(self.has_history(), |row| {
+                        row.child(
+                            Button::new("file-history")
+                                .debug_selector(|| "file-history".into())
+                                .ghost()
+                                .label(if self.history_shown {
+                                    "Hide history"
+                                } else {
+                                    "History"
+                                })
+                                .disabled(self.document.is_none())
+                                .on_click(cx.listener(|view, _, _, cx| view.toggle_history(cx))),
+                        )
+                    }),
             )
+            .children(self.lock_banner(cx))
             .children(status.map(|text| {
                 div()
                     .px_3()
@@ -211,6 +219,7 @@ impl Render for FileView {
             .when_some(self.editor.as_ref(), |view, editor| {
                 view.child(
                     Editor::new(&editor.state)
+                        .readonly(self.locked)
                         .font_family(Preferences::editor_text(cx).0)
                         .text_size(Preferences::editor_text(cx).1)
                         .size_full(),

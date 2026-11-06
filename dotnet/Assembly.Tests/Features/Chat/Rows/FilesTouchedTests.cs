@@ -241,6 +241,45 @@ public sealed class FilesTouchedTests : IDisposable
 
     // Pins: g0-shape#13
     [Fact]
+    public void A_relative_path_that_climbs_out_of_the_folder_lists_absolute()
+    {
+        Save(Call("t1", "read", path: "../lib/helper.rs"));
+
+        Assert.Equal([$"{Path.GetDirectoryName(Folder)}/lib/helper.rs"], Paths(Read()));
+    }
+
+    // Pins: g0-shape#13
+    [Fact]
+    public void A_climbing_and_a_whole_spelling_of_one_outside_file_are_one_row()
+    {
+        var outside = $"{Path.GetDirectoryName(Folder)}/lib/helper.rs";
+        Save(Call("t1", "edit", path: "../lib/helper.rs", more: ""","added":2,"removed":1"""), Call("t2", "edit", path: outside, more: ""","added":3"""));
+
+        Assert.Equal(new FileTouched(outside, 5, 1, 2, 2), Assert.Single(Read()));
+    }
+
+    // The Claude adapter's Read row: a whole path, and the relative spelling the call was given.
+    // Pins: g0-shape#13
+    [Fact]
+    public void One_call_with_a_whole_and_a_climbing_spelling_of_one_file_counts_once()
+    {
+        var outside = $"{Path.GetDirectoryName(Folder)}/lib/helper.rs";
+        Save(Call("t1", "read", path: outside, more: Named("../lib/helper.rs")));
+
+        Assert.Equal(new FileTouched(outside, 0, 0, 1, 1), Assert.Single(Read()));
+    }
+
+    // Pins: g0-shape#13
+    [Fact]
+    public void A_dotted_and_a_plain_spelling_inside_the_folder_are_one_relative_row()
+    {
+        Save(Call("t1", "edit", path: "./x", more: ""","added":1"""), Call("t2", "edit", path: "x", more: ""","added":2"""));
+
+        Assert.Equal(new FileTouched("x", 3, 0, 2, 2), Assert.Single(Read()));
+    }
+
+    // Pins: g0-shape#13
+    [Fact]
     public void A_home_path_and_its_tilde_are_one_row()
     {
         Save(Call("t1", "read", path: "~/a.md"), Call("t2", "read", path: "/home/x/a.md"));
@@ -368,7 +407,7 @@ public sealed class FilesTouchedTests : IDisposable
     public void Paging_stops_once_fifty_are_kept()
     {
         var offsets = new List<int>();
-        var rows = Enumerable.Range(0, TouchedFiles.Page).Select(i => new TouchedRow($"f{i}", 0, 0, 1, 1, false, null)).ToArray();
+        var rows = Enumerable.Range(0, TouchedFiles.Page).Select(i => new TouchedRow($"f{i}", 0, 0, [$"c{i}"], 1, false, null)).ToArray();
 
         var files = TouchedFiles.Read((_, offset) => { offsets.Add(offset); return rows; }, null, null, CancellationToken.None);
 
@@ -382,7 +421,7 @@ public sealed class FilesTouchedTests : IDisposable
     {
         using var cancel = new CancellationTokenSource();
         var probe = new CancellingProbe(cancel);
-        var rows = new[] { new TouchedRow("a", 0, 0, 1, 1, false, null), new TouchedRow("b", 0, 0, 1, 1, false, null) };
+        var rows = new[] { new TouchedRow("a", 0, 0, ["c1"], 1, false, null), new TouchedRow("b", 0, 0, ["c2"], 1, false, null) };
 
         Assert.Throws<OperationCanceledException>(() => TouchedFiles.Read((_, _) => rows, "/repo", probe, cancel.Token));
         Assert.Equal(["/repo/a"], probe.Asked);

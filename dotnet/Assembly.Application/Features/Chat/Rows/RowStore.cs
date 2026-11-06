@@ -369,7 +369,8 @@ public sealed partial class RowStore
 
     // Every page reads rows up to the same seq, so a call written mid-read can't move a path between pages. ~/ expands
     // before the folder is stripped and before grouping, so ~/a, /home/x/a and a can be one file. substr, not LIKE, so a
-    // folder with _ or % in its name still matches. calls is materialized so the tool rows are scanned once a page.
+    // folder with _ or % in its name still matches. calls is materialized so the tool rows are scanned once a page. Each
+    // group returns its distinct call ids (a call's item id, a prompt's seq) so spellings merged later count a call once.
     internal IReadOnlyList<TouchedRow> FilesTouchedPage(string sessionId, string? folder, string? home, long upto, int limit, int offset, CancellationToken cancellationToken) =>
         _db.Query(
             """
@@ -411,14 +412,21 @@ public sealed partial class RowStore
                      CASE WHEN $folder IS NOT NULL AND substr(path, 1, length($folder) + 1) = $folder || '/'
                           THEN substr(path, length($folder) + 2) ELSE path END AS path
               FROM homed)
-            SELECT path, SUM(added), SUM(removed), COUNT(DISTINCT call), MAX(seq), MIN(candidate), MAX(name)
+            SELECT path, SUM(added), SUM(removed), json_group_array(DISTINCT call), MAX(seq), MIN(candidate), MAX(name)
             FROM named
             WHERE $folder IS NULL OR path <> $folder
             GROUP BY path ORDER BY 5 DESC, 1 LIMIT $limit OFFSET $offset;
             """,
-            reader => new TouchedRow(reader.Text(0), reader.Long(1), reader.Long(2), reader.Long(3), reader.Long(4), reader.Long(5) == 1, reader.IsNull(6) ? null : reader.Text(6)),
+            reader => new TouchedRow(reader.Text(0), reader.Long(1), reader.Long(2), CallIds(reader.Text(3)), reader.Long(4), reader.Long(5) == 1, reader.IsNull(6) ? null : reader.Text(6)),
             cancellationToken, new SqlArg("$session", sessionId), new SqlArg("$folder", folder), new SqlArg("$home", home),
             new SqlArg("$upto", upto), new SqlArg("$limit", limit), new SqlArg("$offset", offset));
+
+    // Raw JSON text keeps a call's item id ("41") and a prompt's seq (41) apart.
+    private static string[] CallIds(string json)
+    {
+        using var ids = JsonDocument.Parse(json);
+        return ids.RootElement.EnumerateArray().Select(id => id.GetRawText()).ToArray();
+    }
 
     /// <summary>
     /// The session's token total (<c>rows/tokens</c>): the sum of what each turn reported at its end, since a provider's

@@ -25,7 +25,9 @@ impl WorkspaceCoordinator {
         let snapshot = match WorkspacePanes::capture(window, cx) {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                self.status = Some(format!("Not saved: {error}"));
+                let refused = format!("Not saved: {error}");
+                self.capture_refused = Some(refused.clone());
+                self.status = Some(refused);
                 if self.active_request {
                     self.guard_outgoing(window, cx);
                 }
@@ -34,6 +36,13 @@ impl WorkspaceCoordinator {
             }
         };
         if current.safe_to_leave.as_ref() == Some(&snapshot) {
+            // Already saved as it stands, so an earlier capture refusal's "Not saved" no longer holds; any other status
+            // (a save that failed, a workspace changed elsewhere) stays.
+            let refused = self.capture_refused.take();
+            if refused.is_some() && self.status == refused {
+                self.status = None;
+                cx.notify();
+            }
             if self.active_request {
                 self.read_target(window, cx);
             }

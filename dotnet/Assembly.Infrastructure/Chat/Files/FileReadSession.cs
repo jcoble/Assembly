@@ -20,7 +20,7 @@ public sealed class FileReadSession
     }
 
     public async Task<FileChunk> ReadAsync(string root, string path, long offset, string? revision,
-        string connection, CancellationToken cancellationToken, string? session = null)
+        string connection, CancellationToken cancellationToken, string? session = null, Action? recheck = null)
     {
         var key = new Key(connection, Path.GetFullPath(root), SessionPaths.ResolveFile(root, path), session ?? Path.GetFullPath(root), path);
         if (offset != 0)
@@ -61,7 +61,7 @@ public sealed class FileReadSession
         }
         try
         {
-            var bytes = await FileRead.CaptureAsync(root, path, cancellationToken);
+            var bytes = await FileRead.CaptureAsync(root, path, cancellationToken, recheck);
             var chunk = FileRead.Chunk(bytes, 0);
             lock (gate)
             {
@@ -94,16 +94,10 @@ public sealed class FileReadSession
         }
     }
 
-    public bool Release(string root, string path, string revision, string connection)
-    {
-        var key = new Key(connection, Path.GetFullPath(root), SessionPaths.ResolveFile(root, path), Path.GetFullPath(root), path);
-        lock (gate)
-        {
-            if (!snapshots.TryGetValue(key, out var snapshot) || snapshot.Metadata.Revision != revision)
-                return false;
-            return snapshots.Remove(key);
-        }
-    }
+    /// <summary>Ends a read taken with no session, by the root and path it was read as. It touches no disk, so a file that
+    /// has since gone or become a link still lets go of its snapshot.</summary>
+    public bool Release(string root, string path, string revision, string connection) =>
+        ReleaseSession(Path.GetFullPath(root), path, revision, connection);
 
     public bool ReleaseSession(string session, string path, string revision, string connection)
     {
