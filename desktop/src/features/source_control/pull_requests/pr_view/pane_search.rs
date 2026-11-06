@@ -3,6 +3,9 @@ use super::*;
 use crate::core::navigation::web_links::web_address;
 use crate::core::socket::{client::SocketClient, connection_state::ConnectionState};
 
+/// A waiting link's words when the connection ended, or the read failed, before the projects answered.
+const PROJECTS_UNREAD: &str = "The projects couldn't be read, so the link didn't open.";
+
 /// A followed link held until the pushed projects say whether a project holds its repository.
 pub(super) struct WaitingLink {
     target: PrTarget,
@@ -59,9 +62,21 @@ impl PrPane {
         if self.waiting_link.is_none() || !(ended || self.projects_answered(cx)) {
             return;
         }
-        if let Some(waiting) = self.waiting_link.take() {
-            self.open_through_project(waiting.target, cx);
+        let Some(waiting) = self.waiting_link.take() else {
+            return;
+        };
+        if (ended && !self.projects_answered(cx)) || self.projects_unread(cx) {
+            self.close_detail(cx);
+            let page = waiting.target.web_page();
+            self.missing_link = Some((PROJECTS_UNREAD.into(), page));
+            return;
         }
+        self.open_through_project(waiting.target, cx);
+    }
+    /// The projects' read failed with no rows, so no link can be placed among them.
+    fn projects_unread(&self, cx: &App) -> bool {
+        let projects = self.projects.as_ref().map(|projects| projects.read(cx));
+        projects.is_some_and(|projects| projects.failure.is_some() && projects.rows().is_empty())
     }
     fn open_through_project(&mut self, target: PrTarget, cx: &mut Context<Self>) {
         match target.clone().among(&self.project_repositories(cx)) {

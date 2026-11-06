@@ -218,3 +218,27 @@ async fn a_refused_layout_save_clears_after_a_conflicting_outside_save_and_its_r
         assert!(!cx.global::<DocumentStore>().is_dirty(&hosts_document()));
     });
 }
+
+// Review item 1: only the capture refusal clears when the layout is already saved; another status, as a workspace
+// changed elsewhere, stays through a file save.
+#[gpui::test]
+async fn a_changed_elsewhere_status_stays_through_a_file_save(cx: &mut TestAppContext) {
+    const ELSEWHERE: &str = "This workspace changed elsewhere. The live view is preserved; another save requires reconciliation.";
+    let mut stage = stage(cx);
+    *stage.commit.lock().unwrap() = "conflict";
+    let (view, mut heard) = open(&mut stage).await;
+    saved_draft(&mut stage, &view, &mut heard).await;
+    let coordinator = stage.coordinator.clone();
+    stage.cx.update(|_, cx| {
+        coordinator.update(cx, |coordinator, cx| {
+            coordinator.status = Some(ELSEWHERE.into());
+            cx.notify();
+        })
+    });
+
+    let release = release(&mut stage);
+    save(&mut stage, &view);
+    settled(&mut stage, &view, &mut heard, "the file save").await;
+    drop(release);
+    assert_eq!(status(&mut stage).as_deref(), Some(ELSEWHERE));
+}

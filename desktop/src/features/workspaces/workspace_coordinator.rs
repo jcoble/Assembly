@@ -85,6 +85,8 @@ pub struct WorkspaceCoordinator {
     guarding: Option<Task<()>>,
     watching: Option<Task<()>>,
     pub status: Option<String>,
+    /// The words of the last capture refused while a file operation ran, which an already saved layout clears.
+    capture_refused: Option<String>,
 }
 impl EventEmitter<WorkspaceSaved> for WorkspaceCoordinator {}
 impl EventEmitter<WorkspaceActivated> for WorkspaceCoordinator {}
@@ -109,6 +111,7 @@ impl WorkspaceCoordinator {
             guarding: None,
             watching: None,
             status: None,
+            capture_refused: None,
         });
         cx.set_global(Current(view.clone()));
         view

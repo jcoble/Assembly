@@ -1,5 +1,5 @@
 //! Proof fixes brief item 2: a pull request link followed before the projects are known waits for the pushed projects,
-//! then routes; a connection that ends first gives the notice.
+//! then routes; a connection that ends first says the projects couldn't be read.
 use super::*;
 
 /// A backend holding project LANE for o/r. Its projects list answers only when the test's `release` call arrives, or,
@@ -121,7 +121,7 @@ async fn a_link_followed_before_the_projects_are_known_opens_once_they_arrive(
 }
 
 #[gpui::test]
-async fn a_link_waiting_on_the_projects_says_no_project_when_the_connection_ends(
+async fn a_link_waiting_on_the_projects_says_they_could_not_be_read_when_the_connection_ends(
     cx: &mut TestAppContext,
 ) {
     let mut fake = late_projects(cx, true);
@@ -136,9 +136,9 @@ async fn a_link_waiting_on_the_projects_says_no_project_when_the_connection_ends
     window.update(|_, cx| {
         let pane = pane.read(cx);
         let (words, page) = pane.missing_link.clone().expect("the notice");
-        assert!(
-            words.starts_with("github.com/o/r is not a project in Assembly"),
-            "{words}"
+        assert_eq!(
+            words,
+            "The projects couldn't be read, so the link didn't open."
         );
         assert_eq!(page, "https://github.com/o/r/pull/7");
     });
