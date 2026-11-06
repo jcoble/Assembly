@@ -1,5 +1,6 @@
 using Assembly.Application.Features.Notion;
 using Assembly.Infrastructure.Notion;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Assembly.Tests.Features.Notion;
 
@@ -68,6 +69,28 @@ public sealed class NotionEditTests
         Assert.Single(Directory.GetFiles(root));
         Assert.Equal("unknown_upload", (await Assert.ThrowsAsync<NotionException>(() => images.ChunkAsync("a", a.UploadId, 0, "", default))).Code);
         images.Close("b"); Assert.Empty(Directory.GetFiles(root)); Directory.Delete(root);
+    }
+
+    [Fact]
+    public async Task A_lease_its_client_went_quiet_on_is_let_go_so_the_next_upload_still_starts()
+    {
+        await using var f = new NotionFixture(); await f.Settings.SaveAsync(NotionFixture.Source, "fake", default);
+        var root = Path.Combine(Path.GetTempPath(), "notion-image-test-" + Guid.NewGuid());
+        var time = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        using var images = new NotionImageUpload(root, f.Http, f.Settings, new NotionEdits(f.Database, f.Settings, f.Http), time);
+        var source = new NotionTaskRef(NotionFixture.Source, NotionFixture.Page);
+        // Two leases whose answers nobody heard: the client was cancelled after asking.
+        var quiet = await images.BeginAsync("a", source, "image/png", 8, default);
+        var busy = await images.BeginAsync("a", source, "image/png", 8, default);
+        Assert.Equal("upload_capacity", (await Assert.ThrowsAsync<NotionException>(() => images.BeginAsync("a", source, "image/png", 8, default))).Code);
+        time.Advance(TimeSpan.FromSeconds(50));
+        await images.ChunkAsync("a", busy.UploadId, 0, Convert.ToBase64String(new byte[] { 0x89, 0x50, 0x4e, 0x47 }), default);
+        time.Advance(TimeSpan.FromSeconds(20));
+        await images.BeginAsync("a", source, "image/png", 8, default);
+        Assert.Equal("unknown_upload", (await Assert.ThrowsAsync<NotionException>(() => images.ChunkAsync("a", quiet.UploadId, 0, "", default))).Code);
+        await images.ChunkAsync("a", busy.UploadId, 4, Convert.ToBase64String(new byte[] { 0x0d, 0x0a, 0x1a, 0x0a }), default);
+        Assert.Equal(2, Directory.GetFiles(root).Length);
+        images.Close("a"); Directory.Delete(root);
     }
 
     [Fact]

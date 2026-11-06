@@ -328,6 +328,7 @@ impl TaskDetailView {
 
 impl Render for TaskDetailView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.pictures.next_frame();
         if self.any_editing(cx) {
             self.list.remeasure();
         }

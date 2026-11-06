@@ -38,6 +38,7 @@ impl TasksPane {
         cx: &mut Context<Self>,
     ) {
         let seed = self.seed(&source);
+        self.set_aside(window, cx);
         let token = self.state.select(source.clone());
         self.page_fallback = fallback;
         let detail = cx.new(|cx| TaskDetailView::new(source.clone(), seed, window, cx));
@@ -51,6 +52,7 @@ impl TasksPane {
                             pane.read_detail(token, source, window, cx);
                         }
                     }
+                    TaskDetailEvent::PicturesSettled => {}
                 }),
             );
         detail.read(cx).focus_handle(cx).focus(window, cx);
@@ -78,12 +80,54 @@ impl TasksPane {
 
     pub(super) fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.state.back();
-        self.detail = None;
-        self._detail_heard = None;
+        self.set_aside(window, cx);
         self.reading_detail = None;
         self.page_fallback = None;
         self.focus.focus(window, cx);
         cx.notify();
+    }
+
+    /// Closes the open page. One still sending pictures is kept until they're on, then says if any didn't go.
+    pub(super) fn set_aside(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self._detail_heard = None;
+        let Some(view) = self.detail.take() else {
+            return;
+        };
+        if !view.read(cx).pictures_pending() {
+            return;
+        }
+        let title = self
+            .state
+            .row(&view.read(cx).source.page_id)
+            .map(|row| row.title.clone())
+            .filter(|title| !title.is_empty());
+        let heard = cx.subscribe_in(&view, window, move |pane, view, event, window, cx| {
+            if matches!(event, TaskDetailEvent::Reread) {
+                // The same page opened again shows the picture that just went on.
+                let page = &view.read(cx).source.page_id;
+                let open = pane
+                    .detail
+                    .as_ref()
+                    .map(|open| &open.read(cx).source.page_id);
+                if open == Some(page)
+                    && let Some((token, source)) = pane.state.reread()
+                {
+                    pane.read_detail(token, source, window, cx);
+                }
+            }
+            if !matches!(event, TaskDetailEvent::PicturesSettled) {
+                return;
+            }
+            pane.finishing.retain(|(kept, _)| kept != view);
+            if let Some(failure) = view.read(cx).pictures_failure() {
+                let note = match &title {
+                    Some(title) => format!("{title}: {failure}"),
+                    None => failure,
+                };
+                window.push_notification(Notification::warning(note), cx);
+            }
+        });
+        self.finishing.push((view, heard));
     }
 
     pub(super) fn read_detail(

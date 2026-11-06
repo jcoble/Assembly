@@ -6,15 +6,18 @@
 //! which sees only an address, can't tell it from an image in markdown. Tasks asks `read_page_picture` for it instead.
 mod gate;
 mod load;
+mod page_picture;
 mod rules;
 
+pub use page_picture::decode_page_picture;
 pub use rules::picture_url;
 
 use gate::Gate;
 use gpui_kit::http_client::{self, AsyncBody, HttpClient, Response, Url, http};
-use gpui_kit::{App, Global, Image};
+use gpui_kit::{App, Global, RenderImage};
 use load::{Hop, NoPicture, PAGE, PERSON, load, load_within};
-use rules::{may_ask_first, picture_format};
+use page_picture::PublicOnly;
+use rules::may_ask_first;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -30,21 +33,53 @@ struct PictureClient {
 }
 /// Connections aren't kept, so nothing stays open once the pictures are read. Redirects are followed by `load`, so each
 /// is checked. Cookies are a feature this build leaves out.
+fn config() -> ureq::config::Config {
+    Agent::config_builder()
+        .http_status_as_error(false)
+        .https_only(true)
+        .proxy(None)
+        .max_redirects(0)
+        .max_idle_connections(0)
+        .max_idle_connections_per_host(0)
+        .user_agent("Assembly")
+        .accept("image/png, image/jpeg, image/gif, image/webp")
+        .build()
+}
 fn agent() -> Agent {
-    Agent::new_with_config(
-        Agent::config_builder()
-            .http_status_as_error(false)
-            .https_only(true)
-            .proxy(None)
-            .max_redirects(0)
-            .max_idle_connections(0)
-            .max_idle_connections_per_host(0)
-            .user_agent("Assembly")
-            .accept("image/png, image/jpeg, image/gif, image/webp")
-            .build(),
+    Agent::new_with_config(config())
+}
+/// A page's picture can name any host, so only public addresses are connected to.
+fn page_agent() -> Agent {
+    Agent::with_parts(
+        config(),
+        ureq::unversioned::transport::DefaultConnector::default(),
+        PublicOnly::default(),
     )
 }
-fn ask(agent: &Agent, url: &Url, left: Duration, largest: u64) -> Result<Hop, NoPicture> {
+/// The body in pieces, stopping as soon as nobody wants it.
+fn read_body(
+    reader: &mut impl std::io::Read,
+    wanted: &dyn Fn() -> bool,
+) -> Result<Vec<u8>, NoPicture> {
+    let (mut bytes, mut piece) = (Vec::new(), vec![0; 64 * 1024]);
+    loop {
+        if !wanted() {
+            return Err(NoPicture::NoLongerWanted);
+        }
+        match reader.read(&mut piece) {
+            Ok(0) => return Ok(bytes),
+            Ok(read) => bytes.extend_from_slice(&piece[..read]),
+            Err(_) => return Err(NoPicture::Unreachable),
+        }
+    }
+}
+fn ask(
+    agent: &Agent,
+    url: &Url,
+    left: Duration,
+    largest: u64,
+    wanted: &dyn Fn() -> bool,
+) -> Result<Hop, NoPicture> {
     let mut response = agent
         .get(url.as_str())
         .config()
@@ -69,12 +104,8 @@ fn ask(agent: &Agent, url: &Url, left: Duration, largest: u64) -> Result<Hop, No
         return Err(NoPicture::BadStatus);
     }
     let content_type = header(ureq::http::header::CONTENT_TYPE).unwrap_or_default();
-    let bytes = response
-        .body_mut()
-        .with_config()
-        .limit(largest)
-        .read_to_vec()
-        .map_err(|_| NoPicture::Unreachable)?;
+    let mut body = response.body_mut().with_config().limit(largest).reader();
+    let bytes = read_body(&mut body, wanted)?;
     Ok(Hop::Answer {
         content_type,
         bytes,
@@ -104,7 +135,7 @@ impl HttpClient for PictureClient {
                 let turn = gate.clone().turn().await;
                 let wanted = || gate.wanted();
                 let answer = load(&asked, Instant::now, wanted, |url, left| {
-                    ask(&agent, url, left, PERSON.largest)
+                    ask(&agent, url, left, PERSON.largest, &wanted)
                 });
                 drop(turn);
                 // The screen closed meanwhile: throw this away, so no failure is kept for it, and wait for one to open.
@@ -121,13 +152,13 @@ impl HttpClient for PictureClient {
 /// Reads a picture on a task's page, with the same care as a person's: no credentials, cookies, referrer or proxy, and
 /// each redirect checked. This blocks, so call it off the main thread. `None` means there's no picture to draw; why is
 /// never said, since the address is signed and nothing downstream should repeat it.
-pub fn read_page_picture(url: &str, wanted: &dyn Fn() -> bool) -> Option<Image> {
-    let agent = agent();
+pub fn read_page_picture(url: &str, wanted: &dyn Fn() -> bool) -> Option<Arc<RenderImage>> {
+    let agent = page_agent();
     let bytes = load_within(&PAGE, url, Instant::now, wanted, |url, left| {
-        ask(&agent, url, left, PAGE.largest)
+        ask(&agent, url, left, PAGE.largest, wanted)
     })
     .ok()?;
-    Some(Image::from_bytes(picture_format(&bytes)?, bytes))
+    decode_page_picture(&bytes)
 }
 /// Makes this the window's web client. Call once, before any window opens.
 pub fn register(cx: &mut App) {

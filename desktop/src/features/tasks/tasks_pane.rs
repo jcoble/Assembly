@@ -48,6 +48,8 @@ pub struct TasksPane {
     pills: Entity<FilterPills>,
     setup: Entity<NotionSetup>,
     detail: Option<Entity<TaskDetailView>>,
+    /// Pages left while their pictures were still going on, kept until they're done.
+    finishing: Vec<(Entity<TaskDetailView>, Subscription)>,
     /// A Notion page that may not be a task in this source; opened in the browser if it isn't.
     page_fallback: Option<String>,
     /// The session a task was opened from.
@@ -201,6 +203,7 @@ impl TasksPane {
             pills,
             setup,
             detail: None,
+            finishing: Vec::new(),
             page_fallback: None,
             task_session: None,
             refreshing: false,

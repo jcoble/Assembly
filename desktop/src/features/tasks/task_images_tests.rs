@@ -12,7 +12,10 @@ use gpui_kit::{
 use super::super::super::task_export::*;
 use super::super::super::tasks_state::TaskDetail;
 use super::super::{TaskDetailEvent, TaskDetailView, TaskSeed};
-use super::{ImageCalls, MAX_BYTES, TOO_LARGE, WRONG_KIND, accepted};
+use super::{
+    ImageCalls, MAX_BYTES, MOST_WAITING, TOO_LARGE, TOO_MANY, TestFile, WRONG_KIND, Waiting,
+    accepted,
+};
 
 /// The backend, answering at once. It records every call.
 #[derive(Default)]
@@ -354,5 +357,109 @@ fn the_next_read_after_a_picture_lands_goes_to_its_row(cx: &mut TestAppContext) 
         arrive(&view, cx),
         0,
         "a later read stays where the reader is"
+    );
+}
+
+/// The begins and commits in the backend's log, in order.
+fn begins_and_commits(backend: &Backend) -> Vec<String> {
+    backend
+        .log
+        .borrow()
+        .iter()
+        .filter(|line| line.starts_with("begin") || *line == "commit")
+        .cloned()
+        .collect()
+}
+
+#[gpui::test]
+fn a_file_and_a_pasted_picture_go_in_the_order_they_came(cx: &mut TestAppContext) {
+    let (view, _, backend, cx) = open(Backend::default(), cx);
+    let file = TestFile::new(b"from a file");
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            // A picked file, read only when its turn comes, then a paste behind it.
+            view.take(Waiting::File(file.0.clone()));
+            view.paste_item(&picture(b"pasted"), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        begins_and_commits(&backend),
+        [
+            "begin image/png 11",
+            "commit",
+            "begin image/png 6",
+            "commit"
+        ]
+    );
+    assert_eq!(*backend.sent.borrow(), b"from a filepasted");
+}
+
+#[gpui::test]
+fn a_file_that_cant_be_read_says_so_and_the_rest_still_go(cx: &mut TestAppContext) {
+    let (view, _, backend, cx) = open(Backend::default(), cx);
+    let gone = std::env::temp_dir().join("assembly-no-such-picture.png");
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.take(Waiting::File(gone.clone()));
+            view.paste_item(&picture(b"next"), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        begins_and_commits(&backend),
+        ["begin image/png 4", "commit"]
+    );
+    assert!(failure(&view, cx).is_some_and(|text| text.contains("couldn't read")));
+}
+
+#[gpui::test]
+fn past_the_waiting_limit_a_picture_is_turned_away_and_says_so(cx: &mut TestAppContext) {
+    let (view, _, backend, cx) = open(Backend::default(), cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            // The first goes at once; the limit counts the ones behind it.
+            for _ in 0..MOST_WAITING + 2 {
+                view.paste_item(&picture(b"png!"), window, cx);
+            }
+        });
+    });
+    cx.run_until_parked();
+    let commits = backend
+        .log
+        .borrow()
+        .iter()
+        .filter(|line| *line == "commit")
+        .count();
+    assert_eq!(commits, MOST_WAITING + 1);
+    assert_eq!(failure(&view, cx).as_deref(), Some(TOO_MANY));
+}
+
+#[gpui::test]
+fn every_picture_that_didnt_go_is_counted_not_only_the_last(cx: &mut TestAppContext) {
+    let backend = Backend {
+        fail_begin: Some("notion_source_mismatch"),
+        ..Backend::default()
+    };
+    let (view, _, _, cx) = open(backend, cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            for bytes in [b"one", b"two", b"six"] {
+                view.paste_item(&picture(bytes), window, cx);
+            }
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| view.read(cx).pictures_failure()).as_deref(),
+        Some(
+            "That page isn't in the connected task database. 2 more pictures didn't go on either."
+        )
+    );
+    // The next batch starts clean.
+    paste(&view, &picture(b"again"), cx);
+    assert_eq!(
+        cx.read(|cx| view.read(cx).pictures_failure()).as_deref(),
+        Some("That page isn't in the connected task database.")
     );
 }

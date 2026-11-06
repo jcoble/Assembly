@@ -2,9 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use gpui::{
-    Bounds, DevicePixels, Image, ImageFormat, Pixels, TestAppContext, VisualTestContext, px, size,
-};
+use gpui::{Bounds, DevicePixels, Pixels, TestAppContext, VisualTestContext, px, size};
 use gpui_kit::{
     AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _, Window,
     div,
@@ -15,6 +13,7 @@ use super::super::super::task_export::*;
 use super::super::super::tasks_state::TaskDetail;
 use super::super::{TaskDetailView, TaskSeed};
 use super::{MOST_AT_ONCE, PictureState, TALLEST, largest, place};
+use crate::core::socket::picture_client::decode_page_picture;
 
 /// One pixel.
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
@@ -75,9 +74,10 @@ fn open(cx: &mut TestAppContext) -> (Entity<TaskDetailView>, Asked, &mut VisualT
             let mut view = TaskDetailView::new(source, TaskSeed::default(), window, cx);
             view.pictures.read = Arc::new(move |url, _| {
                 log.lock().unwrap().push(url.to_owned());
-                (!url.contains("broken")).then(|| {
-                    Image::from_bytes(ImageFormat::Png, STANDARD.decode(PNG).expect("base64"))
-                })
+                if url.contains("broken") {
+                    return None;
+                }
+                decode_page_picture(&STANDARD.decode(PNG).expect("base64"))
             });
             view
         });
@@ -221,10 +221,8 @@ fn drawn<'a>(
     let (view, _, cx) = open(cx);
     cx.update(|_, cx| {
         view.update(cx, |view, _| {
-            view.pictures.read = Arc::new(move |_, _| {
-                let bytes = STANDARD.decode(bytes).expect("base64");
-                Some(Image::from_bytes(ImageFormat::Png, bytes))
-            });
+            view.pictures.read =
+                Arc::new(move |_, _| decode_page_picture(&STANDARD.decode(bytes).expect("base64")));
         })
     });
     show(&view, vec![image_block("a", &signed("a.png", "1"))], cx);
@@ -277,8 +275,7 @@ fn a_picture_below_the_screen_isnt_read_until_it_comes_on(cx: &mut TestAppContex
                 let asked = asked.clone();
                 move |url, _| {
                     asked.lock().unwrap().push(url.to_owned());
-                    let bytes = STANDARD.decode(TALL).expect("base64");
-                    Some(Image::from_bytes(ImageFormat::Png, bytes))
+                    decode_page_picture(&STANDARD.decode(TALL).expect("base64"))
                 }
             });
         })

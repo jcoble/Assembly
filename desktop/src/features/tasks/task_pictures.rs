@@ -1,7 +1,8 @@
 //! The pictures on a task's page, shown where they sit. Rows ask for theirs as they come on screen, so a long page reads
 //! only what's looked at, and a few at a time. The view owns each read, so leaving the page cancels them, and hands
 //! every picture back to the GPU when it goes. Notion's addresses change with every read of the page, so a picture is
-//! kept by its block and only read again when it's really a different one.
+//! kept by its block and only read again when it's really a different one. Past a memory budget, pictures off screen
+//! are let go, to be read again if they come back.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,8 +18,12 @@ use super::TaskDetailView;
 const MOST_AT_ONCE: usize = 3;
 /// The old page's limit.
 const TALLEST: f32 = 480.;
+/// What a page's pictures may hold, decoded.
+const BUDGET: usize = 256 * 1024 * 1024;
+/// A picture that can't be read gets one more go, at the address the next read of the page gives it.
+const MOST_TRIES: u8 = 2;
 
-type Reader = Arc<dyn Fn(&str, &dyn Fn() -> bool) -> Option<Image> + Send + Sync>;
+type Reader = Arc<dyn Fn(&str, &dyn Fn() -> bool) -> Option<Arc<RenderImage>> + Send + Sync>;
 
 enum Picture {
     Reading {
@@ -33,6 +38,9 @@ enum Picture {
 struct Slot {
     url: String,
     picture: Picture,
+    tries: u8,
+    /// The last frame its row was drawn in.
+    drawn: u64,
 }
 
 /// What a row draws.
@@ -45,6 +53,8 @@ pub(super) enum PictureState {
 pub(in super::super) struct PagePictures {
     pub(super) read: Reader,
     slots: HashMap<String, Slot>,
+    frame: u64,
+    pub(super) budget: usize,
 }
 
 impl Default for PagePictures {
@@ -52,8 +62,15 @@ impl Default for PagePictures {
         Self {
             read: Arc::new(read_page_picture),
             slots: HashMap::new(),
+            frame: 0,
+            budget: BUDGET,
         }
     }
+}
+
+fn bytes_of(picture: &RenderImage) -> usize {
+    let size = picture.size(0);
+    size.width.0.max(0) as usize * size.height.0.max(0) as usize * 4
 }
 
 /// A Notion file's address carries a signature that's new with every read; what comes before it says which file.
@@ -83,11 +100,59 @@ impl PagePictures {
         }
     }
 
+    /// Each draw of the page is a new frame, so a picture knows when its row was last on screen.
+    pub(super) fn next_frame(&mut self) {
+        self.frame += 1;
+    }
+
     /// Whether this row's address still has to be read: a failed one gets another go at a newly signed address.
     fn to_read(&self, block: &str, url: &str) -> bool {
         match self.slots.get(block) {
             None => true,
-            Some(slot) => matches!(slot.picture, Picture::Unreadable) && slot.url != url,
+            Some(slot) => {
+                matches!(slot.picture, Picture::Unreadable)
+                    && slot.url != url
+                    && slot.tries < MOST_TRIES
+            }
+        }
+    }
+
+    fn seen(&mut self, block: &str) {
+        if let Some(slot) = self.slots.get_mut(block) {
+            slot.drawn = self.frame;
+        }
+    }
+
+    /// Over budget, lets go of the pictures drawn longest ago, never one on screen now.
+    fn evict(&mut self, cx: &mut App) {
+        let mut held: usize = self
+            .slots
+            .values()
+            .filter_map(|slot| match &slot.picture {
+                Picture::Shown(picture) => Some(bytes_of(picture)),
+                _ => None,
+            })
+            .sum();
+        while held > self.budget {
+            let Some(block) = self
+                .slots
+                .iter()
+                .filter(|(_, slot)| {
+                    matches!(slot.picture, Picture::Shown(_)) && slot.drawn < self.frame
+                })
+                .min_by_key(|(_, slot)| slot.drawn)
+                .map(|(block, _)| block.clone())
+            else {
+                return;
+            };
+            if let Some(Slot {
+                picture: Picture::Shown(picture),
+                ..
+            }) = self.slots.remove(&block)
+            {
+                held -= bytes_of(&picture);
+                cx.drop_image(picture, None);
+            }
         }
     }
 
@@ -142,18 +207,22 @@ impl TaskDetailView {
         let Some(url) = row.image.as_ref().and_then(|image| image.url.as_deref()) else {
             return;
         };
+        self.pictures.seen(&row.id);
         if !self.pictures.to_read(&row.id, url) || self.pictures.reading() >= MOST_AT_ONCE {
             return;
         }
+        let tries = self
+            .pictures
+            .slots
+            .get(&row.id)
+            .map_or(0, |slot| slot.tries)
+            + 1;
         let wanted = Arc::new(());
         let still_wanted = Arc::downgrade(&wanted);
         let read = self.pictures.read.clone();
-        let svg = cx.svg_renderer();
         let asked = url.to_owned();
-        let made = cx.background_spawn(async move {
-            let image = read(&asked, &|| still_wanted.strong_count() > 0)?;
-            image.to_image_data(svg).ok()
-        });
+        let made =
+            cx.background_spawn(async move { read(&asked, &|| still_wanted.strong_count() > 0) });
         let block = row.id.clone();
         let task = cx.spawn(async move |view, cx| {
             let picture = made.await;
@@ -167,6 +236,8 @@ impl TaskDetailView {
                     _task: task,
                     _wanted: wanted,
                 },
+                tries,
+                drawn: self.pictures.frame,
             },
         );
     }
@@ -181,6 +252,7 @@ impl TaskDetailView {
             return;
         };
         slot.picture = picture.map_or(Picture::Unreadable, Picture::Shown);
+        self.pictures.evict(cx);
         // The row's height changed. The first item is the page's head, so a row sits one past its place.
         if let Some(place) = self.rows.iter().position(|row| row.id == block) {
             self.list.remeasure_items(place + 1..place + 2);

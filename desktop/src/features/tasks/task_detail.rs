@@ -32,6 +32,8 @@ pub enum TaskDetailEvent {
     Back,
     Reread,
     ListStale,
+    /// The page's pictures have all gone on, or failed.
+    PicturesSettled,
 }
 
 /// What the page opens with, from the list, before Notion answers.

@@ -5,14 +5,18 @@ using Assembly.Application.Features.Notion;
 
 namespace Assembly.Infrastructure.Notion;
 
-public sealed class NotionImageUpload(string root, NotionHttp http, NotionSettings settings, NotionEdits edits) : IDisposable, IAsyncDisposable
+public sealed class NotionImageUpload(string root, NotionHttp http, NotionSettings settings, NotionEdits edits, TimeProvider? time = null) : IDisposable, IAsyncDisposable
 {
     public const int ChunkBytes = 64 * 1024;
+    /// An upload its client went quiet on, say a lease answered after the client stopped listening, is let go by then.
+    public static readonly TimeSpan IdleLimit = TimeSpan.FromSeconds(60);
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly ConcurrentDictionary<string, Upload> _uploads = new();
     private readonly object _gate = new();
     private bool _disposed;
-    private sealed class Upload(string connection, NotionTaskRef source, ImageType type, long size, long generation, string path)
+    private sealed class Upload(string connection, NotionTaskRef source, ImageType type, long size, long generation, string path, DateTimeOffset now)
     {
+        public DateTimeOffset LastUsed = now;
         public string Connection = connection;
         public NotionTaskRef Source = source;
         public ImageType Type = type;
@@ -35,6 +39,9 @@ public sealed class NotionImageUpload(string root, NotionHttp http, NotionSettin
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            var now = _time.GetUtcNow();
+            foreach (var pair in _uploads)
+                if (pair.Value.Connection == connection && !pair.Value.Committing && now - pair.Value.LastUsed > IdleLimit) Drop(connection, pair.Key);
             if (_uploads.Values.Count(x => x.Connection == connection) >= 2) throw new NotionException("upload_capacity");
             if (OperatingSystem.IsWindows()) Directory.CreateDirectory(root);
             else Directory.CreateDirectory(root, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
@@ -43,7 +50,7 @@ public sealed class NotionImageUpload(string root, NotionHttp http, NotionSettin
             var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
             if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
             using (new FileStream(path, options)) { }
-            _uploads[id] = new(connection, source, type, size, current.Generation, path);
+            _uploads[id] = new(connection, source, type, size, current.Generation, path, now);
             return Task.FromResult(new NotionImageLease(id, ChunkBytes));
         }
     }
@@ -55,6 +62,7 @@ public sealed class NotionImageUpload(string root, NotionHttp http, NotionSettin
         await upload.Gate.WaitAsync(linked.Token);
         try
         {
+            upload.LastUsed = _time.GetUtcNow();
             if (upload.Committing || offset != upload.Offset) throw new NotionException("invalid_upload_offset");
             if (data.Length > 4 * ((ChunkBytes + 2) / 3) || JsonSerializer.SerializeToUtf8Bytes(new NotionImageChunk(id, offset, data), NotionJson.Default.NotionImageChunk).Length > 576 * 1024 - 1024) throw new NotionException("image_chunk_too_large");
             byte[] bytes;
@@ -65,6 +73,7 @@ public sealed class NotionImageUpload(string root, NotionHttp http, NotionSettin
             try { await file.WriteAsync(bytes, linked.Token); await file.FlushAsync(linked.Token); }
             catch { file.SetLength(offset); throw; }
             upload.Offset += bytes.Length;
+            upload.LastUsed = _time.GetUtcNow();
             return new();
         }
         catch (OperationCanceledException) { Drop(connection, id); throw; }

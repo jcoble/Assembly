@@ -1,7 +1,11 @@
 //! The pane drawn whole, in each of the states a person meets. There's no backend here, so a test hands it what the
 //! backend would have pushed.
-use gpui::TestAppContext;
-use gpui_kit::{Entity, VisualTestContext};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use gpui::{ClipboardItem, Image, ImageFormat, Keystroke, TestAppContext};
+use gpui_kit::component::WindowExt as _;
+use gpui_kit::{AppContext as _, Entity, VisualTestContext};
 
 use super::TasksPane;
 use crate::features::tasks::task_export::*;
@@ -134,4 +138,53 @@ fn another_connection_drops_what_the_old_one_showed(cx: &mut TestAppContext) {
         )
     });
     assert_eq!((rows, detail, drawn), (0, false, 0));
+}
+
+#[gpui::test]
+fn leaving_a_page_lets_its_pictures_finish_and_says_when_they_didnt_go(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    cx.update(crate::inline_field::init);
+    let made = Rc::new(RefCell::new(None));
+    let kept = made.clone();
+    let (_, cx) = cx.add_window_view(move |window, cx| {
+        let pane = cx.new(|cx| TasksPane::new(window, cx));
+        *kept.borrow_mut() = Some(pane.clone());
+        gpui_kit::base::Root::new(pane, window, cx)
+    });
+    let pane = made.borrow_mut().take().expect("the pane");
+    draw(cx);
+    listed(&pane, cx);
+    cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open_row(2, window, cx)));
+    draw(cx);
+    cx.write_to_clipboard(ClipboardItem::new_image(&Image::from_bytes(
+        ImageFormat::Png,
+        b"png!".to_vec(),
+    )));
+    // Pasted and left before the picture is on. There's no backend here, so the upload fails.
+    cx.update(|window, cx| {
+        let paste = Keystroke::parse_with_os("secondary-v", cx.platform_info().os).expect("a key");
+        window.dispatch_keystroke(paste, cx);
+        pane.update(cx, |pane, cx| pane.go_back(window, cx));
+    });
+    let (open, finishing) = cx.read(|cx| {
+        let pane = pane.read(cx);
+        (pane.detail.is_some(), pane.finishing.len())
+    });
+    assert_eq!(
+        (open, finishing),
+        (false, 1),
+        "the list shows, and the page keeps going"
+    );
+    draw(cx);
+    assert_eq!(cx.read(|cx| pane.read(cx).finishing.len()), 0);
+    cx.update(|window, cx| assert_eq!(window.notifications(cx).len(), 1));
+}
+
+#[gpui::test]
+fn a_page_with_no_pictures_going_is_let_go_at_once(cx: &mut TestAppContext) {
+    let (pane, cx) = open(cx);
+    listed(&pane, cx);
+    cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open_row(1, window, cx)));
+    cx.update(|window, cx| pane.update(cx, |pane, cx| pane.go_back(window, cx)));
+    assert_eq!(cx.read(|cx| pane.read(cx).finishing.len()), 0);
 }
