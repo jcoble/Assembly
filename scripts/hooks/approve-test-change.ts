@@ -16,6 +16,11 @@ import { parseArgs } from 'node:util';
 import type { ApprovedTest } from './test-approvals.ts';
 import { changedAssertions, isTest, testHash, testText } from './test-integrity.ts';
 
+// A refusal prints its reason alone, not a stack trace.
+process.setUncaughtExceptionCaptureCallback(error => {
+  process.stderr.write('approve-test-change: ' + (error instanceof Error ? error.message : String(error)) + '\n');
+  process.exit(1);
+});
 const { values } = parseArgs({ options: {
   key: { type: 'string' }, repo: { type: 'string' }, branch: { type: 'string' }, patch: { type: 'string' },
   test: { type: 'string', multiple: true }, reason: { type: 'string' }, out: { type: 'string' },
