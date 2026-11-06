@@ -8,7 +8,7 @@ use base64::engine::general_purpose::STANDARD;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::TestAppContext;
 use gpui_kit::component::dock::BasePanel as _;
-use gpui_kit::{Entity, Subscription, VisualTestContext};
+use gpui_kit::{AppContext as _, Entity, Subscription, VisualTestContext};
 use serde_json::{Value, json};
 
 use crate::core::socket::client::SocketClient;
@@ -192,12 +192,30 @@ pub(super) struct Open<'a> {
 /// The pane on a fake backend whose terminals start as `terminals`, with sessions a and b (b on another machine
 /// when `remote`), and the tab shown on session a.
 pub(super) async fn open(cx: &mut TestAppContext, terminals: Terminals, remote: bool) -> Open<'_> {
+    open_in(cx, terminals, remote, false).await
+}
+
+/// The same pane registered and inside the kit's window `Root`, as the app opens its windows, so Root's key bindings
+/// (Tab) apply.
+pub(super) async fn open_in_root(cx: &mut TestAppContext, terminals: Terminals) -> Open<'_> {
+    open_in(cx, terminals, false, true).await
+}
+
+async fn open_in(
+    cx: &mut TestAppContext,
+    terminals: Terminals,
+    remote: bool,
+    rooted: bool,
+) -> Open<'_> {
     let terminals = Arc::new(Mutex::new(terminals));
     let (changed, mut changes) = unbounded();
     let backend = backend(terminals.clone(), changed.clone());
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
+        if rooted {
+            TerminalPane::register(cx);
+        }
         SelectedSession::init(cx);
         let b = session("b", remote.then_some("Workbox Test"));
         Sessions::start_holding(vec![session("a", None), b], false, false, cx);
@@ -216,7 +234,18 @@ pub(super) async fn open(cx: &mut TestAppContext, terminals: Terminals, remote: 
             cx,
         );
     });
-    let (pane, cx) = cx.add_window_view(TerminalPane::new);
+    let (pane, cx) = match rooted {
+        false => cx.add_window_view(TerminalPane::new),
+        true => {
+            let mut made = None;
+            let (_, cx) = cx.add_window_view(|window, cx| {
+                let pane = cx.new(|cx| TerminalPane::new(window, cx));
+                made = Some(pane.clone());
+                gpui_kit::base::Root::new(pane, window, cx)
+            });
+            (made.expect("the pane was made"), cx)
+        }
+    };
     let tell = changed.clone();
     let heard = cx.update(|_, cx| cx.observe(&pane, move |_, _| _ = tell.unbounded_send(())));
     pick("a", cx);

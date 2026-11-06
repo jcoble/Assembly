@@ -398,3 +398,6 @@ mod lost_release;
 
 #[path = "terminal_pane_window_blink_tests.rs"]
 mod window_blink;
+
+#[path = "terminal_pane_tab_tests.rs"]
+mod tab;
