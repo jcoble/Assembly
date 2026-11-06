@@ -2,7 +2,7 @@
 //! tinted while it runs) with how long it has run or its age, and an arrow when the row has something to open; icons
 //! for its state and machine, then the remote machine's name and branch, all spelled out in a tooltip; and its newest
 //! text, one line, or its project before it has any. The right-click menu moves it between Working and Done or
-//! settles it (`sessions/mark`).
+//! settles it (`sessions/mark`), and copies its link.
 
 use std::rc::Rc;
 
@@ -15,6 +15,7 @@ use super::history::age::{age, elapsed_text};
 use super::presence::Presence;
 use super::rail_page::RailEntry;
 use super::status::Status;
+use crate::core::navigation::external_urls::session_link;
 use crate::core::ui::three_line_row::{RowArrow, ThreeLineRow};
 
 /// Moves a session to a group: the pane's `mark`.
@@ -162,6 +163,7 @@ impl RenderOnce for SessionRow {
         let opened = id.clone();
         let selector = format!("session-{id}");
         let status = Status::of(entry.completed_at);
+        let link_machine = route.clone();
         ThreeLineRow {
             key: format!("session:{id}").into(),
             lead: mark,
@@ -193,11 +195,20 @@ impl RenderOnce for SessionRow {
                     PopupMenuItem::new(label).on_click(move |_, _, cx| on_mark(id.clone(), to, cx)),
                 );
             }
-            menu
+            let (id, machine) = (id.clone(), link_machine.clone());
+            menu.separator().item(
+                PopupMenuItem::new("Copy deeplink").on_click(move |_, _, cx| {
+                    let link = session_link(&id, machine.as_deref());
+                    cx.write_to_clipboard(ClipboardItem::new_string(link))
+                }),
+            )
         })
     }
 }
 
+#[cfg(test)]
+#[path = "session_row_menu_tests.rs"]
+mod menu_tests;
 #[cfg(test)]
 #[path = "session_row_tests.rs"]
 mod tests;

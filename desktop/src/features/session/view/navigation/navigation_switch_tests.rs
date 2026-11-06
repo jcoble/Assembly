@@ -67,3 +67,37 @@ async fn automatic_workspace_switch_restores_chat_only_after_the_target_rows_are
     assert_eq!(saved["args"]["snapshot"]["chat"]["offset"], 0.);
     assert_eq!(saved["args"]["snapshot"]["chat"]["following"], false);
 }
+
+// A reading place inside a row is the normal place to be after scrolling up; it must never stop a save or a switch.
+#[gpui::test]
+async fn a_session_scrolled_part_way_through_a_row_still_lets_another_session_open(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    cx.update(gpui_kit::init);
+    cx.update(SelectedSession::init);
+    let (host, cx) = cx.add_window_view(|_, _| NavigationHost::default());
+    let mut nav = cx.update(|window, cx| NavigationFixture::new(true, window, cx));
+    host.update(cx, |host, cx| {
+        host.pane = Some(nav.pane.clone());
+        cx.notify();
+    });
+    nav.ready(cx).await;
+    nav.request("a", cx).await;
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.simulate_event(gpui::ScrollEvent {
+        position: gpui::point(gpui::px(400.), gpui::px(200.)),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(7.))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    nav.pane.read_with(cx, |pane, cx| {
+        assert!(
+            !pane.timeline.read(cx).workspace_place(cx).following,
+            "the wheel scrolled the session up"
+        );
+    });
+    nav.request("b", cx).await;
+    nav.pane
+        .read_with(cx, |pane, _| assert_eq!(pane.session.as_deref(), Some("b")));
+}

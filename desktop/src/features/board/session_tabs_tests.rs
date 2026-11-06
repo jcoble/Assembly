@@ -1,12 +1,13 @@
 //! A session's row and what it opens into.
 use serde_json::{Value, json};
 
-use super::{default_tab, row_chip, second_line, task_label};
+use super::{default_tab, project_label, row_chip, second_line, task_label};
 use crate::activity::Tone;
 use crate::core::engine::engine_items::SessionItem;
 use crate::core::engine::workflow_items::{RunItem, StepItem};
 use crate::core::engine::{EngineItem, EngineKey};
 use crate::features::board::board_prefs::SessionTab;
+use crate::features::projects::projects::ProjectRecord;
 
 fn session(extra: Value) -> SessionItem {
     let mut value = json!({"entityKind":"session","machine":"m","id":"s","version":1,"provider":"claude","folder":"/work/tsk-1615-mute","state":"idle","activityState":"idle","epoch":1});
@@ -46,17 +47,22 @@ fn default_tab_rules() {
 fn chip_prefers_question_count() {
     let running = session(json!({"state":"running"}));
     assert_eq!(
-        row_chip(&running, 1),
-        ("1 question".to_owned(), Tone::Warning)
+        row_chip(&running, 1, 0),
+        ("1 needs you".to_owned(), Tone::Warning)
     );
-    assert_eq!(row_chip(&running, 2).0, "2 questions");
-    assert_eq!(row_chip(&running, 0), ("Working".to_owned(), Tone::Info));
+    assert_eq!(row_chip(&running, 2, 0).0, "2 need you");
+    assert_eq!(row_chip(&running, 0, 0), ("Working".to_owned(), Tone::Info));
     assert_eq!(
-        row_chip(&session(json!({"state":"lost"})), 0),
+        row_chip(&session(json!({"state":"lost"})), 0, 0),
         ("Lost".to_owned(), Tone::Danger)
     );
-    assert_eq!(row_chip(&session(json!({"runId":"r"})), 0).0, "Waiting");
-    assert_eq!(row_chip(&session(json!({})), 0).0, "Idle");
+    assert_eq!(row_chip(&session(json!({"runId":"r"})), 0, 0).0, "Waiting");
+    assert_eq!(row_chip(&session(json!({})), 0, 0).0, "Idle");
+    assert_eq!(
+        row_chip(&running, 0, 1),
+        ("1 needs you".to_owned(), Tone::Warning)
+    );
+    assert_eq!(row_chip(&running, 1, 1).0, "2 need you");
 }
 
 #[test]
@@ -114,4 +120,18 @@ fn child_question_shows_for_parent_label() {
         asked_by("Worker", "This Mac", Some("Main orchestrator")),
         "Worker · This Mac · for Main orchestrator"
     );
+}
+
+#[test]
+fn a_project_reads_as_its_name_and_never_as_its_id() {
+    let rows: Vec<ProjectRecord> = serde_json::from_value(serde_json::json!([
+        {"id":"1631249f","machine":"m","rootPath":"/w/repo","title":"Assembly","createdAt":1}
+    ]))
+    .unwrap();
+    assert_eq!(
+        project_label(Some("1631249f"), &rows).as_deref(),
+        Some("Assembly")
+    );
+    assert_eq!(project_label(Some("not-listed-here"), &rows), None);
+    assert_eq!(project_label(None, &rows), None);
 }

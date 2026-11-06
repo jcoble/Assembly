@@ -7,11 +7,14 @@ use gpui_kit::*;
 use crate::core::intents::open_file::OpenFile;
 use crate::core::intents::open_pull_requests::OpenPullRequests;
 use crate::core::intents::open_url::OpenUrl;
+use crate::core::navigation::deep_links::handle_route;
 use crate::core::state::selected_session::SelectedSession;
 use crate::features::tasks::notion_client::NotionClient;
 use crate::features::tasks::task_detail::{TaskDetailEvent, TaskDetailView, TaskSeed};
 use crate::features::tasks::task_export::*;
-use crate::features::tasks::task_navigation::{RouteContext, RouteRefused, TaskRoute, route_url};
+use crate::features::tasks::task_navigation::{
+    RouteContext, RouteRefused, TaskRoute, passes_on, route_url,
+};
 use crate::features::tasks::tasks_state::*;
 
 use super::{NO_SESSION, NOT_CONNECTED, NOT_OPENABLE, TasksPane};
@@ -163,11 +166,17 @@ impl TasksPane {
             ),
             Ok(TaskRoute::File { path }) => self.open_file(path, window, cx),
             Ok(TaskRoute::Web(url)) => window.dispatch_action(Box::new(OpenUrl { url }), cx),
-            Err(RouteRefused::NotConnected) => {
-                window.push_notification(Notification::warning(NOT_CONNECTED), cx)
-            }
-            Err(RouteRefused::Unsupported) => {
-                window.push_notification(Notification::warning(NOT_OPENABLE), cx)
+            Err(refused) => {
+                if let Some(route) = passes_on(url, refused) {
+                    // This runs while the window is being updated, and a route updates the window itself.
+                    cx.defer(move |cx| handle_route(route, cx));
+                    return;
+                }
+                let words = match refused {
+                    RouteRefused::NotConnected => NOT_CONNECTED,
+                    RouteRefused::Unsupported => NOT_OPENABLE,
+                };
+                window.push_notification(Notification::warning(words), cx);
             }
         }
     }

@@ -79,9 +79,8 @@ fn main() {
             .expect("one workspace registry after concrete pane registration");
         let (read_layout, write_layout) = start_backend(cx);
         PaletteView::init(cx);
-        core::intents::open_url::register(cx);
+        core::navigation::open_url_handler::register(cx);
         features::settings::init(cx);
-        features::remote_install::init(cx);
         features::meter::start_if_on(cx);
         // The window opens once the theme files have loaded, already in its theme. The kit calls this once, so
         // the layout's read and write are taken out on that call.
@@ -107,8 +106,9 @@ fn main() {
                 cx.new(|cx| WindowRoot::new(frame, window, cx))
             })
             .expect("open the window");
+            Launcher::tell_if_update_finishing(cx);
             cx.activate(true);
-            external_urls.start(features::tasks::tasks_pane::handle_external, cx);
+            external_urls.start(core::navigation::deep_links::handle_route, cx);
         });
     });
 }

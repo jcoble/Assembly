@@ -60,6 +60,19 @@ impl ConnectionCut {
             && self.bulk.read(cx).connection_generation() == Some(self.bulk_generation)
     }
 }
+impl SessionPane {
+    /// A link can try its session: Chat exists and both sockets are up.
+    pub(crate) fn can_open_links(cx: &App) -> bool {
+        ConnectionCut::capture(cx).is_ok()
+            && crate::core::ui::center_panes::CenterPanes::find::<Self>("Chat", cx).is_some()
+    }
+
+    /// Chat has an open not answered yet, which another open would cancel.
+    pub(crate) fn open_is_out(cx: &App) -> bool {
+        crate::core::ui::center_panes::CenterPanes::find::<Self>("Chat", cx)
+            .is_some_and(|pane| pane.read(cx).pending_open.is_some())
+    }
+}
 pub(super) struct PendingOpen {
     pub checked_engine: Option<crate::core::engine::EngineItem>,
     pub classify_online: bool,
@@ -392,6 +405,24 @@ pub(super) fn call_refusal(error: CallError) -> EngineRefusal {
     match error {
         CallError::Refused { code, message } => EngineRefusal { code, message },
         error => refused("session_open_failed", &error.reason()),
+    }
+}
+
+/// Whether a session's row, changed since an open checked it, still opens the same way. A session's row changes all the
+/// time while it runs, and comes again after a reconnect; only what the open was built on can stop it.
+pub(super) fn opens_the_same(
+    checked: &crate::core::engine::EngineItem,
+    current: &crate::core::engine::EngineItem,
+) -> bool {
+    use crate::core::engine::engine_items::SessionItem;
+    match (SessionItem::of(checked), SessionItem::of(current)) {
+        (Some(checked), Some(current)) => {
+            checked.provider == current.provider
+                && checked.parent_id == current.parent_id
+                && checked.parent_machine == current.parent_machine
+                && online_historical(&checked.state) == online_historical(&current.state)
+        }
+        _ => false,
     }
 }
 

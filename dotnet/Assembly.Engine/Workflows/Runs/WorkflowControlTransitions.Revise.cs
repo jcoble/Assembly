@@ -16,10 +16,10 @@ internal static partial class WorkflowControlTransitions
 
     private const string WorkRedone = "work_redone";
 
-    /// <summary>Answers the gate with the owner's text and sends the work back through the existing redo: the target and
-    /// everything after it run again with that text as their findings, and the gate opens anew when they finish. Any other
-    /// approval open after the target closes here, unanswered, and is asked again when the rerun reaches it.</summary>
-    private static CommandResult Revise(IWriteScope s, CommandContext c, Run run, GateStep gate, GateNeed need, string target, string text)
+    /// <summary>Answers the gate with the owner's text and sends the work back through the existing redo: each worker feeding
+    /// the gate and everything after it run again with that text as their findings, and the gate opens anew when they finish.
+    /// Any other approval open after them closes here, unanswered, and is asked again when the rerun reaches it.</summary>
+    private static CommandResult Revise(IWriteScope s, CommandContext c, Run run, GateStep gate, GateNeed need, IReadOnlyList<string> targets, string text)
     {
         s.Execute("""
             UPDATE engine_needs_me SET state='answered',version=version+1,updated_ms=$now,answered_ms=$now,
@@ -32,13 +32,17 @@ internal static partial class WorkflowControlTransitions
               json_object('decision','revise','reply',$reply) FROM engine_workflow_history WHERE run_id=$run
             """, new("$id", c.CommandId.ToString("N") + "/decision"), new("$machine", c.Machine), new("$now", c.NowMs), new("$run", c.EntityId),
             new("$step", gate.Id), new("$attempt", gate.Attempt), new("$generation", gate.Generation), new("$reply", text));
-        var redo = ReviewTransitions.GateRevised(s, c with { EntityId = gate.Id, ExpectedVersion = gate.Version }, c.EntityId, gate.Attempt, target, text);
-        if (!redo.Applied) throw new InvalidOperationException(redo.Error ?? "gate_revision_refused");
+        foreach (var target in targets)
+        {
+            var redo = ReviewTransitions.GateRevised(s, c with { EntityId = gate.Id, ExpectedVersion = gate.Version }, c.EntityId, gate.Attempt, target, text);
+            if (!redo.Applied) throw new InvalidOperationException(redo.Error ?? "gate_revision_refused");
+        }
         s.Execute("UPDATE engine_step_attempt SET reason='revise',gate_state='settled' WHERE step_id=$step AND attempt=$attempt",
             new("$step", gate.Id), new("$attempt", gate.Attempt));
         List<EventDraft> events = [new("needs_me.answered", "needs_me", need.Id, need.Version + 1, false,
             new(run.Owner, c.EntityId, gate.Id, run.Owner, "answered", run.Epoch))];
-        foreach (var other in WorkflowGateRevision.OpenApprovalsAfter(s, gate.Id, target)) events.Add(CloseOpenApproval(s, c, run, other));
+        foreach (var target in targets)
+            foreach (var other in WorkflowGateRevision.OpenApprovalsAfter(s, gate.Id, target)) events.Add(CloseOpenApproval(s, c, run, other));
         events.AddRange(RunTransitions.Recompute(s, c, c.EntityId));
         return Changed(s, c, run with
         {

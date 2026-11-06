@@ -402,7 +402,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         }
         catch (MachineUnreachable error)
         {
-            return Bounded(Frame(new ErrorFrame(id, "unreachable", error.Message, error.Machine), SocketJson.Default.ErrorFrame), id);
+            return Bounded(Frame(new ErrorFrame(id, error.EngineDiffers ? "engine_differs" : "unreachable", error.Message, error.Machine), SocketJson.Default.ErrorFrame), id);
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested && context.SourceGuard?.Changed.IsCancellationRequested == true)
         {

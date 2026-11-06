@@ -4,7 +4,7 @@
 // test-integrity.ts is the commit-level check and owns what counts as a test and an assertion.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { changedAssertions, isTest } from './test-integrity.ts';
 
 interface Replacement { old_string: string; new_string: string; replace_all?: boolean; }
@@ -29,12 +29,23 @@ function repoPath(path: string): string | undefined {
     return relative(top, real);
   } catch { return undefined; }
 }
+// A test moved into another changed test file, same name and same assertions, is a split and not a removal.
+function changedTestsBesides(path: string): string[] {
+  const real = realpathSync(path), run = (args: string[]) => execFileSync("git", ["-C", dirname(real), ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  const top = run(["rev-parse", "--show-toplevel"]).trim();
+  return run(["status", "--porcelain", "-u", "--no-renames"]).split("\n").filter(Boolean).map(line => line.slice(3))
+    .filter(name => isTest(name) && existsSync(join(top, name)) && realpathSync(join(top, name)) !== real)
+    .map(name => unix(readFileSync(join(top, name), "utf8")));
+}
+const movedAway = (before: string, name: string, others: string[]) => others.some(other => !changedAssertions(before, other).includes(name));
 function refusal(input: ToolInput): string | undefined {
   const path = input.file_path;
   if (!path || !existsSync(path)) return undefined;
   const inRepo = repoPath(path);
   if (!inRepo || !isTest(inRepo)) return undefined;
-  const before = unix(readFileSync(path, 'utf8')), names = changedAssertions(before, result(before, input));
+  const before = unix(readFileSync(path, 'utf8')), changed = changedAssertions(before, result(before, input));
+  if (!changed.length) return undefined;
+  const others = changedTestsBesides(path), names = changed.filter(name => !movedAway(before, name, others));
   if (!names.length) return undefined;
   return 'BLOCKED: this edit changes or removes an assertion in ' + inRepo + ' (' + names.join(', ') + ').\n'
     + 'Tests define expected behavior. Do NOT change tests to match code. If the code has a bug, fix the code.\n'

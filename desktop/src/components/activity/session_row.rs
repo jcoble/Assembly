@@ -25,14 +25,15 @@ pub struct SessionRowValues {
     pub body: CardBody,
 }
 
+/// A project and its folder are often the same word, which reads once.
 fn joined(parts: [&Option<SharedString>; 2]) -> SharedString {
-    parts
+    let mut words: Vec<&str> = parts
         .into_iter()
         .flatten()
         .map(SharedString::as_ref)
-        .collect::<Vec<&str>>()
-        .join(" · ")
-        .into()
+        .collect();
+    words.dedup();
+    words.join(" · ").into()
 }
 
 pub fn session_row(values: SessionRowValues, drops: &Entity<RowDropDowns>, cx: &App) -> ListItem {

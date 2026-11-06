@@ -1,8 +1,11 @@
 using Assembly.Desktop.Serve;
+using Assembly.Infrastructure.Updates;
 
 return args switch
 {
     ["serve", .. var rest] => await DesktopServe.MainAsync(rest),
+    ["finish-update", var plan] => await AppSwap.MainAsync(plan),
+    ["check-start", var database] => DesktopServe.CheckStart(database),
     _ => Usage(),
 };
 

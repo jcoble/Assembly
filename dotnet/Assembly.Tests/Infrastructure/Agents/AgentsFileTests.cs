@@ -20,6 +20,32 @@ public sealed class AgentsFileTests : IDisposable
          {"id":"other","name":"Other","command":"custom-adapter","args":["--unchanged"],"env":{"PRIVATE":"retained"}}]
         """;
 
+    [Fact]
+    public void A_host_with_no_agents_file_says_so_plainly_rather_than_crashing()
+    {
+        var said = new StringWriter();
+        Assert.Null(AgentsFile.OpenOrSay(FilePath, said));
+        Assert.Equal($"There's no agents file at {FilePath}, so this host didn't start.", said.ToString().Trim());
+    }
+
+    [Fact]
+    public void A_host_with_an_agents_file_it_cannot_read_says_why()
+    {
+        File.WriteAllText(FilePath, "not json");
+        var said = new StringWriter();
+        Assert.Null(AgentsFile.OpenOrSay(FilePath, said));
+        Assert.StartsWith($"The agents file {FilePath} can't be used (", said.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_good_agents_file_opens()
+    {
+        File.WriteAllText(FilePath, Original);
+        var said = new StringWriter();
+        Assert.NotNull(AgentsFile.OpenOrSay(FilePath, said));
+        Assert.Empty(said.ToString());
+    }
+
     private AgentsFile Open()
     {
         File.WriteAllText(FilePath, Original);

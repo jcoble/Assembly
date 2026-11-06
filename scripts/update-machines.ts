@@ -1,8 +1,11 @@
 // `npm run deploy:remote`: updates whatever is behind on this checkout's machine and its lane remote: adapters, their
 // launcher and scripts, CLIs and the remote's backend. The desktop's update button runs this same command. A run with
 // nothing behind builds nothing, and a running session is never killed: the remote finishes once its host goes idle.
-// `--if-behind` is a dev launch: when the remote's version number matches it does nothing else at all, not even reading
-// the network for tool versions, and when it differs it does this same update.
+// `--if-behind` is a dev launch: unless the remote's version number is lower it does nothing else at all, not even reading
+// the network for tool versions, and when it's lower it does this same update. A remote on a higher number is never touched,
+// by either: this checkout is the side that's behind.
+// The app's button names what it wants: `--this-machine --home <its home>` for its own tools, and `--lane-remote` for a
+// lane's own remote when that's a machine in its Settings. Every other saved machine is the backend's to install.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
@@ -47,16 +50,33 @@ function remote(mode: string, request?: object) {
   });
 }
 
+// The folder this home's agents file runs its adapters from, or the one a release uses.
+async function adaptersOf(home: string) {
+  const agents = JSON.parse(await fs.readFile(join(home, 'agents.json'), 'utf8').catch(() => '[]')) as { args?: string[] }[];
+  const entry = agents.flatMap(agent => agent.args ?? []).find(arg => arg.includes('/bundles/'));
+  return entry ? entry.slice(0, entry.indexOf('/bundles/')) : join(home, 'adapters');
+}
+
+const after = (name: string) => process.argv[process.argv.indexOf(name) + 1];
+
 try {
+  if (process.argv.includes('--this-machine')) {
+    const home = after('--home');
+    say('Updating this machine\'s adapters and CLIs.');
+    await ensureTools(root, await adaptersOf(home), join(home, 'agents.json'), await latestTools(owner.signal), owner.signal);
+    process.exit();
+  }
   const managed = existsSync(join(root, '.lane')) && await isManagedLane(root);
   const { home, adapters } = managed ? { home: profileFor(root).home, adapters: join(profileFor(root).home, 'adapters') } : laneFolders();
   const lane = managed ? await managedLane() : undefined;
   const checked = process.argv.includes('--if-behind') ? await remote('check', lane) : remoteBehindExit;
   if (checked !== remoteBehindExit) { process.exitCode = checked ?? 1; process.exit(); }
   const request = lane && { ...await managedTools(root, home, owner.signal), ...lane };
+  if (!process.argv.includes('--lane-remote')) {
   say('Updating this machine\'s adapters and CLIs.');
   const local = await ensureTools(root, adapters, join(home, 'agents.json'), request?.versions ?? await latestTools(owner.signal), owner.signal);
   console.log(local.changed ? 'this machine: adapters and CLIs updated' : 'this machine: adapters and CLIs already current');
+  }
   say('Checking the remote.');
   process.exitCode = await remote('1', request) ?? 1;
 } catch (error) {
