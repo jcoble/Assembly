@@ -25,44 +25,6 @@ public sealed class FileOwnerTests
     }
 
     [Fact]
-    public void A_session_with_no_folder_says_no_folder()
-    {
-        using var fixture = new EngineFixture();
-        using var root = new GitFolder("a");
-        var sessions = SessionStore.Open(fixture.Db, fixture.Time, root.Root);
-        // An id that can't name a managed folder, with no working folder: nothing to resolve.
-        var bare = sessions.Add("not/a/name", "codex", "repo", "");
-        var failure = Assert.Throws<CallFailed>(() => new FileOwner(sessions, fixture.Db).Resolve(bare.SessionId, CancellationToken.None));
-        Assert.Equal("no_folder", failure.Reason);
-        Assert.Equal("this session has no folder", failure.Message);
-    }
-
-    [Fact]
-    public void A_missing_folder_before_the_first_message_is_not_made()
-    {
-        using var fixture = new EngineFixture();
-        using var root = new GitFolder("a");
-        var sessions = SessionStore.Open(fixture.Db, fixture.Time, root.Root);
-        var waiting = sessions.Create("codex", "repo");
-        var failure = Assert.Throws<CallFailed>(() => new FileOwner(sessions, fixture.Db).Resolve(waiting.SessionId, CancellationToken.None));
-        Assert.Equal("folder_not_made", failure.Reason);
-        Assert.Equal("this session's folder is made on its first message", failure.Message);
-    }
-
-    [Fact]
-    public void A_missing_folder_after_a_turn_is_a_deleted_checkout()
-    {
-        using var fixture = new EngineFixture();
-        using var root = new GitFolder("a");
-        var sessions = SessionStore.Open(fixture.Db, fixture.Time, root.Root);
-        var ran = sessions.Create("codex", "repo");
-        sessions.SetAcpSession(ran.SessionId, "provider-session");
-        var failure = Assert.Throws<CallFailed>(() => new FileOwner(sessions, fixture.Db).Resolve(ran.SessionId, CancellationToken.None));
-        Assert.Equal("checkout_unavailable", failure.Reason);
-        Assert.Equal("Checkout/Worktree deleted.", failure.Message);
-    }
-
-    [Fact]
     public void A_remote_name_without_its_live_owner_mapping_never_reads_a_local_checkout()
     {
         using var fixture = new EngineFixture();

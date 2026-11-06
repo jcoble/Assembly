@@ -1,15 +1,11 @@
 //! Native tree rows and controls borrow the pane's owned lazy model and action state.
 use super::{FileView, FilesPane, INDENT, Row, TREE_LINE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use crate::core::ui::file_icon::file_glyph;
-use crate::empty_state_component::empty_state;
-use crate::features::files::panel_message::{PanelMessage, has_header};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::ContextMenuExt as _;
-use gpui_kit::component::tag::Tag;
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -42,14 +38,10 @@ impl FilesPane {
                 let (accent, secondary, foreground) =
                     (theme.accent, theme.secondary, theme.foreground);
                 let glyph = match (folder, open) {
-                    (true, true) => Icon::new(IconName::FolderOpen)
-                        .size(px(14.))
-                        .text_color(muted),
-                    (true, false) => Icon::new(IconName::Folder).size(px(14.)).text_color(muted),
-                    _ if entry.excluded => file_glyph(&path, cx).text_color(muted),
-                    _ => file_glyph(&path, cx),
+                    (true, true) => IconName::FolderOpen,
+                    (true, false) => IconName::Folder,
+                    _ => IconName::File,
                 };
-                let chip = self.clipboard_chip(&path, cx);
                 line(depth)
                     .id(ix)
                     .rounded(px(6.))
@@ -68,7 +60,7 @@ impl FilesPane {
                             .text_color(muted),
                         )
                     }))
-                    .child(glyph)
+                    .child(Icon::new(glyph).size(px(14.)).text_color(muted))
                     .child(
                         div()
                             .min_w_0()
@@ -76,20 +68,17 @@ impl FilesPane {
                             .text_ellipsis()
                             .child(entry.name.clone()),
                     )
-                    .when_some(chip, |row, chip| {
-                        row.child(Tag::secondary().small().flex_none().child(chip))
-                    })
                     .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
                     .on_click(cx.listener(move |pane, event: &ClickEvent, window, cx| {
                         if pane.session != row_session || pane.source != row_source {
                             return;
                         }
                         window.focus(&pane.focus, cx);
-                        pane.clicked(path.to_string(), folder, cx);
+                        pane.clicked(path.clone(), folder, cx);
                         if let (false, Some(session)) = (folder, pane.session.clone()) {
                             FileView::open_at(
                                 session,
-                                path.to_string(),
+                                path.clone(),
                                 (None, None),
                                 event.click_count() > 1,
                                 row_source.clone(),
@@ -98,20 +87,13 @@ impl FilesPane {
                             );
                         }
                     }))
-                    .on_mouse_down(MouseButton::Right, {
-                        let picked = menu_path.to_string();
-                        cx.listener(move |pane, _, _, cx| {
-                            pane.selected = Some(picked.clone());
-                            pane.sync_history(cx);
-                        })
-                    })
                     .context_menu(move |menu, _, cx| {
                         if let Some(session) = &menu_session {
                             Self::file_menu(
                                 menu,
                                 pane.clone(),
                                 session.clone(),
-                                menu_path.to_string(),
+                                menu_path.clone(),
                                 folder,
                                 menu_source.clone(),
                                 cx,
@@ -143,9 +125,6 @@ impl FilesPane {
                     .cursor_pointer()
                     .child("Load more")
                     .on_click(cx.listener(move |pane, _, _, cx| {
-                        if pane.building.is_some() {
-                            return;
-                        }
                         if let Some(cursor) = pane.tree.more(&dir) {
                             pane.load(dir.clone(), Some(cursor), cx);
                         }
@@ -156,112 +135,93 @@ impl FilesPane {
     }
 }
 
-impl FilesPane {
-    fn message_view(&self, message: PanelMessage, cx: &mut Context<Self>) -> AnyElement {
-        let actions = match message {
-            PanelMessage::Failed(_) => Some(
-                Button::new("files-try-again")
-                    .ghost()
-                    .label("Try again")
-                    .on_click(cx.listener(|pane, _, _, cx| pane.retry(cx)))
-                    .into_any_element(),
-            ),
-            PanelMessage::EmptyFolder => Some(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Button::new("files-empty-new-file")
-                            .ghost()
-                            .label("New file")
-                            .on_click(cx.listener(|pane, _, window, cx| {
-                                pane.start_entry(
-                                    crate::features::files::file_entry_bar::EntryKind::NewFile,
-                                    "",
-                                    window,
-                                    cx,
-                                )
-                            })),
-                    )
-                    .child(
-                        Button::new("files-empty-new-folder")
-                            .ghost()
-                            .label("New folder")
-                            .on_click(cx.listener(|pane, _, window, cx| {
-                                pane.start_entry(
-                                    crate::features::files::file_entry_bar::EntryKind::NewFolder,
-                                    "",
-                                    window,
-                                    cx,
-                                )
-                            })),
-                    )
-                    .into_any_element(),
-            ),
-            _ => None,
-        };
-        empty_state(
-            IconName::Folder,
-            message.title(),
-            message.body(),
-            actions,
-            cx,
-        )
-    }
-}
-
 impl Render for FilesPane {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let message = self.message();
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
         let pane = v_flex()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
             .size_full();
-        if let Some(message @ PanelMessage::NoSession) = message {
-            return pane.child(self.message_view(message, cx));
-        }
-        let count = self.tree.row_count();
-        let filtering = self.filter.read(cx).active();
-        let header = has_header(message.as_ref()) || filtering;
-        let field = header.then(|| self.filter_field(window, cx));
-        let results = filtering.then(|| self.filter_results(cx));
-        pane.when(header, |pane| pane.child(self.header(cx)))
-            .children(field)
-            .children(self.entry_view(cx))
-            .children(self.action_error.clone().map(|error| {
+        if self.session.is_none() {
+            return pane.child(
                 div()
-                    .px_2()
+                    .px_3()
+                    .py_2()
                     .text_role(TextRole::Body, cx)
-                    .text_color(cx.theme().danger)
-                    .child(error)
-            }))
-            .children(results)
-            .when(!filtering, |pane| {
-                pane.when_some(message.clone(), |pane, message| {
-                    pane.child(self.message_view(message, cx))
-                })
-            })
-            .when(!filtering && message.is_none(), |pane| {
-                pane.child(
-                    uniform_list(
-                        "files",
-                        count,
-                        cx.processor(|pane, range: std::ops::Range<usize>, _window, cx| {
-                            let pane = &*pane;
-                            let start = range.start;
-                            pane.tree
-                                .visible(range)
-                                .into_iter()
-                                .enumerate()
-                                .map(|(at, row)| pane.row(row, start + at, cx))
-                                .collect()
-                        }),
-                    )
-                    .track_scroll(&self.list)
-                    .flex_1()
-                    .px_1()
-                    .py_1(),
+                    .text_color(muted)
+                    .child("Pick a session to see its files."),
+            );
+        }
+        let count = self.tree.rows().len();
+        pane.child(
+            h_flex()
+                .px_2()
+                .py_1()
+                .gap_1()
+                .child(
+                    Button::new("files-excluded")
+                        .ghost()
+                        .label(if self.include_excluded {
+                            "Hide excluded"
+                        } else {
+                            "Show excluded"
+                        })
+                        .on_click(cx.listener(|pane, _, _, cx| {
+                            pane.include_excluded = !pane.include_excluded;
+                            pane.refresh(cx);
+                        })),
                 )
-            })
-            .when(header, |pane| pane.child(self.history_card(cx)))
+                .child(
+                    Button::new("files-sort")
+                        .ghost()
+                        .label(if self.descending { "Z–A" } else { "A–Z" })
+                        .on_click(cx.listener(|pane, _, _, cx| {
+                            pane.descending = !pane.descending;
+                            pane.refresh(cx);
+                        })),
+                )
+                .child(
+                    Button::new("files-new")
+                        .ghost()
+                        .label("New file")
+                        .on_click(cx.listener(|pane, _, window, cx| {
+                            pane.open_action("createFile", String::new(), None, None, window, cx)
+                        })),
+                )
+                .child(
+                    Button::new("files-refresh")
+                        .ghost()
+                        .label("Refresh")
+                        .on_click(cx.listener(|pane, _, _, cx| pane.refresh(cx))),
+                ),
+        )
+        .children(self.action_error.clone().map(|error| {
+            div()
+                .px_2()
+                .text_role(TextRole::Body, cx)
+                .text_color(cx.theme().danger)
+                .child(error)
+        }))
+        .child(
+            uniform_list(
+                "files",
+                count,
+                cx.processor(|pane, range: std::ops::Range<usize>, _window, cx| {
+                    let pane = &*pane;
+                    pane.tree
+                        .rows()
+                        .into_iter()
+                        .enumerate()
+                        .skip(range.start)
+                        .take(range.len())
+                        .map(|(ix, row)| pane.row(row, ix, cx))
+                        .collect()
+                }),
+            )
+            .track_scroll(&self.list)
+            .flex_1()
+            .px_1()
+            .py_1(),
+        )
     }
 }

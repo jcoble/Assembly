@@ -2,7 +2,6 @@ using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Projects;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Domain.Sessions;
 
 namespace Assembly.Infrastructure.Chat.Files;
 
@@ -26,9 +25,9 @@ internal sealed class FileOwner(SessionStore sessions, IAppDatabase db, IProject
         {
             if (engine is not null && (engine.Holder != "local" || engine.State == "foreign"))
                 throw new CallFailed("this session's checkout is not owned by this engine");
-            var root = engine?.Folder ?? sessions.Root(scope, session) ?? throw new CallFailed("this session has no folder", "no_folder");
+            var root = engine?.Folder ?? sessions.Root(scope, session) ?? throw new CallFailed("this session has no folder");
             var resolved = Match(new FileOwnership(local, root, sessionId), expected);
-            if (!Directory.Exists(root)) throw FolderMissing(session);
+            if (!Directory.Exists(root)) throw new CallFailed("this session's folder is made on its first message");
             return resolved;
         }
         var owners = scope.Query("""
@@ -44,12 +43,6 @@ internal sealed class FileOwner(SessionStore sessions, IAppDatabase db, IProject
         if (string.IsNullOrEmpty(folder)) throw new CallFailed("the owning machine has not published this session's checkout");
         return Match(new FileOwnership(owners[0], folder, sessionId), expected);
     }
-
-    /// <summary>A session that has never run hasn't made its folder yet; one that has run has lost it.</summary>
-    private static CallFailed FolderMissing(SessionInfo session) =>
-        string.IsNullOrEmpty(session.AcpSessionId) && session.CompletedAt is null
-            ? new("this session's folder is made on its first message", "folder_not_made")
-            : new("Checkout/Worktree deleted.", "checkout_unavailable");
 
     /// <summary>A viewed folder is owned by its project's machine.</summary>
     private FileOwnership OfView(IReadScope scope, string local, string sessionId)

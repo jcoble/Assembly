@@ -33,8 +33,6 @@ impl ErrorCode {
             "source_changed"
             | "checkout_root_changed"
             | "checkout_unavailable"
-            | "no_folder"
-            | "folder_not_made"
             | "native_card_changed"
             | "native_history_unavailable"
             | "owner_validation_required"

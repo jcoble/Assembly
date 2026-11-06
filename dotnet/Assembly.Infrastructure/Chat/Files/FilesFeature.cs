@@ -4,7 +4,6 @@ using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Common;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Calls;
-using Assembly.Application.Common.Topics;
 using Assembly.Application.Features.Chat.Sessions;
 
 namespace Assembly.Infrastructure.Chat.Files;
@@ -16,7 +15,7 @@ namespace Assembly.Infrastructure.Chat.Files;
 /// Remote operations retain the selected source and use that owner's scoped existing socket transports.
 /// </summary>
 internal sealed partial class FilesFeature(SessionStore sessions, FileOwner owners, BackgroundWork work,
-    FileRemoteRoutes? remote = null, IRowSourceBindings? sources = null, ITopics? topics = null) : IFeature
+    FileRemoteRoutes? remote = null, IRowSourceBindings? sources = null) : IFeature
 {
     public const string Feature = "files";
     private readonly FileRemoteRoutes? remoteRoutes = remote;
@@ -24,7 +23,7 @@ internal sealed partial class FilesFeature(SessionStore sessions, FileOwner owne
     private readonly BackgroundWork backgroundWork = work;
     private readonly FileReadSession reads = new();
     private readonly FileSaveUploads uploads = new();
-    private readonly FileObservations observations = new(topics, work);
+    private readonly FileObservations observations = new();
     private readonly SearchRun searches = new();
 
     public void Register(ICallRegistry calls)
@@ -39,11 +38,6 @@ internal sealed partial class FilesFeature(SessionStore sessions, FileOwner owne
         calls.Read(Feature, "unobserve", FilesJson.Default.UnobserveRoot, FilesJson.Default.UnobservedRoot, (args, call) =>
             Task.FromResult(new UnobservedRoot(observations.Release(args.Lease, call.Connection))));
         calls.Closed(observations.Close);
-        calls.Topic(FileObservations.Topic, FilesJson.Default.FilesChanged, item => item.Lease, (key, call) =>
-        {
-            if (key is null || !observations.Holds(key, call.Connection)) throw new CallFailed("filesChanged follows a lease this connection holds");
-            return Array.Empty<FilesChanged>();
-        });
         calls.Read(Feature, "list", FilesJson.Default.ListArgs, FilesJson.Default.FileListing, (args, call) =>
             DirectoryListing.ListAsync(LocalRoot(args.Session, call.Cancellation, args.ExpectedOwner), args.Dir, args.IncludeExcluded, call.Cancellation, args.Descending, args.Cursor));
         calls.Read(Feature, "search", FilesJson.Default.SearchArgs, FilesJson.Default.SearchResult, (args, call) =>
@@ -165,7 +159,6 @@ internal sealed partial class FilesFeature(SessionStore sessions, FileOwner owne
 [JsonSerializable(typeof(UnobserveRoot))]
 [JsonSerializable(typeof(ObservedRoot))]
 [JsonSerializable(typeof(UnobservedRoot))]
-[JsonSerializable(typeof(FilesChanged))]
 [JsonSerializable(typeof(FileEntry))]
 [JsonSerializable(typeof(FileListing))]
 [JsonSerializable(typeof(NameMatch))]

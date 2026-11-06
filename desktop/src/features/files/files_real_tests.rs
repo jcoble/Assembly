@@ -12,10 +12,10 @@ use gpui_kit::component::dock::BasePanel;
 use gpui_kit::{Entity, VisualTestContext};
 use serde_json::{Value, json};
 
-use super::super::file_tree::Row;
-use super::super::file_view::FileView;
-use super::super::files_pane::FilesPane;
-use super::super::panel_message::PanelMessage;
+use super::file_tree::Row;
+use super::file_view::FileView;
+use super::files_pane::FilesPane;
+use super::search_pane::{DEBOUNCE, SearchPane};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
@@ -28,10 +28,7 @@ use crate::core::state::selected_session::SelectedSession;
 
 /// A backend with one session selected, whose folder is a git repo holding `files` (a path ending in '/' is a folder)
 /// and a `.gitignore` that ignores `target/`.
-pub(super) async fn selected_session(
-    cx: &mut TestAppContext,
-    files: &[&str],
-) -> (RealBackend, String) {
+async fn selected_session(cx: &mut TestAppContext, files: &[&str]) -> (RealBackend, String) {
     // These fail rather than skip: build the backend first (`dotnet build` in dotnet/).
     let (backend, repo) = backend_with_stub().expect("the desktop backend isn't built");
     cx.executor().allow_parking();
@@ -64,24 +61,9 @@ pub(super) async fn selected_session(
     let Outcome::Ok(added) = adding.await else {
         panic!("the project wasn't added");
     };
-    let asked = stub_session(&added);
-    let client = asked["clientId"].clone();
-    let Outcome::Ok(created) = call("create", asked, cx).await else {
+    let Outcome::Ok(created) = call("create", stub_session(&added), cx).await else {
         panic!("the session wasn't made");
     };
-    // Creating it starts a checkout operation on the repo, which is the session's folder. Tests move and fill that
-    // folder, so they start once the operation is over.
-    for _ in 0..100 {
-        let Outcome::Ok(found) = call("byClient", json!({ "clientId": client }), cx).await else {
-            panic!("the session can't be found by its client id");
-        };
-        if found["checkoutState"] != "pending" {
-            break;
-        }
-        cx.background_executor
-            .timer(Duration::from_millis(50))
-            .await;
-    }
     let id = created["sessionId"].as_str().unwrap().to_string();
     // The session made here, by its id, read again until its root shows: under load a page can come before it.
     let mut last = Value::Null;
@@ -137,7 +119,7 @@ fn fill(root: &Path, files: &[&str]) {
 }
 
 /// Waits for the view to change until `done` holds.
-pub(super) async fn settled<T: 'static>(
+async fn settled<T: 'static>(
     view: &Entity<T>,
     cx: &mut VisualTestContext,
     done: impl Fn(&T) -> bool,
@@ -152,9 +134,9 @@ pub(super) async fn settled<T: 'static>(
 }
 
 /// The tree's lines as text: an open folder ends in "/ v", an excluded entry in " -".
-pub(super) fn shape(pane: &FilesPane) -> Vec<String> {
+fn shape(pane: &FilesPane) -> Vec<String> {
     pane.tree
-        .visible(0..pane.tree.row_count())
+        .rows()
         .iter()
         .map(|row| match row {
             Row::Entry { entry, depth, open } => format!(
@@ -188,23 +170,63 @@ async fn the_tree_loads_when_shown_and_opens_folders_one_at_a_time(cx: &mut Test
     let (pane, cx) = cx.add_window_view(|_, cx| FilesPane::new(cx));
     // Hidden, it asks for nothing.
     pane.read_with(cx, |pane, _| {
-        assert!(pane.tree.row_count() == 0 && pane.loads.is_empty())
+        assert!(pane.tree.rows().is_empty() && pane.loads.is_empty())
     });
     pane.update_in(cx, |pane, window, cx| {
         BasePanel::set_active(pane, true, window, cx)
     });
     settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
-        assert_eq!(shape(pane), ["src/", ".gitignore", "readme.md"]);
+        assert_eq!(
+            shape(pane),
+            [".git/ -", "src/", "target/ -", ".gitignore", "readme.md"]
+        );
     });
     pane.update(cx, |pane, cx| pane.clicked("src".into(), true, cx));
     settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
         assert_eq!(
             shape(pane),
-            ["src/ v", "  lib/", "  main.rs", ".gitignore", "readme.md"]
+            [
+                ".git/ -",
+                "src/ v",
+                "  lib/",
+                "  main.rs",
+                "target/ -",
+                ".gitignore",
+                "readme.md"
+            ]
         );
         assert_eq!(pane.selected.as_deref(), Some("src"));
+    });
+}
+
+// Pins: files#7, files#8
+#[gpui::test]
+async fn search_finds_names_and_a_newer_search_replaces_the_older(cx: &mut TestAppContext) {
+    let (_backend, _) = selected_session(
+        cx,
+        &["src/main.rs", "src/lib.rs", "target/main.o", "docs/Main.md"],
+    )
+    .await;
+    let (pane, cx) = cx.add_window_view(SearchPane::new);
+    pane.update_in(cx, |pane, window, cx| {
+        BasePanel::set_active(pane, true, window, cx)
+    });
+    pane.update(cx, |pane, cx| {
+        pane.search("lib".into(), DEBOUNCE, cx);
+        pane.search("MAIN".into(), Duration::ZERO, cx);
+    });
+    settled(&pane, cx, |pane| pane.searching.is_none()).await;
+    pane.read_with(cx, |pane, _| {
+        let mut found: Vec<_> = pane
+            .matches
+            .iter()
+            .map(|found| found.relative_path.as_str())
+            .collect();
+        found.sort();
+        assert_eq!(found, ["docs/Main.md", "src/main.rs"]);
+        assert!(pane.error.is_none());
     });
 }
 
@@ -221,7 +243,10 @@ async fn a_folder_made_after_the_tab_was_shown_loads_when_shown_again(cx: &mut T
     });
     settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
-        assert_eq!(pane.message(), Some(PanelMessage::FolderNotMade));
+        assert_eq!(
+            shape(pane),
+            ["! this session's folder is made on its first message"]
+        );
     });
     fs::rename(&away, &root).unwrap();
     pane.update_in(cx, |pane, window, cx| {
@@ -230,7 +255,7 @@ async fn a_folder_made_after_the_tab_was_shown_loads_when_shown_again(cx: &mut T
     });
     settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
-        assert_eq!(shape(pane), [".gitignore", "readme.md"])
+        assert_eq!(shape(pane), [".git/ -", ".gitignore", "readme.md"])
     });
 }
 
@@ -315,7 +340,7 @@ async fn a_tool_changing_the_folder_reloads_the_tree_with_its_open_folders_kept(
     pane.read_with(cx, |pane, _| {
         assert_eq!(
             shape(pane),
-            ["src/ v", "  added.rs", "  main.rs", ".gitignore"]
+            [".git/ -", "src/ v", "  added.rs", "  main.rs", ".gitignore"]
         );
         assert_eq!(pane.selected.as_deref(), Some("src"));
     });

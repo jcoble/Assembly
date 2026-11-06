@@ -5,7 +5,7 @@ use gpui_kit::component::dock::DockPlacement;
 use gpui_kit::{Modifiers, MouseButton, VisualTestContext, point, px};
 use serde_json::json;
 
-use super::default_layout::{CHAT, FILES, PROBLEMS, SESSIONS, TERMINAL};
+use super::default_layout::{CHAT, FILES, PROBLEMS, SEARCH, SESSIONS, TERMINAL};
 use super::frame_tests::{dump, open};
 
 fn tab(name: &str, cx: &mut VisualTestContext) -> Option<gpui_kit::Bounds<gpui_kit::Pixels>> {
@@ -18,7 +18,7 @@ fn tab(name: &str, cx: &mut VisualTestContext) -> Option<gpui_kit::Bounds<gpui_k
 fn the_sessions_column_tabs_fit_the_header(cx: &mut TestAppContext) {
     let (_, _, cx) = open(None, cx);
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    for name in [SESSIONS, FILES] {
+    for name in [SESSIONS, FILES, SEARCH] {
         let chip = tab(name, cx).unwrap_or_else(|| panic!("{name} has a chip"));
         assert!(
             chip.size.height > px(0.) && chip.size.height <= px(30.),
@@ -86,7 +86,11 @@ fn a_side_tab_drags_its_pane_elsewhere(cx: &mut TestAppContext) {
         .iter()
         .map(|pane| pane["panel_name"].clone())
         .collect();
-    assert_eq!(names, [json!(SESSIONS)], "Files left the column");
+    assert_eq!(
+        names,
+        [json!(SESSIONS), json!(SEARCH)],
+        "Files left the column"
+    );
 }
 
 // Pins: g0-shape#2
@@ -104,8 +108,8 @@ fn a_pane_dropped_after_the_last_side_tab_joins_the_row(cx: &mut TestAppContext)
         .debug_bounds("dock-tab-0")
         .expect("the bottom dock's first tab")
         .center();
-    let files = tab(FILES, cx).expect("Files has a chip");
-    let after = point(files.right() + px(20.), files.center().y);
+    let search = tab(SEARCH, cx).expect("Search has a chip");
+    let after = point(search.right() + px(20.), search.center().y);
     cx.simulate_mouse_down(problems, MouseButton::Left, Modifiers::none());
     for to in [point(problems.x + px(20.), problems.y), after, after] {
         cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
@@ -119,5 +123,13 @@ fn a_pane_dropped_after_the_last_side_tab_joins_the_row(cx: &mut TestAppContext)
         .iter()
         .map(|pane| pane["panel_name"].clone())
         .collect();
-    assert_eq!(names, [json!(SESSIONS), json!(FILES), json!(PROBLEMS)]);
+    assert_eq!(
+        names,
+        [
+            json!(SESSIONS),
+            json!(FILES),
+            json!(SEARCH),
+            json!(PROBLEMS)
+        ]
+    );
 }
