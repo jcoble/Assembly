@@ -82,6 +82,33 @@ public sealed class FilesTouchedTests : IDisposable
 
     // Pins: g0-shape#13
     [Fact]
+    public void A_file_reached_through_the_real_path_of_a_symlinked_folder_is_inside()
+    {
+        var real = Directory.CreateDirectory(Path.Combine(Folder, "real")).FullName;
+        var link = Path.Combine(Folder, "link");
+        Directory.CreateSymbolicLink(link, real);
+        File.WriteAllText(Path.Combine(real, "a.rs"), "x");
+        Save(Call("t1", "edit", path: Path.Combine(real, "a.rs"), more: ""","added":2"""), Call("t2", "read", path: Path.Combine(link, "a.rs")));
+
+        var files = _store.FilesTouched("s", CancellationToken.None, link, probe: new DiskPathProbe());
+
+        Assert.Equal(new FileTouched("a.rs", 2, 0, 2, 2), Assert.Single(files));
+    }
+
+    // Pins: g0-shape#13
+    [Fact]
+    public void A_missing_file_outside_a_symlinked_folder_keeps_its_plain_path()
+    {
+        var real = Directory.CreateDirectory(Path.Combine(Folder, "real")).FullName;
+        var link = Path.Combine(Folder, "link");
+        Directory.CreateSymbolicLink(link, real);
+        Save(Call("t1", "edit", path: "/elsewhere/gone.rs"));
+
+        Assert.Equal(["/elsewhere/gone.rs"], Paths(_store.FilesTouched("s", CancellationToken.None, link, probe: new DiskPathProbe())));
+    }
+
+    // Pins: g0-shape#13
+    [Fact]
     public void A_failed_calls_lines_dont_add_but_it_still_counts()
     {
         Save(Call("t1", "edit", path: "a.rs", more: ""","added":3"""), Call("t2", "edit", "failed", "a.rs", ""","added":9,"removed":9"""));
@@ -388,6 +415,7 @@ public sealed class FilesTouchedTests : IDisposable
         public readonly List<string> Asked = [];
         public bool IsFile(string path) => Ask(path);
         public bool IsFolder(string path) => Ask(path);
+        public string Resolve(string path) => path;
         private bool Ask(string path) { Asked.Add(path); cancel.Cancel(); return false; }
     }
 
@@ -446,6 +474,7 @@ public sealed class FilesTouchedTests : IDisposable
         public readonly List<string> Asked = [];
         public bool IsFile(string path) { Asked.Add(path); return false; }
         public bool IsFolder(string path) { Asked.Add(path); return false; }
+        public string Resolve(string path) => path;
     }
 
     // Pins: g0-shape#13

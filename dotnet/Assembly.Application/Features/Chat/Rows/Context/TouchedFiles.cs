@@ -18,18 +18,39 @@ internal static class TouchedFiles
     public static IReadOnlyList<FileTouched> Read(Func<int, int, IReadOnlyList<TouchedRow>> page, string? folder, IPathProbe? probe, CancellationToken ct)
     {
         var kept = new List<FileTouched>();
+        var real = folder is null || probe is null ? null : probe.Resolve(folder);
         for (var offset = 0; offset < Budget && kept.Count < MostFiles; offset += Page)
         {
             var rows = page(Page, offset);
             foreach (var row in rows)
             {
                 ct.ThrowIfCancellationRequested();
-                if (Keep(row, folder, probe)) kept.Add(new FileTouched(row.Path, row.Added, row.Removed, row.Count, row.LastSeq, row.Name));
+                if (Keep(row, folder, probe)) Add(kept, new FileTouched(Inside(row, real, probe), row.Added, row.Removed, row.Count, row.LastSeq, row.Name));
                 if (kept.Count == MostFiles) break;
             }
             if (rows.Count < Page) break;
         }
         return kept;
+    }
+
+    /// <summary>
+    /// A whole path that resolves inside the resolved folder, as one reached through the real path of a symlinked
+    /// folder does, lists relative like any other inside file. The query strips only the folder as written.
+    /// </summary>
+    private static string Inside(TouchedRow row, string? real, IPathProbe? probe)
+    {
+        if (real is null || probe is null || row.Name is not null || !Path.IsPathRooted(row.Path)) return row.Path;
+        var resolved = probe.Resolve(row.Path);
+        return resolved.StartsWith(real + Path.DirectorySeparatorChar, StringComparison.Ordinal) ? resolved[(real.Length + 1)..] : row.Path;
+    }
+
+    /// <summary>The same file under two spellings is one row: the newer keeps its place and the counts add.</summary>
+    private static void Add(List<FileTouched> kept, FileTouched file)
+    {
+        var at = kept.FindIndex(held => held.Path == file.Path && held.Name == file.Name);
+        if (at < 0) { kept.Add(file); return; }
+        var held = kept[at];
+        kept[at] = held with { Added = held.Added + file.Added, Removed = held.Removed + file.Removed, Count = held.Count + file.Count };
     }
 
     private static bool Keep(TouchedRow row, string? folder, IPathProbe? probe)

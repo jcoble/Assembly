@@ -5,4 +5,7 @@ public interface IPathProbe
 {
     bool IsFile(string path);
     bool IsFolder(string path);
+
+    /// <summary>The whole path with every symlink in it followed, or the path as given when it doesn't exist.</summary>
+    string Resolve(string path);
 }
