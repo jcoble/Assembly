@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Runs after every commit (git config core.hooksPath .githooks; scripts/lane.sh sets it for lanes): a controller test-change
+# approval whose approved text this commit holds is used and moves to used/ (scripts/hooks/test-integrity.ts --used).
+cd "$(git rev-parse --show-toplevel)"
+node scripts/hooks/test-integrity.ts --used

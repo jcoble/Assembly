@@ -2,16 +2,12 @@
 // Claude Code hook (.claude/settings.json, before Edit/Write/MultiEdit): EdiPlatform's guard-test-changes.
 // Stops an edit that changes or removes an assertion in a test file, at the moment it is made.
 // test-integrity.ts is the commit-level check and owns what counts as a test and an assertion.
-// A changed test is allowed when the controller signed an approval for it (approve-test-change.ts):
-// <id>.json {branch, tests: [{file, name}], reason, approvedBy, at} beside <id>.json.sig, in
-// ~/.local/state/assembly-test-approvals/, verified against ~/.config/assembly-test-approvals/allowed_signers.
-// ASSEMBLY_TEST_APPROVALS_HOME, when set, replaces both: approvals in it, signers at <it>/allowed_signers.
-// A detached checkout (branch HEAD) gets no approvals.
+// A changed test is allowed when the edit produces exactly the text of the controller's signed, unused, unexpired
+// approval for this branch (test-integrity.ts holds the approval rules and where approvals live).
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { changedAssertions, isTest } from './test-integrity.ts';
+import { approvals, changedAssertions, currentBranch, isTest, satisfies } from './test-integrity.ts';
 
 interface Replacement { old_string: string; new_string: string; replace_all?: boolean; }
 interface ToolInput extends Partial<Replacement> { file_path?: string; content?: string; edits?: Replacement[]; }
@@ -43,55 +39,32 @@ function changedTestsBesides(path: string): string[] {
     .filter(name => isTest(name) && existsSync(join(top, name)) && realpathSync(join(top, name)) !== real)
     .map(name => unix(readFileSync(join(top, name), "utf8")));
 }
-const approvalsHome = process.env.ASSEMBLY_TEST_APPROVALS_HOME;
-const approvals = approvalsHome ?? join(homedir(), '.local/state/assembly-test-approvals');
-const signers = approvalsHome ? join(approvalsHome, 'allowed_signers') : join(homedir(), '.config/assembly-test-approvals/allowed_signers');
-function signed(json: Buffer, signature: string): boolean {
-  try {
-    execFileSync('ssh-keygen', ['-Y', 'verify', '-f', signers, '-I', 'controller', '-n', 'assembly-test-change', '-s', signature], { input: json, stdio: ['pipe', 'ignore', 'ignore'] });
-    return true;
-  } catch { return false; }
-}
-// The test names in this file the controller approved for the current branch. Anything unreadable approves nothing.
-function approved(path: string, inRepo: string): Set<string> {
-  const names = new Set<string>();
-  let files: string[], branch: string;
-  try {
-    files = readdirSync(approvals).filter(name => name.endsWith('.json'));
-    if (!files.length) return names;
-    branch = execFileSync('git', ['-C', dirname(realpathSync(path)), 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  } catch { return names; }
-  if (branch === 'HEAD') return names;
-  for (const name of files) {
-    try {
-      const file = join(approvals, name), json = readFileSync(file);
-      if (!signed(json, file + '.sig')) continue;
-      const approval = JSON.parse(json.toString('utf8'));
-      if (approval.branch !== branch || !Array.isArray(approval.tests)) continue;
-      for (const test of approval.tests) if (test?.file === inRepo && typeof test.name === 'string') names.add(test.name);
-    } catch { continue; }
-  }
-  return names;
-}
 const movedAway = (before: string, name: string, others: string[]) => others.some(other => !changedAssertions(before, other).includes(name));
 function refusal(input: ToolInput): string | undefined {
   const path = input.file_path;
   if (!path || !existsSync(path)) return undefined;
   const inRepo = repoPath(path);
   if (!inRepo || !isTest(inRepo)) return undefined;
-  const before = unix(readFileSync(path, 'utf8')), changed = changedAssertions(before, result(before, input));
+  const before = unix(readFileSync(path, 'utf8')), after = result(before, input), changed = changedAssertions(before, after);
   if (!changed.length) return undefined;
   const others = changedTestsBesides(path), moved = changed.filter(name => !movedAway(before, name, others));
   if (!moved.length) return undefined;
-  const allowed = approved(path, inRepo), names = moved.filter(name => !allowed.has(name));
+  const allowed = new Set<string>(), partial = new Set<string>();
+  for (const approval of approvals(currentBranch(dirname(realpathSync(path))))) {
+    const entries = approval.tests.filter(test => test.file === inRepo).map(test => test.name);
+    for (const name of entries) (satisfies(approval, inRepo, after) ? allowed : partial).add(name);
+  }
+  const names = moved.filter(name => !allowed.has(name)), short = names.filter(name => partial.has(name));
   if (!names.length) return undefined;
-  return 'BLOCKED: this edit changes or removes an assertion in ' + inRepo + ' (' + names.join(', ') + ').\n'
+  return (short.length ? 'An approval covers ' + short.join(', ') + ', but this edit does not produce its approved text. Intermediate states are refused: make the whole approved change in one Edit, or one Write of the file.\n' : '')
+    + 'BLOCKED: this edit changes or removes an assertion in ' + inRepo + ' (' + names.join(', ') + ').\n'
     + 'Tests define expected behavior. Do NOT change tests to match code. If the code has a bug, fix the code.\n'
     + 'If this test is genuinely outdated:\n'
     + '1. Do not change the test. Write the proposed change as a patch in your reports folder.\n'
     + '2. Explain why the expectation is wrong, and ask your controller (the session that started you), not Jesse.\n'
     + '3. Your controller approves by signing an approval for this branch and these tests. Never write or sign an approval yourself.\n'
-    + '4. When it is approved, make the edit again, and name the test in a TEST-CHANGE line when you commit.\n';
+    + '4. When it is approved, make the edit again, and name the test in a TEST-CHANGE line when you commit.\n'
+    + '5. Make the approved change exactly, in one Edit or one Write of the file, and cite the approval id in its TEST-CHANGE line.\n';
 }
 
 let text = '';

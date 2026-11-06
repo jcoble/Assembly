@@ -1,8 +1,16 @@
 #!/usr/bin/env node
 // EdiPlatform's TEST-CHANGE discipline, adapted to Assembly's C#, Rust, TS and Dart.
 // A reason is an audit trail, never approval to change behavior or proof of correctness.
+// Approval to change an assertion is the controller's signed approval (approve-test-change.ts) of the exact test text:
+// <id>.json {id, branch, tests: [{file, name, sha256} | {file, name, removed: true}], reason, approvedBy, at, expires}
+// beside <id>.json.sig in ~/.local/state/assembly-test-approvals/, verified against
+// ~/.config/assembly-test-approvals/allowed_signers. ASSEMBLY_TEST_APPROVALS_HOME, when set, replaces both: approvals
+// in it, signers at <it>/allowed_signers. A commit that holds an approval's text moves it to used/ (--used, post-commit).
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readdirSync, readFileSync, renameSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export interface Change { path: string; previousPath?: string; before: string; after: string; }
@@ -70,6 +78,81 @@ function assertions(source: string): Map<string, string[]> {
   }
   return result;
 }
+// A test's own text, from the line that names it through its closing bracket, without comments or whitespace outside
+// literals and without a comma before a closing bracket, so a formatter's wrap of the same code reads the same.
+function normalized(text: string): string {
+  let out = '', quote = '', escaped = false;
+  for (const c of text) {
+    if (quote) {
+      out += c;
+      if (escaped) escaped = false; else if (c === '\\') escaped = true; else if (c === quote) quote = '';
+      continue;
+    }
+    if (/\s/.test(c)) continue;
+    if (')]}'.includes(c) && out.endsWith(',')) out = out.slice(0, -1);
+    if (c === '"' || c === "'" || c === '`') quote = c;
+    out += c;
+  }
+  return out;
+}
+export function testText(source: string, name: string): string | undefined {
+  const lines = executable(source.replaceAll('\r\n', '\n')).split('\n'), found: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (method(lines[i]) !== name) continue;
+    let body = lines[i];
+    while (!(balance(body) <= 0 && (body.includes('{') || /;\s*$/.test(body))) && i + 1 < lines.length && method(lines[i + 1]) === undefined) body += '\n' + lines[++i];
+    found.push(normalized(body));
+  }
+  return found.length ? found.join('\n') : undefined;
+}
+export function testHash(source: string, name: string): string | undefined {
+  const text = testText(source, name);
+  return text === undefined ? undefined : createHash('sha256').update(text).digest('hex');
+}
+
+export interface ApprovedTest { file: string; name: string; sha256?: string; removed?: boolean; }
+export interface Approval { id: string; branch: string; tests: ApprovedTest[]; expires: string; path?: string; }
+const approvalsHome = process.env.ASSEMBLY_TEST_APPROVALS_HOME;
+const approvalsFolder = approvalsHome ?? join(homedir(), '.local/state/assembly-test-approvals');
+const signers = approvalsHome ? join(approvalsHome, 'allowed_signers') : join(homedir(), '.config/assembly-test-approvals/allowed_signers');
+function signed(json: Buffer, signature: string): boolean {
+  try {
+    execFileSync('ssh-keygen', ['-Y', 'verify', '-f', signers, '-I', 'controller', '-n', 'assembly-test-change', '-s', signature], { input: json, stdio: ['pipe', 'ignore', 'ignore'] });
+    return true;
+  } catch { return false; }
+}
+export function currentBranch(cwd?: string): string {
+  try { return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return 'HEAD'; }
+}
+// The controller's signed approvals for this branch, unexpired at `at`; with `used`, also those a commit already used.
+// A detached checkout (HEAD) gets none. Anything unreadable approves nothing.
+export function approvals(branch: string, at = Date.now(), used = false): Approval[] {
+  const result: Approval[] = [];
+  if (!branch || branch === 'HEAD') return result;
+  for (const folder of used ? [approvalsFolder, join(approvalsFolder, 'used')] : [approvalsFolder]) {
+    let names: string[];
+    try { names = readdirSync(folder).filter(name => name.endsWith('.json')); } catch { continue; }
+    for (const name of names) {
+      try {
+        const path = join(folder, name), json = readFileSync(path);
+        if (!signed(json, path + '.sig')) continue;
+        const approval = JSON.parse(json.toString('utf8'));
+        if (approval.id !== name.slice(0, -'.json'.length) || approval.branch !== branch || !(Date.parse(approval.expires) > at)) continue;
+        const tests = approval.tests;
+        if (!Array.isArray(tests) || !tests.length || !tests.every(test => typeof test?.file === 'string' && typeof test.name === 'string'
+          && (test.removed === true || typeof test.sha256 === 'string'))) continue;
+        result.push({ ...approval, path });
+      } catch { continue; }
+    }
+  }
+  return result;
+}
+// Every entry the approval has for this file holds at once in the file's text after the change.
+export function satisfies(approval: Approval, file: string, after: string): boolean {
+  const entries = approval.tests.filter(test => test.file === file);
+  return entries.length > 0 && entries.every(test => test.removed ? testText(after, test.name) === undefined : testHash(after, test.name) === test.sha256);
+}
+
 // The tests whose assertions are not all still there, unchanged, in the same test.
 export function changedAssertions(before: string, after: string): string[] {
   const names: string[] = [], kept = assertions(after);
@@ -84,7 +167,8 @@ export function changedAssertions(before: string, after: string): string[] {
   }
   return names;
 }
-export function violations(changes: Change[], message: string): string[] {
+// With approvals (on a host that holds them), a changed assertion also needs one that matches the committed text, cited by id.
+export function violations(changes: Change[], message: string, approved?: Approval[]): string[] {
   const errors: string[] = [], tests = changes.filter(change => (isTest(change.path) || Boolean(change.previousPath && isTest(change.previousPath))));
   const production = changes.some(change => !isTest(change.path) && !/^(?:docs\/|evidence\/|scripts\/|\.githooks\/|\.github\/|\.claude\/|\.codex\/)|\.(?:md|mdx)$/.test(change.path));
   const tokens = message.split('\n').map(line => line.trim());
@@ -93,6 +177,10 @@ export function violations(changes: Change[], message: string): string[] {
     for (const name of changedAssertions(change.before, change.after)) {
       const prefix = 'TEST-CHANGE: ' + name + ':';
       if (!tokens.some(line => line.startsWith(prefix) && line.slice(prefix.length).trim())) errors.push(change.path + ': changed/removed assertion in ' + name + '; add ' + prefix + ' <reason and governing contract>.');
+      else if (approved && !approved.some(approval => approval.tests.some(test => test.file === change.path && test.name === name)
+        && satisfies(approval, change.path, change.after) && tokens.some(line => line.startsWith(prefix) && line.includes(approval.id)))) {
+        errors.push(change.path + ': ' + name + ' needs a signed, unused, unexpired controller approval for this branch that matches the committed test text, cited by its id in the ' + prefix + ' line.');
+      }
     }
   }
   return errors;
@@ -112,12 +200,35 @@ export function stagedChanges(commit?: string): Change[] {
   }
   return result;
 }
+// post-commit: an approval whose whole approved text this commit holds, in a file it changed, is used and moves to used/.
+function markUsed(): number {
+  const changed = git(['diff-tree', '--root', '--no-commit-id', '-r', '--name-only', '-z', 'HEAD']).split('\0').filter(Boolean);
+  for (const approval of approvals(currentBranch())) {
+    const files = [...new Set(approval.tests.map(test => test.file))];
+    if (!files.some(file => changed.includes(file)) || !files.every(file => satisfies(approval, file, content('HEAD:' + file)))) continue;
+    const used = join(approvalsFolder, 'used'), path = approval.path!;
+    mkdirSync(used, { recursive: true });
+    renameSync(path + '.sig', join(used, basename(path) + '.sig'));
+    renameSync(path, join(used, basename(path)));
+    process.stdout.write('Test approval ' + approval.id + ' is used by this commit; moved to ' + used + '\n');
+  }
+  return 0;
+}
+// The approval check activates prospectively, from the commit after the one that adds it, and not in CI, which has no approvals.
+const approvalCheck = 'approvals(currentBranch(), ';
+function approving(base: string): boolean {
+  return process.env.GITHUB_ACTIONS !== 'true' && exists(base + ':scripts/hooks/test-integrity.ts') && content(base + ':scripts/hooks/test-integrity.ts').includes(approvalCheck);
+}
 export function main(args: string[]): number {
+  if (args[0] === '--used') return markUsed();
   const commit = args[0] === '--commit' ? args[1] : undefined;
   // Activate prospectively. Removing the policy after activation cannot deactivate it.
   if (commit ? !exists(commit + ':scripts/hooks/test-integrity.ts') && !exists(commit + '^:scripts/hooks/test-integrity.ts') : !exists('HEAD:scripts/hooks/test-integrity.ts') && !exists(':scripts/hooks/test-integrity.ts')) return 0;
   const message = commit ? git(['log', '-1', '--format=%B', commit]) : readFileSync(args[0], 'utf8');
-  const errors = violations(stagedChanges(commit), message);
+  // A pushed commit may already have used its approval, so --commit also accepts used ones, valid at its author date.
+  const approved = !approving(commit ? commit + '^' : 'HEAD') ? undefined
+    : commit ? approvals(currentBranch(), Date.parse(git(['log', '-1', '--format=%aI', commit]).trim()), true) : approvals(currentBranch(), Date.now());
+  const errors = violations(stagedChanges(commit), message, approved);
   if (errors.length) { process.stderr.write('Test integrity: commit stopped.\n' + errors.join('\n') + '\nInvestigate; fix incorrect production code. TEST-CHANGE is not permission to change behavior.\n'); return 1; }
   return 0;
 }
