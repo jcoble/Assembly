@@ -304,13 +304,16 @@ fn refusal_words(failure: CallFailure, machine: Option<String>) -> String {
     };
     match code {
         "not_a_path" => "That file link isn't a file path.".into(),
-        "not_full_path" => "That file link isn't a full path.".into(),
+        "not_full_path" => NOT_FULL_PATH.into(),
         "not_regular" => "That isn't a regular file, so it can't open.".into(),
         // The backend's own words name the machine.
         "remote_older" => failure.message,
         _ => didnt_open(&failure.message),
     }
 }
+
+/// The words for a file link whose path isn't absolute, from the backend or the link's own text.
+pub const NOT_FULL_PATH: &str = "That file link isn't a full path.";
 
 /// What a notice calls the machine the app runs on.
 const THIS_COMPUTER: &str = if cfg!(target_os = "macos") {

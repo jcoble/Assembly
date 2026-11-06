@@ -74,6 +74,18 @@ fn a_file_link_carries_an_absolute_path_and_maybe_its_machine() {
     );
 }
 
+// Proof fixes brief item 5: the old app refused a relative file link; it is still refused, in its own words.
+#[test]
+fn a_relative_file_link_is_not_a_full_path() {
+    for url in [
+        "assembly://file?path=relative.cs",
+        "assembly://file?path=src%2Fmain.rs&profile=workbox-test",
+        "assembly://file?path=~%2Fa.cs",
+    ] {
+        assert_eq!(parse_external(url), ExternalRoute::NotFullPath, "{url}");
+    }
+}
+
 #[test]
 fn every_other_shape_is_unsupported() {
     for url in [
@@ -81,7 +93,6 @@ fn every_other_shape_is_unsupported() {
         "assembly://session/",
         "assembly://session/a/b",
         "assembly://open?url=javascript%3Aalert(1)",
-        "assembly://file?path=relative.cs",
         "assembly://settings",
         "https://session/owned-123",
         // Session.

@@ -43,6 +43,8 @@ pub enum ExternalRoute {
         path: String,
         machine: Option<String>,
     },
+    /// A file link whose path isn't absolute: refused in the file words.
+    NotFullPath,
     Unsupported,
 }
 
@@ -54,6 +56,7 @@ impl fmt::Debug for ExternalRoute {
             Self::Session { id, machine } => write!(formatter, "Session({id}, {machine:?})"),
             Self::Open { url } => write!(formatter, "Open({url})"),
             Self::File { path, machine } => write!(formatter, "File({path}, {machine:?})"),
+            Self::NotFullPath => formatter.write_str("NotFullPath"),
             Self::Unsupported => formatter.write_str("Unsupported"),
         }
     }
@@ -162,9 +165,13 @@ fn open_route(query: Option<&str>) -> Option<ExternalRoute> {
     is_web_page(&address).then_some(ExternalRoute::Open { url: address })
 }
 
+/// A well-formed file link whose path isn't absolute is refused in the file words rather than as no link at all.
 fn file_route(query: Option<&str>) -> Option<ExternalRoute> {
     let [path, machine] = query_values(query, ["path", "profile"])?;
     let path = path?;
+    if !path.starts_with('/') {
+        return Some(ExternalRoute::NotFullPath);
+    }
     is_clean_path(&path).then_some(ExternalRoute::File { path, machine })
 }
 

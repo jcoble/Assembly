@@ -25,6 +25,7 @@ pub fn handle_route(route: ExternalRoute, cx: &mut App) {
             tasks_pane::receive_sign_in(state, claim_code, cx)
         }
         ExternalRoute::Task { page_id } => tasks_pane::open_task_link(page_id, cx),
+        ExternalRoute::NotFullPath => show_notice(file_link::NOT_FULL_PATH.into(), cx),
         ExternalRoute::Unsupported => show_notice(NOT_OPENABLE.into(), cx),
     }
 }
