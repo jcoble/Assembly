@@ -269,6 +269,7 @@ fn a_turn_ending_while_shown_reads_the_total_again(cx: &mut TestAppContext) {
     assert_eq!(tokens_reads(&client), 1, "only a turn ending reads it");
 
     client.queue_answer(Ok(json!({ "total": 250 })));
+    client.queue_answer(Ok(json!([])));
     publish(facts(&pane, "s1", None, 2), cx);
     assert_eq!(tokens_reads(&client), 2);
     assert_eq!(pane.read_with(cx, |pane, _| pane.total), Some(Some(250)));
@@ -278,8 +279,8 @@ fn a_turn_ending_while_shown_reads_the_total_again(cx: &mut TestAppContext) {
             .iter()
             .filter(|(call, _)| call == "rows/files")
             .count(),
-        1,
-        "the lists aren't read again"
+        2,
+        "a turn ending reads the files again"
     );
 }
 
