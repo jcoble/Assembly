@@ -54,6 +54,8 @@ struct FakeState {
 enum FakeAnswer {
     Value(Result<Value, CallError>),
     OwnerAccepted,
+    /// Answers when the test sends it; a dropped sender aborts the call.
+    Pending(futures_channel::oneshot::Receiver<Result<Value, CallError>>),
 }
 
 impl FakeClient {
@@ -101,6 +103,16 @@ impl FakeClient {
             .borrow_mut()
             .answers
             .push_back(FakeAnswer::Value(answer));
+    }
+
+    /// The next call's answer, held until the test sends it, so a test can see what happens while a call is going.
+    pub fn queue_pending(&self) -> futures_channel::oneshot::Sender<Result<Value, CallError>> {
+        let (sender, receiver) = futures_channel::oneshot::channel();
+        self.state
+            .borrow_mut()
+            .answers
+            .push_back(FakeAnswer::Pending(receiver));
+        sender
     }
 
     pub fn queue_owner_accepted(&self) {
@@ -230,7 +242,7 @@ impl SessionClient for FakeClient {
         method: &str,
         args: Value,
         _key: Option<&str>,
-        _cx: &App,
+        cx: &App,
     ) -> Task<Result<Value, CallError>> {
         let mut state = self.state.borrow_mut();
         if feature == "config" {
@@ -258,6 +270,11 @@ impl SessionClient for FakeClient {
         });
         let answer = match answer {
             FakeAnswer::Value(answer) => answer,
+            FakeAnswer::Pending(receiver) => {
+                return cx
+                    .foreground_executor()
+                    .spawn(async move { receiver.await.unwrap_or(Err(CallError::Aborted)) });
+            }
             FakeAnswer::OwnerAccepted => Ok(serde_json::json!({
                 "sessionId":args["session"],"clientId":args["clientId"],
                 "messageId":format!("prompt/{}/{}", args["session"].as_str().unwrap(), args["clientId"].as_str().unwrap()),

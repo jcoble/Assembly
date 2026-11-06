@@ -9,6 +9,8 @@ mod features;
 #[allow(dead_code)]
 #[path = "components/inline_field/mod.rs"]
 mod inline_field;
+#[path = "components/section_card.rs"]
+mod section_card;
 
 use std::cell::{Cell, OnceCell};
 use std::path::PathBuf;
@@ -52,6 +54,7 @@ fn main() {
         features::shell::workspace_preview::register(cx);
         features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
         SelectedSession::init(cx);
+        features::session::context::live_facts::LiveFacts::init(cx);
         Preferences::init(cx);
         features::session::view::session_pane::SessionPane::register(cx);
         features::sessions::sessions_pane::SessionsPane::register(cx);

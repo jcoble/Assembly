@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Assembly.Domain.Events;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Application.Features.Chat.Rows.Context;
 using Assembly.Application.Features.Chat.Rows.Markdown;
 using Assembly.Domain.Markdown;
 using Assembly.Domain.Rows;
@@ -114,9 +115,11 @@ public sealed class RowConverter
                     CloseThinking(batch, steered.At);
                     CloseMessage(batch, steered.At);
                 }
+                var steeredPaths = PromptPaths.Of(steered.Text);
                 batch.Rows.Add(new NewRow(steered.RunId, null, RowKind.User, JsonSerializer.SerializeToElement(
                     new UserPayload(steered.Text, steered.FromSessionId, steered.ClientId, SenderLabel: steered.SenderLabel,
-                        ItemId: steered.UserItemId, AttachmentIds: steered.AttachmentIds, FromMachine: steered.FromMachine), RowJsonContext.Rows.UserPayload), steered.At));
+                        ItemId: steered.UserItemId, AttachmentIds: steered.AttachmentIds, FromMachine: steered.FromMachine,
+                        Named: NullIfEmpty(steeredPaths.Named), Attached: NullIfEmpty(steeredPaths.Attached)), RowJsonContext.Rows.UserPayload), steered.At));
                 break;
             case TextChunk chunk:
                 AddText(batch, chunk);
@@ -176,10 +179,14 @@ public sealed class RowConverter
     private void StartTurn(RowBatch batch, TurnStarted started)
     {
         _turn = new OpenTurn(started.RunId, started.At, _sessionCost);
+        var paths = PromptPaths.Of(started.Text);
         Add(batch, null, RowKind.User, new UserPayload(started.Text, started.FromSessionId, started.ClientId, SenderLabel: started.SenderLabel,
-            ItemId: started.UserItemId, AttachmentIds: started.AttachmentIds, FromMachine: started.FromMachine), RowJsonContext.Rows.UserPayload, started.At);
+            ItemId: started.UserItemId, AttachmentIds: started.AttachmentIds, FromMachine: started.FromMachine,
+            Named: NullIfEmpty(paths.Named), Attached: NullIfEmpty(paths.Attached)), RowJsonContext.Rows.UserPayload, started.At);
         Add(batch, null, RowKind.Turn, new TurnPayload("started"), RowJsonContext.Rows.TurnPayload, started.At);
     }
+
+    private static IReadOnlyList<T>? NullIfEmpty<T>(IReadOnlyList<T> list) => list.Count == 0 ? null : list;
 
     private void AddText(RowBatch batch, TextChunk chunk)
     {

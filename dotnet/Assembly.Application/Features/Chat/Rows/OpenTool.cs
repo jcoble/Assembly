@@ -3,6 +3,7 @@ using System.Text;
 using System.Security.Cryptography;
 using Assembly.Domain.Events;
 using Assembly.Domain.Rows;
+using Assembly.Application.Features.Chat.Rows.Context;
 
 namespace Assembly.Application.Features.Chat.Rows;
 
@@ -12,6 +13,8 @@ namespace Assembly.Application.Features.Chat.Rows;
 /// </summary>
 internal sealed class OpenTool(string itemId, string? runId = null)
 {
+    private const int MostNamed = 50;
+
     private ToolCallFields _fields = new();
     private string? _lastLine;
     private byte[] _lastDetail = DetailFingerprint(new ToolDetail(itemId));
@@ -58,7 +61,7 @@ internal sealed class OpenTool(string itemId, string? runId = null)
         var name = _fields.Name ?? _fields.Title ?? (_fields.Kind == "other" ? null : _fields.Kind) ?? "Tool";
         var summary = ToolSummary.Of(_fields.Input) ?? _fields.Title;
         var line = new ToolPayload(name, state, summary == name ? null : summary, path, diff?.Added, diff?.Removed,
-            HasDetail: input is not null || output is not null || diff is not null || _hasTerminal, _fields.Kind, diff is { Files.Count: > 1 } ? diff.Files : null);
+            HasDetail: input is not null || output is not null || diff is not null || _hasTerminal, _fields.Kind, diff is { Files.Count: > 1 } ? diff.Files : null, NamedPaths(path, diff));
 
         var lineJson = JsonSerializer.Serialize(line, RowJsonContext.Rows.ToolPayload);
         var changedLine = lineJson == _lastLine ? null : line;
@@ -67,6 +70,33 @@ internal sealed class OpenTool(string itemId, string? runId = null)
         (_lastLine, _lastDetail) = (lineJson, fingerprint);
         return (changedLine, changedDetail);
     }
+
+    /// <summary>
+    /// The paths this call mentions, null when there are none. A shell call keeps all it parsed, because the read ignores
+    /// a shell call's <c>path</c>. Other kinds keep only those beyond what their row already carries.
+    /// </summary>
+    private IReadOnlyList<string>? NamedPaths(string? path, UnifiedDiff? diff)
+    {
+        IEnumerable<string> paths = _fields.Kind switch
+        {
+            "execute" when ToolSummary.Command(_fields.Input) is { } command => ShellPaths.Candidates(command, Cwd(_fields.Input)),
+            "read" or "edit" or "delete" or "move" => Beyond(path, diff),
+            _ => [],
+        };
+        var named = paths.Distinct().Take(MostNamed).ToArray();
+        return named.Length == 0 ? null : named;
+    }
+
+    private IEnumerable<string> Beyond(string? path, UnifiedDiff? diff)
+    {
+        var known = new HashSet<string>(diff is { Files.Count: > 1 } ? diff.Files.Select(file => file.Path) : []);
+        if (path is not null) known.Add(path);
+        return (_fields.Paths ?? []).Concat(_fields.Diffs?.SelectMany(diff => diff.Paths) ?? []).Where(named => !known.Contains(named));
+    }
+
+    private static string? Cwd(JsonElement? input) =>
+        input is { ValueKind: JsonValueKind.Object } fields && fields.TryGetProperty("cwd", out var cwd)
+            && cwd.ValueKind == JsonValueKind.String && cwd.GetString() is { } folder && folder.StartsWith('/') ? folder : null;
 
     // V2 sends complete resolved snapshots on later patches. Finished routing needs no second copy of their detail.
     // Legacy partial producers still need their original merge fields.

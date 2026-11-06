@@ -42,6 +42,8 @@ internal sealed class OpenTurn(string runId, long startedAt, decimal? sessionCos
             CacheHitPct: usage is null || allInput == 0 ? null : Math.Round(100.0 * read / allInput, 1),
             // A failed or lost turn's total isn't settled, so its cost is unknown, not 0.
             CostUsd: _cost.Delta(status, sessionCost),
-            ToolCalls);
+            ToolCalls,
+            // A cancelled turn reports zeros, which are no total.
+            TotalTokens: usage?.TotalTokens is > 0 ? usage.TotalTokens : null);
     }
 }
