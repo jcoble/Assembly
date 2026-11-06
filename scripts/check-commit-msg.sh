@@ -4,8 +4,8 @@
 #   scripts/check-commit-msg.sh --commit <id> <branch>  CI, on each of a pull request's own commits
 # A message has no Co-Authored-By line and ends with `Committed-by: <name>`. On a tsk-<n> branch it has
 # `Task: TSK-<n> https://app.notion.com/p/<page id>`. A fix commit (subject starting "fix") changes a test
-# (dotnet/Assembly.Tests/, scripts/*.test.sh, a tests.rs or *_tests.rs under desktop/src/, or desktop/tests/)
-# or says why not with a `No-test: <reason>` line. Historical app/test paths count only in --commit mode
+# (dotnet/Assembly.Tests/, a *.test.sh or *.test.ts under scripts/, a tests.rs or *_tests.rs under desktop/src/, or
+# desktop/tests/) or says why not with a `No-test: <reason>` line. Historical app/test paths count only in --commit mode
 # for a commit containing the old app manifest. Architecture is unchanged or updated at the canonical Notion page.
 # --commit skips a commit GitHub made in its web UI (committer noreply@github.com), which can't carry these lines.
 set -euo pipefail
@@ -48,10 +48,10 @@ grep -Eiq '^Architecture: unchanged$' <<<"$message" \
   || stop "add Architecture: unchanged, or Architecture: updated https://app.notion.com/p/409394b0689d8184906cd246dc89acd1."
 
 if head -n 1 <<<"$message" | grep -Eiq '^fix([^A-Za-z0-9_]|$)'; then
-  grep -Eq '^(dotnet/Assembly\.Tests/|scripts/[^/]+\.test\.sh$|desktop/src/(.*/)?([^/]*_)?tests\.rs$|desktop/tests/)' <<<"$changed" \
+  grep -Eq '^(dotnet/Assembly\.Tests/|scripts/(.*/)?[^/]+\.test\.(sh|ts)$|desktop/src/(.*/)?([^/]*_)?tests\.rs$|desktop/tests/)' <<<"$changed" \
     || { [ "$historical_app" = true ] && grep -q '^app/test/' <<<"$changed"; } \
     || grep -Eq '^No-test:[[:space:]]*[^[:space:]]' <<<"$(tail -n +2 <<<"$message")" \
-    || stop "a fix commit changes a test (dotnet/Assembly.Tests/, scripts/*.test.sh, a tests.rs or *_tests.rs under desktop/src/, or desktop/tests/), or says why not with No-test: <reason>."
+    || stop "a fix commit changes a test (dotnet/Assembly.Tests/, a *.test.sh or *.test.ts under scripts/, a tests.rs or *_tests.rs under desktop/src/, or desktop/tests/), or says why not with No-test: <reason>."
 fi
 hook_dir="$(cd "$(dirname "$0")/hooks" && pwd)"
 if [ -n "${commit:-}" ]; then

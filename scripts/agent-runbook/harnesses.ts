@@ -4,12 +4,14 @@ export const harnesses = {
     settingsFile: '.claude/settings.json',
     hookOptions: {},
     compactExit: 2,
+    worktreeEvents: ['WorktreeCreate', 'WorktreeRemove'],
     compactFailure: (message: string) => ({ decision: 'block', reason: message }),
   },
   codex: {
     settingsFile: '.codex/hooks.json',
     hookOptions: { additionalContextLimit: 4000 },
     compactExit: 0,
+    worktreeEvents: [],
     compactFailure: (message: string) => ({ continue: false, stopReason: message }),
   },
 };
