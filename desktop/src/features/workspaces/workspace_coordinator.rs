@@ -490,3 +490,7 @@ mod outside_tests;
 #[cfg(test)]
 #[path = "workspace_outside_drafts_tests.rs"]
 mod outside_drafts_tests;
+
+#[cfg(test)]
+#[path = "workspace_outside_save_tests.rs"]
+mod outside_save_tests;

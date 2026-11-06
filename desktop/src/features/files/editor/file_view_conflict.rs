@@ -114,7 +114,7 @@ impl FileView {
         }));
     }
 
-    pub(super) fn request_reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn request_reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.saving.is_some() || self.prompting.is_some() {
             return;
         }

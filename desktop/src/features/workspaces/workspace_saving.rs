@@ -34,6 +34,10 @@ impl WorkspaceCoordinator {
             }
         };
         if current.safe_to_leave.as_ref() == Some(&snapshot) {
+            // Already saved as it stands, so an earlier refusal's "Not saved" no longer holds.
+            if self.status.take().is_some() {
+                cx.notify();
+            }
             if self.active_request {
                 self.read_target(window, cx);
             }

@@ -60,7 +60,9 @@ type Saves = Arc<Mutex<Vec<Value>>>;
 pub(super) struct Stage<'a> {
     pub(super) cx: &'a mut VisualTestContext,
     pub(super) coordinator: Entity<WorkspaceCoordinator>,
-    saves: Saves,
+    pub(super) saves: Saves,
+    /// The state a file save's commit answers with: "saved", or "conflict" as the revision check refusing it.
+    pub(super) commit: Arc<Mutex<&'static str>>,
     dock: Entity<DockArea>,
     pub(super) _refused: Subscription,
     _backend: FakeBackend,
@@ -69,6 +71,8 @@ pub(super) struct Stage<'a> {
 pub(super) fn stage(cx: &mut TestAppContext) -> Stage<'_> {
     let saves = Saves::default();
     let saved = saves.clone();
+    let commit = Arc::new(Mutex::new("saved"));
+    let committed = commit.clone();
     // A file save's commit, held until the test's release call, which may come first.
     let mut held: Option<Value> = None;
     let mut released = false;
@@ -107,14 +111,19 @@ pub(super) fn stage(cx: &mut TestAppContext) -> Stage<'_> {
             (Some("files"), Some("release")) => json!({}),
             (Some("files"), Some("beginSave")) => json!({"upload": "u1"}),
             (Some("files"), Some("saveChunk" | "dropSave")) => json!({}),
-            (Some("files"), Some("commitSave")) if released => {
-                json!({"state": "saved", "revision": "r2"})
-            }
             (Some("files"), Some("commitSave")) => {
-                held = Some(
-                    json!({"t": "result", "id": frame["id"], "result": {"state": "saved", "revision": "r2"}}),
-                );
-                return Vec::new();
+                let result = match *committed.lock().unwrap() {
+                    "saved" => json!({"state": "saved", "revision": "r2"}),
+                    state => {
+                        json!({"state": state, "error": {"message": "The file changed on disk."}})
+                    }
+                };
+                if released {
+                    result
+                } else {
+                    held = Some(json!({"t": "result", "id": frame["id"], "result": result}));
+                    return Vec::new();
+                }
             }
             (Some("test"), Some("release")) => {
                 released = true;
@@ -162,6 +171,7 @@ pub(super) fn stage(cx: &mut TestAppContext) -> Stage<'_> {
         cx,
         coordinator,
         saves,
+        commit,
         dock,
         _refused,
         _backend: backend,
@@ -169,7 +179,7 @@ pub(super) fn stage(cx: &mut TestAppContext) -> Stage<'_> {
 }
 
 impl Stage<'_> {
-    async fn open_workspace(&mut self) {
+    pub(super) async fn open_workspace(&mut self) {
         let (sent, mut activated) = unbounded();
         let _heard = self.cx.update(|_, cx| {
             cx.subscribe(
@@ -396,79 +406,4 @@ async fn a_session_file_and_an_unclaimed_outside_tab_on_it_save_as_one(cx: &mut 
     assert_eq!(captured["files"].as_array().unwrap().len(), 1);
     assert_eq!(captured["files"][0]["path"], "README.md");
     assert_eq!(captured["topTabs"]["order"], json!([identity.unwrap()]));
-}
-
-// Proof fixes brief item 3: a layout save refused while an outside file saved goes through once the save ends, so the
-// "Not saved" line doesn't stay.
-#[gpui::test]
-async fn a_layout_save_refused_during_an_outside_save_goes_through_when_it_ends(
-    cx: &mut TestAppContext,
-) {
-    let mut stage = stage(cx);
-    stage.open_workspace().await;
-    let view = stage.open_hosts(Some("box")).await;
-    let coordinator = stage.coordinator.clone();
-    let (changed, mut changes) = unbounded();
-    let tell = changed.clone();
-    let _heard = stage.cx.update(|_, cx| {
-        cx.observe(&coordinator, move |_, _| {
-            let _ = tell.unbounded_send(());
-        })
-    });
-    let idle = |stage: &mut Stage<'_>| {
-        stage
-            .cx
-            .update(|_, cx| stage.coordinator.read(cx).saving.is_none())
-    };
-    until("the open saved", &mut changes, &changed, || {
-        stage.cx.run_until_parked();
-        idle(&mut stage)
-    })
-    .await;
-
-    let (answer, _saved) = futures_channel::oneshot::channel();
-    stage.cx.update(|_, cx| {
-        view.update(cx, |view, cx| view.edit_anyway(cx));
-        let docs = cx.global_mut::<DocumentStore>();
-        let version = docs.snapshot(&hosts_document()).unwrap().version;
-        docs.replace(&hosts_document(), version, "edited\n".into())
-            .unwrap();
-        view.update(cx, |view, cx| view.save_for_guard(answer, cx));
-    });
-    // A view change while the file saves: its layout save is refused for now.
-    stage.cx.update(|_, cx| WorkspaceCoordinator::changed(cx));
-    stage.cx.run_until_parked();
-    let status = stage.cx.update(|_, cx| coordinator.read(cx).status.clone());
-    assert!(
-        status.is_some_and(|status| status.starts_with("Not saved:")),
-        "refused while the file saves"
-    );
-
-    let release = stage.cx.update(|_, cx| {
-        // The file save goes over the bulk connection, so its held answer comes back on it.
-        SocketClient::try_bulk(cx).unwrap().read(cx).call::<Value>(
-            "test",
-            "release",
-            json!({}),
-            None,
-        )
-    });
-    until(
-        "the layout saved after the file",
-        &mut changes,
-        &changed,
-        || {
-            stage.cx.run_until_parked();
-            let status = stage.cx.update(|_, cx| coordinator.read(cx).status.clone());
-            status.is_none() && idle(&mut stage)
-        },
-    )
-    .await;
-    drop(release);
-    let last = stage.saves.lock().unwrap().last().cloned().unwrap();
-    assert_eq!(last["files"][0]["path"], "/etc/hosts");
-    assert!(
-        last["files"][0]["draft"].is_null(),
-        "the saved file has no draft left: {last}"
-    );
 }
