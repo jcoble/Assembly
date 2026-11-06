@@ -103,22 +103,31 @@ function assertions(source: string): Map<string, string[]> {
   }
   return result;
 }
-// A test's exact text (every span with that name), with only CRLF and trailing whitespace on each line set aside.
+// A test's exact text (every span with that name), with only CRLF and each line's trailing whitespace outside a literal set aside.
 export function testText(source: string, name: string): string | undefined {
-  const unix = source.replaceAll('\r\n', '\n'), original = unix.split('\n'), { tests, blocks } = spans(unix);
+  const unix = source.replaceAll('\r\n', '\n'), kinds = scan(unix), { tests, blocks } = spans(unix);
+  const original: string[] = [];
+  for (let start = 0; start <= unix.length;) {
+    const stop = unix.indexOf('\n', start) < 0 ? unix.length : unix.indexOf('\n', start);
+    let end = stop;
+    while (end > start && (unix[end - 1] === ' ' || unix[end - 1] === '\t') && kinds[end - 1] !== 'q') end--;
+    original.push(unix.slice(start, end)); start = stop + 1;
+  }
   const chosen = tests.some(span => span.name === name) ? tests.filter(span => span.name === name) : blocks.filter(span => span.name === name);
   if (!chosen.length && name !== '<file>') return undefined;
-  const text = (span: Span) => original.slice(span.start, span.end + 1).map(line => line.replace(/[ \t]+$/, '')).join('\n');
+  const text = (span: Span) => original.slice(span.start, span.end + 1).join('\n');
   return chosen.length ? chosen.map(text).join('\n') : text({ name, start: 0, end: original.length - 1 });
 }
 export function testHash(source: string, name: string): string | undefined {
   const text = testText(source, name);
   return text === undefined ? undefined : createHash('sha256').update(text).digest('hex');
 }
-// Every entry the approval has for this file holds at once in the file's text after the change.
-export function satisfies(approval: Approval, file: string, after: string): boolean {
-  const entries = approval.tests.filter(test => test.file === file);
-  return entries.length > 0 && entries.every(test => test.removed ? testText(after, test.name) === undefined : testHash(after, test.name) === test.sha256);
+// Every entry the approval has for this file holds at once in the file's text after the change. A renamed file's entries
+// for its old path hold against nothing, since that path is gone.
+export function satisfies(approval: Approval, file: string, after: string, previousPath?: string): boolean {
+  const text = (path: string) => path === file ? after : '';
+  const entries = approval.tests.filter(test => test.file === file || (previousPath !== undefined && test.file === previousPath));
+  return entries.length > 0 && entries.every(test => test.removed ? testText(text(test.file), test.name) === undefined : testHash(text(test.file), test.name) === test.sha256);
 }
 
 // The tests whose assertions are not all still there, unchanged, in the same test.
@@ -146,8 +155,8 @@ export function violations(changes: Change[], message: string, approved?: Approv
     for (const name of changedAssertions(change.before, change.after)) {
       const prefix = 'TEST-CHANGE: ' + name + ':';
       if (!tokens.some(line => line.startsWith(prefix) && line.slice(prefix.length).trim())) errors.push(change.path + ': changed/removed assertion in ' + name + '; add ' + prefix + ' <reason and governing contract>.');
-      else if (approved && !approved.some(approval => approval.tests.some(test => test.file === change.path && test.name === name)
-        && satisfies(approval, change.path, change.after) && tokens.some(line => line.startsWith(prefix) && line.includes(approval.id)))) {
+      else if (approved && !approved.some(approval => approval.tests.some(test => (test.file === change.path || test.file === change.previousPath) && test.name === name)
+        && satisfies(approval, change.path, change.after, change.previousPath) && tokens.some(line => line.startsWith(prefix) && line.includes(approval.id)))) {
         errors.push(change.path + ': ' + name + ' needs the controller\'s approval in this commit: add ' + approvalsFolder + '/<id>.json and <id>.json.sig (from '
           + hostApprovals + '), signed by the key in the base\'s ' + approvalsFolder + '/allowed_signers, for this branch, unexpired, matching the committed test text, and cite the id in the ' + prefix + ' line.');
       }

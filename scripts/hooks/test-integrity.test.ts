@@ -98,6 +98,20 @@ test('with approvals, a changed assertion needs a matching approval cited by id'
   assert.deepEqual(violations([{ path, before: seedRust, after: renamed }], 'TEST-CHANGE: keeps_path: renamed, ap-2', [rename]), []);
 });
 
+test('a test hash keeps trailing spaces inside a literal', () => {
+  const ts = "test('keeps', () => {\n  expect(a).toBe(`new\ntext`);\n});\n";
+  assert.notEqual(testHash(ts, 'keeps'), testHash(ts.replace('new\n', 'new  \n'), 'keeps'));
+  assert.equal(testHash(ts, 'keeps'), testHash(ts.replace('{\n', '{  \n'), 'keeps'));
+});
+
+test('an approval for a test renamed into a renamed file is matched by the old path', () => {
+  const expires = '2999-01-01T00:00:00Z', before = "test('old', () => {\n  expect(a).toBe(1);\n});\n", after = before.replace("'old'", "'new'");
+  const approval = { id: 'ap-3', branch: 'work', expires, tests: [{ file: 'scripts/new.test.ts', name: 'new', sha256: testHash(after, 'new') }, { file: 'scripts/old.test.ts', name: 'old', removed: true }] };
+  const change = { path: 'scripts/new.test.ts', previousPath: 'scripts/old.test.ts', before, after };
+  assert.deepEqual(violations([change], 'TEST-CHANGE: old: renamed, ap-3', [approval]), []);
+  assert.match(violations([{ ...change, after: after.replace('toBe(1)', 'toBe(2)') }], 'TEST-CHANGE: old: renamed, ap-3', [approval]).join(), /approval/);
+});
+
 // A repository on branch work whose seed commit holds the approval check and the controller's key in
 // test-approvals/allowed_signers; BASE points at the seed, as CI's pull request base would.
 function withRepo(run: (repo: {
