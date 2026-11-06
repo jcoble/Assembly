@@ -153,7 +153,11 @@ impl TerminalPane {
         let focus = cx.focus_handle();
         let focused = [
             cx.on_focus(&focus, window, |pane, _, cx| pane.focused(true, cx)),
-            cx.on_blur(&focus, window, |pane, _, cx| pane.focused(false, cx)),
+            // GPUI blurs during a draw, which drops that draw's notify: redraw once it ends, so the steady cursor shows.
+            cx.on_blur(&focus, window, |pane, window, cx| {
+                pane.focused(false, cx);
+                cx.defer_in(window, |_, _, cx| cx.notify());
+            }),
         ];
         let activation = cx.observe_window_activation(window, |pane, window, cx| {
             pane.window_active = window.is_window_active();
