@@ -112,6 +112,16 @@ test('an approval for a test renamed into a renamed file is matched by the old p
   assert.match(violations([{ ...change, after: after.replace('toBe(1)', 'toBe(2)') }], 'TEST-CHANGE: old: renamed, ap-3', [approval]).join(), /approval/);
 });
 
+test('an approved move between files needs its replacement, with the approved text, in the same commit', () => {
+  const expires = '2999-01-01T00:00:00Z', source = "test('moved', () => {\n  expect(a).toBe(1);\n});\n";
+  const approval = { id: 'ap-4', branch: 'work', expires, tests: [{ file: 'scripts/a.test.ts', name: 'moved', removed: true }, { file: 'scripts/b.test.ts', name: 'moved', sha256: testHash(source, 'moved') }] };
+  const removal = { path: 'scripts/a.test.ts', previousPath: 'scripts/a.test.ts', before: source, after: '' }, message = 'TEST-CHANGE: moved: moved to b, ap-4';
+  const added = (after: string) => ({ path: 'scripts/b.test.ts', previousPath: 'scripts/b.test.ts', before: '', after });
+  assert.match(violations([removal], message, [approval]).join(), /approval/);
+  assert.match(violations([removal, added(source.replace('toBe(1)', 'toBe(2)'))], message, [approval]).join(), /approval/);
+  assert.deepEqual(violations([removal, added(source)], message, [approval]), []);
+});
+
 // A repository on branch work whose seed commit holds the approval check and the controller's key in
 // test-approvals/allowed_signers; BASE points at the seed, as CI's pull request base would.
 function withRepo(run: (repo: {

@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { addedApprovals, approvalsFolder, baseRef, currentBranch, hostApprovals, type Approval } from './test-approvals.ts';
+import { addedApprovals, approvalsFolder, baseRef, currentBranch, hostApprovals, type Approval, type ApprovedTest } from './test-approvals.ts';
 
 export interface Change { path: string; previousPath?: string; before: string; after: string; }
 export const isTest = (path: string): boolean => /(?:^|\/)(?:[^/]*[Tt]ests?|[Ff]ixtures?|testdata)(?:\/|\.)|(?:[._](?:test|spec)|_tests?)\.(?:cs|rs|ts|tsx|dart|sh)$|\.expected\.json$/.test(path);
@@ -122,12 +122,19 @@ export function testHash(source: string, name: string): string | undefined {
   const text = testText(source, name);
   return text === undefined ? undefined : createHash('sha256').update(text).digest('hex');
 }
-// Every entry the approval has for this file holds at once in the file's text after the change. A renamed file's entries
-// for its old path hold against nothing, since that path is gone.
-export function satisfies(approval: Approval, file: string, after: string, previousPath?: string): boolean {
-  const text = (path: string) => path === file ? after : '';
-  const entries = approval.tests.filter(test => test.file === file || (previousPath !== undefined && test.file === previousPath));
-  return entries.length > 0 && entries.every(test => test.removed ? testText(text(test.file), test.name) === undefined : testHash(text(test.file), test.name) === test.sha256);
+const holds = (test: ApprovedTest, text: string | undefined) => text !== undefined
+  && (test.removed ? testText(text, test.name) === undefined : testHash(text, test.name) === test.sha256);
+// Every entry the approval has for this file holds at once in the file's text after the change.
+export function satisfies(approval: Approval, file: string, after: string): boolean {
+  const entries = approval.tests.filter(test => test.file === file);
+  return entries.length > 0 && entries.every(test => holds(test, after));
+}
+// Every entry of the approval holds in this commit: a file it names is one the commit changes (a renamed file's old path holds
+// nothing), so a reviewed move can't land as the removal alone.
+function complete(approval: Approval, changes: Change[]): boolean {
+  const text = (file: string) => changes.find(change => change.path === file)?.after
+    ?? (changes.some(change => change.previousPath === file) ? '' : undefined);
+  return approval.tests.every(test => holds(test, text(test.file)));
 }
 
 // The tests whose assertions are not all still there, unchanged, in the same test.
@@ -156,7 +163,7 @@ export function violations(changes: Change[], message: string, approved?: Approv
       const prefix = 'TEST-CHANGE: ' + name + ':';
       if (!tokens.some(line => line.startsWith(prefix) && line.slice(prefix.length).trim())) errors.push(change.path + ': changed/removed assertion in ' + name + '; add ' + prefix + ' <reason and governing contract>.');
       else if (approved && !approved.some(approval => approval.tests.some(test => (test.file === change.path || test.file === change.previousPath) && test.name === name)
-        && satisfies(approval, change.path, change.after, change.previousPath) && tokens.some(line => line.startsWith(prefix) && line.includes(approval.id)))) {
+        && complete(approval, changes) && tokens.some(line => line.startsWith(prefix) && line.includes(approval.id)))) {
         errors.push(change.path + ': ' + name + ' needs the controller\'s approval in this commit: add ' + approvalsFolder + '/<id>.json and <id>.json.sig (from '
           + hostApprovals + '), signed by the key in the base\'s ' + approvalsFolder + '/allowed_signers, for this branch, unexpired, matching the committed test text, and cite the id in the ' + prefix + ' line.');
       }
