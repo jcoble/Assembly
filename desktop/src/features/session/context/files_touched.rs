@@ -1,14 +1,11 @@
 //! The Context tab's Files touched card: each file the session's calls and prompts named, newest first, by name with
 //! its folder muted, a count chip when more than one call or prompt named it, and its lines added and removed. A click
 //! opens a file inside the session's folder through the normal open (`OpenFile`) and an attached image full size, as
-//! the Attachments card does. A file outside the folder looks the same, but its click is held until TSK-1388 lands
-//! (`held_until_outside_opener`), and meanwhile it keeps the normal cursor rather than the pointer.
-
-use std::path::{Component, Path};
+//! the Attachments card does. A file outside the folder looks and opens the same: its whole path (absolute or `~/`)
+//! goes through the normal open to the outside-file opener (TSK-1388), which opens it read-only until Edit anyway.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::list::ListItem;
-use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -52,7 +49,6 @@ impl ContextPane {
                         let selector = format!("touched-file-{}", file.path);
                         let chip = format!("touched-count-{}", file.path);
                         let clicked = file.clone();
-                        let held = held_until_outside_opener(file);
                         let line =
                             h_flex()
                                 .w_full()
@@ -100,12 +96,7 @@ impl ContextPane {
                         ListItem::new(("touched-file", index))
                             .debug_selector(move || selector)
                             .text_role(TextRole::Body, cx)
-                            .cursor(row_cursor(file))
-                            .when_some(held, |row, note| {
-                                row.tooltip(move |window, cx| {
-                                    Tooltip::new(note.clone()).build(window, cx)
-                                })
-                            })
+                            .cursor(CursorStyle::PointingHand)
                             .on_click(cx.listener(move |pane, _, window, cx| {
                                 pane.open_touched(&clicked, window, cx)
                             }))
@@ -129,9 +120,6 @@ impl ContextPane {
         let Some(scope) = self.context_scope.as_ref().filter(|scope| scope.valid) else {
             return;
         };
-        if held_until_outside_opener(file).is_some() {
-            return;
-        }
         if let Some(name) = &file.name {
             // As the Attachments card: a remote session's image opens only through its captured source.
             if self.machine.is_none() || scope.source.is_some() {
@@ -193,37 +181,6 @@ impl ContextPane {
         }
         self.files_shown = serial;
         self.files = touched(answer);
-    }
-}
-
-/// TSK-1388 hold: the normal open can't save a file outside the session's folder, so until the outside-file opener
-/// lands such a row's click does nothing and its hover gives this note. A row is outside when it isn't an attached image
-/// and its path is whole (absolute or `~/`) or climbs out (`..`); `rows/files` sends a path inside the folder relative.
-/// When the opener lands, delete this function, `row_cursor` and their uses.
-pub(super) fn held_until_outside_opener(file: &FileTouched) -> Option<String> {
-    let path = Path::new(&file.path);
-    let outside = file.name.is_none()
-        && (path.is_absolute()
-            || file.path.starts_with("~/")
-            || path.components().any(|part| {
-                matches!(
-                    part,
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                )
-            }));
-    outside.then(|| {
-        format!(
-            "{} — opens once files outside the session's folder can be opened",
-            file.path
-        )
-    })
-}
-
-/// The pointer on a row that opens; a held row's click does nothing, so it keeps the normal cursor.
-pub(super) fn row_cursor(file: &FileTouched) -> CursorStyle {
-    match held_until_outside_opener(file) {
-        Some(_) => CursorStyle::Arrow,
-        None => CursorStyle::PointingHand,
     }
 }
 
