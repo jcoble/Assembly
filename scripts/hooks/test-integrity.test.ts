@@ -129,6 +129,9 @@ function withRepo(run: (repo: {
     });
   } finally { rmSync(base, { recursive: true, force: true }); }
 }
+// The merge check runs git merge-tree --write-tree (git 2.38+); an older git fails it closed, so its merge tests can't run.
+const [gitMajor, gitMinor] = (execFileSync('git', ['--version'], { encoding: 'utf8' }).match(/(\d+)\.(\d+)/) ?? ['', '0', '0']).slice(1).map(Number);
+const noMergeTree = gitMajor > 2 || (gitMajor === 2 && gitMinor >= 38) ? false : 'git ' + gitMajor + '.' + gitMinor + ' is older than 2.38, which has the merge-tree --write-tree the merge check needs';
 const approvedEntry = () => [{ file: 'desktop/src/view_tests.rs', name: 'keeps_path', sha256: testHash(approvedRust, 'keeps_path') }];
 const inAnHour = () => new Date(Date.now() + 3600_000).toISOString();
 const commitWith = (root: string, git: (...args: string[]) => string, text: string) => { writeFileSync(join(root, 'msg'), text); git('commit', '--quiet', '-F', join(root, 'msg')); };
@@ -222,7 +225,7 @@ test('the base holding the controller\'s key turns the check on, whatever the br
   assert.equal(check(['--commit', 'HEAD', 'work']).status, 1);
 }));
 
-test('in --commit mode a merge may not remove an approval, and is not judged as a test change', () => withRepo(({ root, git, check, approve, stage }) => {
+test('in --commit mode a merge may not remove an approval, and is not judged as a test change', { skip: noMergeTree }, () => withRepo(({ root, git, check, approve, stage }) => {
   approve({ id: 'ap-1', branch: 'work', expires: inAnHour(), tests: approvedEntry() });
   stage(approvedRust);
   commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-1');
@@ -261,7 +264,7 @@ test('the key is read at the base tip, so a branch forked before the key landed 
   assert.equal(check(['--commit', 'HEAD', 'work'], { BASE: git('rev-parse', 'keyed').trim() }).status, 1);
 }));
 
-test('a merge may not drop an approval either parent holds, whichever parent comes first', () => withRepo(({ root, git, check, approve, stage }) => {
+test('a merge may not drop an approval either parent holds, whichever parent comes first', { skip: noMergeTree }, () => withRepo(({ root, git, check, approve, stage }) => {
   approve({ id: 'ap-1', branch: 'work', expires: inAnHour(), tests: approvedEntry() });
   stage(approvedRust);
   commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-1');
@@ -275,7 +278,7 @@ test('a merge may not drop an approval either parent holds, whichever parent com
   assert.match(String(merge.stderr), /only ever added/);
 }));
 
-test('a merge\'s own test edit is judged, while a test brought in unchanged from a parent is not', () => withRepo(({ root, git, check, stage }) => {
+test('a merge\'s own test edit is judged, while a test brought in unchanged from a parent is not', { skip: noMergeTree }, () => withRepo(({ root, git, check, stage }) => {
   git('checkout', '--quiet', '-b', 'side'); stage(seedRust.replace('"a"', '"z"')); commitWith(root, git, 'side changes the test');
   git('checkout', '--quiet', 'work'); writeFileSync(join(root, 'other'), 'x'); git('add', 'other'); commitWith(root, git, 'work');
   git('merge', '--quiet', '--no-ff', '-m', 'Merge side', 'side');
@@ -300,7 +303,7 @@ test('an approval the base already holds is used, even on a branch forked before
   assert.equal(check(['--commit', 'HEAD', 'work'], { BASE: base }).status, 1);
 }));
 
-test('a clean merge where both sides edited the same test file passes', () => withRepo(({ root, git, check, approve }) => {
+test('a clean merge where both sides edited the same test file passes', { skip: noMergeTree }, () => withRepo(({ root, git, check, approve }) => {
   const beta = (n: number) => '\n// the second test\n\nfn beta() {\n assert_eq!(count, ' + n + ');\n}\n';
   const put = (text: string) => { writeFileSync(join(root, 'desktop/src/view_tests.rs'), text); git('add', 'desktop/src/view_tests.rs', 'test-approvals'); };
   put(seedRust + beta(4)); commitWith(root, git, 'test: add beta');
@@ -313,7 +316,7 @@ test('a clean merge where both sides edited the same test file passes', () => wi
   assert.equal(check(['--commit', 'HEAD', 'work']).status, 0);
 }));
 
-test('a merge that deletes a test file the branch added is judged', () => withRepo(({ root, git, check }) => {
+test('a merge that deletes a test file the branch added is judged', { skip: noMergeTree }, () => withRepo(({ root, git, check }) => {
   writeFileSync(join(root, 'desktop/src/added_tests.rs'), 'fn added() {\n assert!(ready);\n}\n'); git('add', '.'); commitWith(root, git, 'test: add added');
   git('checkout', '--quiet', '-b', 'side', 'HEAD~1'); writeFileSync(join(root, 'other'), 'x'); git('add', 'other'); commitWith(root, git, 'side');
   git('checkout', '--quiet', 'work');
@@ -321,4 +324,18 @@ test('a merge that deletes a test file the branch added is judged', () => withRe
   git('rm', '--quiet', 'desktop/src/added_tests.rs');
   git('commit', '--quiet', '--no-edit');
   assert.equal(check(['--commit', 'HEAD', 'work']).status, 1);
+}));
+
+test('a conflicted merge resolved to the base\'s text passes', { skip: noMergeTree }, () => withRepo(({ root, git, check, approve }) => {
+  const put = (text: string) => { writeFileSync(join(root, 'desktop/src/view_tests.rs'), text); git('add', 'desktop/src/view_tests.rs', 'test-approvals'); };
+  const based = seedRust.replace('"a"', '"c"');
+  git('checkout', '--quiet', '-b', 'base'); put(based); commitWith(root, git, 'TEST-CHANGE: keeps_path: the base moved on');
+  const base = git('rev-parse', 'HEAD').trim();
+  git('checkout', '--quiet', 'work');
+  approve({ id: 'ap-1', branch: 'work', expires: inAnHour(), tests: approvedEntry() });
+  put(approvedRust); commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-1');
+  assert.throws(() => git('merge', '--quiet', '--no-ff', 'base'));
+  put(based);
+  git('commit', '--quiet', '--no-edit');
+  assert.equal(check(['--commit', 'HEAD', 'work'], { BASE: base }).status, 0);
 }));

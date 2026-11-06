@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { addedApprovals, approvalsFolder, currentBranch, hostApprovals, type Approval } from './test-approvals.ts';
+import { addedApprovals, approvalsFolder, baseRef, currentBranch, hostApprovals, type Approval } from './test-approvals.ts';
 
 export interface Change { path: string; previousPath?: string; before: string; after: string; }
 export const isTest = (path: string): boolean => /(?:^|\/)(?:[^/]*[Tt]ests?|[Ff]ixtures?|testdata)(?:\/|\.)|(?:[._](?:test|spec)|_tests?)\.(?:cs|rs|ts|tsx|dart|sh)$|\.expected\.json$/.test(path);
@@ -172,7 +172,8 @@ function autoMerge(parents: string[]): { tree: string; conflicts: Set<string> } 
 }
 // A merge brings in its parents' work. Each test file it holds is judged against git's automatic merge of its parents, where
 // that merges cleanly, and against its first parent where it conflicts (or for an octopus merge): a merge answers only for
-// what it does beyond the automatic merge, a deletion included. It may not drop or change an approval file any parent holds,
+// what it does beyond the automatic merge, a deletion included. A file equal to the base's current copy is fine too (a conflict
+// resolved to the base's side); an older parent's copy isn't, since it may be weaker. It may not drop or change an approval file any parent holds,
 // which would let the approval be added and used again.
 function mergeChanges(commit: string): Change[] {
   const parents = git(['rev-list', '--parents', '-n', '1', commit]).trim().split(' ').slice(1);
@@ -180,7 +181,8 @@ function mergeChanges(commit: string): Change[] {
   const auto = autoMerge(parents);
   const against = (path: string) => !auto || auto.conflicts.has(path) ? parents[0] : auto.tree;
   const paths = new Set([...git(['diff-tree', '-r', '--name-only', '-z', auto?.tree ?? parents[0], commit]).split('\0'), ...(auto?.conflicts ?? [])]);
-  const tests = [...paths].filter(path => path && isTest(path) && blob(against(path) + ':' + path) !== blob(commit + ':' + path))
+  const based = (path: string) => exists(baseRef() + ':' + path) && blob(baseRef() + ':' + path) === blob(commit + ':' + path);
+  const tests = [...paths].filter(path => path && isTest(path) && blob(against(path) + ':' + path) !== blob(commit + ':' + path) && !based(path))
     .map(path => ({ path, before: content(against(path) + ':' + path), after: content(commit + ':' + path) }));
   const approvals = new Set(parents.flatMap(parent => git(['ls-tree', '-r', '--name-only', '-z', parent, '--', approvalsFolder + '/']).split('\0').filter(Boolean)));
   return [...tests, ...[...approvals].flatMap(path => {

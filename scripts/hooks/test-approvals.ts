@@ -18,9 +18,10 @@ export const hostApprovals = join(homedir(), '.local/state/assembly-test-approva
 const git = (repo: string, args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
 const tryGit = (repo: string, args: string[]) => { try { return git(repo, args); } catch { return undefined; } };
 export function currentBranch(repo: string): string { return tryGit(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])?.trim() ?? 'HEAD'; }
-const base = () => process.env.BASE || 'origin/HEAD';
+// The base: CI's pull request base, else origin/HEAD.
+export const baseRef = () => process.env.BASE || 'origin/HEAD';
 // The controller's key as the base tip holds it. Without one, nothing is approved.
-export function baseSigners(repo: string): string | undefined { return tryGit(repo, ['show', base() + ':' + approvalsFolder + '/allowed_signers']); }
+export function baseSigners(repo: string): string | undefined { return tryGit(repo, ['show', baseRef() + ':' + approvalsFolder + '/allowed_signers']); }
 const held = (repo: string, tree: string) => (tryGit(repo, ['ls-tree', '-r', '--name-only', '-z', tree, '--', approvalsFolder + '/']) ?? '').split('\0').filter(Boolean);
 // The approval files a commit adds: in its tree, in none of its parents'.
 function addedPaths(repo: string, commit: string): string[] {
@@ -62,7 +63,7 @@ const accepted = (candidates: Signed[], signers: string | undefined, branch: str
 export function addedApprovals(repo: string, commit: string | undefined, branch: string, now?: number): Approval[] | undefined {
   const signers = baseSigners(repo);
   if (!signers) return undefined;
-  const used = new Set(held(repo, base()));
+  const used = new Set(held(repo, baseRef()));
   const added = commit ? addedPaths(repo, commit) : (tryGit(repo, ['diff', '--cached', '--name-only', '-z', '--diff-filter=A', '--', approvalsFolder]) ?? '').split('\0');
   const tree = commit ? commit + ':' : ':';
   const candidates = added.filter(path => /^test-approvals\/[^/]+\.json$/.test(path) && !used.has(path)).flatMap(path => {
@@ -80,7 +81,7 @@ export function pendingApprovals(repo: string, top: string, host: string, now: n
       try { return [{ id: name.slice(0, -'.json'.length), json: readFileSync(join(folder, name), 'utf8'), sig: readFileSync(join(folder, name + '.sig'), 'utf8') }]; } catch { return []; }
     });
   };
-  const used = new Set([...held(repo, 'HEAD'), ...held(repo, base())]);
+  const used = new Set([...held(repo, 'HEAD'), ...held(repo, baseRef())]);
   const candidates = [...read(host), ...read(join(top, approvalsFolder))].filter(candidate => !used.has(approvalsFolder + '/' + candidate.id + '.json'));
   return accepted(candidates, baseSigners(repo), currentBranch(repo), now);
 }
