@@ -62,3 +62,28 @@ async fn the_cursor_stays_steady_while_another_window_is_active(cx: &mut TestApp
     open.advance(530);
     assert!(!cursor_on(&mut open), "the blink resumed");
 }
+
+#[gpui::test]
+async fn the_steady_cursor_is_drawn_when_focus_moves_within_the_window(cx: &mut TestAppContext) {
+    cx.update(crate::core::state::preferences::Preferences::init);
+    let mut open = open(cx, Terminals::default(), false).await;
+    open.cx.update(|window, _| window.activate_window());
+    open.until("the shell started", |_, pane| following(pane))
+        .await;
+    open.cx.run_until_parked();
+    open.advance(530);
+    assert!(!cursor_drawn(&mut open), "mid-blink, the frame hides it");
+
+    // Another focusable thing in the same window, as the "More panels" popup is.
+    let elsewhere = open.cx.update(|_, cx| cx.focus_handle());
+    open.cx.update(|window, cx| window.focus(&elsewhere, cx));
+    open.cx.run_until_parked();
+    assert!(!pane_focused(&mut open), "the pane lost the focus");
+    assert!(!blinking(&mut open), "a timer ran without the focus");
+    assert!(
+        cursor_drawn(&mut open),
+        "the window drew the steady cursor, not a frame from mid-blink"
+    );
+    open.advance(530 * 3);
+    assert!(cursor_drawn(&mut open), "it stays drawn");
+}
