@@ -48,7 +48,8 @@ public sealed partial class GitWriter
         foreach (var path in tracked.Concat(untracked))
         {
             if (!current.TryGetValue(path, out var file) || !prior.TryGetValue(path, out var seen) || file != seen ||
-                (file.Index == '?') != untracked.Contains(path, StringComparer.Ordinal)) throw new CallFailed(Changed);
+                (file.Index == '?') != untracked.Contains(path, StringComparer.Ordinal) ||
+                (Renamed(file) && current.ContainsKey(file.OriginalPath!))) throw new CallFailed(Changed); // Restoring the old name would overwrite a file there.
         }
         await Discard(root, tracked.Select(path => current[path]).ToArray(), untracked, ct);
         return await Result(root, $"Discarded changes in {tracked.Count + untracked.Count} file(s)", ct);
@@ -103,9 +104,11 @@ public sealed partial class GitWriter
         if (full.Status.Fingerprint != fingerprint) throw new CallFailed(Changed);
         return full;
     }
+    /// <summary>A rename also names its old path, which comes back; a copy's source is its own row, so it stays out.</summary>
     private static IReadOnlyList<string> Paths(IEnumerable<ChangedFile> files) => files
-        .SelectMany(file => file.OriginalPath is null ? new[] { file.Path } : new[] { file.Path, file.OriginalPath })
+        .SelectMany(file => Renamed(file) ? new[] { file.Path, file.OriginalPath! } : new[] { file.Path })
         .Distinct(StringComparer.Ordinal).ToArray();
+    private static bool Renamed(ChangedFile file) => (file.Index == 'R' || file.Worktree == 'R') && file.OriginalPath is not null;
     private static string Stdin(IEnumerable<string> paths) => string.Join('\0', paths) + "\0";
     private static void RequirePaths(IReadOnlyList<string> paths)
     {

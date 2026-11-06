@@ -18,4 +18,22 @@ public sealed partial class GitSocketTests
         await AssertErrorAsync(socket, "that path is outside the session's folder");
         Assert.Equal("new\n", await File.ReadAllTextAsync(Path.Combine(root, "-a[1].txt")));
     }
+
+    /// <summary>The desktop sends a rename's current name; the backend restores the old one from the reviewed rename.</summary>
+    [Fact]
+    public async Task Discarding_a_staged_rename_restores_the_old_name()
+    {
+        var session = _sessions.Create("claude", "https://github.com/o/r"); var root = _sessions.Item(session).Root!;
+        await MakeRepoAsync(root); await GitAsync(root, "mv", "tracked.txt", "renamed.txt");
+        using var socket = await OpenAsync();
+        await CallAsync(socket, 1, "git", "status", session.SessionId);
+        using var status = JsonDocument.Parse(await ReadAsync(socket));
+        var files = status.RootElement.GetProperty("result").GetProperty("files");
+        Assert.Equal("tracked.txt", Assert.Single(files.EnumerateArray()).GetProperty("originalPath").GetString());
+        await SendAsync(socket, JsonSerializer.Serialize(new { t = "call", id = 2, feature = "git", method = "discard", args = new { session = session.SessionId, tracked = new[] { "renamed.txt" }, untracked = Array.Empty<string>(), expected = files } }));
+        using var result = JsonDocument.Parse(await ReadAsync(socket));
+        Assert.Equal("result", result.RootElement.GetProperty("t").GetString());
+        Assert.Equal("committed", await File.ReadAllTextAsync(Path.Combine(root, "tracked.txt")));
+        Assert.False(File.Exists(Path.Combine(root, "renamed.txt")));
+    }
 }

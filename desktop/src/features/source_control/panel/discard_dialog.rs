@@ -96,7 +96,7 @@ impl DiscardRequest {
             }
         }
     }
-    /// A rename restores both paths: the new name goes and the old one comes back.
+    /// A rename sends its new name only; the backend restores the old one from the reviewed rename.
     pub fn args(&self, session: &str, include_new: bool) -> Value {
         match self {
             Self::Everything { fingerprint, .. } => {
@@ -106,9 +106,7 @@ impl DiscardRequest {
                 let tracked: Vec<&str> = files
                     .iter()
                     .filter(|file| file.index != "?")
-                    .flat_map(|file| {
-                        std::iter::once(file.path.as_str()).chain(file.original_path.as_deref())
-                    })
+                    .map(|file| file.path.as_str())
                     .collect();
                 let untracked: Vec<&str> = files
                     .iter()
