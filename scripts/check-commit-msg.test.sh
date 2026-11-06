@@ -66,6 +66,19 @@ expect 1 "an unchanged prefix with trailing prose stops it" work $'Subject\n\nAr
 expect 1 "an empty No-test reason stops it" work $'fix: x\n\nNo-test:  \nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/x.rs
 expect 1 "a malformed task URL stops it" tsk-42-thing $'Subject\n\nTask: TSK-42 https://app.notion.com/p/no-page\nArchitecture: unchanged\nCommitted-by: Claude'
 
+# A commit GitHub made in its web UI (committer noreply@github.com) can't carry a Committed-by line; CI skips it, saying so.
+git checkout -q -B work
+GIT_COMMITTER_NAME=GitHub GIT_COMMITTER_EMAIL=noreply@github.com git -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'Revert "x"'
+web=$("$check" --commit HEAD work 2>/dev/null)
+ci=$?
+if [ "$ci" = 0 ] && grep -q "skipped" <<<"$web"; then echo "ok   a GitHub web UI commit is skipped, and says so"
+else echo "FAIL web UI commit: ci $ci, output: $web"; failed=1; fi
+git -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'Revert "x"'
+"$check" --commit HEAD work 2>/dev/null
+ci=$?
+if [ "$ci" = 1 ]; then echo "ok   the same message from another committer still stops"
+else echo "FAIL other committer: ci $ci, wanted 1"; failed=1; fi
+
 # Historical commits retain app/test recognition, while the staged hook always requires retained tests.
 mkdir -p app
 printf '{}\n' >app/package.json

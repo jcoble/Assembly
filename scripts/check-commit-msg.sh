@@ -7,11 +7,15 @@
 # (dotnet/Assembly.Tests/, scripts/*.test.sh, a tests.rs or *_tests.rs under desktop/src/, or desktop/tests/)
 # or says why not with a `No-test: <reason>` line. Historical app/test paths count only in --commit mode
 # for a commit containing the old app manifest. Architecture is unchanged or updated at the canonical Notion page.
+# --commit skips a commit GitHub made in its web UI (committer noreply@github.com), which can't carry these lines.
 set -euo pipefail
 
 historical_app=false
 if [ "${1:-}" = --commit ]; then
   commit=${2:?usage: check-commit-msg.sh --commit <id> <branch>} branch=${3:-}
+  if [ "$(git log -1 --format=%ce "$commit")" = noreply@github.com ]; then
+    echo "skipped $(git log -1 --format='%h %s' "$commit"): made in the GitHub web UI"; exit 0
+  fi
   if git cat-file -e "$commit:app/package.json" 2>/dev/null; then historical_app=true; fi
   message=$(git log -1 --format=%B "$commit" | git stripspace --strip-comments)
   changed=$(git -c core.quotePath=false diff-tree --root --no-commit-id --name-only -r --diff-filter=ACMR "$commit")

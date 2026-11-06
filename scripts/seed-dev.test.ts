@@ -1,14 +1,49 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, existsSync, realpathSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, symlinkSync, rmSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseArgs, profileFor, safePath, takeLauncherLock, waitForOwnedClose } from './seed-dev.ts';
+import { fileURLToPath } from 'node:url';
+import { parseArgs, profileFor, safePath, seedIfEmpty, seedMarker, takeLauncherLock, waitForOwnedClose } from './seed-dev.ts';
+
+const worktree = (root: string) => {
+  mkdirSync(join(root, 'desktop')); mkdirSync(join(root, 'dotnet', 'Assembly.Desktop'), { recursive: true });
+  writeFileSync(join(root, 'desktop', 'Cargo.toml'), ''); writeFileSync(join(root, 'dotnet', 'Assembly.Desktop', 'Assembly.Desktop.csproj'), '');
+};
+
+test('the command refuses any profile but the checkout\'s own, before starting anything or creating it', () => {
+  const root = mkdtempSync(join(realpathSync(tmpdir()), 'seed-refuse-'));
+  try {
+    worktree(root);
+    const script = fileURLToPath(new URL('./seed-dev.ts', import.meta.url));
+    for (const other of [join(root, 'assembly-dotnet', 'mac'), join(root, 'assembly-dev'), join(root, 'assembly-dev', 'worktrees', 'other-0123456789abcdef')]) {
+      const refused = spawnSync(process.execPath, [script, '--worktree', root, '--profile', other], { encoding: 'utf8', env: { ...process.env, HOME: root, PATH: '/nonexistent' } });
+      assert.equal(refused.status, 1, refused.stderr);
+      assert.match(refused.stderr, /only writes to/);
+      assert.equal(existsSync(other), false);
+    }
+    assert.equal(existsSync(join(root, 'assembly-dev')), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('a profile already decided on starts no build', async () => {
+  const root = mkdtempSync(join(realpathSync(tmpdir()), 'seed-decided-'));
+  const path = process.env.PATH, home = process.env.HOME;
+  try {
+    worktree(root);
+    process.env.HOME = root; process.env.PATH = '/nonexistent';
+    const profile = profileFor(root).home;
+    mkdirSync(profile, { recursive: true }); writeFileSync(seedMarker(profile), '{}');
+    await seedIfEmpty(root);
+    assert.deepEqual(readdirSync(profile), ['dev-seed.json']);
+  } finally { process.env.PATH = path; process.env.HOME = home; rmSync(root, { recursive: true, force: true }); }
+});
 
 test('arguments are explicit and complete', () => {
-  assert.deepEqual(parseArgs(['--worktree', '/w', '--manifest', '/m', '--dry-run']), { worktree: '/w', manifest: '/m', dryRun: true });
-  for (const args of [[], ['--worktree'], ['--worktree', '/w'], ['--manifest', '/m', '--wat'], ['--worktree', '/w', '--manifest', '--dry-run']]) assert.throws(() => parseArgs(args));
+  assert.deepEqual(parseArgs(['--worktree', '/w', '--profile', '/p', '--if-empty']), { worktree: '/w', profile: '/p', ifEmpty: true });
+  assert.equal(parseArgs([]).ifEmpty, false);
+  for (const args of [['--worktree'], ['--profile'], ['--wat'], ['--worktree', '/w', '--worktree', '/x'], ['--worktree', '--if-empty'], ['--manifest', '/m'], ['--dry-run']]) assert.throws(() => parseArgs(args));
 });
 test('profile follows exact launcher identity and rejects symlink/traversal', () => {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'seed-node-'));
@@ -36,14 +71,12 @@ test('owned stage lifecycle covers cancellation, success and failure before lock
   const { spawn } = await import('node:child_process');
   const { connect } = await import('node:net');
   const { chmodSync, renameSync } = await import('node:fs');
-  const { fileURLToPath } = await import('node:url');
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'seed-lifecycle-'));
   const ipc = mkdtempSync(join(realpathSync('/tmp'), 'seed-ipc-'));
   const stopped = (child: ReturnType<typeof spawn>) => new Promise<number | null>(done => child.once('close', code => done(code)));
   try {
     mkdirSync(join(root, 'desktop')); mkdirSync(join(root, 'dotnet', 'Assembly.Desktop'), { recursive: true }); mkdirSync(join(root, 'tools'));
     writeFileSync(join(root, 'desktop', 'Cargo.toml'), ''); writeFileSync(join(root, 'dotnet', 'Assembly.Desktop', 'Assembly.Desktop.csproj'), '');
-    const manifest = join(root, 'manifest.json'); writeFileSync(manifest, '{}');
     const tool = join(root, 'tools', 'dotnet');
     writeFileSync(tool, `#!${process.execPath}
 const { createServer } = require('node:net');
@@ -57,7 +90,7 @@ if (phase === 'companion') process.on('SIGTERM', () => console.log('companion-st
     for (const phase of ['build', 'companion', 'success', 'build-failure', 'build-spawn-failure', 'apply-spawn-failure']) {
       const base = join(ipc, phase);
       if (phase === 'build-spawn-failure') renameSync(tool, tool + '.saved');
-      const child = spawn(process.execPath, [fileURLToPath(new URL('./seed-dev.ts', import.meta.url)), '--worktree', root, '--manifest', manifest], {
+      const child = spawn(process.execPath, [fileURLToPath(new URL('./seed-dev.ts', import.meta.url)), '--worktree', root], {
         env: { ...process.env, HOME: root, PATH: join(root, 'tools'), SEED_FAKE_SOCKET: base }, stdio: ['ignore', 'pipe', 'pipe'],
       });
       const exited = stopped(child);

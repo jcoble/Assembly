@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -12,7 +12,7 @@ test('a second managed dev launch runs no build, install or seed process', { tim
   const home = join(top, 'user'), root = join(home, 'dev/work/worktrees/Assembly/example'), log = join(top, 'calls'), marker = join(top, 'remote-checked');
   const write = (file: string, text: string, mode = 0o600) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text, { mode }); };
   try {
-    for (const file of ['app-dev.ts', 'app-dev-remote.ts', 'update-machines.ts', 'app-dev-managed.ts', 'seed-dev.ts', 'dev-seed-cohort.ts', 'dev-build-cache.ts', 'dev-toolchain.ts', 'dev-lane-clean.ts', 'dev-remote-identity.ts', 'dev-remote-process.ts']) {
+    for (const file of ['app-dev.ts', 'app-dev-remote.ts', 'update-machines.ts', 'app-dev-managed.ts', 'seed-dev.ts', 'dev-build-cache.ts', 'dev-toolchain.ts', 'dev-lane-clean.ts', 'dev-remote-identity.ts', 'dev-remote-process.ts']) {
       mkdirSync(join(root, 'scripts'), { recursive: true }); copyFileSync(new URL(file, import.meta.url), join(root, 'scripts', file));
     }
     const owner = { version: 1, name: 'example', number: 2, owner: randomUUID(), host: hostname(), worktree: root };
@@ -27,15 +27,13 @@ test('a second managed dev launch runs no build, install or seed process', { tim
     write(join(root, 'dotnet/scripts/workbox.sh'), '#!/bin/sh\necho remote-check >> "$MANAGED_TEST_LOG"\necho "remote is right; no deploy"\ntouch "$MANAGED_TEST_MARKER"\n');
     const loader = join(top, 'registry-fixture.ts');
     write(loader, `globalThis.fetch=async()=>new Response(JSON.stringify({version:'1.2.3'}),{status:200});`);
-    const backup = join(top, 'designated-test-backup.db'); write(backup, 'artificial backup bytes: importer process is faked in this launcher test');
-    const manifest = join(top, 'private-manifest.json'); write(manifest, JSON.stringify({ version: 1, originId: 'launcher-test', kind: 'real-recorded', sources: [{ format: 'database', path: backup, sha256: createHash('sha256').update(readFileSync(backup)).digest('hex') }] }));
     write(join(root, 'bin/dotnet'), `#!${process.execPath}
 const fs=require('node:fs'),path=require('node:path'),args=process.argv.slice(2);
 const write=(file,text)=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,text)};
 fs.appendFileSync(process.env.MANAGED_TEST_LOG,'dotnet '+args[0]+'\\n');
 if(args[0]==='publish'){const out=args[args.indexOf('--output')+1];write(path.join(out,'Assembly.Desktop.dll'),'backend');write(path.join(out,'Assembly.Infrastructure.dll'),'backend')}
 else if(args[0]==='build'){write(path.join(args[args.indexOf('--output')+1],'Assembly.DevSeed.dll'),'helper')}
-else {let text='';process.stdin.on('data',data=>text+=data);process.stdin.on('end',()=>{const request=JSON.parse(text);write(path.join(request.computedHome,'assembly.db'),'fake importer output; real SQL parity covered separately')})}
+else {let text='';process.stdin.on('data',data=>text+=data);process.stdin.on('end',()=>{const request=JSON.parse(text);write(path.join(request.computedHome,'dev-seed.json'),'{}')})}
 `, 0o755);
     write(join(root, 'bin/npm'), `#!${process.execPath}
 const fs=require('node:fs'),path=require('node:path'),args=process.argv.slice(2),prefix=args[args.indexOf('--prefix')+1];
@@ -59,7 +57,7 @@ write(descriptor,JSON.stringify([{id:'claude',cli:path.join(bin,'claude'),args:[
     const run = (env: object = {}) => {
       const started = performance.now();
       const result = spawnSync(process.execPath, ['--import', loader, join(root, 'scripts/app-dev.ts')], { cwd: root, encoding: 'utf8', timeout: 15000,
-        env: { ...process.env, HOME: home, PATH: join(root, 'bin') + ':' + process.env.PATH, ASSEMBLY_REMOTE: undefined, ASSEMBLY_DEV_SEED_MANIFEST: manifest,
+        env: { ...process.env, HOME: home, PATH: join(root, 'bin') + ':' + process.env.PATH, ASSEMBLY_REMOTE: undefined,
           MANAGED_TEST_LOG: log, MANAGED_TEST_MARKER: marker, MANAGED_TEST_NATIVE: join(top, 'native-template'), ...env } });
       assert.equal(result.status, 0, result.stderr + result.error);
       return performance.now() - started;

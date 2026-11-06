@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startRemoteUpdate } from './app-dev-remote.ts';
-import { profileFor } from './seed-dev.ts';
+import { profileFor, seedIfEmpty } from './seed-dev.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const backend = join(root, 'desktop/target/dev-backend');
@@ -75,7 +75,7 @@ let [port, configuredHome, tokenFile, remotePort, remoteTokenFile, adapters, lan
 
 let home = configuredHome;
 const isManaged = existsSync(join(root, '.lane')) && await (await import('./app-dev-managed.ts')).isManagedLane(root);
-if (existsSync(join(root, '.lane')) && !isManaged) console.warn('app:dev: this checkout does not own its lane (made by hand or a copied .lane), so dependency checks, seed and cleanup are off');
+if (existsSync(join(root, '.lane')) && !isManaged) console.warn('app:dev: this checkout does not own its lane (made by hand or a copied .lane), so dependency checks, seed data and cleanup are off');
 let managed: Awaited<ReturnType<typeof import('./app-dev-managed.ts').prepareManagedLane>> | undefined;
 
 // The backend's update check compares against this checkout, and its update button runs scripts/update-machines.ts here.
@@ -106,7 +106,14 @@ try {
   ]);
   if (cache) await cache.ensureBuild(root, 'backend', [join(backend, 'Assembly.Desktop.dll'), join(backend, 'Assembly.Infrastructure.dll')], publish);
   else await publish();
-  if (managed) await managed.seed();
+  // A checkout on its own profile opens with data. Main and a hand-made lane keep theirs and are never written to.
+  if (managed || lane.status !== 0) {
+    try { await seedIfEmpty(root, Boolean(managed)); }
+    catch (error) {
+      launch.signal.throwIfAborted();
+      console.warn(`app:dev: opening without seed data: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   mkdirSync(backend, { recursive: true });
   const laneFile = join(backend, 'lane.json');
   const temporaryLane = `${laneFile}.${process.pid}`;
