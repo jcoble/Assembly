@@ -1,5 +1,6 @@
-//! Spec section 4: a file link opens through the selected session, or says why it can't. Rests on an open question to
-//! Jesse, so it comes last.
+//! Deep links spec section 4, as Feature 28 (opening any file) changed it: a file link opens through the one resolver,
+//! as a session file when it's inside the selected session's checkout and by machine and path otherwise. The harness
+//! here is shared with `file_link_resolve_tests`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19,28 +20,55 @@ use crate::core::socket::fake_backend::{FakeBackend, Reply};
 use crate::core::socket::row_source::ExpectedRowSource;
 use crate::core::state::selected_session::SelectedSession;
 
-const ROOT: &str = "/work/a";
+/// The selected session's checkout on the fake backend; its owner answers `remoteSessionId` "r".
+pub(super) const ROOT: &str = "/work/a";
+/// The fake backend's home folder, for `~` links.
+pub(super) const HOME: &str = "/home/me";
 
 type Opens = Rc<RefCell<Vec<OpenFile>>>;
 
 /// What the backend does with `files/owner`.
 #[derive(Default)]
-struct Owner {
-    refuse: bool,
-    hold: bool,
-    held: Option<Value>,
-    asked: Vec<Value>,
+pub(super) struct Owner {
+    /// A path target's refusal: its code and message.
+    pub(super) refuse: Option<(&'static str, &'static str)>,
+    /// The session's owner call fails, as for a session with no folder yet.
+    pub(super) refuse_session: bool,
+    /// Paths a path target names that aren't there.
+    pub(super) missing: Vec<String>,
+    /// Holds the next `files/owner` answer until `fixture/release`.
+    pub(super) hold: bool,
+    pub(super) held: Option<Value>,
+    pub(super) asked: Vec<Value>,
 }
 
-struct Harness<'a> {
-    cx: &'a mut VisualTestContext,
+pub(super) struct Harness<'a> {
+    pub(super) cx: &'a mut VisualTestContext,
     opens: Opens,
-    owner: Arc<Mutex<Owner>>,
+    pub(super) owner: Arc<Mutex<Owner>>,
     client: Option<Entity<SocketClient>>,
     _backend: Option<FakeBackend>,
 }
 
-fn harness(cx: &mut TestAppContext) -> Harness<'_> {
+/// The fake backend's answer to a path target: inside `ROOT` when `insideOf` is its session, else outside.
+fn target_answer(target: &Value) -> Value {
+    let path = target["path"].as_str().unwrap_or_default();
+    let real = match path.strip_prefix("~/") {
+        Some(rest) => format!("{HOME}/{rest}"),
+        None => path.to_string(),
+    };
+    let inside = (target["insideOf"] == "r")
+        .then(|| real.strip_prefix(&format!("{ROOT}/")).map(String::from))
+        .flatten();
+    if let Some(file) = inside {
+        return json!({"machine": "owner", "checkoutRoot": ROOT, "remoteSessionId": "r", "file": file});
+    }
+    let (parent, name) = real.rsplit_once('/').unwrap_or(("", &real));
+    let parent = if parent.is_empty() { "/" } else { parent };
+    json!({"machine": "owner", "checkoutRoot": parent, "remoteSessionId": "", "file": name})
+}
+
+pub(super) fn harness(cx: &mut TestAppContext) -> Harness<'_> {
     cx.executor().allow_parking();
     let opens = Opens::default();
     let heard = opens.clone();
@@ -65,8 +93,8 @@ fn harness(cx: &mut TestAppContext) -> Harness<'_> {
 }
 
 impl Harness<'_> {
-    /// Connects to a backend whose `files/owner` answers with `ROOT`, and waits for the connection.
-    fn connect(&mut self) {
+    /// Connects to a backend whose `files/owner` answers a session with `ROOT` and a path target with `target_answer`.
+    pub(super) fn connect(&mut self) {
         let state = self.owner.clone();
         let backend = FakeBackend::start(move |frame| {
             let id = &frame["id"];
@@ -82,20 +110,46 @@ impl Harness<'_> {
                     json!({"t": "welcome", "protocol": 1, "machine": "box", "engine": "owner"}),
                 )],
                 (Some("call"), Some("files"), Some("owner")) => {
-                    state.asked.push(frame["args"].clone());
-                    if state.refuse {
+                    let args = frame["args"].clone();
+                    state.asked.push(args.clone());
+                    let by_target = args.get("target").is_some();
+                    let gone = by_target
+                        && (state.missing.iter()).any(|path| args["target"]["path"] == *path);
+                    let refusal = match (by_target, state.refuse) {
+                        _ if gone => Some(("failed", "that file isn't there")),
+                        (true, Some(refusal)) => Some(refusal),
+                        (false, _) if state.refuse_session => Some(("failed", "No folder yet.")),
+                        _ => None,
+                    };
+                    if let Some((code, message)) = refusal {
                         return vec![Reply::Frame(
-                            json!({"t": "error", "id": id, "code": "failed", "message": "The reason."}),
+                            json!({"t": "error", "id": id, "code": code, "message": message}),
                         )];
                     }
-                    let reply = json!({"t": "result", "id": id, "result": {
-                        "machine": "owner", "checkoutRoot": ROOT, "remoteSessionId": "r"}});
+                    let answer = if by_target {
+                        target_answer(&args["target"])
+                    } else {
+                        json!({"machine": "owner", "checkoutRoot": ROOT, "remoteSessionId": "r"})
+                    };
+                    let reply = json!({"t": "result", "id": id, "result": answer});
                     if state.hold {
+                        state.hold = false;
                         state.held = Some(reply);
                         vec![]
                     } else {
                         vec![Reply::Frame(reply)]
                     }
+                }
+                // A session's machine as `sessions/resolve_source` answers it: this machine's engine, or "box-engine".
+                (Some("call"), Some("sessions"), Some("resolve_source")) => {
+                    let route = frame["args"]["routeMachine"].clone();
+                    let source = match route.is_null() {
+                        true => json!({"machine": "owner", "generation": 0, "routeMachine": null}),
+                        false => {
+                            json!({"machine": "box-engine", "generation": 2, "routeMachine": route})
+                        }
+                    };
+                    vec![result(source)]
                 }
                 (Some("call"), Some("fixture"), Some("release")) => {
                     let held = state.held.take().expect("a held answer");
@@ -114,7 +168,7 @@ impl Harness<'_> {
     }
 
     /// One round trip: everything the backend answered before it has reached the app, and its effects have run.
-    async fn flush(&mut self, method: &str) {
+    pub(super) async fn flush(&mut self, method: &str) {
         let client = self.client.clone().expect("connected");
         self.cx.run_until_parked();
         let call = self.cx.read(|cx| {
@@ -126,7 +180,7 @@ impl Harness<'_> {
         self.cx.run_until_parked();
     }
 
-    fn select(&mut self, id: &str, route: Option<&str>) {
+    pub(super) fn select(&mut self, id: &str, route: Option<&str>) {
         let key = SessionKey {
             machine: "owner".into(),
             id: id.into(),
@@ -143,7 +197,7 @@ impl Harness<'_> {
         });
     }
 
-    async fn link(&mut self, path: &str, machine: Option<&str>) {
+    pub(super) async fn link(&mut self, path: &str, machine: Option<&str>) {
         let route = ExternalRoute::File {
             path: path.into(),
             machine: machine.map(String::from),
@@ -151,17 +205,25 @@ impl Harness<'_> {
         // As the queue does: outside any window update.
         self.cx
             .update(|_, cx| cx.defer(move |cx| handle_route(route, cx)));
+        self.settle().await;
+    }
+
+    /// Three round trips: a link's session source and session questions, then its path question, have been answered
+    /// and their effects run.
+    pub(super) async fn settle(&mut self) {
         self.cx.run_until_parked();
         if self.client.is_some() {
+            self.flush("ping").await;
+            self.flush("ping").await;
             self.flush("ping").await;
         }
     }
 
-    fn shown(&mut self) -> Vec<String> {
+    pub(super) fn shown(&mut self) -> Vec<String> {
         self.cx.update(|_, cx| notices(cx))
     }
 
-    fn opened(&self) -> Vec<OpenFile> {
+    pub(super) fn opened(&self) -> Vec<OpenFile> {
         self.opens.borrow().clone()
     }
 }
@@ -189,11 +251,16 @@ async fn a_file_inside_the_selected_sessions_folder_opens_by_its_relative_path(
             route_machine: None,
         })
     );
+    assert_eq!(opened[0].outside, None);
     assert_eq!(h.shown(), Vec::<String>::new());
     let asked = h.owner.lock().unwrap().asked.clone();
-    assert_eq!(asked.len(), 1);
+    assert_eq!(asked.len(), 2, "the session's folder, then the path");
     assert_eq!(asked[0]["session"], "s1");
     assert_eq!(asked[0]["expectedSource"]["machine"], "owner");
+    assert_eq!(
+        asked[1]["target"],
+        json!({"path": "/work/a/src/main.rs", "machine": null, "insideOf": "r"})
+    );
 }
 
 #[gpui::test]
@@ -214,29 +281,27 @@ async fn a_remote_file_opens_on_a_session_on_that_machine(cx: &mut TestAppContex
     );
 }
 
-#[gpui::test]
-async fn no_selected_session_says_to_select_one(cx: &mut TestAppContext) {
-    let mut h = harness(cx);
-    h.connect();
-    h.link("/work/a/x.cs", None).await;
-    assert_eq!(h.shown(), ["Select a session to open this file."]);
-    assert!(h.opened().is_empty());
-}
-
+// Restored from review: a relative link is only the session's when it's for the session's machine.
 #[gpui::test]
 async fn a_file_on_another_machine_says_which(cx: &mut TestAppContext) {
     let mut h = harness(cx);
     h.connect();
     h.select("s1", None);
-    h.link("/work/a/x.cs", Some("Box")).await;
+    h.link("x.cs", Some("Box")).await;
     assert_eq!(h.shown(), ["That file is on Box."]);
     h.select("s1", Some("Box"));
-    h.link("/work/a/x.cs", None).await;
+    h.link("x.cs", None).await;
     assert_eq!(
         h.shown().last().map(String::as_str),
-        Some("That file is on this Mac.")
+        Some(
+            format!(
+                "That file is on {}.",
+                super::file_link_resolve_tests::this_computer()
+            )
+            .as_str()
+        )
     );
-    h.link("/work/a/x.cs", Some("Other")).await;
+    h.link("x.cs", Some("Other")).await;
     assert_eq!(
         h.shown().last().map(String::as_str),
         Some("That file is on Other.")
@@ -249,30 +314,35 @@ async fn a_file_on_another_machine_says_which(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn a_path_outside_the_folder_says_so_comparing_whole_components(cx: &mut TestAppContext) {
+async fn a_path_outside_the_folder_opens_by_machine_and_path_comparing_whole_components(
+    cx: &mut TestAppContext,
+) {
     let mut h = harness(cx);
     h.connect();
     h.select("s1", None);
-    for (at, path) in ["/work/ab/x.cs", "/work/x.cs", "/", ROOT]
-        .into_iter()
-        .enumerate()
-    {
+    for path in ["/work/ab/x.cs", "/work/x.cs"] {
         h.link(path, None).await;
-        let shown = h.shown();
-        assert_eq!(shown.len(), at + 1, "{path}");
-        assert_eq!(
-            shown[at], "That file isn't in this session's folder.",
-            "{path}"
-        );
     }
-    assert!(h.opened().is_empty());
+    let opened: Vec<_> = h
+        .opened()
+        .into_iter()
+        .map(|open| (open.session_id, open.outside.map(|outside| outside.path)))
+        .collect();
+    assert_eq!(
+        opened,
+        [
+            (String::new(), Some("/work/ab/x.cs".to_string())),
+            (String::new(), Some("/work/x.cs".to_string())),
+        ]
+    );
+    assert_eq!(h.shown(), Vec::<String>::new());
 }
 
 #[gpui::test]
 async fn a_refused_folder_question_gives_the_reason(cx: &mut TestAppContext) {
     let mut h = harness(cx);
     h.connect();
-    h.owner.lock().unwrap().refuse = true;
+    h.owner.lock().unwrap().refuse = Some(("failed", "The reason."));
     h.select("s1", None);
     h.link("/work/a/x.cs", None).await;
     assert_eq!(h.shown(), ["That file didn't open: The reason."]);
@@ -341,8 +411,7 @@ async fn several_files_at_once_all_open(cx: &mut TestAppContext) {
             }
         })
     });
-    h.cx.run_until_parked();
-    h.flush("ping").await;
+    h.settle().await;
     let paths: Vec<_> = h.opened().into_iter().map(|open| open.path).collect();
     assert_eq!(paths, ["one.cs", "two.cs", "three.cs"]);
 }

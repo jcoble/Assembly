@@ -44,6 +44,7 @@ fn a_coherent_file_becomes_an_editable_shared_draft_with_unicode_navigation(
             machine: "actual-engine".into(),
             checkout_root: "/checkout".into(),
             remote_session_id: "s1".into(),
+            file: None,
         });
         view.text.start();
         view.text.loaded(

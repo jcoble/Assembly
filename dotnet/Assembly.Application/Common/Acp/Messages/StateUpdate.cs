@@ -18,7 +18,8 @@ public sealed record StateUpdate(string State, string? StopReason = null, AcpErr
                 || !meta.TryGetProperty("quota", out var quota) || quota.ValueKind != JsonValueKind.Object
                 || !quota.TryGetProperty("token_count", out var count) || count.ValueKind != JsonValueKind.Object) return null;
             return new UsageReport(Number(count, "inputTokens"), Number(count, "outputTokens"),
-                Number(count, "cachedInputTokens"), Number(count, "cacheWriteInputTokens") ?? Number(count, "cachedWriteTokens"));
+                Number(count, "cachedInputTokens"), Number(count, "cacheWriteInputTokens") ?? Number(count, "cachedWriteTokens"),
+                TotalTokens: Number(count, "totalTokens"));
         }
     }
 
@@ -28,4 +29,4 @@ public sealed record StateUpdate(string State, string? StopReason = null, AcpErr
 
 public sealed record UsageReport(long? InputTokens = null, long? OutputTokens = null,
     long? CachedReadTokens = null, long? CachedWriteTokens = null, decimal? CostUsd = null,
-    string? Model = null, long? Used = null, long? Size = null);
+    string? Model = null, long? Used = null, long? Size = null, long? TotalTokens = null);

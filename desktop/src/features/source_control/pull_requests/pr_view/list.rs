@@ -6,7 +6,7 @@ use super::super::{
     pull_request::PullRequestSummary,
 };
 use super::*;
-use crate::core::intents::open_url::OpenUrl;
+use crate::core::intents::open_url::OpenInBrowser;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids as ids;
@@ -288,8 +288,10 @@ impl PrPane {
                                 .small()
                                 .label("Open on GitHub")
                                 .on_click(move |_, window, cx| {
-                                    window
-                                        .dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
+                                    window.dispatch_action(
+                                        Box::new(OpenInBrowser { url: url.clone() }),
+                                        cx,
+                                    )
                                 }),
                         ),
                     )

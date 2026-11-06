@@ -1,13 +1,20 @@
+using System.Runtime.InteropServices;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Projects;
 using Assembly.Application.Features.Chat.Sessions;
+using Microsoft.Win32.SafeHandles;
 
 namespace Assembly.Infrastructure.Chat.Files;
 
-public sealed record FileOwnership(string Machine, string CheckoutRoot, string RemoteSessionId);
+public sealed record FileOwnership(string Machine, string CheckoutRoot, string RemoteSessionId, string? File = null);
 
-/// <summary>Resolves trusted session metadata beside the files. Caller paths never select or authorize a root.</summary>
+/// <summary>Resolves trusted ownership for a file call. A session target takes the session's trusted root and a relative
+/// path; caller paths never select its root. A path target takes a machine and an absolute path, and is the only place a
+/// caller path names a file: after <c>~</c> expansion on this machine it follows links to the real path and accepts any
+/// regular file this backend's user can read, refusing NUL, <c>.</c>/<c>..</c>, over 4096 characters, <c>/proc</c>,
+/// <c>/sys</c>, <c>/dev</c> and anything not a regular file. It returns the owner as (this machine, real parent folder,
+/// file name).</summary>
 internal sealed class FileOwner(SessionStore sessions, IAppDatabase db, IProjectRoots? projects = null)
 {
     public FileOwnership Resolve(string sessionId, CancellationToken ct, FileOwnership? expected = null)
@@ -64,6 +71,107 @@ internal sealed class FileOwner(SessionStore sessions, IAppDatabase db, IProject
     public ExpectedSource? ViewSource(string machine, CancellationToken ct) => db.QueryFirst(
         "SELECT machine,generation,name FROM engine_mirror WHERE machine=$machine AND state='live'",
         r => new ExpectedSource(r.Text(0), r.Long(1), r.Text(2)), ct, new SqlArg("$machine", machine));
+
+    internal FileOwnership ResolvePath(PathTarget target, CancellationToken ct, FileOwnership? expected = null)
+    {
+        if (target.Machine is not null) throw new CallFailed("this machine's files must be opened on it");
+        var real = RealFile(target.Path);
+        var local = db.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", r => r.Text(0), ct)
+            ?? throw new CallFailed("the owning engine identity is unavailable");
+        var actual = Inside(real, target.InsideOf, local, ct)
+            ?? new FileOwnership(local, Path.GetDirectoryName(real)!, "", Path.GetFileName(real));
+        if (expected is not null && expected != actual)
+            throw new CallFailed("the file moved; the draft is preserved", "checkout_changed");
+        return actual;
+    }
+
+    /// <summary>The file's real absolute path, or the refusal that says why a caller's path can't name a file.</summary>
+    internal static string RealFile(string path)
+    {
+        if (path is null || path.Contains('\0') || path.Length > MaxPath)
+            throw new CallFailed("That file link isn't a file path.", "not_a_path");
+        var full = ExpandHome(path);
+        if (!Path.IsPathFullyQualified(full) || full.Split('/').Any(part => part is "." or ".."))
+            throw new CallFailed("That file link isn't a full path.", "not_full_path");
+        try
+        {
+            var real = RealPath(full);
+            if (Unreadable.Any(folder => real == folder || real.StartsWith(folder + '/', StringComparison.Ordinal))) throw NotRegular();
+            RequireRegular(real);
+            return real;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { throw new CallFailed("that file can't be read"); }
+    }
+
+    /// <summary>The named session's ownership when the real path lies inside its checkout. The session is only a hint: if it
+    /// can't be resolved here, for any reason, the file is simply outside.</summary>
+    private FileOwnership? Inside(string real, string? insideOf, string local, CancellationToken ct)
+    {
+        if (insideOf is null) return null;
+        try
+        {
+            var owner = Resolve(insideOf, ct);
+            if (owner.Machine != local) return null;
+            var root = RealPath(owner.CheckoutRoot);
+            var prefix = root.EndsWith('/') ? root : root + '/';
+            return real.StartsWith(prefix, StringComparison.Ordinal) ? owner with { File = real[prefix.Length..] } : null;
+        }
+        catch (Exception e) when (e is CallFailed or IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    private static string ExpandHome(string path)
+    {
+        if (path != "~" && !path.StartsWith("~/", StringComparison.Ordinal)) return path;
+        var home = Environment.GetEnvironmentVariable("HOME");
+        if (string.IsNullOrEmpty(home)) throw new CallFailed("The home folder is unavailable.");
+        return path.Length <= 2 ? home : Path.Join(home, path[2..]);
+    }
+
+    /// <summary>Follows every link, one step at a time, so a link's own target is checked for links too. A component that
+    /// doesn't exist stays as written; the regular-file check then says the file isn't there.</summary>
+    private static string RealPath(string path, int depth = 0)
+    {
+        if (depth > MaxLinks) throw new CallFailed("that path has too many links");
+        var current = Path.GetPathRoot(path)!;
+        foreach (var part in path[current.Length..].Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var next = Path.Combine(current, part);
+            var link = new FileInfo(next).LinkTarget;
+            current = link is null ? next : RealPath(Path.GetFullPath(link, current), depth + 1);
+        }
+        return current;
+    }
+
+    /// <summary>Opens without blocking, since opening a FIFO blocks until a writer appears. Sockets fail the open; FIFOs and
+    /// most devices open but can't seek.</summary>
+    private static void RequireRegular(string real)
+    {
+        if (Directory.Exists(real)) throw NotRegular();
+        var fd = open(real, OperatingSystem.IsMacOS() ? MacReadNonBlocking : LinuxReadNonBlocking);
+        if (fd < 0)
+            throw Marshal.GetLastPInvokeError() switch
+            {
+                NoSuchFile or NotAFolder => new CallFailed("that file isn't there"),
+                AccessDenied => new CallFailed("that file can't be read"),
+                _ => NotRegular(),
+            };
+        using var handle = new SafeFileHandle(fd, ownsHandle: true);
+        using var stream = new FileStream(handle, FileAccess.Read, bufferSize: 0);
+        if (!stream.CanSeek) throw NotRegular();
+    }
+
+    private static CallFailed NotRegular() => new("That isn't a regular file, so it can't open.", "not_regular");
+
+    private const int MaxPath = 4096;
+    private const int MaxLinks = 40;
+    private const int NoSuchFile = 2; // ENOENT, the same on Linux and macOS.
+    private const int NotAFolder = 20; // ENOTDIR: a file named as if it were a folder; the same on Linux and macOS.
+    private const int AccessDenied = 13; // EACCES, the same on Linux and macOS.
+    private const int LinuxReadNonBlocking = 0x800 | 0x80000; // O_RDONLY | O_NONBLOCK | O_CLOEXEC
+    private const int MacReadNonBlocking = 0x4 | 0x1000000; // O_RDONLY | O_NONBLOCK | O_CLOEXEC
+    private static readonly string[] Unreadable = ["/proc", "/sys", "/dev"];
+
+    [DllImport("libc", SetLastError = true)] private static extern int open([MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
 
     private static FileOwnership Match(FileOwnership actual, FileOwnership? expected)
     {

@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
+using Assembly.Application.Features.Chat.Rows.Context;
 using Assembly.Application.Features.Chat.Sessions;
 
 namespace Assembly.Application.Features.Chat.Rows;
@@ -39,14 +40,21 @@ internal sealed class RowsFeature : IFeature
     private readonly RowStore _store;
     private readonly SessionStore _sessions;
     private readonly MachineSet _machines;
+    private readonly IPathProbe _paths;
+    private readonly string? _home;
     private readonly IRowSourceBindings? _sources;
 
-    public RowsFeature(LiveHub hub, RowStore store, SessionStore sessions, MachineSet machines, IRowSourceBindings? sources = null)
+    /// <param name="home">This machine's home folder, which a <c>~/</c> path in a local session's rows names; the host
+    /// passes the owning home it gives <c>SessionsFeature</c>. Null leaves <c>~/</c> paths as written.</param>
+    public RowsFeature(LiveHub hub, RowStore store, SessionStore sessions, MachineSet machines, IPathProbe paths, string? home,
+        IRowSourceBindings? sources = null)
     {
         _hub = hub;
         _store = store;
         _sessions = sessions;
         _machines = machines;
+        _paths = paths;
+        _home = home;
         _sources = sources;
     }
 
@@ -156,8 +164,24 @@ internal sealed class RowsFeature : IFeature
                 var files = await bound.FilesAsync(call.Cancellation);
                 bound.EnsureCurrent(); return files;
             }
+            var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
+            // A remote session's copied rows are read here with no disk check, since this disk isn't the one they name.
+            var local = string.IsNullOrEmpty(session.Machine);
+            var result = _store.FilesTouched(args.Session, call.Cancellation, local ? _sessions.Root(session) : null,
+                local ? _home : null, local ? _paths : null);
+            bound?.EnsureCurrent(); return result;
+        });
+        calls.Read(Topic, "tokens", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.SessionTokens, async (args, call) =>
+        {
+            call.Cancellation.ThrowIfCancellationRequested();
+            var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
+            if (bound?.Remote == true)
+            {
+                var tokens = await bound.TokensAsync(call.Cancellation);
+                bound.EnsureCurrent(); return tokens;
+            }
             if (_sessions.Get(args.Session) is null) throw new CallFailed("unknown session");
-            var result = _store.FilesTouched(args.Session, call.Cancellation);
+            var result = new SessionTokens(_store.SessionTokens(args.Session, call.Cancellation));
             bound?.EnsureCurrent(); return result;
         });
         calls.Read(Topic, "attachments", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.SessionAttachments, async (args, call) =>

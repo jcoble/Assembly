@@ -64,13 +64,6 @@ impl NotionClient {
     ) -> Task<Result<NotionTaskExport, NotionError>> {
         self.call("export", json!(source), true, cx)
     }
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "The task export and image upload calls have no pane yet; only their tests call them."
-        )
-    )]
     pub fn settings(&self, cx: &mut App) -> Task<Result<NotionSettingsView, NotionError>> {
         self.call("settings", json!({}), false, cx)
     }

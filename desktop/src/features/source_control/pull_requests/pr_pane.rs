@@ -37,6 +37,8 @@ struct Selected {
     row: Option<PullRequestSummary>,
     /// The tab the person is on; the page keeps it once it can read.
     on_changes: bool,
+    /// A link to another repository than the session's: its project answers, not the session.
+    by_project: bool,
 }
 struct OpenPane(Option<WeakEntity<PrPane>>);
 impl Global for OpenPane {}
@@ -65,6 +67,8 @@ pub struct PrPane {
     failure: Option<String>,
     /// A pasted link to a repository Assembly doesn't have, and the words saying so.
     missing_link: Option<(String, String)>,
+    /// A link followed before the projects were known, waiting for them or for the connection to end.
+    waiting_link: Option<WaitingLink>,
     _queue: Subscription,
     _detail: Option<[Subscription; 2]>,
     _projects: Option<Subscription>,
@@ -192,6 +196,7 @@ impl PrPane {
         let project_heard = projects.as_ref().map(|projects| {
             cx.observe(projects, |pane: &mut Self, _, cx| {
                 pane.sync_scope(cx);
+                pane.route_waiting_link(false, cx);
                 cx.notify();
             })
         });
@@ -214,6 +219,7 @@ impl PrPane {
             projects,
             failure: None,
             missing_link: None,
+            waiting_link: None,
             _queue: queue_heard,
             _detail: None,
             _projects: project_heard,
@@ -311,8 +317,12 @@ impl PrPane {
             }
         }
         self.sync_scope(cx);
-        if let Some(number) = intent.number {
-            self.select_pr(intent.repo, number, cx);
+        match (intent.repo, intent.number) {
+            (Some(repository), Some(number)) => {
+                self.open_linked(PrTarget { repository, number }, cx)
+            }
+            (None, Some(number)) => self.select_pr(None, number, cx),
+            _ => {}
         }
         cx.notify();
     }
@@ -323,6 +333,19 @@ impl PrPane {
             listed_local: false,
             row: None,
             on_changes: false,
+            by_project: false,
+        };
+        self.open_pr(wanted, cx);
+    }
+    /// Opens through the project holding `repository`, even while the tab follows a session.
+    fn select_in_project(&mut self, repository: String, number: u64, cx: &mut Context<Self>) {
+        let wanted = Selected {
+            repository: Some(repository),
+            number,
+            listed_local: false,
+            row: None,
+            on_changes: false,
+            by_project: true,
         };
         self.open_pr(wanted, cx);
     }
@@ -333,6 +356,7 @@ impl PrPane {
             listed_local: self.project.is_none(),
             row: Some(row),
             on_changes: false,
+            by_project: false,
         };
         self.open_pr(wanted, cx);
     }
@@ -350,9 +374,10 @@ impl PrPane {
             listed_local,
             row,
             on_changes,
+            by_project,
         } = wanted.clone();
         self.failure = None;
-        if let Some(id) = self.session.clone() {
+        if let Some(id) = self.session.clone().filter(|_| !by_project) {
             let source = selected_source(Some(&id), cx);
             let owner = PrOwner::Session { id, source };
             self.open_detail(owner, repository, number, row, on_changes, cx);
@@ -495,6 +520,7 @@ fn selected_source(session: Option<&str>, cx: &App) -> Option<ExpectedRowSource>
 mod render;
 #[path = "pr_view/pane_search.rs"]
 mod search_run;
+use search_run::WaitingLink;
 #[cfg(test)]
 #[path = "pr_view/pane_tests.rs"]
 mod tests;

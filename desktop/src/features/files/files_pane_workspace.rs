@@ -153,6 +153,7 @@ impl FilesPane {
                 machine: key.machine.clone(),
                 checkout_root: key.checkout_root.clone(),
                 remote_session_id: key.session_id.clone(),
+                file: None,
             })
         });
         let generation = self.generation;

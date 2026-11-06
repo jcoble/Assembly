@@ -35,6 +35,7 @@ use crate::core::state::sessions::GlobalSessions;
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::sessions as ids;
 use crate::core::ui::filter_pills::{FilterGroup, FilterOption, FilterPills, FilterPillsChanged};
+use crate::core::ui::provider_name::provider_name;
 
 const RAIL_TOPIC: &str = "sessionRail";
 /// The pills' picks among the backend's preferences.
@@ -468,13 +469,9 @@ pub fn saved_filters(update: &Update) -> Option<(Vec<String>, Vec<String>, Vec<S
 pub fn provider_options(agents: &[String], picked: &[String]) -> Vec<FilterOption> {
     let extra = picked.iter().filter(|pick| !agents.contains(pick));
     (agents.iter().chain(extra))
-        .map(|agent| {
-            let mut letters = agent.chars();
-            let first = letters.next().map(|first| first.to_uppercase());
-            FilterOption {
-                value: agent.clone(),
-                label: first.into_iter().flatten().chain(letters).collect(),
-            }
+        .map(|agent| FilterOption {
+            value: agent.clone(),
+            label: provider_name(agent),
         })
         .collect()
 }

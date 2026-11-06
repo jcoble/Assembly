@@ -9,8 +9,9 @@ namespace Assembly.Infrastructure.Remote;
 internal sealed partial class RemoteMachine
 {
     // Files shares the existing transports. It never reconnects an established resource scope.
+    // A path target's channel has no mirror binding (live is null); its owner binding alone fences it.
     internal async Task<FileRelayChannel> OpenFilesAsync(OwnerConnectionBinding binding,
-        EngineMirror.LiveMirrorBinding live, CancellationToken ct)
+        EngineMirror.LiveMirrorBinding? live, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         // Settle the small grant exchange even if its desktop caller cancels. Otherwise a successful late
@@ -61,7 +62,7 @@ internal sealed partial class RemoteMachine
             expectedOwner: binding);
 
     internal sealed class FileRelayChannel(RemoteMachine owner, OwnerConnectionBinding binding,
-        EngineMirror.LiveMirrorBinding live, ClientWebSocket bulk, string scope)
+        EngineMirror.LiveMirrorBinding? live, ClientWebSocket bulk, string scope)
     {
         internal string Scope { get; } = scope;
         internal string Machine => binding.Machine;

@@ -16,6 +16,8 @@ mod inline_field;
 #[allow(dead_code)]
 #[path = "../src/features/projects/mod.rs"]
 mod projects;
+#[path = "../src/components/section_card.rs"]
+mod section_card;
 #[path = "../src/features/settings/preview/mod.rs"]
 mod settings_preview;
 

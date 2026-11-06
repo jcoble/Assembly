@@ -81,16 +81,24 @@ fn harness(cx: &mut TestAppContext) -> Harness<'_> {
 impl Harness<'_> {
     /// As a link does: outside any window update, and with the window drawn.
     fn open_file(&mut self) {
+        self.open_path("src/main.rs");
+    }
+
+    /// As `open_file`, for `path` in session s1, as a changes list sends it.
+    fn open_path(&mut self, path: &str) {
+        let path = path.to_string();
         self.cx.update(|window, cx| window.draw(cx).clear(cx));
         self.cx.update(|_, cx| {
-            cx.defer(|cx| {
+            cx.defer(move |cx| {
                 cx.dispatch_action(&OpenFile {
                     session_id: "s1".into(),
-                    path: "src/main.rs".into(),
+                    path,
                     expected_source: None,
                     line: None,
                     column: None,
                     pinned: true,
+                    outside: None,
+                    whole: None,
                 })
             })
         });
@@ -151,4 +159,118 @@ async fn it_opens_with_focus_inside_the_window_root(cx: &mut TestAppContext) {
     h.cx.update(|window, _| assert!(inside.is_focused(window)));
     h.open_file();
     h.assert_opened();
+}
+
+// Feature 28, ruling 15: an absolute or `~` path the intent doesn't place outside goes to the one resolver, with the
+// intent's session and its source's route machine, instead of opening as a session-relative path.
+#[gpui::test]
+async fn an_absolute_or_tilde_path_goes_to_the_resolver_instead_of_opening(
+    cx: &mut TestAppContext,
+) {
+    use crate::core::navigation::deep_links::notices;
+    use crate::core::socket::row_source::ExpectedRowSource;
+    use crate::core::state::machines::Machines;
+    let h = harness(cx);
+    h.cx.update(|_, cx| {
+        Machines::start_holding(
+            vec![(
+                "Box".into(),
+                serde_json::json!({"name": "Box", "kind": "remote", "reachable": true, "checked": true}),
+            )],
+            cx,
+        )
+    });
+    let send = |path: &str, route: Option<&str>| OpenFile {
+        session_id: "s1".into(),
+        path: path.into(),
+        expected_source: Some(ExpectedRowSource {
+            machine: "owner".into(),
+            generation: 0,
+            route_machine: route.map(String::from),
+        }),
+        line: None,
+        column: None,
+        pinned: true,
+        outside: None,
+        whole: None,
+    };
+    for intent in [
+        send("/etc/hosts", None),
+        send("~/notes.txt", Some("Nowhere")),
+    ] {
+        h.cx.update(|_, cx| cx.defer(move |cx| cx.dispatch_action(&intent)));
+        h.cx.run_until_parked();
+    }
+    let shown = h.cx.update(|_, cx| notices(cx));
+    assert_eq!(
+        shown,
+        [
+            "That file didn't open: The backend isn't running.",
+            "That file is on Nowhere, which this app isn't connected to.",
+        ]
+    );
+    let tabs = h.cx.update(|_, cx| {
+        [key("s1", "/etc/hosts"), key("s1", "~/notes.txt")]
+            .iter()
+            .filter(|tab| CenterPanes::find::<FileView>(tab, cx).is_some())
+            .count()
+    });
+    assert_eq!(tabs, 0, "neither opened as a session file");
+}
+
+// Brief item 1: only `~` and `~/...` name a home folder, as the backend's `FileOwner.ExpandHome` reads them. A session
+// file whose own name starts with `~`, such as `~notes.md` or an Office lock file, still opens as that session's file.
+#[gpui::test]
+async fn a_session_file_whose_name_starts_with_a_tilde_opens_as_a_session_file(
+    cx: &mut TestAppContext,
+) {
+    let mut h = harness(cx);
+    for path in ["~notes.md", "~$plan.docx"] {
+        h.open_path(path);
+        let opened = h.cx.update(|_, cx| {
+            let view = CenterPanes::find::<FileView>(&key("s1", path), cx)?;
+            let view = view.read(cx);
+            Some((view.session.clone(), view.path.clone(), view.is_outside()))
+        });
+        assert_eq!(opened, Some(("s1".into(), path.into(), false)), "{path}");
+    }
+}
+
+// Brief item 4: an absolute path with a session and no source keeps that session, so it never resolves on a guessed
+// machine. One that isn't listed or selected, while a remote machine is configured, can't be placed.
+#[gpui::test]
+async fn an_absolute_path_with_a_session_and_no_source_keeps_its_session(cx: &mut TestAppContext) {
+    use crate::core::navigation::deep_links::notices;
+    use crate::core::state::machines::Machines;
+    let mut h = harness(cx);
+    h.cx.update(|_, cx| {
+        Machines::start_holding(
+            vec![(
+                "Box".into(),
+                serde_json::json!({"name": "Box", "kind": "remote", "reachable": true, "checked": true}),
+            )],
+            cx,
+        )
+    });
+    h.open_path("/etc/hosts");
+    let shown = h.cx.update(|_, cx| notices(cx));
+    assert_eq!(
+        shown,
+        ["That file didn't open: Assembly can't tell which machine this session is on."]
+    );
+}
+
+// Note 2 ruling 1: a link whose line suffix was read reaches the real listener, which asks first and then opens the
+// intent it settled on once. With no backend to ask, the suffix is read as a line.
+#[gpui::test]
+async fn a_link_with_a_line_suffix_opens_its_file_once(cx: &mut TestAppContext) {
+    let h = harness(cx);
+    let intent = OpenFile::link("s1", "src/main.rs:3:2", None).expect("a link");
+    h.cx.update(|_, cx| cx.defer(move |cx| cx.dispatch_action(&intent)));
+    h.cx.run_until_parked();
+    let opened = h.cx.update(|_, cx| {
+        let view = CenterPanes::find::<FileView>(&key("s1", "src/main.rs"), cx)?;
+        Some(view.read(cx).path.clone())
+    });
+    assert_eq!(opened.as_deref(), Some("src/main.rs"));
 }

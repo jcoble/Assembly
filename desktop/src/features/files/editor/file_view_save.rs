@@ -27,12 +27,32 @@ struct Fault {
 }
 
 impl FileView {
+    /// A save, upload or reconcile ended, however it went.
+    pub(super) fn end_saving(&mut self, cx: &mut App) {
+        self.saving = None;
+        self.operation_ended(cx);
+    }
+
+    /// A question to the person ended, however it was answered.
+    pub(super) fn end_prompting(&mut self, cx: &mut App) {
+        self.prompting = None;
+        self.operation_ended(cx);
+    }
+
+    /// The workspace refuses its layout save while a file operation runs, so the save goes through once none does.
+    fn operation_ended(&self, cx: &mut App) {
+        if self.rename_ready() {
+            crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
+        }
+    }
+
     pub(super) fn save_document(&mut self, cx: &mut Context<Self>) {
         self.save_document_at(None, cx);
     }
 
     pub(super) fn save_document_at(&mut self, revision: Option<String>, cx: &mut Context<Self>) {
-        if self.saving.is_some() {
+        // A locked file saves nothing until Edit anyway: not the button, the shortcut, Overwrite or the guard.
+        if self.saving.is_some() || self.locked {
             return;
         }
         if revision.is_none()
@@ -53,8 +73,9 @@ impl FileView {
         if let Some(revision) = revision {
             snapshot.base_revision = revision;
         }
-        let args = json!({ "session": self.session, "path": self.path,
-            "expectedRevision": snapshot.base_revision, "size": snapshot.text.len(), "expectedSource": self.source, "expectedOwner": self.owner });
+        let args = self.file_args(
+            json!({ "expectedRevision": snapshot.base_revision, "size": snapshot.text.len() }),
+        );
         let bytes = snapshot.text.clone().into_bytes();
         self.save = Some(FileSaveController::begin(snapshot));
         let begin = socket
@@ -84,7 +105,7 @@ impl FileView {
             let result = call.await;
             let _ = view.update(cx, |view, cx| {
                 view.upload = None;
-                view.saving = None;
+                view.end_saving(cx);
                 match result {
                     Outcome::Ok(reply) if reply.state == "saved" && reply.revision.is_some() => {
                         if let Some(save) = &mut view.save {
@@ -134,7 +155,7 @@ impl FileView {
     }
 
     fn save_failed(&mut self, message: String, unknown: bool, cx: &mut Context<Self>) {
-        self.saving = None;
+        self.end_saving(cx);
         self.closing_window = None;
         self.finish_guard_save(false);
         if let Some(save) = &mut self.save {
@@ -166,16 +187,15 @@ impl FileView {
         let Some(socket) = SocketClient::try_bulk(cx) else {
             return;
         };
-        let session = self.session.clone();
-        let path = self.path.clone();
-        let source = self.source.clone();
-        let owner = self.owner.clone();
+        let file = self.file_args(json!({}));
         self.saving = Some(cx.spawn(async move |view, cx| {
             let mut content = String::new();
             let mut offset = 0;
             let mut revision: Option<String> = None;
             loop {
-                let args = json!({ "session": session, "path": path, "offset": offset, "revision": revision, "expectedSource": source, "expectedOwner": owner });
+                let mut args = file.clone();
+                args["offset"] = json!(offset);
+                args["revision"] = json!(revision);
                 let Ok(call) = view.update(cx, |_, cx| socket.read(cx).call::<crate::features::files::entry::FileChunk>("files", "read", args, None)) else { return; };
                 let chunk = match call.await {
                     Outcome::Ok(chunk) if !chunk.binary && revision.as_ref().is_none_or(|r| r == &chunk.revision) => chunk,
@@ -186,7 +206,7 @@ impl FileView {
                 if let Some(next) = chunk.next_offset { offset = next; } else { break; }
             }
             let _ = view.update(cx, |view, cx| {
-                view.saving = None;
+                view.end_saving(cx);
                 if let Some(save) = &mut view.save {
                     view.last_save = save.reconcile(&content, revision.expect("complete read"), cx.global_mut::<DocumentStore>());
                     view.editor_error = if view.last_save.is_some() { None } else {

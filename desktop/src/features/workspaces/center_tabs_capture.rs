@@ -12,7 +12,7 @@ pub(super) fn capture(key: &WorkspaceKey, window: &Window, cx: &App) -> Result<T
     let tree = dock
         .layout(DockPlacement::Center)
         .ok_or("The center layout is unavailable.")?;
-    let retained = FileView::captured_workspace_paths(key, cx);
+    let retained = FileView::captured_workspace_identities(key, cx);
     let mut order = Vec::new();
     let mut panes = Vec::new();
     let mut choices = Vec::new();
@@ -34,14 +34,17 @@ pub(super) fn capture(key: &WorkspaceKey, window: &Window, cx: &App) -> Result<T
                         .and_then(|panel| panel.view().downcast::<FileView>().ok());
                     match file {
                         // A viewed project's file isn't this workspace's, and stays open until the app closes.
-                        Some(file) if is_view(file.read(cx).layout_ref().0) => None,
-                        Some(file) => match file.read(cx).workspace_path(key) {
-                            Ok(path) if retained.contains(path) => Some(format!(
-                                "document:{}",
-                                serde_json::to_string(&(&key.machine, &key.checkout_root, path))
-                                    .expect("document identity")
-                            )),
-                            Ok(_) => None, // A clean file excluded by the sole Files retention limit.
+                        Some(file) if is_view(file.read(cx).session()) => None,
+                        Some(file) => match file.read(cx).workspace_identity(key) {
+                            // A second tab on one document waits for its claim; the first stands for it.
+                            Ok(Some(identity))
+                                if retained.contains(&identity) && !order.contains(&identity) =>
+                            {
+                                Some(identity)
+                            }
+                            // A clean file excluded by the sole Files retention limit, a second tab on one document,
+                            // or an outside file that belongs to no workspace.
+                            Ok(_) => None,
                             Err(error) => {
                                 failure = Some(error);
                                 None

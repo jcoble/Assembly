@@ -41,6 +41,8 @@ pub struct SessionView {
     pub turn: Option<Turn>,
     /// The newest context window report, for the composer's ring.
     pub context: Option<ContextReport>,
+    /// The newest user row's seq, so a new prompt is seen without its item carrying a seq.
+    pub newest_prompt: Option<i64>,
     /// The lowest seq loaded (the next page's `before`), and whether older rows exist.
     pub oldest: Option<i64>,
     pub has_before: bool,
@@ -94,6 +96,9 @@ impl SessionView {
             self.reconcile_pending_row(client, &key);
         }
         self.newest = self.newest.max(row.seq);
+        if row.kind == "user" {
+            self.newest_prompt = self.newest_prompt.max(Some(row.seq));
+        }
         let key = key_of(row);
         let at = self.index.get(&key).copied();
         if let Some(i) = at {
@@ -323,6 +328,7 @@ impl SessionView {
         self.turn = self.turn.take().or(page.turn);
         self.context = self.context.or(page.context);
         self.newest = self.newest.max(page.newest);
+        self.newest_prompt = self.newest_prompt.max(page.newest_prompt);
         if let Some(lowest) = rows.iter().map(first_seq).min() {
             self.oldest = Some(self.oldest.map_or(lowest, |oldest| oldest.min(lowest)));
         }

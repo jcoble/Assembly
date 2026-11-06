@@ -32,7 +32,7 @@ fn link_notice(id: &'static str, text: &'static str, url: String, cx: &App) -> i
                 .small()
                 .label("View it on GitHub")
                 .on_click(move |_, window, cx| {
-                    window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
+                    window.dispatch_action(Box::new(OpenInBrowser { url: url.clone() }), cx)
                 }),
         )
 }

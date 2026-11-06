@@ -65,3 +65,22 @@ fn a_clicked_link_that_does_not_parse_keeps_the_refusal(cx: &mut TestAppContext)
         assert_eq!(notices(cx), at + 1, "{address}");
     }
 }
+
+// Proof fixes brief item 5: a relative file link is refused in the file words, not as a link that isn't a web page.
+#[gpui::test]
+fn a_clicked_relative_file_link_says_it_is_not_a_full_path(cx: &mut TestAppContext) {
+    let cx = window(cx);
+    for address in [
+        "assembly://file?path=src%2Fmain.rs&profile=workbox-test",
+        "assembly://file?path=relative.cs",
+    ] {
+        follow(address, cx);
+        assert_eq!(cx.opened_url(), None, "{address}");
+        let shown = cx.update(|_, cx| crate::core::navigation::deep_links::notices(cx));
+        assert_eq!(
+            shown.last().map(String::as_str),
+            Some("That file link isn't a full path."),
+            "{address}"
+        );
+    }
+}

@@ -1,4 +1,4 @@
-namespace Assembly.Application.Features.Chat.Rows;
+namespace Assembly.Application.Features.Chat.Rows.Context;
 
 /// <summary>
 /// The ends of a session's newest prompts that may have attached images, newest first, whose trailing "Attached image:"
