@@ -1,7 +1,10 @@
 namespace Assembly.Application.Features.Chat.Rows.Context;
 
-/// <summary>One grouped path from the rows. <c>MustExist</c>: only shell or prompt candidates named it.</summary>
-internal sealed record TouchedRow(string Path, long Added, long Removed, long Count, long LastSeq, bool MustExist, string? Name);
+/// <summary>
+/// One grouped path from the rows. <c>Calls</c>: the calls and prompts that named it, so two spellings of one file that
+/// a single call carries count that call once. <c>MustExist</c>: only shell or prompt candidates named it.
+/// </summary>
+internal sealed record TouchedRow(string Path, long Added, long Removed, IReadOnlyCollection<string> Calls, long LastSeq, bool MustExist, string? Name);
 
 /// <summary>
 /// Pages the grouped paths and checks the disk until 50 are kept, since a shell-heavy session can have many candidates
@@ -18,6 +21,7 @@ internal static class TouchedFiles
     public static IReadOnlyList<FileTouched> Read(Func<int, int, IReadOnlyList<TouchedRow>> page, string? folder, IPathProbe? probe, CancellationToken ct)
     {
         var kept = new List<FileTouched>();
+        var calls = new List<HashSet<string>>();
         var real = folder is null || probe is null ? null : probe.Resolve(folder);
         for (var offset = 0; offset < Budget && kept.Count < MostFiles; offset += Page)
         {
@@ -25,7 +29,7 @@ internal static class TouchedFiles
             foreach (var row in rows)
             {
                 ct.ThrowIfCancellationRequested();
-                if (Keep(row, folder, probe)) Add(kept, new FileTouched(Inside(row, folder, real, probe), row.Added, row.Removed, row.Count, row.LastSeq, row.Name));
+                if (Keep(row, folder, probe)) Add(kept, calls, new FileTouched(Inside(row, folder, real, probe), row.Added, row.Removed, row.Calls.Count, row.LastSeq, row.Name), row.Calls);
                 if (kept.Count == MostFiles) break;
             }
             if (rows.Count < Page) break;
@@ -48,13 +52,17 @@ internal static class TouchedFiles
         return resolved.StartsWith(real + Path.DirectorySeparatorChar, StringComparison.Ordinal) ? resolved[(real.Length + 1)..] : path;
     }
 
-    /// <summary>The same file under two spellings is one row: the newer keeps its place and the counts add.</summary>
-    private static void Add(List<FileTouched> kept, FileTouched file)
+    /// <summary>
+    /// The same file under two spellings is one row: the newer keeps its place, the lines add and the count is the
+    /// distinct calls across both, so one call that carries both spellings counts once.
+    /// </summary>
+    private static void Add(List<FileTouched> kept, List<HashSet<string>> calls, FileTouched file, IReadOnlyCollection<string> named)
     {
         var at = kept.FindIndex(held => held.Path == file.Path && held.Name == file.Name);
-        if (at < 0) { kept.Add(file); return; }
+        if (at < 0) { kept.Add(file); calls.Add([.. named]); return; }
+        calls[at].UnionWith(named);
         var held = kept[at];
-        kept[at] = held with { Added = held.Added + file.Added, Removed = held.Removed + file.Removed, Count = held.Count + file.Count };
+        kept[at] = held with { Added = held.Added + file.Added, Removed = held.Removed + file.Removed, Count = calls[at].Count };
     }
 
     private static bool Keep(TouchedRow row, string? folder, IPathProbe? probe)
