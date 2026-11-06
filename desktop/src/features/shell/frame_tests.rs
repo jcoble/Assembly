@@ -226,7 +226,7 @@ fn the_window_opens_in_the_old_layout(cx: &mut TestAppContext) {
         (&left["size"], &left["open"]),
         (&json!(326.0), &json!(true))
     );
-    assert_eq!(pane_names(&left["panel"]), ["Sessions", "Files"]);
+    assert_eq!(pane_names(&left["panel"]), ["Sessions", "Files", "Search"]);
     assert_eq!(
         (&right["size"], &right["open"]),
         (&json!(320.0), &json!(false))

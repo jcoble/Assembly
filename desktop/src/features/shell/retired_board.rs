@@ -1,17 +1,13 @@
-//! Saved layouts with retired tabs: the Board, from when it was a center pane, and Search, which became the Files
-//! filter. Their tabs go, and everything else stays as it was.
+//! Saved layouts from when the Board was a center pane: its tabs go, and everything else stays as it was.
 use gpui_kit::component::dock::{DockAreaState, DockState, PanelInfo, PanelState};
 
-/// The retired Board pane's name.
+/// The retired saved pane's name.
 pub const BOARD: &str = "Build Board";
-/// The retired Search pane's name.
-pub const SEARCH: &str = "Search";
-const RETIRED: [&str; 2] = [BOARD, SEARCH];
 
-/// Removes only the retired tabs from an otherwise compatible saved layout.
+/// Removes only the retired Board tabs from an otherwise compatible saved layout.
 pub fn remove_saved_panel(state: &mut DockAreaState) {
     fn prune(mut panel: PanelState) -> Option<PanelState> {
-        if RETIRED.contains(&panel.panel_name.as_str()) {
+        if panel.panel_name == BOARD {
             return None;
         }
         let old_len = panel.children.len();
@@ -69,5 +65,5 @@ pub fn remove_saved_panel(state: &mut DockAreaState) {
 }
 
 #[cfg(test)]
-#[path = "retired_panels_tests.rs"]
+#[path = "retired_board_tests.rs"]
 mod tests;

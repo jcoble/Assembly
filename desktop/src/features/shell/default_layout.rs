@@ -2,8 +2,7 @@
 //! kit's panel registry use. Replaces frame.ts's region setup and size constants (SESSIONS_WIDTH, DOCK_HEIGHT),
 //! routes/+page.svelte's drawer width (lines 144-147) and RightPanelTabs.svelte's tab list.
 //!
-//! Left dock: one tabbed column, Sessions and Files, open (the approved look, Jesse 2026-10-27; Search became the
-//! Files filter, 2026-11-05). Center: Chat.
+//! Left dock: one tabbed column, Sessions, Files and Search, open (the approved look, Jesse 2026-10-27). Center: Chat.
 //! Right dock (the drawer): Source control, Agents, Tasks, Worktrees, Run, Context, History, closed at launch as in the
 //! old app. Bottom dock: Problems, Terminal, closed. Editor, browser
 //! and diff tabs aren't in the default: they open beside Chat when the first one opens, as the old tab pane did.
@@ -11,10 +10,10 @@
 use gpui_kit::component::dock::{DockAreaState, DockPlacement, DockState, PanelInfo, PanelState};
 use gpui_kit::*;
 
-pub use crate::core::ui::pane_names::FILES;
+pub use crate::core::ui::pane_names::{FILES, SEARCH};
 
 /// The saved layout's version. A layout saved with another version opens the default instead, so raise it whenever
-/// the default gains a pane, or old layouts never gain it. A retired pane needs no raise: `retired_panels` drops it.
+/// the default's panes change, or old layouts never gain the new pane.
 pub const LAYOUT_VERSION: usize = 2;
 
 pub const SESSIONS: &str = "Sessions";
@@ -30,10 +29,11 @@ pub const PROBLEMS: &str = "Problems";
 pub const TERMINAL: &str = "Terminal";
 
 /// Every pane in the default layout.
-pub const PANES: [&str; 12] = [
+pub const PANES: [&str; 13] = [
     SESSIONS,
     CHAT,
     FILES,
+    SEARCH,
     SOURCE_CONTROL,
     AGENTS,
     TASKS,
@@ -58,7 +58,7 @@ pub fn default_state() -> DockAreaState {
         version: Some(LAYOUT_VERSION),
         center: tabs(&[CHAT]),
         left_dock: Some(DockState::new(
-            tabs(&[SESSIONS, FILES]),
+            tabs(&[SESSIONS, FILES, SEARCH]),
             DockPlacement::Left,
             SESSIONS_WIDTH,
             true,

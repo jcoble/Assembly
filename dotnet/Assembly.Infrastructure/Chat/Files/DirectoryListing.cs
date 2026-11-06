@@ -35,8 +35,7 @@ public static class DirectoryListing
             if (batch.Count == 128) await AddBatch();
         }
         await AddBatch();
-        // A first page has nothing before it to disagree with; a later page must come from the listing it continues.
-        if (cursor is not null && lease.Generation != generation) throw new CallFailed("cursor_changed: refresh this folder");
+        if (lease.Generation != generation) throw new CallFailed("cursor_changed: refresh this folder");
         var sorted = candidates.UnorderedItems.Select(item => item.Element).Order(comparer).ToList();
         var entries = new List<FileEntry>(Limit);
         var bytes = 4096;
