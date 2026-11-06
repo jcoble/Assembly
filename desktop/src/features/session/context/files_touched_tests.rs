@@ -7,12 +7,12 @@ use gpui::TestAppContext;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::dock::BasePanel as _;
-use gpui_kit::{AppContext as _, Entity, Modifiers, VisualTestContext};
+use gpui_kit::{AppContext as _, CursorStyle, Entity, Modifiers, VisualTestContext};
 use serde_json::{Value, json};
 
 use super::super::listing::Listing;
 use super::super::{ContextPane, FileTouched};
-use super::{RowLook, held_until_outside_opener, names, row_looks, touched};
+use super::{RowLook, held_until_outside_opener, names, row_cursor, row_looks, touched};
 use crate::core::engine::SessionKey;
 use crate::core::intents::open_file::OpenFile;
 use crate::core::socket::row_source::ExpectedRowSource;
@@ -355,4 +355,18 @@ fn only_an_outside_row_is_held_and_its_hover_says_why() {
         None,
         "an attached image opens full size"
     );
+}
+
+// Pins: g0-shape#13
+#[test]
+fn a_held_row_keeps_the_normal_cursor_and_a_row_that_opens_shows_the_pointer() {
+    let cursor = |path: &str| row_cursor(&file(path));
+    assert_eq!(cursor("/home/x/.codex/AGENTS.md"), CursorStyle::Arrow);
+    assert_eq!(cursor("~/notes.md"), CursorStyle::Arrow);
+    assert_eq!(cursor("src/a.rs"), CursorStyle::PointingHand);
+    let image = FileTouched {
+        name: Some("shot.png".into()),
+        ..file("/h/attachments/s1/9f.png")
+    };
+    assert_eq!(row_cursor(&image), CursorStyle::PointingHand);
 }

@@ -2,7 +2,7 @@
 //! its folder muted, a count chip when more than one call or prompt named it, and its lines added and removed. A click
 //! opens a file inside the session's folder through the normal open (`OpenFile`) and an attached image full size, as
 //! the Attachments card does. A file outside the folder looks the same, but its click is held until TSK-1388 lands
-//! (`held_until_outside_opener`).
+//! (`held_until_outside_opener`), and meanwhile it keeps the normal cursor rather than the pointer.
 
 use std::path::{Component, Path};
 
@@ -100,7 +100,7 @@ impl ContextPane {
                         ListItem::new(("touched-file", index))
                             .debug_selector(move || selector)
                             .text_role(TextRole::Body, cx)
-                            .cursor_pointer()
+                            .cursor(row_cursor(file))
                             .when_some(held, |row, note| {
                                 row.tooltip(move |window, cx| {
                                     Tooltip::new(note.clone()).build(window, cx)
@@ -156,7 +156,7 @@ impl ContextPane {
 /// TSK-1388 hold: the normal open can't save a file outside the session's folder, so until the outside-file opener
 /// lands such a row's click does nothing and its hover gives this note. A row is outside when it isn't an attached image
 /// and its path is whole (absolute or `~/`) or climbs out (`..`); `rows/files` sends a path inside the folder relative.
-/// When the opener lands, delete this function and its two uses.
+/// When the opener lands, delete this function, `row_cursor` and their uses.
 pub(super) fn held_until_outside_opener(file: &FileTouched) -> Option<String> {
     let path = Path::new(&file.path);
     let outside = file.name.is_none()
@@ -174,6 +174,14 @@ pub(super) fn held_until_outside_opener(file: &FileTouched) -> Option<String> {
             file.path
         )
     })
+}
+
+/// The pointer on a row that opens; a held row's click does nothing, so it keeps the normal cursor.
+pub(super) fn row_cursor(file: &FileTouched) -> CursorStyle {
+    match held_until_outside_opener(file) {
+        Some(_) => CursorStyle::Arrow,
+        None => CursorStyle::PointingHand,
+    }
 }
 
 /// What a row says and how: its name (an attached image's name when it has one), its folder, and their colours. Every
