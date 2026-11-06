@@ -3,7 +3,8 @@
 // node scripts/hooks/approve-test-change.ts --key <private key> --repo <dir> --branch <b> --patch <file>
 //   --test <file>::<name after the change> [--test ...] --reason "<text>" --out <folder>
 // Applies the patch to the branch tip in a temporary index (never a checkout), hashes each named test's resulting text
-// (test-integrity.ts testHash: the exact text), records each test the patch removes or renames away, and writes
+// (test-integrity.ts testHash: the exact text; a named test the patch deletes is recorded as removed), records each test the
+// patch removes or renames away, and writes
 // <out>/<id>.json, signed into <id>.json.sig with ssh-keygen. It refuses a Rust file the patch leaves unformatted (rustfmt),
 // since the lane's commit must hold exactly the approved text. It expires 24 hours after signing.
 // Hand the lane the id; it commits both files under test-approvals/ with the change. Never run this for your own test changes.
@@ -50,8 +51,9 @@ try {
   catch (error) { throw new Error('the patch does not apply to ' + branch + ' at ' + tip + ': ' + String((error as { stderr?: string }).stderr ?? error)); }
   tests = named.map(({ file, name }) => {
     const sha256 = testHash(show(':' + file), name);
-    if (!sha256) throw new Error(name + ' is not in ' + file + ' after the patch');
-    return { file, name, sha256 };
+    if (sha256) return { file, name, sha256 };
+    if (testText(show(tip + ':' + file), name) !== undefined) return { file, name, removed: true };
+    throw new Error(name + ' is in ' + file + ' neither before nor after the patch');
   });
   const patched = git(['diff-index', '--cached', '--name-only', '-z', '--diff-filter=AM', tip]).split('\0').filter(Boolean);
   for (const file of patched.filter(path => path.endsWith('.rs'))) {

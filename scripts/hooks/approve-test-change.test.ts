@@ -106,6 +106,20 @@ test('records a rename as the old name removed plus the new name with its approv
   assert.ok(existsSync(join(out, approval.id + '.json.sig')));
 }));
 
+test('a patch that only deletes tests can name them; each is recorded as removed', () => withBranch((propose, sign, _out, root) => {
+  const file = 'desktop/src/view_tests.rs', git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  const one = sign(propose(seed.slice(seed.indexOf('fn keeps_name'))), [file + '::keeps_path']);
+  assert.equal(one.status, 0, String(one.stderr));
+  assert.deepEqual(JSON.parse(readFileSync(String(one.stdout).trim(), 'utf8')).tests, [{ file, name: 'keeps_path', removed: true }]);
+  const deletion = join(root, '..', 'delete.patch');
+  rmSync(join(root, file)); writeFileSync(deletion, git('diff')); git('checkout', '--quiet', '--', file);
+  const all = sign(deletion, [file + '::keeps_path', file + '::keeps_name']);
+  assert.equal(all.status, 0, String(all.stderr));
+  assert.deepEqual(JSON.parse(readFileSync(String(all.stdout).trim(), 'utf8')).tests, [
+    { file, name: 'keeps_path', removed: true }, { file, name: 'keeps_name', removed: true },
+  ]);
+}));
+
 test('refuses a patch that leaves Rust unformatted', () => {
   const base = mkdtempSync(join(tmpdir(), 'assembly-approve-'));
   try {
