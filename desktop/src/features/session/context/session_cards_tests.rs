@@ -283,6 +283,64 @@ fn a_turn_ending_while_shown_reads_the_total_again(cx: &mut TestAppContext) {
     );
 }
 
+// Pins: g0-shape#13
+#[gpui::test]
+fn a_turn_ending_while_shown_reads_the_files_again(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    shown_on_s1(Ok(json!({ "total": 100 })), &pane, &client, cx);
+    publish(facts(&pane, "s1", None, 1), cx);
+    let a = || FileTouched {
+        path: "src/a.rs".into(),
+        added: 1,
+        removed: 0,
+        count: 1,
+        name: None,
+    };
+    let files = |pane: &Entity<ContextPane>, cx: &mut VisualTestContext| {
+        pane.read_with(cx, |pane, _| pane.files.clone())
+    };
+
+    client.queue_answer(Ok(json!({ "total": 250 })));
+    client.queue_answer(Ok(
+        json!([{ "path": "src/a.rs", "added": 1, "removed": 0, "count": 1, "lastSeq": 4 }]),
+    ));
+    publish(facts(&pane, "s1", None, 2), cx);
+    let reads: Vec<Value> = (client.calls().into_iter())
+        .filter(|(call, _)| call == "rows/files")
+        .map(|(_, args)| args)
+        .collect();
+    assert_eq!(
+        reads,
+        [json!({ "session": "s1" }), json!({ "session": "s1" })]
+    );
+    assert_eq!(
+        files(&pane, cx),
+        Listing::Read(vec![a()]),
+        "the list follows the run"
+    );
+
+    client.queue_answer(Ok(json!({ "total": 300 })));
+    client.queue_answer(Err(CallError::Failed("disk is full".into())));
+    publish(facts(&pane, "s1", None, 3), cx);
+    assert_eq!(
+        files(&pane, cx),
+        Listing::Read(vec![a()]),
+        "a failed re-read keeps the list"
+    );
+
+    client.queue_answer(Ok(json!({ "total": 400 })));
+    let late = client.queue_pending();
+    publish(facts(&pane, "s1", None, 4), cx);
+    shown(&pane, false, cx);
+    late.send(Ok(json!([]))).ok();
+    cx.run_until_parked();
+    assert_eq!(
+        files(&pane, cx),
+        Listing::Read(vec![a()]),
+        "a read answered after a hide is dropped"
+    );
+}
+
 // Pins: g0-shape#17
 #[gpui::test]
 fn a_failed_total_leaves_the_lists(cx: &mut TestAppContext) {

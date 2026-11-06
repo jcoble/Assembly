@@ -153,6 +153,47 @@ impl ContextPane {
     }
 }
 
+impl ContextPane {
+    /// Reads the files again in their own task, as a turn ending while shown does, while the source is valid.
+    pub(super) fn reread_files(&mut self, cx: &mut Context<Self>) {
+        let Some(scope) = self.context_scope.clone().filter(|scope| scope.valid) else {
+            return;
+        };
+        self.files_serial += 1;
+        let (serial, files_serial) = (self.read_serial, self.files_serial);
+        let answer = (self.client).call("rows", "files", scope.args(), Some("rows/files"), cx);
+        self._files = Some(cx.spawn(async move |pane, cx| {
+            let answer = answer.await;
+            pane.update(cx, |pane, cx| {
+                if !pane.current(serial, &scope) {
+                    return;
+                }
+                if answer.as_ref().is_err_and(CallError::is_source_changed) {
+                    pane.refuse_source(&scope, super::SOURCE_CHANGED.into(), cx);
+                }
+                pane.take_files(files_serial, answer, true);
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Keeps the answer of files read `serial`, or why it couldn't be read, unless the list already holds a newer
+    /// read's answer. A failed re-read (`keep_on_failure`) leaves the list as it is.
+    pub(super) fn take_files(
+        &mut self,
+        serial: u64,
+        answer: Result<serde_json::Value, CallError>,
+        keep_on_failure: bool,
+    ) {
+        if serial < self.files_shown || (keep_on_failure && answer.is_err()) {
+            return;
+        }
+        self.files_shown = serial;
+        self.files = touched(answer);
+    }
+}
+
 /// TSK-1388 hold: the normal open can't save a file outside the session's folder, so until the outside-file opener
 /// lands such a row's click does nothing and its hover gives this note. A row is outside when it isn't an attached image
 /// and its path is whole (absolute or `~/`) or climbs out (`..`); `rows/files` sends a path inside the folder relative.
