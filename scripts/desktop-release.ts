@@ -10,13 +10,13 @@ import { fileURLToPath } from 'node:url';
 
 const repository = fileURLToPath(new URL('../', import.meta.url));
 
-// Paths under the user's home, where the packaged app keeps main's data and reaches main's remote.
+// Paths under the user's home, where the packaged app keeps main's data and reaches its installed remote.
 export const PACKAGED_CONFIG = {
   port: 18797,
   home: 'assembly-dotnet/mac',
   tokenFile: '.config/assembly-dotnet/env',
   remotePort: 9797,
-  remoteTokenFile: '.config/assembly-dotnet/env'
+  remoteTokenFile: '.config/assembly-host/env'
 };
 
 export function desktopVersion(source = repository): string {
@@ -60,6 +60,9 @@ export function writeDesktopPackage(input: PackageInput): string {
     copyFileSync(input.backendBinary, program);
     chmodSync(program, 0o755);
     writeFileSync(path.join(backend, 'packaged.json'), `${JSON.stringify(PACKAGED_CONFIG, null, 2)}\n`);
+    // The one adapter installer, which a remote runs from its release package too. The backend finds it beside itself.
+    copyFileSync(path.join(source, 'dotnet/scripts/agents-file.sh'), path.join(backend, 'agents-file.sh'));
+    chmodSync(path.join(backend, 'agents-file.sh'), 0o755);
     // The nested program first: signing the bundle seals what's inside it.
     for (const target of [program, app]) execFileSync('codesign', ['--force', '--timestamp=none', '--sign', input.identity, target]);
     mkdirSync(input.outputDirectory, { recursive: true });

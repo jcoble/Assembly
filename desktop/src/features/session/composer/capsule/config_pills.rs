@@ -83,16 +83,16 @@ impl RenderOnce for ConfigPills {
     }
 }
 
-/// The options sorted into the pills they belong to.
-struct Grouped {
-    approval: Option<(ConfigOption, String)>,
-    model: Option<(ConfigOption, String)>,
-    effort: Option<(ConfigOption, String)>,
+/// The options sorted into the pills they belong to; the Context tab's Session card reads the same slots.
+pub(crate) struct Grouped {
+    pub(crate) approval: Option<(ConfigOption, String)>,
+    pub(crate) model: Option<(ConfigOption, String)>,
+    pub(crate) effort: Option<(ConfigOption, String)>,
     others: Vec<(ConfigOption, String)>,
 }
 
 impl Grouped {
-    fn of(options: Vec<(ConfigOption, String)>) -> Self {
+    pub(crate) fn of(options: Vec<(ConfigOption, String)>) -> Self {
         let mut grouped = Grouped {
             approval: None,
             model: None,
@@ -229,7 +229,7 @@ fn chip(id: &'static str) -> Button {
 }
 
 /// The value to read back: the one offered now, or what the agent reported even if it no longer offers it.
-fn shown<'a>(option: &'a ConfigOption, current: &'a str) -> &'a str {
+pub(crate) fn shown<'a>(option: &'a ConfigOption, current: &'a str) -> &'a str {
     if current.is_empty() {
         option.current_value.as_deref().unwrap_or_default()
     } else {

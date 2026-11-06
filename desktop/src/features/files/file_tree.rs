@@ -1,10 +1,7 @@
 //! `FileTree` owns what the Files pane knows of a session's folder: each loaded folder's entries, which folders are
-//! open, which are loading and why one failed. It draws nothing; the pane loads what it asks for and draws `visible`.
-//! The list of lines is rebuilt when the tree changes, so a draw reads only the lines it shows.
+//! open, which are loading and why one failed. It draws nothing; the pane loads what it asks for and draws `rows`.
 
-use gpui_kit::SharedString;
 use std::collections::{HashMap, HashSet};
-use std::ops::Range;
 
 use super::entry::{FileEntry, FileListing, PageCursor};
 
@@ -41,27 +38,6 @@ pub enum RevealStep {
     Missing,
 }
 
-/// Where a row's text lives, so the list costs little however long the folders' entries are.
-enum Line {
-    Entry {
-        dir: SharedString,
-        at: usize,
-        depth: usize,
-        open: bool,
-    },
-    Loading {
-        depth: usize,
-    },
-    Failed {
-        dir: SharedString,
-        depth: usize,
-    },
-    Truncated {
-        dir: SharedString,
-        depth: usize,
-    },
-}
-
 /// The root folder is "", as `files/list` takes it.
 #[derive(Default)]
 pub struct FileTree {
@@ -69,7 +45,6 @@ pub struct FileTree {
     open: HashSet<String>,
     loading: HashSet<String>,
     failed: HashMap<String, String>,
-    lines: Vec<Line>,
 }
 
 impl FileTree {
@@ -77,7 +52,6 @@ impl FileTree {
     pub fn start(&mut self) -> &'static str {
         *self = Self::default();
         self.loading.insert(String::new());
-        self.rebuild();
         ""
     }
 
@@ -93,17 +67,14 @@ impl FileTree {
                 .retain(|path, _| path != dir && !path.starts_with(&prefix));
             self.failed
                 .retain(|path, _| path != dir && !path.starts_with(&prefix));
-            self.rebuild();
             return None;
         }
         self.open.insert(dir.to_string());
         if self.loaded.contains_key(dir) {
-            self.rebuild();
             return None;
         }
         self.failed.remove(dir);
         self.loading.insert(dir.to_string());
-        self.rebuild();
         Some(dir.to_string())
     }
 
@@ -114,7 +85,6 @@ impl FileTree {
         let cursor = self.loaded.get(dir)?.next_cursor.clone()?;
         self.failed.remove(dir);
         self.loading.insert(dir.to_owned());
-        self.rebuild();
         Some(cursor)
     }
 
@@ -144,18 +114,10 @@ impl FileTree {
                 self.failed.insert(dir.to_string(), message);
             }
         }
-        self.rebuild();
-    }
-
-    /// Nothing is loading any more; what's loaded stays.
-    pub fn cancel_loads(&mut self) {
-        self.loading.clear();
-        self.rebuild();
     }
 
     pub fn entry_state(&self, path: &str) -> Option<(bool, bool)> {
-        let rows = self.visible(0..self.row_count());
-        rows.into_iter().find_map(|row| match row {
+        self.rows().into_iter().find_map(|row| match row {
             Row::Entry { entry, open, .. } if entry.path == path => {
                 Some((entry.is_directory, open))
             }
@@ -165,11 +127,11 @@ impl FileTree {
 
     pub fn adjacent(&self, selected: Option<&str>, delta: i32) -> Option<(String, bool, usize)> {
         let entries: Vec<_> = self
-            .visible(0..self.row_count())
+            .rows()
             .into_iter()
             .enumerate()
             .filter_map(|(ix, row)| match row {
-                Row::Entry { entry, .. } => Some((entry.path.to_string(), entry.is_directory, ix)),
+                Row::Entry { entry, .. } => Some((entry.path.clone(), entry.is_directory, ix)),
                 _ => None,
             })
             .collect();
@@ -204,11 +166,6 @@ impl FileTree {
         self.reveal_path(path, false)
     }
     fn reveal_path(&mut self, path: &str, expand_last: bool) -> RevealStep {
-        let step = self.walk_to(path, expand_last);
-        self.rebuild();
-        step
-    }
-    fn walk_to(&mut self, path: &str, expand_last: bool) -> RevealStep {
         let mut parent = String::new();
         let mut parts = path.split('/').filter(|part| !part.is_empty()).peekable();
         while let Some(part) = parts.next() {
@@ -258,103 +215,41 @@ impl FileTree {
         RevealStep::Ready
     }
 
-    /// Whether `dir`'s entries are on screen: loaded, and it and every folder above it open.
-    pub fn shows(&self, dir: &str) -> bool {
-        if !self.loaded.contains_key(dir) {
-            return false;
-        }
-        let mut at = dir;
-        while !at.is_empty() {
-            if !self.open.contains(at) {
-                return false;
-            }
-            at = at.rsplit_once('/').map_or("", |(parent, _)| parent);
-        }
-        true
-    }
-
-    pub fn root_loaded(&self) -> bool {
-        self.loaded.contains_key("")
-    }
-
     /// Whether the root's load failed, so showing the tree again retries it (its folder may exist by now).
     pub fn root_failed(&self) -> bool {
         self.failed.contains_key("")
     }
 
-    pub fn row_count(&self) -> usize {
-        self.lines.len()
+    /// The lines to draw: the root's entries, each open folder's under it.
+    pub fn rows(&self) -> Vec<Row<'_>> {
+        let mut rows = Vec::new();
+        self.push(&mut rows, "", 0);
+        rows
     }
 
-    /// The lines in `range`, in drawing order: the root's entries, each open folder's under it.
-    pub fn visible(&self, range: Range<usize>) -> Vec<Row<'_>> {
-        let end = range.end.min(self.lines.len());
-        let start = range.start.min(end);
-        self.lines[start..end]
-            .iter()
-            .filter_map(|line| self.row(line))
-            .collect()
-    }
-
-    fn row<'a>(&'a self, line: &'a Line) -> Option<Row<'a>> {
-        Some(match line {
-            Line::Entry {
-                dir,
-                at,
-                depth,
-                open,
-            } => Row::Entry {
-                entry: self.loaded.get(&**dir)?.entries.get(*at)?,
-                depth: *depth,
-                open: *open,
-            },
-            Line::Loading { depth } => Row::Loading { depth: *depth },
-            Line::Failed { dir, depth } => Row::Failed {
-                depth: *depth,
-                message: self.failed.get(&**dir)?,
-            },
-            Line::Truncated { dir, depth } => Row::Truncated { depth: *depth, dir },
-        })
-    }
-
-    fn rebuild(&mut self) {
-        let mut lines = Vec::with_capacity(self.lines.len());
-        self.push(&mut lines, "", 0);
-        self.lines = lines;
-    }
-
-    fn push(&self, lines: &mut Vec<Line>, dir: &str, depth: usize) {
-        let shared = SharedString::from(dir);
+    fn push<'a>(&'a self, rows: &mut Vec<Row<'a>>, dir: &'a str, depth: usize) {
         if let Some(listing) = self.loaded.get(dir) {
-            for (at, entry) in listing.entries.iter().enumerate() {
-                let open = entry.is_directory && self.open.contains(entry.path.as_str());
-                lines.push(Line::Entry {
-                    dir: shared.clone(),
-                    at,
-                    depth,
-                    open,
-                });
+            for entry in &listing.entries {
+                let open = entry.is_directory && self.open.contains(&entry.path);
+                rows.push(Row::Entry { entry, depth, open });
                 if open {
-                    self.push(lines, &entry.path, depth + 1);
+                    self.push(rows, &entry.path, depth + 1);
                 }
             }
             if self.loading.contains(dir) {
-                lines.push(Line::Loading { depth });
+                rows.push(Row::Loading { depth });
             } else {
-                if self.failed.contains_key(dir) {
-                    lines.push(Line::Failed {
-                        dir: shared.clone(),
-                        depth,
-                    });
+                if let Some(message) = self.failed.get(dir) {
+                    rows.push(Row::Failed { depth, message });
                 }
                 if listing.truncated {
-                    lines.push(Line::Truncated { dir: shared, depth });
+                    rows.push(Row::Truncated { depth, dir });
                 }
             }
         } else if self.loading.contains(dir) {
-            lines.push(Line::Loading { depth });
-        } else if self.failed.contains_key(dir) {
-            lines.push(Line::Failed { dir: shared, depth });
+            rows.push(Row::Loading { depth });
+        } else if let Some(message) = self.failed.get(dir) {
+            rows.push(Row::Failed { depth, message });
         }
     }
 }

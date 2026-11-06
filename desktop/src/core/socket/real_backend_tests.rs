@@ -182,6 +182,57 @@ fn a_stopped_backend_is_disconnected_until_reconnect_to_the_new_one() {
     panic!("not Connected after Reconnect");
 }
 
+// Spec section 4: a restarted backend has lost the shell, and its calls say so by code.
+#[test]
+fn real_backend_reports_a_gone_shell_by_call() {
+    let terminal = |backend: &RealBackend| {
+        let mut client = Client::start_on(backend.endpoint(), "/socket/terminal");
+        assert_eq!(client.state(), ConnectionState::Connecting);
+        let state = client.state();
+        assert!(
+            matches!(state, ConnectionState::Connected { .. }),
+            "{state:?}"
+        );
+        client
+    };
+    let call = |client: &Client, method: &str, args: serde_json::Value| {
+        outcome(client.call_with("terminal", method, args, None).1)
+    };
+    let Some(before) = RealBackend::start() else {
+        return;
+    };
+    let Some(restarted) = RealBackend::start() else {
+        return;
+    };
+    let shell = {
+        let client = terminal(&before);
+        let cwd = std::env::temp_dir();
+        let started = call(
+            &client,
+            "start",
+            json!({"cwd": cwd, "shell": "/bin/sh", "cols": 80, "rows": 24}),
+        );
+        let Outcome::Ok(info) = started else {
+            panic!("the first backend started no shell");
+        };
+        info["id"].as_str().expect("the shell's id").to_string()
+    };
+    drop(before);
+    let client = terminal(&restarted);
+    for (method, args) in [
+        ("read", json!({"terminal": shell, "offset": 0})),
+        ("write", json!({"terminal": shell, "data": "YQ=="})),
+        ("resize", json!({"terminal": shell, "cols": 90, "rows": 30})),
+    ] {
+        match call(&client, method, args) {
+            Outcome::Failed(failure) => {
+                assert_eq!(failure.code, ErrorCode::TerminalMissing, "{method}")
+            }
+            _ => panic!("{method} of a gone shell didn't fail"),
+        }
+    }
+}
+
 // A start that fails (here a stand-in that never prints its ready line) stops the child and removes its folder.
 #[test]
 fn a_backend_that_never_gets_ready_is_stopped_and_its_folder_removed() {

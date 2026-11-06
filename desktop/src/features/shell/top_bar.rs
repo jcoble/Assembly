@@ -1,9 +1,10 @@
 //! `TopBar` owns the title row above the panes, on the rail: the Home button, which keeps the open sessions column's width so the
 //! dividers line up, also while the column's edge is dragged. Its menu opens Build Board and Settings,
-//! and at the right the drawer toggle. Tool tabs and the Terminal action live in the drawer header's capsule/menu
+//! and at the right the Terminal button and the drawer toggle. Tool tabs live in the drawer header's capsule/menu
 //! (drawer_buttons.rs). Replaces TopTabRow.svelte's chrome, HomeButton.svelte and the
 //! `window-chrome` markup in routes/+page.svelte.
 
+use crate::features::remote_install::restart_button::RestartButton;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -13,7 +14,7 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::*;
 
-use super::{drawer_buttons, top_tabs};
+use super::{drawer_buttons, terminal_toggle, top_tabs};
 use crate::activity::{DotChip, Tone};
 use crate::core::engine::{EngineChanged, EngineFeed};
 use crate::core::intents::open_settings::OpenSettings;
@@ -41,6 +42,7 @@ pub struct TopBar {
     board_memory: BoardMemory,
     /// How many need the owner, read when the shared rows change.
     badge: Option<SharedString>,
+    restart: Entity<RestartButton>,
     _feed: Subscription,
     /// A notification's click opens the panel on its question.
     _notifications: Option<Subscription>,
@@ -68,6 +70,7 @@ impl TopBar {
             })
         });
         Self {
+            restart: cx.new(RestartButton::new),
             dock,
             _subscription,
             _notifications,
@@ -206,6 +209,8 @@ impl Render for TopBar {
                     ),
             )
             .child(top_tabs::tabs(self.dock.clone(), window, cx))
+            .child(self.restart.clone())
+            .child(terminal_toggle::button(self.dock.clone(), cx))
             .child(drawer_buttons::toggle(self.dock.clone(), cx))
     }
 }

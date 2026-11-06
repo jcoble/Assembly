@@ -170,14 +170,15 @@ impl SessionPane {
             .pending_open
             .as_mut()
             .ok_or("The prepared session open was cancelled.")?;
-        if let Some(checked) = &pending.checked_engine {
+        if let Some(checked) = &mut pending.checked_engine {
             let feed = crate::core::engine::EngineFeed::global(cx);
-            if feed.read(cx).item(&checked.key).is_some_and(|current| {
-                current.version != checked.version || current.value != checked.value
-            }) {
-                return Err(
-                    "The checked Engine session changed while preparing its workspace.".into(),
-                );
+            if let Some(current) = feed.read(cx).item(&checked.key) {
+                if !super::opening::opens_the_same(checked, current) {
+                    return Err(
+                        "The checked Engine session changed while preparing its workspace.".into(),
+                    );
+                }
+                *checked = current.clone();
             }
         }
         let target = pending

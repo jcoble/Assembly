@@ -50,7 +50,7 @@ public static class ApiServer
                 feature.Register(calls);
             var socket = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, engineMachine: services.Engine?.Machine);
             var bulk = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, bulk: true, engineMachine: services.Engine?.Machine);
-            var terminal = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, terminal: true);
+            var terminal = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, terminal: true, engineMachine: services.Engine?.Machine);
             app.Lifetime.ApplicationStopping.Register(terminal.CloseAll);
             app.Lifetime.ApplicationStopping.Register(socket.CloseAll);
             app.Lifetime.ApplicationStopping.Register(bulk.CloseAll);

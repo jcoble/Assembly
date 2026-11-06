@@ -11,7 +11,6 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 
-use crate::core::engine::SessionKey;
 use crate::core::intents::open_task::{OpenTask, OpenTaskLink};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::update::Update;
@@ -25,7 +24,11 @@ use super::notion_setup::NotionSetup;
 use super::task_detail::TaskDetailView;
 use super::task_export::*;
 use super::tasks_state::*;
+use crate::core::navigation::web_links::notion_web_page;
 
+#[cfg(test)]
+#[path = "tasks_pane_links_tests.rs"]
+mod links_tests;
 #[path = "tasks_pane_list.rs"]
 mod list;
 #[path = "tasks_pane_open.rs"]
@@ -49,8 +52,9 @@ pub struct TasksPane {
     detail: Option<Entity<TaskDetailView>>,
     /// A Notion page that may not be a task in this source; opened in the browser if it isn't.
     page_fallback: Option<String>,
-    /// The session a task was opened from.
-    task_session: Option<SessionKey>,
+    /// The one link that came before the tab knew whether Notion is connected, asking the backend; a newer link
+    /// replaces it, and dropping it cancels the question.
+    waiting_link: Option<Task<()>>,
     refreshing: bool,
     /// Asked Notion once for a brand new connection's list.
     first_refresh_done: bool,
@@ -78,7 +82,6 @@ impl TasksPane {
         cx.on_action(|intent: &OpenTask, cx| {
             let intent = intent.clone();
             Self::in_window(cx, move |pane, window, cx| {
-                pane.task_session = intent.session.clone();
                 pane.open_task(intent.source.clone(), None, window, cx);
             });
         });
@@ -88,7 +91,7 @@ impl TasksPane {
         });
     }
 
-    /// Runs once the current update is over, on the window's pane, with the tab brought forward.
+    /// Runs once the current update is over, on the window's pane. Opening a task brings the tab forward.
     fn in_window(
         cx: &mut App,
         act: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
@@ -108,7 +111,6 @@ impl TasksPane {
                     window.push_notification(Notification::warning(NO_TAB), cx);
                     return;
                 };
-                Self::show(window, cx);
                 pane.update(cx, |pane, cx| act(pane, window, cx));
             });
         });
@@ -201,7 +203,7 @@ impl TasksPane {
             setup,
             detail: None,
             page_fallback: None,
-            task_session: None,
+            waiting_link: None,
             refreshing: false,
             first_refresh_done: false,
             started: false,
@@ -298,18 +300,33 @@ pub fn receive_sign_in(state: String, claim_code: String, cx: &mut App) {
     }
 }
 
-/// A task link, once the window is up.
+/// A task link, once the window is up. With no Tasks tab to open it in, its Notion page opens in the browser.
 pub fn open_task_link(page_id: String, cx: &mut App) {
-    let url = format!("assembly://task/{page_id}");
-    TasksPane::in_window(cx, move |pane, window, cx| pane.open_link(&url, window, cx));
+    let page = notion_web_page(&page_id);
+    open_here_or_in_browser(format!("assembly://task/{page_id}"), page, cx);
+}
+
+/// A Notion page link from anywhere: its task here when Notion is connected, else the page in the browser.
+pub fn open_notion_page(url: String, cx: &mut App) {
+    open_here_or_in_browser(url.clone(), url, cx);
+}
+
+fn open_here_or_in_browser(link: String, page: String, cx: &mut App) {
+    if (cx.try_global::<OpenPane>())
+        .and_then(|open| open.0.upgrade())
+        .is_none()
+    {
+        return cx.open_url(&page);
+    }
+    TasksPane::in_window(cx, move |pane, window, cx| {
+        pane.open_link(&link, window, cx)
+    });
 }
 
 /// About a row's height, for what to draw ahead and how many rows fill the tab.
 const ROW_HEIGHT: f32 = 64.;
 const NO_TAB: &str = "The Tasks tab isn't open in this window.";
-const NOT_CONNECTED: &str = "Connect Notion to open tasks.";
 pub(crate) const NOT_OPENABLE: &str = "Assembly can't open that link.";
-const NO_SESSION: &str = "Select a session to open this file.";
 
 impl EventEmitter<PanelEvent> for TasksPane {}
 

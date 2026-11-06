@@ -59,7 +59,7 @@ impl ContextMeter {
 const MIN_SPENT_ARC: f64 = 10.0;
 
 /// 1,000,000.
-fn thousands(n: i64) -> String {
+pub(crate) fn thousands(n: i64) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, digit) in digits.chars().enumerate() {

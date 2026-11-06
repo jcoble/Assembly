@@ -34,6 +34,9 @@ pub struct ChangedFile {
     /// Git's porcelain letters: `.` unchanged, `?` untracked, `U` (either side) a conflict.
     pub index: String,
     pub worktree: String,
+    /// The file's revision when it was read; a discard sends it back so an edit since then refuses it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

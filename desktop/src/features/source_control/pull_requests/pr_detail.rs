@@ -15,7 +15,7 @@ use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::control_ids as ids;
 use crate::core::ui::access::{Control as _, Named as _};
 use crate::core::{
-    intents::open_url::OpenUrl,
+    intents::open_url::OpenInBrowser,
     socket::{client::SocketClient, outcome::Outcome},
 };
 use gpui_kit::assets::IconName;
@@ -463,7 +463,7 @@ impl PrDetail {
                             .on_click(move |_, window, cx| {
                                 if let Some(url) = &url {
                                     window.dispatch_action(
-                                        Box::new(OpenUrl { url: url.clone() }),
+                                        Box::new(OpenInBrowser { url: url.clone() }),
                                         cx,
                                     );
                                 }

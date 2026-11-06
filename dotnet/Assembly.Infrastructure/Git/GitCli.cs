@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Git;
+using Assembly.Infrastructure.Common.Processes;
 
 namespace Assembly.Infrastructure.Git;
 
@@ -13,14 +14,21 @@ namespace Assembly.Infrastructure.Git;
 /// </summary>
 public sealed class GitCli(TimeProvider? time = null) : IGit
 {
+    /// <summary>Size and write time: a stat, not a read, so a status read stays cheap however big the files are.</summary>
+    public string Revision(string folder, string path)
+    {
+        var file = new FileInfo(Path.Combine(folder, path));
+        return file.Exists ? $"{file.Length}:{file.LastWriteTimeUtc.Ticks}" : "none";
+    }
     public async IAsyncEnumerable<string> ReadAsync(string folder, IReadOnlyList<string> arguments, IReadOnlyList<string>? input,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var start = Start(folder, arguments);
         using var git = Process.Start(start) ?? throw new InvalidOperationException("Could not start git.");
+        var tree = new ProcessTree(git);
         // Killing it ends its output, so a read waiting on it returns and the token's throw below runs.
-        using var stop = cancellationToken.Register(() => Kill(git));
+        using var stop = cancellationToken.Register(tree.Kill);
         try
         {
             var stderr = git.StandardError.ReadToEndAsync(CancellationToken.None);
@@ -60,8 +68,9 @@ public sealed class GitCli(TimeProvider? time = null) : IGit
         }
         finally
         {
-            Kill(git);
+            tree.Kill();
             await git.WaitForExitAsync(CancellationToken.None);
+            await tree.GoneAsync();
         }
     }
 
@@ -80,8 +89,9 @@ public sealed class GitCli(TimeProvider? time = null) : IGit
         try { git = Process.Start(start) ?? throw new InvalidOperationException("Could not start git."); }
         catch (Win32Exception error) when (error.NativeErrorCode == 2)
         { throw new CallFailed("Git isn't installed on this machine."); }
+        var tree = new ProcessTree(git);
         using (git)
-        using (linked.Token.Register(() => Kill(git)))
+        using (linked.Token.Register(tree.Kill))
         {
             var output = ReadBoundedAsync(git.StandardOutput.BaseStream);
             var error = ReadBoundedAsync(git.StandardError.BaseStream);
@@ -99,11 +109,12 @@ public sealed class GitCli(TimeProvider? time = null) : IGit
             { throw new CallFailed($"git {arguments[0]} took longer than {budget.TotalSeconds:0.#} seconds"); }
             finally
             {
-                Kill(git);
+                tree.Kill();
                 await git.WaitForExitAsync(CancellationToken.None);
                 try { await written; }
                 catch (OperationCanceledException) when (linked.IsCancellationRequested) { }
                 await Task.WhenAll(output, error);
+                await tree.GoneAsync();
             }
         }
     }
@@ -173,19 +184,6 @@ public sealed class GitCli(TimeProvider? time = null) : IGit
         catch (IOException)
         {
             // git stopped reading: it failed or was killed, and the read says why.
-        }
-    }
-
-    private static void Kill(Process git)
-    {
-        try
-        {
-            if (!git.HasExited)
-                git.Kill(entireProcessTree: true);
-        }
-        catch (InvalidOperationException)
-        {
-            // It had already exited.
         }
     }
 }

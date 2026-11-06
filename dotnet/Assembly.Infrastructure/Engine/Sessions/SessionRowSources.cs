@@ -4,6 +4,7 @@ using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Features.Chat.Rows.Context;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Remote;
@@ -214,6 +215,16 @@ internal sealed class SessionRowSources(IAppDatabase db, SessionStore sessions, 
                 false, stop.Token, _live.Machine, expectedOwner: _live.OwnerBinding, expectedMirror: _live);
             EnsureCurrent();
             return value.Deserialize(RowJsonContext.Rows.IReadOnlyListFileTouched) ?? throw new CallFailed("Invalid file context reply.");
+        }
+        public override async Task<SessionTokens> TokensAsync(CancellationToken ct)
+        {
+            EnsureCurrent();
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, Changed);
+            var args = new RowsFeature.SessionArgs(_session, OwnerSource);
+            var value = await _machine.CallAsync("rows", "tokens", JsonSerializer.SerializeToElement(args, RowJsonContext.Rows.SessionArgs),
+                false, stop.Token, _live.Machine, expectedOwner: _live.OwnerBinding, expectedMirror: _live);
+            EnsureCurrent();
+            return value.Deserialize(RowJsonContext.Rows.SessionTokens) ?? throw new CallFailed("Invalid token context reply.");
         }
         public override async Task<SessionAttachments> AttachmentsAsync(CancellationToken ct)
         {

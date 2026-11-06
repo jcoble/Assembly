@@ -19,6 +19,7 @@ fn file(path: &str, index: &str, worktree: &str) -> ChangedFile {
         original_path: None,
         index: index.into(),
         worktree: worktree.into(),
+        revision: None,
     }
 }
 // Pins: g9#3
@@ -65,14 +66,23 @@ fn several_files_say_how_many_of_each_and_keep_their_own_words() {
         ]
     );
 }
+/// The backend checks each sent path against the reviewed list, which names a rename by its new path only.
 #[test]
-fn a_rename_restores_both_paths_and_new_files_go_in_their_own_list() {
+fn a_rename_sends_its_new_name_and_new_files_go_in_their_own_list() {
     let mut renamed = file("new-name", "R", ".");
     renamed.original_path = Some("old-name".into());
     let args = DiscardRequest::Files(vec![renamed, file("n", "?", "?")]).args("s", false);
-    assert_eq!(args["tracked"], serde_json::json!(["new-name", "old-name"]));
+    assert_eq!(args["tracked"], serde_json::json!(["new-name"]));
     assert_eq!(args["untracked"], serde_json::json!(["n"]));
     assert_eq!(args["expected"].as_array().unwrap().len(), 2);
+}
+/// An edit since the read keeps the letters; only the revision sent back lets the backend refuse it.
+#[test]
+fn the_reviewed_revision_goes_back_with_the_discard() {
+    let mut edited = file("a", ".", "M");
+    edited.revision = Some("9:123".into());
+    let args = DiscardRequest::Files(vec![edited]).args("s", false);
+    assert_eq!(args["expected"][0]["revision"], "9:123");
 }
 // Pins: g9#3
 #[gpui::test]

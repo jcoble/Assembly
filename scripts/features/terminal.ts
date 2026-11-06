@@ -100,7 +100,8 @@ try {
   const kept = await host.call('read', { terminal, offset: 0 });
   bytes = Buffer.from(kept.data, 'base64');
   offset = kept.offset + bytes.length;
-  while (!bytes.toString().includes('terminal-ready')) await read();
+  // The whole line: a pty turns the printed \n into \r\n, so wait for the line end either way.
+  while (!/terminal-ready\r?\n/.test(bytes.toString())) await read();
   const replay = await host.call('read', { terminal, offset: 0 });
   assert.equal(replay.offset, 0);
   assert.equal(replay.end, offset);

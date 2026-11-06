@@ -86,6 +86,7 @@ pub struct SessionPane {
     revealed_at: Instant,
     /// A frame is asked for the reveal's next step.
     frame_asked: bool,
+    _reveal_tick: Option<Task<()>>,
     /// The backend clock's last second while a turn runs, which the "Working for" line counts by.
     now: Option<i64>,
     /// The run going now and when it started: its turn row's time, or when the pane first saw it, as the web does,
@@ -124,13 +125,14 @@ pub struct SessionPane {
     _writes: HashMap<String, Task<()>>,
     /// The newest seq told to the backend as read, for the open session.
     read_to: i64,
-    /// The selected session, followed once the pane is registered.
+    /// The selected session, followed from construction so this pane publishes its live facts when its session is
+    /// picked and clears them when another is (context/pane_live.rs).
     _selected: Option<Subscription>,
     /// Hears the machines list start, then follows it, for the open session's machine (pane_machine.rs).
     _machines_started: Subscription,
     _machines: Option<Subscription>,
-    /// The composer's events and the timeline's scrolling.
-    _heard: [Subscription; 3],
+    /// The composer's events and changes, the timeline's scrolling, the header and the pane's own release.
+    _heard: [Subscription; 5],
 }
 
 impl SessionPane {
@@ -286,12 +288,13 @@ impl SessionPane {
         }
         match change {
             // A reply, tool or card changing in place in a run that isn't folded changes no entry: only its row
-            // draws again, so a streaming reply never rebuilds the timeline.
+            // draws again, so a streaming reply never rebuilds the timeline. An ask also holds or frees the composer.
             Change::Updated(at)
-                if self.view.items[at]
-                    .run_id
-                    .as_ref()
-                    .is_none_or(|run| !self.folds.contains_key(run)) =>
+                if !matches!(self.view.items[at].kind, ItemKind::Ask { .. })
+                    && self.view.items[at]
+                        .run_id
+                        .as_ref()
+                        .is_none_or(|run| !self.folds.contains_key(run)) =>
             {
                 self.redraw(at, cx)
             }
@@ -391,6 +394,7 @@ impl SessionPane {
             composer.set_locked(lock, cx);
         });
         self.tell_read(running, cx);
+        self.publish_live(cx);
         cx.notify();
     }
 
@@ -415,6 +419,8 @@ mod actions;
 mod construct;
 #[path = "pane_expand.rs"]
 mod expand;
+#[path = "../context/pane_live.rs"]
+mod live;
 #[path = "pane_machine.rs"]
 mod machine;
 #[path = "pane_pages.rs"]
@@ -448,6 +454,12 @@ mod action_tests;
 #[cfg(test)]
 #[path = "tests/session_pane_activity_tests.rs"]
 mod activity_tests;
+#[cfg(test)]
+#[path = "../context/context_refusal_tests.rs"]
+mod context_refusal_tests;
+#[cfg(test)]
+#[path = "../context/live_facts_tests.rs"]
+mod live_facts_tests;
 #[cfg(test)]
 #[path = "tests/session_pane_real_switch_tests.rs"]
 mod real_switch_tests;

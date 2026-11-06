@@ -6,6 +6,7 @@ using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Rows;
+using Assembly.Infrastructure.Chat;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Remote;
 using Assembly.Infrastructure.Engine;
@@ -67,7 +68,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         _remoteMachine = new FakeMachine(null, sessions);
         var machines = new MachineSet(_remoteMachine);
         var calls = new SocketDispatcher(_remoteDb.Writer, topics, TimeProvider.System, NullLogger.Instance);
-        new RowsFeature(_remoteHub, _remoteStore, sessions, machines).Register(calls);
+        new RowsFeature(_remoteHub, _remoteStore, sessions, machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)).Register(calls);
         var answers = new Assembly.Tests.Infrastructure.Socket.AnswerDoor
         {
             Owner = OwnerDoor(sessions, machines, topics),

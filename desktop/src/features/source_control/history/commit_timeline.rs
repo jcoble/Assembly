@@ -173,6 +173,8 @@ impl CommitTimeline {
             line: None,
             column: None,
             pinned: false,
+            outside: None,
+            whole: None,
         })
     }
     /// The history's own commits, for the toolbar's pickers and counts.

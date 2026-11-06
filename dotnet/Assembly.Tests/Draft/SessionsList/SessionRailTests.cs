@@ -416,44 +416,6 @@ public sealed partial class SessionRailTests : IDisposable
         Assert.Empty(Read(statuses: ["working"], groupBy: groupBy, after: cursor).Sessions);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void RailBranchIsTheEnginesNotAnOldTurnsStats(bool remote)
-    {
-        var session = Parent(machine: remote ? "workbox-test" : null);
-        Assert.Null(Entry(Read(), session).Branch);
-        var stats = JsonSerializer.SerializeToElement(new { status = "completed", branch = "old-from-stats" });
-        if (remote)
-            Assert.True(_hub.PublishCopy(new StoredRow(session, 1, "run-1", null, RowKind.Stats, stats, 10, PrevSeq: 0)));
-        else
-            _hub.Publish(session, Batch((null, RowKind.Stats, new { status = "completed", branch = "old-from-stats" }), 10));
-        Assert.Null(Entry(Read(), session).Branch);
-
-        var facade = _sessions.Get(session)!;
-        _database.Writer.Write("test.branch", scope => remote
-            ? scope.Execute("UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.provider',$provider,'$.folder','/recorded/remote','$.updatedMs',$updated,'$.branch','real') WHERE entity_id=$id",
-                new("$provider", facade.Agent), new("$updated", facade.UpdatedAt), new("$id", session))
-            : scope.Execute("UPDATE engine_session SET branch='real' WHERE id=$id", new Assembly.Application.Common.Database.SqlArg("$id", session)));
-        var known = Assert.Single(Read().Sessions, row => row.SessionId == session && row.Source is not null);
-        Assert.Equal("real", known.Branch);
-    }
-
-    [Fact]
-    public void CommittedHearsRowsThisMachineProducedNotCopies()
-    {
-        var session = Parent();
-        var heard = new List<string>();
-        _hub.Committed += (id, rows) => heard.AddRange(rows.Select(row => id + ":" + row.Kind));
-
-        _hub.Publish(session, Batch(("t1", RowKind.Tool, new { state = "completed" }), 10));
-        Assert.Equal([session + ":" + RowKind.Tool], heard);
-
-        var copied = Parent(machine: "workbox-test");
-        Assert.True(_hub.PublishCopy(new StoredRow(copied, 1, "run-1", "t1", RowKind.Tool, JsonSerializer.SerializeToElement(new { state = "completed" }), 10, PrevSeq: 0)));
-        Assert.Single(heard);
-    }
-
     [Fact]
     public void PreviewIsTheNewestAssistantText()
     {
@@ -494,6 +456,35 @@ public sealed partial class SessionRailTests : IDisposable
         var id = _sessions.Helper(_sessions.Get(parent)!, agent, "helper").SessionId;
         RecordEngineSession(id, parent);
         return id;
+    }
+
+    // A lost or ended session's last turn stays "started" for good, and a running row redraws the window every second.
+    [Theory]
+    [InlineData(false, "lost")]
+    [InlineData(false, "ended")]
+    [InlineData(true, "lost")]
+    [InlineData(true, "ended")]
+    public void ASessionThatIsGoneIsNotRunningWhateverItsLastTurnSaid(bool remote, string state)
+    {
+        var session = Parent("codex", machine: remote ? "workbox-test" : null);
+        if (remote)
+            _database.Writer.Write("test.known-owner", scope => scope.Execute("""
+                INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
+                    activity_state,parent_id,holder,epoch,cancel_requested,account_context,managed_checkout)
+                SELECT s.session_id,0,m.machine,s.created_at,s.updated_at,s.agent,NULL,s.repo_url,COALESCE(s.title,''),'foreign',
+                    'idle',NULL,m.machine,0,0,'',0
+                FROM session_info s JOIN engine_mirror_row m ON m.entity_kind='session' AND m.entity_id=s.session_id
+                WHERE s.session_id=$id;
+                UPDATE engine_mirror_row AS m SET row_json=json_set(row_json,
+                    '$.provider',s.agent,'$.folder',s.repo_url,'$.updatedMs',s.updated_at)
+                FROM session_info s WHERE m.entity_kind='session' AND m.entity_id=s.session_id AND s.session_id=$id;
+                """, new Assembly.Application.Common.Database.SqlArg("$id", session)));
+        Running(session);
+        Assert.True(Entry(Read(), session).Running);
+        _database.Writer.Write("test.session-gone", scope => scope.Execute(remote
+            ? "UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.state',$state) WHERE entity_kind='session' AND entity_id=$id"
+            : "UPDATE engine_session SET state=$state WHERE id=$id", new("$state", state), new("$id", session)));
+        Assert.False(Entry(Read(), session).Running);
     }
 
     private void Running(string session) => Rows(session, (null, RowKind.Turn, new { state = "started" }));

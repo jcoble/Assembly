@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use super::document_store::{DocumentKey, DocumentSnapshot, DocumentStore, DocumentView};
 use super::editor_surface::EditorSurface;
 use super::entry::{FileChunk, FileOwnership};
+use super::file_history::FileHistory;
 use super::file_save::{ConfirmedFileSave, FileSaveController, SaveState};
 
 #[path = "file_view_close.rs"]
@@ -15,6 +16,10 @@ mod closing;
 mod conflict;
 #[path = "file_view_editor.rs"]
 mod editor;
+#[path = "file_view_lock.rs"]
+mod lock;
+#[path = "file_view_outside.rs"]
+mod outside;
 #[path = "file_view_panel.rs"]
 mod panel;
 #[path = "file_view_save.rs"]
@@ -22,12 +27,16 @@ mod saving;
 #[path = "file_view_workspace.rs"]
 mod workspace;
 use super::file_text::FileText;
-use crate::core::intents::open_file::OpenFile;
+use crate::core::engine::SessionKey;
+use crate::core::intents::open_file::{OpenFile, names_its_own_place};
+use crate::core::navigation::{file_link, file_link_whole};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::preferences::Preferences;
 use crate::core::ui::center_panes::CenterPanes;
+pub(crate) use outside::{outside_document, saved_alias};
 pub use workspace::LegacyFileCapture;
+pub(crate) use workspace::{WorkspaceTab, workspace_document};
 
 #[cfg(test)]
 #[path = "file_view_tests.rs"]
@@ -41,6 +50,10 @@ pub struct FileView {
     focus: FocusHandle,
     pub(super) session: String,
     pub(super) path: String,
+    /// Set for a file opened by machine and real path rather than through a session.
+    outside: Option<outside::Outside>,
+    /// Edits and saves wait for the person's say-so; outside files open locked.
+    locked: bool,
     pub(super) text: FileText,
     /// The part being read; dropping it cancels its call.
     pub(super) loading: Option<Task<()>>,
@@ -61,7 +74,9 @@ pub struct FileView {
     saving: Option<Task<()>>,
     upload: Option<String>,
     last_save: Option<ConfirmedFileSave>,
+    history: Option<Entity<FileHistory>>,
     comparison: Option<Entity<super::file_comparison::FileComparison>>,
+    history_shown: bool,
     prompting: Option<Task<()>>,
     reload_version: Option<u64>,
     closing_window: Option<AnyWindowHandle>,
@@ -111,15 +126,37 @@ impl FileView {
                 PanelInfo::Panel(saved) => saved,
                 _ => Value::Null,
             };
-            let text = |key: &str| saved[key].as_str().unwrap_or_default().to_string();
-            let (session, path) = (text("session"), text("path"));
-            let view = cx.new(|cx| FileView::new(session.clone(), path.clone(), cx));
-            CenterPanes::remember(key(&session, &path), PanelId::from(view.entity_id()), cx);
+            let (view, alias) = FileView::from_saved(&saved, cx);
+            CenterPanes::remember(alias, PanelId::from(view.entity_id()), cx);
             panel_handle(view)
         });
         // Global, so a link is heard wherever focus is and with no window active. It's the intent's only listener.
         cx.on_action(|intent: &OpenFile, cx| {
             let intent = intent.clone();
+            // A link whose line suffix was read opens by its whole name when that file exists, which is asked first.
+            if intent.whole.is_some() {
+                return file_link_whole::open_whole_first(intent, cx);
+            }
+            // An absolute or `~` path goes to the one resolver, which opens it as a session file or an outside one. A
+            // session that came with no source keeps its session, and the resolver finds its machine.
+            if intent.outside.is_none() && names_its_own_place(&intent.path) {
+                let jump = (intent.line, intent.column);
+                let Some(source) = intent.expected_source else {
+                    if intent.session_id.is_empty() {
+                        return file_link::open(intent.path, None, None, jump, cx);
+                    }
+                    return file_link::open_unsourced(intent.path, intent.session_id, jump, cx);
+                };
+                let machine = source.route_machine.clone();
+                let from = (!intent.session_id.is_empty()).then(|| {
+                    let key = SessionKey {
+                        machine: source.machine.clone(),
+                        id: intent.session_id.clone(),
+                    };
+                    (key, source)
+                });
+                return file_link::open(intent.path, machine, from, jump, cx);
+            }
             let Some(handle) = cx
                 .active_window()
                 .or_else(|| cx.windows().into_iter().next())
@@ -128,6 +165,10 @@ impl FileView {
             };
             cx.defer(move |cx| {
                 let _ = handle.update(cx, |_, window, cx| {
+                    if let Some(file) = intent.outside {
+                        let jump = (intent.line, intent.column);
+                        return Self::open_outside(file, jump, intent.pinned, window, cx);
+                    }
                     Self::open_at(
                         intent.session_id,
                         intent.path,
@@ -147,6 +188,8 @@ impl FileView {
             focus: cx.focus_handle(),
             session,
             path,
+            outside: None,
+            locked: false,
             text: FileText::default(),
             loading: None,
             started: false,
@@ -166,7 +209,9 @@ impl FileView {
             saving: None,
             upload: None,
             last_save: None,
+            history: None,
             comparison: None,
+            history_shown: false,
             prompting: None,
             reload_version: None,
             closing_window: None,
@@ -181,8 +226,7 @@ impl FileView {
             self.text.failed("The backend isn't running.".into());
             return;
         };
-        let args = json!({ "session": self.session, "path": self.path, "offset": offset,
-            "revision": self.text.revision(), "expectedSource": self.source, "expectedOwner": self.owner });
+        let args = self.file_args(json!({ "offset": offset, "revision": self.text.revision() }));
         let call = socket
             .read(cx)
             .call::<FileChunk>("files", "read", args, None);
@@ -211,21 +255,25 @@ impl FileView {
     }
 
     fn load_owner(&mut self, cx: &mut Context<Self>) {
-        if crate::core::state::workspace_panes::WorkspacePanes::awaiting_key(cx) {
+        // An outside file needs no session's checkout; its own expected owner stands in for the workspace checks.
+        if self.outside.is_none()
+            && crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::try_global(
+                cx,
+            )
+            .is_some()
+            && crate::core::state::workspace_panes::WorkspacePanes::key(cx).is_none()
+        {
             self.text
-                .failed("This session's workspace is still opening.".into());
+                .failed("This transcript has no recorded checkout to open files from.".into());
             return;
         }
         let Some(socket) = SocketClient::try_global(cx) else {
             self.text.failed("The backend isn't running.".into());
             return;
         };
-        let call = socket.read(cx).call::<FileOwnership>(
-            "files",
-            "owner",
-            json!({ "session": self.session, "expectedSource": self.source, "expectedOwner": self.owner }),
-            None,
-        );
+        let call = socket
+            .read(cx)
+            .call::<FileOwnership>("files", "owner", self.owner_args(), None);
         self.loading = Some(cx.spawn(async move |view, cx| {
             let answer = call.await;
             let _ = view.update(cx, |view, cx| {
@@ -235,7 +283,7 @@ impl FileView {
                 }
                 match answer {
                     Outcome::Ok(owner) => {
-                        if view.expected_workspace.as_ref().is_some_and(|key| {
+                        if view.outside.is_none() && view.expected_workspace.as_ref().is_some_and(|key| {
                             key.session_id != view.session
                                 || key.machine != owner.machine
                                 || key.checkout_root != owner.checkout_root
@@ -258,6 +306,9 @@ impl FileView {
                             );
                             cx.notify();
                             return;
+                        }
+                        if let Some(outside) = &mut view.outside {
+                            outside.engine = Some(owner.machine.clone());
                         }
                         view.owner = Some(owner);
                         // A person's open was refused a save while its owner was unknown, so it's retried now.
@@ -293,7 +344,6 @@ impl FileView {
         // A restore runs inside the coordinator's own update, for the checkout it has already validated; its current
         // target is still the session being left, so only a person's open asks it.
         if !crate::core::state::workspace_panes::WorkspacePanes::is_restoring(cx)
-            && !crate::features::files::files_pane::FilesPane::lists(&session, cx)
             && let Some(coordinator) =
                 crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::try_global(
                     cx,
@@ -332,25 +382,61 @@ impl FileView {
                     view.editor_error = Some("The file was opened from a different source. Its existing draft remains unchanged.".into());
                     cx.notify();return;
                 }
-                view.pinned |= pinned;
-                if let Some(line) = line {
-                    if let Some(editor) = &mut view.editor {
-                        editor.jump(line, column.unwrap_or(1), cx);
-                    } else {
-                        view.jump = Some((line, column.unwrap_or(1)));
-                    }
-                }
-                cx.notify();
+                view.arrive(pinned, (line, column), cx);
             });
         }
     }
 
+    pub fn open_history(
+        session: String,
+        path: String,
+        source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let alias = key(&session, &path);
+        if let Some(id) = CenterPanes::open(alias, window, cx, |_, cx| {
+            cx.new(|cx| {
+                let mut view = Self::new(session, path, cx);
+                view.source = source.clone();
+                view
+            })
+        }) && let Some(view) = Self::panel(id, cx)
+        {
+            view.update(cx, |view, cx| {
+                view.pinned = true;
+                if !view.history_shown {
+                    view.toggle_history(cx);
+                }
+            });
+        }
+    }
+
+    fn toggle_history(&mut self, cx: &mut Context<Self>) {
+        if !self.has_history() {
+            return;
+        }
+        self.history_shown = !self.history_shown;
+        if self.history.is_none() {
+            self.history = Some(cx.new(|_| {
+                FileHistory::new(self.session.clone(), self.path.clone(), self.source.clone())
+            }));
+        }
+        if let Some(history) = &self.history {
+            history.update(cx, |history, cx| {
+                history.set_active(self.active && self.history_shown, cx)
+            });
+        }
+        cx.notify();
+    }
+
     pub(crate) fn matches_path(&self, machine: &str, root: &str, path: &str) -> bool {
-        self.document.as_ref().is_some_and(|key| {
-            key.machine == machine
-                && key.checkout_root == root
-                && (key.path == path || key.path.starts_with(&(path.to_string() + "/")))
-        })
+        self.outside.is_none()
+            && self.document.as_ref().is_some_and(|key| {
+                key.machine == machine
+                    && key.checkout_root == root
+                    && (key.path == path || key.path.starts_with(&(path.to_string() + "/")))
+            })
     }
 
     pub(crate) fn rename_ready(&self) -> bool {
@@ -360,14 +446,11 @@ impl FileView {
     pub(crate) fn renamed_keys(&self, source: &str, destination: &str) -> (String, String) {
         let key = self.document.as_ref().expect("matching document");
         let path = format!("{}{}", destination, &self.path[source.len()..]);
-        (
-            self::key(&self.session, &path),
-            format!(
-                "document:{}",
-                serde_json::to_string(&(&key.machine, &key.checkout_root, &path))
-                    .expect("document key")
-            ),
-        )
+        let renamed = DocumentKey {
+            path: path.clone(),
+            ..key.clone()
+        };
+        (self::key(&self.session, &path), renamed.identity())
     }
 
     pub(crate) fn renamed(
@@ -380,22 +463,14 @@ impl FileView {
         self.loading = None;
         self.release_read(cx);
         self.comparison = None;
-        self.path = format!("{}{}", destination, &self.path[source.len()..]);
-        if self.active {
-            crate::core::state::active_file::ActiveFile::set(
-                &self.session,
-                &self.path,
-                self.source.clone(),
-                cx,
-            );
+        if let Some(history) = self.history.take() {
+            history.update(cx, |history, cx| history.set_active(false, cx));
         }
+        self.history_shown = false;
+        self.path = format!("{}{}", destination, &self.path[source.len()..]);
         let key = self.document.as_mut().expect("matching document");
         key.path = self.path.clone();
-        let real = format!(
-            "document:{}",
-            serde_json::to_string(&(&key.machine, &key.checkout_root, &key.path))
-                .expect("document key")
-        );
+        let real = key.identity();
         let snapshot = cx
             .global::<DocumentStore>()
             .snapshot(key)
@@ -411,15 +486,14 @@ impl FileView {
 
     fn release_read(&mut self, cx: &mut Context<Self>) {
         if let (Some(socket), Some(revision)) = (SocketClient::try_bulk(cx), self.text.revision()) {
+            // A target's release names the owner it was read as; a session's, its relative path.
+            let args = match &self.outside {
+                Some(_) => self.file_args(json!({ "revision": revision })),
+                None => json!({ "session": self.session, "path": self.path, "revision": revision }),
+            };
             socket
                 .read(cx)
-                .call::<Value>(
-                    "files",
-                    "release",
-                    json!({ "session": self.session, "path": self.path,
-                "revision": revision }),
-                    None,
-                )
+                .call::<Value>("files", "release", args, None)
                 .ignore_reply();
         }
     }

@@ -1,5 +1,5 @@
 //! Pure old-layout cutover preflight. The caller must hold confirmed canonical saves and fresh live captures.
-use crate::features::files::file_view::LegacyFileCapture;
+use crate::features::files::file_view::{FileView, LegacyFileCapture, saved_alias};
 use gpui_kit::component::dock::{DockAreaState, DockState, PanelInfo, PanelState};
 use std::collections::HashSet;
 
@@ -9,24 +9,40 @@ pub(super) fn prune(
 ) -> Result<DockAreaState, String> {
     let refs: Vec<_> = captures
         .iter()
-        .map(|capture| (capture.legacy_session.as_str(), capture.path.as_str()))
+        .map(|capture| FileView::session_tab_key(&capture.legacy_session, &capture.path))
         .collect();
-    prune_refs(state, &refs)
+    // Old layouts hold session files only; an outside file opened with no workspace isn't kept.
+    prune_refs(&strip_outside(state)?, &refs)
 }
-pub(super) fn prune_refs(
-    state: &DockAreaState,
-    refs: &[(&str, &str)],
-) -> Result<DockAreaState, String> {
-    let confirmed: HashSet<_> = refs.iter().copied().collect();
+/// Drops the File panes whose tab keys are confirmed in `refs`, failing on any other File pane.
+pub(super) fn prune_refs(state: &DockAreaState, refs: &[String]) -> Result<DockAreaState, String> {
+    let confirmed: HashSet<_> = refs.iter().map(String::as_str).collect();
     if confirmed.len() != refs.len() {
         return Err("Duplicate file references prevent layout migration.".into());
     }
     let mut seen = HashSet::new();
-    let mut panel = |state: &PanelState| {
-        prune_panel(state, &confirmed, &mut seen)?.ok_or_else(|| {
-            "An old File occupies a dock root; its metadata was preserved.".to_string()
-        })
-    };
+    rebuild(
+        state,
+        &mut |state| confirmed_file(state, &confirmed, &mut seen),
+        "An old File occupies a dock root; its metadata was preserved.",
+    )
+}
+/// Drops the outside File panes, which belong to no workspace when none is open, so they aren't saved.
+pub(super) fn strip_outside(state: &DockAreaState) -> Result<DockAreaState, String> {
+    rebuild(
+        state,
+        &mut |state| Ok(matches!(&state.info, PanelInfo::Panel(info) if info["outside"] == true)),
+        "An outside file fills a whole dock, so the layout wasn't saved.",
+    )
+}
+/// The layout without the File panes `drop` says to drop. `drop` sees every File pane.
+fn rebuild(
+    state: &DockAreaState,
+    drop: &mut dyn FnMut(&PanelState) -> Result<bool, String>,
+    at_root: &str,
+) -> Result<DockAreaState, String> {
+    let mut panel =
+        |state: &PanelState| prune_panel(state, drop)?.ok_or_else(|| at_root.to_string());
     let center = panel(&state.center)?;
     let mut dock = |state: &Option<DockState>| -> Result<Option<DockState>, String> {
         state
@@ -49,44 +65,61 @@ pub(super) fn prune_refs(
         bottom_dock: dock(&state.bottom_dock)?,
     })
 }
-fn prune_panel(
+/// Whether a File pane is a confirmed, once-seen tab: `Ok(true)` drops it.
+fn confirmed_file(
     state: &PanelState,
-    confirmed: &HashSet<(&str, &str)>,
-    seen: &mut HashSet<(String, String)>,
-) -> Result<Option<PanelState>, String> {
-    if state.panel_name == "File" {
-        let PanelInfo::Panel(info) = &state.info else {
-            return Err("An old File has invalid metadata; the saved layout was preserved.".into());
-        };
-        let fields = info
-            .as_object()
-            .ok_or("An old File has no metadata; the saved layout was preserved.")?;
-        if !state.children.is_empty()
-            || fields
-                .keys()
-                .any(|key| !matches!(key.as_str(), "session" | "path"))
+    confirmed: &HashSet<&str>,
+    seen: &mut HashSet<String>,
+) -> Result<bool, String> {
+    let PanelInfo::Panel(info) = &state.info else {
+        return Err("An old File has invalid metadata; the saved layout was preserved.".into());
+    };
+    let fields = info
+        .as_object()
+        .ok_or("An old File has no metadata; the saved layout was preserved.")?;
+    if !state.children.is_empty() {
+        return Err(
+            "An old File contains additional unmigrated metadata; the saved layout was preserved."
+                .into(),
+        );
+    }
+    if fields.get("outside").is_none() {
+        if fields
+            .keys()
+            .any(|key| !matches!(key.as_str(), "session" | "path"))
         {
             return Err("An old File contains additional unmigrated metadata; the saved layout was preserved.".into());
         }
-        let session = fields
+        fields
             .get("session")
             .and_then(serde_json::Value::as_str)
             .ok_or("An old File has no session reference.")?;
-        let path = fields
+        fields
             .get("path")
             .and_then(serde_json::Value::as_str)
             .ok_or("An old File has no path reference.")?;
-        if !confirmed.contains(&(session, path)) || !seen.insert((session.into(), path.into())) {
-            return Err(
-                "An old File is unconfirmed or duplicated; the saved layout was preserved.".into(),
-            );
-        }
-        return Ok(None);
+    }
+    let alias = saved_alias(fields).ok_or(
+        "An old File contains additional unmigrated metadata; the saved layout was preserved.",
+    )?;
+    if !confirmed.contains(alias.as_str()) || !seen.insert(alias) {
+        return Err(
+            "An old File is unconfirmed or duplicated; the saved layout was preserved.".into(),
+        );
+    }
+    Ok(true)
+}
+fn prune_panel(
+    state: &PanelState,
+    drop: &mut dyn FnMut(&PanelState) -> Result<bool, String>,
+) -> Result<Option<PanelState>, String> {
+    if state.panel_name == "File" {
+        return Ok((!drop(state)?).then(|| state.clone()));
     }
     let mut retained = Vec::new();
     let mut children = Vec::new();
     for (index, child) in state.children.iter().enumerate() {
-        if let Some(child) = prune_panel(child, confirmed, seen)? {
+        if let Some(child) = prune_panel(child, drop)? {
             retained.push(index);
             children.push(child);
         }

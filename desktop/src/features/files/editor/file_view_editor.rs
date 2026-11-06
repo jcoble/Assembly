@@ -6,6 +6,24 @@ use gpui_kit::component::input::InputEvent;
 use gpui_kit::*;
 
 impl FileView {
+    /// An open reached this tab: it's pinned when asked, and goes to the line when given.
+    pub(super) fn arrive(
+        &mut self,
+        pinned: bool,
+        (line, column): (Option<u32>, Option<u32>),
+        cx: &mut Context<Self>,
+    ) {
+        self.pinned |= pinned;
+        if let Some(line) = line {
+            if let Some(editor) = &mut self.editor {
+                editor.jump(line, column.unwrap_or(1), cx);
+            } else {
+                self.jump = Some((line, column.unwrap_or(1)));
+            }
+        }
+        cx.notify();
+    }
+
     pub(super) fn bind_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.editor.is_some()
             || !self.active
@@ -36,7 +54,7 @@ impl FileView {
         let key = DocumentKey {
             machine: owner.machine.clone(),
             checkout_root: owner.checkout_root.clone(),
-            path: self.path.clone(),
+            path: self.document_path(owner),
         };
         if !cx.has_global::<DocumentStore>() {
             cx.set_global(DocumentStore::default());
@@ -67,27 +85,21 @@ impl FileView {
             .snapshot(&key)
             .expect("opened document");
         let current = PanelId::from(cx.entity_id());
-        let document_key = format!(
-            "document:{}",
-            serde_json::to_string(&(&key.machine, &key.checkout_root, &key.path))
-                .expect("document key")
-        );
-        let claimed = CenterPanes::claim_file(
-            document_key,
-            super::key(&self.session, &self.path),
-            current,
-            cx,
-        );
+        let claimed = CenterPanes::claim_file(key.identity(), self.tab_key(), current, cx);
         if claimed != current {
             if let Some(existing) = Self::panel(claimed, cx) {
                 let incoming = cx.entity();
                 let jump = self.jump.take();
                 let pinned = self.pinned;
+                let history_shown = self.history_shown;
                 let handle = window.window_handle();
                 cx.defer(move |cx| {
                     let _ = handle.update(cx, |_, window, cx| {
                         existing.update(cx, |view, cx| {
                             view.pinned |= pinned;
+                            if history_shown && !view.history_shown {
+                                view.toggle_history(cx);
+                            }
                             if let Some((line, column)) = jump {
                                 if let Some(editor) = &mut view.editor {
                                     editor.jump(line, column, cx);

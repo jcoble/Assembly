@@ -8,8 +8,9 @@ pub mod frame;
 pub mod layout_store;
 pub mod motion_skin;
 pub mod placeholder_pane;
-mod retired_panels;
+mod retired_board;
 mod side_tabs;
+mod terminal_toggle;
 pub mod top_bar;
 mod top_tabs;
 pub mod utility_strip;
@@ -23,3 +24,5 @@ mod frame_limits_tests;
 mod frame_tests;
 #[cfg(test)]
 mod side_tabs_tests;
+#[cfg(test)]
+mod terminal_toggle_tests;

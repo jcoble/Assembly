@@ -124,3 +124,34 @@ fn split_size_entries_follow_retained_children_and_corrupt_sizes_refuse_the_tran
     assert!(prune(&original, &[captured()]).is_err());
     assert_eq!(original, before);
 }
+fn outside_file() -> PanelState {
+    PanelState {
+        panel_name: "File".into(),
+        children: vec![],
+        info: PanelInfo::panel(json!({"outside": true, "machine": "box", "path": "/etc/hosts"})),
+    }
+}
+#[test]
+fn an_outside_file_is_stripped_or_pruned_by_its_tab_key_and_never_called_an_old_file() {
+    let mut original = layout();
+    original.center.children.push(outside_file());
+    let stripped = strip_outside(&original).unwrap();
+    assert_eq!(stripped.center.children.len(), 3);
+    assert_eq!(stripped.center.children[1].panel_name, "File");
+    let alias = FileView::session_tab_key("old-alias", "src/λ.rs");
+    let PanelInfo::Panel(fields) = outside_file().info else {
+        unreachable!()
+    };
+    let outside = saved_alias(fields.as_object().unwrap()).unwrap();
+    let pruned = prune_refs(&original, &[alias, outside]).unwrap();
+    assert_eq!(pruned.center.children.len(), 2);
+
+    let root = DockAreaState {
+        center: outside_file(),
+        ..layout()
+    };
+    assert_eq!(
+        strip_outside(&root).unwrap_err(),
+        "An outside file fills a whole dock, so the layout wasn't saved."
+    );
+}

@@ -10,6 +10,9 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Color, Processor};
 
+use super::terminal_links::url_at;
+use crate::core::navigation::external_urls::file_url_address;
+
 pub struct TerminalGrid {
     term: Term<VoidListener>,
     parser: Processor,
@@ -28,6 +31,20 @@ pub struct GridCell {
     pub wide: bool,
     /// Inside the mouse selection.
     pub selected: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strike: bool,
+    pub dim: bool,
+    pub hidden: bool,
+    /// Combining marks that stay with this cell's character.
+    pub marks: Vec<char>,
+}
+
+/// A link under the mouse: where it shows, as (screen line, start column, end column), and where it goes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HoveredLink {
+    pub line_spans: Vec<(usize, usize, usize)>,
+    pub url: String,
 }
 
 /// The lines kept above the screen to scroll back to, as the old app's terminal kept.
@@ -75,13 +92,21 @@ impl TerminalGrid {
         self.term.resize(Cells(cols, rows));
     }
 
-    /// Moves the view `lines` back into the history, or forward when negative; it stops at either end.
-    pub fn scroll(&mut self, lines: i32) {
-        self.term.scroll_display(Scroll::Delta(lines));
+    /// Moves the view `lines` back into the history, or forward when negative; it stops at either end. Says whether
+    /// the view moved.
+    pub fn scroll(&mut self, lines: i32) -> bool {
+        self.moved(Scroll::Delta(lines))
     }
 
-    pub fn scroll_to_bottom(&mut self) {
-        self.term.scroll_display(Scroll::Bottom);
+    /// Says whether the view moved.
+    pub fn scroll_to_bottom(&mut self) -> bool {
+        self.moved(Scroll::Bottom)
+    }
+
+    fn moved(&mut self, scroll: Scroll) -> bool {
+        let offset = self.display_offset();
+        self.term.scroll_display(scroll);
+        self.display_offset() != offset
     }
 
     /// A full-screen program (an editor, a pager) shows its own screen with no history: the wheel goes to it as
@@ -102,6 +127,112 @@ impl TerminalGrid {
         if let Some(selection) = &mut self.term.selection {
             selection.update(point, side);
         }
+    }
+
+    /// Selects the word at a cell of the screen as shown, and says whether there was one; a blank clears the
+    /// selection. A word is ASCII letters, digits, `_` and `-`, on that row only, as the old renderer's
+    /// `getWordAtCell` (`/[\w-]/`).
+    pub fn select_word(&mut self, column: usize, line: usize) -> bool {
+        let (point, _) = self.point(column, line, false);
+        let row = &self.term.grid()[point.line];
+        let word = |column: usize| {
+            let c = row[Column(column)].c;
+            c.is_ascii_alphanumeric() || c == '_' || c == '-'
+        };
+        if column >= self.term.columns() || !word(column) {
+            self.clear_selection();
+            return false;
+        }
+        let start = (0..column).rev().take_while(|&at| word(at)).last();
+        let end = (column + 1..self.term.columns())
+            .take_while(|&at| word(at))
+            .last();
+        let at = |column| Point::new(point.line, Column(column));
+        let mut selection = Selection::new(
+            SelectionType::Simple,
+            at(start.unwrap_or(column)),
+            Side::Left,
+        );
+        selection.update(at(end.unwrap_or(column)), Side::Right);
+        self.term.selection = Some(selection);
+        true
+    }
+
+    /// Says whether there was a selection to clear.
+    pub fn clear_selection(&mut self) -> bool {
+        self.term.selection.take().is_some()
+    }
+
+    /// The lines kept above the screen.
+    pub fn history_size(&self) -> usize {
+        self.term.grid().history_size()
+    }
+
+    /// How many lines back the view is.
+    pub fn display_offset(&self) -> usize {
+        self.term.grid().display_offset()
+    }
+
+    /// Moves the view to `offset` lines back, stopping at either end.
+    pub fn scroll_to_offset(&mut self, offset: usize) {
+        let by = offset as i32 - self.display_offset() as i32;
+        self.scroll(by);
+    }
+
+    /// The link at a cell of the screen as shown: an OSC 8 link, its cells joined across rows, or else a URL printed
+    /// on that row. A `file:` OSC 8 link keeps its URL, which the click turns into the app's file link; one that link
+    /// can't carry gives none.
+    pub fn link_at(&self, column: usize, line: usize) -> Option<HoveredLink> {
+        let (columns, lines) = (self.term.columns(), self.term.screen_lines());
+        if column >= columns || line >= lines {
+            return None;
+        }
+        let offset = self.display_offset() as i32;
+        let grid = self.term.grid();
+        let cell =
+            |index: usize| &grid[Line((index / columns) as i32 - offset)][Column(index % columns)];
+        let at = line * columns + column;
+        if let Some(hyperlink) = cell(at).hyperlink() {
+            if hyperlink
+                .uri()
+                .get(..5)
+                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:"))
+                && file_url_address(hyperlink.uri(), None).is_none()
+            {
+                return None;
+            }
+            let same = |index: &usize| cell(*index).hyperlink().as_ref() == Some(&hyperlink);
+            let first = (0..at).rev().take_while(same).last().unwrap_or(at);
+            let last = (at..columns * lines).take_while(same).last().unwrap_or(at);
+            let line_spans = (first / columns..=last / columns)
+                .map(|row| {
+                    let start = if row == first / columns {
+                        first % columns
+                    } else {
+                        0
+                    };
+                    let end = if row == last / columns {
+                        last % columns + 1
+                    } else {
+                        columns
+                    };
+                    (row, start, end)
+                })
+                .collect();
+            let url = hyperlink.uri().to_string();
+            return Some(HoveredLink { line_spans, url });
+        }
+        let row: String = (0..columns)
+            .map(|at| match cell(line * columns + at).c {
+                c if c < ' ' => ' ',
+                c => c,
+            })
+            .collect();
+        let (start, end, url) = url_at(&row, column)?;
+        Some(HoveredLink {
+            line_spans: vec![(line, start, end)],
+            url,
+        })
     }
 
     /// The selected text, lines joined by line breaks; none when nothing is selected.
@@ -151,6 +282,12 @@ impl TerminalGrid {
                     bold: cell.flags.contains(Flags::BOLD),
                     wide: cell.flags.contains(Flags::WIDE_CHAR),
                     selected: selection.is_some_and(|range| range.contains(cell.point)),
+                    italic: cell.flags.contains(Flags::ITALIC),
+                    underline: cell.flags.intersects(Flags::ALL_UNDERLINES),
+                    strike: cell.flags.contains(Flags::STRIKEOUT),
+                    dim: cell.flags.contains(Flags::DIM),
+                    hidden: cell.flags.contains(Flags::HIDDEN),
+                    marks: cell.zerowidth().map(<[char]>::to_vec).unwrap_or_default(),
                 }
             })
             .collect()

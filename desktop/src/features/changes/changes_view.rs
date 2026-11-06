@@ -64,6 +64,8 @@ fn open_line(
             line,
             column: None,
             pinned: false,
+            outside: None,
+            whole: None,
         }),
         cx,
     );

@@ -122,7 +122,7 @@ public sealed partial class RemoteMachineTests
     {
         // The tunnel's command exits each time this file appears.
         var exit = Path.Combine(Directory.CreateTempSubdirectory("assembly-tunnel-").FullName, "exit");
-        await using var tunnel = new RemoteTunnel("/bin/sh", ["-c", $"while [ ! -e '{exit}' ]; do sleep 0.1; done; rm '{exit}'"], TextWriter.Null);
+        await using var tunnel = RemoteTunnel.Wrapped(["/bin/sh", "-c", $"while [ ! -e '{exit}' ]; do sleep 0.1; done; rm '{exit}'"], TextWriter.Null);
         await using var desktop = await DesktopBackend.StartAsync(Directory.CreateTempSubdirectory("assembly-desktop-").FullName, DesktopToken, 0,
             _desktopLauncher, _log, new RemoteConfig(Box, _box.Address, BoxToken), tunnel);
         using var socket = new ClientWebSocket();

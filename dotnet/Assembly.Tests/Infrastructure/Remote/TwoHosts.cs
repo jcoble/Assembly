@@ -46,6 +46,8 @@ internal sealed class TwoHosts : IAsyncDisposable
         public SocketEndpoint TerminalEndpoint { get; private set; } = null!;
         public int TerminalConnections;
         public Func<Task>? OpeningTerminal { get; set; }
+        /// <summary>Later terminal connections are welcomed by this engine instead of the host's own.</summary>
+        public string? TerminalIdentity { get; set; }
         private bool _running;
         public int MachineCalls;
         public event Action? RetentionCommitted;
@@ -134,6 +136,11 @@ internal sealed class TwoHosts : IAsyncDisposable
             {
                 Interlocked.Increment(ref TerminalConnections);
                 if (OpeningTerminal is { } opening) await opening().WaitAsync(context.RequestAborted);
+                if (TerminalIdentity is { } identity)
+                {
+                    await new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, terminal: true, engineMachine: identity).HandleAsync(context);
+                    return;
+                }
                 await terminal.HandleAsync(context);
             });
             App.Map("/socket/bulk", async context =>

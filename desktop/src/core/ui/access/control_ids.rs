@@ -21,26 +21,14 @@ ids! {
         BOARD = "topbar.board",
         BOARD_BADGE = "topbar.board-badge",
         DRAWER_TOGGLE = "topbar.drawer-toggle",
+        TERMINAL_TOGGLE = "topbar.terminal-toggle",
+        RESTART_TO_UPDATE = "topbar.restart-to-update",
     }
     open_project {
         TRIGGER = "open-project.trigger",
         NEW_SESSION = "open-project.new-session",
         BACK = "open-project.back",
         LOAD_MORE = "open-project.load-more",
-    }
-    files {
-        NEW_FILE = "files.new-file",
-        NEW_FOLDER = "files.new-folder",
-        SORT = "files.sort",
-        EXCLUDED = "files.excluded",
-        REFRESH = "files.refresh",
-        STOP = "files.stop",
-        FILTER = "files.filter",
-        HISTORY = "files.history",
-        HISTORY_GO = "files.history-go",
-        HISTORY_REFRESH = "files.history-refresh",
-        HISTORY_LARGE = "files.history-large",
-        ENTRY = "files.entry",
     }
     drawer {
         MORE_PANELS = "drawer.more-panels",
@@ -76,6 +64,8 @@ ids! {
         BACK = "settings.back",
         MACHINE_NAME = "settings.machine-name",
         MACHINE_SSH = "settings.machine-ssh",
+        MACHINE_SSH_RESOLVED = "settings.machine-ssh-resolved",
+        MACHINE_HOST_SEARCH = "settings.machine-host-search",
         MACHINE_PORT = "settings.machine-port",
         MACHINE_TOKEN_FILE = "settings.machine-token-file",
         MACHINE_SAVE = "settings.machine-save",
@@ -179,9 +169,14 @@ pub fn settings_nav(section: &str) -> String {
 }
 
 /// A button on a remote machine's row in Settings > Connections: `settings.machine.workbox-test.connect`
-/// (`connect`, `disconnect`, `edit`, `remove`, `update`).
+/// (`connect`, `disconnect`, `edit`, `remove`, `update`, `cancel`, `restart`).
 pub fn machine_button(machine: &str, action: &str) -> String {
     format!("settings.machine.{}.{action}", slug(machine))
+}
+
+/// A host in Add a machine's search box: `settings.host.workbox-test`.
+pub fn machine_host(host: &str) -> String {
+    format!("settings.host.{}", slug(host))
 }
 
 /// What a remote machine's row says in Settings > Connections: `settings.machine.workbox-test.status`

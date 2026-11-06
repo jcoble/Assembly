@@ -148,7 +148,9 @@ fn call_error(failure: CallFailure) -> CallError {
     match failure.code {
         ErrorCode::NotFound => CallError::NotFound(failure.message),
         ErrorCode::BadArgs => CallError::BadArgs(failure.message),
-        ErrorCode::Failed => CallError::Failed(failure.message),
+        ErrorCode::Failed | ErrorCode::ConnectionLost | ErrorCode::TerminalMissing => {
+            CallError::Failed(failure.message)
+        }
         ErrorCode::Timeout => CallError::Timeout(failure.message),
         ErrorCode::Refused { code } => CallError::Refused {
             code,

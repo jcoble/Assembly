@@ -5,5 +5,7 @@ pub mod terminal_draw;
 pub mod terminal_grid;
 pub mod terminal_keys;
 pub mod terminal_link;
+pub mod terminal_links;
 pub mod terminal_palette;
 pub mod terminal_pane;
+pub mod terminal_scrollbar;

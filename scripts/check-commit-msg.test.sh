@@ -43,6 +43,9 @@ expect 0 "a fix that changes a .NET test passes" work $'fix(chat): rows keep ord
 expect 1 "a current app test does not count as a retained test" work $'Fix rows\n\nArchitecture: unchanged\nCommitted-by: Claude' app/test/x.test.ts
 expect 0 "a fix that changes only a script test passes" work $'fix: guard\n\nArchitecture: unchanged\nCommitted-by: Claude' scripts/x.test.sh
 expect 1 "a fix that changes only a script that isn't a test stops it" work $'fix: guard\n\nArchitecture: unchanged\nCommitted-by: Claude' scripts/x.sh
+expect 0 "a fix that changes only a TypeScript script test passes" work $'fix: guard\n\nArchitecture: unchanged\nCommitted-by: Claude' scripts/x.test.ts
+expect 0 "a fix that changes only a nested script test passes" work $'fix: guard\n\nArchitecture: unchanged\nCommitted-by: Claude' scripts/verify-pr/x.test.ts
+expect 1 "a fix that changes only a nested script stops" work $'fix: guard\n\nArchitecture: unchanged\nCommitted-by: Claude' scripts/verify-pr/x.ts
 expect 0 "a fix that changes a Rust test file beside the code passes" work $'fix: frames\n\nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/core/socket/frames_tests.rs
 expect 0 "a fix that changes a Rust tests.rs beside the code passes" work $'fix: frames\n\nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/core/socket/tests.rs
 expect 0 "a fix that changes a Rust test under desktop/tests passes" work $'fix: frames\n\nArchitecture: unchanged\nCommitted-by: Claude' desktop/tests/x.rs
@@ -65,6 +68,51 @@ expect 1 "a canonical URL with a suffix stops it" work $'Subject\n\nArchitecture
 expect 1 "an unchanged prefix with trailing prose stops it" work $'Subject\n\nArchitecture: unchanged maybe\nCommitted-by: Claude'
 expect 1 "an empty No-test reason stops it" work $'fix: x\n\nNo-test:  \nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/x.rs
 expect 1 "a malformed task URL stops it" tsk-42-thing $'Subject\n\nTask: TSK-42 https://app.notion.com/p/no-page\nArchitecture: unchanged\nCommitted-by: Claude'
+
+# A commit GitHub made in its web UI (committer noreply@github.com) can't carry a Committed-by line; CI skips it, saying so.
+git checkout -q -B work
+GIT_COMMITTER_NAME=GitHub GIT_COMMITTER_EMAIL=noreply@github.com git -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'Revert "x"'
+web=$("$check" --commit HEAD work 2>/dev/null)
+ci=$?
+if [ "$ci" = 0 ] && grep -q "skipped" <<<"$web"; then echo "ok   a GitHub web UI commit is skipped, and says so"
+else echo "FAIL web UI commit: ci $ci, output: $web"; failed=1; fi
+git -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'Revert "x"'
+"$check" --commit HEAD work 2>/dev/null
+ci=$?
+if [ "$ci" = 1 ]; then echo "ok   the same message from another committer still stops"
+else echo "FAIL other committer: ci $ci, wanted 1"; failed=1; fi
+
+# CI checks a commit made before de5a7b0e (2026-11-03T02:01:28Z) against the rule it replaced: the commit changes
+# docs/architecture.md, or a line starts with Architecture: unchanged.
+# ci_dated <committer date> <message> [file to change]: prints the --commit exit code
+ci_dated() {
+  local when=$1 msg=$2 f=${3:-}
+  git checkout -q -B work
+  if [ -n "$f" ]; then mkdir -p "$(dirname "$f")"; echo "$RANDOM" >"$f"; git add "$f"; fi
+  GIT_COMMITTER_DATE=$when git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "$msg"
+  "$check" --commit HEAD work >/dev/null 2>&1
+  echo $?
+}
+before=2026-11-03T02:01:27Z cutoff=2026-11-03T02:01:28Z
+bare=$'Subject\n\nArchitecture: updated\nCommitted-by: Claude'
+linked=$'Subject\n\nArchitecture: unchanged \xe2\x80\x94 https://app.notion.com/p/'"$page"$'\nCommitted-by: Claude'
+ci=$(ci_dated "$before" "$bare" docs/architecture.md)
+if [ "$ci" = 0 ]; then echo "ok   an old commit changing docs/architecture.md passes with a bare Architecture: updated"
+else echo "FAIL old bare updated with the doc: ci $ci, wanted 0"; failed=1; fi
+ci=$(ci_dated "$before" "$linked")
+if [ "$ci" = 0 ]; then echo "ok   an old commit passes with Architecture: unchanged and trailing text"
+else echo "FAIL old unchanged with trailing text: ci $ci, wanted 0"; failed=1; fi
+ci=$(ci_dated "$cutoff" "$bare" docs/architecture.md)$(ci_dated "$cutoff" "$linked")
+if [ "$ci" = 11 ]; then echo "ok   a commit at the cutoff is held to today's rule"
+else echo "FAIL commit at the cutoff: ci $ci, wanted 11"; failed=1; fi
+ci=$(ci_dated "$before" $'Subject\n\nCommitted-by: Claude')
+if [ "$ci" = 1 ]; then echo "ok   an old commit with no Architecture line and no doc change stops"
+else echo "FAIL old commit with no Architecture line: ci $ci, wanted 1"; failed=1; fi
+printf '%s\n' "$bare" >"$repo/.msg"
+"$check" "$repo/.msg" 2>/dev/null
+hook=$?
+if [ "$hook" = 1 ]; then echo "ok   the hook still stops a bare Architecture: updated"
+else echo "FAIL hook bare Architecture: updated: hook $hook, wanted 1"; failed=1; fi
 
 # Historical commits retain app/test recognition, while the staged hook always requires retained tests.
 mkdir -p app

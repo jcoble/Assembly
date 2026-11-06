@@ -108,6 +108,12 @@ impl Machines {
         })
     }
 
+    /// Whether any remote machine is configured: one with a name. A list not started holds none.
+    pub fn any_remote(cx: &App) -> bool {
+        Machines::try_global(cx)
+            .is_some_and(|machines| machines.read(cx).machines().any(|held| held.name.is_some()))
+    }
+
     /// When the machine `name` stopped answering, while it's offline.
     pub fn offline_since(name: &str, cx: &App) -> Option<i64> {
         let machines = Machines::try_global(cx)?;
@@ -116,7 +122,7 @@ impl Machines {
             .and_then(|held| held.offline_since_ms)
     }
 
-    fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
+    pub(crate) fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
         match update {
             Update::State(items) => {
                 replace(&mut self.machines, items);

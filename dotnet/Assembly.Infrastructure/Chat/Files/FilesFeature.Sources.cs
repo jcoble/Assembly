@@ -13,8 +13,9 @@ internal sealed partial class FilesFeature
         var json = JsonSerializer.SerializeToElement(args, type);
         if (!json.TryGetProperty("expectedSource", out var expected) || expected.ValueKind == JsonValueKind.Null)
             return null;
-        // Session-less continuations are admitted by their original connection-owned scope, never a new lookup.
-        if (!json.TryGetProperty("session", out var session)) return null;
+        // Session-less continuations are admitted by their original connection-owned scope, never a new lookup; a path
+        // target has no session source to capture and checks its own peer.
+        if (!json.TryGetProperty("session", out var session) || session.ValueKind == JsonValueKind.Null) return null;
         if (call.Peer is not OwnerPeer) throw new CallFailed("forbidden");
         // A viewed folder has no session row to bind: the forward that named this machine already chose it.
         if (FolderView.IsView(session.GetString())) return null;

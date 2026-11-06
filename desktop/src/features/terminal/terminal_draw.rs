@@ -12,35 +12,60 @@ use gpui_kit::*;
 use super::terminal_grid::GridCell;
 use super::terminal_palette::Palette;
 
+/// Fixed-width faces to use when the chosen one isn't on the machine, as the old terminal fell back.
+const FIXED_WIDTH: [&str; 4] = [
+    "Menlo",
+    "DejaVu Sans Mono",
+    "Liberation Mono",
+    "Noto Sans Mono",
+];
+
+/// The chosen face if it's installed, else the first installed fixed-width one. GPUI on its own takes a missing face
+/// to its UI fallbacks, which on Linux is the proportional DejaVu Sans, and the face's own fallbacks only cover
+/// characters it lacks, so the columns drift.
+fn terminal_font(family: &SharedString, window: &Window) -> Font {
+    let text = window.text_system();
+    let fallbacks = FontFallbacks::from_fonts(FIXED_WIDTH.map(String::from).to_vec());
+    let with_fallbacks = |family: SharedString| Font {
+        fallbacks: Some(fallbacks.clone()),
+        ..gpui_kit::font(family)
+    };
+    let installed = |font: &Font| {
+        (text.get_font_for_id(text.resolve_font(font)))
+            .is_some_and(|found| found.family == font.family)
+    };
+    std::iter::once(family.clone())
+        .chain(FIXED_WIDTH.map(SharedString::from))
+        .map(with_fallbacks)
+        .find(installed)
+        .unwrap_or_else(|| with_fallbacks(family.clone()))
+}
+
 /// The space for each cell: the font's advance and its line height.
-pub fn cell_size(
-    (font, font_size, line_height): &(SharedString, Pixels, Pixels),
-    window: &Window,
-) -> Size<Pixels> {
-    let id = window
-        .text_system()
-        .resolve_font(&gpui_kit::font(font.clone()));
+fn cell_size(font: &Font, font_size: Pixels, line_height: Pixels, window: &Window) -> Size<Pixels> {
+    let id = window.text_system().resolve_font(font);
     let width = window
         .text_system()
-        .advance(id, *font_size, 'm')
-        .map_or(*font_size * 0.6, |advance| advance.width);
-    size(width, *line_height)
+        .advance(id, font_size, 'm')
+        .map_or(font_size * 0.6, |advance| advance.width);
+    size(width, line_height)
 }
 
 /// The grid's lines, filling the pane, and a measure of the space that calls `fitted` with the columns and rows that
-/// fit, where the grid starts in the window and each cell's size, on each paint.
+/// fit, the grid's bounds in the window and each cell's size, on each paint.
 pub fn draw(
     cells: Vec<GridCell>,
     (rows, cursor): (usize, Option<(usize, usize)>),
     text: (SharedString, Pixels, Pixels),
     palette: Option<&Palette>,
-    fitted: impl Fn(((usize, usize), Point<Pixels>, Size<Pixels>), &mut App) + 'static,
+    fitted: impl Fn(((usize, usize), Bounds<Pixels>, Size<Pixels>), &mut App) + 'static,
     window: &Window,
     cx: &App,
 ) -> impl IntoElement {
     let colors = Colors::new(cx.theme(), palette);
-    let cell = cell_size(&text, window);
-    let (font, font_size, line_height) = text;
+    let (family, font_size, line_height) = text;
+    let font = terminal_font(&family, window);
+    let cell = cell_size(&font, font_size, line_height, window);
     let mut lines: Vec<Vec<GridCell>> = vec![Vec::new(); rows];
     for cell in cells {
         if let Some(line) = lines.get_mut(cell.line) {
@@ -54,8 +79,7 @@ pub fn draw(
                 fit(bounds.size.width, cell.width),
                 fit(bounds.size.height, cell.height),
             );
-            let origin = bounds.origin;
-            cx.defer(move |cx| fitted((size, origin, cell), cx));
+            cx.defer(move |cx| fitted((size, bounds, cell), cx));
         },
         |_, _, _, _| {},
     )
@@ -66,7 +90,7 @@ pub fn draw(
         .size_full()
         .overflow_hidden()
         .bg(colors.background)
-        .font_family(font)
+        .font(font)
         .text_size(font_size)
         .line_height(line_height)
         .child(measure)
@@ -81,6 +105,9 @@ pub fn draw(
                 .whitespace_nowrap()
                 .children(runs(line, cursor).into_iter().map(|run| {
                     let (mut fg, mut bg) = (colors.of(run.fg), colors.of(run.bg));
+                    if run.dim {
+                        fg = fg.opacity(0.5);
+                    }
                     if run.cursor {
                         (fg, bg) = (colors.background, colors.cursor);
                     }
@@ -94,6 +121,12 @@ pub fn draw(
                         .text_color(fg)
                         .bg(bg)
                         .when(run.bold, |run| run.font_weight(FontWeight::BOLD))
+                        .when(run.italic, |run| run.italic())
+                        .when(run.underline, |run| run.underline())
+                        .when(run.strike, |run| run.line_through())
+                        .when(run.cursor, |run| {
+                            run.debug_selector(|| "terminal-cursor".into())
+                        })
                         .child(run.text)
                 }))
         }))
@@ -109,6 +142,34 @@ struct Run {
     bold: bool,
     cursor: bool,
     selected: bool,
+    italic: bool,
+    underline: bool,
+    strike: bool,
+    /// Faint, drawn at half opacity as the old renderer did.
+    dim: bool,
+    /// Invisible (SGR 8): blanks, with no marks or lines.
+    hidden: bool,
+}
+
+impl Run {
+    /// The look that decides where one run ends and the next begins.
+    fn look(&self) -> (Color, Color, bool, bool, bool, bool, bool, bool, bool) {
+        let Run {
+            fg,
+            bg,
+            bold,
+            selected,
+            italic,
+            underline,
+            strike,
+            dim,
+            hidden,
+            ..
+        } = *self;
+        (
+            fg, bg, bold, selected, italic, underline, strike, dim, hidden,
+        )
+    }
 }
 
 /// A line's cells as runs, with a blank for each column before a cell that isn't there and the cursor's cell on its
@@ -124,6 +185,12 @@ fn runs(line: Vec<GridCell>, cursor: Option<usize>) -> Vec<Run> {
         bold: false,
         wide: false,
         selected: false,
+        italic: false,
+        underline: false,
+        strike: false,
+        dim: false,
+        hidden: false,
+        marks: Vec::new(),
     };
     let last = line.last().map_or(0, |cell| cell.column + 1);
     let end = last.max(cursor.map_or(0, |column| column + 1));
@@ -137,25 +204,29 @@ fn runs(line: Vec<GridCell>, cursor: Option<usize>) -> Vec<Run> {
         let columns = if cell.wide { 2 } else { 1 };
         let at_cursor = cursor == Some(column);
         column += columns;
+        let piece = Run {
+            text: match cell.hidden {
+                true => " ".repeat(columns),
+                false => std::iter::once(cell.text).chain(cell.marks).collect(),
+            },
+            columns,
+            fg: cell.fg,
+            bg: cell.bg,
+            bold: cell.bold,
+            cursor: at_cursor,
+            selected: cell.selected,
+            italic: cell.italic,
+            underline: cell.underline && !cell.hidden,
+            strike: cell.strike && !cell.hidden,
+            dim: cell.dim,
+            hidden: cell.hidden,
+        };
         match runs.last_mut() {
-            Some(run)
-                if !at_cursor
-                    && !run.cursor
-                    && (run.fg, run.bg, run.bold, run.selected)
-                        == (cell.fg, cell.bg, cell.bold, cell.selected) =>
-            {
-                run.text.push(cell.text);
+            Some(run) if !at_cursor && !run.cursor && run.look() == piece.look() => {
+                run.text.push_str(&piece.text);
                 run.columns += columns;
             }
-            _ => runs.push(Run {
-                text: cell.text.to_string(),
-                columns,
-                fg: cell.fg,
-                bg: cell.bg,
-                bold: cell.bold,
-                cursor: at_cursor,
-                selected: cell.selected,
-            }),
+            _ => runs.push(piece),
         }
     }
     runs
@@ -257,5 +328,5 @@ fn hsla_of(Rgb { r, g, b }: Rgb) -> Hsla {
 }
 
 #[cfg(test)]
-#[path = "terminal_draw_tests.rs"]
+#[path = "tests/terminal_draw_tests.rs"]
 mod tests;

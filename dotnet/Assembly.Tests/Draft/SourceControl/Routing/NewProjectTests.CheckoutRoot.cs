@@ -25,7 +25,7 @@ public sealed partial class NewProjectTests
         var origin = new { machine = h.Hosts.Mac.Fixture.Machine, generation = 0, routeMachine = (string?)null };
         var observed = (await h.Call(client, 1, "status", new { session = owned.SessionId, expectedSource = origin })).GetProperty("result");
         var observedRoot = observed.GetProperty("checkoutRoot").GetString()!;
-        var replacement = await new GitStatusReader(realGit).ReadAsync(h.RemoteParent, default);
+        var replacement = await new GitStatusReader(git).ReadAsync(h.RemoteParent, default);
         Assert.NotNull(replacement.Head);
         Assert.Equal(replacement.Head, observed.GetProperty("head").GetString());
         Assert.Equal(replacement.Fingerprint, observed.GetProperty("fingerprint").GetString());

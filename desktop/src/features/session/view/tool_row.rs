@@ -1,13 +1,19 @@
 //! `ToolRow` draws a tool call: its step line (`StepRow`: sign, title, summary, line counts), and, opened as an
 //! `ExpandRow` (pane_expand.rs), the command it ran, its output tail and diff from `rows/tool`. The detail is read
 //! when it opens and again only when the call's state changes (an edit's diff once the edit finishes). A long diff
-//! shows its first lines until shown in full. Replaces chat/Tool.svelte and chat/tools/tool.ts.
+//! shows its first lines until shown in full. The path its line shows is a link that opens the file. Replaces
+//! chat/Tool.svelte and chat/tools/tool.ts.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+
+use std::path::{Component, Path, PathBuf};
+
+use crate::core::intents::open_file::OpenFile;
+use crate::core::socket::row_source::ExpectedRowSource;
 
 use super::session_action::{OnAction, SessionAction};
 use super::step_row::{StepRow, StepState};
@@ -32,6 +38,9 @@ pub struct ToolRow {
     /// The user denied it: it didn't run, so it isn't drawn as failed.
     pub denied: bool,
     pub on_action: OnAction,
+    /// The session its file path opens in, and the source it was read from; `None` with no session.
+    pub session: Option<String>,
+    pub expected_source: Option<ExpectedRowSource>,
 }
 
 /// The diff's lines to show, and how many are hidden.
@@ -60,7 +69,7 @@ pub fn command_of(input: &str) -> Option<String> {
         .map(|parts| parts.join(" "))
 }
 
-/// A path's last two parts ("notes/plan.md"), for a tool line: the call doesn't say what folder it ran in.
+/// A path's last two parts ("notes/plan.md"), for a tool line.
 pub fn short_path(path: &str) -> String {
     let parts: Vec<&str> = path
         .split(['/', '\\'])
@@ -71,11 +80,49 @@ pub fn short_path(path: &str) -> String {
 
 /// What a tool line shows after its title: its summary, else its path; a path as its last two parts.
 pub fn line_summary(tool: &ToolPayload) -> Option<String> {
+    if let Some(path) = shown_path(tool) {
+        return Some(short_path(path));
+    }
     match (&tool.summary, &tool.path) {
         (Some(summary), Some(path)) if summary != path => Some(summary.clone()),
         (_, Some(path)) => Some(short_path(path)),
         (summary, None) => summary.clone(),
     }
+}
+
+/// The file a tool line's summary names, which opens as a link: a file call's summary that is its path, or the path as
+/// the call gave it before the backend joined it onto the call's folder and folded its `.` and `..` parts. A folder or a
+/// search pattern isn't one, nor a path that still holds a `.` or `..` part, which can't open.
+pub fn shown_path(tool: &ToolPayload) -> Option<&str> {
+    let path = tool.path.as_deref()?;
+    let summary = tool
+        .summary
+        .as_deref()
+        .filter(|summary| !summary.is_empty())?;
+    let file_kind = matches!(
+        tool.kind.as_deref(),
+        Some("read" | "edit" | "delete" | "move")
+    );
+    let plain = Path::new(path)
+        .components()
+        .all(|part| !matches!(part, Component::CurDir | Component::ParentDir));
+    let joined = !Path::new(summary).has_root() && ends_in(path, summary);
+    (file_kind && plain && (summary == path || joined)).then_some(path)
+}
+
+/// Whether `path` ends in the relative `summary` once that's folded as the backend folds a join: `.` dropped, each
+/// `..` taking off the part before it, and a `..` with nothing before it dropped, since it climbed into the call's
+/// folder. `../lib/./a.rs` is folded to `lib/a.rs`.
+fn ends_in(path: &str, summary: &str) -> bool {
+    let mut parts: Vec<&std::ffi::OsStr> = Vec::new();
+    for part in Path::new(summary).components() {
+        match part {
+            Component::Normal(name) => parts.push(name),
+            Component::ParentDir => _ = parts.pop(),
+            _ => {}
+        }
+    }
+    !parts.is_empty() && Path::new(path).ends_with(parts.iter().collect::<PathBuf>())
 }
 
 /// A run that failed (not one the user denied, which didn't run): its line reads "Failed to run" and it opens to its
@@ -150,10 +197,23 @@ impl ToolRow {
                 .then(|| glyph(self.tool.kind.as_deref())),
             title: title.into(),
             summary: summary.map(Into::into),
+            summary_action: self.path_link(),
             tags,
             took_ms: self.took_ms,
             chevron,
         }
+    }
+
+    /// Opening the file its line shows, through the `OpenFile` listener, which sends an absolute or `~` path to the one
+    /// resolver.
+    fn path_link(&self) -> Option<Box<dyn Action>> {
+        let session = self.session.as_deref().unwrap_or_default();
+        let open = OpenFile::link(
+            session,
+            shown_path(&self.tool)?,
+            self.expected_source.clone(),
+        )?;
+        Some(Box::new(open))
     }
 
     /// What it shows open: its detail once read, nothing before.

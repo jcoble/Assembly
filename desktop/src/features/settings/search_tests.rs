@@ -59,7 +59,8 @@ fn a_search_reads_the_description_keywords_card_and_section() {
         [
             "terminal-font",
             "terminal-font-size",
-            "terminal-line-height"
+            "terminal-line-height",
+            "terminal-cursor-blink"
         ]
     );
 }

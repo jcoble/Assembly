@@ -30,6 +30,7 @@ internal sealed class RemoteTerminalSocket(string name, Uri address, string toke
     private readonly ConcurrentDictionary<string, byte> _ended = new();
     private TaskCompletionSource<ClientWebSocket> _ready = NewReady();
     private Task? _runner;
+    private bool _sourceChanged;
     private long _next;
 
     private static TaskCompletionSource<ClientWebSocket> NewReady() => new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -68,6 +69,7 @@ internal sealed class RemoteTerminalSocket(string name, Uri address, string toke
     private async Task CaptureBeforeAsync(string? expected, CancellationToken ct,
         RemoteMachine.OwnerConnectionBinding? originalOwner = null)
     {
+        lock (_gate) RequireSource();
         if (originalOwner is not null && (originalOwner.IsInvalidated || originalOwner.Machine != expected)) throw SourceChanged();
         string? original;
         lock (_gate) original = _engine;
@@ -79,15 +81,25 @@ internal sealed class RemoteTerminalSocket(string name, Uri address, string toke
             if (_engine is not null && _engine != owner.Machine || expected is not null && expected != owner.Machine) throw SourceChanged();
             _engine ??= owner.Machine;
         }
-        if (owner.IsInvalidated) throw SourceChanged();
+        if (owner.IsInvalidated) throw originalOwner is null ? ConnectionLost("changed") : SourceChanged();
     }
     private void RequireConnectedOwner(ClientWebSocket socket)
     {
         lock (_gate)
-            if (!ReferenceEquals(socket, _connected) || _connectedOwner is not { } owner || owner.IsInvalidated || owner.Machine != _engine)
-                throw SourceChanged();
+        {
+            RequireSource();
+            // A stale socket or a binding invalidated by a main socket reconnect is a drop; only another engine is a changed source.
+            if (!ReferenceEquals(socket, _connected) || _connectedOwner is not { } owner || owner.IsInvalidated) throw ConnectionLost("changed");
+            if (owner.Machine != _engine) throw SourceChanged();
+        }
+    }
+    // The caller holds _gate. Once the source has changed, every entry fails at once.
+    private void RequireSource()
+    {
+        if (_sourceChanged) throw SourceChanged();
     }
     private static CallFailed SourceChanged() => new("The terminal's original owning source is unavailable or changed.", "source_changed");
+    private CallFailed ConnectionLost(string how) => new($"{name}: terminal connection {how}", "connection_lost");
 
     public async Task<TResult> CallAsync<TArgs, TResult>(string method, TArgs args, JsonTypeInfo<TArgs> input,
         JsonTypeInfo<TResult> output, CancellationToken cancellation)
@@ -172,6 +184,7 @@ internal sealed class RemoteTerminalSocket(string name, Uri address, string toke
         lock (_gate)
         {
             _stop.Token.ThrowIfCancellationRequested();
+            RequireSource();
             _runner ??= Task.Run(RunAsync, CancellationToken.None);
             if (!_ready.Task.IsCompletedSuccessfully && _wake.CurrentCount == 0) _wake.Release();
             return _ready.Task.WaitAsync(cancellation);
@@ -195,7 +208,8 @@ internal sealed class RemoteTerminalSocket(string name, Uri address, string toke
                 {
                     string? original; lock (_gate) original = _engine;
                     owner = await captureOwner(original, _stop.Token);
-                    if (original is null || owner.Machine != original || owner.IsInvalidated) throw SourceChanged();
+                    if (original is null || owner.Machine != original) throw SourceChanged();
+                    if (owner.IsInvalidated) throw ConnectionLost("changed");
                     invalidated = owner.Invalidated.Register(socket.Abort);
                     connectionStop = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, owner.Invalidated);
                     var connectionCt = connectionStop.Token;
@@ -215,7 +229,7 @@ internal sealed class RemoteTerminalSocket(string name, Uri address, string toke
                     try
                     {
                         lock (_gate) { _connected = socket; _connectedOwner = owner; }
-                        if (owner.IsInvalidated) throw SourceChanged();
+                        if (owner.IsInvalidated) throw ConnectionLost("changed");
                         reader = ReadAsync(socket, connectionCt);
                         foreach (var (key, follow) in _following)
                         {
@@ -232,19 +246,22 @@ internal sealed class RemoteTerminalSocket(string name, Uri address, string toke
                 }
                 catch (Exception error) when (error is WebSocketException or IOException or OperationCanceledException or JsonException or CallFailed or MachineUnreachable or ObjectDisposedException || owner?.IsInvalidated == true)
                 {
-                    var failure = new CallFailed($"{name}: terminal connection lost ({error.Message})");
+                    var changed = error is CallFailed { Reason: "source_changed" };
+                    var failure = changed ? (CallFailed)error : ConnectionLost($"lost ({error.Message})");
                     socket.Abort();
                     lock (_gate)
                     {
                         if (ReferenceEquals(_connected, socket)) _connected = null;
                         _ready.TrySetException(failure);
-                        _ready = NewReady();
+                        // A changed source keeps its failed _ready: later entries fail with it rather than wait.
+                        if (changed) _sourceChanged = true;
+                        else _ready = NewReady();
                     }
                     foreach (var answer in _pending.Values) answer.TrySetException(failure);
                     if (!_stop.IsCancellationRequested)
                         foreach (var pair in _following.ToArray())
-                            await PublishAvailability(pair.Key, pair.Value, TerminalUnavailable.ConnectionLost);
-                    if (error is CallFailed { Reason: "source_changed" }) break;
+                            await PublishAvailability(pair.Key, pair.Value, changed ? TerminalUnavailable.SourceChanged : TerminalUnavailable.ConnectionLost);
+                    if (changed) break;
                 }
                 finally
                 {
@@ -353,6 +370,7 @@ internal sealed class RemoteTerminalSocket(string name, Uri address, string toke
 
     private async Task ReadAsync(ClientWebSocket socket, CancellationToken ct)
     {
+        CallFailed? changed = null;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -379,10 +397,15 @@ internal sealed class RemoteTerminalSocket(string name, Uri address, string toke
                 }
             }
         }
+        catch (CallFailed error) when (error.Reason == "source_changed")
+        {
+            changed = error;
+            throw;
+        }
         finally
         {
-            foreach (var answer in _pending.Values)
-                answer.TrySetException(new CallFailed($"{name}: terminal connection closed"));
+            var failure = changed ?? ConnectionLost("closed");
+            foreach (var answer in _pending.Values) answer.TrySetException(failure);
         }
     }
 

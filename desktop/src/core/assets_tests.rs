@@ -50,27 +50,15 @@ fn the_window_has_every_icon_it_draws() {
     assert!(listed.contains(&IconName::ChevronRight.path()));
 }
 
+// Pins: g0-shape#16
 #[test]
-fn the_files_tab_has_every_icon_it_draws() {
-    // The header's New file, New folder, Sort, Excluded, Refresh and Stop; the filter's search; the rows' folders and
-    // chevrons; the history card's clock, Go to File, Refresh and large view.
+fn the_context_cards_have_their_heading_icons() {
+    // Session, Context usage, Files touched and Attachments; Files isn't in the kit's default set.
     for icon in [
-        IconName::FilePlus,
-        IconName::FolderPlus,
-        IconName::ArrowDownAZ,
-        IconName::ArrowUpZA,
-        IconName::Eye,
-        IconName::EyeOff,
-        IconName::RefreshCw,
-        IconName::Square,
-        IconName::Search,
-        IconName::Folder,
-        IconName::FolderOpen,
-        IconName::ChevronDown,
-        IconName::ChevronRight,
-        IconName::RotateCcwClock,
-        IconName::FileUp,
-        IconName::Maximize2,
+        IconName::Bot,
+        IconName::Gauge,
+        IconName::Files,
+        IconName::Image,
     ] {
         let path = icon.path();
         let svg = AppAssets.load(&path).expect("loads").expect("is there");

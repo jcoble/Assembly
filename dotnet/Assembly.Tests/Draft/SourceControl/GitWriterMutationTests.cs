@@ -88,6 +88,62 @@ public sealed class GitWriterMutationTests
         Assert.Equal('M', Assert.Single((await reader.ReadAsync(repo.Root, default)).Files).Index);
     }
 
+    /// <summary>A later edit keeps the file's letters, so only its revision says the work on disk isn't what was reviewed.</summary>
+    [Fact]
+    public async Task An_edit_after_the_read_refuses_both_discards_and_keeps_the_newer_work()
+    {
+        using var repo = new GitHistoryTestRepository(); await repo.InitializeAsync();
+        await repo.Write("a", "original\n"); await repo.Commit("Root");
+        var file = Path.Combine(repo.Root, "a");
+        await File.WriteAllTextAsync(file, "edited 1\n");
+        var reader = new GitStatusReader(repo.Git); var seen = await reader.ReadAsync(repo.Root, default);
+        await File.WriteAllTextAsync(file, "edited 2\n"); File.SetLastWriteTimeUtc(file, File.GetLastWriteTimeUtc(file).AddSeconds(2));
+        var now = await reader.ReadAsync(repo.Root, default);
+        Assert.Equal(Assert.Single(seen.Files) with { Revision = null }, Assert.Single(now.Files) with { Revision = null });
+        var writer = new GitWriter(repo.Git);
+        var one = await Assert.ThrowsAsync<CallFailed>(() => writer.DiscardAsync(repo.Root, ["a"], [], seen.Files, default));
+        Assert.Contains("Files changed since you looked", one.Message);
+        var all = await Assert.ThrowsAsync<CallFailed>(() => writer.DiscardAllAsync(repo.Root, seen.Fingerprint, true, default));
+        Assert.Contains("Files changed since you looked", all.Message);
+        Assert.Equal("edited 2\n", await File.ReadAllTextAsync(file));
+        await writer.DiscardAsync(repo.Root, ["a"], [], now.Files, default);
+        Assert.Equal("original\n", await File.ReadAllTextAsync(file));
+    }
+
+    /// <summary>Discarding a rename brings its old name back, so a file made there since the read would be overwritten.</summary>
+    [Fact]
+    public async Task A_new_file_at_a_renames_old_name_refuses_the_discard_and_is_kept()
+    {
+        using var repo = new GitHistoryTestRepository(); await repo.InitializeAsync();
+        await repo.Write("a", "original\n"); await repo.Commit("Root");
+        await repo.Run("mv", "a", "b");
+        var seen = await new GitStatusReader(repo.Git).ReadAsync(repo.Root, default);
+        Assert.Equal("a", Assert.Single(seen.Files).OriginalPath);
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "a"), "newer work\n");
+        var refused = await Assert.ThrowsAsync<CallFailed>(() => new GitWriter(repo.Git).DiscardAsync(repo.Root, ["b"], [], seen.Files, default));
+        Assert.Contains("Files changed since you looked", refused.Message);
+        Assert.Equal("newer work\n", await File.ReadAllTextAsync(Path.Combine(repo.Root, "a")));
+        Assert.True(File.Exists(Path.Combine(repo.Root, "b")));
+    }
+
+    /// <summary>A copy's source is a file of its own, listed on its own row; discarding the copy leaves its edits alone.</summary>
+    [Fact]
+    public async Task Discarding_a_copy_removes_only_the_copy()
+    {
+        using var repo = new GitHistoryTestRepository(); await repo.InitializeAsync();
+        var lines = string.Concat(Enumerable.Range(1, 50).Select(n => $"{n}\n"));
+        await repo.Write("a", lines); await repo.Commit("Root"); await repo.Run("config", "status.renames", "copies");
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "c"), lines);
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "a"), lines + "staged\n"); await repo.Run("add", "a", "c");
+        await File.AppendAllTextAsync(Path.Combine(repo.Root, "a"), "unstaged\n");
+        var seen = await new GitStatusReader(repo.Git).ReadAsync(repo.Root, default);
+        Assert.Equal(('C', "a"), seen.Files.Where(file => file.Path == "c").Select(file => (file.Index, file.OriginalPath)).Single());
+        await new GitWriter(repo.Git).DiscardAsync(repo.Root, ["c"], [], seen.Files, default);
+        Assert.False(File.Exists(Path.Combine(repo.Root, "c")));
+        Assert.Equal(lines + "staged\nunstaged\n", await File.ReadAllTextAsync(Path.Combine(repo.Root, "a")));
+        Assert.Equal(('M', 'M'), (await new GitStatusReader(repo.Git).ReadAsync(repo.Root, default)).Files.Select(file => (file.Index, file.Worktree)).Single());
+    }
+
     // Pins: g9#1, g9#2
     [Fact]
     public async Task All_operations_cover_paths_beyond_the_display_cap_and_refuse_stale_fingerprints()

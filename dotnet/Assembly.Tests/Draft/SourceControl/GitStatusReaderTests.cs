@@ -71,7 +71,7 @@ public sealed class GitStatusReaderTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(Root, "tracked"), "staged content");
         await Git(Root, "add", "tracked");
         await File.WriteAllTextAsync(Path.Combine(Root, "tracked"), "edited again");
-        Assert.Equal(new ChangedFile("tracked", null, 'M', 'M'), Assert.Single((await Read()).Files));
+        Assert.Equal(new ChangedFile("tracked", null, 'M', 'M'), Assert.Single((await Read()).Files) with { Revision = null });
     }
 
     // Pins: scm#10
@@ -81,7 +81,7 @@ public sealed class GitStatusReaderTests : IDisposable
         await Init();
         Directory.CreateDirectory(Path.Combine(Root, "new folder"));
         await File.WriteAllTextAsync(Path.Combine(Root, "new folder", "new file"), "new content");
-        Assert.Equal(new ChangedFile("new folder/new file", null, '?', '?'), Assert.Single((await Read()).Files));
+        Assert.Equal(new ChangedFile("new folder/new file", null, '?', '?'), Assert.Single((await Read()).Files) with { Revision = null });
     }
 
     // Pins: scm#10
@@ -90,7 +90,7 @@ public sealed class GitStatusReaderTests : IDisposable
     {
         await Init();
         await Git(Root, "mv", "tracked", "renamed file");
-        Assert.Equal(new ChangedFile("renamed file", "tracked", 'R', '.'), Assert.Single((await Read()).Files));
+        Assert.Equal(new ChangedFile("renamed file", "tracked", 'R', '.'), Assert.Single((await Read()).Files) with { Revision = null });
     }
 
     // Pins: scm#12

@@ -5,7 +5,6 @@ use super::outcomes::running_label;
 use crate::core::state::session_read::Shown;
 use crate::core::state::viewed_project::ViewedProject;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use crate::empty_state_component::empty_state;
 use crate::features::source_control::commit_box::{
     can_commit, commit_hint, commit_label, stage_hint, stageable,
 };
@@ -16,7 +15,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Textarea;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -25,6 +24,43 @@ const AMEND_TIP: &str = "Rewrite the last commit instead of adding one. Never do
 /// The running and result lines under the list; long git text under Details scrolls inside it.
 const FOOTER_MAX_HEIGHT: f32 = 160.;
 
+/// What an empty panel shows: one icon, a short title, a sentence or two, and at most one thing to press.
+fn empty_state(
+    title: &'static str,
+    body: &'static str,
+    actions: Option<AnyElement>,
+    cx: &App,
+) -> AnyElement {
+    let muted = cx.theme().muted_foreground;
+    v_flex()
+        .w_full()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .px_4()
+        .py_8()
+        .text_center()
+        .child(
+            Icon::new(IconName::GitBranch)
+                .size(px(24.))
+                .text_color(muted),
+        )
+        .child(
+            div()
+                .max_w(px(300.))
+                .font_weight(FontWeight::MEDIUM)
+                .child(title),
+        )
+        .child(
+            div()
+                .max_w(px(340.))
+                .text_role(TextRole::Body, cx)
+                .text_color(muted)
+                .child(body),
+        )
+        .children(actions)
+        .into_any_element()
+}
 impl Render for SourceControlPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.render_header(cx);
@@ -53,7 +89,6 @@ impl SourceControlPane {
     fn render_body(&mut self, cx: &mut Context<Self>) -> AnyElement {
         match self.read.read(cx).shown().clone() {
             Shown::NoSession => empty_state(
-                IconName::GitBranch,
                 "No project selected yet",
                 "Pick a session and this panel shows that folder's source control.",
                 None,
@@ -134,7 +169,6 @@ impl SourceControlPane {
                 .children(result)
                 .into_any_element();
             return empty_state(
-                IconName::GitBranch,
                 "This folder is not a git work tree",
                 "It is a plain folder or a bare repository, so there are no changes to show.",
                 Some(actions),

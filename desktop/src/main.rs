@@ -5,14 +5,18 @@
 #[path = "components/activity/mod.rs"]
 mod activity;
 mod core;
-#[path = "components/empty_state/mod.rs"]
-mod empty_state_component;
 mod features;
+#[path = "components/hinted_item/mod.rs"]
+mod hinted_item;
 #[allow(dead_code)]
 #[path = "components/inline_field/mod.rs"]
 mod inline_field;
+#[path = "components/notice_strip/mod.rs"]
+mod notice_strip;
 #[path = "components/open_project/mod.rs"]
 mod open_project_component;
+#[path = "components/section_card.rs"]
+mod section_card;
 
 use std::cell::{Cell, OnceCell};
 use std::path::PathBuf;
@@ -56,10 +60,12 @@ fn main() {
         features::shell::workspace_preview::register(cx);
         features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
         SelectedSession::init(cx);
+        features::session::context::live_facts::LiveFacts::init(cx);
         Preferences::init(cx);
         features::session::view::session_pane::SessionPane::register(cx);
         features::sessions::sessions_pane::SessionsPane::register(cx);
         features::files::files_pane::FilesPane::register(cx);
+        features::files::search_pane::SearchPane::register(cx);
         features::files::file_view::FileView::register(cx);
         features::session::context::context_pane::ContextPane::register(cx);
         features::sessions::history::history_pane::HistoryPane::register(cx);
@@ -81,7 +87,6 @@ fn main() {
         PaletteView::init(cx);
         core::navigation::open_url_handler::register(cx);
         features::settings::init(cx);
-        features::remote_install::init(cx);
         features::meter::start_if_on(cx);
         // The window opens once the theme files have loaded, already in its theme. The kit calls this once, so
         // the layout's read and write are taken out on that call.
@@ -103,10 +108,12 @@ fn main() {
             };
             gpui_kit::open_window(options, cx, |window, cx| {
                 theme::set(ThemeId::DEFAULT, window, cx);
+                features::workspaces::drafts_guard::guard_close(window, cx);
                 let frame = cx.new(|cx| Frame::new(read_layout, write_layout, window, cx));
                 cx.new(|cx| WindowRoot::new(frame, window, cx))
             })
             .expect("open the window");
+            Launcher::tell_if_update_finishing(cx);
             cx.activate(true);
             external_urls.start(core::navigation::deep_links::handle_route, cx);
         });

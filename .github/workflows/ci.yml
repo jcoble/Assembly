@@ -112,6 +112,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: PR verifier behavior
+        run: node --test scripts/verify-pr/*.test.ts
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
@@ -119,6 +121,9 @@ jobs:
         run: node --test scripts/hooks/*.test.ts
       - name: Agent runbook behavior
         run: node --test scripts/agent-runbook/runbook.test.ts
+      - name: Every scripts/*.test.ts passes
+        if: ${{ !cancelled() }}
+        run: node --test scripts/*.test.ts
       - name: Every scripts/*.test.sh passes
         run: |
           failed=0

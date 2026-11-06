@@ -72,6 +72,8 @@ public static class ServeRun
         Action<IProgramTerminals>? programTerminals = null)
     {
         Directory.CreateDirectory(options.Home);
+        var agents = launcher is null ? AgentsFile.OpenOrSay(options.AgentsFile, Console.Error) : null;
+        if (launcher is null && agents is null) return 1;
         // Before the database opens, so a second host on this home writes nothing into the live one's; disposed last.
         using var homeLock = HomeLock.Take(options.Home);
         var token = TokenFile.ReadOrCreate(options.TokenFile);
@@ -88,7 +90,6 @@ public static class ServeRun
         using var hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: sessionStore.PublishSummary);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
         AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
-        var agents = launcher is null ? new AgentsFile(options.AgentsFile) : null;
         launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions());
         var preferences = new PreferenceStore(db);
         var utility = new AcpUtilityModel(agents is not null ? agents : launcher.Agents, () => preferences.Read("utilityModel"), TimeProvider.System, Console.Out);
@@ -226,7 +227,7 @@ public static class ServeRun
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
                 [new Assembly.Infrastructure.Engine.Messages.MessagesCalls(engine, db), new EngineCalls(engine, TimeProvider.System, answers, door, new WorkflowCommandRecovery(db, Path.Combine(options.Home, "workflow-proof"))), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, resolveProject: project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore), new SessionTitleCalls(engine, sessionStore), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines), ownerMachineCalls,
                     new ProvidersFeature(challenges, localEngineMachine: engine.Machine), new ProviderRuntimeCalls(engine.Machine, agents), new Assembly.Infrastructure.Updates.InstalledCalls(launcher, TimeProvider.System), new TerminalFeature(terminals), workflowCalls,
-                    new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome, remoteFolders: localFolders),
+                    new RowsFeature(hub, store, sessionStore, machines, new DiskPathProbe(), owningHome, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome, remoteFolders: localFolders),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(options.Home, "staging", "attachments"), sessionSources),
                     new FilesFeature(sessionStore, new FileOwner(sessionStore, db), work, sources: sessionSources),
