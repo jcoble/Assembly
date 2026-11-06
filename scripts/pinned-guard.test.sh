@@ -3,7 +3,7 @@
 # whether it lets each one through (exit 0) or refuses it (exit 2). Run: bash scripts/pinned-guard.test.sh
 set -uo pipefail
 guard=$(cd "$(dirname "$0")" && pwd)/pinned-guard.sh
-repo=$(mktemp -d)
+repo=$(mktemp -d) || exit 1
 trap 'rm -rf "$repo"' EXIT
 git -C "$repo" init -q
 mkdir "$repo/scripts"

@@ -5,8 +5,8 @@
 // under test-approvals/ (test-approvals.ts). CI enforces it; the commit hook and pre-push warn early.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { readFileSync, realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { addedApprovals, approvalsFolder, currentBranch, hostApprovals, type Approval } from './test-approvals.ts';
 
 export interface Change { path: string; previousPath?: string; before: string; after: string; }
@@ -162,8 +162,13 @@ export function violations(changes: Change[], message: string, approved?: Approv
 function git(args: string[]): string { return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }); }
 function exists(spec: string): boolean { try { git(['cat-file', '-e', spec]); return true; } catch { return false; } }
 function content(spec: string): string { return exists(spec) ? git(['show', spec]) : ''; }
+// A merge answers only for its approvals, against its first parent: it brings in work its other parents' commits answer
+// for, but it may not remove or change an approval (which would let the approval be added and used again).
 export function stagedChanges(commit?: string): Change[] {
-  const args = commit ? ['diff-tree', '--root', '--no-commit-id', '-r', '--name-status', '-z', '-M', commit] : ['diff', '--cached', '--name-status', '-z', '-M'];
+  const merge = commit !== undefined && exists(commit + '^2');
+  const args = !commit ? ['diff', '--cached', '--name-status', '-z', '-M']
+    : merge ? ['diff-tree', '-r', '--name-status', '-z', '-M', commit + '^', commit, '--', approvalsFolder]
+    : ['diff-tree', '--root', '--no-commit-id', '-r', '--name-status', '-z', '-M', commit];
   const parts = git(args).split('\0'), result: Change[] = [];
   const parent = commit && exists(commit + '^') ? commit + '^' : undefined;
   for (let i = 0; i < parts.length && parts[i];) {
@@ -174,22 +179,20 @@ export function stagedChanges(commit?: string): Change[] {
   }
   return result;
 }
-// The approval check activates prospectively, from the commit after the one that adds it.
-const approvalCheck = 'addedApprovals(';
-const approving = (base: string) => exists(base + ':scripts/hooks/test-integrity.ts') && content(base + ':scripts/hooks/test-integrity.ts').includes(approvalCheck);
 export function main(args: string[]): number {
   const commit = args[0] === '--commit' ? args[1] : undefined;
-  // Activate prospectively. Removing the policy after activation cannot deactivate it.
-  if (commit ? !exists(commit + ':scripts/hooks/test-integrity.ts') && !exists(commit + '^:scripts/hooks/test-integrity.ts') : !exists('HEAD:scripts/hooks/test-integrity.ts') && !exists(':scripts/hooks/test-integrity.ts')) return 0;
-  const message = commit ? git(['log', '-1', '--format=%B', commit]) : readFileSync(args[0], 'utf8');
   // --commit <id> <branch> (CI and pre-push) needs no expiry: the parent tree already makes each approval single use.
   const branch = (commit ? args[2] : undefined) || currentBranch('.');
-  const approved = approving(commit ? commit + '^' : 'HEAD') ? addedApprovals('.', commit, branch, commit ? undefined : Date.now()) : undefined;
+  // The approval check is on when the base holds the controller's key, whatever the branch does to this script.
+  const approved = addedApprovals('.', commit, branch, commit ? undefined : Date.now());
+  // Without it, the TEST-CHANGE rule applies from the commit that adds this script.
+  if (!approved && (commit ? !exists(commit + ':scripts/hooks/test-integrity.ts') && !exists(commit + '^:scripts/hooks/test-integrity.ts') : !exists('HEAD:scripts/hooks/test-integrity.ts') && !exists(':scripts/hooks/test-integrity.ts'))) return 0;
+  const message = commit ? git(['log', '-1', '--format=%B', commit]) : readFileSync(args[0], 'utf8');
   const errors = violations(stagedChanges(commit), message, approved);
   if (errors.length) { process.stderr.write('Test integrity: commit stopped.\n' + errors.join('\n') + '\nInvestigate; fix incorrect production code. TEST-CHANGE is not permission to change behavior.\n'); return 1; }
   return 0;
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   try { process.exitCode = main(process.argv.slice(2)); }
   catch (error) { process.stderr.write('Test integrity: ' + String(error) + '\n'); process.exitCode = 1; }
 }

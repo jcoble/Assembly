@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -212,4 +212,37 @@ test('a branch that brings its own allowed_signers and signs its own approval is
   assert.equal(check([join(root, 'msg')]).status, 1);
   commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-self');
   assert.equal(check(['--commit', 'HEAD', 'work']).status, 1);
+}));
+
+test('the base holding the controller\'s key turns the check on, whatever the branch does to its own checker', () => withRepo(({ root, git, check, stage }) => {
+  git('rm', '--quiet', 'scripts/hooks/test-integrity.ts');
+  commitWith(root, git, 'chore: drop the checker');
+  stage(approvedRust);
+  commitWith(root, git, 'TEST-CHANGE: keeps_path: no approval');
+  assert.equal(check(['--commit', 'HEAD', 'work']).status, 1);
+}));
+
+test('in --commit mode a merge may not remove an approval, and is not judged as a test change', () => withRepo(({ root, git, check, approve, stage }) => {
+  approve({ id: 'ap-1', branch: 'work', expires: inAnHour(), tests: approvedEntry() });
+  stage(approvedRust);
+  commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-1');
+  const side = (name: string) => { git('checkout', '--quiet', '-B', 'side', 'HEAD~1'); writeFileSync(join(root, name), name); git('add', name); commitWith(root, git, name); git('checkout', '--quiet', 'work'); };
+  side('one');
+  git('merge', '--quiet', '--no-ff', '-m', 'Merge one', 'side');
+  assert.equal(check(['--commit', 'HEAD', 'work']).status, 0);
+  side('two');
+  git('merge', '--quiet', '--no-ff', '--no-commit', 'side');
+  git('rm', '--quiet', 'test-approvals/ap-1.json', 'test-approvals/ap-1.json.sig');
+  git('commit', '--quiet', '--no-edit');
+  const removal = check(['--commit', 'HEAD', 'work']);
+  assert.equal(removal.status, 1);
+  assert.match(String(removal.stderr), /only ever added/);
+}));
+
+test('the checker run through a symlink still checks', () => withRepo(({ root, stage }) => {
+  const link = join(root, '..', 'linked-test-integrity.ts');
+  symlinkSync(resolve(import.meta.dirname, 'test-integrity.ts'), link);
+  stage(approvedRust);
+  writeFileSync(join(root, 'msg'), 'Subject');
+  assert.equal(spawnSync(process.execPath, [link, join(root, 'msg')], { cwd: root }).status, 1);
 }));

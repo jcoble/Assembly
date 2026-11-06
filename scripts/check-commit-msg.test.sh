@@ -4,9 +4,9 @@
 # Run: bash scripts/check-commit-msg.test.sh
 set -uo pipefail
 check=$(cd "$(dirname "$0")" && pwd)/check-commit-msg.sh
-repo=$(mktemp -d)
+repo=$(mktemp -d) || exit 1
 trap 'rm -rf "$repo"' EXIT
-cd "$repo"
+cd "$repo" || exit 1
 git init -q -b main
 git config core.hooksPath /dev/null
 git config commit.gpgsign false

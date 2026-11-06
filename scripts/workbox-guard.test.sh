@@ -5,7 +5,7 @@
 # Run: bash scripts/workbox-guard.test.sh
 set -uo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/src/scripts" "$tmp/src/dotnet/scripts"
 cat >"$tmp/bin/ssh" <<'SSH'

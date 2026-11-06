@@ -52,8 +52,11 @@ const accepted = (candidates: Signed[], signers: string | undefined, branch: str
   .map(candidate => parsed(candidate, branch)).filter((approval): approval is Approval => Boolean(approval) && (now === undefined || Date.parse(approval!.expires) > now));
 
 // The approvals a commit adds (or, without a commit, the index adds over HEAD), for the commit check. `now` is the commit
-// hook's expiry check; CI and pre-push leave it out, since an approval can be added only once.
-export function addedApprovals(repo: string, commit: string | undefined, branch: string, now?: number): Approval[] {
+// hook's expiry check; CI and pre-push leave it out, since an approval can be added only once. Undefined while the base
+// holds no controller key: the check is off and the TEST-CHANGE rule alone applies. Only the base turns it on or off.
+export function addedApprovals(repo: string, commit: string | undefined, branch: string, now?: number): Approval[] | undefined {
+  const signers = baseSigners(repo, commit ?? 'HEAD');
+  if (!signers) return undefined;
   const listing = commit ? ['diff-tree', '--root', '--no-commit-id', '-r', '--name-only', '-z', '--diff-filter=A', commit, '--', approvalsFolder]
     : ['diff', '--cached', '--name-only', '-z', '--diff-filter=A', '--', approvalsFolder];
   const tree = commit ? commit + ':' : ':';
@@ -61,7 +64,7 @@ export function addedApprovals(repo: string, commit: string | undefined, branch:
     const json = tryGit(repo, ['show', tree + path]), sig = tryGit(repo, ['show', tree + path + '.sig']);
     return json !== undefined && sig !== undefined ? [{ id: path.slice(approvalsFolder.length + 1, -'.json'.length), json, sig }] : [];
   });
-  return accepted(candidates, baseSigners(repo, commit ?? 'HEAD'), branch, now);
+  return accepted(candidates, signers, branch, now);
 }
 // For the Edit guard: approvals installed on this host or copied into the checkout, not yet used by a commit on this branch.
 export function pendingApprovals(repo: string, top: string, host: string, now: number): Approval[] {

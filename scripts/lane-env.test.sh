@@ -4,7 +4,7 @@
 # checks it passes (exit 0) or stops (exit 1). Run: bash scripts/lane-env.test.sh
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-repo=$(mktemp -d)
+repo=$(mktemp -d) || exit 1
 trap 'rm -rf "$repo"' EXIT
 git -C "$repo" init -q -b main
 mkdir -p "$repo/scripts"

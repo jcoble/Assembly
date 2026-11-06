@@ -3,7 +3,7 @@
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 source_root=$(cd "$here/.." && pwd)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
 repo="$tmp/repo"
 mkdir -p "$repo/scripts" "$repo/dotnet/Assembly.Tests/Pinned" "$tmp/bin"

@@ -1,6 +1,6 @@
 # On a pull request marked ready, every push to main and a manual dispatch (a draft runs only the commit check): the
 # backend builds with no warnings and its tests pass, the window (desktop/) builds, tests and passes clippy, every
-# retained scripts/*.test.sh passes, lint passes, and (on a pull request) each of its own commits passes
+# retained scripts/*.test.sh passes, lint passes, and (on a pull request) each of its own commits passes the base's
 # scripts/check-commit-msg.sh. A change with nothing for the backend skips its job (scripts/ci-changes.ts); these are
 # job conditions, not path filters, so a skipped job still reports success to a required check.
 name: ci
@@ -170,9 +170,15 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
           BRANCH: ${{ github.head_ref }}
+        # The base's copy of the checker judges the commits, so a pull request can't change the check it answers to.
+        # A merge carries git's own message; test-integrity.ts checks only that it removes no approval.
         run: |
+          checker=$(mktemp -d)
+          git archive "$BASE" $(git ls-tree --name-only "$BASE" scripts/check-commit-msg.sh scripts/hooks scripts/dev-remote-identity.ts scripts/dev-remote-process.ts) | tar -x -C "$checker"
           failed=0
-          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
-            scripts/check-commit-msg.sh --commit "$c" "$BRANCH" || { echo "in $(git log -1 --format='%h %s' "$c")"; failed=1; }
+          for c in $(git rev-list "$BASE..$HEAD"); do
+            if ! git rev-parse -q --verify "$c^2" >/dev/null; then "$checker/scripts/check-commit-msg.sh" --commit "$c" "$BRANCH"
+            elif [ -f "$checker/scripts/hooks/test-integrity.ts" ]; then node "$checker/scripts/hooks/test-integrity.ts" --commit "$c" "$BRANCH"
+            fi || { echo "in $(git log -1 --format='%h %s' "$c")"; failed=1; }
           done
           exit $failed

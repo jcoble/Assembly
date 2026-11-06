@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 export interface Update { local: string; remote: string; remoteRef: string; }
 export function updates(input: string): Update[] {
   return input.split('\n').filter(line => line.trim()).map(line => {
@@ -18,7 +19,7 @@ export function outgoing(update: Update, git: Git): string[] {
   const replaced = /^0+$/.test(update.remote) ? [] : ['^' + update.remote];
   return git(['rev-list', '--no-merges', update.local, ...replaced, '--not', '--remotes=origin']).split('\n').filter(Boolean);
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   let input = ''; for await (const chunk of process.stdin) input += chunk;
   try {
     const commits = new Set<string>();

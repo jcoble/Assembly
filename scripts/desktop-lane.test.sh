@@ -8,7 +8,7 @@
 # Run: bash scripts/desktop-lane.test.sh
 set -uo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) || exit 1
 branches=()
 cleanup() {
   local b

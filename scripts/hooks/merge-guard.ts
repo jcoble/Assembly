@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 export function blocked(command: string, branch: string): string | undefined {
   // Recognize supported command prefixes; never execute the supplied text.
   const anchor = '(?:^|[;&|\\n])\\s*(?:env\\s+)?(?:[A-Za-z_][A-Za-z_0-9]*=\\S+\\s+)*(?:command\\s+)?';
@@ -24,7 +25,7 @@ function currentBranch(): string {
     return '';
   }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   let input = ''; for await (const chunk of process.stdin) input += chunk;
   try {
     const payload = JSON.parse(input), command = payload.tool_input?.command ?? payload.tool_input?.cmd ?? '';

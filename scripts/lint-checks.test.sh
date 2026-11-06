@@ -48,7 +48,7 @@ trap finish EXIT
 # A throwaway repo holding one lint.d script; prints its path.
 repo_with() {
   local repo
-  repo=$(mktemp -d)
+  repo=$(mktemp -d) || exit 1
   git -C "$repo" init -q
   mkdir -p "$repo/scripts/lint.d"
   cp "$here/lint.d/$1" "$repo/scripts/lint.d/"
@@ -172,7 +172,7 @@ expect 1 "architecture: no architecture test found fails" "$r" 70-architecture.s
 rm -rf "$r"
 
 # scripts/lint.sh runs every lint.d check and fails if any one does.
-r=$(mktemp -d)
+r=$(mktemp -d) || exit 1
 git -C "$r" init -q
 mkdir -p "$r/scripts/lint.d"
 cp "$here/lint.sh" "$r/scripts/"
