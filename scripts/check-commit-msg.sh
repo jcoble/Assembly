@@ -10,13 +10,17 @@
 # --commit skips a commit GitHub made in its web UI (committer noreply@github.com), which can't carry these lines.
 set -euo pipefail
 
+# de5a7b0e (committed 2026-11-03T02:01:28Z) tightened the Architecture rule; --commit checks older commits by the old one.
+architecture_rule_since=1793671288
 historical_app=false
+old_architecture_rule=false
 if [ "${1:-}" = --commit ]; then
   commit=${2:?usage: check-commit-msg.sh --commit <id> <branch>} branch=${3:-}
   if [ "$(git log -1 --format=%ce "$commit")" = noreply@github.com ]; then
     echo "skipped $(git log -1 --format='%h %s' "$commit"): made in the GitHub web UI"; exit 0
   fi
   if git cat-file -e "$commit:app/package.json" 2>/dev/null; then historical_app=true; fi
+  if [ "$(git log -1 --format=%ct "$commit")" -lt "$architecture_rule_since" ]; then old_architecture_rule=true; fi
   message=$(git log -1 --format=%B "$commit" | git stripspace --strip-comments)
   changed=$(git -c core.quotePath=false diff-tree --root --no-commit-id --name-only -r --diff-filter=ACMR "$commit")
 else
@@ -43,9 +47,14 @@ case "$branch" in
     ;;
 esac
 
-grep -Eiq '^Architecture: unchanged$' <<<"$message" \
-  || grep -qFx 'Architecture: updated https://app.notion.com/p/409394b0689d8184906cd246dc89acd1' <<<"$message" \
-  || stop "add Architecture: unchanged, or Architecture: updated https://app.notion.com/p/409394b0689d8184906cd246dc89acd1."
+if [ "$old_architecture_rule" = true ]; then
+  grep -qFx 'docs/architecture.md' <<<"$changed" || grep -Eiq '^Architecture: unchanged' <<<"$message" \
+    || stop "update docs/architecture.md in this commit, or say Architecture: unchanged when it describes nothing this changes."
+else
+  grep -Eiq '^Architecture: unchanged$' <<<"$message" \
+    || grep -qFx 'Architecture: updated https://app.notion.com/p/409394b0689d8184906cd246dc89acd1' <<<"$message" \
+    || stop "add Architecture: unchanged, or Architecture: updated https://app.notion.com/p/409394b0689d8184906cd246dc89acd1."
+fi
 
 if head -n 1 <<<"$message" | grep -Eiq '^fix([^A-Za-z0-9_]|$)'; then
   grep -Eq '^(dotnet/Assembly\.Tests/|scripts/(.*/)?[^/]+\.test\.(sh|ts)$|desktop/src/(.*/)?([^/]*_)?tests\.rs$|desktop/tests/)' <<<"$changed" \

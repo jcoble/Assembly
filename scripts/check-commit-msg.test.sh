@@ -82,6 +82,38 @@ ci=$?
 if [ "$ci" = 1 ]; then echo "ok   the same message from another committer still stops"
 else echo "FAIL other committer: ci $ci, wanted 1"; failed=1; fi
 
+# CI checks a commit made before de5a7b0e (2026-11-03T02:01:28Z) against the rule it replaced: the commit changes
+# docs/architecture.md, or a line starts with Architecture: unchanged.
+# ci_dated <committer date> <message> [file to change]: prints the --commit exit code
+ci_dated() {
+  local when=$1 msg=$2 f=${3:-}
+  git checkout -q -B work
+  if [ -n "$f" ]; then mkdir -p "$(dirname "$f")"; echo "$RANDOM" >"$f"; git add "$f"; fi
+  GIT_COMMITTER_DATE=$when git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "$msg"
+  "$check" --commit HEAD work >/dev/null 2>&1
+  echo $?
+}
+before=2026-11-03T02:01:27Z cutoff=2026-11-03T02:01:28Z
+bare=$'Subject\n\nArchitecture: updated\nCommitted-by: Claude'
+linked=$'Subject\n\nArchitecture: unchanged \xe2\x80\x94 https://app.notion.com/p/'"$page"$'\nCommitted-by: Claude'
+ci=$(ci_dated "$before" "$bare" docs/architecture.md)
+if [ "$ci" = 0 ]; then echo "ok   an old commit changing docs/architecture.md passes with a bare Architecture: updated"
+else echo "FAIL old bare updated with the doc: ci $ci, wanted 0"; failed=1; fi
+ci=$(ci_dated "$before" "$linked")
+if [ "$ci" = 0 ]; then echo "ok   an old commit passes with Architecture: unchanged and trailing text"
+else echo "FAIL old unchanged with trailing text: ci $ci, wanted 0"; failed=1; fi
+ci=$(ci_dated "$cutoff" "$bare" docs/architecture.md)$(ci_dated "$cutoff" "$linked")
+if [ "$ci" = 11 ]; then echo "ok   a commit at the cutoff is held to today's rule"
+else echo "FAIL commit at the cutoff: ci $ci, wanted 11"; failed=1; fi
+ci=$(ci_dated "$before" $'Subject\n\nCommitted-by: Claude')
+if [ "$ci" = 1 ]; then echo "ok   an old commit with no Architecture line and no doc change stops"
+else echo "FAIL old commit with no Architecture line: ci $ci, wanted 1"; failed=1; fi
+printf '%s\n' "$bare" >"$repo/.msg"
+"$check" "$repo/.msg" 2>/dev/null
+hook=$?
+if [ "$hook" = 1 ]; then echo "ok   the hook still stops a bare Architecture: updated"
+else echo "FAIL hook bare Architecture: updated: hook $hook, wanted 1"; failed=1; fi
+
 # Historical commits retain app/test recognition, while the staged hook always requires retained tests.
 mkdir -p app
 printf '{}\n' >app/package.json
