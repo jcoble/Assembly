@@ -33,6 +33,8 @@ internal sealed partial class SourceControlFeature
             return await local(); // The existing pre-session project producers validate their own captured owner.
         if (sessionValue.ValueKind != JsonValueKind.String || sessionValue.GetString() is not { Length: > 0 } session)
             throw new CallBadArguments("A session is required.");
+        if (FolderView.IsView(session))
+            return await InvokeView(method, resultType, json, FolderView.Parse(session), session, call, kind, local);
         var info = sessions.Get(session) ?? throw new CallFailed("unknown session");
         var qualified = kind == CallKind.Write || method is "checkouts" or "status" or "diff" or "branchDiff" or "branches" or "stashes" or "history" or "commitFiles" or "commitDiff" or "prs" or "pr" or "prFile" or "operation_host" or "operation";
         var assertedSource = json.TryGetProperty("expectedSource", out var asserted) && asserted.ValueKind != JsonValueKind.Null
@@ -76,6 +78,40 @@ internal sealed partial class SourceControlFeature
             call.SourceGuard = SessionRowSources.CapturedRemote(session, target.Owner.Machine, target.Live, target.EnsureCurrent);
             json = OwnerArguments(json, target.Owner.Engine);
         }
+        return await Forward(method, resultType, json, target, session, call, kind);
+    }
+
+    /// <summary>A write's turn can come after a session has started in the viewed folder it was admitted for.</summary>
+    internal void RequireViewWritable(string session, CancellationToken ct)
+    {
+        if (FolderView.IsView(session)) views.RequireWritable(FolderView.Parse(session).LocalFolder(), ct);
+    }
+
+    /// <summary>A viewed folder runs on its project's machine, with no session behind it to check.</summary>
+    private async Task<TResult> InvokeView<TResult>(string method, JsonTypeInfo<TResult> resultType, JsonElement json, FolderView view,
+        string session, CallContext call, CallKind kind, Func<Task<TResult>> local)
+    {
+        if (views.RemoteMachine(view) is { } machine)
+        {
+            if (forward is null || connections is null) throw new CallFailed("This host does not own that folder.");
+            var target = await Capture(machine, null, call.Cancellation);
+            call.SourceGuard = SessionRowSources.CapturedRemote(session, target.Owner.Machine, target.Live, target.EnsureCurrent);
+            return await Forward(method, resultType, OwnerArguments(json, target.Owner.Engine), target, session, call, kind);
+        }
+        var folder = view.LocalFolder();
+        if (kind == CallKind.Write && method is not ("cancel" or "release"))
+        {
+            views.RequireWritable(folder, call.Cancellation);
+            var observed = json.TryGetProperty("expectedCheckoutRoot", out var root) && root.ValueKind == JsonValueKind.String ? root.GetString() : null;
+            SourceControlWrites.RequireRoot(sessions, session, observed, required: false);
+        }
+        call.SourceGuard = new LocalReadSource(() => view.LocalFolder());
+        return await local();
+    }
+
+    private async Task<TResult> Forward<TResult>(string method, JsonTypeInfo<TResult> resultType, JsonElement json, GitTarget target,
+        string session, CallContext call, CallKind kind)
+    {
         using var sourceStop = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation,
             call.SourceGuard?.Changed ?? CancellationToken.None);
         target.EnsureCurrent();
@@ -86,7 +122,7 @@ internal sealed partial class SourceControlFeature
         JsonElement answer;
         try
         {
-            answer = await forward.CallAsync(target.Owner.Engine, "git", method, json, kind == CallKind.BulkRead,
+            answer = await forward!.CallAsync(target.Owner.Engine, "git", method, json, kind == CallKind.BulkRead,
                 sourceStop.Token, target.Owner.Socket, target.Owner.Binding, target.Live, kind == CallKind.Write);
         }
         catch (MachineUnreachable error) when (kind == CallKind.Write && error.MayHaveBeenSent)

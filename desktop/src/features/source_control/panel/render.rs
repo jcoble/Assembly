@@ -3,6 +3,7 @@
 use super::SourceControlPane;
 use super::outcomes::running_label;
 use crate::core::state::session_read::Shown;
+use crate::core::state::viewed_project::ViewedProject;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::features::source_control::commit_box::{
     can_commit, commit_hint, commit_label, stage_hint, stageable,
@@ -20,6 +21,8 @@ use gpui_kit::*;
 
 const NOT_A_REPOSITORY: &str = "This folder isn't a git repository yet.";
 const AMEND_TIP: &str = "Rewrite the last commit instead of adding one. Never do this to a commit that is already pushed and shared.";
+/// The running and result lines under the list; long git text under Details scrolls inside it.
+const FOOTER_MAX_HEIGHT: f32 = 160.;
 
 /// What an empty panel shows: one icon, a short title, a sentence or two, and at most one thing to press.
 fn empty_state(
@@ -65,12 +68,23 @@ impl Render for SourceControlPane {
         v_flex()
             .track_focus(&self.focus)
             .size_full()
+            .text_role(TextRole::Body, cx)
+            .child(self.open_project.clone())
             .child(header)
             .child(body)
     }
 }
-/// Pull requests belong to the session's branch, whichever checkout the rest of the panel is reading.
-const PR_SCOPE: &str = "Pull requests below are for the session folder, not this checkout.";
+/// The bounds a person can drag the commit box between.
+const COMMIT_BOX_HEIGHTS: (Pixels, Pixels) = (px(72.), px(320.));
+#[derive(Clone)]
+struct CommitBoxDrag;
+impl Render for CommitBoxDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+/// Pull requests stay with the session's branch, whichever project the rest of the panel is showing.
+const PR_SCOPE: &str = "Pull requests below are for the session folder, not this project.";
 impl SourceControlPane {
     fn render_body(&mut self, cx: &mut Context<Self>) -> AnyElement {
         match self.read.read(cx).shown().clone() {
@@ -80,26 +94,46 @@ impl SourceControlPane {
                 None,
                 cx,
             ),
-            Shown::Reading => {
-                let scope = self.scope_row(cx);
-                v_flex()
-                    .children(scope)
-                    .child(
-                        div()
-                            .px_3()
-                            .text_role(TextRole::Body, cx)
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Reading the changes…"),
-                    )
-                    .into_any_element()
-            }
-            Shown::Failed(message) => {
-                let scope = self.scope_row(cx);
-                let failure = self.failure_body(message, cx);
-                v_flex().children(scope).child(failure).into_any_element()
-            }
+            Shown::Reading => div()
+                .px_3()
+                .text_role(TextRole::Body, cx)
+                .text_color(cx.theme().muted_foreground)
+                .child("Reading the changes…")
+                .into_any_element(),
+            Shown::Failed(message) => self.failure_body(message, cx),
             Shown::Read(status) => self.repository_body(status, cx),
         }
+    }
+    /// The kit's textarea with a grip under it, the kit having no drag to resize: it grows with its text until dragged.
+    fn commit_box(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let height = self.commit_height;
+        let read_only = self.read_only(cx);
+        v_flex()
+            .id("commit-box")
+            .debug_selector(|| "git-commit-box".into())
+            .w_full()
+            .on_drag_move(
+                cx.listener(|pane, event: &DragMoveEvent<CommitBoxDrag>, _, cx| {
+                    let (least, most) = COMMIT_BOX_HEIGHTS;
+                    let height = event.event.position.y - event.bounds.top();
+                    pane.commit_height = Some(height.clamp(least, most));
+                    cx.notify();
+                }),
+            )
+            .child(
+                Textarea::new(&self.message)
+                    .small()
+                    .disabled(read_only)
+                    .when_some(height, |area, height| area.h(height)),
+            )
+            .child(
+                div()
+                    .id("commit-box-grip")
+                    .w_full()
+                    .h(px(6.))
+                    .cursor_row_resize()
+                    .on_drag(CommitBoxDrag, |drag, _, _, cx| cx.new(|_| drag.clone())),
+            )
     }
     fn try_again(&self, cx: &mut Context<Self>) -> Button {
         Button::new("source-control-retry")
@@ -195,26 +229,36 @@ impl SourceControlPane {
     }
     fn repository_body(&mut self, status: GitStatus, cx: &mut Context<Self>) -> AnyElement {
         let busy = self.busy(cx);
-        let selection = self.selection(cx);
-        let scope = self.scope_picker(cx);
-        // Another checkout is only read, so the place that changes things says so and offers the way to change it.
-        let change_area = match &selection {
-            Some(selection) => vec![self.read_only_block(selection, cx)],
-            None => vec![
-                Textarea::new(&self.message).into_any_element(),
-                self.commit_row(&status, busy, cx).into_any_element(),
-            ],
-        };
+        let read_only = self.read_only(cx);
+        let change_area = [
+            self.commit_box(cx).into_any_element(),
+            self.commit_row(&status, busy || read_only, cx)
+                .into_any_element(),
+        ];
         let running = self.running_line(cx);
         let result = self.result_element(cx);
-        let sections = self.render_sections(&status, busy || selection.is_some(), cx);
+        let sections = self.render_sections(&status, busy || read_only, cx);
         let timeline = self.timeline.as_ref().map(|(_, timeline)| timeline.clone());
         let pull_requests = self
             .pull_requests
             .as_ref()
             .map(|(_, section)| section.clone());
         let muted = cx.theme().muted_foreground;
-        div()
+        // What's running and what the last write came to sit under the list, so they never push its rows down.
+        let footer = (running.is_some() || result.is_some()).then(|| {
+            div()
+                .id("git-result-footer")
+                .debug_selector(|| "git-result-footer".into())
+                .flex_none()
+                .max_h(px(FOOTER_MAX_HEIGHT))
+                .overflow_y_scroll()
+                .p_2()
+                .border_t_1()
+                .border_color(cx.theme().border)
+                .children(running)
+                .children(result)
+        });
+        let list = div()
             .relative()
             .flex_1()
             .min_h_0()
@@ -227,11 +271,8 @@ impl SourceControlPane {
                     .child(
                         v_flex()
                             .p_2()
-                            .gap_2()
-                            .children(scope)
+                            .gap_1()
                             .children(change_area)
-                            .children(running)
-                            .children(result)
                             .children(status.more_line().map(|line| {
                                 div()
                                     .text_role(TextRole::Body, cx)
@@ -240,17 +281,25 @@ impl SourceControlPane {
                             }))
                             .children(sections)
                             .children(timeline)
-                            .children((selection.is_some() && pull_requests.is_some()).then(|| {
-                                div()
-                                    .debug_selector(|| "git-pr-scope".into())
-                                    .text_role(TextRole::Body, cx)
-                                    .text_color(muted)
-                                    .child(PR_SCOPE)
-                            }))
+                            .children(
+                                (ViewedProject::viewed(cx).is_some() && pull_requests.is_some())
+                                    .then(|| {
+                                        div()
+                                            .debug_selector(|| "git-pr-scope".into())
+                                            .text_role(TextRole::Body, cx)
+                                            .text_color(muted)
+                                            .child(PR_SCOPE)
+                                    }),
+                            )
                             .children(pull_requests),
                     ),
             )
-            .vertical_scrollbar(&self.scroll)
+            .vertical_scrollbar(&self.scroll);
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(list)
+            .children(footer)
             .into_any_element()
     }
     fn commit_row(&mut self, status: &GitStatus, busy: bool, cx: &mut Context<Self>) -> Div {
@@ -270,12 +319,13 @@ impl SourceControlPane {
             commit.secondary()
         };
         h_flex()
-            .gap_2()
+            .gap_1()
             .child(
                 Switch::new("git-amend")
                     .small()
                     .label("Amend")
                     .checked(self.amend)
+                    .disabled(self.read_only(cx))
                     .tooltip(AMEND_TIP)
                     .on_click(cx.listener(|pane, checked: &bool, _, cx| {
                         pane.amend = *checked;

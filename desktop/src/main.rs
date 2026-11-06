@@ -13,6 +13,8 @@ mod hinted_item;
 mod inline_field;
 #[path = "components/notice_strip/mod.rs"]
 mod notice_strip;
+#[path = "components/open_project/mod.rs"]
+mod open_project_component;
 #[path = "components/section_card.rs"]
 mod section_card;
 

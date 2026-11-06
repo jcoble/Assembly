@@ -1,7 +1,9 @@
 //! The header's branch menu: switch branch, new branch, and stash. It draws what the pane read and says what was picked;
 //! the pane owns the read and the write, so nothing here reaches the backend.
 use super::git_branches::GitBranch;
+use super::stash_dialogs::Stash;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::spinner::Spinner;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -9,6 +11,9 @@ use gpui_kit::component::list::ListItem;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+
+/// The kit's list row turns off without looking off, so a row that can't run dims itself like the old menu's.
+const OFF_ROW_OPACITY: f32 = 0.5;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum BranchPicked {
@@ -18,6 +23,7 @@ pub enum BranchPicked {
     MoveToFolder(String),
     Create(String),
     Stash,
+    PopStash(String),
     OpenStashes,
 }
 pub fn choice_for(branch: &GitBranch) -> Option<BranchPicked> {
@@ -86,6 +92,7 @@ pub struct BranchMenu {
     filter: Entity<InputState>,
     name: Entity<InputState>,
     branches: Vec<GitBranch>,
+    stashes: Vec<Stash>,
     reading: bool,
     failure: Option<String>,
     /// The refusal the last create came back with.
@@ -114,6 +121,7 @@ impl BranchMenu {
             filter,
             name,
             branches: Vec::new(),
+            stashes: Vec::new(),
             reading: false,
             failure: None,
             refused: None,
@@ -138,6 +146,10 @@ impl BranchMenu {
         self.has_changes = has_changes;
         cx.notify();
     }
+    pub fn set_stashes(&mut self, stashes: Vec<Stash>, cx: &mut Context<Self>) {
+        self.stashes = stashes;
+        cx.notify();
+    }
     pub fn set_refused(&mut self, refused: Option<String>, cx: &mut Context<Self>) {
         self.refused = refused;
         cx.notify();
@@ -158,13 +170,21 @@ impl BranchMenu {
         }
         cx.emit(BranchPicked::Create(name));
     }
+    fn icon_row(icon: IconName, label: String) -> Div {
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .gap_2()
+            .child(Icon::new(icon).size(px(14.)))
+            .child(div().min_w_0().truncate().child(label))
+    }
     fn rule(cx: &App) -> Div {
         div().h(px(1.)).bg(cx.theme().border)
     }
     fn heading(title: &'static str, cx: &App) -> Div {
         div()
             .px_2()
-            .text_role(TextRole::Body, cx)
+            .text_role(TextRole::Meta, cx)
             .font_weight(FontWeight::MEDIUM)
             .text_color(cx.theme().muted_foreground)
             .child(title)
@@ -180,16 +200,19 @@ impl BranchMenu {
                 .text_color(color)
                 .child(text)
         };
+        if self.reading {
+            return line("Reading branches…".into(), muted)
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(Spinner::new().xsmall())
+                .into_any_element();
+        }
         if let Some(failure) = &self.failure {
             return line(failure.clone(), danger).into_any_element();
         }
         if self.branches.is_empty() {
-            let text = if self.reading {
-                "Reading branches…"
-            } else {
-                "No local branches were found."
-            };
-            return line(text.into(), muted).into_any_element();
+            return line("No local branches were found.".into(), muted).into_any_element();
         }
         let filter = self.filter.read(cx).value().to_string();
         let shown: Vec<GitBranch> = filter_branches(&self.branches, &filter)
@@ -203,7 +226,10 @@ impl BranchMenu {
         v_flex()
             .children(shown.into_iter().map(|branch| {
                 let choice = choice_for(&branch);
+                let choice_off = choice.is_none();
                 ListItem::new(SharedString::from(format!("branch:{}", branch.name)))
+                    .py_1()
+                    .text_role(TextRole::Body, cx)
                     .disabled(busy || choice.is_none())
                     .on_click(cx.listener(move |_, _, _, cx| {
                         if let Some(choice) = choice.clone() {
@@ -212,6 +238,7 @@ impl BranchMenu {
                     }))
                     .child(
                         h_flex()
+                            .when(busy || choice_off, |row| row.opacity(OFF_ROW_OPACITY))
                             .w_full()
                             .min_w_0()
                             .gap_2()
@@ -230,7 +257,7 @@ impl BranchMenu {
                                     .child(div().truncate().child(branch.name.clone()))
                                     .child(
                                         div()
-                                            .text_role(TextRole::Body, cx)
+                                            .text_role(TextRole::Meta, cx)
                                             .truncate()
                                             .text_color(muted)
                                             .child(branch_detail(&branch)),
@@ -255,6 +282,7 @@ impl Render for BranchMenu {
         v_flex()
             .w(px(280.))
             .gap_2()
+            .text_role(TextRole::Body, cx)
             .child(Self::heading("SWITCH BRANCH", cx))
             .child(Input::new(&self.filter).small())
             .child(
@@ -290,19 +318,62 @@ impl Render for BranchMenu {
             .child(Self::heading("STASH", cx))
             .child(
                 ListItem::new("branch-stash")
+                    .py_1()
+                    .text_role(TextRole::Body, cx)
                     .disabled(busy || !has_changes)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(BranchPicked::Stash)))
-                    .child(div().child(if has_changes {
-                        "Stash all changes, including new files"
-                    } else {
-                        "Nothing to stash"
-                    })),
+                    .child(
+                        Self::icon_row(
+                            IconName::Archive,
+                            if has_changes {
+                                "Stash all changes, including new files".to_string()
+                            } else {
+                                "Nothing to stash".to_string()
+                            },
+                        )
+                        .when(busy || !has_changes, |row| row.opacity(OFF_ROW_OPACITY)),
+                    ),
             )
+            .when_some(self.stashes.first().cloned(), |menu, latest| {
+                let label = format!("Pop {}", latest.description());
+                let sha = latest.sha;
+                menu.child(
+                    ListItem::new("branch-pop-stash")
+                        .py_1()
+                        .text_role(TextRole::Body, cx)
+                        .disabled(busy)
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(BranchPicked::PopStash(sha.clone()))
+                        }))
+                        .child(
+                            Self::icon_row(IconName::ArchiveRestore, label)
+                                .when(busy, |row| row.opacity(OFF_ROW_OPACITY)),
+                        ),
+                )
+            })
+            .when(self.stashes.len() > 1, |menu| {
+                menu.child(
+                    div()
+                        .px_2()
+                        .text_role(TextRole::Meta, cx)
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!(
+                            "{} stashes saved. Popping takes the most recent one.",
+                            self.stashes.len()
+                        )),
+                )
+            })
             .child(
                 ListItem::new("branch-stashes")
+                    .py_1()
+                    .text_role(TextRole::Body, cx)
                     .disabled(busy)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(BranchPicked::OpenStashes)))
-                    .child(div().child("Stashes…")),
+                    .child(
+                        div()
+                            .when(busy, |row| row.opacity(OFF_ROW_OPACITY))
+                            .child("Stashes…"),
+                    ),
             )
     }
 }

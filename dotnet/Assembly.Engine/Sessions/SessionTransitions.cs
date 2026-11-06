@@ -58,6 +58,7 @@ public static partial class SessionTransitions
             StopSession => Stop(scope, context, current),
             LinkTask link => Link(scope, context, current, link),
             ReportSessionModel model => ReportModel(scope, context, current, model),
+            ReportSessionBranch branch => ReportBranch(scope, context, current, branch),
             ReportSessionTitle title => ReportTitle(scope, context, current, title, titleUtf8),
             _ => Refused(context, "unsupported_command", current)
         };
@@ -280,6 +281,21 @@ public static partial class SessionTransitions
             new("$title", titleUtf8 ?? new System.Text.UTF8Encoding(false, true).GetBytes(command.Title)), new("$now", context.NowMs), new("$id", context.EntityId));
         return EngineJournal.Commit(scope, context, current.Version + 1, current.Epoch,
             [new("session.changed", "session", context.EntityId, current.Version + 1, false,
+                new(context.EntityId, current.RunId, null, current.ParentId, current.State, current.Epoch))], []);
+    }
+
+    private static CommandResult ReportBranch(IWriteScope scope, CommandContext context, Session current, ReportSessionBranch command)
+    {
+        if (context.Actor.Kind != ActorKind.System)
+            return Refused(context, "forbidden", current);
+        if (command.Branch is { } name && (string.IsNullOrWhiteSpace(name) || name.Length > 256 || name.Any(char.IsControl)))
+            return Refused(context, "bad_args", current);
+        var branch = scope.QueryFirst("SELECT branch FROM engine_session WHERE id=$id", r => r.IsNull(0) ? null : r.Text(0), new SqlArg("$id", context.EntityId));
+        if (branch == command.Branch) return new(true, false, null, current.Version, 0, current.Epoch);
+        scope.Execute("UPDATE engine_session SET branch=$branch,version=version+1,updated_ms=$now WHERE id=$id",
+            new("$branch", command.Branch), new("$now", context.NowMs), new("$id", context.EntityId));
+        return EngineJournal.Commit(scope, context, current.Version + 1, current.Epoch,
+            [new("session.checkout_changed", "session", context.EntityId, current.Version + 1, false,
                 new(context.EntityId, current.RunId, null, current.ParentId, current.State, current.Epoch))], []);
     }
 

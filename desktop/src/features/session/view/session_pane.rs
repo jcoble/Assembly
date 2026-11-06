@@ -255,7 +255,28 @@ impl SessionPane {
                 ItemKind::Message { blocks, .. } if item.key == key => Some(Reveal::chars(blocks)),
                 _ => None,
             });
+        let tool_before = self
+            .view
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match &item.kind {
+                ItemKind::Tool { tool, .. } if item.key == key => Some(tool.state),
+                _ => None,
+            });
         let change = self.view.apply(row);
+        let changed_at = match change {
+            Change::Appended => self.view.items.len().checked_sub(1),
+            Change::Updated(at) => Some(at),
+            _ => None,
+        };
+        if let Some(ItemKind::Tool { tool, .. }) = changed_at
+            .and_then(|at| self.view.items.get(at))
+            .map(|item| &item.kind)
+            && tool.just_touched_folder(tool_before)
+        {
+            crate::core::state::folder_touched::FolderTouched::touch(&row.session_id, cx);
+        }
         if let (Change::Appended, Some(item)) = (change, self.view.items.last()) {
             let now = Instant::now();
             self.fresh

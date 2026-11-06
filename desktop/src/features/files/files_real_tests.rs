@@ -305,3 +305,43 @@ async fn a_file_reads_a_complete_coherent_buffer_and_closing_drops_the_read(
         );
     });
 }
+
+#[gpui::test]
+async fn a_tool_changing_the_folder_reloads_the_tree_with_its_open_folders_kept(
+    cx: &mut TestAppContext,
+) {
+    let (_backend, root) = selected_session(cx, &["src/main.rs", "readme.md"]).await;
+    let session = cx.read(|cx| {
+        SelectedSession::global(cx)
+            .read(cx)
+            .session_id()
+            .unwrap()
+            .to_string()
+    });
+    let (pane, cx) = cx.add_window_view(|_, cx| FilesPane::new(cx));
+    pane.update_in(cx, |pane, window, cx| {
+        BasePanel::set_active(pane, true, window, cx)
+    });
+    settled(&pane, cx, |pane| !pane.is_loading()).await;
+    pane.update(cx, |pane, cx| pane.clicked("src".into(), true, cx));
+    settled(&pane, cx, |pane| !pane.is_loading()).await;
+    fs::write(Path::new(&root).join("src/added.rs"), "").unwrap();
+    fs::remove_file(Path::new(&root).join("readme.md")).unwrap();
+    cx.update(|_, cx| crate::core::state::folder_touched::FolderTouched::touch("another", cx));
+    cx.run_until_parked();
+    pane.read_with(cx, |pane, _| {
+        assert!(shape(pane).contains(&"readme.md".into()))
+    });
+    cx.update(|_, cx| crate::core::state::folder_touched::FolderTouched::touch(&session, cx));
+    settled(&pane, cx, |pane| {
+        !pane.is_loading() && shape(pane).contains(&"  added.rs".into())
+    })
+    .await;
+    pane.read_with(cx, |pane, _| {
+        assert_eq!(
+            shape(pane),
+            [".git/ -", "src/ v", "  added.rs", "  main.rs", ".gitignore"]
+        );
+        assert_eq!(pane.selected.as_deref(), Some("src"));
+    });
+}

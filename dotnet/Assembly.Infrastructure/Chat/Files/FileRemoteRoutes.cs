@@ -34,6 +34,12 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
         if (HasTarget(json, out var machine))
             return machine is null ? null : "files-path:" + machine + ":" + json.GetProperty("target").GetProperty("path").GetString();
         if (!json.TryGetProperty("session", out var session) || session.GetString() is not { } id) return null;
+        // A viewed folder sends no source. On another machine its writes queue by the view, since there's no local root.
+        if (FolderView.IsView(id))
+        {
+            var owner = owners.Resolve(id, CancellationToken.None);
+            return owners.IsLocal(owner, CancellationToken.None) ? null : "files-source:" + owner.Machine + ":" + id;
+        }
         // Queue ordering is not authority. Qualified calls validate the supplied source before any owner lookup.
         if (!json.TryGetProperty("expectedSource", out var source) || source.ValueKind == JsonValueKind.Null) return null;
         return "files-source:" + source.GetProperty("machine").GetString() + ":" + id;
@@ -76,6 +82,7 @@ internal sealed class FileRemoteRoutes(IAppDatabase db, FileOwner owners, Remote
             sessionId = session.GetString() ?? throw new CallBadArguments("A file session is required.");
             ownership = owners.Resolve(sessionId, call.Cancellation, expectedOwner);
             if (owners.IsLocal(ownership, call.Cancellation)) return (false, default!);
+            if (expected is null && FolderView.IsView(sessionId)) expected = owners.ViewSource(ownership.Machine, call.Cancellation);
             if (expected is null || expected.Machine != ownership.Machine || expected.Generation <= 0 ||
                 expected.RouteMachine is not { Length: > 0 })
                 throw new CallFailed("Reopen this file from its actual source before using remote files.", "source_changed");

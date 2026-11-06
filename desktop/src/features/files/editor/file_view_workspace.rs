@@ -47,6 +47,10 @@ impl FileView {
     pub(crate) fn layout_ref(&self) -> String {
         self.tab_key()
     }
+    /// The session (or viewed folder) this file is open under.
+    pub(crate) fn session(&self) -> &str {
+        &self.session
+    }
     pub(crate) fn restored_workspace_path(&self, key: &WorkspaceKey) -> Option<&str> {
         (self.outside.is_none()
             && (self.owning_workspace().as_ref() == Some(key)

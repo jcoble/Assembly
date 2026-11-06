@@ -1,5 +1,6 @@
 //! Reads the owner's actual center dock order and focus selection; keeps no second tab list.
 use super::center_tabs::{Pane, Tabs, pane_key};
+use crate::core::state::viewed_project::is_view;
 use crate::core::{state::workspace_panes::WorkspaceKey, ui::center_panes::CenterPanes};
 use crate::features::files::file_view::FileView;
 use gpui_kit::component::dock::{DockPlacement, PaneRef, PanelHandle};
@@ -32,6 +33,8 @@ pub(super) fn capture(key: &WorkspaceKey, window: &Window, cx: &App) -> Result<T
                     let file = PanelHandle::of(panel)
                         .and_then(|panel| panel.view().downcast::<FileView>().ok());
                     match file {
+                        // A viewed project's file isn't this workspace's, and stays open until the app closes.
+                        Some(file) if is_view(file.read(cx).session()) => None,
                         Some(file) => match file.read(cx).workspace_identity(key) {
                             // A second tab on one document waits for its claim; the first stands for it.
                             Ok(Some(identity))

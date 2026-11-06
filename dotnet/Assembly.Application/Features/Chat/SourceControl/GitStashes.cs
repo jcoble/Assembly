@@ -28,7 +28,8 @@ public sealed class GitStashes(IGit git, TimeProvider time)
     public async Task<GitWriteResult> StashAsync(string root, string session, string text, bool includeUntracked, CancellationToken ct)
     {
         if (session.Contains('\0') || text.Contains('\0')) throw new CallFailed("A stash message cannot contain a null character.");
-        var message = $"assembly {session} {time.GetUtcNow():yyyy-MM-ddTHH:mm}: {text}";
+        // Git strips trailing whitespace from what it stores, so the message it gets is the one to look for.
+        var message = $"assembly {session} {time.GetUtcNow():yyyy-MM-ddTHH:mm}: {text}".TrimEnd();
         var before = (await Entries(root, ct)).Select(entry => entry.Stash.Sha).ToHashSet(StringComparer.Ordinal);
         List<string> args = ["stash", "push"];
         if (includeUntracked) args.Add("--include-untracked");

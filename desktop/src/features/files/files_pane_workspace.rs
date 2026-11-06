@@ -66,22 +66,45 @@ impl FilesPane {
         if self.workspace_key.as_ref() != Some(key) {
             return None;
         }
+        Some(self.tree_snapshot())
+    }
+    /// The open folders, selection and scroll as they are, or as they will be once a restore underway finishes.
+    fn tree_snapshot(&self) -> TreeSnapshot {
         if let Some(restore) = &self.restoring_tree {
             let mut expanded = self.tree.expanded_paths();
             expanded.extend(restore.folders.iter().cloned());
             expanded.sort();
             expanded.dedup();
-            return Some(TreeSnapshot {
+            return TreeSnapshot {
                 expanded_paths: expanded,
                 selected_path: restore.selected.clone(),
                 scroll: restore.scroll,
-            });
+            };
         }
-        Some(TreeSnapshot {
+        TreeSnapshot {
             expanded_paths: self.tree.expanded_paths(),
             selected_path: self.selected.clone(),
             scroll: f32::from(self.list.0.borrow().base_handle.offset().y),
-        })
+        }
+    }
+    /// Reads the folder again after the session's tool changed it, keeping the open folders, selection and scroll.
+    /// The lease stays: it's the same folder.
+    pub(super) fn reload_kept(&mut self, cx: &mut Context<Self>) {
+        if !self.shown || !self.started {
+            return;
+        }
+        let snapshot = self.tree_snapshot();
+        self.generation = self.generation.wrapping_add(1);
+        self.loads.clear();
+        self.started = false;
+        self.tree = FileTree::default();
+        self.restoring_tree = Some(TreeRestore {
+            folders: snapshot.expanded_paths.into(),
+            selected: snapshot.selected_path,
+            scroll: snapshot.scroll,
+        });
+        self.start(cx);
+        cx.notify();
     }
     pub(crate) fn restore_workspace_tree(
         &mut self,

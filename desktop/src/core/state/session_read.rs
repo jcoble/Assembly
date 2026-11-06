@@ -7,9 +7,10 @@ use gpui_kit::*;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+use super::folder_touched::FolderTouched;
 use super::selected_session::SelectedSession;
 use super::sessions::Sessions;
-use crate::core::socket::checkout_selector::CheckoutSelector;
+use super::viewed_project::ViewedProject;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::error_code::ErrorCode;
 use crate::core::socket::outcome::Outcome;
@@ -37,8 +38,6 @@ pub struct SessionRead<T> {
     /// The session what's shown, or the read on its way, is for.
     read_for: Option<String>,
     source: Option<ExpectedRowSource>,
-    /// A linked checkout to read instead, for the session and source it was picked under and no other.
-    checkout: Option<(String, Option<ExpectedRowSource>, CheckoutSelector)>,
     shown: Shown<T>,
     /// Why the shown failure failed, for a next step such as Connect.
     failure_code: Option<ErrorCode>,
@@ -49,7 +48,11 @@ pub struct SessionRead<T> {
     _read: Option<Task<()>>,
     _selected: Subscription,
     _settled: Option<Subscription>,
+    _touched: Option<Subscription>,
     settled_state: Option<(String, String)>,
+    /// Reads the viewed folder instead of the session while one is viewed.
+    follows_view: bool,
+    _viewed: Option<Subscription>,
 }
 
 impl<T: DeserializeOwned + 'static> SessionRead<T> {
@@ -67,7 +70,6 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
             active: false,
             read_for: None,
             source: None,
-            checkout: None,
             shown: Shown::NoSession,
             failure_code: None,
             answers: 0,
@@ -75,7 +77,10 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
             _read: None,
             _selected: selected,
             _settled: None,
+            _touched: None,
             settled_state: None,
+            follows_view: false,
+            _viewed: None,
         }
     }
 
@@ -85,11 +90,35 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         self
     }
 
-    /// Refreshes on the selected session's actual running-to-settled transition; never polls.
+    /// For Files' and Git's reads: reads the viewed folder while another project is viewed. Nothing else follows it.
+    pub fn following_view(&mut self, cx: &mut Context<Self>) {
+        self.follows_view = true;
+        let viewed = ViewedProject::global(cx);
+        self._viewed = Some(cx.observe(&viewed, |read, _, cx| {
+            if read.active {
+                read.read(false, cx);
+            }
+        }));
+    }
+
+    /// Refreshes on the selected session's actual running-to-settled transition, and mid-turn when one of its tool
+    /// calls that can change its folder finishes; never polls.
     pub fn refresh_on_settle(&mut self, cx: &mut Context<Self>) {
         if self._settled.is_some() {
             return;
         }
+        let touched = FolderTouched::global(cx);
+        self._touched = Some(cx.observe(&touched, |read, touched, cx| {
+            let touched = touched.read(cx);
+            let session = touched.session().map(str::to_string);
+            if read.active
+                && !touched.by_git_panel()
+                && session.is_some()
+                && session == read.read_for
+            {
+                read.read(true, cx);
+            }
+        }));
         let Some(sessions) = Sessions::try_global(cx) else {
             return;
         };
@@ -133,34 +162,9 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         self.source.as_ref()
     }
 
-    /// The linked checkout being read, if it isn't the session's own.
-    pub fn checkout(&self) -> Option<&CheckoutSelector> {
-        self.checkout.as_ref().map(|(_, _, checkout)| checkout)
-    }
-
     /// Why the shown failure failed.
     pub fn failure_code(&self) -> Option<&ErrorCode> {
         self.failure_code.as_ref()
-    }
-
-    /// Reads another checkout of the session it's on, or its own again. What was shown belongs to the last one.
-    pub fn set_checkout(&mut self, checkout: Option<CheckoutSelector>, cx: &mut Context<Self>) {
-        let bound = match (checkout, &self.read_for) {
-            (Some(checkout), Some(session)) => {
-                Some((session.clone(), self.source.clone(), checkout))
-            }
-            _ => None,
-        };
-        if bound == self.checkout {
-            return;
-        }
-        self.checkout = bound;
-        self.failure_code = None;
-        self.shown = Shown::Reading;
-        cx.notify();
-        if self.active {
-            self.read(true, cx);
-        }
     }
 
     pub fn reading(&self) -> bool {
@@ -210,24 +214,28 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
 
     /// Reads the selected session, unless it's already shown or on its way and `again` isn't set.
     fn read(&mut self, again: bool, cx: &mut Context<Self>) {
-        let selection = SelectedSession::global(cx);
-        let selection = selection.read(cx);
-        let selected = selection.session_id().map(String::from);
-        let source = selection.source().cloned();
+        let subject = if self.follows_view {
+            ViewedProject::subject(cx)
+        } else {
+            let selection = SelectedSession::global(cx);
+            let selection = selection.read(cx);
+            selection
+                .session_id()
+                .map(|session| (session.to_string(), selection.source().cloned()))
+        };
+        let (selected, source) = match subject {
+            Some((session, source)) => (Some(session), source),
+            None => (None, None),
+        };
         let Some(session) = selected else {
             self.read_for = None;
             self.reading = false;
             self._read = None;
             self.source = None;
-            self.checkout = None;
             self.shown = Shown::NoSession;
             cx.notify();
             return;
         };
-        self.checkout = self
-            .checkout
-            .take()
-            .filter(|(bound, from, _)| *bound == session && *from == source);
         let same = self.read_for.as_deref() == Some(session.as_str()) && self.source == source;
         if same && !again && !matches!(self.shown, Shown::Failed(_)) {
             return;
@@ -247,10 +255,7 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
             return;
         };
         // Keyed, so a newer read answers this one Aborted and cancels it on the backend.
-        let args = CheckoutSelector::applied(
-            self.checkout(),
-            json!({ "session": session, "expectedSource": source }),
-        );
+        let args = json!({ "session": session, "expectedSource": source });
         let call = socket
             .read(cx)
             .call::<Value>(self.feature, self.method, args, Some(&self.key));

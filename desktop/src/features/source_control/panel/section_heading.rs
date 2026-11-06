@@ -10,6 +10,16 @@ use gpui_kit::*;
 use std::time::Duration;
 
 /// The name and count, for a heading that doesn't fold as well as one that does.
+/// A count beside a heading or the branch: body-sized text in a pill no taller than its row.
+pub fn count_chip(count: impl Into<SharedString>, cx: &App) -> impl IntoElement {
+    Tag::secondary()
+        .small()
+        .h(CHIP_HEIGHT)
+        .text_role(TextRole::Body, cx)
+        .rounded_full()
+        .child(count.into())
+}
+pub const CHIP_HEIGHT: Pixels = px(20.);
 pub fn heading_label(title: &'static str, count: Option<String>, cx: &App) -> Div {
     h_flex()
         .gap_1()
@@ -17,7 +27,7 @@ pub fn heading_label(title: &'static str, count: Option<String>, cx: &App) -> Di
         .font_weight(FontWeight::MEDIUM)
         .text_color(cx.theme().muted_foreground)
         .child(title.to_uppercase())
-        .children(count.map(|count| Tag::secondary().xsmall().rounded_full().child(count)))
+        .children(count.map(|count| count_chip(count, cx)))
 }
 pub fn section_heading(
     id: impl Into<SharedString>,

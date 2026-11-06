@@ -55,9 +55,8 @@ pub struct RailEntry {
     pub failed: bool,
     pub unread: bool,
     pub ordering: String,
-    /// The newest branch a turn's stats recorded: what it was then, not the checkout now.
+    /// The branch git has checked out in the session's folder, as the Engine records it.
     pub branch: Option<String>,
-    pub branch_at: Option<i64>,
     /// The provider's glyph: a bundled icon's path, picked by the backend.
     pub icon: String,
     pub section_index: usize,
@@ -345,10 +344,12 @@ fn cursor(entry: &RailEntry, view: View) -> RailCursor {
 /// A parent with nothing going on, for the tests to change.
 #[cfg(test)]
 pub fn test_entry(id: &str, repo_url: &str) -> RailEntry {
-    serde_json::from_value(json!({ "sessionId": id, "kind": "session", "section": "working", "agent": "claude",
+    serde_json::from_value(
+        json!({ "sessionId": id, "kind": "session", "section": "working", "agent": "claude",
         "repoUrl": repo_url, "group": repo_url, "count": 0, "machines": [],
         "title": null, "machine": null, "updatedAt": 1, "completedAt": null, "running": false,
         "failed": false, "unread": false, "ordering": id,
-        "branch": null, "branchAt": null, "icon": "icons/bot.svg", "sectionIndex": 0, "header": 2 }))
+        "branch": null, "icon": "icons/bot.svg", "sectionIndex": 0, "header": 2 }),
+    )
     .unwrap()
 }

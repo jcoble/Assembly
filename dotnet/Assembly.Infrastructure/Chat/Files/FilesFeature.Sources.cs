@@ -17,6 +17,8 @@ internal sealed partial class FilesFeature
         // target has no session source to capture and checks its own peer.
         if (!json.TryGetProperty("session", out var session) || session.ValueKind == JsonValueKind.Null) return null;
         if (call.Peer is not OwnerPeer) throw new CallFailed("forbidden");
+        // A viewed folder has no session row to bind: the forward that named this machine already chose it.
+        if (FolderView.IsView(session.GetString())) return null;
         var source = expected.Deserialize(FilesJson.Default.ExpectedSource) ?? throw new CallFailed("source_changed");
         if (sourceBindings is null) throw new CallFailed("The file source cannot be verified.", "source_changed");
         var guard = await sourceBindings.CaptureAsync(source, session.GetString()!, call.Cancellation);

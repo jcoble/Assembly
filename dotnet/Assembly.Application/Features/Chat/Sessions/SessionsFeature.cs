@@ -315,7 +315,7 @@ internal sealed class SessionsFeature : IFeature
     internal sealed record RailEntry(string SessionId, string Kind, string Section, string Agent, string RepoUrl, string Group,
         int Count, IReadOnlyList<string> Machines, string? Title, string? Machine, long UpdatedAt, long? CompletedAt,
         bool Running, bool Failed, bool Unread, string? Branch,
-        long? BranchAt, string Icon, int SectionIndex, int Header, string Ordering, string? Preview,
+        string Icon, int SectionIndex, int Header, string Ordering, string? Preview,
         string? ParentSessionId, int Depth, long? PinnedAt, long? OrchestratorAt, long? Position, string? Model,
         string? Worktree, string? LastError, string? ResumeCommand, long? LastSeenMs, ExpectedSource? Source, bool NativeActivity);
 

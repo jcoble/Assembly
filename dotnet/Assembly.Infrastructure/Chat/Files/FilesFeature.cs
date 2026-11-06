@@ -1,4 +1,6 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Common;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Calls;
@@ -92,7 +94,11 @@ internal sealed partial class FilesFeature(SessionStore sessions, FileOwner owne
         calls.Write(Feature, "commitSave", FilesJson.Default.CommitSave, FilesJson.Default.SaveResult, async (args, call) =>
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, call.Closed);
-            var result = await uploads.CommitAsync(args.Upload, call.Connection, linked.Token, (save, root) => RequireSameOwner(save, root, call, linked.Token));
+            var result = await uploads.CommitAsync(args.Upload, call.Connection, linked.Token, (save, root) =>
+            {
+                RequireSameOwner(save, root, call, linked.Token);
+                if (save.Target is null && FolderView.IsView(save.Session!)) owners.RequireViewWritable(save.Session!, linked.Token);
+            });
             return _ => result;
         }, order: args => uploads.OrderKey(args.Upload), failed: (args, call) => uploads.Drop(args.Upload, call.Connection), bulk: true);
         calls.Read(Feature, "compare", FilesJson.Default.CompareFile, FilesJson.Default.FileComparison, async (args, call) =>
@@ -116,6 +122,13 @@ internal sealed partial class FilesFeature(SessionStore sessions, FileOwner owne
         }, order: args => "files:" + SessionPaths.ResolveFile(LocalRoot(SessionOnly(args.Session, args.Target), CancellationToken.None, args.ExpectedOwner), args.Path));
         calls.Closed(uploads.Close);
         calls.Closed(reads.Close);
+    }
+
+    private void RequireViewWritable<T>(T args, JsonTypeInfo<T> type, CallContext call)
+    {
+        var json = JsonSerializer.SerializeToElement(args, type);
+        if (json.TryGetProperty("session", out var session) && session.GetString() is { } id && FolderView.IsView(id))
+            owners.RequireViewWritable(id, call.Cancellation);
     }
 
     private string LocalRoot(string session, CancellationToken ct, FileOwnership? expected = null)

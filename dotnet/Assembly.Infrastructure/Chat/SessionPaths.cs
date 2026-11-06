@@ -12,6 +12,7 @@ public static class SessionPaths
 {
     public static string RootOf(SessionStore sessions, string sessionId)
     {
+        if (FolderView.IsView(sessionId)) return FolderView.Parse(sessionId).LocalFolder();
         var session = sessions.Get(sessionId) ?? throw new CallFailed("unknown session");
         if (!string.IsNullOrEmpty(session.Machine))
             throw new CallFailed($"this session's files are on {session.Machine}, which this window can't show yet");

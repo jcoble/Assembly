@@ -83,6 +83,7 @@ impl WorkspacePanes {
                 | "diff"
                 | "browser"
                 | "sourceControl"
+                | "viewedProject"
         ) {
             return Err("Unknown workspace pane.".into());
         }
@@ -211,6 +212,7 @@ fn validate(snapshot: &Value) -> Result<(), String> {
                     | "diff"
                     | "browser"
                     | "sourceControl"
+                    | "viewedProject"
             )
         })
     {

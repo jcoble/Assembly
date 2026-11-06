@@ -2,7 +2,8 @@
 //! first. The panel draws them.
 use super::git_status::{GitStatus, Section};
 
-pub const PLACEHOLDER: &str = "Message. Press Command-Enter to commit.";
+/// Broken by hand: the kit draws a placeholder without wrapping it, and this one is wider than the drawer.
+pub const PLACEHOLDER: &str = "Message. Press Command-Enter to\ncommit.";
 const STILL_RUNNING: &str = "Wait for the current source-control action to finish.";
 
 pub fn commit_label(amend: bool) -> &'static str {
@@ -51,7 +52,7 @@ pub fn stageable(status: &GitStatus) -> Vec<String> {
     let mut paths: Vec<String> = [Section::Changes, Section::Untracked]
         .into_iter()
         .flat_map(|section| status.section(section))
-        .filter(|(letter, _)| *letter != '!')
+        .filter(|(_, file)| !file.conflicted())
         .map(|(_, file)| file.path.clone())
         .collect();
     paths.sort();

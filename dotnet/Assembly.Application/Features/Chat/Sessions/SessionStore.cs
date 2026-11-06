@@ -333,10 +333,10 @@ public sealed partial class SessionStore
             _ => new SessionsFeature.RailEntry(row.Text(2), row.Text(3), row.Text(4), row.Text(5), row.Text(6), row.Text(7),
                 (int)row.Long(8), Text(9)?.Split(',', StringSplitOptions.RemoveEmptyEntries) ?? [], row.IsNull(10) ? null : TitleUtf8.GetString(row.Blob(10)), Text(11), row.Long(12),
                 Long(13), row.Long(14) == 1, row.Long(15) == 1, row.Long(16) == 1,
-                Text(17), Long(18), ProviderGlyph.Of(row.Text(5)), (int)row.Long(19), (int)row.Long(20),
-                row.Text(21), Text(22), Text(26), (int)row.Long(35), Long(27), Long(28), Long(29),
-                Text(30), Text(31), Text(32), Text(33), Long(34),
-                Text(23) is { } machine ? new(machine, row.Long(24), Text(25)) : null, row.Long(36) == 1),
+                Text(17), ProviderGlyph.Of(row.Text(5)), (int)row.Long(18), (int)row.Long(19),
+                row.Text(20), Text(21), Text(25), (int)row.Long(34), Long(26), Long(27), Long(28),
+                Text(29), Text(30), Text(31), Text(32), Long(33),
+                Text(22) is { } machine ? new(machine, row.Long(23), Text(24)) : null, row.Long(35) == 1),
         };
     }
 

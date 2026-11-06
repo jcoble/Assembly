@@ -14,7 +14,7 @@ use crate::features::changes::{
     file_diff::FileDiff,
     working_copy::{Scope, Selection, read_branch, read_file, wanted_files},
 };
-use crate::features::source_control::{git_checkouts::checkout_gone, git_status::GitStatus};
+use crate::features::source_control::git_status::GitStatus;
 use crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator;
 use gpui_kit::component::diff::DiffFile;
 use gpui_kit::*;
@@ -126,7 +126,7 @@ impl ChangesPane {
         WorkspaceCoordinator::changed(cx);
         cx.notify();
     }
-    /// Follows the checkout Source control has read for this session. A status it read moves this tab's too.
+    /// A status Source control read for this session reads this tab's files again.
     pub(super) fn sync_inspected(&mut self, read_again: bool, cx: &mut Context<Self>) {
         if !self.active || self.target != Target::Stack {
             return;
@@ -137,17 +137,10 @@ impl ChangesPane {
             status.session() == Some(inspected.session.as_str())
                 && status.source() == inspected.source.as_ref()
         });
-        let checkout = same_session
-            .as_ref()
-            .and_then(|inspected| inspected.checkout.clone());
-        let moved = status.checkout() != checkout.as_ref();
         let stamp = same_session.map(|inspected| (inspected.fingerprint, inspected.answers));
         let newer = read_again && stamp.is_some() && stamp != self.published;
         self.published = stamp;
-        if moved {
-            self.status
-                .update(cx, |status, cx| status.set_checkout(checkout, cx));
-        } else if newer {
+        if newer {
             self.refresh(cx);
         }
     }
@@ -160,14 +153,11 @@ impl ChangesPane {
         let selection = read.session().map(|session| Selection {
             session: session.to_string(),
             source: read.source().cloned(),
-            checkout: read.checkout().cloned(),
         });
         let answers = read.answers();
         let answer = match read.shown() {
             Shown::Read(status) => Ok(Some(status.clone())),
-            Shown::Failed(_) => {
-                Err(read.failure_code().is_some_and(checkout_gone) && read.checkout().is_some())
-            }
+            Shown::Failed(_) => Err(()),
             _ => Ok(None),
         };
         if selection != self.selection {
@@ -179,7 +169,6 @@ impl ChangesPane {
             if moved {
                 self.focus_path = None;
             }
-            // Only for another session: a deleted checkout must not be picked straight back up.
             if new_session {
                 self.sync_inspected(false, cx);
             }
@@ -199,15 +188,11 @@ impl ChangesPane {
                     self.started_for = Some(answers);
                     self.start_round(&status, cx);
                 }
-                Err(gone) => {
+                Err(()) => {
                     self.started_for = Some(answers);
                     self.working.stop();
                     self.reads.clear();
                     self.branch_read = None;
-                    if gone {
-                        self.status
-                            .update(cx, |status, cx| status.set_checkout(None, cx));
-                    }
                 }
                 Ok(None) => {}
             }

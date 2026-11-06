@@ -8,7 +8,9 @@ use crate::core::socket::{
     row_source::ExpectedRowSource,
     test_wait::until,
 };
-use crate::core::state::{selected_session::SelectedSession, sessions::Sessions};
+use crate::core::state::{
+    selected_session::SelectedSession, session_item::SessionItem, sessions::Sessions,
+};
 use crate::features::source_control::branch_menu::BranchPicked;
 use crate::features::source_control::result_line::PaneResult;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
@@ -27,7 +29,11 @@ fn session_row(version: i64, checkout: &str, operation: &str) -> Value {
 }
 #[derive(Default)]
 struct Seen {
+    /// The title the backend gives for who works in a viewed folder.
+    working: Option<&'static str>,
     commits: Vec<Value>,
+    switches: Vec<Value>,
+    branch_reads: Vec<Value>,
     commands: Vec<Value>,
     statuses: usize,
     subscriptions: Vec<Value>,
@@ -71,7 +77,19 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
                     "totalFiles":1,"totalStaged":1,"fingerprint":"f"}),
                 )]
             }
-            (Some("call"), Some("branches")) => vec![result(json!({"remotes":[]}))],
+            // The backend decides who works in a viewed folder.
+            (Some("call"), Some("inUse")) => vec![result(json!({"session": seen.working}))],
+            (Some("call"), Some("branches")) => {
+                seen.branch_reads.push(frame["args"].clone());
+                vec![result(json!({"remotes":[]}))]
+            }
+            (Some("call"), Some("switchBranch")) => {
+                seen.switches.push(frame["args"].clone());
+                vec![result(
+                    json!({"message":"Switched to made.","status":{"branch":"made","head":HEAD,"ahead":0,"behind":0,
+                    "hasUpstream":false,"files":[],"totalFiles":0,"totalStaged":0,"fingerprint":"g"}}),
+                )]
+            }
             (Some("call"), Some("commit")) => {
                 seen.commits.push(frame["args"].clone());
                 vec![result(json!({}))]
@@ -319,4 +337,164 @@ async fn a_row_still_moving_after_that_says_so_in_words(cx: &mut TestAppContext)
         }
         _ => panic!("the refusal is shown"),
     });
+}
+
+/// A viewed folder has no session behind it, so its branch never goes through the Engine.
+#[gpui::test]
+async fn a_viewed_folders_branch_is_switched_there_and_no_session_moves(cx: &mut TestAppContext) {
+    use crate::core::state::viewed_project::{Viewed, ViewedProject};
+
+    let mut open = open(cx).await;
+    open.cx.update(|_, cx| {
+        let viewed = Viewed {
+            project_id: "p".into(),
+            machine: "local".into(),
+            folder: "/other".into(),
+            title: "other".into(),
+        };
+        ViewedProject::set(Some("s1".into()), Some(viewed), cx);
+    });
+    let id = "view:70:2f6f74686572";
+    open.until("the viewed status", |pane, cx| {
+        pane.read_with(cx, |pane, cx| {
+            pane.target(cx).is_some_and(|target| target.session == id)
+                && pane.shown_status(cx).is_some()
+        })
+    })
+    .await;
+    let pane = open.pane.clone();
+    pane.update_in(open.cx, |pane, window, cx| {
+        pane.branch_picked(BranchPicked::Create("made".into()), window, cx)
+    });
+    let seen = open.seen.clone();
+    open.until("the switch", |_, _| {
+        !seen.lock().unwrap().switches.is_empty()
+    })
+    .await;
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.switches[0]["session"], id);
+    assert_eq!(seen.switches[0]["name"], "made");
+    assert_eq!(seen.switches[0]["create"], true);
+    assert_eq!(seen.switches[0]["expectedHead"], HEAD);
+    assert!(seen.commands.is_empty(), "the session's checkout stays put");
+}
+
+/// Files reads the folder again after the panel's own switch; the panel shows its answer without a second read.
+#[gpui::test]
+async fn a_switch_from_the_panel_tells_files_the_folder_changed(cx: &mut TestAppContext) {
+    use crate::core::state::folder_touched::FolderTouched;
+    use crate::core::state::viewed_project::{Viewed, ViewedProject};
+
+    let mut open = open(cx).await;
+    open.cx.update(|_, cx| {
+        let viewed = Viewed {
+            project_id: "p".into(),
+            machine: "local".into(),
+            folder: "/other".into(),
+            title: "other".into(),
+        };
+        ViewedProject::set(Some("s1".into()), Some(viewed), cx);
+    });
+    let id = "view:70:2f6f74686572";
+    open.until("the viewed status", |pane, cx| {
+        pane.read_with(cx, |pane, cx| {
+            pane.target(cx).is_some_and(|target| target.session == id)
+                && pane.shown_status(cx).is_some()
+        })
+    })
+    .await;
+    let before = open
+        .cx
+        .update(|_, cx| FolderTouched::global(cx).read(cx).count());
+    let pane = open.pane.clone();
+    pane.update_in(open.cx, |pane, window, cx| {
+        pane.branch_picked(BranchPicked::Create("made".into()), window, cx)
+    });
+    open.until("the touch", |_, cx| {
+        cx.update(|_, cx| FolderTouched::global(cx).read(cx).count() > before)
+    })
+    .await;
+    open.cx.update(|_, cx| {
+        let touched = FolderTouched::global(cx).read(cx);
+        assert_eq!(touched.session(), Some(id));
+        assert!(touched.by_git_panel());
+    });
+}
+
+/// What a write came to shows under the list, so the rows stay where they were.
+#[gpui::test]
+async fn the_result_line_does_not_push_the_rows_down(cx: &mut TestAppContext) {
+    let mut open = open(cx).await;
+    open.until("the staged section", |_, cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("git-section-Staged").is_some()
+    })
+    .await;
+    let before = open.cx.debug_bounds("git-section-Staged").unwrap();
+    assert!(open.cx.debug_bounds("git-result-footer").is_none());
+    open.pane.update(open.cx, |pane, cx| {
+        pane.result = Some(PaneResult::Done("Staged 1 file.".into()));
+        cx.notify();
+    });
+    open.cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert_eq!(
+        open.cx.debug_bounds("git-section-Staged").unwrap().origin,
+        before.origin
+    );
+    let footer = open.cx.debug_bounds("git-result-footer").unwrap();
+    assert!(
+        footer.origin.y > before.origin.y,
+        "{footer:?} under {before:?}"
+    );
+}
+
+/// Read-only stops writes, not reads: the branch menu still lists the folder it is looking at.
+#[gpui::test]
+async fn a_read_only_viewed_folder_still_reads_its_own_branches(cx: &mut TestAppContext) {
+    use crate::core::state::viewed_project::{Viewed, ViewedProject};
+
+    let mut open = open(cx).await;
+    open.seen.lock().unwrap().working = Some("Busy");
+    open.cx.update(|_, cx| {
+        let working: SessionItem = serde_json::from_value(json!({
+            "sessionId":"s2","agent":"fixture","repoUrl":"/other","updatedAt":0,
+            "state":"waiting","title":"Busy","root":"/other","machine":"local"
+        }))
+        .unwrap();
+        Sessions::start_holding(vec![working], false, false, cx);
+        let viewed = Viewed {
+            project_id: "p".into(),
+            machine: "local".into(),
+            folder: "/other".into(),
+            title: "other".into(),
+        };
+        ViewedProject::set(Some("s1".into()), Some(viewed), cx);
+    });
+    let id = "view:70:2f6f74686572";
+    open.until("the read-only viewed status", |pane, cx| {
+        pane.read_with(cx, |pane, cx| {
+            pane.read_only(cx)
+                && pane
+                    .shown_target(cx)
+                    .is_some_and(|target| target.session == id)
+        })
+    })
+    .await;
+    // The commit box stays, turned off, as in the old app.
+    open.until("the commit box", |_, cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("git-commit-box").is_some()
+    })
+    .await;
+    let pane = open.pane.clone();
+    pane.update_in(open.cx, |pane, _, cx| pane.set_branch_open(true, cx));
+    let seen = open.seen.clone();
+    open.until("the branch list of the viewed folder", |_, _| {
+        seen.lock()
+            .unwrap()
+            .branch_reads
+            .iter()
+            .any(|args| args["session"] == id)
+    })
+    .await;
 }

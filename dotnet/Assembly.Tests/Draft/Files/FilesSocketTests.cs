@@ -14,6 +14,7 @@ using Assembly.Application.Common;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Engine.Sessions;
 using Assembly.Tests.Draft.Base.Chat;
+using Assembly.Infrastructure.Chat;
 using Assembly.Infrastructure.Chat.Files;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Socket;
@@ -81,6 +82,17 @@ public sealed partial class FilesSocketTests : IAsyncLifetime
         var answer = await ReadAsync(socket);
         Assert.StartsWith("""{"t":"result","id":1""", answer);
         var entries = JsonDocument.Parse(answer).RootElement.GetProperty("result").GetProperty("entries");
+        Assert.Equal(["src", "a.txt"], entries.EnumerateArray().Select(entry => entry.GetProperty("path").GetString()));
+    }
+
+    [Fact]
+    public async Task A_viewed_folder_lists_with_no_session_there()
+    {
+        var folder = Path.Combine(_checkouts.FullName, "other-project");
+        GitFolder.Fill(folder, "src/", "a.txt");
+        using var socket = await OpenAsync();
+        await CallAsync(socket, 1, "list", $$"""{"session":"{{FolderView.Id("p1", folder)}}","dir":""}""");
+        var entries = JsonDocument.Parse(await ReadAsync(socket)).RootElement.GetProperty("result").GetProperty("entries");
         Assert.Equal(["src", "a.txt"], entries.EnumerateArray().Select(entry => entry.GetProperty("path").GetString()));
     }
 

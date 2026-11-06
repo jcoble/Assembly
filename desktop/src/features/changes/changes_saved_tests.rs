@@ -26,6 +26,14 @@ fn a_saved_scope_must_be_one_of_the_two() {
     );
     assert!(ChangesPane::workspace_key(&saved(json!({"session":"s1","scope":7})), "s1").is_err());
 }
+#[test]
+fn a_diff_from_a_viewed_project_saves_but_another_sessions_does_not() {
+    let keyed = |session: &str| {
+        ChangesPane::workspace_key(&saved(json!({"session":session,"scope":"branch"})), "s1")
+    };
+    assert!(keyed("view:70:2f6f74686572").is_ok());
+    assert!(keyed("s2").is_err());
+}
 #[gpui::test]
 fn the_saved_target_comes_back_and_an_old_layouts_means_what_it_meant(cx: &mut TestAppContext) {
     cx.update(|cx| {

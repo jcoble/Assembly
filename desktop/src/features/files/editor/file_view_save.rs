@@ -1,6 +1,7 @@
 //! FileView's one sequential bulk save. Lost commit replies are reconciled, never replayed.
 use super::FileView;
 use crate::core::socket::{client::SocketClient, outcome::Outcome, pending_call::PendingCall};
+use crate::core::state::folder_touched::FolderTouched;
 use crate::features::files::{
     document_store::DocumentStore,
     file_save::{FileSaveController, SaveState},
@@ -113,6 +114,8 @@ impl FileView {
                                 cx.global_mut::<DocumentStore>(),
                             );
                         }
+                        // The folder changed on disk, so Git and Files read it again.
+                        FolderTouched::touch(&view.session, cx);
                         view.editor_error = None;
                         let clean = view
                             .document
@@ -212,7 +215,12 @@ impl FileView {
                 }
                 let clean = view.last_save.is_some() && view.document.as_ref().is_some_and(|key| !cx.global::<DocumentStore>().is_dirty(key));
                 view.finish_guard_save(clean);
-                if view.last_save.is_some() { view.finish_close_after_save(cx); } else { view.closing_window = None; }
+                if view.last_save.is_some() {
+                    FolderTouched::touch(&view.session, cx);
+                    view.finish_close_after_save(cx);
+                } else {
+                    view.closing_window = None;
+                }
                 cx.notify();
             });
         }));

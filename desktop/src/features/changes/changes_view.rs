@@ -2,7 +2,9 @@
 use super::{ChangesPane, Target};
 use crate::core::intents::open_file::OpenFile;
 use crate::core::socket::{error_code::ErrorCode, row_source::ExpectedRowSource};
-use crate::core::state::{preferences::Preferences, session_read::Shown};
+use crate::core::state::{
+    preferences::Preferences, session_read::Shown, viewed_project::ViewedProject,
+};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::control_ids as ids;
 use crate::core::ui::access::{Control as _, Named as _};
@@ -112,7 +114,7 @@ impl ChangesPane {
         let status = self.status.read(cx);
         let deleted = matches!(status.failure_code(), Some(ErrorCode::Refused { code })
             if code == "checkout_unavailable");
-        if deleted && status.checkout().is_none() {
+        if deleted {
             return Some(Waiting::Quiet("Checkout/Worktree deleted."));
         }
         match status.shown() {
@@ -130,7 +132,7 @@ impl ChangesPane {
             Shown::Read(_) => None,
         }
     }
-    pub(super) fn line_target(&self) -> LineTarget {
+    pub(super) fn line_target(&self, cx: &App) -> LineTarget {
         match &self.target {
             Target::Commit(pick) => LineTarget {
                 session: Some(pick.session.clone()),
@@ -146,10 +148,7 @@ impl ChangesPane {
                     .selection
                     .as_ref()
                     .and_then(|selection| selection.source.clone()),
-                read_only: self
-                    .selection
-                    .as_ref()
-                    .is_some_and(|selection| selection.checkout.is_some()),
+                read_only: ViewedProject::read_only_reason(cx).is_some(),
             },
         }
     }
@@ -198,11 +197,8 @@ impl ChangesPane {
             Target::Commit(pick) => Some(format!("Commit {}", &pick.sha[..pick.sha.len().min(7)])),
             Target::Stack => None,
         };
-        let folder = self
-            .selection
-            .as_ref()
-            .and_then(|selection| selection.checkout.as_ref())
-            .map(|checkout| checkout.folder().to_string())
+        let folder = ViewedProject::viewed(cx)
+            .map(|viewed| viewed.folder)
             .filter(|_| stack);
         let pending = if stack { self.working.pending() } else { 0 };
         let refreshing = self.status.read(cx).reading();
@@ -289,7 +285,7 @@ impl ChangesPane {
         let both = self.both.clone();
         let viewed = self.viewed.clone();
         let (header, lines) = (cx.entity().downgrade(), cx.entity().downgrade());
-        let target = self.line_target();
+        let target = self.line_target(cx);
         let line_target = target.clone();
         Diff::new(&self.state)
             .render_header(move |file, _, cx| {

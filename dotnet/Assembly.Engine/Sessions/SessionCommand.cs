@@ -19,6 +19,8 @@ public sealed record StopSession() : SessionCommand;
 public sealed record LinkTask(string TaskUrl) : SessionCommand;
 
 public sealed record ReportSessionModel(string? Model) : SessionCommand;
+/// <summary>The branch git really has checked out in the session's folder, seen after something moved it. Null when detached.</summary>
+public sealed record ReportSessionBranch(string? Branch) : SessionCommand;
 public sealed record ReportSessionTitle(string Title) : SessionCommand;
 
 public sealed record AssignProject(string ProjectId) : SessionCommand;

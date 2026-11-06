@@ -416,33 +416,6 @@ public sealed partial class SessionRailTests : IDisposable
         Assert.Empty(Read(statuses: ["working"], groupBy: groupBy, after: cursor).Sessions);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void RecordedBranchComesFromTheLatestStats(bool remote)
-    {
-        var session = Parent(machine: remote ? "workbox-test" : null);
-        Assert.Null(Entry(Read(), session).Branch);
-        var seq = 0L;
-        void Stats(string? branch, long at)
-        {
-            var payload = JsonSerializer.SerializeToElement(new { status = "completed", branch });
-            if (remote)
-                Assert.True(_hub.PublishCopy(new StoredRow(session, ++seq, "run-1", null, RowKind.Stats, payload, at, PrevSeq: seq - 1)));
-            else
-                _hub.Publish(session, Batch((null, RowKind.Stats, new { status = "completed", branch }), at));
-        }
-        Stats("main", 10);
-        _topics.Published.Clear();
-        Stats("lane/rail", 20);
-        Assert.Contains((RailTopic, (string?)session, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
-        Stats("", 30);
-        Stats(null, 40);
-
-        var entry = Entry(Read(), session);
-        Assert.Equal(("lane/rail", 20L), (entry.Branch, entry.BranchAt));
-    }
-
     [Fact]
     public void PreviewIsTheNewestAssistantText()
     {

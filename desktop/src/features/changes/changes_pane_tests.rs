@@ -167,11 +167,10 @@ fn open(cx: &mut TestAppContext, files: Vec<Value>, diffs: Vec<(String, Value)>)
         _heard: heard,
     }
 }
-fn inspected(session: &str, checkout: Option<CheckoutSelector>, answers: u64) -> Inspected {
+fn inspected(session: &str, answers: u64) -> Inspected {
     Inspected {
         session: session.into(),
         source: None,
-        checkout,
         fingerprint: "f".into(),
         answers,
     }
@@ -337,59 +336,6 @@ fn changing_presentation_retains_the_same_patch_revision(cx: &mut TestAppContext
     });
 }
 
-// Pins: scm#13
-#[gpui::test]
-async fn it_reads_the_checkout_source_control_read_and_no_other_sessions(cx: &mut TestAppContext) {
-    let mut open = open(
-        cx,
-        vec![changed("a.rs")],
-        vec![diff_answer("a.rs", "", &patch("a.rs", "b"))],
-    );
-    open.pane.update(cx, |pane, cx| pane.activate(true, cx));
-    open.wait("own read", cx, |seen, _| seen.reads.len() == 1)
-        .await;
-    assert!(
-        open.seen.lock().unwrap().args[0]
-            .get("checkoutPath")
-            .is_none()
-    );
-
-    cx.update(|cx| InspectedCheckout::publish(Some(inspected("other", Some(linked()), 1)), cx));
-    cx.run_until_parked();
-    assert!(
-        open.seen
-            .lock()
-            .unwrap()
-            .statuses
-            .iter()
-            .all(|args| args.get("checkoutPath").is_none()),
-        "another session's checkout isn't this one's"
-    );
-
-    cx.update(|cx| InspectedCheckout::publish(Some(inspected("s1", Some(linked()), 2)), cx));
-    open.wait("linked read", cx, |seen, _| {
-        seen.args
-            .iter()
-            .any(|args| args["checkoutPath"] == "/linked")
-    })
-    .await;
-    let seen = open.seen.lock().unwrap();
-    let status = seen.statuses.last().unwrap();
-    assert_eq!(status["checkoutPath"], "/linked");
-    assert_eq!(status["expectedCheckoutRoot"], "/own");
-    let read = seen.args.last().unwrap();
-    assert_eq!(read["checkoutPath"], "/linked");
-    assert_eq!(read["expectedCheckoutRoot"], "/own");
-    drop(seen);
-    cx.update(|cx| {
-        let pane = open.pane.read(cx);
-        assert!(
-            pane.line_target().read_only,
-            "another checkout opens nothing for editing"
-        );
-    });
-}
-
 // Pins: scm#17
 #[gpui::test]
 async fn a_status_source_control_read_reads_the_files_again(cx: &mut TestAppContext) {
@@ -401,11 +347,11 @@ async fn a_status_source_control_read_reads_the_files_again(cx: &mut TestAppCont
     open.pane.update(cx, |pane, cx| pane.activate(true, cx));
     open.wait("first read", cx, |seen, _| seen.reads.len() == 1)
         .await;
-    cx.update(|cx| InspectedCheckout::publish(Some(inspected("s1", None, 1)), cx));
+    cx.update(|cx| InspectedCheckout::publish(Some(inspected("s1", 1)), cx));
     open.wait("second read", cx, |seen, _| seen.reads.len() == 2)
         .await;
     let statuses = open.seen.lock().unwrap().statuses.len();
-    cx.update(|cx| InspectedCheckout::publish(Some(inspected("s1", None, 1)), cx));
+    cx.update(|cx| InspectedCheckout::publish(Some(inspected("s1", 1)), cx));
     cx.run_until_parked();
     assert_eq!(
         open.seen.lock().unwrap().statuses.len(),
@@ -434,7 +380,7 @@ async fn a_commit_stays_on_its_own_while_source_control_moves_on(cx: &mut TestAp
         pane.working.answers().len() == 1
     })
     .await;
-    cx.update(|cx| InspectedCheckout::publish(Some(inspected("s1", None, 1)), cx));
+    cx.update(|cx| InspectedCheckout::publish(Some(inspected("s1", 1)), cx));
     cx.run_until_parked();
     let seen = open.seen.lock().unwrap();
     assert_eq!(seen.commits.len(), 1);
@@ -481,76 +427,3 @@ async fn it_says_what_it_is_waiting_for(cx: &mut TestAppContext) {
     });
 }
 // Pins: a checkout that's gone goes back to the session's own folder once, even while Source control still names it.
-#[gpui::test]
-async fn a_deleted_checkout_falls_back_once_without_reading_it_again(cx: &mut TestAppContext) {
-    let seen = Arc::new(Mutex::new(Seen::default()));
-    let (changed, mut changes) = unbounded();
-    let (answers, heard) = (seen.clone(), changed.clone());
-    let backend = FakeBackend::start(move |frame| {
-        if let Some(replies) = hello(frame) {
-            return replies;
-        }
-        let id = frame["id"].clone();
-        let mut seen = answers.lock().unwrap();
-        let replies = if frame["t"] == "call" && frame["method"] == "status" {
-            seen.statuses.push(frame["args"].clone());
-            if frame["args"].get("checkoutPath").is_some() {
-                vec![Reply::Frame(
-                    json!({"t":"error","id":id,"code":"checkout_unavailable","message":"gone"}),
-                )]
-            } else {
-                vec![Reply::Frame(
-                    json!({"t":"result","id":id,"result":{"branch":"main","head":"a","ahead":0,"behind":0,
-                    "hasUpstream":false,"files":[],"totalFiles":0,"totalStaged":0,"fingerprint":"f"}}),
-                )]
-            }
-        } else {
-            Vec::new()
-        };
-        drop(seen);
-        _ = heard.unbounded_send(());
-        replies
-    });
-    cx.executor().allow_parking();
-    cx.update(|cx| {
-        gpui_kit::init(cx);
-        SelectedSession::init(cx);
-        SocketClient::start(
-            Endpoint {
-                port: backend.port,
-                token: "secret".into(),
-            },
-            cx,
-        );
-        SelectedSession::global(cx)
-            .update(cx, |selected, cx| selected.select(Some("s1".into()), cx));
-        InspectedCheckout::publish(Some(inspected("s1", Some(linked()), 1)), cx);
-    });
-    let pane = cx.new(|cx| ChangesPane::new(None, cx));
-    pane.update(cx, |pane, cx| pane.activate(true, cx));
-    until("back on its own folder", &mut changes, &changed, || {
-        cx.run_until_parked();
-        let own = seen
-            .lock()
-            .unwrap()
-            .statuses
-            .last()
-            .is_some_and(|args| args.get("checkoutPath").is_none());
-        let settled = cx.update(|cx| !pane.read(cx).status.read(cx).reading());
-        own && settled
-    })
-    .await;
-    cx.run_until_parked();
-    let seen = seen.lock().unwrap();
-    let linked_reads = seen
-        .statuses
-        .iter()
-        .filter(|args| args.get("checkoutPath").is_some())
-        .count();
-    assert!(
-        linked_reads <= 2,
-        "read the deleted checkout {linked_reads} times"
-    );
-    assert!(seen.statuses.last().unwrap().get("checkoutPath").is_none());
-    drop(backend);
-}

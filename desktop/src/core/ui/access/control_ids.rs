@@ -24,6 +24,12 @@ ids! {
         TERMINAL_TOGGLE = "topbar.terminal-toggle",
         RESTART_TO_UPDATE = "topbar.restart-to-update",
     }
+    open_project {
+        TRIGGER = "open-project.trigger",
+        NEW_SESSION = "open-project.new-session",
+        BACK = "open-project.back",
+        LOAD_MORE = "open-project.load-more",
+    }
     drawer {
         MORE_PANELS = "drawer.more-panels",
         CLOSE = "drawer.close",

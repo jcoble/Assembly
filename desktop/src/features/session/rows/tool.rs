@@ -26,6 +26,15 @@ pub enum ToolState {
     Cancelled,
 }
 
+impl ToolPayload {
+    /// It just finished (it wasn't before this row) and its kind can have changed the session's folder.
+    pub fn just_touched_folder(&self, before: Option<ToolState>) -> bool {
+        self.state != ToolState::Started
+            && before.is_none_or(|was| was == ToolState::Started)
+            && crate::core::state::folder_touched::can_change_folder(self.kind.as_deref())
+    }
+}
+
 /// `input` is the call's arguments as JSON text. Output and diff are cut at 1 MB each, with `truncated` set and the
 /// full sizes in `output_bytes` and `diff_bytes` (RowsFeature.ToolDetail).
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -40,3 +49,7 @@ pub struct ToolDetail {
     pub output_bytes: i64,
     pub diff_bytes: i64,
 }
+
+#[cfg(test)]
+#[path = "tool_tests.rs"]
+mod tests;

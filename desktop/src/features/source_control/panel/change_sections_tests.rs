@@ -27,11 +27,11 @@ fn status(files: Vec<ChangedFile>) -> GitStatus {
 // Pins: g9#8
 #[test]
 fn a_rows_first_button_stages_what_is_left_and_unstages_only_a_fully_staged_file() {
-    assert_eq!(row_write(&file("a", ".", "M"), 'M'), RowWrite::Stage);
-    assert_eq!(row_write(&file("a", "M", "M"), 'M'), RowWrite::Stage);
-    assert_eq!(row_write(&file("a", "M", "."), 'M'), RowWrite::Unstage);
-    assert_eq!(row_write(&file("a", "U", "U"), '!'), RowWrite::Resolve);
-    assert_eq!(row_write(&file("a", "?", "?"), '?'), RowWrite::Stage);
+    assert_eq!(row_write(&file("a", ".", "M")), RowWrite::Stage);
+    assert_eq!(row_write(&file("a", "M", "M")), RowWrite::Stage);
+    assert_eq!(row_write(&file("a", "M", ".")), RowWrite::Unstage);
+    assert_eq!(row_write(&file("a", "U", "U")), RowWrite::Resolve);
+    assert_eq!(row_write(&file("a", "?", "?")), RowWrite::Stage);
 }
 #[test]
 fn on_another_checkout_a_file_only_keeps_its_copy_path() {
@@ -86,6 +86,25 @@ fn only_a_file_changed_two_ways_gets_a_change_word() {
     assert_eq!(change_word(&file("a", "?", "?")), None);
 }
 #[test]
+fn a_conflict_shows_u_in_staged_and_changes_and_does_not_make_anything_committable() {
+    let status = status(vec![file("conflict", "U", "U")]);
+    for section in [Section::Staged, Section::Changes] {
+        let listed = status.section(section);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0, 'U');
+        assert!(stageable_in(&status, section).is_empty());
+    }
+    assert!(status.section(Section::Untracked).is_empty());
+    assert_eq!(status.staged_total(), Some(0));
+    assert!(!status.has_staged_files());
+}
+#[test]
+fn a_conflict_cannot_be_unstaged_from_its_menu() {
+    let reasons = file_reasons(&file("a", "U", "U"), true, false);
+    assert!(reasons.unstage.is_some());
+    assert_eq!(reasons.stage, None);
+}
+#[test]
 fn stage_all_leaves_conflicts_for_a_person() {
     let status = status(vec![
         file("clean", ".", "M"),
@@ -100,4 +119,20 @@ fn stage_all_leaves_conflicts_for_a_person() {
         stageable_in(&status, Section::Untracked),
         vec!["new".to_string()]
     );
+}
+
+#[test]
+fn a_row_tip_gives_the_path_then_what_each_side_of_git_says() {
+    let file = |index: &str, worktree: &str| ChangedFile {
+        path: "src/a.rs".into(),
+        original_path: None,
+        index: index.into(),
+        worktree: worktree.into(),
+    };
+    assert_eq!(
+        file("M", "D").tip(),
+        "src/a.rs\nStaged: modified\nOn disk: deleted"
+    );
+    assert_eq!(file(".", "M").tip(), "src/a.rs\nOn disk: modified");
+    assert_eq!(file("?", "?").tip(), "src/a.rs");
 }

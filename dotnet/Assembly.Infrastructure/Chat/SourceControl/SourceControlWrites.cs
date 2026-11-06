@@ -4,11 +4,12 @@ using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Git;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat.SourceControl;
+using Assembly.Infrastructure.Engine.Checkouts;
 using Assembly.Infrastructure.Git;
 
 namespace Assembly.Infrastructure.Chat.SourceControl;
 /// <summary>Short owner writes use the same host checkout lease as Engine checkout effects.</summary>
-internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, CheckoutWrites writes, TimeProvider time, SourceControlFeature routes) : IFeature
+internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, CheckoutWrites writes, TimeProvider time, SourceControlFeature routes, SessionBranches? branches = null) : IFeature
 {
     private readonly GitWriter git = new(cli);
     public void Register(ICallRegistry calls)
@@ -41,8 +42,18 @@ internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, Check
             (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => git.InitAsync(root, call.Cancellation)), args => args.Session);
         calls.Write("git", "createBranch", GitWritesJson.Default.BranchArgs, GitWritesJson.Default.GitWriteResult,
             (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitBranches(cli).CreateAsync(root, args.Name, args.ExpectedHead, call.Cancellation)), args => args.Session);
+        // A session's branch is the Engine's to change; a viewed folder has no session to tell.
+        calls.Write("git", "switchBranch", GitWritesJson.Default.BranchArgs, GitWritesJson.Default.GitWriteResult,
+            (args, call) => FolderView.IsView(args.Session)
+                ? Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, async root =>
+                {
+                    var switched = await new GitBranches(cli).SwitchAsync(root, args.Name, args.Create, args.ExpectedHead, call.Cancellation);
+                    branches?.FolderChanged(root);
+                    return switched;
+                })
+                : throw new CallFailed("forbidden"), args => args.Session);
         calls.Write("git", "stash", GitWritesJson.Default.StashArgs, GitWritesJson.Default.GitWriteResult,
-            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitStashes(cli, time).StashAsync(root, args.Session, args.Message, args.IncludeUntracked, call.Cancellation)), args => args.Session);
+            (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitStashes(cli, time).StashAsync(root, FolderView.IsView(args.Session) ? "view" : args.Session, args.Message, args.IncludeUntracked, call.Cancellation)), args => args.Session);
         calls.Write("git", "applyStash", GitWritesJson.Default.StashShaArgs, GitWritesJson.Default.GitWriteResult,
             (args, call) => Write(args.Session, call, args.ExpectedCheckoutRoot, args.ExpectedSource, root => new GitStashes(cli, time).ApplyAsync(root, args.Sha, call.Cancellation)), args => args.Session);
         calls.Write("git", "dropStash", GitWritesJson.Default.StashShaArgs, GitWritesJson.Default.GitWriteResult,
@@ -58,13 +69,14 @@ internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, Check
             call.Cancellation.ThrowIfCancellationRequested();
             call.SourceGuard?.EnsureCurrent();
             if (RequireRoot(sessions, session, expectedRoot, expectedSource is not null || call.ExpectedSource is not null) != root) throw ChangedRoot();
+            routes.RequireViewWritable(session, call.Cancellation);
             return await execute(root);
         });
         return _ => result;
     }
     internal static string RequireRoot(SessionStore sessions, string session, string? expectedRoot, bool required)
     {
-        if (sessions.Get(session) is not { Machine: null }) throw ChangedRoot();
+        if (!FolderView.IsView(session) && sessions.Get(session) is not { Machine: null }) throw ChangedRoot();
         var actual = Path.GetFullPath(SessionPaths.RootOf(sessions, session));
         if (expectedRoot is null)
         {
@@ -82,7 +94,7 @@ internal sealed class SourceControlWrites(SessionStore sessions, IGit cli, Check
         return relative == "." ? throw new CallBadArguments("Choose files to change.") : relative;
     }).Distinct(StringComparer.Ordinal).ToArray();
     private static string RequireFingerprint(string? fingerprint) => fingerprint ?? throw new CallBadArguments("Refresh Source Control before changing all files.");
-    internal sealed record BranchArgs([property: JsonRequired] string Session, [property: JsonRequired] string Name, string? ExpectedHead, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
+    internal sealed record BranchArgs([property: JsonRequired] string Session, [property: JsonRequired] string Name, string? ExpectedHead, bool Create = false, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
     internal sealed record StashArgs([property: JsonRequired] string Session, [property: JsonRequired] string Message, bool IncludeUntracked, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
     internal sealed record StashShaArgs([property: JsonRequired] string Session, [property: JsonRequired] string Sha, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
     internal sealed record SessionArgs([property: JsonRequired] string Session, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);

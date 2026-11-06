@@ -3,7 +3,8 @@
 //! ChangedFileRow.svelte and sourceControlFileMenu.ts.
 use super::SourceControlPane;
 use crate::core::intents::{open_diff::OpenDiff, open_file::OpenFile};
-use crate::core::socket::checkout_selector::CheckoutSelector;
+use crate::core::socket::{client::SocketClient, row_source::ExpectedRowSource};
+use crate::core::state::viewed_project::{LOCAL_MACHINE, ViewedProject};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Named as _;
 use crate::core::ui::file_icon::file_icon;
@@ -19,13 +20,15 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+const NOT_IN_FINDER: &str = "This file is on a remote machine, so Finder cannot show it.";
 const NO_ROOT: &str = "This panel is not pointed at a repository folder yet.";
 const DELETED: &str = "This file was deleted, so there is nothing on disk to open.";
 const ALL_STAGED: &str = "Everything in this file is already staged.";
+const CONFLICT_STAYS: &str = "Resolve this conflict first. Unstaging would erase it.";
 const NOTHING_STAGED: &str = "Nothing about this file is staged.";
 
 /// Which way the row's first button goes.
@@ -44,8 +47,8 @@ impl RowWrite {
         }
     }
 }
-pub(super) fn row_write(file: &ChangedFile, letter: char) -> RowWrite {
-    if letter == '!' {
+pub(super) fn row_write(file: &ChangedFile) -> RowWrite {
+    if file.conflicted() {
         RowWrite::Resolve
     } else if file.worktree != "." {
         RowWrite::Stage
@@ -63,7 +66,7 @@ pub(super) struct FileReasons {
     pub copy_path: Option<&'static str>,
 }
 impl FileReasons {
-    /// On another checkout nothing changes and nothing opens for editing; a path can still be copied.
+    /// In a folder a session works in nothing changes and nothing opens for editing; a path can still be copied.
     fn read_only(self) -> Self {
         Self {
             stage: Some(READ_ONLY_SCOPE),
@@ -74,12 +77,28 @@ impl FileReasons {
         }
     }
 }
+/// Whether what the panel shows lives on another machine, out of this desktop's reach.
+fn on_another_machine(source: Option<&ExpectedRowSource>, cx: &App) -> bool {
+    if let Some(viewed) = ViewedProject::viewed(cx) {
+        return viewed.machine != LOCAL_MACHINE;
+    }
+    source.is_some_and(|source| {
+        source.route_machine.is_some()
+            || SocketClient::try_global(cx).is_some_and(|socket| {
+                socket.read(cx).engine_machine().as_deref() != Some(source.machine.as_str())
+            })
+    })
+}
 pub(super) fn file_reasons(file: &ChangedFile, has_root: bool, busy: bool) -> FileReasons {
     let write = |reason: Option<&'static str>| if busy { Some(STILL_RUNNING) } else { reason };
     let deleted = file.worktree == "D" || (file.index == "D" && file.worktree == ".");
     FileReasons {
         stage: write((file.worktree == ".").then_some(ALL_STAGED)),
-        unstage: write((file.index == "." || file.index == "?").then_some(NOTHING_STAGED)),
+        unstage: write(if file.conflicted() {
+            Some(CONFLICT_STAYS)
+        } else {
+            (file.index == "." || file.index == "?").then_some(NOTHING_STAGED)
+        }),
         discard: write(None),
         open: if has_root {
             deleted.then_some(DELETED)
@@ -99,7 +118,7 @@ pub(super) fn stageable_in(status: &GitStatus, section: Section) -> Vec<String> 
     status
         .section(section)
         .into_iter()
-        .filter(|(letter, _)| *letter != '!')
+        .filter(|(_, file)| !file.conflicted())
         .map(|(_, file)| file.path.clone())
         .collect()
 }
@@ -113,7 +132,7 @@ fn empty_text(section: Section) -> &'static str {
 fn letter_tone(letter: char, cx: &App) -> Hsla {
     match letter {
         'A' | '?' => cx.theme().success,
-        'D' | '!' => cx.theme().danger,
+        'D' => cx.theme().danger,
         'R' | 'C' => cx.theme().primary,
         _ => cx.theme().warning,
     }
@@ -128,6 +147,7 @@ fn icon_button(
     Button::new(id)
         .named(tooltip.clone())
         .ghost()
+        .small()
         .compact()
         .icon(Icon::new(icon).size(px(14.)))
         .tooltip(tooltip)
@@ -197,6 +217,7 @@ impl SourceControlPane {
                         "git-section-hover-{}",
                         section.label()
                     )))
+                    .debug_selector(move || format!("git-section-{}", section.label()))
                     .on_hover(hover)
                     .child(heading),
             )
@@ -210,9 +231,9 @@ impl SourceControlPane {
                 )
             })
             .when_some(target.filter(|_| open), |list, target| {
-                list.children(files.iter().map(|(letter, file)| {
+                list.child(v_flex().children(files.iter().map(|(letter, file)| {
                     self.file_row(section, *letter, file, &target, root.clone(), busy, cx)
-                }))
+                })))
             })
             .into_any_element()
     }
@@ -259,7 +280,7 @@ impl SourceControlPane {
         let files: Vec<ChangedFile> = status
             .section(section)
             .into_iter()
-            .filter(|(letter, _)| *letter != '!')
+            .filter(|(_, file)| !file.conflicted())
             .map(|(_, file)| file.clone())
             .collect();
         actions.push(
@@ -292,16 +313,16 @@ impl SourceControlPane {
         let selected = self.selected_file.as_ref() == Some(&key);
         let (name, folder) = split_path(&file.path);
         let muted = cx.theme().muted_foreground;
-        let checkout = self.selection(cx);
+        let read_only = self.read_only(cx);
         let reasons = file_reasons(file, root.is_some(), busy);
-        let reasons = if checkout.is_some() {
+        let reasons = if read_only {
             reasons.read_only()
         } else {
             reasons
         };
         let id = format!("{}:{}", section.label(), file.path);
         let cluster =
-            hovered.then(|| self.row_buttons(letter, file, target, &id, name, busy, &reasons, cx));
+            hovered.then(|| self.row_buttons(file, target, &id, name, busy, &reasons, cx));
         let word = (!hovered).then(|| change_word(file)).flatten();
         let row = h_flex()
             .w_full()
@@ -345,14 +366,15 @@ impl SourceControlPane {
             session_id: target.session.clone(),
             path: file.path.clone(),
         };
-        let tip = SharedString::from(file.label());
+        let tip = SharedString::from(file.tip());
         let hover_key = key.clone();
-        let menu = self.file_menu(letter, file, target, checkout, root, busy, cx);
+        let menu = self.file_menu(file, target, read_only, root, busy, cx);
         ListItem::new(SharedString::from(format!("git-file:{id}")))
             .selected(selected)
             .px_2()
             .py_0()
             .min_h(px(28.))
+            .text_role(TextRole::Body, cx)
             .on_click(cx.listener(move |pane, _, window, cx| {
                 pane.selected_file = Some(key.clone());
                 window.dispatch_action(Box::new(open.clone()), cx);
@@ -374,7 +396,6 @@ impl SourceControlPane {
     #[allow(clippy::too_many_arguments)]
     fn row_buttons(
         &self,
-        letter: char,
         file: &ChangedFile,
         target: &GitTarget,
         id: &str,
@@ -390,7 +411,7 @@ impl SourceControlPane {
             None => format!("{label} — {name}"),
         };
         let path = file.path.clone();
-        let write = row_write(file, letter);
+        let write = row_write(file);
         let reason = match write {
             RowWrite::Unstage => reasons.unstage,
             RowWrite::Stage | RowWrite::Resolve => reasons.stage,
@@ -412,7 +433,7 @@ impl SourceControlPane {
                 });
             },
         );
-        let discard = (letter != '!').then(|| {
+        let discard = (!file.conflicted()).then(|| {
             let weak = pane.clone();
             let file = file.clone();
             icon_button(
@@ -439,7 +460,7 @@ impl SourceControlPane {
         };
         let open = icon_button(
             button("open"),
-            IconName::ExternalLink,
+            IconName::FileSymlink,
             tip("Open in editor", reasons.open),
             reasons.open.is_some(),
             move |window, cx| window.dispatch_action(Box::new(open_file.clone()), cx),
@@ -455,10 +476,9 @@ impl SourceControlPane {
     #[allow(clippy::too_many_arguments)]
     fn file_menu(
         &self,
-        letter: char,
         file: &ChangedFile,
         target: &GitTarget,
-        checkout: Option<CheckoutSelector>,
+        read_only: bool,
         root: Option<String>,
         busy: bool,
         cx: &mut Context<Self>,
@@ -472,10 +492,11 @@ impl SourceControlPane {
         let pane = cx.entity().downgrade();
         let file = file.clone();
         let target = target.clone();
+        let remote = on_another_machine(target.source.as_ref(), cx);
         move |menu, _, _| {
             let reasons = file_reasons(&file, root.is_some(), busy);
             let view_reason = reasons.open;
-            let reasons = if checkout.is_some() {
+            let reasons = if read_only {
                 reasons.read_only()
             } else {
                 reasons
@@ -503,8 +524,8 @@ impl SourceControlPane {
             let absolute = root
                 .as_ref()
                 .map(|root| format!("{}/{}", root.trim_end_matches('/'), file.path));
-            menu.min_w(px(220.))
-                .max_w(px(220.))
+            menu.min_w(px(280.))
+                .max_w(px(280.))
                 .item(reasoned_item(
                     "View changes",
                     reason(view_reason),
@@ -528,7 +549,7 @@ impl SourceControlPane {
                         });
                     },
                 ))
-                .when(letter != '!', |menu| {
+                .when(!file.conflicted(), |menu| {
                     menu.item(reasoned_item(
                         "Discard changes…",
                         reason(reasons.discard),
@@ -558,7 +579,7 @@ impl SourceControlPane {
                 ))
                 .item(reasoned_item(
                     "Reveal in Finder",
-                    reason(reasons.open),
+                    reason(remote.then_some(NOT_IN_FINDER).or(reasons.open)),
                     move |_, cx| {
                         _ = reveal_pane
                             .update(cx, |pane, cx| pane.reveal_file(reveal_path.clone(), cx));

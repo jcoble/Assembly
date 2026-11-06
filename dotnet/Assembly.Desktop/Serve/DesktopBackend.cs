@@ -3,6 +3,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Infrastructure.Engine.Workflows;
 using Assembly.Engine.Mcp;
 using Assembly.Engine.Mcp.Tools;
+using Assembly.Infrastructure.Engine.Checkouts;
 using Assembly.Infrastructure.Engine.Helpers;
 using Assembly.Infrastructure.Engine.Needs;
 using Assembly.Infrastructure.Engine.Relays;
@@ -136,6 +137,7 @@ public sealed class DesktopBackend : IAsyncDisposable
     internal int BackgroundRunning => _work.Running;
     internal RemoteConnections Connections => _connections;
     private MachineUpdates? _updates;
+    private SessionBranches? _branches;
     private IAppInstall? _appInstall;
 
     /// <summary>The first update check, off the startup path. Tests that don't ask stay off the network.</summary>
@@ -186,6 +188,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         WorkflowReceiptServices? workflowReceipts = null;
         BackgroundWork? work = null;
         LiveHub? hub = null;
+        SessionBranches? branches = null;
         RemoteConnections? connections = null;
         SignInRelay? signInRelay = null;
         MachinesFeature? machinesFeature = null;
@@ -407,6 +410,8 @@ public sealed class DesktopBackend : IAsyncDisposable
             var cliUpdates = new UpdateCalls(launcher, engine.Machine, cliHttp, TimeProvider.System, hostStop.Token,
                 (machine, ct) => connections.CliLocator(db, machine, ct), new RemoteCliClient(cliHttp, TimeProvider.System));
             var git = new GitCli();
+            branches = new SessionBranches(cutover, git, log);
+            hub.Committed += branches.RowsCommitted;
             var gh = new GhCli();
             gitOperations = new GitOperations(work, topics, TimeProvider.System, engine.Machine);
             var patches = new GitTextPatch(git);
@@ -418,10 +423,10 @@ public sealed class DesktopBackend : IAsyncDisposable
             var projectFolders = new ProjectFolderCreation(localFolders, projectWriter, checkoutWrites, gitOperations);
             var projectCoordinator = new NewProjectCoordinator(projectStore, db, localFolders, projectWriter, checkoutWrites, gitOperations, connections);
             providerRuntimeSubscriptions = new ProviderRuntimeSubscriptions(topics, connections.CaptureMirrorOwners);
-            var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, machineForward, connections, git);
+            var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, machineForward, connections, git, projectRoots);
             var projectPrReads = new ProjectPullRequestReads(db, projectRoots, sessionSources, engine.Machine, prReader, machineForward, connections);
             var projectPrActions = new ProjectPullRequestActions(projectPrReads, gitOperations, sessionGit, machineForward);
-            var fileOwners = new FileOwner(sessionStore, db);
+            var fileOwners = new FileOwner(sessionStore, db, projectRoots);
             routedTerminals = new RoutedTerminals(terminals, sessionStore, machines, topics, work);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
                 [notion, new Assembly.Infrastructure.Remote.SshHostsFeature(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)), cliUpdates, updates, new InstalledCalls(launcher, TimeProvider.System), new ProviderRuntimeCalls(engine.Machine, agentsFile, machineForward, providerRuntimeSubscriptions), new Assembly.Infrastructure.Engine.Messages.MessagesCalls(engine, db, machineForward), new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts, door, new WorkflowCommandRecovery(db, Path.Combine(home, "workflow-proof"))), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward, project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore, connections: connections), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, localEngineMachine: engine.Machine, readRemoteChallenge: signInRelay.ReadChallengeAsync, submitRemoteCode: signInRelay.SubmitCodeAsync, acknowledgeRemoteUrl: signInRelay.AcknowledgeUrlAsync), new TerminalFeature(routedTerminals), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, new DiskPathProbe(), owningHome, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome,
@@ -432,7 +437,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                     new FilesFeature(sessionStore, fileOwners, work, new FileRemoteRoutes(db, fileOwners, connections, work), sessionSources),
                     new Assembly.Application.Features.Workspaces.WorkspacesFeature(new Assembly.Application.Features.Workspaces.WorkspaceStore(db, TimeProvider.System)),
                     new WorktreesFeature(sessionStore),
-                    gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes),
+                    gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes, branches),
                     new PullRequestsFeature(sessionStore, prReader, gitRoutes, projectPrReads), new GitProjectOperations(gitOperations, projectFolders, sessionGit, gitRoutes, projectPrActions, projectCoordinator),
                     new FoldersFeature(localFolders), new ProjectsFeature(projectStore,
                         name => name == "local" ? localFolders : new RemoteProjectFolders(connections, name), db)], board, Engine: engine), port, out _);
@@ -451,6 +456,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             await app.StartAsync();
             var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, routedTerminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp, gitOperations, providerRuntimeSubscriptions, remoteReleases, releaseHttp, signInRelay, notion);
             backend._updates = updates;
+            backend._branches = branches;
             backend._windowGone = windowGone;
             backend._appInstall = appInstall;
             endpoint.Listening(backend.Address);
@@ -486,6 +492,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             if (sessions is not null) await sessions.DisposeAsync();
             if (work is not null) await work.DisposeAsync();
             cliHttp?.Dispose();
+            if (branches is not null) await branches.DisposeAsync();
             hub?.Dispose();
             activity.Hold(false);
             hostStop?.Dispose();
@@ -537,6 +544,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         await _terminals.DisposeAsync();
         await _helperCards.DisposeAsync();
         await _sessions.DisposeAsync();
+        if (_branches is not null) await _branches.DisposeAsync();
         // After the sessions, so a stop's cancel fails fast; before the database, which a write still finishing needs.
         await _work.DisposeAsync();
         _cliHttp.Dispose();

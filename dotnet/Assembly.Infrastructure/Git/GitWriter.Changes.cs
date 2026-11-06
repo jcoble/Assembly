@@ -31,7 +31,7 @@ public sealed partial class GitWriter
     public async Task<GitWriteResult> UnstageAllAsync(string root, string expectedFingerprint, CancellationToken ct)
     {
         var full = await Current(root, expectedFingerprint, ct);
-        var files = full.All.Where(file => file.Index is not ('.' or '?')).ToArray();
+        var files = full.All.Where(file => file.Index is not ('.' or '?' or 'U')).ToArray(); // Restoring a conflict's index would erase it.
         var paths = Paths(files);
         if (paths.Count > 0) await Run(root, "restore", full.Status.Head is null
             ? ["--literal-pathspecs", "rm", "--cached", "--pathspec-from-file=-", "--pathspec-file-nul"]

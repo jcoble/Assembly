@@ -18,6 +18,7 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
     internal static bool Supports(string? action) => action is "fetch" or "pull" or "push" or "publish" or "createPr" or "review" or "reply" or "comment" or "merge" or "draftCommitMessage" or "draftPr" or "draftReview";
     internal void RequireSession(string session)
     {
+        if (FolderView.IsView(session)) return;
         var actual = sessions.Get(session) ?? throw new CallFailed("unknown session");
         if (!string.IsNullOrEmpty(actual.Machine)) throw new CallFailed("This session is owned by another machine.");
     }
@@ -37,6 +38,7 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
             SourceControlFeature.RequireLocalOwner(db, machine, session);
             if (SourceControlWrites.RequireRoot(sessions, session, request.ExpectedCheckoutRoot, request.ExpectedSource is not null) != root)
                 throw new CallFailed("The session's checkout changed. Refresh and try again.", "source_changed");
+            if (FolderView.IsView(session)) new FolderViews(db, null).RequireWritable(root, ct);
             try { return await execute(root, ct); }
             catch (Exception error) when (error is GhInterrupted or GhUnconfirmed)
             { throw new CallUncertain(machine, "This may have posted. Refresh before trying again."); }

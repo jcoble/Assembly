@@ -27,6 +27,35 @@ public sealed class GitWriterMutationTests
         Assert.Equal('M', Assert.Single((await writer.UnstageAsync(repo.Root, [path], default)).Status.Files).Worktree);
     }
 
+    /// <summary>`git restore --staged` drops a conflict's unmerged entries, which would pass it off as an ordinary edit.</summary>
+    [Fact]
+    public async Task Unstage_all_leaves_a_conflict_a_conflict()
+    {
+        using var repo = new GitHistoryTestRepository(); await repo.InitializeAsync();
+        var writer = new GitWriter(repo.Git);
+        async Task<string> Git(params string[] args) => (await repo.Git.RunAsync(repo.Root, args, null, null, default)).Output;
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "clash.txt"), "base\n");
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "keep.txt"), "base\n");
+        await writer.StageAsync(repo.Root, ["clash.txt", "keep.txt"], default); await repo.Commit("Root");
+        var start = (await Git("branch", "--show-current")).Trim();
+        await Git("switch", "-c", "other");
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "clash.txt"), "other\n");
+        await writer.StageAsync(repo.Root, ["clash.txt"], default); await repo.Commit("Other");
+        await Git("switch", start);
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "clash.txt"), "here\n");
+        await writer.StageAsync(repo.Root, ["clash.txt"], default); await repo.Commit("Here");
+        await Git("merge", "other");
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "keep.txt"), "edited\n");
+        await writer.StageAsync(repo.Root, ["keep.txt"], default);
+        var fingerprint = (await new GitStatusReader(repo.Git).ReadAsync(repo.Root, default)).Fingerprint;
+
+        var result = await writer.UnstageAllAsync(repo.Root, fingerprint, default);
+
+        Assert.NotEqual("", (await Git("ls-files", "-u")).Trim());
+        Assert.Equal('U', result.Status.Files.Single(file => file.Path == "clash.txt").Index);
+        Assert.Equal('.', result.Status.Files.Single(file => file.Path == "keep.txt").Index);
+    }
+
     // Pins: g9#2
     [Fact]
     public async Task Discard_restores_a_rename_and_removes_only_listed_untracked_files()

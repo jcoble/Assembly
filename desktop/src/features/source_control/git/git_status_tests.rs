@@ -45,6 +45,7 @@ fn files_go_in_staged_changes_and_untracked_sorted_with_their_letters() {
         listed(&status, Section::Staged),
         vec![
             ('A', "added.rs".to_string()),
+            ('U', "both.rs".to_string()),
             ('C', "copy.rs".to_string()),
             ('M', "src/a.rs".to_string()),
             ('M', "src/b.rs".to_string()),
@@ -53,7 +54,7 @@ fn files_go_in_staged_changes_and_untracked_sorted_with_their_letters() {
     assert_eq!(
         listed(&status, Section::Changes),
         vec![
-            ('!', "both.rs".to_string()),
+            ('U', "both.rs".to_string()),
             ('D', "gone.txt".to_string()),
             ('M', "src/a.rs".to_string()),
         ]

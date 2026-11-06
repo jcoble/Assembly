@@ -2,6 +2,7 @@
 //! returned status needs no second read, and an operation's terminal state is taken once.
 use super::{PaneResult, RunningOperation, SourceControlPane};
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::state::folder_touched::FolderTouched;
 use crate::core::state::inspected_checkout::{Inspected, InspectedCheckout};
 use crate::core::state::session_read::Shown;
 use crate::features::source_control::commit_timeline::CommitTimeline;
@@ -9,6 +10,7 @@ use crate::features::source_control::git_branches::GitBranchList;
 use crate::features::source_control::git_failure::{GitFailure, Recovery};
 use crate::features::source_control::git_status::GitStatus;
 use crate::features::source_control::pull_requests::pr_section::PrSection;
+use crate::features::source_control::stash_dialogs::Stash;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
@@ -52,13 +54,12 @@ impl SourceControlPane {
             self.session_changed(session.clone(), cx);
         }
         self.publish_inspected(cx);
-        self.sync_checkouts(cx);
         self.settle_place(cx);
         if matches!(self.result, Some(PaneResult::Done(_))) && answers != self.result_answers {
             self.result = None;
         }
         self.sync_children(cx);
-        let target = self.target(cx);
+        let target = self.shown_target(cx);
         if self.branches_target.is_some() && self.branches_target != target {
             self.forget_branches();
         }
@@ -69,14 +70,13 @@ impl SourceControlPane {
         self.push_branch_menu(cx);
         cx.notify();
     }
-    /// Tells the Changes tab what this panel has actually read. A pick or a saved hint on its way isn't that.
+    /// Tells the Changes tab what this panel has actually read.
     fn publish_inspected(&self, cx: &mut Context<Self>) {
         let read = self.read.read(cx);
         if let (Shown::Read(status), Some(session)) = (read.shown(), read.session()) {
             let inspected = Inspected {
                 session: session.to_string(),
                 source: read.source().cloned(),
-                checkout: read.checkout().cloned(),
                 fingerprint: status.fingerprint.clone(),
                 answers: read.answers(),
             };
@@ -115,12 +115,25 @@ impl SourceControlPane {
         let target = self.target(cx);
         let shown = self.shown_target(cx);
         let source = shown.as_ref().and_then(|shown| shown.source.clone());
-        let checkout = self.selection(cx);
-        let head = self.shown_status(cx).and_then(|status| status.head);
+        // The commit list's labels change on a switch to a branch at the same commit, too.
+        let head = self.shown_status(cx).and_then(|status| {
+            status
+                .head
+                .as_ref()
+                .map(|head| format!("{head} {}", status.branch_name()))
+        });
         let is_repository = matches!(self.read.read(cx).shown(), Shown::Read(_));
-        if self.pull_requests.as_ref().map(|(key, _)| key) != session.as_ref() {
-            self.pull_requests = session.as_ref().map(|session| {
-                let target = target.clone().unwrap_or_else(|| {
+        // Pull requests stay on the session's folder while a project is viewed.
+        let own = self.session_target(cx);
+        let viewing = own.is_some();
+        let pr_session = own
+            .as_ref()
+            .map(|own| own.session.clone())
+            .or_else(|| session.clone());
+        let pr_target = own.or_else(|| target.clone());
+        if self.pull_requests.as_ref().map(|(key, _)| key) != pr_session.as_ref() {
+            self.pull_requests = pr_session.as_ref().map(|session| {
+                let target = pr_target.clone().unwrap_or_else(|| {
                     crate::features::source_control::git_target::GitTarget::new(session.clone())
                 });
                 let writes = self.writes.clone();
@@ -131,9 +144,12 @@ impl SourceControlPane {
                 )
             });
         }
-        if let (Some((_, section)), Some(target)) = (&self.pull_requests, &target) {
+        if let (Some((_, section)), Some(target)) = (&self.pull_requests, &pr_target) {
             let target = target.clone();
-            let branch = self.shown_status(cx).map(|status| status.branch_name());
+            let branch = self
+                .shown_status(cx)
+                .filter(|_| !viewing)
+                .map(|status| status.branch_name());
             section.update(cx, |section, cx| section.set_target(target, branch, cx));
         }
         if self.timeline.as_ref().map(|(key, _)| key) != session.as_ref() {
@@ -154,7 +170,6 @@ impl SourceControlPane {
             self.timeline_active = wanted;
             self.seen_head = head;
             timeline.update(cx, |timeline, cx| {
-                timeline.set_checkout(checkout, cx);
                 timeline.set_target(None, source, cx);
                 timeline.set_active(wanted, cx)
             });
@@ -162,7 +177,6 @@ impl SourceControlPane {
             let moved = head.is_some() && head != self.seen_head;
             self.seen_head = head;
             timeline.update(cx, |timeline, cx| {
-                timeline.set_checkout(checkout, cx);
                 timeline.set_target(None, source, cx);
                 if moved {
                     timeline.refresh(cx);
@@ -192,6 +206,9 @@ impl SourceControlPane {
         }
         self.details_open = false;
         if succeeded {
+            if let Some(target) = &decided_against {
+                FolderTouched::git_panel_wrote(&target.session, cx);
+            }
             self.result = message.map(PaneResult::Done);
             if let Some(status) = status {
                 self.read.update(cx, |read, cx| read.show(status, cx));
@@ -309,6 +326,9 @@ impl SourceControlPane {
     }
     /// A sync moved refs the status doesn't show, so the branches and commits read again whatever the head did.
     fn after_sync(&mut self, status: Option<GitStatus>, cx: &mut Context<Self>) {
+        if let Some(session) = self.read.read(cx).session().map(str::to_string) {
+            FolderTouched::git_panel_wrote(&session, cx);
+        }
         match status {
             Some(status) => {
                 self.read.update(cx, |read, cx| read.show(status, cx));
@@ -329,15 +349,19 @@ impl SourceControlPane {
         self.branches_failure = None;
         self.branches_read = None;
         self.branches_target = None;
+        self.stashes.clear();
+        self.stashes_read = None;
     }
+    /// Reads what's shown, read-only or not: read-only stops writes, not the menu's list.
     pub(super) fn read_branches(&mut self, cx: &mut Context<Self>) {
-        let Some(target) = self.target(cx) else {
+        let Some(target) = self.shown_target(cx) else {
             return;
         };
         let Some(socket) = SocketClient::try_global(cx) else {
             return;
         };
         let args = target.read_args(json!({"session":target.session}));
+        let stash_args = args.clone();
         let call = socket
             .read(cx)
             .call::<GitBranchList>("git", "branches", args, None);
@@ -361,6 +385,20 @@ impl SourceControlPane {
                 cx.notify();
             });
         }));
+        let call = socket
+            .read(cx)
+            .call::<Vec<Stash>>("git", "stashes", stash_args, None);
+        self.stashes_read = Some(cx.spawn(async move |pane, cx| {
+            // Without the list the menu just offers no Pop; Stashes… says why when opened.
+            let answer = call.await;
+            _ = pane.update(cx, |pane, cx| {
+                pane.stashes = match answer {
+                    Outcome::Ok(items) => items,
+                    _ => Vec::new(),
+                };
+                pane.push_branch_menu(cx);
+            });
+        }));
         self.push_branch_menu(cx);
     }
     pub(super) fn push_branch_menu(&mut self, cx: &mut Context<Self>) {
@@ -371,11 +409,14 @@ impl SourceControlPane {
             .unwrap_or_default();
         let reading = self.branches_read.is_some();
         let failure = self.branches_failure.clone();
-        let busy = self.busy(cx);
+        // A read-only folder still opens the menu; only its rows are off.
+        let busy = self.busy(cx) || self.read_only(cx);
+        let stashes = self.stashes.clone();
         let has_changes = self
             .shown_status(cx)
             .is_some_and(|status| status.total_files > 0);
         self.branch_menu.update(cx, |menu, cx| {
+            menu.set_stashes(stashes, cx);
             menu.set_state(branches, reading, failure, busy, has_changes, cx)
         });
     }

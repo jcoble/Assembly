@@ -12,12 +12,33 @@ use std::{cell::RefCell, rc::Rc};
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Stash {
-    sha: String,
-    message: String,
-    branch: Option<String>,
+pub struct Stash {
+    pub sha: String,
+    pub message: String,
+    pub branch: Option<String>,
     created_ms: i64,
     made_by_assembly: bool,
+}
+impl Stash {
+    /// What a person calls it, as git lists it: `On <branch>: <words>`. One made here is saved as
+    /// `assembly <session> <time>: <text>`, whose words are the text, or its time when it has none.
+    pub fn description(&self) -> String {
+        let words = match self.message.strip_prefix("assembly ") {
+            // Git trims the space that follows an empty text, leaving just the colon.
+            Some(rest) => match rest.trim_end().split_once(": ") {
+                Some((_, text)) => text,
+                None => {
+                    let made = rest.trim_end().trim_end_matches(':');
+                    made.rsplit(' ').next().unwrap_or(made)
+                }
+            },
+            None => &self.message,
+        };
+        match &self.branch {
+            Some(branch) => format!("On {branch}: {words}"),
+            None => words.to_string(),
+        }
+    }
 }
 struct DropApproval {
     sha: String,

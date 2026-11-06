@@ -1,6 +1,7 @@
 //! The facts the window shows, one owner each, kept current from the backend's topics and calls.
 
 pub mod appearance;
+pub mod folder_touched;
 pub mod inspected_checkout;
 pub mod machine;
 pub mod machines;
@@ -13,5 +14,6 @@ pub mod session_page;
 pub mod session_read;
 pub mod sessions;
 pub mod sessions_settings;
+pub mod viewed_project;
 
 pub mod workspace_panes;

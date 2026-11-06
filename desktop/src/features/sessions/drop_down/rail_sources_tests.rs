@@ -345,7 +345,7 @@ mod session_notices {
                     )
                 }
                 (Some("call"), _, Some("rail")) => {
-                    let row = json!({"sessionId":ROW,"kind":"session","section":"working","agent":"claude","repoUrl":"r","group":"r","count":0,"machines":[],"title":null,"machine":"actual-B","updatedAt":1,"completedAt":null,"running":false,"failed":false,"unread":false,"ordering":ROW,"branch":null,"branchAt":null,"icon":"icons/bot.svg","sectionIndex":0,"header":2});
+                    let row = json!({"sessionId":ROW,"kind":"session","section":"working","agent":"claude","repoUrl":"r","group":"r","count":0,"machines":[],"title":null,"machine":"actual-B","updatedAt":1,"completedAt":null,"running":false,"failed":false,"unread":false,"ordering":ROW,"branch":null,"icon":"icons/bot.svg","sectionIndex":0,"header":2});
                     result(
                         &frame["id"],
                         json!({"totals":{"needs":0},"agents":[],"sessions":if held.load(SeqCst){vec![row]}else{vec![]},"next":null,"start":0}),

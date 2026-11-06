@@ -37,6 +37,15 @@ public sealed class GitBranches(IGit git)
         if (run.ExitCode != 0) throw GitErrors.From("branch", run);
         return new("Created branch " + name, await new GitStatusReader(git).ReadAsync(root, ct));
     }
+    public async Task<GitWriteResult> SwitchAsync(string root, string name, bool create, string? expectedHead, CancellationToken ct)
+    {
+        if (Refusal(name) is { } reason) throw new CallFailed(reason);
+        name = name.Trim();
+        if (create && (await new GitStatusReader(git).ReadAsync(root, ct)).Head != expectedHead) throw new CallFailed("The branch moved since you looked. Refresh and try again.");
+        var run = await git.RunAsync(root, create ? ["switch", "-c", name] : ["switch", name], null, null, ct);
+        if (run.ExitCode != 0) throw GitErrors.From("switch", run);
+        return new((create ? "Created and switched to " : "Switched to ") + name, await new GitStatusReader(git).ReadAsync(root, ct));
+    }
     public static string? Refusal(string name)
     {
         name = name.Trim();

@@ -591,3 +591,5 @@ async fn a_restored_file_answered_by_another_checkout_reads_nothing_and_keeps_it
         "nothing was read from the other checkout"
     );
 }
+#[path = "tests/workspace_view_file_tests.rs"]
+mod view_file;

@@ -52,6 +52,7 @@ namespace Assembly.Engine.Contracts;
 [JsonDerivedType(typeof(StopSession), "stop_session")]
 [JsonDerivedType(typeof(ReportSessionTitle), "report_session_title")]
 [JsonDerivedType(typeof(ReportSessionModel), "report_session_model")]
+[JsonDerivedType(typeof(ReportSessionBranch), "report_session_branch")]
 [JsonDerivedType(typeof(LinkTask), "link_task")]
 [JsonDerivedType(typeof(StartRun), "start_run")]
 [JsonDerivedType(typeof(CancelRun), "cancel_run")]
