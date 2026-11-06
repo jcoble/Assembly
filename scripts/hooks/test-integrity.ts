@@ -162,13 +162,24 @@ export function violations(changes: Change[], message: string, approved?: Approv
 function git(args: string[]): string { return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }); }
 function exists(spec: string): boolean { try { git(['cat-file', '-e', spec]); return true; } catch { return false; } }
 function content(spec: string): string { return exists(spec) ? git(['show', spec]) : ''; }
-// A merge answers only for its approvals, against its first parent: it brings in work its other parents' commits answer
-// for, but it may not remove or change an approval (which would let the approval be added and used again).
+// A merge brings in its parents' work. A test file it leaves equal to that file in some parent, it answers nothing for; any
+// other test file it changes is judged against its first parent, as a commit's would be. It may not drop or change an approval
+// file any parent holds, which would let the approval be added and used again.
+function mergeChanges(commit: string): Change[] {
+  const parents = git(['rev-list', '--parents', '-n', '1', commit]).trim().split(' ').slice(1);
+  const blob = (spec: string) => exists(spec) ? git(['rev-parse', spec]).trim() : '';
+  const tests = git(['diff-tree', '-r', '--name-only', '-z', parents[0], commit]).split('\0')
+    .filter(path => path && isTest(path) && !parents.some(parent => blob(parent + ':' + path) === blob(commit + ':' + path)))
+    .map(path => ({ path, before: content(parents[0] + ':' + path), after: content(commit + ':' + path) }));
+  const approvals = new Set(parents.flatMap(parent => git(['ls-tree', '-r', '--name-only', '-z', parent, '--', approvalsFolder + '/']).split('\0').filter(Boolean)));
+  return [...tests, ...[...approvals].flatMap(path => {
+    const parent = parents.find(parent => exists(parent + ':' + path) && blob(parent + ':' + path) !== blob(commit + ':' + path));
+    return parent ? [{ path, before: content(parent + ':' + path), after: content(commit + ':' + path) }] : [];
+  })];
+}
 export function stagedChanges(commit?: string): Change[] {
-  const merge = commit !== undefined && exists(commit + '^2');
-  const args = !commit ? ['diff', '--cached', '--name-status', '-z', '-M']
-    : merge ? ['diff-tree', '-r', '--name-status', '-z', '-M', commit + '^', commit, '--', approvalsFolder]
-    : ['diff-tree', '--root', '--no-commit-id', '-r', '--name-status', '-z', '-M', commit];
+  if (commit && exists(commit + '^2')) return mergeChanges(commit);
+  const args = commit ? ['diff-tree', '--root', '--no-commit-id', '-r', '--name-status', '-z', '-M', commit] : ['diff', '--cached', '--name-status', '-z', '-M'];
   const parts = git(args).split('\0'), result: Change[] = [];
   const parent = commit && exists(commit + '^') ? commit + '^' : undefined;
   for (let i = 0; i < parts.length && parts[i];) {

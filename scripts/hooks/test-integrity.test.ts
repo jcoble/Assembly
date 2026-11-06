@@ -246,3 +246,56 @@ test('the checker run through a symlink still checks', () => withRepo(({ root, s
   writeFileSync(join(root, 'msg'), 'Subject');
   assert.equal(spawnSync(process.execPath, [link, join(root, 'msg')], { cwd: root }).status, 1);
 }));
+
+test('the key is read at the base tip, so a branch forked before the key landed is still checked', () => withRepo(({ root, git, check, stage }) => {
+  git('checkout', '--quiet', '--orphan', 'old');
+  git('rm', '--quiet', '--cached', 'test-approvals/allowed_signers');
+  rmSync(join(root, 'test-approvals/allowed_signers'));
+  commitWith(root, git, 'old: no key yet');
+  git('checkout', '--quiet', '-b', 'keyed');
+  git('checkout', '--quiet', 'work', '--', 'test-approvals/allowed_signers');
+  commitWith(root, git, 'the key lands');
+  git('checkout', '--quiet', '-B', 'work', 'old');
+  stage(approvedRust);
+  commitWith(root, git, 'TEST-CHANGE: keeps_path: no approval');
+  assert.equal(check(['--commit', 'HEAD', 'work'], { BASE: git('rev-parse', 'keyed').trim() }).status, 1);
+}));
+
+test('a merge may not drop an approval either parent holds, whichever parent comes first', () => withRepo(({ root, git, check, approve, stage }) => {
+  approve({ id: 'ap-1', branch: 'work', expires: inAnHour(), tests: approvedEntry() });
+  stage(approvedRust);
+  commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-1');
+  git('checkout', '--quiet', '-b', 'side', 'HEAD~1'); writeFileSync(join(root, 'other'), 'x'); git('add', 'other'); commitWith(root, git, 'side');
+  git('merge', '--quiet', '--no-ff', '--no-commit', 'work');
+  git('rm', '--quiet', '--force', 'test-approvals/ap-1.json', 'test-approvals/ap-1.json.sig');
+  stage(seedRust);
+  git('commit', '--quiet', '--no-edit');
+  const merge = check(['--commit', 'HEAD', 'work']);
+  assert.equal(merge.status, 1);
+  assert.match(String(merge.stderr), /only ever added/);
+}));
+
+test('a merge\'s own test edit is judged, while a test brought in unchanged from a parent is not', () => withRepo(({ root, git, check, stage }) => {
+  git('checkout', '--quiet', '-b', 'side'); stage(seedRust.replace('"a"', '"z"')); commitWith(root, git, 'side changes the test');
+  git('checkout', '--quiet', 'work'); writeFileSync(join(root, 'other'), 'x'); git('add', 'other'); commitWith(root, git, 'work');
+  git('merge', '--quiet', '--no-ff', '-m', 'Merge side', 'side');
+  assert.equal(check(['--commit', 'HEAD', 'work']).status, 0);
+  git('checkout', '--quiet', '-b', 'side2', 'HEAD~1'); writeFileSync(join(root, 'more'), 'x'); git('add', 'more'); commitWith(root, git, 'side2');
+  git('checkout', '--quiet', 'work');
+  git('merge', '--quiet', '--no-ff', '--no-commit', 'side2');
+  stage(seedRust.replace('"a"', '"q"'));
+  git('commit', '--quiet', '--no-edit');
+  assert.equal(check(['--commit', 'HEAD', 'work']).status, 1);
+}));
+
+test('an approval the base already holds is used, even on a branch forked before it landed', () => withRepo(({ root, git, check, approve, stage }) => {
+  git('checkout', '--quiet', '-b', 'base');
+  approve({ id: 'ap-old', branch: 'work', expires: inAnHour(), tests: approvedEntry() });
+  stage(approvedRust);
+  commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-old');
+  const base = git('rev-parse', 'HEAD').trim();
+  git('checkout', '--quiet', 'work');
+  git('checkout', '--quiet', base, '--', 'test-approvals', 'desktop/src/view_tests.rs');
+  commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-old');
+  assert.equal(check(['--commit', 'HEAD', 'work'], { BASE: base }).status, 1);
+}));
