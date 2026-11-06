@@ -26,7 +26,7 @@ function inRepo(run: (write: (path: string, text: string) => string) => void, fo
 // The tests without approvals never read the real approvals folder.
 const noApprovals = mkdtempSync(join(tmpdir(), 'assembly-guard-no-approvals-'));
 after(() => rmSync(noApprovals, { recursive: true, force: true }));
-const send = (tool_input: unknown) => spawnSync(process.execPath, [guard], { input: JSON.stringify({ tool_input }), encoding: 'utf8', env: { ...process.env, ASSEMBLY_TEST_APPROVALS_HOME: noApprovals } });
+const send = (tool_input: unknown) => spawnSync(process.execPath, [guard, '--approvals', noApprovals], { input: JSON.stringify({ tool_input }), encoding: 'utf8' });
 
 test('changing an expected value is blocked and names the test', () => inRepo(write => {
   const file_path = write('desktop/src/view_tests.rs', rust);
@@ -167,9 +167,16 @@ function withApprovals(run: (home: string, approve: (approval: object, key?: str
     }, newKey);
   } finally { rmSync(home, { recursive: true, force: true }); rmSync(keys, { recursive: true, force: true }); }
 }
-const sendWith = (home: string, tool_input: unknown) => spawnSync(process.execPath, [guard], { input: JSON.stringify({ tool_input }), encoding: 'utf8', env: { ...process.env, ASSEMBLY_TEST_APPROVALS_HOME: home } });
-function committed(file_path: string): string {
+// The guard reads approvals from `home` as the host folder, and the controller's key from the base, here HEAD.
+const sendWith = (home: string, tool_input: unknown) => spawnSync(process.execPath, [guard, '--approvals', home], { input: JSON.stringify({ tool_input }), encoding: 'utf8', env: { ...process.env, BASE: 'HEAD' } });
+// Commits everything, with home's allowed_signers as the repo's test-approvals/allowed_signers when home is given.
+function committed(file_path: string, home?: string): string {
   const git = (...args: string[]) => execFileSync('git', ['-C', dirname(file_path), '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' });
+  if (home) {
+    const folder = join(git('rev-parse', '--show-toplevel').trim(), 'test-approvals');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'allowed_signers'), readFileSync(join(home, 'allowed_signers')));
+  }
   git('add', '-A'); git('commit', '--quiet', '-m', 'x');
   return git('rev-parse', '--abbrev-ref', 'HEAD').trim();
 }
@@ -178,7 +185,7 @@ const edit = (file_path: string) => ({ file_path, old_string: '"a"', new_string:
 const soon = () => new Date(Date.now() + 3600_000).toISOString(), edited = testHash(rust.replace('"a"', '"b"'), 'keeps_path');
 
 test('a signed approval for this branch, file and test allows the edit', () => inRepo(write => withApprovals((home, approve) => {
-  const file_path = write('desktop/src/view_tests.rs', rust), branch = committed(file_path);
+  const file_path = write('desktop/src/view_tests.rs', rust), branch = committed(file_path, home);
   approve({ branch, expires: soon(), tests: [{ file: 'desktop/src/view_tests.rs', name: 'keeps_path', sha256: edited }] });
   assert.equal(sendWith(home, edit(file_path)).status, 0);
 })));
@@ -195,6 +202,7 @@ test('an approval that does not match, or is not signed by the controller, is re
     ['unsigned', approve => approve({ branch, expires, tests: [test] }, '')],
   ];
   for (const [label, make] of cases) withApprovals((home, approve, newKey) => {
+    committed(file_path, home);
     make(approve, newKey);
     const result = sendWith(home, edit(file_path));
     assert.equal(result.status, 2, label);
@@ -203,7 +211,7 @@ test('an approval that does not match, or is not signed by the controller, is re
 }));
 
 test('an approval for one of two changed tests still refuses, naming only the other', () => inRepo(write => withApprovals((home, approve) => {
-  const file_path = write('desktop/src/view_tests.rs', rust + 'fn second() {\n assert_eq!(path, "a");\n}\n'), branch = committed(file_path);
+  const file_path = write('desktop/src/view_tests.rs', rust + 'fn second() {\n assert_eq!(path, "a");\n}\n'), branch = committed(file_path, home);
   approve({ branch, expires: soon(), tests: [{ file: 'desktop/src/view_tests.rs', name: 'keeps_path', sha256: edited }] });
   const result = sendWith(home, { ...edit(file_path), replace_all: true });
   assert.equal(result.status, 2);
@@ -225,7 +233,7 @@ test('the block sends the agent to its controller, never to approve itself', () 
 
 test('a detached checkout gets no approvals, even one written for HEAD', () => inRepo(write => withApprovals((home, approve) => {
   const file_path = write('desktop/src/view_tests.rs', rust);
-  committed(file_path);
+  committed(file_path, home);
   execFileSync('git', ['-C', dirname(file_path), 'checkout', '--quiet', '--detach']);
   approve({ branch: 'HEAD', expires: soon(), tests: [{ file: 'desktop/src/view_tests.rs', name: 'keeps_path', sha256: edited }] });
   const result = sendWith(home, edit(file_path));
@@ -256,19 +264,21 @@ function approveChange(home: string, key: string, file_path: string, proposed: s
   return execFileSync(process.execPath, [approveScript, '--key', key, '--repo', root, '--branch', branch, '--patch', patch,
     ...tests.flatMap(name => ['--test', name]), '--reason', 'reviewed', '--out', home], { encoding: 'utf8' }).trim();
 }
-const twoChecks = 'fn keeps_path() {\n assert_eq!(path, "a");\n assert_eq!(name, "x");\n}\n';
+// Approvals made by approve-test-change.ts need rustfmt-formatted Rust.
+const formatted = 'fn keeps_path() {\n    assert_eq!(path, "a");\n}\n';
+const twoChecks = 'fn keeps_path() {\n    assert_eq!(path, "a");\n    assert_eq!(name, "x");\n}\n';
 
 test('an approved change passes only as its exact approved text', () => inRepo(write => withController((home, key) => {
-  const file_path = write('desktop/src/view_tests.rs', rust);
-  committed(file_path);
-  approveChange(home, key, file_path, rust.replace('"a"', '"b"'), ['desktop/src/view_tests.rs::keeps_path']);
+  const file_path = write('desktop/src/view_tests.rs', formatted);
+  committed(file_path, home);
+  approveChange(home, key, file_path, formatted.replace('"a"', '"b"'), ['desktop/src/view_tests.rs::keeps_path']);
   assert.equal(sendWith(home, { file_path, old_string: '"a"', new_string: '"c"' }).status, 2);
   assert.equal(sendWith(home, edit(file_path)).status, 0);
 })));
 
 test('a part of an approved change is refused, and the refusal asks for the whole change in one edit', () => inRepo(write => withController((home, key) => {
   const file_path = write('desktop/src/view_tests.rs', twoChecks), approved = twoChecks.replace('"a"', '"b"').replace('"x"', '"y"');
-  committed(file_path);
+  committed(file_path, home);
   approveChange(home, key, file_path, approved, ['desktop/src/view_tests.rs::keeps_path']);
   const part = sendWith(home, edit(file_path));
   assert.equal(part.status, 2);
@@ -278,19 +288,19 @@ test('a part of an approved change is refused, and the refusal asks for the whol
 })));
 
 test('a rename is approved under its new name, carrying the approved text', () => inRepo(write => withController((home, key) => {
-  const file_path = write('desktop/src/view_tests.rs', rust), renamed = rust.replace('keeps_path', 'keeps_name').replace('"a"', '"b"');
-  committed(file_path);
+  const file_path = write('desktop/src/view_tests.rs', formatted), renamed = formatted.replace('keeps_path', 'keeps_name').replace('"a"', '"b"');
+  committed(file_path, home);
   approveChange(home, key, file_path, renamed, ['desktop/src/view_tests.rs::keeps_name']);
-  assert.equal(sendWith(home, { file_path, old_string: rust, new_string: renamed.replace('"b"', '"c"') }).status, 2);
-  assert.equal(sendWith(home, { file_path, old_string: rust, new_string: renamed }).status, 0);
+  assert.equal(sendWith(home, { file_path, old_string: formatted, new_string: renamed.replace('"b"', '"c"') }).status, 2);
+  assert.equal(sendWith(home, { file_path, old_string: formatted, new_string: renamed }).status, 0);
 })));
 
-test('a formatter wrap of the approved text still matches', () => inRepo(write => withController((home, key) => {
-  const file_path = write('desktop/src/view_tests.rs', rust);
-  committed(file_path);
-  approveChange(home, key, file_path, rust.replace('"a"', '"b"'), ['desktop/src/view_tests.rs::keeps_path']);
+test('a formatter wrap of the approved text is a different text', () => inRepo(write => withController((home, key) => {
+  const file_path = write('desktop/src/view_tests.rs', formatted);
+  committed(file_path, home);
+  approveChange(home, key, file_path, formatted.replace('"a"', '"b"'), ['desktop/src/view_tests.rs::keeps_path']);
   const wrapped = 'assert_eq!(\n        path,\n        "b",\n    );';
-  assert.equal(sendWith(home, { file_path, old_string: 'assert_eq!(path, "a");', new_string: wrapped }).status, 0);
+  assert.equal(sendWith(home, { file_path, old_string: 'assert_eq!(path, "a");', new_string: wrapped }).status, 2);
 })));
 
 test('an expired approval, or one without the approved text, approves nothing', () => inRepo(write => {
@@ -301,16 +311,30 @@ test('an expired approval, or one without the approved text, approves nothing', 
     ['no hash', { id: 'one', branch, tests: [{ file: tests[0].file, name: tests[0].name }], expires: new Date(Date.now() + 3600_000).toISOString() }],
     ['no expiry', { id: 'one', branch, tests }],
   ] as const) withApprovals((home, approve) => {
+    committed(file_path, home);
     approve(approval);
     assert.equal(sendWith(home, edit(file_path)).status, 2, label);
   });
 }));
 
-test('an approval in used/ approves nothing', () => inRepo(write => withController((home, key) => {
-  const file_path = write('desktop/src/view_tests.rs', rust);
+test('an approval the branch already committed approves nothing', () => inRepo(write => withController((home, key) => {
+  const file_path = write('desktop/src/view_tests.rs', formatted);
+  committed(file_path, home);
+  const approval = approveChange(home, key, file_path, formatted.replace('"a"', '"b"'), ['desktop/src/view_tests.rs::keeps_path']);
+  const folder = join(dirname(dirname(dirname(file_path))), 'test-approvals');
+  for (const file of [approval, approval + '.sig']) writeFileSync(join(folder, basename(file)), readFileSync(file));
   committed(file_path);
-  const approval = approveChange(home, key, file_path, rust.replace('"a"', '"b"'), ['desktop/src/view_tests.rs::keeps_path']);
-  mkdirSync(join(home, 'used'));
-  for (const file of [approval, approval + '.sig']) renameSync(file, join(home, 'used', basename(file)));
   assert.equal(sendWith(home, edit(file_path)).status, 2);
+})));
+
+test('an approval copied into test-approvals/ counts until committed, and the block says to commit it with the change', () => inRepo(write => withController((home, key) => {
+  const file_path = write('desktop/src/view_tests.rs', formatted);
+  committed(file_path, home);
+  const refused = sendWith(home, edit(file_path));
+  assert.match(refused.stderr, /Commit it together with the approval: copy <id>\.json and <id>\.json\.sig/);
+  assert.match(refused.stderr, /into test-approvals\/, and cite the id in its TEST-CHANGE line/);
+  const approval = approveChange(home, key, file_path, formatted.replace('"a"', '"b"'), ['desktop/src/view_tests.rs::keeps_path']);
+  const folder = join(dirname(dirname(dirname(file_path))), 'test-approvals');
+  for (const file of [approval, approval + '.sig']) renameSync(file, join(folder, basename(file)));
+  assert.equal(sendWith(home, edit(file_path)).status, 0);
 })));

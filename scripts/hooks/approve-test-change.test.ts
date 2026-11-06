@@ -14,8 +14,8 @@ function proposal(base: string): { root: string; patch: string } {
   const git = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' });
   execFileSync('git', ['init', '--quiet', '-b', 'claude/x', root]);
   mkdirSync(join(root, 'desktop/src'), { recursive: true });
-  writeFileSync(file, 'fn keeps_path() {\n assert_eq!(path, "a");\n}\n'); git('add', '.'); git('commit', '--quiet', '-m', 'seed');
-  writeFileSync(file, 'fn keeps_path() {\n assert_eq!(path, "b");\n}\n'); writeFileSync(patch, git('diff')); git('checkout', '--quiet', '--', '.');
+  writeFileSync(file, 'fn keeps_path() {\n    assert_eq!(path, "a");\n}\n'); git('add', '.'); git('commit', '--quiet', '-m', 'seed');
+  writeFileSync(file, 'fn keeps_path() {\n    assert_eq!(path, "b");\n}\n'); writeFileSync(patch, git('diff')); git('checkout', '--quiet', '--', '.');
   return { root, patch };
 }
 
@@ -29,7 +29,7 @@ test('writes a signed approval the guard can verify', () => {
       '--test', 'desktop/src/view_tests.rs::keeps_path', '--reason', 'spec changed', '--out', out], { encoding: 'utf8' }).trim();
     const approval = JSON.parse(readFileSync(file, 'utf8'));
     assert.equal(approval.branch, 'claude/x');
-    assert.deepEqual(approval.tests, [{ file: 'desktop/src/view_tests.rs', name: 'keeps_path', sha256: testHash('fn keeps_path() {\n assert_eq!(path, "b");\n}\n', 'keeps_path') }]);
+    assert.deepEqual(approval.tests, [{ file: 'desktop/src/view_tests.rs', name: 'keeps_path', sha256: testHash('fn keeps_path() {\n    assert_eq!(path, "b");\n}\n', 'keeps_path') }]);
     assert.equal(approval.reason, 'spec changed');
     assert.match(approval.approvedBy, /^controller@/);
     assert.ok(!Number.isNaN(Date.parse(approval.at)));
@@ -58,7 +58,7 @@ test('refuses a test file that is absolute or holds . or .. parts', () => {
 
 // A throwaway repo on branch work and a controller key. propose turns the lane's text into a patch against the current tip;
 // sign runs the script on a patch.
-const seed = 'fn keeps_path() {\n assert_eq!(path, "a");\n}\nfn keeps_name() {\n assert_eq!(name, "x");\n}\n';
+const seed = 'fn keeps_path() {\n    assert_eq!(path, "a");\n}\nfn keeps_name() {\n    assert_eq!(name, "x");\n}\n';
 type Sign = (patch: string, tests: string[]) => ReturnType<typeof spawnSync>;
 function withBranch(run: (propose: (text: string) => string, sign: Sign, out: string, root: string) => void): void {
   const base = mkdtempSync(join(tmpdir(), 'assembly-approve-')), root = join(base, 'repo'), out = join(base, 'approvals'), file = join(root, 'desktop/src/view_tests.rs');
@@ -105,3 +105,26 @@ test('records a rename as the old name removed plus the new name with its approv
   ]);
   assert.ok(existsSync(join(out, approval.id + '.json.sig')));
 }));
+
+test('refuses a patch that leaves Rust unformatted', () => {
+  const base = mkdtempSync(join(tmpdir(), 'assembly-approve-'));
+  try {
+    const root = join(base, 'repo'), key = join(base, 'controller'), file = join(root, 'desktop/src/view_tests.rs');
+    const formatted = 'fn keeps_path() {\n    assert_eq!(path, "a");\n}\n';
+    const git = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' });
+    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', key]);
+    execFileSync('git', ['init', '--quiet', '-b', 'work', root]);
+    mkdirSync(join(root, 'desktop/src'), { recursive: true });
+    writeFileSync(file, formatted); git('add', '.'); git('commit', '--quiet', '-m', 'seed');
+    const sign = (text: string) => {
+      writeFileSync(file, text); const patch = join(base, 'p' + Math.random() + '.patch'); writeFileSync(patch, git('diff')); writeFileSync(file, formatted);
+      return spawnSync(process.execPath, [script, '--key', key, '--repo', root, '--branch', 'work', '--patch', patch,
+        '--test', 'desktop/src/view_tests.rs::keeps_path', '--reason', 'r', '--out', join(base, 'out')], { encoding: 'utf8' });
+    };
+    const unformatted = sign('fn keeps_path() {\n    assert_eq!(\n        path,\n        "b");\n}\n');
+    assert.notEqual(unformatted.status, 0);
+    assert.match(unformatted.stderr, /not formatted/);
+    assert.ok(!existsSync(join(base, 'out')));
+    assert.equal(sign(formatted.replace('"a"', '"b"')).status, 0);
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});

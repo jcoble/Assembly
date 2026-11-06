@@ -1,0 +1,70 @@
+{
+  "id": "ebc502ba-a52c-4e0f-8aab-c78a4ec6c8c7",
+  "branch": "claude/test-approval-exact",
+  "tests": [
+    {
+      "file": "scripts/hooks/guard-test-changes.test.ts",
+      "name": "keeps_path",
+      "sha256": "b2d29dbdbfe080c10dfe19802402cc7db13831d21908362b4b7d305b0b77ea66"
+    },
+    {
+      "file": "scripts/hooks/guard-test-changes.test.ts",
+      "name": "second",
+      "sha256": "af3908c353e557dddc1a4a72f312c753f090e81c5de2d5fc78dff4ad16633ca1"
+    },
+    {
+      "file": "scripts/hooks/guard-test-changes.test.ts",
+      "name": "a rename is approved under its new name, carrying the approved text",
+      "sha256": "712a7c54658164dc6327d8eb1fcf0dd6c4417a9277eca4274d0df0514225e44f"
+    },
+    {
+      "file": "scripts/hooks/guard-test-changes.test.ts",
+      "name": "a formatter wrap of the approved text is a different text",
+      "sha256": "2c0aa8ce087b03888b645488dc7f8e1d1c54eb5aa9f487dc973f16e0f5d6d9c4"
+    },
+    {
+      "file": "scripts/hooks/guard-test-changes.test.ts",
+      "name": "an approval the branch already committed approves nothing",
+      "sha256": "ea96e7d00e56c8c30a7b9ad1ddd9dcab482231e176b7920ac4eaf019b48de9e6"
+    },
+    {
+      "file": "scripts/hooks/test-integrity.test.ts",
+      "name": "a",
+      "sha256": "9ae674e866c44e0b49fb85e57c17a7dcce97d72ebe21b1365d5ccee74237f24e"
+    },
+    {
+      "file": "scripts/hooks/test-integrity.test.ts",
+      "name": "a commit holds an approved change only once, and a Bash edit cannot get around it",
+      "sha256": "3052e67a1e9ae8993fec5e87ed34276d47ba08fa62eda859d29c1b5a4459bcaf"
+    },
+    {
+      "file": "scripts/hooks/test-integrity.test.ts",
+      "name": "CI enforces approvals, and the environment cannot switch the check off",
+      "sha256": "7039582e1bfae42791a8a70e417e7d7526a204ef33093280e16eff0a962ca3cd"
+    },
+    {
+      "file": "scripts/hooks/approve-test-change.test.ts",
+      "name": "keeps_path",
+      "sha256": "1deb72a4bd836625076d5fff0972ca64affe41e9c4133b2adf4a97990b6867f6"
+    },
+    {
+      "file": "scripts/hooks/guard-test-changes.test.ts",
+      "name": "a formatter wrap of the approved text still matches",
+      "removed": true
+    },
+    {
+      "file": "scripts/hooks/guard-test-changes.test.ts",
+      "name": "an approval in used/ approves nothing",
+      "removed": true
+    },
+    {
+      "file": "scripts/hooks/test-integrity.test.ts",
+      "name": "CI, which cannot see approvals, keeps the TEST-CHANGE rule",
+      "removed": true
+    }
+  ],
+  "reason": "Controller REDO after independent review (2026-11-06): approvals committed with the change and checked in CI against the base key; exact text hashes; no env seams; assertions outside a test credited to their block. Patch sha256 334c5644.",
+  "approvedBy": "controller@Jesses-MacBook-Air.local",
+  "at": "2026-11-06T17:15:09.199Z",
+  "expires": "2026-11-07T17:15:09.199Z"
+}

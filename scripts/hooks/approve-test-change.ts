@@ -3,15 +3,18 @@
 // node scripts/hooks/approve-test-change.ts --key <private key> --repo <dir> --branch <b> --patch <file>
 //   --test <file>::<name after the change> [--test ...] --reason "<text>" --out <folder>
 // Applies the patch to the branch tip in a temporary index (never a checkout), hashes each named test's resulting text
-// (test-integrity.ts testHash), records each test the patch removes or renames away, and writes <out>/<id>.json, signed
-// into <id>.json.sig with ssh-keygen. It expires 24 hours after signing. Never run this for your own test changes.
+// (test-integrity.ts testHash: the exact text), records each test the patch removes or renames away, and writes
+// <out>/<id>.json, signed into <id>.json.sig with ssh-keygen. It refuses a Rust file the patch leaves unformatted (rustfmt),
+// since the lane's commit must hold exactly the approved text. It expires 24 hours after signing.
+// Hand the lane the id; it commits both files under test-approvals/ with the change. Never run this for your own test changes.
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { changedAssertions, isTest, testHash, testText, type ApprovedTest } from './test-integrity.ts';
+import type { ApprovedTest } from './test-approvals.ts';
+import { changedAssertions, isTest, testHash, testText } from './test-integrity.ts';
 
 const { values } = parseArgs({ options: {
   key: { type: 'string' }, repo: { type: 'string' }, branch: { type: 'string' }, patch: { type: 'string' },
@@ -45,6 +48,13 @@ try {
     if (!sha256) throw new Error(name + ' is not in ' + file + ' after the patch');
     return { file, name, sha256 };
   });
+  const patched = git(['diff-index', '--cached', '--name-only', '-z', '--diff-filter=AM', tip]).split('\0').filter(Boolean);
+  for (const file of patched.filter(path => path.endsWith('.rs'))) {
+    const after = show(':' + file);
+    if (execFileSync('rustfmt', ['--edition', '2024', '--emit', 'stdout'], { input: after, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }) !== after) {
+      throw new Error(file + ' is not formatted after the patch; run cargo fmt, then write the patch again');
+    }
+  }
   for (const file of git(['diff-index', '--cached', '--name-only', '-z', tip]).split('\0').filter(path => path && isTest(path))) {
     const after = show(':' + file);
     for (const name of changedAssertions(show(tip + ':' + file), after)) {

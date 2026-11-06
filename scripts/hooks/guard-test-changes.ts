@@ -2,12 +2,14 @@
 // Claude Code hook (.claude/settings.json, before Edit/Write/MultiEdit): EdiPlatform's guard-test-changes.
 // Stops an edit that changes or removes an assertion in a test file, at the moment it is made.
 // test-integrity.ts is the commit-level check and owns what counts as a test and an assertion.
-// A changed test is allowed when the edit produces exactly the text of the controller's signed, unused, unexpired
-// approval for this branch (test-integrity.ts holds the approval rules and where approvals live).
+// A changed test is allowed when the edit produces exactly the text of a controller approval for this branch that is
+// signed, unexpired and not yet used by a commit (test-approvals.ts): installed on this host, or copied into test-approvals/.
+// This is an early warning; CI enforces the rule. `--approvals <folder>` replaces the host folder (tests).
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { approvals, changedAssertions, currentBranch, isTest, satisfies } from './test-integrity.ts';
+import { hostApprovals, pendingApprovals } from './test-approvals.ts';
+import { changedAssertions, isTest, satisfies } from './test-integrity.ts';
 
 interface Replacement { old_string: string; new_string: string; replace_all?: boolean; }
 interface ToolInput extends Partial<Replacement> { file_path?: string; content?: string; edits?: Replacement[]; }
@@ -24,13 +26,11 @@ function result(before: string, input: ToolInput): string {
   const edits = input.edits ?? [input as Replacement];
   return edits.reduce(replace, before);
 }
-function repoPath(path: string): string | undefined {
-  const real = realpathSync(path);
-  try {
-    const top = execFileSync('git', ['-C', dirname(real), 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return relative(top, real);
-  } catch { return undefined; }
+function repoTop(path: string): string | undefined {
+  try { return execFileSync('git', ['-C', dirname(realpathSync(path)), 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
+  catch { return undefined; }
 }
+const host = process.argv[2] === '--approvals' && process.argv[3] ? process.argv[3] : hostApprovals;
 // A test moved into another changed test file, same name and same assertions, is a split and not a removal.
 function changedTestsBesides(path: string): string[] {
   const real = realpathSync(path), run = (args: string[]) => execFileSync("git", ["-C", dirname(real), ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
@@ -43,14 +43,14 @@ const movedAway = (before: string, name: string, others: string[]) => others.som
 function refusal(input: ToolInput): string | undefined {
   const path = input.file_path;
   if (!path || !existsSync(path)) return undefined;
-  const inRepo = repoPath(path);
-  if (!inRepo || !isTest(inRepo)) return undefined;
+  const top = repoTop(path), inRepo = top === undefined ? undefined : relative(top, realpathSync(path));
+  if (!top || !inRepo || !isTest(inRepo)) return undefined;
   const before = unix(readFileSync(path, 'utf8')), after = result(before, input), changed = changedAssertions(before, after);
   if (!changed.length) return undefined;
   const others = changedTestsBesides(path), moved = changed.filter(name => !movedAway(before, name, others));
   if (!moved.length) return undefined;
   const allowed = new Set<string>(), partial = new Set<string>();
-  for (const approval of approvals(currentBranch(dirname(realpathSync(path))))) {
+  for (const approval of pendingApprovals(top, top, host, Date.now())) {
     const entries = approval.tests.filter(test => test.file === inRepo).map(test => test.name);
     for (const name of entries) (satisfies(approval, inRepo, after) ? allowed : partial).add(name);
   }
@@ -64,7 +64,8 @@ function refusal(input: ToolInput): string | undefined {
     + '2. Explain why the expectation is wrong, and ask your controller (the session that started you), not Jesse.\n'
     + '3. Your controller approves by signing an approval for this branch and these tests. Never write or sign an approval yourself.\n'
     + '4. When it is approved, make the edit again, and name the test in a TEST-CHANGE line when you commit.\n'
-    + '5. Make the approved change exactly, in one Edit or one Write of the file, and cite the approval id in its TEST-CHANGE line.\n';
+    + '5. Make the approved change exactly, in one Edit or one Write of the file. Commit it together with the approval: copy <id>.json and <id>.json.sig\n'
+    + '   from ' + hostApprovals + ' into test-approvals/, and cite the id in its TEST-CHANGE line.\n';
 }
 
 let text = '';

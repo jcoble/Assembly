@@ -1,17 +1,13 @@
 #!/usr/bin/env node
 // EdiPlatform's TEST-CHANGE discipline, adapted to Assembly's C#, Rust, TS and Dart.
 // A reason is an audit trail, never approval to change behavior or proof of correctness.
-// Approval to change an assertion is the controller's signed approval (approve-test-change.ts) of the exact test text:
-// <id>.json {id, branch, tests: [{file, name, sha256} | {file, name, removed: true}], reason, approvedBy, at, expires}
-// beside <id>.json.sig in ~/.local/state/assembly-test-approvals/, verified against
-// ~/.config/assembly-test-approvals/allowed_signers. ASSEMBLY_TEST_APPROVALS_HOME, when set, replaces both: approvals
-// in it, signers at <it>/allowed_signers. A commit that holds an approval's text moves it to used/ (--used, post-commit).
+// Changing an assertion also needs the controller's signed approval of the exact test text, committed with the change
+// under test-approvals/ (test-approvals.ts). CI enforces it; the commit hook and pre-push warn early.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readdirSync, readFileSync, renameSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { addedApprovals, approvalsFolder, currentBranch, hostApprovals, type Approval } from './test-approvals.ts';
 
 export interface Change { path: string; previousPath?: string; before: string; after: string; }
 export const isTest = (path: string): boolean => /(?:^|\/)(?:[^/]*[Tt]ests?|[Ff]ixtures?|testdata)(?:\/|\.)|(?:[._](?:test|spec)|_tests?)\.(?:cs|rs|ts|tsx|dart|sh)$|\.expected\.json$/.test(path);
@@ -23,129 +19,101 @@ function method(line: string): string | undefined {
     ?? line.match(/\b(?:it|test)(?:\.[a-zA-Z]+)*\s*\(\s*(['"`])((?:\\.|(?!\1).)*)\1/)?.[2];
 }
 
-// Balance complete assertion expressions, including multiline expected values.
-// Preserve whitespace inside literals; changing an expected string must be detected.
-function balance(text: string): number {
-  let depth = 0, quote = '', escaped = false, comment = false, block = false;
+// Marks each character as code (c), inside a literal (q) or a comment (m). A Rust lifetime ('a after & or <, 'static) is
+// code, and a C# verbatim string (@"...") has no backslash escapes and doubles its quotes.
+const lifetime = (text: string, i: number) => /^'[A-Za-z_]\w*(?![\w'])/.test(text.slice(i, i + 80)) && (text[i - 1] === '&' || text[i - 1] === '<' || text.startsWith("'static", i));
+function scan(text: string): string {
+  let kinds = '', quote = '', verbatim = false, escaped = false, line = false, block = false;
   for (let i = 0; i < text.length; i++) {
     const c = text[i], next = text[i + 1];
-    if (comment) { if (c === '\n') comment = false; continue; }
-    if (block) { if (c === '*' && next === '/') { block = false; i++; } continue; }
+    if (line) { if (c === '\n') { line = false; kinds += 'c'; } else kinds += 'm'; continue; }
+    if (block) {
+      if (c === '*' && next === '/') { block = false; kinds += 'mm'; i++; } else kinds += c === '\n' ? 'c' : 'm';
+      continue;
+    }
     if (quote) {
+      kinds += 'q';
       if (escaped) escaped = false;
-      else if (c === '\\') escaped = true;
-      else if (c === quote) quote = '';
-    } else if (c === '/' && next === '/') { comment = true; i++; }
-    else if (c === '/' && next === '*') { block = true; i++; }
-    else if (c === '"' || c === "'" || c === '`') quote = c;
-    else if ('([{'.includes(c)) depth++;
-    else if (')]}'.includes(c)) depth--;
+      else if (c === '\\' && !verbatim) escaped = true;
+      else if (c === quote && verbatim && next === '"') { kinds += 'q'; i++; }
+      else if (c === quote) { quote = ''; verbatim = false; }
+      continue;
+    }
+    if (c === '/' && (next === '/' || next === '*')) { if (next === '/') line = true; else block = true; kinds += 'mm'; i++; continue; }
+    if (c === '"' || c === '`' || (c === "'" && !lifetime(text, i))) {
+      quote = c; verbatim = c === '"' && (text[i - 1] === '@' || (text[i - 1] === '$' && text[i - 2] === '@')); kinds += 'q';
+      continue;
+    }
+    kinds += 'c';
   }
+  return kinds;
+}
+// Balance complete assertion expressions, including multiline expected values.
+function balance(text: string): number {
+  const kinds = scan(text);
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) if (kinds[i] === 'c') { if ('([{'.includes(text[i])) depth++; else if (')]}'.includes(text[i])) depth--; }
   return depth;
 }
 // Remove comments across lines while retaining literal bytes and line boundaries.
 function executable(source: string): string {
-  let result = '', quote = '', escaped = false, line = false, block = false;
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i], next = source[i + 1];
-    if (line) { if (c === '\n') { line = false; result += c; } else result += ' '; continue; }
-    if (block) {
-      if (c === '*' && next === '/') { block = false; result += '  '; i++; }
-      else result += c === '\n' ? c : ' ';
+  const kinds = scan(source);
+  let result = '';
+  for (let i = 0; i < source.length; i++) result += kinds[i] === 'm' ? ' ' : source[i];
+  return result;
+}
+// Each test runs from the line that names it through its closing bracket. Code outside any test belongs to its top-level
+// block (named by that block's first line), so every assertion is credited to a span that its hash covers.
+interface Span { name: string; start: number; end: number; }
+function spans(source: string): { lines: string[]; tests: Span[]; blocks: Span[] } {
+  const text = executable(source), lines = text.split('\n'), tests: Span[] = [], blocks: Span[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const name = method(lines[i]);
+    if (name === undefined) continue;
+    let end = i, body = lines[i];
+    while (!(balance(body) <= 0 && (body.includes('{') || /;\s*$/.test(body))) && end + 1 < lines.length && method(lines[end + 1]) === undefined) body += '\n' + lines[++end];
+    tests.push({ name, start: i, end });
+  }
+  const kinds = scan(text);
+  let depth = 0, line = 0, start = -1;
+  for (let i = 0; i <= text.length; i++) {
+    if (i < text.length && text[i] !== '\n') {
+      if (start < 0 && depth <= 0 && /\S/.test(text[i])) start = line;
+      if (kinds[i] === 'c') { if ('([{'.includes(text[i])) depth++; else if (')]}'.includes(text[i])) depth--; }
       continue;
     }
-    if (quote) {
-      result += c;
-      if (escaped) escaped = false;
-      else if (c === '\\') escaped = true;
-      else if (c === quote) quote = '';
-    } else if (c === '/' && next === '/') { line = true; result += '  '; i++; }
-    else if (c === '/' && next === '*') { block = true; result += '  '; i++; }
-    else { result += c; if (c === '"' || c === "'" || c === '`') quote = c; }
+    if (start >= 0 && (depth <= 0 || i === text.length)) { blocks.push({ name: lines[start].trim(), start, end: line }); start = -1; }
+    line++;
   }
-  return result;
+  return { lines, tests, blocks };
+}
+function owner(at: number, tests: Span[], blocks: Span[]): string {
+  const inside = (span: Span) => span.start <= at && at <= span.end;
+  return tests.filter(inside).sort((a, b) => b.start - a.start)[0]?.name ?? blocks.find(inside)?.name ?? '<file>';
 }
 function assertions(source: string): Map<string, string[]> {
-  const result = new Map<string, string[]>(), lines = executable(source).split('\n');
-  let owner = '<file>';
+  const result = new Map<string, string[]>(), { lines, tests, blocks } = spans(source);
   for (let i = 0; i < lines.length; i++) {
-    owner = method(lines[i]) ?? owner;
     if (!assertion.test(lines[i]) || /^\s*(?:\/\/|\*)/.test(lines[i])) continue;
+    const name = owner(i, tests, blocks);
     let body = lines[i];
     while (i + 1 < lines.length && (balance(body) > 0 || /^\s*\./.test(lines[i + 1]))) body += '\n' + lines[++i];
-    const values = result.get(owner) ?? [];
-    values.push(body.trim()); result.set(owner, values);
+    const values = result.get(name) ?? [];
+    values.push(body.trim()); result.set(name, values);
   }
   return result;
 }
-// A test's own text, from the line that names it through its closing bracket, without comments or whitespace outside
-// literals and without a comma before a closing bracket, so a formatter's wrap of the same code reads the same.
-function normalized(text: string): string {
-  let out = '', quote = '', escaped = false;
-  for (const c of text) {
-    if (quote) {
-      out += c;
-      if (escaped) escaped = false; else if (c === '\\') escaped = true; else if (c === quote) quote = '';
-      continue;
-    }
-    if (/\s/.test(c)) continue;
-    if (')]}'.includes(c) && out.endsWith(',')) out = out.slice(0, -1);
-    if (c === '"' || c === "'" || c === '`') quote = c;
-    out += c;
-  }
-  return out;
-}
+// A test's exact text (every span with that name), with only CRLF and trailing whitespace on each line set aside.
 export function testText(source: string, name: string): string | undefined {
-  const lines = executable(source.replaceAll('\r\n', '\n')).split('\n'), found: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (method(lines[i]) !== name) continue;
-    let body = lines[i];
-    while (!(balance(body) <= 0 && (body.includes('{') || /;\s*$/.test(body))) && i + 1 < lines.length && method(lines[i + 1]) === undefined) body += '\n' + lines[++i];
-    found.push(normalized(body));
-  }
-  return found.length ? found.join('\n') : undefined;
+  const unix = source.replaceAll('\r\n', '\n'), original = unix.split('\n'), { tests, blocks } = spans(unix);
+  const chosen = tests.some(span => span.name === name) ? tests.filter(span => span.name === name) : blocks.filter(span => span.name === name);
+  if (!chosen.length && name !== '<file>') return undefined;
+  const text = (span: Span) => original.slice(span.start, span.end + 1).map(line => line.replace(/[ \t]+$/, '')).join('\n');
+  return chosen.length ? chosen.map(text).join('\n') : text({ name, start: 0, end: original.length - 1 });
 }
 export function testHash(source: string, name: string): string | undefined {
   const text = testText(source, name);
   return text === undefined ? undefined : createHash('sha256').update(text).digest('hex');
-}
-
-export interface ApprovedTest { file: string; name: string; sha256?: string; removed?: boolean; }
-export interface Approval { id: string; branch: string; tests: ApprovedTest[]; expires: string; path?: string; }
-const approvalsHome = process.env.ASSEMBLY_TEST_APPROVALS_HOME;
-const approvalsFolder = approvalsHome ?? join(homedir(), '.local/state/assembly-test-approvals');
-const signers = approvalsHome ? join(approvalsHome, 'allowed_signers') : join(homedir(), '.config/assembly-test-approvals/allowed_signers');
-function signed(json: Buffer, signature: string): boolean {
-  try {
-    execFileSync('ssh-keygen', ['-Y', 'verify', '-f', signers, '-I', 'controller', '-n', 'assembly-test-change', '-s', signature], { input: json, stdio: ['pipe', 'ignore', 'ignore'] });
-    return true;
-  } catch { return false; }
-}
-export function currentBranch(cwd?: string): string {
-  try { return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return 'HEAD'; }
-}
-// The controller's signed approvals for this branch, unexpired at `at`; with `used`, also those a commit already used.
-// A detached checkout (HEAD) gets none. Anything unreadable approves nothing.
-export function approvals(branch: string, at = Date.now(), used = false): Approval[] {
-  const result: Approval[] = [];
-  if (!branch || branch === 'HEAD') return result;
-  for (const folder of used ? [approvalsFolder, join(approvalsFolder, 'used')] : [approvalsFolder]) {
-    let names: string[];
-    try { names = readdirSync(folder).filter(name => name.endsWith('.json')); } catch { continue; }
-    for (const name of names) {
-      try {
-        const path = join(folder, name), json = readFileSync(path);
-        if (!signed(json, path + '.sig')) continue;
-        const approval = JSON.parse(json.toString('utf8'));
-        if (approval.id !== name.slice(0, -'.json'.length) || approval.branch !== branch || !(Date.parse(approval.expires) > at)) continue;
-        const tests = approval.tests;
-        if (!Array.isArray(tests) || !tests.length || !tests.every(test => typeof test?.file === 'string' && typeof test.name === 'string'
-          && (test.removed === true || typeof test.sha256 === 'string'))) continue;
-        result.push({ ...approval, path });
-      } catch { continue; }
-    }
-  }
-  return result;
 }
 // Every entry the approval has for this file holds at once in the file's text after the change.
 export function satisfies(approval: Approval, file: string, after: string): boolean {
@@ -167,7 +135,8 @@ export function changedAssertions(before: string, after: string): string[] {
   }
   return names;
 }
-// With approvals (on a host that holds them), a changed assertion also needs one that matches the committed text, cited by id.
+// With approvals (once the check is active), a changed assertion also needs an approval the commit adds that matches the
+// committed text, cited by id, and committed approvals can't be changed or removed.
 export function violations(changes: Change[], message: string, approved?: Approval[]): string[] {
   const errors: string[] = [], tests = changes.filter(change => (isTest(change.path) || Boolean(change.previousPath && isTest(change.previousPath))));
   const production = changes.some(change => !isTest(change.path) && !/^(?:docs\/|evidence\/|scripts\/|\.githooks\/|\.github\/|\.claude\/|\.codex\/)|\.(?:md|mdx)$/.test(change.path));
@@ -179,9 +148,14 @@ export function violations(changes: Change[], message: string, approved?: Approv
       if (!tokens.some(line => line.startsWith(prefix) && line.slice(prefix.length).trim())) errors.push(change.path + ': changed/removed assertion in ' + name + '; add ' + prefix + ' <reason and governing contract>.');
       else if (approved && !approved.some(approval => approval.tests.some(test => test.file === change.path && test.name === name)
         && satisfies(approval, change.path, change.after) && tokens.some(line => line.startsWith(prefix) && line.includes(approval.id)))) {
-        errors.push(change.path + ': ' + name + ' needs a signed, unused, unexpired controller approval for this branch that matches the committed test text, cited by its id in the ' + prefix + ' line.');
+        errors.push(change.path + ': ' + name + ' needs the controller\'s approval in this commit: add ' + approvalsFolder + '/<id>.json and <id>.json.sig (from '
+          + hostApprovals + '), signed by the key in the base\'s ' + approvalsFolder + '/allowed_signers, for this branch, unexpired, matching the committed test text, and cite the id in the ' + prefix + ' line.');
       }
     }
+  }
+  if (approved) for (const change of changes) {
+    const paths = [change.path, change.previousPath ?? change.path];
+    if (change.before && paths.some(path => path.startsWith(approvalsFolder + '/') && path !== approvalsFolder + '/allowed_signers')) errors.push(change.path + ': approvals are only ever added; this commit changes or removes ' + paths.join(' / ') + '.');
   }
   return errors;
 }
@@ -200,34 +174,17 @@ export function stagedChanges(commit?: string): Change[] {
   }
   return result;
 }
-// post-commit: an approval whose whole approved text this commit holds, in a file it changed, is used and moves to used/.
-function markUsed(): number {
-  const changed = git(['diff-tree', '--root', '--no-commit-id', '-r', '--name-only', '-z', 'HEAD']).split('\0').filter(Boolean);
-  for (const approval of approvals(currentBranch())) {
-    const files = [...new Set(approval.tests.map(test => test.file))];
-    if (!files.some(file => changed.includes(file)) || !files.every(file => satisfies(approval, file, content('HEAD:' + file)))) continue;
-    const used = join(approvalsFolder, 'used'), path = approval.path!;
-    mkdirSync(used, { recursive: true });
-    renameSync(path + '.sig', join(used, basename(path) + '.sig'));
-    renameSync(path, join(used, basename(path)));
-    process.stdout.write('Test approval ' + approval.id + ' is used by this commit; moved to ' + used + '\n');
-  }
-  return 0;
-}
-// The approval check activates prospectively, from the commit after the one that adds it, and not in CI, which has no approvals.
-const approvalCheck = 'approvals(currentBranch(), ';
-function approving(base: string): boolean {
-  return process.env.GITHUB_ACTIONS !== 'true' && exists(base + ':scripts/hooks/test-integrity.ts') && content(base + ':scripts/hooks/test-integrity.ts').includes(approvalCheck);
-}
+// The approval check activates prospectively, from the commit after the one that adds it.
+const approvalCheck = 'addedApprovals(';
+const approving = (base: string) => exists(base + ':scripts/hooks/test-integrity.ts') && content(base + ':scripts/hooks/test-integrity.ts').includes(approvalCheck);
 export function main(args: string[]): number {
-  if (args[0] === '--used') return markUsed();
   const commit = args[0] === '--commit' ? args[1] : undefined;
   // Activate prospectively. Removing the policy after activation cannot deactivate it.
   if (commit ? !exists(commit + ':scripts/hooks/test-integrity.ts') && !exists(commit + '^:scripts/hooks/test-integrity.ts') : !exists('HEAD:scripts/hooks/test-integrity.ts') && !exists(':scripts/hooks/test-integrity.ts')) return 0;
   const message = commit ? git(['log', '-1', '--format=%B', commit]) : readFileSync(args[0], 'utf8');
-  // A pushed commit may already have used its approval, so --commit also accepts used ones, valid at its author date.
-  const approved = !approving(commit ? commit + '^' : 'HEAD') ? undefined
-    : commit ? approvals(currentBranch(), Date.parse(git(['log', '-1', '--format=%aI', commit]).trim()), true) : approvals(currentBranch(), Date.now());
+  // --commit <id> <branch> (CI and pre-push) needs no expiry: the parent tree already makes each approval single use.
+  const branch = (commit ? args[2] : undefined) || currentBranch('.');
+  const approved = approving(commit ? commit + '^' : 'HEAD') ? addedApprovals('.', commit, branch, commit ? undefined : Date.now()) : undefined;
   const errors = violations(stagedChanges(commit), message, approved);
   if (errors.length) { process.stderr.write('Test integrity: commit stopped.\n' + errors.join('\n') + '\nInvestigate; fix incorrect production code. TEST-CHANGE is not permission to change behavior.\n'); return 1; }
   return 0;

@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { violations, isTest, testHash } from './test-integrity.ts';
+import { changedAssertions, violations, isTest, testHash } from './test-integrity.ts';
 
 const cs = (expected: string) => `public void PreservesIdentity() {\n Assert.Equal(\n  ${expected},\n  actual);\n}`;
 test('changed multiline assertion requires its named reason even with production edits', () => {
@@ -65,10 +65,14 @@ test('commenting out an assertion remains a named assertion change alongside pro
   assert.deepEqual(violations([{ path: 'desktop/src/a_tests.rs', before, after: before }], 'TEST-CHANGE: new coverage'), []);
 });
 
-test('a test hash ignores wrapping but not code, and covers only its own test', () => {
+test('a test hash is the exact text apart from line endings and trailing spaces, and covers only its own test', () => {
   const one = 'fn a() {\n assert_eq!(path, "b");\n}\nfn other() {\n assert!(x);\n}\n';
   const wrapped = 'fn a() {\n    assert_eq!(\n        path,\n        "b",\n    );\n}\nfn other() {\n assert!(y);\n}\n';
-  assert.equal(testHash(one, 'a'), testHash(wrapped, 'a'));
+  assert.notEqual(testHash(one, 'a'), testHash(wrapped, 'a'));
+  assert.equal(testHash(one, 'a'), testHash(one.replace('"b");', '"b");  ').replaceAll('\n', '\r\n'), 'a'));
+  for (const [x, y] of [['new Foo()', 'newFoo()'], ['f(1,)', 'f(1)'], ['i++ + j', 'i + ++j']]) {
+    assert.notEqual(testHash(`fn a() {\n    let v = ${x};\n    assert!(v);\n}\n`, 'a'), testHash(`fn a() {\n    let v = ${y};\n    assert!(v);\n}\n`, 'a'), x);
+  }
   assert.notEqual(testHash(one, 'a'), testHash(one.replace('"b"', '"c"'), 'a'));
   assert.notEqual(testHash(one, 'a'), testHash(one.replace('"b"', '"b "'), 'a'));
   assert.notEqual(testHash(one, 'other'), testHash(wrapped, 'other'));
@@ -94,51 +98,118 @@ test('with approvals, a changed assertion needs a matching approval cited by id'
   assert.deepEqual(violations([{ path, before: seedRust, after: renamed }], 'TEST-CHANGE: keeps_path: renamed, ap-2', [rename]), []);
 });
 
-// A repository whose test-integrity.ts has the approval check, with a throwaway controller key.
-function approvingRepo(run: (root: string, git: (...args: string[]) => string, hook: (args: string[], env?: object) => { status: number | null; stderr: string; stdout: string }, sign: (approval: object) => void, home: string) => void): void {
-  const base = mkdtempSync(join(tmpdir(), 'assembly-hook-approvals-')), root = join(base, 'repo'), home = join(base, 'approvals');
+// A repository on branch work whose seed commit holds the approval check and the controller's key in
+// test-approvals/allowed_signers; BASE points at the seed, as CI's pull request base would.
+function withRepo(run: (repo: {
+  root: string; git: (...args: string[]) => string; check: (args: string[], env?: object) => ReturnType<typeof spawnSync>;
+  approve: (approval: object & { id: string }, key?: string) => void; stranger: string; stage: (text: string) => void;
+}) => void): void {
+  const base = mkdtempSync(join(tmpdir(), 'assembly-committed-approvals-')), root = join(base, 'repo');
   const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'core.hooksPath=/dev/null', ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const script = resolve(import.meta.dirname, 'test-integrity.ts');
-  const hook = (args: string[], env = {}) => spawnSync(process.execPath, [script, ...args], { cwd: root, encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '', ASSEMBLY_TEST_APPROVALS_HOME: home, ...env } });
   try {
-    mkdirSync(join(root, 'desktop/src'), { recursive: true }); mkdirSync(join(root, 'scripts/hooks'), { recursive: true }); mkdirSync(home);
-    const key = join(base, 'controller');
-    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', key]);
-    writeFileSync(join(home, 'allowed_signers'), 'controller ' + readFileSync(key + '.pub', 'utf8'));
+    mkdirSync(join(root, 'desktop/src'), { recursive: true }); mkdirSync(join(root, 'scripts/hooks'), { recursive: true }); mkdirSync(join(root, 'test-approvals'));
+    const key = (name: string) => { const path = join(base, name); execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', path]); return path; };
+    const controller = key('controller'), stranger = key('stranger');
     git('init', '--quiet', '-b', 'work');
+    writeFileSync(join(root, 'test-approvals/allowed_signers'), 'controller ' + readFileSync(controller + '.pub', 'utf8'));
     writeFileSync(join(root, 'desktop/src/view_tests.rs'), seedRust);
     writeFileSync(join(root, 'scripts/hooks/test-integrity.ts'), readFileSync(script, 'utf8'));
     git('add', '.'); git('commit', '--quiet', '-m', 'seed');
-    const sign = (approval: object & { id?: string }) => {
-      const file = join(home, approval.id + '.json');
-      writeFileSync(file, JSON.stringify(approval));
-      execFileSync('ssh-keygen', ['-Y', 'sign', '-f', key, '-n', 'assembly-test-change', file], { stdio: 'ignore' });
-    };
-    run(root, git, hook, sign, home);
+    const seed = git('rev-parse', 'HEAD').trim();
+    run({
+      root, git, stranger,
+      check: (args, env = {}) => spawnSync(process.execPath, [script, ...args], { cwd: root, encoding: 'utf8', env: { ...process.env, BASE: seed, ...env } }),
+      approve: (approval, signer = controller) => {
+        const file = join(root, 'test-approvals', approval.id + '.json');
+        writeFileSync(file, JSON.stringify(approval));
+        execFileSync('ssh-keygen', ['-Y', 'sign', '-f', signer, '-n', 'assembly-test-change', file], { stdio: 'ignore' });
+      },
+      stage: text => { writeFileSync(join(root, 'desktop/src/view_tests.rs'), text); git('add', '.'); },
+    });
   } finally { rmSync(base, { recursive: true, force: true }); }
 }
-const stage = (root: string, git: (...args: string[]) => string, text: string) => { writeFileSync(join(root, 'desktop/src/view_tests.rs'), text); git('add', '.'); };
-const message = (root: string, text: string) => { writeFileSync(join(root, 'msg'), text); return join(root, 'msg'); };
+const approvedEntry = () => [{ file: 'desktop/src/view_tests.rs', name: 'keeps_path', sha256: testHash(approvedRust, 'keeps_path') }];
+const inAnHour = () => new Date(Date.now() + 3600_000).toISOString();
+const commitWith = (root: string, git: (...args: string[]) => string, text: string) => { writeFileSync(join(root, 'msg'), text); git('commit', '--quiet', '-F', join(root, 'msg')); };
 
-test('a commit holds an approved change only once, and a Bash edit cannot get around it', () => approvingRepo((root, git, hook, sign, home) => {
-  const expires = new Date(Date.now() + 3600_000).toISOString(), cite = 'TEST-CHANGE: keeps_path: approved in ap-1';
-  sign({ id: 'ap-1', branch: 'work', expires, tests: [{ file: 'desktop/src/view_tests.rs', name: 'keeps_path', sha256: testHash(approvedRust, 'keeps_path') }] });
-  stage(root, git, seedRust.replace('"a"', '"c"'));
-  assert.equal(hook([message(root, cite)]).status, 1);
-  stage(root, git, approvedRust);
-  assert.equal(hook([message(root, 'TEST-CHANGE: keeps_path: approved')]).status, 1);
-  assert.equal(hook([message(root, cite)]).status, 0);
-  git('commit', '--quiet', '-F', join(root, 'msg'));
-  assert.equal(hook(['--used']).status, 0);
-  assert.ok(existsSync(join(home, 'used', 'ap-1.json')) && existsSync(join(home, 'used', 'ap-1.json.sig')) && !existsSync(join(home, 'ap-1.json')));
-  assert.equal(hook(['--commit', 'HEAD']).status, 0);
-  stage(root, git, seedRust);
-  assert.equal(hook([message(root, cite)]).status, 1);
+test('a commit holds an approved change only once, and a Bash edit cannot get around it', () => withRepo(({ root, git, check, approve, stage }) => {
+  const cite = 'TEST-CHANGE: keeps_path: approved in ap-1', msg = join(root, 'msg');
+  approve({ id: 'ap-1', branch: 'work', expires: inAnHour(), tests: approvedEntry() });
+  stage(seedRust.replace('"a"', '"c"'));
+  writeFileSync(msg, cite);
+  assert.equal(check([msg]).status, 1);
+  stage(approvedRust);
+  writeFileSync(msg, 'TEST-CHANGE: keeps_path: approved');
+  assert.equal(check([msg]).status, 1);
+  writeFileSync(msg, cite);
+  assert.equal(check([msg]).status, 0);
+  git('commit', '--quiet', '-F', msg);
+  assert.equal(check(['--commit', 'HEAD', 'work']).status, 0);
+  stage(seedRust);
+  assert.equal(check([msg]).status, 1);
 }));
 
-test('CI, which cannot see approvals, keeps the TEST-CHANGE rule', () => approvingRepo((root, git, hook) => {
-  stage(root, git, approvedRust);
-  git('commit', '--quiet', '-m', 'TEST-CHANGE: keeps_path: reviewed');
-  assert.equal(hook(['--commit', 'HEAD']).status, 1);
-  assert.equal(hook(['--commit', 'HEAD'], { GITHUB_ACTIONS: 'true' }).status, 0);
+test('CI enforces approvals, and the environment cannot switch the check off', () => withRepo(({ root, git, check, approve, stage, stranger }) => {
+  const lane = join(root, '..', 'lane');
+  mkdirSync(lane);
+  writeFileSync(join(lane, 'allowed_signers'), 'controller ' + readFileSync(stranger + '.pub', 'utf8'));
+  approve({ id: 'ap-lane', branch: 'work', expires: inAnHour(), tests: approvedEntry() }, stranger);
+  stage(approvedRust);
+  commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-lane');
+  assert.equal(check(['--commit', 'HEAD', 'work']).status, 1);
+  assert.equal(check(['--commit', 'HEAD', 'work'], { GITHUB_ACTIONS: 'true', ASSEMBLY_TEST_APPROVALS_HOME: lane }).status, 1);
+}));
+
+test('an assertion outside every test is credited to its own block, which an approval for a test does not cover', () => {
+  const ts = "describe('suite', () => {\n  afterEach(() => {\n    expect(count).toBe(1);\n  });\n  test('a', () => {\n    expect(a).toBe(1);\n  });\n});\n";
+  const after = ts.replace('toBe(1);\n  });\n  test', 'toBe(99);\n  });\n  test');
+  assert.deepEqual(changedAssertions(ts, after), ["describe('suite', () => {"]);
+  const approval = { id: 'ap-1', branch: 'work', expires: '2999-01-01T00:00:00Z', tests: [{ file: 'scripts/a.test.ts', name: 'a', sha256: testHash(after, 'a') }] };
+  assert.match(violations([{ path: 'scripts/a.test.ts', before: ts, after }], "TEST-CHANGE: describe('suite', () => {: ap-1", [approval]).join(), /approval/);
+  const rust = 'fn a() {\n    assert!(x);\n}\nconst _: () = assert!(ready);\n';
+  assert.deepEqual(changedAssertions(rust, rust.replace('ready', 'done')), ['const _: () = assert!(ready);']);
+});
+
+test('a Rust lifetime or a C# verbatim string does not stretch a test past its end', () => {
+  const rust = 'fn keeps(x: &\'static str) {\n    assert_eq!(x, "a");\n}\nconst Z: &str = "z";\n';
+  assert.equal(testHash(rust, 'keeps'), testHash(rust.replace('"z"', '"y"'), 'keeps'));
+  assert.deepEqual(changedAssertions(rust, rust.replace('"a"', '"b"')), ['keeps']);
+  const csharp = 'public void Keeps()\n{\n    var p = @"C:\\dir\\";\n    Assert.Equal("a", p);\n}\nconst string Z = "z";\n';
+  assert.equal(testHash(csharp, 'Keeps'), testHash(csharp.replace('"z"', '"y"'), 'Keeps'));
+  assert.deepEqual(changedAssertions(csharp, csharp.replace('"a"', '"b"')), ['Keeps']);
+});
+
+test('the commit hook refuses an expired approval, which CI no longer judges by date', () => withRepo(({ root, git, check, approve, stage }) => {
+  approve({ id: 'ap-old', branch: 'work', expires: new Date(Date.now() - 1000).toISOString(), tests: approvedEntry() });
+  stage(approvedRust);
+  writeFileSync(join(root, 'msg'), 'TEST-CHANGE: keeps_path: approved in ap-old');
+  assert.equal(check([join(root, 'msg')]).status, 1);
+  commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-old');
+  assert.equal(check(['--commit', 'HEAD', 'work']).status, 0);
+}));
+
+test('in --commit mode an approval counts once: a later change citing it, or removing it, is refused', () => withRepo(({ root, git, check, approve, stage }) => {
+  approve({ id: 'ap-1', branch: 'work', expires: inAnHour(), tests: approvedEntry() });
+  stage(approvedRust);
+  commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-1');
+  assert.equal(check(['--commit', 'HEAD', 'work']).status, 0);
+  stage(approvedRust.replace('"b"', '"c"'));
+  commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-1');
+  assert.equal(check(['--commit', 'HEAD', 'work']).status, 1);
+  git('rm', '--quiet', 'test-approvals/ap-1.json', 'test-approvals/ap-1.json.sig');
+  commitWith(root, git, 'chore: drop the approval');
+  const removal = check(['--commit', 'HEAD', 'work']);
+  assert.equal(removal.status, 1);
+  assert.match(String(removal.stderr), /only ever added/);
+}));
+
+test('a branch that brings its own allowed_signers and signs its own approval is refused', () => withRepo(({ root, git, check, approve, stage, stranger }) => {
+  writeFileSync(join(root, 'test-approvals/allowed_signers'), 'controller ' + readFileSync(stranger + '.pub', 'utf8'));
+  approve({ id: 'ap-self', branch: 'work', expires: inAnHour(), tests: approvedEntry() }, stranger);
+  stage(approvedRust);
+  writeFileSync(join(root, 'msg'), 'TEST-CHANGE: keeps_path: approved in ap-self');
+  assert.equal(check([join(root, 'msg')]).status, 1);
+  commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-self');
+  assert.equal(check(['--commit', 'HEAD', 'work']).status, 1);
 }));

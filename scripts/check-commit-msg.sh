@@ -55,7 +55,7 @@ if head -n 1 <<<"$message" | grep -Eiq '^fix([^A-Za-z0-9_]|$)'; then
 fi
 hook_dir="$(cd "$(dirname "$0")/hooks" && pwd)"
 if [ -n "${commit:-}" ]; then
-  node "$hook_dir/test-integrity.ts" --commit "$commit"
+  node "$hook_dir/test-integrity.ts" --commit "$commit" "$branch"
   node "$hook_dir/staged-policy.ts" --commit "$commit"
 else
   node "$hook_dir/test-integrity.ts" "$1"
