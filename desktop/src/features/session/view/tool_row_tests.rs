@@ -287,6 +287,25 @@ fn a_joined_path_that_climbed_out_of_its_folder_links_to_the_folded_path(
     });
 }
 
+// Proof fixes review item 2: a path with no folder on its call that stays inside the session's folder comes back
+// relative and folded, and opens as that session's file; one that leaves it comes back absolute.
+#[gpui::test]
+fn a_session_path_comes_back_relative_inside_its_folder_and_absolute_outside(
+    cx: &mut gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        for summary in ["src/a.rs", "./src/../src/a.rs"] {
+            let action =
+                opens(&read_row("src/a.rs", summary, Some("S")), cx).expect("a session file link");
+            assert!(action.partial_eq(&opening("S", "src/a.rs")), "{summary}");
+        }
+        let left = opens(&read_row("/w/lib/x.rs", "../lib/x.rs", Some("S")), cx)
+            .expect("an absolute link");
+        assert!(left.partial_eq(&opening("S", "/w/lib/x.rs")));
+    });
+}
+
 #[gpui::test]
 fn a_folder_or_a_search_pattern_is_not_a_file_link(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {

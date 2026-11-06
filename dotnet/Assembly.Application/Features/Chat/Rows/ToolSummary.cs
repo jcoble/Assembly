@@ -39,11 +39,13 @@ internal static class ToolSummary
     }
 
     /// <summary>
-    /// A relative path joined onto the folder the call ran in: its own <c>workdir</c>, else its <c>cwd</c>, when that folder
-    /// is absolute; otherwise the session's folder, with a relative call folder inside it. The join is folded lexically,
-    /// since a path with a <c>.</c> or <c>..</c> component can't be opened: <c>/w/app</c> and <c>../lib/a.rs</c> give
-    /// <c>/w/lib/a.rs</c>. A join that would climb above <c>/</c> is no path at all. With no absolute folder to join, or
-    /// a path that is already absolute or under <c>~</c>, the path is unchanged.
+    /// A relative path joined onto the folder the call ran in. The call's own <c>workdir</c>, else its <c>cwd</c>, when
+    /// absolute, gives an absolute path. With none, the session's folder is the call's (with a relative call folder
+    /// inside it): a path that stays inside it is kept relative to it, folded, so it opens as the session's file and
+    /// follows a moved worktree; one that leaves it becomes absolute. A join is folded lexically, since a path with a
+    /// <c>.</c> or <c>..</c> component can't be opened: <c>/w/app</c> and <c>../lib/a.rs</c> give <c>/w/lib/a.rs</c>, and
+    /// one that would climb above <c>/</c> is no path at all. A path that is absolute or under <c>~</c>, a call folder
+    /// under <c>~</c>, or no absolute folder to join leaves the path unchanged.
     /// </summary>
     public static string? InFolder(string? path, JsonElement? input, string? sessionFolder = null)
     {
@@ -52,9 +54,15 @@ internal static class ToolSummary
         var callFolder = CallFolder(input);
         if (callFolder is not null && System.IO.Path.IsPathRooted(callFolder))
             return Folded(callFolder + '/' + path);
-        if (sessionFolder is null || !System.IO.Path.IsPathRooted(sessionFolder))
+        if (callFolder is not null && callFolder.StartsWith('~'))
             return path;
-        return Folded(sessionFolder + '/' + (callFolder is null ? path : callFolder + '/' + path));
+        if (sessionFolder is null || !System.IO.Path.IsPathRooted(sessionFolder) || Folded(sessionFolder) is not { } root)
+            return path;
+        var joined = Folded(root + '/' + (callFolder is null ? path : callFolder + '/' + path));
+        var inside = root == "/" ? "/" : root + '/';
+        return joined is not null && joined.Length > inside.Length && joined.StartsWith(inside, StringComparison.Ordinal)
+            ? joined[inside.Length..]
+            : joined;
     }
 
     /// <summary>The call's own <c>workdir</c>, else its <c>cwd</c>, when it names one.</summary>

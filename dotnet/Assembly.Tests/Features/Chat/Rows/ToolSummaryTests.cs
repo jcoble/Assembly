@@ -129,7 +129,7 @@ public sealed class ToolSummaryTests
     {
         var row = SessionToolRow("/w/app", new ToolCallFields(Kind: "read", Title: "Read helper.rs", Paths: ["../lib/helper.rs"]));
         Assert.Equal("/w/lib/helper.rs", Converted.Text(row, "path"));
-        Assert.Equal("/w/app/src/a.rs", Converted.Text(SessionToolRow("/w/app",
+        Assert.Equal("src/a.rs", Converted.Text(SessionToolRow("/w/app",
             new ToolCallFields(Kind: "edit", Diffs: [new FileDiff(["src/a.rs"], null)])), "path"));
     }
 
@@ -143,7 +143,28 @@ public sealed class ToolSummaryTests
 
     [Fact]
     public void A_relative_call_folder_sits_inside_the_session_s_folder()
-        => Assert.Equal("/w/app/sub/src/a.rs", ToolSummary.Path(Input("""{"file_path":"src/a.rs","workdir":"sub"}"""), "/w/app"));
+    {
+        Assert.Equal("sub/src/a.rs", ToolSummary.Path(Input("""{"file_path":"src/a.rs","workdir":"sub"}"""), "/w/app"));
+        Assert.Equal("/w/lib/a.rs", ToolSummary.Path(Input("""{"file_path":"../../lib/a.rs","workdir":"sub"}"""), "/w/app"));
+    }
+
+    // Spec decision 5: a path inside the session's folder opens as a session file, and follows a moved worktree.
+    [Fact]
+    public void A_session_path_that_stays_inside_the_folder_stays_relative_and_folded()
+    {
+        Assert.Equal("src/a.rs", ToolSummary.Path(Input("""{"file_path":"src/a.rs"}"""), "/w/app"));
+        Assert.Equal("src/a.rs", ToolSummary.Path(Input("""{"file_path":"./src/../src/a.rs"}"""), "/w/app"));
+        Assert.Equal("src/a.rs", ToolSummary.Path(Input("""{"file_path":"../app/src/a.rs"}"""), "/w/app/"));
+        Assert.Equal("/w/lib/x.rs", ToolSummary.Path(Input("""{"file_path":"../lib/x.rs"}"""), "/w/app"));
+        Assert.Equal("/w/application/x.rs", ToolSummary.Path(Input("""{"file_path":"../application/x.rs"}"""), "/w/app"));
+    }
+
+    [Fact]
+    public void A_call_folder_under_home_is_not_joined_onto_the_session_s_folder()
+    {
+        Assert.Equal("src/a.rs", ToolSummary.Path(Input("""{"file_path":"src/a.rs","cwd":"~/x"}"""), "/w/app"));
+        Assert.Equal("src/a.rs", ToolSummary.Path(Input("""{"file_path":"src/a.rs","workdir":"~"}"""), "/w/app"));
+    }
 
     [Fact]
     public void A_session_join_that_climbs_above_the_top_folder_is_no_path()
