@@ -19,11 +19,24 @@ internal sealed class CliCommand(TimeProvider time)
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private static readonly IReadOnlyDictionary<string, KnownCli> Known = new Dictionary<string, KnownCli>(StringComparer.Ordinal)
     {
-        ["codex"] = new("codex", "@openai/codex", "codex-cli ", ""),
-        ["claude"] = new("claude", "@anthropic-ai/claude-code", "", " (Claude Code)")
+        ["codex"] = new("codex", "@openai/codex", "codex-cli ", "", UpdatesItself: false),
+        ["claude"] = new("claude", "@anthropic-ai/claude-code", "", " (Claude Code)", UpdatesItself: true)
     };
 
     internal static bool Supports(string? family) => family is not null && Known.ContainsKey(family);
+    internal static string PackageOf(string family) => Known[family].Package;
+    /// <summary>True for a CLI with its own <c>update</c> command; the others go through npm, which installed them.</summary>
+    internal static bool UpdatesItself(string family) => Known[family].UpdatesItself;
+
+    /// <summary>The version in what <c>--version</c> printed, or null when it isn't this CLI's stable answer.</summary>
+    internal static string? ReadVersion(string family, string output)
+    {
+        var cli = Known[family];
+        if (!output.StartsWith(cli.Prefix, StringComparison.Ordinal) || !output.EndsWith(cli.Suffix, StringComparison.Ordinal) ||
+            output.Length <= cli.Prefix.Length + cli.Suffix.Length) return null;
+        var version = output[cli.Prefix.Length..(output.Length - cli.Suffix.Length)];
+        return CliVersion.IsStable(version) ? version : null;
+    }
 
     public async Task<CliInstalled> ProbeAsync(IAgentLauncher launcher, AgentDescriptor descriptor, IReadOnlyDictionary<string, string> environment, CancellationToken ct)
     {
@@ -36,10 +49,7 @@ internal sealed class CliCommand(TimeProvider time)
             var executableFile = await CaptureFile(executable, stop.Token);
             RequireSelectedConfiguration(launcher, descriptor, environment);
             var output = (await ReadAsync(executable, ["--version"], environment, stop.Token)).TrimEnd('\r', '\n');
-            if (!output.StartsWith(cli.Prefix, StringComparison.Ordinal) || !output.EndsWith(cli.Suffix, StringComparison.Ordinal) ||
-                output.Length <= cli.Prefix.Length + cli.Suffix.Length) throw Failure("unrecognized_version");
-            var version = output[cli.Prefix.Length..(output.Length - cli.Suffix.Length)];
-            if (!CliVersion.IsStable(version)) throw Failure("unrecognized_version");
+            var version = ReadVersion(descriptor.VendorFamily, output) ?? throw Failure("unrecognized_version");
             var files = new List<CliFile> { executableFile };
             var npm = Resolve("npm", "npm", environment);
             if (npm is null) return new(version, "unknown", "unknown", files);
@@ -180,5 +190,5 @@ internal sealed class CliCommand(TimeProvider time)
     }
 
     private static CallFailed Failure(string reason) => new("CLI check unavailable.", reason);
-    private sealed record KnownCli(string Name, string Package, string Prefix, string Suffix);
+    private sealed record KnownCli(string Name, string Package, string Prefix, string Suffix, bool UpdatesItself);
 }

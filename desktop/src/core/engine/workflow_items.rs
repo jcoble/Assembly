@@ -92,6 +92,11 @@ pub struct StepItem {
     pub dispatch_state: Option<String>,
     pub deadline_ms: Option<i64>,
     pub needs_me_ids: Vec<String>,
+    /// The engine's word that this step is stopped until the person moves it.
+    #[serde(default)]
+    pub needs_owner: bool,
+    #[serde(default)]
+    pub owner_session_id: Option<String>,
     pub dependencies: Vec<Dependency>,
 }
 // The SQL display currently emits required/ruleSkippable as 0/1, while explicitly
@@ -174,6 +179,30 @@ pub struct RunView {
     pub next: Option<String>,
 }
 impl RunView {
+    /// What the shared rows last said of a run, for when its machine can't be asked. They carry no order of their own,
+    /// so each step follows what it depends on.
+    pub fn last_known(run: RunItem, mut steps: Vec<StepItem>) -> Self {
+        steps.sort_by_key(|step| (step.started_ms.is_none(), step.started_ms, step.id.clone()));
+        let mut ordered: Vec<StepItem> = Vec::with_capacity(steps.len());
+        while !steps.is_empty() {
+            let ready = steps
+                .iter()
+                .position(|step| {
+                    step.dependencies.iter().all(|needed| {
+                        ordered.iter().any(|done| done.id == needed.id)
+                            || !steps.iter().any(|other| other.id == needed.id)
+                    })
+                })
+                .unwrap_or(0);
+            ordered.push(steps.remove(ready));
+        }
+        Self {
+            run,
+            steps: ordered,
+            next: None,
+        }
+    }
+
     pub fn decode(value: Value, run_id: &str) -> Result<Self, EngineRefusal> {
         if serde_json::to_vec(&value)
             .map_err(|_| invalid("Invalid workflow page."))?

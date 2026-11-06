@@ -118,5 +118,5 @@ pub fn key_bytes(keystroke: &Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
 }
 
 #[cfg(test)]
-#[path = "terminal_keys_tests.rs"]
+#[path = "tests/terminal_keys_tests.rs"]
 mod tests;

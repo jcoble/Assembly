@@ -6,6 +6,7 @@ use gpui::TestAppContext;
 use gpui_kit::{Entity, VisualTestContext};
 
 use super::SessionPane;
+use super::reveal::REVEAL_TICK;
 use super::tests::{jump, live, message, open, page, show, user};
 use crate::features::session::model::reveal::Reveal;
 
@@ -66,6 +67,57 @@ fn a_final_row_with_more_text_still_comes_in_smoothly(cx: &mut TestAppContext) {
     live(&client, done, cx);
     let started = reveal(&pane, cx).expect("the rest reveals");
     assert_eq!(started.shown, 3);
+}
+
+/// Display frames alone must not move the reveal: a redraw on each one held up a core for as long as a reply streamed,
+/// up to 120 full windows a second on a Mac.
+#[gpui::test]
+fn a_reveal_steps_on_its_own_tick_and_not_on_every_display_frame(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(vec![user(1, "go")], false, Some("r1"))));
+    jump(&client, 1, cx);
+    let long = "A long reply that takes a good while to come in, word by word.".repeat(20);
+    live(&client, message(2, 0, &[&long]), cx);
+    cx.run_until_parked();
+    let started = reveal(&pane, cx).expect("the new text reveals").shown;
+
+    for _ in 0..30 {
+        cx.update(|window, cx| window.simulate_next_frame(cx));
+        cx.run_until_parked();
+    }
+    assert_eq!(
+        reveal(&pane, cx).expect("still revealing").shown,
+        started,
+        "display frames don't step it"
+    );
+
+    // A step's size comes from real time, which the test clock doesn't move.
+    let tick_passes = |cx: &mut VisualTestContext| {
+        pane.update_in(cx, |pane, _, _| {
+            pane.revealed_at = Instant::now() - REVEAL_TICK;
+        });
+        cx.executor().advance_clock(REVEAL_TICK);
+        cx.run_until_parked();
+    };
+    tick_passes(cx);
+    let stepped = reveal(&pane, cx).expect("still revealing").shown;
+    assert!(stepped > started, "its tick steps it");
+
+    tick_passes(cx);
+    assert!(
+        reveal(&pane, cx).expect("still revealing").shown > stepped,
+        "and the next tick steps it again, without a new row"
+    );
+
+    // Once it has caught up, nothing is left asking for ticks.
+    pane.update_in(cx, |pane, _, _| {
+        pane.revealed_at = Instant::now() - Duration::from_secs(1);
+    });
+    cx.executor().advance_clock(REVEAL_TICK);
+    cx.run_until_parked();
+    assert_eq!(reveal(&pane, cx), None, "it rests");
+    cx.update(|_, cx| assert!(pane.read(cx)._reveal_tick.is_none(), "and its tick is gone"));
 }
 
 fn builds(pane: &Entity<SessionPane>, cx: &mut VisualTestContext) -> usize {

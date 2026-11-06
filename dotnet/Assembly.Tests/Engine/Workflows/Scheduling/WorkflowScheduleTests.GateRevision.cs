@@ -108,6 +108,74 @@ public sealed partial class WorkflowScheduleTests
         Assert.Equal("succeeded", f.Core.Text("SELECT state FROM engine_step WHERE id=$id", new SqlArg("$id", Gate(f))));
     }
 
+    // Two agents can't be parallel: the parser refuses it. An agent and a separately redone command can.
+    private const string ParallelGateFlow = """
+        name: Parallel
+        steps:
+          build:
+            agent: {provider: codex, model: selected-model}
+            prompt: prompt.md
+            result: build
+          setup:
+            run: ["true"]
+          check:
+            needs: [setup]
+            run: ["true"]
+            on_fail: setup
+          approve:
+            needs: [build, check]
+            gate: {prompt: Ship it?}
+        """;
+
+    private static void CommandsSucceeded(Fixture f) => f.Core.Db.Writer.Write("test.commands-done", s =>
+        s.Execute("UPDATE engine_step SET state='succeeded',dispatch_state='settled',ended_ms=1000 WHERE definition_key IN ('setup','check')"));
+
+    private static string RunBothToTheGate(Fixture f)
+    {
+        var build = f.Apply(f.Prepare()); Assert.True(build.Result.Applied, build.Result.Error);
+        Finish(f, build.SessionId!, 1, 0);
+        CommandsSucceeded(f);
+        return OpenGate(f);
+    }
+
+    [Fact]
+    public void A_revision_at_a_parallel_gate_reruns_every_worker_feeding_it_and_the_agent_reads_the_owners_words()
+    {
+        using var f = new Fixture(prompt: "Work", yaml: ParallelGateFlow);
+        var need = RunBothToTheGate(f);
+
+        var revised = Answer(f, need, RevisionOf("Fix the schema")); Assert.True(revised.Applied, revised.Error);
+        Assert.Equal(2, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE definition_key IN ('build','setup') AND dispatch_state='redo_pending'"));
+        Assert.Equal(2, Advance(f));
+        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE state<>'pending'"));
+
+        var build = f.Prepare(3000);
+        Assert.Equal("Work\n\nThe owner reviewed this at an approval step and asked for a revision:\nFix the schema", build.Body.Prompt);
+        var again = f.Apply(build);
+        Finish(f, again.SessionId!, 2, 1);
+        CommandsSucceeded(f);
+
+        var reopened = OpenGate(f);
+        Assert.NotEqual(need, reopened);
+        Assert.True(Answer(f, reopened, "\"approve\"").Applied);
+        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE state<>'succeeded'"));
+    }
+
+    [Theory]
+    [InlineData("build")]
+    [InlineData("setup")]
+    public void A_worker_already_retried_once_still_reruns_when_its_parallel_gate_is_revised(string retried)
+    {
+        using var f = new Fixture(prompt: "Work", yaml: ParallelGateFlow);
+        var need = RunBothToTheGate(f);
+        // A retry moves that step alone to a new generation, so the workers no longer match each other or the gate.
+        f.Core.Db.Writer.Write("test.retried", s => s.Execute("UPDATE engine_step SET generation=1 WHERE definition_key=$key", new SqlArg("$key", retried)));
+
+        Assert.True(Answer(f, need, RevisionOf("Again")).Applied);
+        Assert.Equal(2, Advance(f));
+        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE state<>'pending'"));
+    }
+
     [Fact]
     public void A_gate_asks_its_prompt_and_its_row_can_say_when_it_closed()
     {
@@ -384,11 +452,12 @@ public sealed partial class WorkflowScheduleTests
     }
 
     [Fact]
-    public void A_phone_cannot_send_a_revision()
+    public void A_phone_sends_a_revision_as_a_window_does()
     {
         using var f = new Fixture(prompt: "Work", yaml: GatedFlow);
         var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
-        Assert.Equal("forbidden", Answer(f, OpenGate(f), RevisionOf("From the phone"), "phone").Error);
+        var answered = Answer(f, OpenGate(f), RevisionOf("From the phone"), "phone");
+        Assert.True(answered.Applied, answered.Error);
     }
 
     [Theory]
@@ -420,7 +489,7 @@ public sealed partial class WorkflowScheduleTests
                 needs: [{{gateNeeds}}]
                 gate: {prompt: Ship?}
             """, ImmutableSortedDictionary.Create<string, string>(StringComparer.Ordinal).Add("prompt.md", "Work")));
-        Assert.Equal(expected, WorkflowGateRevision.Nearest(source.Definition.Steps, "approve", _ => true));
+        Assert.Equal(expected, WorkflowGateRevision.Workers(source.Definition.Steps, "approve", _ => true).SingleOrDefault());
     }
 
     [Fact]
@@ -442,6 +511,43 @@ public sealed partial class WorkflowScheduleTests
                 needs: [late]
                 gate: {prompt: Ship?}
             """, ImmutableSortedDictionary.Create<string, string>(StringComparer.Ordinal).Add("prompt.md", "Work")));
-        Assert.Equal("early", WorkflowGateRevision.Nearest(source.Definition.Steps, "approve", key => key != "late"));
+        Assert.Equal(["early"], WorkflowGateRevision.Workers(source.Definition.Steps, "approve", key => key != "late"));
+    }
+
+    [Theory]
+    [InlineData("a, check_x", "a,x")]
+    [InlineData("check_x, a", "a,x")]
+    [InlineData("check_a, check_x", "a,x")]
+    [InlineData("a, then_a", "then_a")]
+    [InlineData("check_a, then_a", "then_a")]
+    public void A_revision_goes_to_every_worker_on_a_path_into_the_gate_and_not_to_one_another_builds_on(string gateNeeds, string expected)
+    {
+        var source = WorkflowParser.Parse(new($$"""
+            name: Paths
+            steps:
+              a:
+                agent: {provider: codex}
+                prompt: prompt.md
+                result: build
+              then_a:
+                needs: [a]
+                agent: {provider: codex}
+                prompt: prompt.md
+                result: build
+              x:
+                run: ["true"]
+              check_x:
+                needs: [x]
+                run: ["true"]
+                on_fail: x
+              check_a:
+                needs: [a]
+                run: ["true"]
+                on_fail: a
+              approve:
+                needs: [{{gateNeeds}}]
+                gate: {prompt: Ship?}
+            """, ImmutableSortedDictionary.Create<string, string>(StringComparer.Ordinal).Add("prompt.md", "Work")));
+        Assert.Equal(expected.Split(','), WorkflowGateRevision.Workers(source.Definition.Steps, "approve", _ => true));
     }
 }

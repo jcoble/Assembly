@@ -10,6 +10,47 @@ namespace Assembly.Tests.Features.Chat.Sessions;
 public sealed partial class SessionHostTests
 {
     [Fact]
+    public async Task A_check_box_and_a_number_answer_as_their_own_types_and_wrong_types_are_refused()
+    {
+        _host.Send("form");
+        var agent = await _launcher.NextAsync(); await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        await agent.RequestAsync(8, "elicitation/create", JsonSerializer.Serialize(new
+        {
+            sessionId = FakeLink.AcpSessionId,
+            mode = "form",
+            message = "Form",
+            requestedSchema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    agree = new { type = "boolean" },
+                    workers = new { type = "integer" },
+                    ratio = new { type = "number" },
+                }
+            }
+        }));
+        var ask = (await RowsUntil(row => row.Kind == "ask"))[^1];
+        var askId = ask.ItemId!["ask:".Length..];
+        bool Answer(string content)
+        {
+            using var answer = JsonDocument.Parse($$"""{"action":"accept","content":{{content}}}""");
+            return _host.Answer(askId, answer.RootElement);
+        }
+        Assert.False(Answer("""{"agree":"yes"}"""));
+        Assert.False(Answer("""{"workers":"3"}"""));
+        Assert.False(Answer("""{"workers":1.5}"""));
+        Assert.False(Answer("""{"ratio":true}"""));
+        Assert.True(Answer("""{"agree":false,"workers":3,"ratio":1.5}"""));
+        var result = await agent.ResultAsync();
+        Assert.False(result.GetProperty("content").GetProperty("agree").GetBoolean());
+        Assert.Equal(3, result.GetProperty("content").GetProperty("workers").GetInt32());
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+    }
+
+    [Fact]
     public async Task Malformed_actual_form_answers_are_refused_without_throwing_or_settling_the_request()
     {
         _host.Send("form");

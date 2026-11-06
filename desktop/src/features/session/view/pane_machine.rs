@@ -7,6 +7,10 @@ use super::SessionPane;
 use crate::core::state::machines::Machines;
 
 impl SessionPane {
+    pub(super) fn is_remote(&self) -> bool {
+        (self.row_source.as_ref()).is_some_and(|source| source.route_machine.is_some())
+    }
+
     /// Follows the machines list, once the socket client has started it.
     pub(super) fn follow_machines(&mut self, cx: &mut Context<Self>) {
         self._machines = Machines::try_global(cx)
@@ -42,9 +46,16 @@ impl SessionPane {
         let offline = machine
             .clone()
             .filter(|name| Machines::offline(Some(name), cx));
+        let still_offline = offline.is_some();
         self.composer.update(cx, |composer, cx| {
             composer.set_offline(offline, cx);
             composer.set_owner(agent, machine, route, cx);
         });
+        if still_offline {
+            self.source_reopens = 0;
+        }
+        if self.source_lost && !still_offline {
+            self.reopen_lost_source(cx);
+        }
     }
 }

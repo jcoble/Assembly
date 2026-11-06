@@ -131,24 +131,23 @@ impl SessionsPane {
             )
         });
         let engine = crate::core::engine::EngineFeed::global(cx);
-        let engine_changed = cx.subscribe(
-            &engine,
-            |pane, _, changed: &crate::core::engine::EngineChanged, cx| {
-                if changed
-                    .scopes
-                    .iter()
-                    .any(|scope| matches!(scope.topic.as_str(), "sessions" | "needs_me"))
-                    || changed
+        let engine_changed =
+            cx.subscribe(
+                &engine,
+                |pane, _, changed: &crate::core::engine::EngineChanged, cx| {
+                    if changed.scopes.iter().any(|scope| {
+                        matches!(scope.topic.as_str(), "sessions" | "needs_me" | "runs")
+                    }) || changed
                         .keys
                         .iter()
-                        .any(|key| matches!(key.kind.as_str(), "session" | "needs_me"))
-                {
-                    let read = pane.rail.changed();
-                    pane.send(read, cx);
-                }
-                cx.notify();
-            },
-        );
+                        .any(|key| matches!(key.kind.as_str(), "session" | "needs_me" | "step"))
+                    {
+                        let read = pane.rail.changed();
+                        pane.send(read, cx);
+                    }
+                    cx.notify();
+                },
+            );
         let (drops, dropdowns) = Self::dropdowns(cx);
         let mut heard = vec![
             dropdowns,
@@ -442,6 +441,15 @@ pub fn empty_line(state: Option<&ConnectionState>) -> &'static str {
         None | Some(ConnectionState::Disconnected | ConnectionState::Refused { .. }) => {
             "The backend isn't running."
         }
+    }
+}
+
+/// What the empty column says. While an update finishes, the window's notice says why there's no backend.
+pub fn empty_words(state: Option<&ConnectionState>, update_finishing: bool) -> &'static str {
+    if update_finishing {
+        ""
+    } else {
+        empty_line(state)
     }
 }
 

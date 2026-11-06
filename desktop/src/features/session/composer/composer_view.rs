@@ -131,6 +131,8 @@ pub enum ComposerEvent {
         receipt: OwnerPromptAccepted,
     },
     PendingChanged,
+    /// That session's source moved under a read; the pane owns reopening it, if it still shows that session.
+    SourceLost(crate::core::engine::SessionKey),
 }
 #[path = "owner_prompt.rs"]
 mod owner_prompt;
@@ -272,6 +274,11 @@ impl Composer {
     /// Drawn with the pane that owns the box, so it needs no notify of its own.
     pub fn set_answer(&mut self, answer: Option<AnswerPanel>) {
         self.answer = answer;
+    }
+
+    #[cfg(test)]
+    pub fn locked(&self) -> Option<Lock> {
+        self.locked
     }
 
     pub fn set_locked(&mut self, lock: Option<Lock>, cx: &mut Context<Self>) {

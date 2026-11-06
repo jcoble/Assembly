@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use super::{Entry, Section, entries, first_tab, group_heading, heading, summary, tab_sections};
 use crate::core::engine::{EngineItem, EngineKey};
 use crate::features::board::board_prefs::{BoardPrefs, BoardTab};
-use crate::features::board::board_queries::BoardData;
+use crate::features::board::board_queries::{BoardData, badge_count};
 
 const MIDNIGHT: i64 = 1000;
 
@@ -28,7 +28,7 @@ fn need(id: &str, state: &str) -> EngineItem {
     item(
         "needs_me",
         id,
-        json!({"sessionId":"s","kind":"question","state":state,"createdMs":1,"answeredMs":MIDNIGHT + 1}),
+        json!({"sessionId":"s","forOwner":true,"kind":"question","state":state,"createdMs":1,"answeredMs":MIDNIGHT + 1}),
     )
 }
 
@@ -199,4 +199,88 @@ fn offline_group_header_and_disabled_actions() {
     );
     assert_eq!(heading(true, None), "Workbox Test · offline");
     assert_eq!(heading(false, Some(at(4, 14))), "Workbox Test");
+}
+
+#[test]
+fn a_stopped_run_is_a_card_on_needs_you_and_is_why_the_tab_opens() {
+    let data = BoardData::of(
+        &[],
+        &[],
+        &[
+            item(
+                "run",
+                "r",
+                json!({"state":"running","activeStepIds":[],"paused":false,"reference":false,"startedMs":1}),
+            ),
+            item(
+                "step",
+                "failed",
+                json!({"runId":"r","name":"failed","kind":"command","state":"failed","attempt":1,"maxAttempts":2,"required":1,"ruleSkippable":0,
+                    "labelPresent":"Checks","labelPast":"Checked","badges":[],"scopeGranted":false,"closed":false,"dependencies":[],"needsMeIds":[],"needsOwner":true}),
+            ),
+        ],
+        &[],
+    );
+    assert_eq!(first_tab(&data, BoardTab::Sessions), BoardTab::Needs);
+    let sections = tab_sections(&data, BoardTab::Needs, MIDNIGHT, None, &[]);
+    let rows = entries(&sections, BoardTab::Needs, &BoardPrefs::default());
+    assert_eq!(
+        rows,
+        [Entry::Run(EngineKey {
+            machine: "m".into(),
+            kind: "run".into(),
+            id: "r".into()
+        })]
+    );
+}
+
+#[test]
+fn a_question_a_stopped_runs_card_shows_isnt_listed_again_beneath_it() {
+    let step = |id: &str, needs: Value, owner: bool| {
+        item(
+            "step",
+            id,
+            json!({"runId":"r","name":id,"kind":"command","state":"failed","attempt":1,"maxAttempts":2,"required":1,"ruleSkippable":0,
+                "labelPresent":"Checks","labelPast":"Checked","badges":[],"scopeGranted":false,"closed":false,"dependencies":[],"needsMeIds":needs,"needsOwner":owner}),
+        )
+    };
+    let data = BoardData::of(
+        &[
+            need("in-card", "open"),
+            need("second", "open"),
+            need("elsewhere", "open"),
+        ],
+        &[],
+        &[
+            item(
+                "run",
+                "r",
+                json!({"state":"running","activeStepIds":[],"paused":false,"reference":false,"startedMs":1}),
+            ),
+            step("a", json!(["in-card"]), true),
+            step("b", json!(["second"]), false),
+        ],
+        &[],
+    );
+    let key = |kind: &str, id: &str| EngineKey {
+        machine: "m".into(),
+        kind: kind.into(),
+        id: id.into(),
+    };
+    let shown = [key("needs_me", "in-card")];
+    for held in [&[][..], &shown[..]] {
+        let sections = tab_sections(&data, BoardTab::Needs, MIDNIGHT, None, held);
+        let rows = entries(&sections, BoardTab::Needs, &BoardPrefs::default());
+        // The card shows its first open question in place; any other still needs a row of its own.
+        assert_eq!(
+            rows,
+            [
+                Entry::Run(key("run", "r")),
+                Entry::Need(key("needs_me", "elsewhere")),
+                Entry::Need(key("needs_me", "second")),
+            ]
+        );
+    }
+    // The count is of what needs him, however it's drawn.
+    assert_eq!(badge_count(&data), 4);
 }

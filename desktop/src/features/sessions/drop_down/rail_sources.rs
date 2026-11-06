@@ -131,7 +131,7 @@ impl SessionsPane {
         feed.update(cx, |feed, _| {
             feed.name_machine(source.machine.clone(), source.route_machine.clone())
         });
-        for topic in ["sessions", "needs_me"] {
+        for topic in ["sessions", "needs_me", "runs"] {
             let scope = EngineScope {
                 machine: source.machine.clone(),
                 topic: topic.into(),

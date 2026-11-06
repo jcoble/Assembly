@@ -12,11 +12,21 @@ public sealed class HomeLockTests : IDisposable
     {
         using (HomeLock.Take(_home))
         {
-            var error = Assert.Throws<InvalidOperationException>(() => HomeLock.Take(_home));
+            var error = Assert.Throws<HomeInUseException>(() => HomeLock.Take(_home));
             Assert.Equal($"home in use by pid {Environment.ProcessId}", error.Message);
         }
 
         using var again = HomeLock.Take(_home);
+    }
+
+    [Fact]
+    public void Only_a_home_the_update_holds_says_it_is_the_update()
+    {
+        using (HomeLock.Take(_home, update: true))
+            Assert.True(Assert.Throws<HomeInUseException>(() => HomeLock.Take(_home)).Update);
+        // The update's note is left behind, but it names a holder that's gone.
+        using (HomeLock.Take(_home))
+            Assert.False(Assert.Throws<HomeInUseException>(() => HomeLock.Take(_home)).Update);
     }
 
     public void Dispose() => Directory.Delete(_home, recursive: true);

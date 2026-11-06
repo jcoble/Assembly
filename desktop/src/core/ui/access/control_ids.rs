@@ -22,6 +22,7 @@ ids! {
         BOARD_BADGE = "topbar.board-badge",
         DRAWER_TOGGLE = "topbar.drawer-toggle",
         TERMINAL_TOGGLE = "topbar.terminal-toggle",
+        RESTART_TO_UPDATE = "topbar.restart-to-update",
     }
     drawer {
         MORE_PANELS = "drawer.more-panels",
@@ -57,6 +58,8 @@ ids! {
         BACK = "settings.back",
         MACHINE_NAME = "settings.machine-name",
         MACHINE_SSH = "settings.machine-ssh",
+        MACHINE_SSH_RESOLVED = "settings.machine-ssh-resolved",
+        MACHINE_HOST_SEARCH = "settings.machine-host-search",
         MACHINE_PORT = "settings.machine-port",
         MACHINE_TOKEN_FILE = "settings.machine-token-file",
         MACHINE_SAVE = "settings.machine-save",
@@ -160,15 +163,26 @@ pub fn settings_nav(section: &str) -> String {
 }
 
 /// A button on a remote machine's row in Settings > Connections: `settings.machine.workbox-test.connect`
-/// (`connect`, `disconnect`, `edit`, `remove`, `update`).
+/// (`connect`, `disconnect`, `edit`, `remove`, `update`, `cancel`, `restart`).
 pub fn machine_button(machine: &str, action: &str) -> String {
     format!("settings.machine.{}.{action}", slug(machine))
+}
+
+/// A host in Add a machine's search box: `settings.host.workbox-test`.
+pub fn machine_host(host: &str) -> String {
+    format!("settings.host.{}", slug(host))
 }
 
 /// What a remote machine's row says in Settings > Connections: `settings.machine.workbox-test.status`
 /// (`name`, `status`, `error`). This machine's row is `local`.
 pub fn machine_line(machine: &str, line: &str) -> String {
     format!("settings.machine.{}.{line}", slug(machine))
+}
+
+/// A button of a question's form, on whichever surface draws it: `ask.a1.continue` (`cancel`, `skip`, `previous`,
+/// `blank`, `continue`).
+pub fn ask_control(key: &str, action: &str) -> String {
+    format!("ask.{}.{action}", slug(key))
 }
 
 /// A tab of the Build Board's panel: `board.tab.needs-you`, `board.tab.workflows`.

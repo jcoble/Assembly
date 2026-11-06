@@ -13,6 +13,7 @@ use super::tests::{jump, live, open, page, row, show, user};
 use crate::core::theme::grow::GROW;
 use crate::core::ui::expand_row::{ExpandRow, ExpandRowEvent};
 use crate::features::session::client::fake_client::FakeClient;
+use crate::features::session::composer::shape::Lock;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::entries::Entry;
 use crate::features::session::rows::tool::ToolState;
@@ -34,6 +35,22 @@ fn detail(diff: &str) -> Value {
 fn act(pane: &Entity<SessionPane>, action: SessionAction, cx: &mut VisualTestContext) {
     pane.update_in(cx, |pane, window, cx| pane.on_action(action, window, cx));
     cx.run_until_parked();
+}
+
+/// The kit's state behind the form above the composer, once the pane has drawn it.
+fn form_of(
+    pane: &Entity<SessionPane>,
+    ask_id: &str,
+    cx: &mut VisualTestContext,
+) -> Entity<gpui_kit::component::questionnaire::QuestionnaireState> {
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        pane.read(cx)
+            .forms
+            .get(ask_id)
+            .map(|form| form.read(cx).kit_state())
+    })
+    .expect("its form is drawn")
 }
 
 /// The row the pane drew for an item that opens in place.
@@ -394,29 +411,21 @@ fn a_questions_form_sends_the_choices_picked(cx: &mut TestAppContext) {
         json!({ "kind": "question", "state": "open", "schema": schema }),
     );
     let (pane, client, cx) = opened(vec![user(1, "go"), ask], cx);
-    let pick = |field: &str, value: &str, many: bool| SessionAction::Pick {
-        ask_id: "a1".into(),
-        field: field.into(),
-        value: value.into(),
-        many,
-    };
-    for action in [
-        pick("zone", "east", false),
-        pick("zone", "west", false),
-        pick("tags", "a", true),
-        pick("tags", "b", true),
-        pick("tags", "a", true),
-    ] {
-        act(&pane, action, cx);
-    }
     client.queue_answer(Ok(json!({ "ok": true })));
-    act(
-        &pane,
-        SessionAction::SubmitAsk {
-            ask_id: "a1".into(),
-        },
-        cx,
-    );
+    let state = form_of(&pane, "a1", cx);
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.activate_choice("zone", "east", cx).unwrap();
+            state.activate_choice("zone", "west", cx).unwrap();
+            state.go_next(window, cx);
+            state.choose("tags", "a", window, cx).unwrap();
+            state.choose("tags", "b", window, cx).unwrap();
+            state.choose("tags", "a", window, cx).unwrap();
+            state.go_next(window, cx);
+            state.skip_current(window, cx);
+        })
+    });
+    cx.run_until_parked();
     assert_eq!(
         calls_after(&client, 1),
         [(
@@ -439,23 +448,16 @@ fn a_check_box_in_a_form_answers_as_a_boolean(cx: &mut TestAppContext) {
         json!({ "kind": "question", "state": "open", "schema": schema }),
     );
     let (pane, client, cx) = opened(vec![user(1, "go"), ask], cx);
-    act(
-        &pane,
-        SessionAction::Flag {
-            ask_id: "a1".into(),
-            field: "agree".into(),
-            on: true,
-        },
-        cx,
-    );
     client.queue_answer(Ok(json!({ "ok": true })));
-    act(
-        &pane,
-        SessionAction::SubmitAsk {
-            ask_id: "a1".into(),
-        },
-        cx,
-    );
+    let state = form_of(&pane, "a1", cx);
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.choose("agree", "yes", window, cx).unwrap();
+            state.go_next(window, cx);
+            state.skip_current(window, cx);
+        })
+    });
+    cx.run_until_parked();
     assert_eq!(
         calls_after(&client, 1),
         [(
@@ -538,6 +540,22 @@ fn an_ask_answered_while_disconnected_shuts_once_the_page_reloads(cx: &mut TestA
     )));
     jump(&client, 3, cx);
     assert!(!is_open(cx), "the reloaded page's answer shuts it");
+}
+
+// The answer arrives as the ask changing in place, which redraws only its row; the draft still has to let go.
+#[gpui::test]
+fn answering_an_approval_live_lets_the_composer_go(cx: &mut TestAppContext) {
+    let ask = |seq: i64, state: &str| {
+        let payload =
+            json!({ "kind": "permission", "state": state, "options": [], "answer": null });
+        row(seq, "ask", Some("ask:a1"), payload)
+    };
+    let (pane, client, cx) = opened(vec![user(1, "go"), ask(2, "open")], cx);
+    let locked =
+        |cx: &mut VisualTestContext| cx.update(|_, cx| pane.read(cx).composer.read(cx).locked());
+    assert_eq!(locked(cx), Some(Lock::Approval));
+    live(&client, ask(3, "answered"), cx);
+    assert_eq!(locked(cx), None);
 }
 
 // An opened call's detail (up to 1 MiB of output and as much diff) is held once, however often its row draws: the

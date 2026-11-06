@@ -328,5 +328,5 @@ fn hsla_of(Rgb { r, g, b }: Rgb) -> Hsla {
 }
 
 #[cfg(test)]
-#[path = "terminal_draw_tests.rs"]
+#[path = "tests/terminal_draw_tests.rs"]
 mod tests;

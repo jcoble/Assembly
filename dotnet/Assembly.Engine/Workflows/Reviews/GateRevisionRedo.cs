@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Workflows.Scheduling;
 
 namespace Assembly.Engine.Workflows.Reviews;
 
@@ -11,9 +12,10 @@ public static partial class ReviewTransitions
 {
     private const string GateRevisionSource = "gate";
 
-    /// <summary>The owner's text becomes a finding like a reviewer's. <c>c.EntityId</c> is the gate.</summary>
-    internal static CommandResult GateRevised(IWriteScope s, CommandContext c, string run, int attempt, string target, string text)
+    /// <summary>The owner's text becomes a finding like a reviewer's, one for each worker sent back. <c>c.EntityId</c> is the gate.</summary>
+    internal static CommandResult GateRevised(IWriteScope s, CommandContext gate, string run, int attempt, string target, string text)
     {
+        var c = gate with { CommandId = DispatchIdentity.Id("gate-revision-target/v1", gate.CommandId.ToString("N"), target) };
         var generation = checked((int)s.QueryFirst("SELECT generation FROM engine_step WHERE id=$target", r => r.Long(0), new SqlArg("$target", target)));
         History(s, c, run, c.EntityId, attempt, generation, "gate_revised",
             JsonSerializer.Serialize(new GateRevision(target, text, c.Actor.Id), GateRevisionJson.Default.GateRevision));

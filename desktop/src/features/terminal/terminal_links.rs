@@ -74,5 +74,5 @@ pub fn url_at(row: &str, column: usize) -> Option<(usize, usize, String)> {
 }
 
 #[cfg(test)]
-#[path = "terminal_links_tests.rs"]
+#[path = "tests/terminal_links_tests.rs"]
 mod tests;

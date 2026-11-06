@@ -22,10 +22,11 @@ use crate::core::ui::access::control_ids::{
     machine_button as machine_button_id, machine_line, settings as ids,
 };
 use crate::core::ui::access::{Control as _, say};
+use crate::features::remote_install::updates::row_status;
 
 /// What the form shows in a blank port or token file: the backend's defaults (SavedMachine.cs), which it fills in.
 const DEFAULT_PORT: &str = "9797";
-const DEFAULT_TOKEN_FILE: &str = ".config/assembly-dotnet/env";
+const DEFAULT_TOKEN_FILE: &str = ".config/assembly-host/env";
 
 impl SettingsPage {
     /// The form's name, SSH destination, port and token file.
@@ -82,7 +83,6 @@ impl SettingsPage {
         };
         let label = v_flex()
             .gap_0p5()
-            .flex_1()
             .min_w_0()
             .child(
                 say(
@@ -105,6 +105,7 @@ impl SettingsPage {
                             machine_line(machine.name.as_deref().unwrap_or("local"), "status"),
                             row_status(&machine, reached, &status),
                         )
+                        .debug_selector(|| "machine-status".into())
                         .flex_1()
                         .min_w_0()
                         .whitespace_normal(),
@@ -113,23 +114,24 @@ impl SettingsPage {
         // This machine's row has no name, but its update button still needs somewhere to say why it failed.
         let key = machine.name.clone().unwrap_or("local".to_string());
         let failure = self.failure_about(Some(&key), cx);
-        let update = (machine.behind().next().is_some() || machine.updating).then(|| {
+        let updates = self.update_buttons(&machine, &key, cx);
+        let install = install_offered(&machine).then(|| {
+            let name = machine.name.clone().unwrap_or_default();
             self.machine_button(
-                format!("start-{key}").into(),
-                machine_button_id(&key, "update"),
-                UPDATE,
+                format!("install-{name}").into(),
+                machine_button_id(&name, "install"),
+                INSTALL,
             )
             .primary()
             .loading(machine.updating)
             .disabled(machine.updating || self.machine_call.is_some())
             .on_click(cx.listener(move |page, _, window, cx| {
-                let about = Some(key.clone());
                 page.machine_call(
-                    about,
+                    Some(name.clone()),
                     "updates",
-                    "start",
-                    json!({}),
-                    "Couldn't update",
+                    "install",
+                    json!({ "machine": name }),
+                    "Couldn't install",
                     window,
                     cx,
                 )
@@ -139,18 +141,23 @@ impl SettingsPage {
             .name
             .is_some()
             .then(|| self.machine_actions(machine, cx));
+        // On their own line: a note or a reason can be long, and all of them beside it left it a letter wide.
+        let any = !updates.is_empty() || install.is_some() || actions.is_some();
+        let buttons = any.then(|| {
+            h_flex()
+                .flex_wrap()
+                .justify_end()
+                .gap_2()
+                .children(updates)
+                .children(install)
+                .children(actions)
+        });
         v_flex()
             .px_4()
             .py_3()
             .gap_1p5()
-            .child(
-                h_flex()
-                    .gap_4()
-                    .justify_between()
-                    .child(label)
-                    .children(update)
-                    .children(actions),
-            )
+            .child(label)
+            .children(buttons)
             .children(failure)
     }
 
@@ -174,6 +181,26 @@ impl SettingsPage {
                 "Couldn't connect",
             )
         };
+        let check_name = name.clone();
+        let check = self
+            .machine_button(
+                format!("check-{name}").into(),
+                machine_button_id(&name, "check"),
+                CHECK,
+            )
+            .outline()
+            .disabled(machine.updating || self.machine_call.is_some())
+            .on_click(cx.listener(move |page, _, window, cx| {
+                page.machine_call(
+                    Some(check_name.clone()),
+                    "updates",
+                    "check",
+                    json!({ "machine": check_name }),
+                    "Couldn't check for updates",
+                    window,
+                    cx,
+                )
+            }));
         let about = Some(name.clone());
         let connection = self
             .machine_button(
@@ -211,6 +238,7 @@ impl SettingsPage {
         h_flex()
             .gap_1()
             .flex_none()
+            .child(check)
             .child(connection)
             .child(edit)
             .child(remove)
@@ -257,9 +285,15 @@ impl SettingsPage {
                     .text_color(theme.foreground),
             )
             .when(editing.is_none(), |form| {
-                form.child(field("Machine name", ids::MACHINE_NAME, name, saving, cx))
+                form.child(self.ssh_picker.select())
+                    .child(field("Machine name", ids::MACHINE_NAME, name, saving, cx))
             })
             .child(field("SSH destination", ids::MACHINE_SSH, ssh, saving, cx))
+            .children(self.ssh_picker.words(&ssh.read(cx).value()).map(|words| {
+                say(ids::MACHINE_SSH_RESOLVED, words)
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(theme.muted_foreground)
+            }))
             .child(
                 h_flex()
                     .gap_3()
@@ -282,7 +316,7 @@ impl SettingsPage {
                 div()
                     .text_role(TextRole::Meta, cx)
                     .text_color(theme.muted_foreground)
-                    .child("A port or token file left empty takes the default shown."),
+                    .child("Port is the one Assembly listens on. A port or token file left empty takes the default shown."),
             )
             .children(failure)
             .child(h_flex().justify_end().gap_2().children(cancel).child(save))
@@ -303,7 +337,12 @@ impl SettingsPage {
     }
 
     /// A small button that shows its call running, and waits while any machine call runs.
-    fn machine_button(&self, id: SharedString, tree_id: String, label: &'static str) -> Button {
+    pub(super) fn machine_button(
+        &self,
+        id: SharedString,
+        tree_id: String,
+        label: &'static str,
+    ) -> Button {
         let running = self.machine_call.as_ref().map(|(running, _)| running);
         Button::new(id.clone())
             .control(tree_id, label)
@@ -334,6 +373,11 @@ impl SettingsPage {
         for field in &self.machine_fields {
             field.update(cx, |field, cx| field.set_value("", window, cx));
         }
+        self.ssh_picker.target = None;
+        self.ssh_picker.failure = None;
+        self.ssh_picker
+            .state
+            .update(cx, |state, cx| state.set_selected_index(None, window, cx));
         cx.notify();
     }
 
@@ -387,7 +431,7 @@ impl SettingsPage {
     /// Sends `machines/<method>` for the row of machine `about`, or the form (`None`); the button that sent it is
     /// `<method>-<name>`, or the form's `set`. Once the backend takes the form's save, the form empties.
     #[allow(clippy::too_many_arguments)]
-    fn machine_call(
+    pub(super) fn machine_call(
         &mut self,
         about: Option<String>,
         feature: &'static str,
@@ -474,26 +518,12 @@ fn field(
 #[path = "connections_tests.rs"]
 mod tests;
 
-/// The one button, on each card with something behind. It updates everything behind on every machine, in development and
-/// from a release: where it comes from is the backend's to decide.
-const UPDATE: &str = "Update everything";
+/// On each remote: runs the one check now and installs nothing. Its answer is on the card, from the machines topic.
+const CHECK: &str = "Check for updates";
 
-/// Where the machine is, how it answered, then its backend and what's behind, all as information.
-pub(crate) fn row_status(machine: &Machine, reached: &str, status: &str) -> String {
-    let mut parts = vec![reached.to_string(), status.to_string()];
-    parts.extend(machine.backend_note());
-    let behind = machine.behind().count();
-    if machine.updating {
-        parts.push(
-            machine
-                .update_note
-                .clone()
-                .unwrap_or("Updating…".to_string()),
-        );
-    } else if let Some(note) = &machine.update_note {
-        parts.push(note.clone());
-    } else if behind > 0 {
-        parts.push(format!("{behind} behind"));
-    }
-    parts.join(" · ")
+/// The button on a saved machine with no backend answering: it puts one there, and connects.
+const INSTALL: &str = "Install Assembly here";
+
+pub(crate) fn install_offered(machine: &Machine) -> bool {
+    machine.name.is_some() && machine.didnt_answer() && machine.cant_update.is_none()
 }

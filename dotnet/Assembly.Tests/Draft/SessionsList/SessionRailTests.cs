@@ -75,7 +75,8 @@ public sealed partial class SessionRailTests : IDisposable
         Running(started);
         Asking(started);
         Assert.Equal([started, other, starter], Collect(next => Read(after: next, limit: 1)));
-        Assert.Equal(new RailTotals(1), Read().Totals);
+        // Locally the question is addressed to the session that started it, so the session answers it, not the person.
+        Assert.Equal(new RailTotals(remote ? 1 : 0), Read().Totals);
         Assert.False(Entry(Read(), starter).Running);
         Assert.True(Entry(Read(), started).Running);
         if (remote)
@@ -393,7 +394,7 @@ public sealed partial class SessionRailTests : IDisposable
         Asking(helper);
         Assert.Contains((RailTopic, (string?)helper, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
         var rail = Read();
-        Assert.Equal(new RailTotals(1), rail.Totals);
+        Assert.Equal(new RailTotals(0), rail.Totals);
         Assert.Equal(helper, Entry(rail, helper).SessionId);
     }
 
@@ -482,6 +483,35 @@ public sealed partial class SessionRailTests : IDisposable
         var id = _sessions.Helper(_sessions.Get(parent)!, agent, "helper").SessionId;
         RecordEngineSession(id, parent);
         return id;
+    }
+
+    // A lost or ended session's last turn stays "started" for good, and a running row redraws the window every second.
+    [Theory]
+    [InlineData(false, "lost")]
+    [InlineData(false, "ended")]
+    [InlineData(true, "lost")]
+    [InlineData(true, "ended")]
+    public void ASessionThatIsGoneIsNotRunningWhateverItsLastTurnSaid(bool remote, string state)
+    {
+        var session = Parent("codex", machine: remote ? "workbox-test" : null);
+        if (remote)
+            _database.Writer.Write("test.known-owner", scope => scope.Execute("""
+                INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
+                    activity_state,parent_id,holder,epoch,cancel_requested,account_context,managed_checkout)
+                SELECT s.session_id,0,m.machine,s.created_at,s.updated_at,s.agent,NULL,s.repo_url,COALESCE(s.title,''),'foreign',
+                    'idle',NULL,m.machine,0,0,'',0
+                FROM session_info s JOIN engine_mirror_row m ON m.entity_kind='session' AND m.entity_id=s.session_id
+                WHERE s.session_id=$id;
+                UPDATE engine_mirror_row AS m SET row_json=json_set(row_json,
+                    '$.provider',s.agent,'$.folder',s.repo_url,'$.updatedMs',s.updated_at)
+                FROM session_info s WHERE m.entity_kind='session' AND m.entity_id=s.session_id AND s.session_id=$id;
+                """, new Assembly.Application.Common.Database.SqlArg("$id", session)));
+        Running(session);
+        Assert.True(Entry(Read(), session).Running);
+        _database.Writer.Write("test.session-gone", scope => scope.Execute(remote
+            ? "UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.state',$state) WHERE entity_kind='session' AND entity_id=$id"
+            : "UPDATE engine_session SET state=$state WHERE id=$id", new("$state", state), new("$id", session)));
+        Assert.False(Entry(Read(), session).Running);
     }
 
     private void Running(string session) => Rows(session, (null, RowKind.Turn, new { state = "started" }));

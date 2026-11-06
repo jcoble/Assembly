@@ -9,7 +9,7 @@ use gpui_kit::component::{ActiveTheme as _, Sizable as _, Size, h_flex, v_flex};
 use gpui_kit::*;
 
 use super::board_prefs::{BoardPrefs, BoardTab};
-use super::board_queries::{BoardData, badge_count, open_owner_questions, summary_counts};
+use super::board_queries::{BoardData, badge_count, summary_counts};
 use super::board_sections::{
     ANSWERED_FOLD, Entry, Section, entries, first_tab, heading, machine_label, summary,
     tab_sections,
@@ -149,6 +149,9 @@ impl BoardPanel {
         if let Some(machines) = Machines::try_global(cx) {
             watching.push(cx.observe(&machines, |_, _, cx| cx.notify()));
         }
+        if let Some(projects) = crate::features::projects::projects::Projects::get(cx) {
+            watching.push(cx.observe(&projects, |_, _, cx| cx.notify()));
+        }
         let clock = SocketClient::try_global(cx).map(|_| cx.new(|_| BackendClock::new()));
         if let Some(clock) = &clock {
             watching.push(cx.subscribe(clock, |_, _, _: &Tick, cx| cx.notify()));
@@ -263,7 +266,10 @@ impl BoardPanel {
             local.as_deref(),
             &held,
         );
-        if let Some(Section::Open(keys)) = sections.first() {
+        if let Some(keys) = sections.iter().find_map(|section| match section {
+            Section::Open(keys) => Some(keys),
+            _ => None,
+        }) {
             self.shown_open = keys.clone();
         }
         let rows = entries(&sections, self.tab, &self.prefs);

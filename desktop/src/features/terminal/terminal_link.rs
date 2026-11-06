@@ -284,5 +284,5 @@ fn decode(data: &str) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(test)]
-#[path = "terminal_link_tests.rs"]
+#[path = "tests/terminal_link_tests.rs"]
 mod tests;

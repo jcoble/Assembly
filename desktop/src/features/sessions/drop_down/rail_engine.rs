@@ -23,14 +23,16 @@ pub(crate) fn needs_you(entry: &RailEntry, cx: &mut App) -> bool {
     };
     let feed = EngineFeed::global(cx);
     let feed = feed.read(cx);
-    feed.loaded(&scope(&source.machine, "needs_me"))
-        && feed
-            .needs_for(&SessionKey {
-                machine: source.machine.clone(),
-                id: entry.session_id.clone(),
-            })
-            .iter()
-            .any(|need| need.state == "open")
+    let session = SessionKey {
+        machine: source.machine.clone(),
+        id: entry.session_id.clone(),
+    };
+    feed.stopped_steps_of(&session) > 0
+        || feed.loaded(&scope(&source.machine, "needs_me"))
+            && feed
+                .needs_for(&session)
+                .iter()
+                .any(|need| need.state == "open" && need.for_owner)
 }
 /// Whether the row has anything to open: a question for you, a workflow, sessions it started, or native activity.
 pub(crate) fn has_details(entry: &RailEntry, cx: &mut App) -> bool {

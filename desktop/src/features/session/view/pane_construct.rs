@@ -74,6 +74,20 @@ impl SessionPane {
                 }
                 ComposerEvent::Accepted { .. } => {}
                 ComposerEvent::PendingChanged => pane.refresh(Change::Nothing, cx),
+                ComposerEvent::SourceLost(key)
+                    if pane.session.as_ref() == Some(&key.id)
+                        && (pane.row_source.as_ref())
+                            .is_some_and(|source| source.machine == key.machine) =>
+                {
+                    pane.on_rows(
+                        crate::features::session::client::session_client::RowUpdate::Refused {
+                            code: "source_changed".into(),
+                            message: "The selected row source changed.".into(),
+                        },
+                        cx,
+                    )
+                }
+                ComposerEvent::SourceLost(_) => {}
             }),
             cx.subscribe(&timeline, |pane, _, TimelineEvent::NearTop, cx| {
                 pane.load_older(cx)
@@ -90,6 +104,9 @@ impl SessionPane {
             pending_open: None,
             active_open_serial: None,
             active_reopen: None,
+            source_lost: false,
+            source_reopens: 0,
+            unheard: None,
             reopen_queued: None,
             read_only: false,
             active_provider: None,
@@ -114,6 +131,7 @@ impl SessionPane {
             reveal: None,
             revealed_at: Instant::now(),
             frame_asked: false,
+            _reveal_tick: None,
             now: None,
             live_since: None,
             reading: HashMap::new(),
