@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use super::mouse::at;
 use super::{Open, Terminals, following, open};
 use crate::core::engine::SessionKey;
+use crate::core::intents::open_file::{OpenFile, OutsideFile};
 use crate::core::intents::open_url::OpenUrl;
 use crate::core::navigation::deep_links::notices;
 use crate::core::navigation::open_url_handler;
@@ -111,15 +112,21 @@ async fn none_when_local(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn a_path_outside_the_folder_gets_the_handlers_notice(cx: &mut TestAppContext) {
-    let owner = json!({"machine": "owner", "checkoutRoot": "/work/a", "remoteSessionId": "r"});
+async fn a_path_outside_the_folder_opens_by_machine_and_path(cx: &mut TestAppContext) {
+    // As the backend answers a path outside every session's checkout: its real parent folder and bare name, no session.
+    let owner = json!({"machine": "owner", "checkoutRoot": "/etc", "file": "passwd", "remoteSessionId": ""});
     let terminals = Terminals {
         answers: vec![("owner".into(), owner)],
         ..Default::default()
     };
     let mut open = printed(cx, "file://box/etc/passwd", None, terminals).await;
-    // The handler's notice goes to a window with the kit's root, as the app's is.
-    open.cx.update(|_, cx| open_url_handler::register(cx));
+    let files = Rc::new(RefCell::new(Vec::new()));
+    let record = files.clone();
+    open.cx.update(|_, cx| {
+        open_url_handler::register(cx);
+        cx.on_action(move |intent: &OpenFile, _| record.borrow_mut().push(intent.clone()));
+    });
+    // Any notice would go to a window with the kit's root, as the app's does.
     let root = open.cx.add_window(|window, cx| {
         let content = cx.new(|_| EmptyView);
         gpui_kit::base::Root::new(content, window, cx)
@@ -137,14 +144,22 @@ async fn a_path_outside_the_folder_gets_the_handlers_notice(cx: &mut TestAppCont
     });
     _ = ping.await;
     open.cx.run_until_parked();
-    assert_eq!(
-        open.cx.update(|_, cx| notices(cx)),
-        vec!["That file isn't in this session's folder.".to_string()]
-    );
+    let opened: Vec<_> = (files.borrow().iter())
+        .map(|file| (file.session_id.clone(), file.outside.clone()))
+        .collect();
+    let outside = OutsideFile {
+        machine: None,
+        path: "/etc/passwd".into(),
+    };
+    assert_eq!(opened, vec![(String::new(), Some(outside))]);
+    assert!(open.cx.update(|_, cx| notices(cx)).is_empty());
+    // The session's question, then the path's, which names no machine since the session is local.
     let asked = open.terminals.lock().unwrap().of("owner");
-    assert_eq!(asked.len(), 1);
+    assert_eq!(asked.len(), 2);
     assert_eq!(asked[0]["session"], "a");
+    assert_eq!(asked[1]["target"]["path"], "/etc/passwd");
+    assert_eq!(asked[1]["target"]["machine"], Value::Null);
     let notes =
         (open.cx).update_window(root.into(), |_, window, cx| window.notifications(cx).len());
-    assert_eq!(notes.ok(), Some(1));
+    assert_eq!(notes.ok(), Some(0));
 }
