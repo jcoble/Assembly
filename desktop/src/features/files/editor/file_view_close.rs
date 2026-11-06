@@ -28,7 +28,7 @@ impl FileView {
         self.prompting = Some(cx.spawn(async move |view, cx| {
             let answer = answer.await;
             let _ = view.update(cx, |view, cx| {
-                view.prompting = None;
+                view.end_prompting(cx);
                 match answer {
                     Ok(0) if view.locked => {
                         view.editor_error = Some(super::lock::SAVE_LOCKED.into());

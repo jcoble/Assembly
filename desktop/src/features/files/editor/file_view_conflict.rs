@@ -32,7 +32,7 @@ impl FileView {
                     Ok(upload) => upload,
                     Err(message) => {
                         let _ = view.update(cx, |view, cx| {
-                            view.saving = None;
+                            view.end_saving(cx);
                             view.drop_upload(cx);
                             view.editor_error = Some(message);
                             cx.notify();
@@ -52,7 +52,7 @@ impl FileView {
             };
             let answer = call.await;
             let _ = view.update(cx, |view, cx| {
-                view.saving = None;
+                view.end_saving(cx);
                 view.drop_upload(cx);
                 match answer {
                     Outcome::Ok(read) => {
@@ -97,7 +97,7 @@ impl FileView {
         self.prompting = Some(cx.spawn(async move |view, cx| {
             let answer = answer.await;
             let _ = view.update(cx, |view, cx| {
-                view.prompting = None;
+                view.end_prompting(cx);
                 if matches!(answer, Ok(0)) {
                     if view
                         .document_snapshot(cx)
@@ -139,7 +139,7 @@ impl FileView {
         self.prompting = Some(cx.spawn(async move |view, cx| {
             let answer = answer.await;
             let _ = view.update(cx, |view, cx| {
-                view.prompting = None;
+                view.end_prompting(cx);
                 if matches!(answer, Ok(0)) {
                     view.begin_reload(snapshot.version, cx);
                 }

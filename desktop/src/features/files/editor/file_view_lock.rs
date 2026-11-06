@@ -31,7 +31,7 @@ impl FileView {
     }
 
     /// The person chose to change this file: it stays unlocked until its tab closes.
-    fn edit_anyway(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn edit_anyway(&mut self, cx: &mut Context<Self>) {
         self.locked = false;
         cx.notify();
     }

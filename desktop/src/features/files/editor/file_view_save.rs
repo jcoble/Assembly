@@ -26,6 +26,25 @@ struct Fault {
 }
 
 impl FileView {
+    /// A save, upload or reconcile ended, however it went.
+    pub(super) fn end_saving(&mut self, cx: &mut App) {
+        self.saving = None;
+        self.operation_ended(cx);
+    }
+
+    /// A question to the person ended, however it was answered.
+    pub(super) fn end_prompting(&mut self, cx: &mut App) {
+        self.prompting = None;
+        self.operation_ended(cx);
+    }
+
+    /// The workspace refuses its layout save while a file operation runs, so the save goes through once none does.
+    fn operation_ended(&self, cx: &mut App) {
+        if self.rename_ready() {
+            crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
+        }
+    }
+
     pub(super) fn save_document(&mut self, cx: &mut Context<Self>) {
         self.save_document_at(None, cx);
     }
@@ -85,7 +104,7 @@ impl FileView {
             let result = call.await;
             let _ = view.update(cx, |view, cx| {
                 view.upload = None;
-                view.saving = None;
+                view.end_saving(cx);
                 match result {
                     Outcome::Ok(reply) if reply.state == "saved" && reply.revision.is_some() => {
                         if let Some(save) = &mut view.save {
@@ -133,7 +152,7 @@ impl FileView {
     }
 
     fn save_failed(&mut self, message: String, unknown: bool, cx: &mut Context<Self>) {
-        self.saving = None;
+        self.end_saving(cx);
         self.closing_window = None;
         self.finish_guard_save(false);
         if let Some(save) = &mut self.save {
@@ -184,7 +203,7 @@ impl FileView {
                 if let Some(next) = chunk.next_offset { offset = next; } else { break; }
             }
             let _ = view.update(cx, |view, cx| {
-                view.saving = None;
+                view.end_saving(cx);
                 if let Some(save) = &mut view.save {
                     view.last_save = save.reconcile(&content, revision.expect("complete read"), cx.global_mut::<DocumentStore>());
                     view.editor_error = if view.last_save.is_some() { None } else {

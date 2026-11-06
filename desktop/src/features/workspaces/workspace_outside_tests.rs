@@ -69,6 +69,9 @@ pub(super) struct Stage<'a> {
 pub(super) fn stage(cx: &mut TestAppContext) -> Stage<'_> {
     let saves = Saves::default();
     let saved = saves.clone();
+    // A file save's commit, held until the test's release call, which may come first.
+    let mut held: Option<Value> = None;
+    let mut released = false;
     let backend = FakeBackend::start(move |frame| {
         if let Some(reply) = hello(frame) {
             return reply;
@@ -102,6 +105,27 @@ pub(super) fn stage(cx: &mut TestAppContext) -> Stage<'_> {
                 json!({"content": "disk\n", "revision": "r1", "size": 5, "lineCount": 1, "binary": false, "nextOffset": null})
             }
             (Some("files"), Some("release")) => json!({}),
+            (Some("files"), Some("beginSave")) => json!({"upload": "u1"}),
+            (Some("files"), Some("saveChunk" | "dropSave")) => json!({}),
+            (Some("files"), Some("commitSave")) if released => {
+                json!({"state": "saved", "revision": "r2"})
+            }
+            (Some("files"), Some("commitSave")) => {
+                held = Some(
+                    json!({"t": "result", "id": frame["id"], "result": {"state": "saved", "revision": "r2"}}),
+                );
+                return Vec::new();
+            }
+            (Some("test"), Some("release")) => {
+                released = true;
+                let done = json!({"t": "result", "id": frame["id"], "result": {}});
+                return held
+                    .take()
+                    .into_iter()
+                    .chain([done])
+                    .map(Reply::Frame)
+                    .collect();
+            }
             _ => panic!("unexpected call {frame}"),
         };
         vec![Reply::Frame(
@@ -372,4 +396,79 @@ async fn a_session_file_and_an_unclaimed_outside_tab_on_it_save_as_one(cx: &mut 
     assert_eq!(captured["files"].as_array().unwrap().len(), 1);
     assert_eq!(captured["files"][0]["path"], "README.md");
     assert_eq!(captured["topTabs"]["order"], json!([identity.unwrap()]));
+}
+
+// Proof fixes brief item 3: a layout save refused while an outside file saved goes through once the save ends, so the
+// "Not saved" line doesn't stay.
+#[gpui::test]
+async fn a_layout_save_refused_during_an_outside_save_goes_through_when_it_ends(
+    cx: &mut TestAppContext,
+) {
+    let mut stage = stage(cx);
+    stage.open_workspace().await;
+    let view = stage.open_hosts(Some("box")).await;
+    let coordinator = stage.coordinator.clone();
+    let (changed, mut changes) = unbounded();
+    let tell = changed.clone();
+    let _heard = stage.cx.update(|_, cx| {
+        cx.observe(&coordinator, move |_, _| {
+            let _ = tell.unbounded_send(());
+        })
+    });
+    let idle = |stage: &mut Stage<'_>| {
+        stage
+            .cx
+            .update(|_, cx| stage.coordinator.read(cx).saving.is_none())
+    };
+    until("the open saved", &mut changes, &changed, || {
+        stage.cx.run_until_parked();
+        idle(&mut stage)
+    })
+    .await;
+
+    let (answer, _saved) = futures_channel::oneshot::channel();
+    stage.cx.update(|_, cx| {
+        view.update(cx, |view, cx| view.edit_anyway(cx));
+        let docs = cx.global_mut::<DocumentStore>();
+        let version = docs.snapshot(&hosts_document()).unwrap().version;
+        docs.replace(&hosts_document(), version, "edited\n".into())
+            .unwrap();
+        view.update(cx, |view, cx| view.save_for_guard(answer, cx));
+    });
+    // A view change while the file saves: its layout save is refused for now.
+    stage.cx.update(|_, cx| WorkspaceCoordinator::changed(cx));
+    stage.cx.run_until_parked();
+    let status = stage.cx.update(|_, cx| coordinator.read(cx).status.clone());
+    assert!(
+        status.is_some_and(|status| status.starts_with("Not saved:")),
+        "refused while the file saves"
+    );
+
+    let release = stage.cx.update(|_, cx| {
+        // The file save goes over the bulk connection, so its held answer comes back on it.
+        SocketClient::try_bulk(cx).unwrap().read(cx).call::<Value>(
+            "test",
+            "release",
+            json!({}),
+            None,
+        )
+    });
+    until(
+        "the layout saved after the file",
+        &mut changes,
+        &changed,
+        || {
+            stage.cx.run_until_parked();
+            let status = stage.cx.update(|_, cx| coordinator.read(cx).status.clone());
+            status.is_none() && idle(&mut stage)
+        },
+    )
+    .await;
+    drop(release);
+    let last = stage.saves.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(last["files"][0]["path"], "/etc/hosts");
+    assert!(
+        last["files"][0]["draft"].is_null(),
+        "the saved file has no draft left: {last}"
+    );
 }
