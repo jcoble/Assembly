@@ -207,7 +207,7 @@ fn the_button_shuts_the_dock_when_the_terminal_shows(cx: &mut TestAppContext) {
     assert_eq!(bottom(&frame, cx), (true, json!(TERMINAL)));
     assert!(showing(&frame, cx));
     press_button(cx);
-    assert_eq!(bottom(&frame, cx).0, false);
+    assert!(!bottom(&frame, cx).0);
     assert!(!showing(&frame, cx));
 }
 
@@ -278,7 +278,7 @@ fn the_menu_item_does_the_same_and_its_check_means_showing(cx: &mut TestAppConte
     );
     assert!(showing(&frame, cx));
     press_menu_item(cx);
-    assert_eq!(bottom(&frame, cx).0, false, "showing: shuts the dock");
+    assert!(!bottom(&frame, cx).0, "showing: shuts the dock");
     assert!(!showing(&frame, cx));
 }
 

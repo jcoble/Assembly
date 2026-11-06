@@ -343,7 +343,7 @@ async fn calls_and_output_use_only_the_terminal_socket(cx: &mut TestAppContext) 
 
 // Pins: terminal#7
 #[gpui::test]
-async fn an_ended_shell_keeps_its_output_above_the_new_one(cx: &mut TestAppContext) {
+async fn a_reopened_ended_shell_starts_clean(cx: &mut TestAppContext) {
     let ended = Some(("term-0".to_string(), "a".to_string(), b"old\r\n".to_vec()));
     let terminals = Terminals {
         kept: b"new\r\n".to_vec(),
@@ -352,14 +352,15 @@ async fn an_ended_shell_keeps_its_output_above_the_new_one(cx: &mut TestAppConte
     };
     let mut open = open(cx, terminals, false).await;
     open.until("the new shell", |_, pane| {
-        following(pane) && pane.grid.text() == "old\nnew"
+        following(pane) && pane.grid.text() == "new"
     })
     .await;
     let terminals = open.terminals.lock().unwrap();
     assert_eq!(terminals.of("start").len(), 1);
-    assert_eq!(
-        terminals.of("read")[0],
-        json!({"terminal": "term-0", "offset": 0})
+    let reads = terminals.of("read");
+    assert!(
+        reads.iter().all(|read| read["terminal"] != "term-0"),
+        "the ended shell was read: {reads:?}"
     );
 }
 

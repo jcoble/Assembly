@@ -97,7 +97,7 @@ fn each_style_reaches_a_cell() {
 
 #[test]
 fn a_double_underline_is_an_underline() {
-    assert!(first_cell(b"\x1b[21mx").underline);
+    assert!(first_cell(b"\x1b[4:2mx").underline);
 }
 
 #[test]
