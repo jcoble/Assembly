@@ -13,6 +13,9 @@ mod external_urls_tests;
 pub(crate) mod file_link;
 #[cfg(test)]
 mod file_link_resolve_tests;
+pub(crate) mod file_link_whole;
+#[cfg(test)]
+mod file_link_whole_tests;
 pub mod open_url_handler;
 mod waiting_session_link;
 pub mod web_links;

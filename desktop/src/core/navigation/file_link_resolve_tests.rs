@@ -46,6 +46,7 @@ fn outside(machine: Option<&str>, path: &str) -> OpenFile {
             machine: machine.map(String::from),
             path: path.into(),
         }),
+        whole: None,
     }
 }
 
@@ -93,6 +94,7 @@ async fn a_relative_path_with_a_session_opens_as_today(cx: &mut TestAppContext) 
         column: None,
         pinned: true,
         outside: None,
+        whole: None,
     };
     assert!(h.opened() == [expected]);
     assert!(h.asked().is_empty(), "a session file needs no question");
@@ -128,6 +130,7 @@ async fn an_absolute_path_inside_the_session_opens_as_a_session_file(cx: &mut Te
         column: None,
         pinned: true,
         outside: None,
+        whole: None,
     };
     assert!(h.opened() == [expected]);
     assert_eq!(h.shown(), Vec::<String>::new());
@@ -416,6 +419,7 @@ async fn a_remote_session_with_no_source_resolves_its_file_on_that_machine(
         column: None,
         pinned: true,
         outside: None,
+        whole: None,
     };
     assert!(h.opened() == [expected], "{:?}", h.opened().len());
     assert_eq!(h.shown(), Vec::<String>::new());

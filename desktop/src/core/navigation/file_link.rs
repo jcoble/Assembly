@@ -78,6 +78,7 @@ pub fn open(
             column: jump.1,
             pinned: true,
             outside: None,
+            whole: None,
         });
     }
     resolve(path, machine, from.map(Came::Sourced), jump, cx)
@@ -266,6 +267,7 @@ fn answered(
             column: jump.1,
             pinned: true,
             outside: None,
+            whole: None,
         },
         None => {
             // An outside answer's `file` is a bare file name and its `checkoutRoot` the real absolute parent folder,
@@ -282,6 +284,7 @@ fn answered(
                     machine,
                     path: real,
                 }),
+                whole: None,
             }
         }
     };

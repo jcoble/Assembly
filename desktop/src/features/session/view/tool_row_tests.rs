@@ -215,6 +215,7 @@ fn opening(session: &str, path: &str) -> crate::core::intents::open_file::OpenFi
         pinned: true,
         expected_source: read_row("/x", "/x", None).expected_source,
         outside: None,
+        whole: None,
     }
 }
 

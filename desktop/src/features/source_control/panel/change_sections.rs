@@ -435,6 +435,7 @@ impl SourceControlPane {
             column: None,
             pinned: false,
             outside: None,
+            whole: None,
         };
         let open = icon_button(
             button("open"),
@@ -492,6 +493,7 @@ impl SourceControlPane {
                 column: None,
                 pinned: false,
                 outside: None,
+                whole: None,
             };
             let (reveal_pane, reveal_path) = (pane.clone(), file.path.clone());
             let (stage_pane, stage_path) = (pane.clone(), file.path.clone());

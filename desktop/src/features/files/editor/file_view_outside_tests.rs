@@ -134,6 +134,7 @@ impl Stage<'_> {
             column: None,
             pinned: true,
             outside,
+            whole: None,
         };
         self.cx
             .update(|_, cx| cx.defer(move |cx| cx.dispatch_action(&intent)));

@@ -16,6 +16,9 @@ pub struct OpenFile {
     pub pinned: bool,
     /// A file outside any session's checkout, opened by machine and real path.
     pub outside: Option<OutsideFile>,
+    /// A link's text as written when a line suffix was read from it: a file of that whole name, if there is one, opens
+    /// instead of `path` at the line (`file_link_whole`).
+    pub whole: Option<String>,
 }
 
 /// Whether a path goes to the backend as a path target rather than opening relative to a session: an absolute path,
@@ -28,38 +31,53 @@ pub fn names_its_own_place(path: &str) -> bool {
 impl OpenFile {
     /// A file link's intent from content shown in `session` (empty with no session selected): any path opens with a
     /// session, and with none only a path that names its own place (absolute or `~`), which the one resolver opens by
-    /// machine and path. A `//host/...` path is never a file. A link ending in a line opens there.
+    /// machine and path. A `//host/...` path is never a file. A link ending in a line, or a line and column, opens
+    /// there, unless a file of the link's whole name exists.
     pub fn link(
         session: &str,
         link: &str,
         expected_source: Option<ExpectedRowSource>,
     ) -> Option<OpenFile> {
-        let (path, line) = split_line(link);
+        let (path, line, column) = split_line(link);
         let opens = !path.starts_with("//") && (!session.is_empty() || names_its_own_place(path));
         opens.then(|| OpenFile {
             session_id: session.to_string(),
             path: path.to_string(),
             expected_source,
             line,
-            column: None,
+            column,
             pinned: true,
             outside: None,
+            whole: line.map(|_| link.to_string()),
         })
     }
 }
 
 /// A link's path and the line it ends in, as the old `splitConversationFileReference` read it: `:N`, `#N` or `#LN`
-/// (either case) with no leading zero. Anything else after the path, such as `:0` or `:x`, stays part of the path.
-fn split_line(link: &str) -> (&str, Option<u32>) {
-    let digits = link.len() - link.trim_end_matches(|c: char| c.is_ascii_digit()).len();
-    let (rest, number) = link.split_at(link.len() - digits);
+/// (either case) with no leading zero. `:N:M` is a line and column, as compilers print it. Anything else after the
+/// path, such as `:0` or `:x`, stays part of the path.
+fn split_line(link: &str) -> (&str, Option<u32>, Option<u32>) {
+    let (path, line) = split_number(link, true);
+    let Some(column) = line else {
+        return (link, None, None);
+    };
+    match split_number(path, false) {
+        (path, Some(line)) => (path, Some(line), Some(column)),
+        _ => (path, Some(column), None),
+    }
+}
+
+/// `text` less a trailing `:N` (or, with `marks`, `#N` or `#LN`), and N.
+fn split_number(text: &str, marks: bool) -> (&str, Option<u32>) {
+    let digits = text.len() - text.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+    let (rest, number) = text.split_at(text.len() - digits);
     let path = (rest.strip_suffix(':'))
-        .or_else(|| rest.strip_suffix("#L"))
-        .or_else(|| rest.strip_suffix("#l"))
-        .or_else(|| rest.strip_suffix('#'));
+        .or_else(|| rest.strip_suffix("#L").filter(|_| marks))
+        .or_else(|| rest.strip_suffix("#l").filter(|_| marks))
+        .or_else(|| rest.strip_suffix('#').filter(|_| marks));
     match (path, number.parse::<u32>()) {
         (Some(path), Ok(line)) if !number.starts_with('0') => (path, Some(line)),
-        _ => (link, None),
+        _ => (text, None),
     }
 }
 

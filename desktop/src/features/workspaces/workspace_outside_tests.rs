@@ -225,6 +225,7 @@ impl Stage<'_> {
             column: None,
             pinned: true,
             outside,
+            whole: None,
         };
         let alias = match &intent.outside {
             Some(file) => {

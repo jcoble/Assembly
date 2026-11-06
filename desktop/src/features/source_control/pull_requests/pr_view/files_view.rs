@@ -37,6 +37,7 @@ impl PrFiles {
                 column: None,
                 pinned: false,
                 outside: None,
+                whole: None,
             }),
             cx,
         );

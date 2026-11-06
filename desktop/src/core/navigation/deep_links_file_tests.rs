@@ -34,6 +34,8 @@ pub(super) struct Owner {
     pub(super) refuse: Option<(&'static str, &'static str)>,
     /// The session's owner call fails, as for a session with no folder yet.
     pub(super) refuse_session: bool,
+    /// Paths a path target names that aren't there.
+    pub(super) missing: Vec<String>,
     /// Holds the next `files/owner` answer until `fixture/release`.
     pub(super) hold: bool,
     pub(super) held: Option<Value>,
@@ -111,7 +113,10 @@ impl Harness<'_> {
                     let args = frame["args"].clone();
                     state.asked.push(args.clone());
                     let by_target = args.get("target").is_some();
+                    let gone = by_target
+                        && (state.missing.iter()).any(|path| args["target"]["path"] == *path);
                     let refusal = match (by_target, state.refuse) {
+                        _ if gone => Some(("failed", "that file isn't there")),
                         (true, Some(refusal)) => Some(refusal),
                         (false, _) if state.refuse_session => Some(("failed", "No folder yet.")),
                         _ => None,

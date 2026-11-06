@@ -115,6 +115,7 @@ fn opening(path: &str) -> OpenFile {
         column: None,
         pinned: false,
         outside: None,
+        whole: None,
     }
 }
 

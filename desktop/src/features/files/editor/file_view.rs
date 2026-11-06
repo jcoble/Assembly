@@ -29,7 +29,7 @@ mod workspace;
 use super::file_text::FileText;
 use crate::core::engine::SessionKey;
 use crate::core::intents::open_file::{OpenFile, names_its_own_place};
-use crate::core::navigation::file_link;
+use crate::core::navigation::{file_link, file_link_whole};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::preferences::Preferences;
@@ -133,6 +133,10 @@ impl FileView {
         // Global, so a link is heard wherever focus is and with no window active. It's the intent's only listener.
         cx.on_action(|intent: &OpenFile, cx| {
             let intent = intent.clone();
+            // A link whose line suffix was read opens by its whole name when that file exists, which is asked first.
+            if intent.whole.is_some() {
+                return file_link_whole::open_whole_first(intent, cx);
+            }
             // An absolute or `~` path goes to the one resolver, which opens it as a session file or an outside one. A
             // session that came with no source keeps its session, and the resolver finds its machine.
             if intent.outside.is_none() && names_its_own_place(&intent.path) {

@@ -109,6 +109,7 @@ fn file_links_require_an_actual_session_context_while_external_urls_do_not() {
         pinned: true,
         expected_source: None,
         outside: None,
+        whole: None,
     }));
     let url = LinkTarget::Url("https://example.com/review".into());
     assert!(url.action(None, None).unwrap().partial_eq(&OpenUrl {
@@ -139,6 +140,7 @@ fn a_file_link_keeps_its_rendered_source_even_when_the_same_session_id_has_anoth
         pinned: true,
         expected_source: Some(source),
         outside: None,
+        whole: None,
     };
     assert!(action.partial_eq(&expected));
     assert!(!action.partial_eq(&OpenFile {
@@ -170,6 +172,7 @@ fn an_absolute_file_link_with_no_session_still_opens() {
             pinned: true,
             expected_source: None,
             outside: None,
+            whole: None,
         }));
     }
 }
@@ -208,19 +211,32 @@ fn a_double_slash_link_is_never_a_file() {
 }
 
 // Feature 28 parity item 4: a file link ending in `:N` or `#L?N` opens at that line, as the old
-// `splitConversationFileReference` did; anything else after the path stays part of it.
+// `splitConversationFileReference` did, and one ending in `:N:M` at that line and column, as compilers print it (note 2
+// ruling 1); anything else after the path stays part of it. A link whose suffix was read keeps its text as written, so
+// a file whose real name ends in the suffix still opens.
 #[test]
 fn a_file_link_s_line_suffix_opens_at_that_line() {
     use crate::core::intents::open_file::OpenFile;
-    let at = |path: &str, line: Option<u32>| OpenFile {
+    let at = |link: &str, path: &str, line: Option<u32>, column: Option<u32>| OpenFile {
         session_id: "s".into(),
         path: path.into(),
         line,
-        column: None,
+        column,
         pinned: true,
         expected_source: None,
         outside: None,
+        whole: line.map(|_| link.to_string()),
     };
+    for (link, path, line, column) in [
+        ("a.rs:12:4", "a.rs", Some(12), Some(4)),
+        ("/work/a.rs:3:1", "/work/a.rs", Some(3), Some(1)),
+        ("a.rs:12:0", "a.rs:12:0", None, None),
+        ("a.rs:x:4", "a.rs:x", Some(4), None),
+    ] {
+        let action = LinkTarget::File(link.into()).action(Some("s"), None);
+        let action = action.unwrap_or_else(|| panic!("{link} opens"));
+        assert!(action.partial_eq(&at(link, path, line, column)), "{link}");
+    }
     for (link, path, line) in [
         ("src/a.ts:71", "src/a.ts", Some(71)),
         ("a.rs#L12", "a.rs", Some(12)),
@@ -232,13 +248,12 @@ fn a_file_link_s_line_suffix_opens_at_that_line() {
         ("a.rs:012", "a.rs:012", None),
         ("a.rs:", "a.rs:", None),
         ("a.rs:x", "a.rs:x", None),
-        ("a.rs:12:4", "a.rs:12", Some(4)),
         ("a.rs#L", "a.rs#L", None),
         ("a.rs:99999999999", "a.rs:99999999999", None),
         ("src/main.rs", "src/main.rs", None),
     ] {
         let action = LinkTarget::File(link.into()).action(Some("s"), None);
         let action = action.unwrap_or_else(|| panic!("{link} opens"));
-        assert!(action.partial_eq(&at(path, line)), "{link}");
+        assert!(action.partial_eq(&at(link, path, line, None)), "{link}");
     }
 }

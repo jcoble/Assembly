@@ -148,6 +148,7 @@ impl ContextPane {
                 column: None,
                 pinned: false,
                 outside: None,
+                whole: None,
             }),
             cx,
         );

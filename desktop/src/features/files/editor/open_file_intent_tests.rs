@@ -98,6 +98,7 @@ impl Harness<'_> {
                     column: None,
                     pinned: true,
                     outside: None,
+                    whole: None,
                 })
             })
         });
@@ -191,6 +192,7 @@ async fn an_absolute_or_tilde_path_goes_to_the_resolver_instead_of_opening(
         column: None,
         pinned: true,
         outside: None,
+        whole: None,
     };
     for intent in [
         send("/etc/hosts", None),
@@ -256,4 +258,19 @@ async fn an_absolute_path_with_a_session_and_no_source_keeps_its_session(cx: &mu
         shown,
         ["That file didn't open: Assembly can't tell which machine this session is on."]
     );
+}
+
+// Note 2 ruling 1: a link whose line suffix was read reaches the real listener, which asks first and then opens the
+// intent it settled on once. With no backend to ask, the suffix is read as a line.
+#[gpui::test]
+async fn a_link_with_a_line_suffix_opens_its_file_once(cx: &mut TestAppContext) {
+    let h = harness(cx);
+    let intent = OpenFile::link("s1", "src/main.rs:3:2", None).expect("a link");
+    h.cx.update(|_, cx| cx.defer(move |cx| cx.dispatch_action(&intent)));
+    h.cx.run_until_parked();
+    let opened = h.cx.update(|_, cx| {
+        let view = CenterPanes::find::<FileView>(&key("s1", "src/main.rs"), cx)?;
+        Some(view.read(cx).path.clone())
+    });
+    assert_eq!(opened.as_deref(), Some("src/main.rs"));
 }
