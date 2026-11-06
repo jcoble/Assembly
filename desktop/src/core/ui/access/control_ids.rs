@@ -29,6 +29,20 @@ ids! {
         BACK = "open-project.back",
         LOAD_MORE = "open-project.load-more",
     }
+    files {
+        NEW_FILE = "files.new-file",
+        NEW_FOLDER = "files.new-folder",
+        SORT = "files.sort",
+        EXCLUDED = "files.excluded",
+        REFRESH = "files.refresh",
+        STOP = "files.stop",
+        FILTER = "files.filter",
+        HISTORY = "files.history",
+        HISTORY_GO = "files.history-go",
+        HISTORY_REFRESH = "files.history-refresh",
+        HISTORY_LARGE = "files.history-large",
+        ENTRY = "files.entry",
+    }
     drawer {
         MORE_PANELS = "drawer.more-panels",
         CLOSE = "drawer.close",

@@ -125,3 +125,36 @@ fn saved_layout_load_migrates_board_only_and_leaves_an_unrelated_layout_exact() 
     assert!(migrated.center.children.is_empty());
     assert_eq!(migrated.center.info.active_index(), Some(0));
 }
+
+#[test]
+fn a_saved_layout_loses_only_its_search_tab_and_keeps_its_active_tab() {
+    use super::{SEARCH, remove_saved_panel};
+    use gpui_kit::component::dock::{
+        DockAreaState, DockPlacement, DockState, PanelInfo, PanelState,
+    };
+    use gpui_kit::px;
+    let left = |names: &[&str], active: usize| PanelState {
+        panel_name: "TabPanel".into(),
+        children: names.iter().map(|name| PanelState::new(*name)).collect(),
+        info: PanelInfo::tabs(active),
+    };
+    // Files active, before Search: it stays active. Search active: the tab before it takes over.
+    for (active, kept) in [(1, 1), (2, 1), (0, 0)] {
+        let mut state = DockAreaState {
+            version: Some(2),
+            left_dock: Some(DockState::new(
+                left(&["Sessions", "Files", SEARCH], active),
+                DockPlacement::Left,
+                px(326.),
+                true,
+            )),
+            ..DockAreaState::default()
+        };
+        let center = state.center.clone();
+        remove_saved_panel(&mut state);
+        let dock = state.left_dock.expect("the left column stays");
+        assert_eq!(dock.panel(), &left(&["Sessions", "Files"], kept));
+        assert_eq!((dock.size(), dock.open()), (px(326.), true));
+        assert_eq!(state.center, center);
+    }
+}

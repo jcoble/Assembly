@@ -17,8 +17,6 @@ pub mod open_project;
 
 pub mod open_pull_requests;
 
-pub mod reveal_file_folder;
-
 pub mod session_open;
 #[cfg(test)]
 mod session_open_tests;

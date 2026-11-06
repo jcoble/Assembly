@@ -22,7 +22,7 @@ fn listing(entries: Vec<FileEntry>) -> Result<FileListing, String> {
 }
 
 fn shape(tree: &FileTree) -> Vec<String> {
-    tree.rows()
+    tree.visible(0..tree.row_count())
         .iter()
         .map(|row| match row {
             Row::Entry { entry, depth, open } => format!(
@@ -267,4 +267,44 @@ fn revealing_a_file_uses_existing_pages_without_loading_it_as_a_directory() {
     assert!(matches!(tree.reveal_entry("src/λ.rs"), RevealStep::Ready));
     assert_eq!(tree.expanded_paths(), vec!["src"]);
     assert!(!tree.reveal_failed("src/λ.rs"));
+}
+
+#[test]
+fn visible_returns_only_the_range() {
+    let mut tree = FileTree::default();
+    tree.start();
+    tree.loaded(
+        "",
+        listing(vec![
+            entry("a.txt", false),
+            entry("b.txt", false),
+            entry("c.txt", false),
+        ]),
+    );
+    assert_eq!(tree.row_count(), 3);
+    let names: Vec<_> = tree
+        .visible(1..2)
+        .iter()
+        .map(|row| match row {
+            Row::Entry { entry, .. } => entry.name.to_string(),
+            _ => String::new(),
+        })
+        .collect();
+    assert_eq!(names, ["b.txt"]);
+    assert_eq!(tree.visible(2..9).len(), 1);
+    assert!(tree.visible(5..9).is_empty());
+}
+
+#[test]
+fn cancel_loads_keeps_loaded_rows() {
+    let mut tree = FileTree::default();
+    tree.start();
+    tree.loaded("", listing(vec![entry("src", true), entry("a.txt", false)]));
+    tree.toggle("src");
+    assert_eq!(shape(&tree), ["src/ v", "  …", "a.txt"]);
+    tree.cancel_loads();
+    assert_eq!(shape(&tree), ["src/ v", "a.txt"]);
+    // What was asked for and never read can be asked for again.
+    assert_eq!(tree.toggle("src"), None);
+    assert_eq!(tree.toggle("src"), Some("src".to_string()));
 }

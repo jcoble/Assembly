@@ -1,5 +1,6 @@
 //! The existing file panel and editor presentation; FileView owns its document and operation state.
 use super::{CloseDocument, DocumentStore, FILE, FileView, Preferences, SaveDocument, SaveState};
+use crate::core::state::active_file::ActiveFile;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, PanelInfo, PanelState};
@@ -36,10 +37,10 @@ impl BasePanel for FileView {
             self.activated_for_workspace(cx);
         }
         self.active = active;
-        if let Some(history) = &self.history {
-            history.update(cx, |history, cx| {
-                history.set_active(active && self.history_shown, cx)
-            });
+        if active {
+            ActiveFile::set(&self.session, &self.path, self.source.clone(), cx);
+        } else {
+            ActiveFile::clear(&self.session, &self.path, cx);
         }
         if active && !self.started {
             self.started = true;
@@ -70,9 +71,7 @@ impl BasePanel for FileView {
         self.saving = None;
         self.drop_upload(cx);
         self.release_read(cx);
-        if let Some(history) = self.history.take() {
-            history.update(cx, |history, cx| history.set_active(false, cx));
-        }
+        ActiveFile::clear(&self.session, &self.path, cx);
     }
 
     fn dump(&self, _: &App) -> PanelState {
@@ -186,18 +185,7 @@ impl Render for FileView {
                                     view.request_overwrite(window, cx)
                                 })),
                         )
-                    })
-                    .child(
-                        Button::new("file-history")
-                            .ghost()
-                            .label(if self.history_shown {
-                                "Hide history"
-                            } else {
-                                "History"
-                            })
-                            .disabled(self.document.is_none())
-                            .on_click(cx.listener(|view, _, _, cx| view.toggle_history(cx))),
-                    ),
+                    }),
             )
             .children(status.map(|text| {
                 div()
@@ -215,9 +203,6 @@ impl Render for FileView {
                         .text_size(Preferences::editor_text(cx).1)
                         .size_full(),
                 )
-            })
-            .when(self.history_shown, |view| {
-                view.children(self.history.clone())
             })
     }
 }

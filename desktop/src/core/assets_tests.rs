@@ -49,3 +49,31 @@ fn the_window_has_every_icon_it_draws() {
     assert!(listed.contains(&IconName::House.path()));
     assert!(listed.contains(&IconName::ChevronRight.path()));
 }
+
+#[test]
+fn the_files_tab_has_every_icon_it_draws() {
+    // The header's New file, New folder, Sort, Excluded, Refresh and Stop; the filter's search; the rows' folders and
+    // chevrons; the history card's clock, Go to File, Refresh and large view.
+    for icon in [
+        IconName::FilePlus,
+        IconName::FolderPlus,
+        IconName::ArrowDownAZ,
+        IconName::ArrowUpZA,
+        IconName::Eye,
+        IconName::EyeOff,
+        IconName::RefreshCw,
+        IconName::Square,
+        IconName::Search,
+        IconName::Folder,
+        IconName::FolderOpen,
+        IconName::ChevronDown,
+        IconName::ChevronRight,
+        IconName::RotateCcwClock,
+        IconName::FileUp,
+        IconName::Maximize2,
+    ] {
+        let path = icon.path();
+        let svg = AppAssets.load(&path).expect("loads").expect("is there");
+        assert!(svg.starts_with(b"<svg"), "{path} is an SVG");
+    }
+}

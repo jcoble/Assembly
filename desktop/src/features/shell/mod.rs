@@ -8,7 +8,7 @@ pub mod frame;
 pub mod layout_store;
 pub mod motion_skin;
 pub mod placeholder_pane;
-mod retired_board;
+mod retired_panels;
 mod side_tabs;
 pub mod top_bar;
 mod top_tabs;

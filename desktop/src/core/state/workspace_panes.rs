@@ -37,6 +37,8 @@ pub trait PaneCodec: 'static {
 pub struct WorkspacePanes {
     key: Option<WorkspaceKey>,
     restoring: bool,
+    /// A coordinator is running and hasn't yet said which workspace, if any, the selected session opens in.
+    awaiting: bool,
     failure: Option<String>,
     codecs: BTreeMap<&'static str, Rc<dyn PaneCodec>>,
 }
@@ -49,7 +51,20 @@ impl WorkspacePanes {
         if !cx.has_global::<Self>() {
             cx.set_global(Self::default());
         }
-        cx.global_mut::<Self>().key = Some(key);
+        let panes = cx.global_mut::<Self>();
+        panes.key = Some(key);
+        panes.awaiting = false;
+    }
+    /// The coordinator decides each session's workspace from here on: panes wait for its first answer.
+    pub fn expect_key(cx: &mut App) {
+        if !cx.has_global::<Self>() {
+            cx.set_global(Self::default());
+        }
+        cx.global_mut::<Self>().awaiting = true;
+    }
+    /// True between selecting a session and the coordinator committing it, with a key or as transcript-only.
+    pub fn awaiting_key(cx: &App) -> bool {
+        cx.try_global::<Self>().is_some_and(|panes| panes.awaiting)
     }
     pub fn clear_key(cx: &mut App) {
         if cx.has_global::<Self>() {
@@ -139,7 +154,9 @@ impl WorkspacePanes {
         if !cx.has_global::<Self>() {
             return;
         }
-        cx.global_mut::<Self>().restoring = true;
+        let panes = cx.global_mut::<Self>();
+        panes.restoring = true;
+        panes.awaiting = false;
         let codecs: Vec<_> = cx.global::<Self>().codecs.values().cloned().collect();
         for codec in codecs {
             codec.deactivate(window, cx);
