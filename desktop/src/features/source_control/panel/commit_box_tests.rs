@@ -6,6 +6,7 @@ fn file(path: &str, index: &str, worktree: &str) -> ChangedFile {
         original_path: None,
         index: index.into(),
         worktree: worktree.into(),
+        revision: None,
     }
 }
 fn status(files: Vec<ChangedFile>, staged: usize) -> GitStatus {

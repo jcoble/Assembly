@@ -88,6 +88,28 @@ public sealed class GitWriterMutationTests
         Assert.Equal('M', Assert.Single((await reader.ReadAsync(repo.Root, default)).Files).Index);
     }
 
+    /// <summary>A later edit keeps the file's letters, so only its revision says the work on disk isn't what was reviewed.</summary>
+    [Fact]
+    public async Task An_edit_after_the_read_refuses_both_discards_and_keeps_the_newer_work()
+    {
+        using var repo = new GitHistoryTestRepository(); await repo.InitializeAsync();
+        await repo.Write("a", "original\n"); await repo.Commit("Root");
+        var file = Path.Combine(repo.Root, "a");
+        await File.WriteAllTextAsync(file, "edited 1\n");
+        var reader = new GitStatusReader(repo.Git); var seen = await reader.ReadAsync(repo.Root, default);
+        await File.WriteAllTextAsync(file, "edited 2\n"); File.SetLastWriteTimeUtc(file, File.GetLastWriteTimeUtc(file).AddSeconds(2));
+        var now = await reader.ReadAsync(repo.Root, default);
+        Assert.Equal(Assert.Single(seen.Files) with { Revision = null }, Assert.Single(now.Files) with { Revision = null });
+        var writer = new GitWriter(repo.Git);
+        var one = await Assert.ThrowsAsync<CallFailed>(() => writer.DiscardAsync(repo.Root, ["a"], [], seen.Files, default));
+        Assert.Contains("Files changed since you looked", one.Message);
+        var all = await Assert.ThrowsAsync<CallFailed>(() => writer.DiscardAllAsync(repo.Root, seen.Fingerprint, true, default));
+        Assert.Contains("Files changed since you looked", all.Message);
+        Assert.Equal("edited 2\n", await File.ReadAllTextAsync(file));
+        await writer.DiscardAsync(repo.Root, ["a"], [], now.Files, default);
+        Assert.Equal("original\n", await File.ReadAllTextAsync(file));
+    }
+
     // Pins: g9#1, g9#2
     [Fact]
     public async Task All_operations_cover_paths_beyond_the_display_cap_and_refuse_stale_fingerprints()

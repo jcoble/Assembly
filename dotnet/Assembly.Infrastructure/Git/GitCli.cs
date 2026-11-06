@@ -14,6 +14,12 @@ namespace Assembly.Infrastructure.Git;
 /// </summary>
 public sealed class GitCli(TimeProvider? time = null) : IGit
 {
+    /// <summary>Size and write time: a stat, not a read, so a status read stays cheap however big the files are.</summary>
+    public string Revision(string folder, string path)
+    {
+        var file = new FileInfo(Path.Combine(folder, path));
+        return file.Exists ? $"{file.Length}:{file.LastWriteTimeUtc.Ticks}" : "none";
+    }
     public async IAsyncEnumerable<string> ReadAsync(string folder, IReadOnlyList<string> arguments, IReadOnlyList<string>? input,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {

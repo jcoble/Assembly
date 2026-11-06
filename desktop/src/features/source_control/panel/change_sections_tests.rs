@@ -8,6 +8,7 @@ fn file(path: &str, index: &str, worktree: &str) -> ChangedFile {
         original_path: None,
         index: index.into(),
         worktree: worktree.into(),
+        revision: None,
     }
 }
 fn status(files: Vec<ChangedFile>) -> GitStatus {
@@ -128,6 +129,7 @@ fn a_row_tip_gives_the_path_then_what_each_side_of_git_says() {
         original_path: None,
         index: index.into(),
         worktree: worktree.into(),
+        revision: None,
     };
     assert_eq!(
         file("M", "D").tip(),

@@ -11,6 +11,10 @@ public interface IGit
     Task<GitRun> RunAsync(string folder, IReadOnlyList<string> arguments, string? stdin, TimeSpan? limit, CancellationToken cancellationToken);
 
     IAsyncEnumerable<string> ReadAsync(string folder, IReadOnlyList<string> arguments, IReadOnlyList<string>? input, CancellationToken cancellationToken);
+
+    /// <summary>A working-tree file's revision, so a write can tell an edit that keeps git's status letters. Null where
+    /// the files aren't on this disk, as with a test's scripted git.</summary>
+    string? Revision(string folder, string path) => null;
 }
 
 public sealed record GitRun(int ExitCode, string Output, string Error);
