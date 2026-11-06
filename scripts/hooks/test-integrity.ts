@@ -5,7 +5,7 @@
 // under test-approvals/ (test-approvals.ts). CI enforces it; the commit hook and pre-push warn early.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { addedApprovals, approvalsFolder, currentBranch, hostApprovals, type Approval } from './test-approvals.ts';
 
@@ -192,7 +192,7 @@ export function main(args: string[]): number {
   if (errors.length) { process.stderr.write('Test integrity: commit stopped.\n' + errors.join('\n') + '\nInvestigate; fix incorrect production code. TEST-CHANGE is not permission to change behavior.\n'); return 1; }
   return 0;
 }
-if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   try { process.exitCode = main(process.argv.slice(2)); }
   catch (error) { process.stderr.write('Test integrity: ' + String(error) + '\n'); process.exitCode = 1; }
 }
