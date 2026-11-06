@@ -41,8 +41,9 @@ test('a profile already decided on starts no build', async () => {
 });
 
 test('arguments are explicit and complete', () => {
-  assert.deepEqual(parseArgs(['--worktree', '/w', '--manifest', '/m', '--dry-run']), { worktree: '/w', manifest: '/m', dryRun: true });
-  for (const args of [[], ['--worktree'], ['--worktree', '/w'], ['--manifest', '/m', '--wat'], ['--worktree', '/w', '--manifest', '--dry-run']]) assert.throws(() => parseArgs(args));
+  assert.deepEqual(parseArgs(['--worktree', '/w', '--profile', '/p', '--if-empty']), { worktree: '/w', profile: '/p', ifEmpty: true });
+  assert.equal(parseArgs([]).ifEmpty, false);
+  for (const args of [['--worktree'], ['--profile'], ['--wat'], ['--worktree', '/w', '--worktree', '/x'], ['--worktree', '--if-empty'], ['--manifest', '/m'], ['--dry-run']]) assert.throws(() => parseArgs(args));
 });
 test('profile follows exact launcher identity and rejects symlink/traversal', () => {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'seed-node-'));

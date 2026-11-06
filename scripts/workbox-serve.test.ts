@@ -97,16 +97,6 @@ for (const [name, state] of [
     assert.equal(pushes(f), 0);
   } finally { f.close(); }
 });
-test('launch check: a managed lane with a new seed is behind even on the same number', () => {
-  const f = fixture({ seedCohort: 'old' });
-  try {
-    Object.assign(f.env, check);
-    f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, cohort: 'new' });
-    assert.equal(f.run().status, remoteBehindExit);
-    f.env.ASSEMBLY_DEV_SYNC_REQUEST = JSON.stringify({ owner: { name: 'test-lane', number: 9 }, cohort: 'old' });
-    assert.equal(f.run().status, 0);
-  } finally { f.close(); }
-});
 for (const [name, state, expected] of [
   ['a matching build', {}, 0],
   ['an unrelated backend commit', { unrelated: true }, 1],
@@ -377,7 +367,7 @@ for (const [name, state, matches] of [
   } finally { f.close(); }
 });
 
-for (const adopted of [false, true]) test(`managed ${adopted ? 'adopted' : 'creator'} lane with current backend, tools and seed skips transfer/build/deploy`, async () => {
+for (const adopted of [false, true]) test(`managed ${adopted ? 'adopted' : 'creator'} lane with current backend and tools skips transfer/build/deploy`, async () => {
   const { toolKey, packages } = await import('./dev-toolchain.ts');
   const versions = Object.fromEntries(packages.map(name => [name, '1.2.3']));
   const key = toolKey(versions as any, sources, 'linux-x64');
