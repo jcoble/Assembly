@@ -124,6 +124,9 @@ pub fn draw(
                         .when(run.italic, |run| run.italic())
                         .when(run.underline, |run| run.underline())
                         .when(run.strike, |run| run.line_through())
+                        .when(run.cursor, |run| {
+                            run.debug_selector(|| "terminal-cursor".into())
+                        })
                         .child(run.text)
                 }))
         }))

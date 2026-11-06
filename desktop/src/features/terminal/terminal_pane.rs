@@ -94,6 +94,10 @@ pub struct TerminalPane {
     cursor_on: bool,
     /// The pane has the focus, one of the blink's conditions.
     has_focus: bool,
+    /// Its window is the active one, the blink's third condition: GPUI keeps the pane's focus while another window is.
+    window_active: bool,
+    /// Follows `window_active`; its notify draws the steady cursor, which a blur inside a draw can't.
+    _activation: Subscription,
     _selected: Subscription,
     /// Draws again when the terminal's font or the theme changes.
     _preferences: Option<Subscription>,
@@ -151,6 +155,10 @@ impl TerminalPane {
             cx.on_focus(&focus, window, |pane, _, cx| pane.focused(true, cx)),
             cx.on_blur(&focus, window, |pane, _, cx| pane.focused(false, cx)),
         ];
+        let activation = cx.observe_window_activation(window, |pane, window, cx| {
+            pane.window_active = window.is_window_active();
+            pane.blink_as_needed(cx);
+        });
         Self {
             focus,
             active: false,
@@ -173,6 +181,8 @@ impl TerminalPane {
             retried: false,
             cursor_on: true,
             has_focus: false,
+            window_active: window.is_window_active(),
+            _activation: activation,
             _focused: focused,
             _preferences: Preferences::try_global(cx).map(|preferences| {
                 cx.observe(&preferences, |pane, _, cx| pane.blink_as_needed(cx))
@@ -348,10 +358,11 @@ impl TerminalPane {
         self.write(cx);
     }
 
-    /// Blinks the cursor only while the shell is open, the pane has the focus and the Cursor blink preference is on;
-    /// otherwise no timer runs and the cursor shows steady. A blink already running carries on.
+    /// Blinks the cursor only while the shell is open, the pane has the focus in the active window and the Cursor
+    /// blink preference is on; otherwise no timer runs and the cursor shows steady. A blink already running carries on.
     pub(super) fn blink_as_needed(&mut self, cx: &mut Context<Self>) {
         let wanted = self.has_focus
+            && self.window_active
             && self.shown == Shown::Open
             && Preferences::read(cx, Appearance::terminal_cursor_blink);
         if !wanted {

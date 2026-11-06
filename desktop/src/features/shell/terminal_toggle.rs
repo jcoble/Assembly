@@ -4,6 +4,7 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{DockArea, DockPlacement, PaneRef, PanelId};
+use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::component::{Icon, Selectable as _};
 use gpui_kit::*;
 
@@ -107,4 +108,12 @@ pub fn button(dock: Entity<DockArea>, cx: &App) -> impl IntoElement {
             .tooltip(TERMINAL)
             .on_click(move |_, window, cx| toggle_terminal(&dock, window, cx)),
     )
+}
+
+/// The "..." menu's Terminal item, checked while the Terminal is showing. It has no icon: the kit draws an item's icon
+/// in place of its check mark.
+pub fn menu_item(dock: Entity<DockArea>, cx: &App) -> PopupMenuItem {
+    PopupMenuItem::new(TERMINAL)
+        .checked(terminal_showing(&dock, cx))
+        .on_click(move |_, window, cx| toggle_terminal(&dock, window, cx))
 }

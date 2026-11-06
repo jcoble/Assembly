@@ -14,9 +14,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::default_layout::{
-    AGENTS, CONTEXT, FILES, HISTORY, RUN, SOURCE_CONTROL, TASKS, TERMINAL, WORKTREES,
+    AGENTS, CONTEXT, FILES, HISTORY, RUN, SOURCE_CONTROL, TASKS, WORKTREES,
 };
-use super::terminal_toggle::{terminal_showing, toggle_terminal};
+use super::terminal_toggle::menu_item;
 
 const PILL_W: Pixels = px(28.);
 const PILL_H: Pixels = px(24.);
@@ -149,13 +149,7 @@ impl RenderOnce for DrawerButtons {
                                     }),
                             )
                         });
-                let dock = dock.clone();
-                menu.separator().item(
-                    PopupMenuItem::new(TERMINAL)
-                        .icon(IconName::SquareTerminal)
-                        .checked(terminal_showing(&dock, cx))
-                        .on_click(move |_, window, cx| toggle_terminal(&dock, window, cx)),
-                )
+                menu.separator().item(menu_item(dock.clone(), cx))
             });
         let dock = self.dock.clone();
         let close = button("Close side panel", ids::CLOSE.into(), IconName::X, false).w(CONTROL).h(CONTROL).rounded_md().on_click(move |_, window, cx| {
