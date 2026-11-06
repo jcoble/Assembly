@@ -1,5 +1,5 @@
-//! The cursor blinks only while its window is active: another window taking over leaves it steady with no timer, though
-//! the pane keeps its focus, and it blinks again once its window is active.
+//! The cursor blinks only while its window is active: GPUI blurs the pane when another window takes over, which leaves
+//! the cursor drawn steady with no timer, and it blinks again once its window is active.
 
 use gpui::TestAppContext;
 
