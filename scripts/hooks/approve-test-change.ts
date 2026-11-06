@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { parseArgs } from 'node:util';
 
 const { values } = parseArgs({ options: {
@@ -14,10 +14,13 @@ const { values } = parseArgs({ options: {
 } });
 const { key, branch, test, reason, out } = values;
 if (!key || !branch || !test?.length || !reason || !out) throw new Error('usage: --key <private key> --branch <b> --test <file>::<name> [--test ...] --reason "<text>" --out <folder>');
+if (branch === 'HEAD') throw new Error('--branch must name a branch; a detached HEAD gets no approvals');
 const tests = test.map(spec => {
   const at = spec.indexOf('::');
   if (at <= 0 || at + 2 >= spec.length) throw new Error('--test must be <file>::<name>: ' + spec);
-  return { file: spec.slice(0, at), name: spec.slice(at + 2) };
+  const file = spec.slice(0, at);
+  if (isAbsolute(file) || file.split('/').some(part => part === '.' || part === '..')) throw new Error('--test file must be repo-relative, without . or .. parts: ' + file);
+  return { file, name: spec.slice(at + 2) };
 });
 mkdirSync(out, { recursive: true });
 const file = join(out, randomUUID() + '.json');

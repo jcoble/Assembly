@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -22,7 +22,10 @@ function inRepo(run: (write: (path: string, text: string) => string) => void, fo
     });
   } finally { rmSync(base, { recursive: true, force: true }); }
 }
-const send = (tool_input: unknown) => spawnSync(process.execPath, [guard], { input: JSON.stringify({ tool_input }), encoding: 'utf8' });
+// The tests without approvals never read the real approvals folder.
+const noApprovals = mkdtempSync(join(tmpdir(), 'assembly-guard-no-approvals-'));
+after(() => rmSync(noApprovals, { recursive: true, force: true }));
+const send = (tool_input: unknown) => spawnSync(process.execPath, [guard], { input: JSON.stringify({ tool_input }), encoding: 'utf8', env: { ...process.env, ASSEMBLY_TEST_APPROVALS_HOME: noApprovals } });
 
 test('changing an expected value is blocked and names the test', () => inRepo(write => {
   const file_path = write('desktop/src/view_tests.rs', rust);
@@ -215,4 +218,14 @@ test('the block sends the agent to its controller, never to approve itself', () 
   assert.match(stderr, /signing an approval for this branch and these tests\. Never write or sign an approval yourself\./);
   assert.match(stderr, /make the edit again, and name the test in a TEST-CHANGE line when you commit/);
   assert.doesNotMatch(stderr, /Explain to Jesse/);
+})));
+
+test('a detached checkout gets no approvals, even one written for HEAD', () => inRepo(write => withApprovals((home, approve) => {
+  const file_path = write('desktop/src/view_tests.rs', rust);
+  committed(file_path);
+  execFileSync('git', ['-C', dirname(file_path), 'checkout', '--quiet', '--detach']);
+  approve({ branch: 'HEAD', tests: [{ file: 'desktop/src/view_tests.rs', name: 'keeps_path' }] });
+  const result = sendWith(home, edit(file_path));
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /BLOCKED/);
 })));

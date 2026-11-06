@@ -5,7 +5,8 @@
 // A changed test is allowed when the controller signed an approval for it (approve-test-change.ts):
 // <id>.json {branch, tests: [{file, name}], reason, approvedBy, at} beside <id>.json.sig, in
 // ~/.local/state/assembly-test-approvals/, verified against ~/.config/assembly-test-approvals/allowed_signers.
-// ASSEMBLY_TEST_APPROVALS_HOME (tests only) replaces both: approvals in it, signers at <it>/allowed_signers.
+// ASSEMBLY_TEST_APPROVALS_HOME, when set, replaces both: approvals in it, signers at <it>/allowed_signers.
+// A detached checkout (branch HEAD) gets no approvals.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -60,6 +61,7 @@ function approved(path: string, inRepo: string): Set<string> {
     if (!files.length) return names;
     branch = execFileSync('git', ['-C', dirname(realpathSync(path)), 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch { return names; }
+  if (branch === 'HEAD') return names;
   for (const name of files) {
     try {
       const file = join(approvals, name), json = readFileSync(file);
