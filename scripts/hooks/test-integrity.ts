@@ -3,7 +3,7 @@
 // A reason is an audit trail, never approval to change behavior or proof of correctness.
 // Changing an assertion also needs the controller's signed approval of the exact test text, committed with the change
 // under test-approvals/ (test-approvals.ts). CI enforces it; the commit hook and pre-push warn early.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -162,15 +162,26 @@ export function violations(changes: Change[], message: string, approved?: Approv
 function git(args: string[]): string { return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }); }
 function exists(spec: string): boolean { try { git(['cat-file', '-e', spec]); return true; } catch { return false; } }
 function content(spec: string): string { return exists(spec) ? git(['show', spec]) : ''; }
-// A merge brings in its parents' work. A test file it leaves equal to that file in some parent, it answers nothing for; any
-// other test file it changes is judged against its first parent, as a commit's would be. It may not drop or change an approval
-// file any parent holds, which would let the approval be added and used again.
+// git's own merge of two parents: its tree, and the files it conflicts on. Undefined for an octopus merge.
+function autoMerge(parents: string[]): { tree: string; conflicts: Set<string> } | undefined {
+  if (parents.length !== 2) return undefined;
+  const result = spawnSync('git', ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', ...parents], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  if (result.status !== 0 && result.status !== 1) throw new Error('git merge-tree failed: ' + result.stderr);
+  const [tree, ...conflicts] = result.stdout.split('\0').filter(Boolean);
+  return { tree, conflicts: new Set(conflicts) };
+}
+// A merge brings in its parents' work. Each test file it holds is judged against git's automatic merge of its parents, where
+// that merges cleanly, and against its first parent where it conflicts (or for an octopus merge): a merge answers only for
+// what it does beyond the automatic merge, a deletion included. It may not drop or change an approval file any parent holds,
+// which would let the approval be added and used again.
 function mergeChanges(commit: string): Change[] {
   const parents = git(['rev-list', '--parents', '-n', '1', commit]).trim().split(' ').slice(1);
   const blob = (spec: string) => exists(spec) ? git(['rev-parse', spec]).trim() : '';
-  const tests = git(['diff-tree', '-r', '--name-only', '-z', parents[0], commit]).split('\0')
-    .filter(path => path && isTest(path) && !parents.some(parent => blob(parent + ':' + path) === blob(commit + ':' + path)))
-    .map(path => ({ path, before: content(parents[0] + ':' + path), after: content(commit + ':' + path) }));
+  const auto = autoMerge(parents);
+  const against = (path: string) => !auto || auto.conflicts.has(path) ? parents[0] : auto.tree;
+  const paths = new Set([...git(['diff-tree', '-r', '--name-only', '-z', auto?.tree ?? parents[0], commit]).split('\0'), ...(auto?.conflicts ?? [])]);
+  const tests = [...paths].filter(path => path && isTest(path) && blob(against(path) + ':' + path) !== blob(commit + ':' + path))
+    .map(path => ({ path, before: content(against(path) + ':' + path), after: content(commit + ':' + path) }));
   const approvals = new Set(parents.flatMap(parent => git(['ls-tree', '-r', '--name-only', '-z', parent, '--', approvalsFolder + '/']).split('\0').filter(Boolean)));
   return [...tests, ...[...approvals].flatMap(path => {
     const parent = parents.find(parent => exists(parent + ':' + path) && blob(parent + ':' + path) !== blob(commit + ':' + path));

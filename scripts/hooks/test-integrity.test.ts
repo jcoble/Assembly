@@ -299,3 +299,26 @@ test('an approval the base already holds is used, even on a branch forked before
   commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-old');
   assert.equal(check(['--commit', 'HEAD', 'work'], { BASE: base }).status, 1);
 }));
+
+test('a clean merge where both sides edited the same test file passes', () => withRepo(({ root, git, check, approve }) => {
+  const beta = (n: number) => '\n// the second test\n\nfn beta() {\n assert_eq!(count, ' + n + ');\n}\n';
+  const put = (text: string) => { writeFileSync(join(root, 'desktop/src/view_tests.rs'), text); git('add', 'desktop/src/view_tests.rs', 'test-approvals'); };
+  put(seedRust + beta(4)); commitWith(root, git, 'test: add beta');
+  git('checkout', '--quiet', '-b', 'side'); put(seedRust + beta(5)); commitWith(root, git, 'TEST-CHANGE: beta: main moved on');
+  git('checkout', '--quiet', 'work');
+  approve({ id: 'ap-1', branch: 'work', expires: inAnHour(), tests: approvedEntry() });
+  put(approvedRust + beta(4)); commitWith(root, git, 'TEST-CHANGE: keeps_path: approved in ap-1');
+  git('merge', '--quiet', '--no-ff', '-m', 'Merge side', 'side');
+  assert.equal(readFileSync(join(root, 'desktop/src/view_tests.rs'), 'utf8'), approvedRust + beta(5));
+  assert.equal(check(['--commit', 'HEAD', 'work']).status, 0);
+}));
+
+test('a merge that deletes a test file the branch added is judged', () => withRepo(({ root, git, check }) => {
+  writeFileSync(join(root, 'desktop/src/added_tests.rs'), 'fn added() {\n assert!(ready);\n}\n'); git('add', '.'); commitWith(root, git, 'test: add added');
+  git('checkout', '--quiet', '-b', 'side', 'HEAD~1'); writeFileSync(join(root, 'other'), 'x'); git('add', 'other'); commitWith(root, git, 'side');
+  git('checkout', '--quiet', 'work');
+  git('merge', '--quiet', '--no-ff', '--no-commit', 'side');
+  git('rm', '--quiet', 'desktop/src/added_tests.rs');
+  git('commit', '--quiet', '--no-edit');
+  assert.equal(check(['--commit', 'HEAD', 'work']).status, 1);
+}));
