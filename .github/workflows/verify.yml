@@ -1,0 +1,55 @@
+name: Verify PR acceptance
+on:
+  pull_request_target:
+    types: [opened, ready_for_review, reopened]
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    if: >-
+      github.repository == 'jcoble/Assembly' &&
+      ((github.event_name == 'pull_request_target' &&
+        github.event.pull_request.head.repo.full_name == github.repository) ||
+       (github.event_name == 'issue_comment' && github.event.issue.pull_request))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VERIFY_PR_SSH_KEY: ${{ secrets.VERIFY_PR_SSH_KEY }}
+      # Parent supplies these at install. Host key must be an audited known_hosts line, never ssh-keyscan output.
+      WORKBOX_HOST: workbox.example.invalid
+      WORKBOX_SSH_USER: blackcolours
+      WORKBOX_PINNED_HOST_KEY: FILL_AT_INSTALL_WORKBOX_KNOWN_HOSTS_LINE
+    steps:
+      - name: Dispatch trusted PR number over restricted SSH
+        if: env.VERIFY_PR_SSH_KEY != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "${VERIFY_PR_SSH_KEY:-}" ] || exit 0
+          # Read all untrusted values from the event file, never GitHub expressions in shell source.
+          command=$(node --input-type=module <<'JS'
+          import {readFileSync} from 'node:fs';
+          const event=JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));
+          const pr=event.pull_request?.number || event.issue?.number;
+          if(!Number.isSafeInteger(pr) || pr<1) process.exit(1);
+          if(process.env.GITHUB_EVENT_NAME==='issue_comment') {
+            if(event.comment?.user?.login!=='jcoble' || !/^@verify(?:\s|$)/.test(event.comment?.body || '')) process.exit(0);
+            if(!Number.isSafeInteger(event.comment.id) || event.comment.id<1) process.exit(1);
+            console.log(pr+' '+event.comment.id);
+          } else console.log(pr);
+          JS
+          )
+          [ -n "$command" ] || exit 0
+          [[ "$WORKBOX_PINNED_HOST_KEY" != FILL_AT_INSTALL_* ]] || { echo 'Workbox host key is not installed'; exit 1; }
+          key_dir=$(mktemp -d)
+          trap 'rm -rf -- "$key_dir"' EXIT
+          chmod 700 "$key_dir"
+          printf '%s\n' "$VERIFY_PR_SSH_KEY" > "$key_dir/key"
+          chmod 600 "$key_dir/key"
+          printf '%s\n' "$WORKBOX_PINNED_HOST_KEY" > "$key_dir/known_hosts"
+          ssh -F /dev/null -i "$key_dir/key" -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$key_dir/known_hosts" \
+            -o ConnectTimeout=20 "$WORKBOX_SSH_USER@$WORKBOX_HOST" "$command"
