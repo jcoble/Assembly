@@ -241,6 +241,34 @@ public sealed class FilesTouchedTests : IDisposable
 
     // Pins: g0-shape#13
     [Fact]
+    public void A_relative_path_that_climbs_out_of_the_folder_lists_absolute()
+    {
+        Save(Call("t1", "read", path: "../lib/helper.rs"));
+
+        Assert.Equal([$"{Path.GetDirectoryName(Folder)}/lib/helper.rs"], Paths(Read()));
+    }
+
+    // Pins: g0-shape#13
+    [Fact]
+    public void A_climbing_and_a_whole_spelling_of_one_outside_file_are_one_row()
+    {
+        var outside = $"{Path.GetDirectoryName(Folder)}/lib/helper.rs";
+        Save(Call("t1", "edit", path: "../lib/helper.rs", more: ""","added":2,"removed":1"""), Call("t2", "edit", path: outside, more: ""","added":3"""));
+
+        Assert.Equal(new FileTouched(outside, 5, 1, 2, 2), Assert.Single(Read()));
+    }
+
+    // Pins: g0-shape#13
+    [Fact]
+    public void A_dotted_and_a_plain_spelling_inside_the_folder_are_one_relative_row()
+    {
+        Save(Call("t1", "edit", path: "./x", more: ""","added":1"""), Call("t2", "edit", path: "x", more: ""","added":2"""));
+
+        Assert.Equal(new FileTouched("x", 3, 0, 2, 2), Assert.Single(Read()));
+    }
+
+    // Pins: g0-shape#13
+    [Fact]
     public void A_home_path_and_its_tilde_are_one_row()
     {
         Save(Call("t1", "read", path: "~/a.md"), Call("t2", "read", path: "/home/x/a.md"));

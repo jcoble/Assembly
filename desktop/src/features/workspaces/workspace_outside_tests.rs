@@ -49,8 +49,10 @@ pub(super) fn hosts_document() -> DocumentKey {
     }
 }
 const README: &str = "/checkout/README.md";
+/// A session file path that climbs out of its checkout, as a Files touched row once sent it.
+pub(super) const CLIMBING: &str = "../lib/helper.rs";
 /// Whether a tab is ready to look at, which a test waits for.
-type Ready = fn(&mut FileView, &mut Window, &mut Context<FileView>) -> bool;
+pub(super) type Ready = fn(&mut FileView, &mut Window, &mut Context<FileView>) -> bool;
 /// Ready once its text is in its editor.
 fn in_editor(view: &mut FileView, window: &mut Window, cx: &mut Context<FileView>) -> bool {
     view.bind_for_test(window, cx)
@@ -104,6 +106,12 @@ pub(super) fn stage(cx: &mut TestAppContext) -> Stage<'_> {
             (Some("files"), Some("read")) if args["target"]["path"] == README => {
                 return vec![Reply::Frame(
                     json!({"t": "error", "id": frame["id"], "code": "failed", "message": "that file isn't there"}),
+                )];
+            }
+            // A session path that climbs out of the checkout, refused as the backend does.
+            (Some("files"), Some("read")) if args["path"] == CLIMBING => {
+                return vec![Reply::Frame(
+                    json!({"t": "error", "id": frame["id"], "code": "failed", "message": "that path is outside the session's folder: traversal components are not allowed"}),
                 )];
             }
             (Some("files"), Some("read")) => {
@@ -210,7 +218,7 @@ impl Stage<'_> {
     }
 
     /// Opens a file as a link does and waits until `ready` says it is.
-    async fn open(
+    pub(super) async fn open(
         &mut self,
         session: &str,
         path: &str,
@@ -256,6 +264,14 @@ impl Stage<'_> {
         .await;
         self.cx.run_until_parked();
         view
+    }
+
+    /// Closes a file's tab, as its close button does.
+    pub(super) fn close(&mut self, view: &Entity<FileView>) {
+        let (dock, view) = (self.dock.clone(), view.clone());
+        self.cx
+            .update(|window, cx| dock.update(cx, |dock, cx| dock.remove_panel(view, window, cx)));
+        self.cx.run_until_parked();
     }
 
     fn layout(&mut self) -> DockAreaState {

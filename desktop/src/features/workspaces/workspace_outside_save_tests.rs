@@ -1,7 +1,7 @@
 //! Proof fixes brief item 3: a layout save refused while a file operation runs ("Not saved: Finish the current file
 //! operation…") goes through when it ends, and the line clears even when the layout is already saved as it stands.
-use super::outside_tests::{Stage, hosts_document, stage};
-use super::{SocketClient, WorkspaceCoordinator};
+use super::outside_tests::{CLIMBING, Ready, Stage, hosts_document, stage};
+use super::{SocketClient, WorkspaceCoordinator, WorkspaceKey};
 use crate::core::socket::{pending_call::PendingCall, test_wait::until};
 use crate::features::files::document_store::DocumentStore;
 use crate::features::files::file_view::FileView;
@@ -241,4 +241,55 @@ async fn a_changed_elsewhere_status_stays_through_a_file_save(cx: &mut TestAppCo
     settled(&mut stage, &view, &mut heard, "the file save").await;
     drop(release);
     assert_eq!(status(&mut stage).as_deref(), Some(ELSEWHERE));
+}
+
+// Controller note 3: a session tab whose path climbs out of its checkout can't be captured, so the layout isn't saved
+// while it's open ("Not saved: A stored file path is outside its checkout."). Nothing bad is stored: once the tab
+// closes, the next capture has no such path, the layout saves and the line clears.
+#[gpui::test]
+async fn a_climbing_session_tab_blocks_layout_saves_only_while_it_is_open(cx: &mut TestAppContext) {
+    const OUTSIDE: &str = "Not saved: A stored file path is outside its checkout.";
+    let mut stage = stage(cx);
+    stage.open_workspace().await;
+    // Owned by the workspace, and its read refused, as the backend refuses a climbing path: the error tab.
+    let opened: Ready = |view, _, _| {
+        let key = WorkspaceKey {
+            machine: "actual-owner".into(),
+            session_id: "session".into(),
+            checkout_root: "/checkout".into(),
+        };
+        view.restored_workspace_path(&key).is_some() && view.text_error().is_some()
+    };
+    let view = stage.open("session", CLIMBING, None, opened).await;
+    stage.cx.update(|_, cx| WorkspaceCoordinator::changed(cx));
+    stage.cx.run_until_parked();
+    assert_eq!(status(&mut stage).as_deref(), Some(OUTSIDE));
+    assert!(stage.saves.lock().unwrap().is_empty(), "refused, not saved");
+
+    let (changed, mut changes) = unbounded();
+    let tell = changed.clone();
+    let coordinator = stage.coordinator.clone();
+    let _heard = stage
+        .cx
+        .update(|_, cx| cx.observe(&coordinator, move |_, _| _ = tell.unbounded_send(())));
+    stage.close(&view);
+    until("the layout saved", &mut changes, &changed, || {
+        stage.cx.run_until_parked();
+        !stage.saves.lock().unwrap().is_empty()
+            && stage
+                .cx
+                .update(|_, cx| coordinator.read(cx).saving.is_none())
+    })
+    .await;
+    assert_eq!(
+        status(&mut stage),
+        None,
+        "the line clears once the tab closes"
+    );
+    let last = stage.saves.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(
+        last["files"],
+        json!([]),
+        "nothing of the climbing path is stored"
+    );
 }
