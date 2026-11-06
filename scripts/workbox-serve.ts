@@ -45,7 +45,7 @@ try {
   if (mode === 'check') {
     if (order === 'unknown')
       console.log(`Workbox Test ${target.unit} says version ${probe.version}, which can't be compared with this checkout's ${version}; nothing to do`);
-    else if (order === 'same' && (!managed || probe.seedCohort === managed.cohort))
+    else if (order === 'same')
       console.log(`Workbox Test ${target.unit} is on version ${version} (host commit ${probe.commit}); nothing to do`);
     else {
       console.log(`Workbox Test ${target.unit} is on version ${probe.missing ? 'none, not installed' : probe.version ?? 'unknown'}; this checkout is on ${version}`);
@@ -57,7 +57,7 @@ try {
   const wanted = identity;
   identityCheck();
   const adaptersCurrent = probe.adapterOK && probe.launcherSha === launcher && (managed ? probe.toolsKey === toolKey(keepNewer(managed.versions, probe.toolVersions), sources, 'linux-x64') : probe.adapterSources === sources);
-  if (actual === wanted && adaptersCurrent && (!managed || probe.seedCohort === managed.cohort)) {
+  if (actual === wanted && adaptersCurrent) {
     console.log(`Workbox Test ${target.unit} already matches ${wanted} (host commit ${probe.commit}); no deploy`);
   } else {
     if (managed?.adopted) throw Error('adopted/shared lane needs its creator to update the remote; no deployment performed');

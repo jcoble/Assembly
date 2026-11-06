@@ -7,12 +7,12 @@ use gpui::TestAppContext;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::dock::BasePanel as _;
-use gpui_kit::{AppContext as _, CursorStyle, Entity, Modifiers, VisualTestContext};
+use gpui_kit::{AppContext as _, Entity, Modifiers, VisualTestContext};
 use serde_json::{Value, json};
 
 use super::super::listing::Listing;
 use super::super::{ContextPane, FileTouched};
-use super::{RowLook, held_until_outside_opener, names, row_cursor, row_looks, touched};
+use super::{RowLook, names, row_looks, touched};
 use crate::core::engine::SessionKey;
 use crate::core::intents::open_file::OpenFile;
 use crate::core::socket::row_source::ExpectedRowSource;
@@ -159,7 +159,7 @@ fn a_click_opens_the_file_through_the_normal_open_with_the_listed_source(cx: &mu
 
 // Pins: g0-shape#13
 #[gpui::test]
-fn a_file_outside_the_folder_is_a_normal_row_and_holds_its_click_until_outside_files_open(
+fn a_file_outside_the_folder_is_a_normal_row_and_opens_through_the_outside_file_opener(
     cx: &mut TestAppContext,
 ) {
     let (pane, client, opened, cx) = open(cx);
@@ -189,14 +189,14 @@ fn a_file_outside_the_folder_is_a_normal_row_and_holds_its_click_until_outside_f
     assert_ne!(looks[0].name_color, muted, "its name isn't muted");
     click("touched-file-/home/x/.codex/AGENTS.md", cx);
     assert!(
-        opened.borrow().is_empty(),
-        "held until outside files can be opened (TSK-1388)"
+        *opened.borrow() == [opening("/home/x/.codex/AGENTS.md")],
+        "its whole path goes to the normal open, which hands it to the outside-file opener (TSK-1388)"
     );
 }
 
 // Pins: g0-shape#13
 #[gpui::test]
-fn an_outside_rows_click_is_held_while_an_inside_rows_opens(cx: &mut TestAppContext) {
+fn an_outside_row_opens_as_an_inside_row_does(cx: &mut TestAppContext) {
     let (pane, client, opened, cx) = open(cx);
     shown_with(
         json!([
@@ -212,8 +212,13 @@ fn an_outside_rows_click_is_held_while_an_inside_rows_opens(cx: &mut TestAppCont
     click("touched-file-~/notes.md", cx);
     click("touched-file-src/a.rs", cx);
     assert!(
-        *opened.borrow() == [opening("src/a.rs")],
-        "only the inside row reaches the normal open"
+        *opened.borrow()
+            == [
+                opening("/home/x/.codex/AGENTS.md"),
+                opening("~/notes.md"),
+                opening("src/a.rs")
+            ],
+        "every row reaches the normal open"
     );
 }
 
@@ -333,42 +338,4 @@ fn a_whole_path_outside_the_shared_folder_keeps_its_leading_slash() {
 fn a_home_path_outside_the_shared_folder_keeps_its_leading_tilde() {
     let files = [file("~/.codex/AGENTS.md"), file("src/a.rs")];
     assert_eq!(names(&files), [("AGENTS.md", "~/.codex"), ("a.rs", "src")]);
-}
-
-// Pins: g0-shape#13
-#[test]
-fn only_an_outside_row_is_held_and_its_hover_says_why() {
-    let held = |path: &str| held_until_outside_opener(&file(path));
-    assert_eq!(
-        held("/home/x/.codex/AGENTS.md").as_deref(),
-        Some(
-            "/home/x/.codex/AGENTS.md — opens once files outside the session's folder can be opened"
-        )
-    );
-    assert!(held("~/notes.md").is_some());
-    assert!(held("../elsewhere/a.rs").is_some());
-    assert_eq!(held("src/a.rs"), None, "inside the folder opens");
-    let image = FileTouched {
-        name: Some("shot.png".into()),
-        ..file("/h/attachments/s1/9f.png")
-    };
-    assert_eq!(
-        held_until_outside_opener(&image),
-        None,
-        "an attached image opens full size"
-    );
-}
-
-// Pins: g0-shape#13
-#[test]
-fn a_held_row_keeps_the_normal_cursor_and_a_row_that_opens_shows_the_pointer() {
-    let cursor = |path: &str| row_cursor(&file(path));
-    assert_eq!(cursor("/home/x/.codex/AGENTS.md"), CursorStyle::Arrow);
-    assert_eq!(cursor("~/notes.md"), CursorStyle::Arrow);
-    assert_eq!(cursor("src/a.rs"), CursorStyle::PointingHand);
-    let image = FileTouched {
-        name: Some("shot.png".into()),
-        ..file("/h/attachments/s1/9f.png")
-    };
-    assert_eq!(row_cursor(&image), CursorStyle::PointingHand);
 }

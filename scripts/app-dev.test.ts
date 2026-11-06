@@ -39,6 +39,8 @@ exit ${tool === 'dotnet' ? '${DOTNET_EXIT:-0}' : '0'}
     const commands = readFileSync(log, 'utf8');
     assert.match(commands, /dotnet publish/);
     assert.match(commands, /cargo run --locked/);
+    // Main and a hand-made lane run on folders the seed never writes to.
+    assert.doesNotMatch(commands, /DevSeed/);
     assert.ok(commands.indexOf('dotnet publish') < commands.indexOf('cargo run'));
     const config = JSON.parse(readFileSync(join(root, 'desktop/target/dev-backend/lane.json'), 'utf8'));
     assert.equal(config.port, 18807);

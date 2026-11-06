@@ -50,4 +50,4 @@ Use only Claude Code models: Opus 5.5 medium for harder implementation and groun
 
 ## Shared UI components
 
-Before building UI, use the components in `desktop/src/components/`; see the [component catalog](<link>). Build a missing one there, on GPUI Kit, rather than inside a feature. Rows and cards expand with `core/ui/row_drop_down.rs`; don't write another grower.
+Before building UI, use the components in `desktop/src/components/`; see the [component catalog](https://app.notion.com/p/40e394b0689d81f2962dfc798918a034). Build a missing one there, on GPUI Kit, rather than inside a feature. Rows and cards expand with `core/ui/row_drop_down.rs`; don't write another grower.

@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "app:dev": "node scripts/app-dev.ts",
+    "seed:dev": "node scripts/seed-dev.ts",
     "deploy:remote": "node scripts/update-machines.ts"
   }
 }
