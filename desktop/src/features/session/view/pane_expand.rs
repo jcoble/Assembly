@@ -39,6 +39,8 @@ impl SessionPane {
                     took_ms,
                     denied: denied(&self.view.items).contains(item_id.as_str()),
                     on_action: self.on_action.clone(),
+                    session: self.session.clone(),
+                    expected_source: self.row_source.clone(),
                 };
                 fails = took_ms.is_none() && failed_run(tool, row.denied);
                 if !tool.has_detail {

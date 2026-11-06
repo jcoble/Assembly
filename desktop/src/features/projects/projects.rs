@@ -48,6 +48,8 @@ pub struct Projects {
     pub loading: bool,
     pub failure: Option<String>,
     revision: Option<i64>,
+    /// A list read has answered, so the rows are what the backend holds rather than not known yet.
+    answered: bool,
     generation: u64,
     read: Option<Task<()>>,
     _feed: Task<()>,
@@ -85,6 +87,7 @@ impl Projects {
             loading: false,
             failure: None,
             revision: None,
+            answered: false,
             generation: 0,
             read: None,
             _feed: feed,
@@ -131,6 +134,10 @@ impl Projects {
     }
     pub fn rows(&self) -> &[ProjectRecord] {
         &self.rows
+    }
+    /// Whether a list read has answered, with rows or a failure; before then an empty list says nothing.
+    pub fn answered(&self) -> bool {
+        self.answered
     }
     fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
         let (state, items) = match update {
@@ -190,6 +197,7 @@ impl Projects {
                 }
                 projects.loading = false;
                 projects.read = None;
+                projects.answered = true;
                 match answer {
                     Outcome::Ok(page) => {
                         if !more {

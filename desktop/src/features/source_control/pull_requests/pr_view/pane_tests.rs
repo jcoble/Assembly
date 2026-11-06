@@ -210,7 +210,17 @@ async fn pane_with_projects(
     fake: &mut Fake,
     window: &mut gpui::VisualTestContext,
 ) -> gpui::Entity<PrPane> {
-    let pane = window.update(|window, cx| cx.new(|cx| PrPane::new(None, window, cx)));
+    pane_following(None, fake, window).await
+}
+
+/// The tab following `session`, or none, once the projects are in.
+async fn pane_following(
+    session: Option<&str>,
+    fake: &mut Fake,
+    window: &mut gpui::VisualTestContext,
+) -> gpui::Entity<PrPane> {
+    let session = session.map(String::from);
+    let pane = window.update(|window, cx| cx.new(|cx| PrPane::new(session, window, cx)));
     until("the project rows", &mut fake.changes, &fake.changed, || {
         window.run_until_parked();
         window.update(|_, cx| {
@@ -303,6 +313,37 @@ fn a_link_clicked_on_the_page_opens_its_address(cx: &mut TestAppContext) {
     assert_eq!(cx.opened_url().as_deref(), Some(url));
 }
 
+// Brief item 10: a pasted pull request link is read by the one web link parser, so an `http://` link opens as an
+// `https://` one does, rather than being searched for as text.
+#[gpui::test]
+fn a_pasted_http_pull_request_link_opens_as_a_link(cx: &mut TestAppContext) {
+    let (_dock, cx) = registered_window(cx);
+    cx.update(|window, cx| {
+        window.dispatch_action(
+            Box::new(OpenPullRequests {
+                session_id: None,
+                repo: None,
+                number: None,
+            }),
+            cx,
+        )
+    });
+    settle(cx);
+    let pane = cx.update(|_, cx| CenterPanes::find::<PrPane>(super::KEY, cx).expect("the tab"));
+    for link in [
+        "http://github.com/o/r/pull/7",
+        "https://github.com/o/r/pull/7",
+    ] {
+        pane.update(cx, |pane, cx| pane.search(link.into(), cx));
+        settle(cx);
+        let missing = pane.read_with(cx, |pane, _| pane.missing_link.clone());
+        let (_, page) = missing.expect("the link was read as a pull request");
+        assert_eq!(page, "https://github.com/o/r/pull/7", "{link}");
+    }
+}
+
+#[path = "pane_link_wait_tests.rs"]
+mod link_wait_tests;
 #[path = "pane_opening_tests.rs"]
 mod opening_tests;
 #[path = "pane_project_tests.rs"]

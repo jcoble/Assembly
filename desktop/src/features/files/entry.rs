@@ -82,4 +82,7 @@ pub struct FileOwnership {
     pub machine: String,
     pub checkout_root: String,
     pub remote_session_id: String,
+    /// For a path target, the file: relative to the session's checkout when inside it, else the real file name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
 }

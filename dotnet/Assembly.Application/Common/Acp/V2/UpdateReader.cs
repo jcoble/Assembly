@@ -172,7 +172,7 @@ public sealed class UpdateReader
                         events.Add(new TurnFailed(at, state.Error?.Message ?? "The agent failed.", state.Error?.Code.ToString(CultureInfo.InvariantCulture)));
                     else if (state.StopReason is { } reason)
                         events.Add(new TurnEnded(at, reason, state.ReportedUsage is { } usage
-                            ? new TokenUsage(usage.InputTokens, usage.OutputTokens, usage.CachedReadTokens, usage.CachedWriteTokens) : null));
+                            ? new TokenUsage(usage.InputTokens, usage.OutputTokens, usage.CachedReadTokens, usage.CachedWriteTokens, usage.TotalTokens) : null));
                     if (state.ReportedUsage is { } report)
                         events.Add(new UsageReported(at, report.CostUsd, report.Model, report.Used, report.Size, report.InputTokens, report.OutputTokens));
                 }
@@ -200,7 +200,7 @@ public sealed class UpdateReader
 
     public static TurnEnded TurnEnd(PromptResult response, long at) =>
         new(at, response.StopReason, response.Usage is { } usage
-            ? new TokenUsage(usage.InputTokens, usage.OutputTokens, usage.CachedReadTokens, usage.CachedWriteTokens) : null);
+            ? new TokenUsage(usage.InputTokens, usage.OutputTokens, usage.CachedReadTokens, usage.CachedWriteTokens, usage.TotalTokens) : null);
 
     public static TurnFailed TurnFailure(JsonRpcException error, long at) =>
         new(at, error.Message, error.Code.ToString(CultureInfo.InvariantCulture));

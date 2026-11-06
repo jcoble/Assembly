@@ -7,7 +7,7 @@ use super::super::git_target::GitTarget;
 use super::pull_request::PullRequestCreated;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::{
-    intents::{open_pull_requests::OpenPullRequests, open_url::OpenUrl},
+    intents::{open_pull_requests::OpenPullRequests, open_url::OpenInBrowser},
     socket::{client::SocketClient, outcome::Outcome},
 };
 use gpui_kit::assets::IconName;
@@ -410,8 +410,10 @@ impl Render for CreatePrForm {
                                 .ghost()
                                 .label("Open on GitHub")
                                 .on_click(move |_, window, cx| {
-                                    window
-                                        .dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
+                                    window.dispatch_action(
+                                        Box::new(OpenInBrowser { url: url.clone() }),
+                                        cx,
+                                    )
                                 }),
                         ),
                     )

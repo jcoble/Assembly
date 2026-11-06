@@ -93,3 +93,13 @@ fn actual_open_target_refusals_remain_definitive_and_keep_their_exact_codes() {
         ErrorCode::Failed
     );
 }
+
+#[test]
+fn a_refused_file_path_keeps_its_code() {
+    for code in ["not_a_path", "not_full_path", "not_regular", "remote_older"] {
+        assert_eq!(
+            ErrorCode::from_wire(code, None),
+            ErrorCode::Refused { code: code.into() }
+        );
+    }
+}

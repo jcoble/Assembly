@@ -55,6 +55,24 @@ public sealed class PhoneChatRoutesTests
         Assert.Equal(1, h.Fixture.Count("engine_message"));
     }
 
+    // The phone route takes a prompt and answers a receipt; it serves no rows. So this holds what it can: a prompt
+    // that makes `named` and `attached` on its row goes through the route as it always did.
+    [Fact]
+    public async Task A_prompt_naming_files_and_images_is_sent_exactly_and_answers_only_the_receipt()
+    {
+        await using var h = new Harness();
+        var id = h.Session();
+        const string text = "see /a/b.md\n\nAttached image: /s/a.png (a.png)";
+        var sent = await h.Send(id, JsonSerializer.Serialize(new { text, clientId = "named_1" }));
+        Assert.Equal(200, sent.Status);
+        Assert.Equal(
+            ["itemId", "sessionId", "messageId", "clientId", "state", "messageVersion", "seq", "epoch", "runId"],
+            sent.Body.EnumerateObject().Select(property => property.Name));
+        var manifest = Assert.Single((await h.Door.ReadOwnerPromptsAsync(new(id), default)).Items);
+        var content = await h.Door.ReadOwnerPromptChunkAsync(new(id, "named_1", manifest.ContentSha256, "text", 0), default);
+        Assert.Equal(text, Encoding.UTF8.GetString(content.Data));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData(7L)]

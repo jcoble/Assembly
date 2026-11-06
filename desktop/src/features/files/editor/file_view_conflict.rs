@@ -9,7 +9,8 @@ use serde_json::json;
 
 impl FileView {
     pub(super) fn compare_document(&mut self, cx: &mut Context<Self>) {
-        if self.saving.is_some() {
+        // Compare stages the draft beside the file, so a locked file doesn't.
+        if self.saving.is_some() || self.locked {
             return;
         }
         let (Some(snapshot), Some(socket)) =
@@ -18,15 +19,20 @@ impl FileView {
             return;
         };
         self.comparison = None;
-        let begin = socket.read(cx).call::<Begun>("files", "beginSave", json!({ "session": self.session,
-            "path": self.path, "expectedRevision": snapshot.base_revision, "size": snapshot.text.len(), "expectedSource": self.source, "expectedOwner": self.owner }), None);
+        let begin = socket.read(cx).call::<Begun>(
+            "files",
+            "beginSave",
+            self.file_args(json!({
+            "expectedRevision": snapshot.base_revision, "size": snapshot.text.len() })),
+            None,
+        );
         self.saving = Some(cx.spawn(async move |view, cx| {
             let upload =
                 match upload_draft(&view, cx, &socket, begin, snapshot.text.as_bytes()).await {
                     Ok(upload) => upload,
                     Err(message) => {
                         let _ = view.update(cx, |view, cx| {
-                            view.saving = None;
+                            view.end_saving(cx);
                             view.drop_upload(cx);
                             view.editor_error = Some(message);
                             cx.notify();
@@ -46,7 +52,7 @@ impl FileView {
             };
             let answer = call.await;
             let _ = view.update(cx, |view, cx| {
-                view.saving = None;
+                view.end_saving(cx);
                 view.drop_upload(cx);
                 match answer {
                     Outcome::Ok(read) => {
@@ -91,7 +97,7 @@ impl FileView {
         self.prompting = Some(cx.spawn(async move |view, cx| {
             let answer = answer.await;
             let _ = view.update(cx, |view, cx| {
-                view.prompting = None;
+                view.end_prompting(cx);
                 if matches!(answer, Ok(0)) {
                     if view
                         .document_snapshot(cx)
@@ -108,7 +114,7 @@ impl FileView {
         }));
     }
 
-    pub(super) fn request_reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn request_reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.saving.is_some() || self.prompting.is_some() {
             return;
         }
@@ -133,7 +139,7 @@ impl FileView {
         self.prompting = Some(cx.spawn(async move |view, cx| {
             let answer = answer.await;
             let _ = view.update(cx, |view, cx| {
-                view.prompting = None;
+                view.end_prompting(cx);
                 if matches!(answer, Ok(0)) {
                     view.begin_reload(snapshot.version, cx);
                 }

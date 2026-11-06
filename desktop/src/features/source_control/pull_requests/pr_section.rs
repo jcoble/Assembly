@@ -5,7 +5,7 @@ use super::super::git_target::GitTarget;
 use super::super::section_heading::section_heading;
 use super::pull_request::{CheckTone, PullRequestSummary};
 use super::{create_pr_dialog, pr_queue::PrQueue};
-use crate::core::intents::{open_pull_requests::OpenPullRequests, open_url::OpenUrl};
+use crate::core::intents::{open_pull_requests::OpenPullRequests, open_url::OpenInBrowser};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::control_ids as ids;
 use crate::core::ui::access::{Control as _, Named as _};
@@ -147,7 +147,10 @@ impl PrSection {
                             .tooltip("Open on GitHub")
                             .on_click(move |_, window, cx| {
                                 cx.stop_propagation();
-                                window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx)
+                                window.dispatch_action(
+                                    Box::new(OpenInBrowser { url: url.clone() }),
+                                    cx,
+                                )
                             }),
                     ),
             )

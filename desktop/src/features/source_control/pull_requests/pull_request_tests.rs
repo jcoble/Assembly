@@ -2,20 +2,17 @@ use super::{CheckTone, PrTarget, PullRequestPage, PullRequestSummary};
 
 #[test]
 fn a_pasted_link_selects_only_an_actual_project_repository() {
-    let target = PrTarget::from_url(
-        "https://github.com/Owner/Repo/pull/42/files#diff",
-        &["owner/repo".into()],
-    )
-    .unwrap();
+    let pasted = |text: &str| PrTarget::parse_url(text).unwrap();
+    let target = pasted("https://github.com/Owner/Repo/pull/42/files#diff")
+        .among(&["owner/repo".into()])
+        .unwrap();
     assert_eq!(target.repository, "owner/repo");
     assert_eq!(target.number, 42);
+    let elsewhere = pasted("https://github.com/other/repo/pull/42");
+    assert_eq!(elsewhere.clone().among(&["owner/repo".into()]), None);
     assert_eq!(
-        PrTarget::from_url(
-            "https://github.com/other/repo/pull/42",
-            &["owner/repo".into()]
-        )
-        .unwrap_err(),
-        "That PR's repository isn't a project in Assembly."
+        elsewhere.web_page(),
+        "https://github.com/other/repo/pull/42"
     );
 }
 #[test]
@@ -28,7 +25,11 @@ fn malformed_or_other_host_links_cannot_select_a_target() {
         "https://github.com/o/r/pull/no",
         "file:///o/r/pull/1",
     ] {
-        assert!(PrTarget::from_url(link, &["o/r".into()]).is_err(), "{link}");
+        assert_eq!(
+            PrTarget::parse_url(link),
+            Err("Paste a GitHub pull request link.".into()),
+            "{link}"
+        );
     }
 }
 #[test]
@@ -46,7 +47,7 @@ fn an_empty_queue_does_not_remove_the_structural_target_needed_for_backend_check
     let target = PrTarget::parse_url("https://github.com/actual/checkout/pull/7").unwrap();
     assert_eq!(target.repository, "actual/checkout");
     assert_eq!(target.number, 7);
-    assert!(PrTarget::from_url("https://github.com/actual/checkout/pull/7", &[]).is_err());
+    assert_eq!(target.among(&[]), None);
 }
 #[test]
 fn a_row_says_its_checks_only_when_the_backend_did() {

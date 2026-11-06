@@ -46,7 +46,11 @@ impl ErrorCode {
             | "operation_id_conflict"
             | "install_busy"
             | "operation_capacity"
-            | "operation_unknown" => ErrorCode::Refused { code: code.into() },
+            | "operation_unknown"
+            | "not_a_path"
+            | "not_full_path"
+            | "not_regular"
+            | "remote_older" => ErrorCode::Refused { code: code.into() },
             "connection_lost" => ErrorCode::ConnectionLost,
             "terminal_missing" => ErrorCode::TerminalMissing,
             "uncertain" => ErrorCode::Uncertain {

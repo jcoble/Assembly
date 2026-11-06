@@ -18,10 +18,12 @@ fn a_task_link_names_its_page() {
     );
 }
 
+// Feature 28 parity item 6: the sign-in service's callback page sends `code` (old
+// infrastructure/notion-oauth/src/worker.ts:148), as the old app read it.
 #[test]
 fn a_sign_in_callback_gives_its_state_and_code() {
     assert_eq!(
-        parse_external("assembly://notion-oauth?state=abc&claimCode=def"),
+        parse_external("assembly://notion-oauth?state=abc&code=def"),
         ExternalRoute::NotionOAuth {
             state: "abc".into(),
             claim_code: "def".into()
@@ -31,7 +33,7 @@ fn a_sign_in_callback_gives_its_state_and_code() {
 
 #[test]
 fn a_callback_never_prints_its_secrets() {
-    let route = parse_external("assembly://notion-oauth?state=abc&claimCode=def");
+    let route = parse_external("assembly://notion-oauth?state=abc&code=def");
     assert_eq!(format!("{route:?}"), "NotionOAuth");
 }
 
@@ -39,15 +41,17 @@ fn a_callback_never_prints_its_secrets() {
 fn malicious_or_unknown_links_are_refused() {
     for url in [
         "assembly://notion-oauth?state=abc",
-        "assembly://notion-oauth?state=abc&claimCode=",
-        "assembly://notion-oauth?state=a&state=b&claimCode=c",
-        "assembly://notion-oauth?state=a&claimCode=c&extra=1",
-        "assembly://user:pw@notion-oauth?state=a&claimCode=c",
-        "assembly://notion-oauth/evil?state=a&claimCode=c",
+        "assembly://notion-oauth?state=abc&code=",
+        "assembly://notion-oauth?state=a&state=b&code=c",
+        "assembly://notion-oauth?state=a&code=c&code=d",
+        "assembly://notion-oauth?state=a&code=c&extra=1",
+        "assembly://notion-oauth?state=a&claimCode=c",
+        "assembly://user:pw@notion-oauth?state=a&code=c",
+        "assembly://notion-oauth/evil?state=a&code=c",
         "assembly://task/not-an-id",
         "assembly://task/../../etc/passwd",
         "assembly://other/thing",
-        "https://notion-oauth?state=a&claimCode=c",
+        "https://notion-oauth?state=a&code=c",
         "file:///etc/passwd",
         "",
     ] {

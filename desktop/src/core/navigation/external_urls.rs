@@ -43,6 +43,8 @@ pub enum ExternalRoute {
         path: String,
         machine: Option<String>,
     },
+    /// A file link whose path isn't absolute: refused in the file words.
+    NotFullPath,
     Unsupported,
 }
 
@@ -54,6 +56,7 @@ impl fmt::Debug for ExternalRoute {
             Self::Session { id, machine } => write!(formatter, "Session({id}, {machine:?})"),
             Self::Open { url } => write!(formatter, "Open({url})"),
             Self::File { path, machine } => write!(formatter, "File({path}, {machine:?})"),
+            Self::NotFullPath => formatter.write_str("NotFullPath"),
             Self::Unsupported => formatter.write_str("Unsupported"),
         }
     }
@@ -188,9 +191,15 @@ fn open_route(query: Option<&str>) -> Option<ExternalRoute> {
     is_web_page(&address).then_some(ExternalRoute::Open { url: address })
 }
 
+/// A home path (`~` or `~/…`) is a file link too: the resolver expands it on the machine that owns it. A well-formed
+/// file link whose path is neither absolute nor home is refused in the file words rather than as no link at all.
 fn file_route(query: Option<&str>) -> Option<ExternalRoute> {
     let [path, machine] = query_values(query, ["path", "profile"])?;
     let path = path?;
+    let home = path == "~" || path.starts_with("~/");
+    if !path.starts_with('/') && !home {
+        return Some(ExternalRoute::NotFullPath);
+    }
     is_clean_path(&path).then_some(ExternalRoute::File { path, machine })
 }
 
@@ -210,9 +219,10 @@ fn file_url_route(text: &str) -> Option<ExternalRoute> {
     })
 }
 
-/// Absolute, with no `.` or `..` component.
+/// Absolute or home, with no `.` or `..` component.
 fn is_clean_path(path: &str) -> bool {
-    path.starts_with('/') && !path.split('/').any(|part| part == "." || part == "..")
+    (path.starts_with('/') || path == "~" || path.starts_with("~/"))
+        && !path.split('/').any(|part| part == "." || part == "..")
 }
 
 /// The value of each key, in the order asked. Each key comes at most once, spelled exactly, with a non-empty value. A
@@ -252,7 +262,7 @@ fn oauth_route(url: &url::Url) -> ExternalRoute {
     for (key, value) in url.query_pairs() {
         let slot = match key.as_ref() {
             "state" => &mut state,
-            "claimCode" => &mut code,
+            "code" => &mut code,
             _ => return ExternalRoute::Unsupported,
         };
         if slot.is_some() || value.is_empty() {
