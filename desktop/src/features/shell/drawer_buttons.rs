@@ -14,8 +14,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::default_layout::{
-    AGENTS, CONTEXT, FILES, HISTORY, RUN, SOURCE_CONTROL, TASKS, TERMINAL, WORKTREES,
+    AGENTS, CONTEXT, FILES, HISTORY, RUN, SOURCE_CONTROL, TASKS, WORKTREES,
 };
+use super::terminal_toggle::menu_item;
 
 const PILL_W: Pixels = px(28.);
 const PILL_H: Pixels = px(24.);
@@ -57,10 +58,7 @@ pub struct DrawerButtons {
 impl RenderOnce for DrawerButtons {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let area = self.dock.read(cx);
-        let (open, terminal_open) = (
-            area.is_dock_open(DockPlacement::Right),
-            area.is_dock_open(DockPlacement::Bottom),
-        );
+        let open = area.is_dock_open(DockPlacement::Right);
         // Each visible drawer pane: its id, its name, and whether its tab group shows it.
         let mut panes: Vec<(PanelId, &'static str, bool)> = Vec::new();
         if let Some(tree) = area.layout(DockPlacement::Right) {
@@ -134,7 +132,7 @@ impl RenderOnce for DrawerButtons {
             .w(CONTROL)
             .h(CONTROL)
             .tooltip("More panels")
-            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, cx| {
                 let menu =
                     overflow
                         .iter()
@@ -151,18 +149,7 @@ impl RenderOnce for DrawerButtons {
                                     }),
                             )
                         });
-                let dock = dock.clone();
-                menu.separator().item(
-                    PopupMenuItem::new(TERMINAL)
-                        .icon(IconName::SquareTerminal)
-                        .checked(terminal_open)
-                        .on_click(move |_, window, cx| {
-                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
-                            dock.update(cx, |dock, cx| {
-                                dock.toggle_dock(DockPlacement::Bottom, window, cx)
-                            });
-                        }),
-                )
+                menu.separator().item(menu_item(dock.clone(), cx))
             });
         let dock = self.dock.clone();
         let close = button("Close side panel", ids::CLOSE.into(), IconName::X, false).w(CONTROL).h(CONTROL).rounded_md().on_click(move |_, window, cx| {
@@ -185,7 +172,11 @@ impl RenderOnce for DrawerButtons {
                     .children(panes),
             )
             .child(div().flex_1())
-            .child(menu)
+            .child(
+                div()
+                    .debug_selector(|| "drawer-overflow".into())
+                    .child(menu),
+            )
             .child(close)
     }
 }

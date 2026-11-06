@@ -128,6 +128,32 @@ pub fn session_link(id: &str, machine: Option<&str>) -> String {
     }
 }
 
+/// The link that opens this file through its session.
+pub fn file_address(path: &str, machine: Option<&str>) -> String {
+    let path = utf8_percent_encode(path, LINK_VALUE);
+    match machine {
+        Some(machine) => format!(
+            "assembly://file?path={path}&profile={}",
+            utf8_percent_encode(machine, LINK_VALUE)
+        ),
+        None => format!("assembly://file?path={path}"),
+    }
+}
+
+/// The app link for a `file://` URL on `machine`. The URL means a file on the machine its program runs on, whatever
+/// host it names, so the host is dropped and the rest read as a `file:` URL from the system is.
+pub fn file_url_address(url: &str, machine: Option<&str>) -> Option<String> {
+    let rest = url
+        .get(..7)
+        .filter(|scheme| scheme.eq_ignore_ascii_case("file://") && is_bare_text(url))
+        .map(|_| &url[7..])?;
+    let text = rest[rest.find('/')?..].strip_prefix('/')?;
+    match file_url_route(text)? {
+        ExternalRoute::File { path, .. } => Some(file_address(&path, machine)),
+        _ => None,
+    }
+}
+
 /// The session, open and file shapes, read from the link's own text: `url::Url` cleans up dot segments, ports, empty
 /// credentials, case and spare separators, so what it hands back isn't what the link says.
 fn exact_link(address: &str) -> Option<ExternalRoute> {

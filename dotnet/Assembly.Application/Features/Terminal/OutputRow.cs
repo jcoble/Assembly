@@ -6,7 +6,8 @@ namespace Assembly.Application.Features.Terminal;
 public enum TerminalUnavailable
 {
     [JsonStringEnumMemberName("connection_lost")] ConnectionLost,
-    [JsonStringEnumMemberName("terminal_missing")] TerminalMissing
+    [JsonStringEnumMemberName("terminal_missing")] TerminalMissing,
+    [JsonStringEnumMemberName("source_changed")] SourceChanged
 }
 
 /// <summary>Byte/exit offsets keep their normal meaning; availability carries no invented offset or exit.</summary>

@@ -1,10 +1,18 @@
-//! The mouse on the Terminal tab: a drag selects (Copy is in `key_down`), and the wheel scrolls back through the
-//! history, or reports the mouse in the tracking/encoding modes requested by the program.
+//! The mouse on the Terminal tab: a drag selects (terminal_pane_select.rs follows it), a double-click selects a word,
+//! a press on the scrollbar takes it (terminal_pane_scrollbar.rs), a link under the mouse underlines and opens through
+//! `OpenUrl` on a Cmd or Ctrl-click (spec 7), and the wheel scrolls back through the history, or
+//! reports the mouse in the tracking/encoding modes requested by the program.
 
 use alacritty_terminal::term::TermMode;
 use gpui_kit::*;
 
+use std::mem;
+
 use super::{Shown, TerminalPane};
+use crate::core::intents::open_url::OpenUrl;
+use crate::core::navigation::external_urls::file_url_address;
+use crate::core::state::selected_session::SelectedSession;
+use crate::features::terminal::terminal_grid::GridCell;
 use crate::features::terminal::terminal_keys::key_bytes;
 
 impl TerminalPane {
@@ -15,6 +23,34 @@ impl TerminalPane {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus, cx);
+        // A release that landed elsewhere or never came leaves nothing for the next one to swallow, nor a drag on.
+        self.link_pressed = false;
+        if event.button == MouseButton::Left {
+            self.end_drag(cx);
+        }
+        if event.button == MouseButton::Left && self.press_bar(event.position, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        // Cmd or Ctrl on a link opens it once, even with a program holding the mouse, which hears neither press nor
+        // release; a double-click's second press only goes nowhere.
+        if event.button == MouseButton::Left
+            && event.modifiers.secondary(cx)
+            && let Some(link) = (self.cell_at(event.position))
+                .and_then(|(column, line, _)| self.grid.link_at(column, line))
+        {
+            self.link_pressed = true;
+            cx.stop_propagation();
+            if event.click_count == 1 {
+                // A file link names a file on the shell's machine: the session's route, none when local.
+                let selected = SelectedSession::global(cx).read(cx);
+                let machine =
+                    (selected.source()).and_then(|source| source.route_machine.as_deref());
+                let url = file_url_address(&link.url, machine).unwrap_or(link.url);
+                window.dispatch_action(Box::new(OpenUrl { url }), cx);
+            }
+            return;
+        }
         let Some((column, line, right)) = self.cell_at(event.position) else {
             return;
         };
@@ -26,9 +62,17 @@ impl TerminalPane {
         if event.button != MouseButton::Left {
             return;
         }
-        self.grid.select_start(column, line, right);
-        self.selecting = true;
         cx.notify();
+        if event.click_count == 2 {
+            if self.grid.select_word(column, line)
+                && let Some(text) = self.grid.selection_text()
+            {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+            return;
+        }
+        self.grid.select_start(column, line, right);
+        (self.selecting, self.dragged_to) = (true, event.position);
     }
 
     pub(super) fn mouse_move(
@@ -37,22 +81,20 @@ impl TerminalPane {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if event.pressed_button.is_none() {
+            self.hover(event.position, cx);
+        }
+        // A link's modifier-click never reached the program, so the moves it holds the button for don't either.
+        if self.link_pressed && event.pressed_button.is_some() {
+            return;
+        }
+        // A selecting drag is followed by terminal_pane_select.rs, past the pane's edge too.
         let mode = self.grid.mouse_mode();
-        if mode.intersects(TermMode::MOUSE_MODE) {
-            if mode.contains(TermMode::MOUSE_MOTION)
-                || (mode.contains(TermMode::MOUSE_DRAG) && event.pressed_button.is_some())
-            {
-                let button = event.pressed_button.and_then(button_code).unwrap_or(3) + 32;
-                self.report_mouse(button, event.position, event.modifiers, false, cx);
-            }
-            return;
-        }
-        if !self.selecting || event.pressed_button != Some(MouseButton::Left) {
-            return;
-        }
-        if let Some((column, line, right)) = self.cell_at(event.position) {
-            self.grid.select_to(column, line, right);
-            cx.notify();
+        if mode.contains(TermMode::MOUSE_MOTION)
+            || (mode.contains(TermMode::MOUSE_DRAG) && event.pressed_button.is_some())
+        {
+            let button = event.pressed_button.and_then(button_code).unwrap_or(3) + 32;
+            self.report_mouse(button, event.position, event.modifiers, false, cx);
         }
     }
 
@@ -62,13 +104,68 @@ impl TerminalPane {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.selecting = false;
+        if event.button == MouseButton::Left && self.release_bar(cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if event.button == MouseButton::Left && mem::take(&mut self.link_pressed) {
+            cx.stop_propagation();
+            return;
+        }
+        if event.button == MouseButton::Left {
+            self.end_drag(cx);
+        }
         if let Some(button) = button_code(event.button) {
             self.report_mouse(button, event.position, event.modifiers, true, cx);
         }
     }
 
-    /// Tracking modes consume mouse input; otherwise selection and scrollback keep their usual behavior.
+    /// Finds the link under the mouse, on its row only, and draws again when it changed.
+    /// Looks again only when the mouse is over another cell.
+    fn hover(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let cell = self
+            .cell_at(position)
+            .map(|(column, line, _)| (column, line));
+        if cell == self.hovered_cell {
+            return;
+        }
+        self.hovered_cell = cell;
+        let link = cell.and_then(|(column, line)| self.grid.link_at(column, line));
+        if link != self.hovered {
+            self.hovered = link;
+            cx.notify();
+        }
+    }
+
+    /// The text under the mouse moved: the link found there no longer is, and the next move looks again.
+    pub(super) fn unhover(&mut self) {
+        (self.hovered, self.hovered_cell) = (None, None);
+    }
+
+    /// The mouse left the pane: no link is under it.
+    pub(super) fn hovered_pane(&mut self, hovered: &bool, _: &mut Window, cx: &mut Context<Self>) {
+        if !*hovered && self.hovered.is_some() {
+            self.unhover();
+            cx.notify();
+        }
+    }
+
+    /// The screen's cells, those of the link under the mouse underlined.
+    pub(super) fn cells(&self) -> Vec<GridCell> {
+        let mut cells = self.grid.cells();
+        if let Some(link) = &self.hovered {
+            for cell in &mut cells {
+                let on = |&(line, start, end): &(usize, usize, usize)| {
+                    cell.line == line && (start..end).contains(&cell.column)
+                };
+                cell.underline |= link.line_spans.iter().any(on);
+            }
+        }
+        cells
+    }
+
+    /// Tracking modes consume mouse input; otherwise selection and scrollback keep their usual behavior. A stopped
+    /// shell's last program hears nothing, so selecting and copying work after exit (spec 2).
     fn report_mouse(
         &mut self,
         button: u8,
@@ -78,7 +175,7 @@ impl TerminalPane {
         cx: &mut Context<Self>,
     ) -> bool {
         let mode = self.grid.mouse_mode();
-        if !mode.intersects(TermMode::MOUSE_MODE) {
+        if self.stopped() || !mode.intersects(TermMode::MOUSE_MODE) {
             return false;
         }
         cx.stop_propagation();
@@ -154,7 +251,10 @@ impl TerminalPane {
             return;
         }
         if !self.grid.wheel_sends_arrows() {
-            self.grid.scroll(lines);
+            if self.grid.scroll(lines) {
+                self.unhover();
+                self.show_scrollbar(cx);
+            }
             cx.notify();
             return;
         }
@@ -171,7 +271,7 @@ impl TerminalPane {
 
     /// The screen cell under a window position and whether it's on the cell's right half; none before the grid is
     /// drawn.
-    fn cell_at(&self, position: Point<Pixels>) -> Option<(usize, usize, bool)> {
+    pub(super) fn cell_at(&self, position: Point<Pixels>) -> Option<(usize, usize, bool)> {
         if self.cell.width <= px(0.) || self.cell.height <= px(0.) {
             return None;
         }

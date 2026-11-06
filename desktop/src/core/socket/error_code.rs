@@ -21,6 +21,10 @@ pub enum ErrorCode {
     Unreachable {
         machine: String,
     },
+    /// The connection to the machine that owns a terminal dropped; it comes back by itself.
+    ConnectionLost,
+    /// The terminal isn't on its owner any more.
+    TerminalMissing,
 }
 
 impl ErrorCode {
@@ -47,6 +51,8 @@ impl ErrorCode {
             | "not_full_path"
             | "not_regular"
             | "remote_older" => ErrorCode::Refused { code: code.into() },
+            "connection_lost" => ErrorCode::ConnectionLost,
+            "terminal_missing" => ErrorCode::TerminalMissing,
             "uncertain" => ErrorCode::Uncertain {
                 machine: machine.unwrap_or_default(),
             },

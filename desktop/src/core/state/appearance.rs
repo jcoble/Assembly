@@ -17,6 +17,7 @@ pub const UI_FONT: &str = "appearance.uiFont";
 pub const CODE_FONT: &str = "appearance.codeFont";
 pub const EDITOR_FONT: &str = "editor.fontFamily";
 pub const TERMINAL_FONT: &str = "terminal.fontFamily";
+pub const TERMINAL_CURSOR_BLINK: &str = "terminal.cursorBlink";
 
 /// The ranges are the old app's sliders (SettingsDialog.svelte:932-1017).
 pub const UI_FONT_SIZE: NumberSetting = NumberSetting {
@@ -90,6 +91,13 @@ impl Appearance {
     /// The saved value for a setting with a type-specific reader.
     pub(crate) fn saved_value(&self, key: &str) -> Option<&Value> {
         self.saved.get(key)
+    }
+
+    /// Whether the terminal's cursor blinks; on unless saved off.
+    pub fn terminal_cursor_blink(&self) -> bool {
+        (self.saved.get(TERMINAL_CURSOR_BLINK))
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
     }
 
     pub fn number(&self, setting: &NumberSetting) -> f32 {

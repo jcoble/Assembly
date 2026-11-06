@@ -1,6 +1,6 @@
 //! `TopBar` owns the title row above the panes, on the rail: the Home button, which keeps the open sessions column's width so the
 //! dividers line up, also while the column's edge is dragged. Its menu opens Build Board and Settings,
-//! and at the right the drawer toggle. Tool tabs and the Terminal action live in the drawer header's capsule/menu
+//! and at the right the Terminal button and the drawer toggle. Tool tabs live in the drawer header's capsule/menu
 //! (drawer_buttons.rs). Replaces TopTabRow.svelte's chrome, HomeButton.svelte and the
 //! `window-chrome` markup in routes/+page.svelte.
 
@@ -14,7 +14,7 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::*;
 
-use super::{drawer_buttons, top_tabs};
+use super::{drawer_buttons, terminal_toggle, top_tabs};
 use crate::activity::{DotChip, Tone};
 use crate::core::engine::{EngineChanged, EngineFeed};
 use crate::core::intents::open_settings::OpenSettings;
@@ -210,6 +210,7 @@ impl Render for TopBar {
             )
             .child(top_tabs::tabs(self.dock.clone(), window, cx))
             .child(self.restart.clone())
+            .child(terminal_toggle::button(self.dock.clone(), cx))
             .child(drawer_buttons::toggle(self.dock.clone(), cx))
     }
 }

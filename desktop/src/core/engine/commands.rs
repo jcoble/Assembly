@@ -147,7 +147,9 @@ impl EngineFeed {
                         ErrorCode::Refused { code } => code.as_str(),
                         ErrorCode::NotFound => "not_found",
                         ErrorCode::BadArgs => "bad_args",
-                        ErrorCode::Failed => "failed",
+                        ErrorCode::Failed
+                        | ErrorCode::ConnectionLost
+                        | ErrorCode::TerminalMissing => "failed",
                         ErrorCode::Uncertain { .. }
                         | ErrorCode::Timeout
                         | ErrorCode::Unreachable { .. } => "outcome_unknown",
