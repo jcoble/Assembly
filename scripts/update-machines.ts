@@ -16,14 +16,13 @@ import type { LaneOwner } from './dev-lane-clean.ts';
 import { remoteBehindExit } from './dev-remote-identity.ts';
 import { lifetime } from './dev-remote-process.ts';
 import { ensureTools, latestTools } from './dev-toolchain.ts';
-import { seedCohort, trackedManifest } from './dev-seed-cohort.ts';
 import { profileFor } from './seed-dev.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const owner = lifetime();
 const say = (reason: string) => console.log('ASSEMBLY_REMOTE_SYNC ' + JSON.stringify({ reason }));
 
-// The same folders app-dev uses: a managed lane's seeded profile, or this checkout's lane data.
+// The same folders app-dev uses: a managed lane's own profile, or this checkout's lane data.
 function laneFolders() {
   const lane = spawnSync('bash', ['-c', 'source scripts/lane-env.sh || exit; printf "%s\\0" "$DATA/mac" "$DATA/adapters"'], { cwd: root, encoding: 'utf8' });
   if (lane.status !== 0) return { home: profileFor(root).home, adapters: join(profileFor(root).home, 'adapters') };
@@ -34,10 +33,8 @@ function laneFolders() {
 async function managedLane() {
   const name = profileFor(root).root.split('/').at(-1)!;
   const laneOwner = JSON.parse(await fs.readFile(join(homedir(), 'assembly-dev/lanes', name + '.json'), 'utf8')) as LaneOwner;
-  const manifest = process.env.ASSEMBLY_DEV_SEED_MANIFEST ?? trackedManifest(root);
   const config = await fs.readFile(join(root, '.lane'), 'utf8');
-  return { cohort: await seedCohort(manifest), seedManifest: process.env.ASSEMBLY_DEV_REMOTE_SEED_MANIFEST,
-    owner: laneOwner.remoteOwner ?? laneOwner, adopted: config.includes('LANE_ADOPTED=1') };
+  return { owner: laneOwner.remoteOwner ?? laneOwner, adopted: config.includes('LANE_ADOPTED=1') };
 }
 
 function remote(mode: string, request?: object) {

@@ -9,7 +9,7 @@
 # dotnet/scripts/workbox.sh serve lane/ui-check
 # Remote: Settings > Connections where the branch has it; before that, start with ASSEMBLY_REMOTE=workbox-test.
 # Connect only to Workbox Test.
-# Optional seeded data: ASSEMBLY_UI_CHECK_PROFILE must be this worktree's canonical TSK-1661 profile.
+# Optional seeded data: npm run seed:dev, then ASSEMBLY_UI_CHECK_PROFILE set to the profile it printed for this worktree.
 # With the printed DISPLAY exported, type: xdotool type --clearmodifiers 'text'
 # Scroll: xdotool click 5 (down), xdotool click 4 (up).
 set -euo pipefail

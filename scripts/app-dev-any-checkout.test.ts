@@ -21,7 +21,13 @@ function checkout(): { root: string; home: string; run: (extra?: NodeJS.ProcessE
   writeFileSync(join(root, 'dotnet/Assembly.Desktop/Assembly.Desktop.csproj'), '');
   writeFileSync(join(root, 'scripts/lane-env.sh'), 'echo "stop: no .lane" >&2\nreturn 1\n');
   writeFileSync(join(root, 'dotnet/scripts/agents-file.sh'), '[ -z "$ADAPTERS_FAIL" ] || exit 1\nprintf "%s" "$1" > "$ADAPTER_LOG"\nprintf "[]" > "$2"\n');
-  writeFileSync(join(root, 'bin/dotnet'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  // A seeder that does what the real one does to the profile: a request on stdin, then the marker.
+  writeFileSync(join(root, 'bin/dotnet'), `#!${process.execPath}
+const fs=require('node:fs'),path=require('node:path'),args=process.argv.slice(2);
+fs.appendFileSync(process.env.DOTNET_LOG,args.join(' ')+'\\n');
+if(process.env.SEED_FAIL&&args[0]==='build'&&args[1].endsWith('Assembly.DevSeed'))process.exit(3);
+if(args[0].endsWith('Assembly.DevSeed.dll')){let t='';process.stdin.on('data',d=>t+=d);process.stdin.on('end',()=>{const r=JSON.parse(t);fs.appendFileSync(process.env.DOTNET_LOG,'request '+t+'\\n');fs.writeFileSync(path.join(r.computedHome,'dev-seed.json'),'{}')})}
+`, { mode: 0o755 });
   writeFileSync(join(root, 'bin/cargo'), '#!/bin/sh\ntouch "$ADAPTER_LOG.launched"\n', { mode: 0o755 });
   return {
     root,
@@ -29,7 +35,7 @@ function checkout(): { root: string; home: string; run: (extra?: NodeJS.ProcessE
     run: (extra = {}) => spawnSync(process.execPath, [join(root, 'scripts/app-dev.ts')], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...process.env, HOME: home, PATH: `${join(root, 'bin')}:${process.env.PATH}`, ADAPTER_LOG: join(root, 'adapter-path'), ADAPTERS: undefined, ...extra },
+      env: { ...process.env, HOME: home, PATH: `${join(root, 'bin')}:${process.env.PATH}`, ADAPTER_LOG: join(root, 'adapter-path'), DOTNET_LOG: join(top, 'dotnet-log'), ADAPTERS: undefined, ...extra },
     }),
   };
 }
@@ -57,6 +63,34 @@ test('the same checkout gets the same data and ports every time', () => {
   try {
     const read = () => { run(); return readFileSync(join(root, 'desktop/target/dev-backend/lane.json'), 'utf8'); };
     assert.equal(read(), read());
+  } finally { rmSync(join(root, '..'), { recursive: true, force: true }); }
+});
+
+test('a plain launch on an empty profile seeds it, asking only about its own profile, and later launches do not', () => {
+  const { root, run } = checkout();
+  const log = join(root, '../dotnet-log');
+  try {
+    assert.equal(run().status, 0);
+    const first = readFileSync(log, 'utf8');
+    const config = JSON.parse(readFileSync(join(root, 'desktop/target/dev-backend/lane.json'), 'utf8'));
+    const request = JSON.parse(first.split('\n').find(line => line.startsWith('request '))!.slice(8));
+    assert.equal(request.computedHome, config.home);
+    assert.equal(request.mode, 'if-empty');
+    assert.ok(first.indexOf('publish') < first.indexOf('Assembly.DevSeed'), 'the backend builds first');
+    assert.ok(existsSync(join(root, 'adapter-path.launched')), 'the app was not launched');
+    writeFileSync(log, '');
+    assert.equal(run().status, 0);
+    assert.doesNotMatch(readFileSync(log, 'utf8'), /DevSeed/);
+  } finally { rmSync(join(root, '..'), { recursive: true, force: true }); }
+});
+
+test('the app still opens when it cannot be seeded, and says so', () => {
+  const { root, run } = checkout();
+  try {
+    const result = run({ SEED_FAIL: '1' });
+    assert.equal(result.status, 0, String(result.stderr));
+    assert.match(String(result.stderr), /without seed data/);
+    assert.ok(existsSync(join(root, 'adapter-path.launched')), 'the app was not launched');
   } finally { rmSync(join(root, '..'), { recursive: true, force: true }); }
 });
 

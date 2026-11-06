@@ -5,8 +5,8 @@ Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
 try
 {
     var request = SeedJson.Parse<SeedRequest>(await Console.In.ReadToEndAsync(cancellation.Token));
-    var report = DevSeed.Run(request, cancellation.Token);
-    Console.WriteLine(SeedJson.Stringify(report));
+    var result = DevSeed.Run(request, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), cancellation.Token);
+    Console.WriteLine(SeedJson.Stringify(result));
     return 0;
 }
 catch (Exception error)
