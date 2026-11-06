@@ -12,8 +12,8 @@ test('app:dev prepares the backend and launches GPUI without Tauri or Vite', () 
       mkdirSync(join(root, folder), { recursive: true });
     }
     copyFileSync(new URL('./app-dev.ts', import.meta.url), join(root, 'scripts/app-dev.ts'));
-    copyFileSync(new URL('./seed-dev.ts', import.meta.url), join(root, 'scripts/seed-dev.ts'));
     copyFileSync(new URL('./app-dev-remote.ts', import.meta.url), join(root, 'scripts/app-dev-remote.ts'));
+    copyFileSync(new URL('./seed-dev.ts', import.meta.url), join(root, 'scripts/seed-dev.ts'));
     writeFileSync(join(root, 'scripts/lane-env.sh'), `
 DATA="$PWD/test-data"
 DESKTOP_PORT=18807

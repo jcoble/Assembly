@@ -17,6 +17,14 @@ internal static class RemoteReleaseTrust
 
     internal static void Verify(ReadOnlySpan<byte> data, ReadOnlySpan<byte> signatureFile, string publicKey = SigningPublicKey)
     {
+        var digest = new ReleaseDigest();
+        digest.Add(data);
+        Verify(digest, signatureFile, publicKey);
+    }
+
+    /// <summary>The same check over bytes already fed to <paramref name="digest"/> as they arrived.</summary>
+    internal static void Verify(ReleaseDigest digest, ReadOnlySpan<byte> signatureFile, string publicKey = SigningPublicKey)
+    {
         try
         {
             var key = Convert.FromBase64String(publicKey);
@@ -29,21 +37,12 @@ internal static class RemoteReleaseTrust
                 !signature.AsSpan(2, KeyIdLength).SequenceEqual(key.AsSpan(2, KeyIdLength))) throw Invalid();
             var raw = signature.AsSpan(2 + KeyIdLength).ToArray();
             var verifier = new Ed25519PublicKeyParameters(key, 2 + KeyIdLength);
-            if (!Check(verifier, Prehash(data), raw)) throw Invalid();
+            if (!Check(verifier, digest.Finish(), raw)) throw Invalid();
             var comment = Encoding.UTF8.GetBytes(lines[2]["trusted comment: ".Length..]);
             var global = Convert.FromBase64String(lines[3]);
             if (global.Length != SignatureLength || !Check(verifier, [.. raw, .. comment], global)) throw Invalid();
         }
         catch (FormatException) { throw Invalid(); }
-    }
-
-    private static byte[] Prehash(ReadOnlySpan<byte> data)
-    {
-        var digest = new Blake2bDigest(512);
-        digest.BlockUpdate(data);
-        var output = new byte[64];
-        digest.DoFinal(output);
-        return output;
     }
 
     private static bool Check(Ed25519PublicKeyParameters key, byte[] message, byte[] signature)
@@ -55,4 +54,19 @@ internal static class RemoteReleaseTrust
     }
 
     private static CallFailed Invalid() => new("Release signature verification failed.", "release_untrusted");
+}
+
+/// <summary>The signature's BLAKE2b prehash, fed a piece at a time, so a large download is checked without holding all of it.</summary>
+internal sealed class ReleaseDigest
+{
+    private readonly Blake2bDigest _digest = new(512);
+
+    internal void Add(ReadOnlySpan<byte> piece) => _digest.BlockUpdate(piece);
+
+    internal byte[] Finish()
+    {
+        var output = new byte[64];
+        _digest.DoFinal(output);
+        return output;
+    }
 }

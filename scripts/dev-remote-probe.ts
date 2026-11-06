@@ -54,11 +54,11 @@ if (cmdline[1] !== dll || !cmdline.includes('serve')) throw Error('running proce
 const token = fs.readFileSync(flag('--token-file'), 'utf8').split('\n').find(x=>x.startsWith('ASSEMBLY_TOKEN='))?.slice(15);
 if (!token) throw Error('lane token is unavailable');
 let adapterOK=false,launcherSha='';try{({adapterOK,launcherSha}=adapters())}catch{}
-let toolsKey, adapterSources;
+let toolsKey, toolVersions, adapterSources;
 try {
  const state=JSON.parse(fs.readFileSync(root+'/adapters/dev-tools.json','utf8'));
  const valid=await (async()=>{const fs=await import('node:fs/promises');const {join}=await import('node:path');return await (${toolsCurrent.toString()})(root+'/adapters',root+'/serve/agents.json',state.key)})();
- if(valid) { toolsKey=state.key; adapterSources=state.sources; }
+ if(valid) { toolsKey=state.key; toolVersions=state.versions; adapterSources=state.sources; }
 } catch {}
 const socket = new WebSocket('ws://127.0.0.1:' + lane.port + '/socket');
 // A deadline for one handshake, never a retry or a poll.
@@ -71,7 +71,7 @@ socket.onmessage=e=>{
   console.error('host did not provide a compatible authenticated identity');process.exit(1);
  }
  clearTimeout(deadline);socket.close();process.stdin.pause();
- console.log(JSON.stringify({commit:frame.commit,backendIdentity:frame.backendIdentity,version:frame.version,engine:frame.engine,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,launcherSha,toolsKey,adapterSources}));
+ console.log(JSON.stringify({commit:frame.commit,backendIdentity:frame.backendIdentity,version:frame.version,engine:frame.engine,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,launcherSha,toolsKey,toolVersions,adapterSources}));
 };
 `;
-export type Probe = { missing?: boolean; commit: string; backendIdentity?: string; version?: unknown; toolsKey?: string; adapterSources?: string; engine: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean; launcherSha: string };
+export type Probe = { missing?: boolean; commit: string; backendIdentity?: string; version?: unknown; toolsKey?: string; toolVersions?: Record<string, string>; adapterSources?: string; engine: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean; launcherSha: string };

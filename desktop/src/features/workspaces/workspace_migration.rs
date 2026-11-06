@@ -44,8 +44,14 @@ pub(super) struct Completed {
     captures: Vec<LegacyFileCapture>,
     receipts: Vec<Receipt>,
 }
+/// The session file tabs an old layout could hold; an outside file opened with no workspace is never migrated.
+fn session_views(cx: &App) -> Vec<Entity<FileView>> {
+    let mut views = CenterPanes::file_views(cx);
+    views.retain(|view| !view.read(cx).is_outside());
+    views
+}
 fn matches_current(captures: &[LegacyFileCapture], cx: &App) -> bool {
-    let views = CenterPanes::file_views(cx);
+    let views = session_views(cx);
     views.len() == captures.len()
         && views
             .iter()
@@ -84,7 +90,7 @@ impl WorkspaceCoordinator {
             .map(|_| ())
     }
     pub(super) fn migrate_legacy(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let views = CenterPanes::file_views(cx);
+        let views = session_views(cx);
         if views.is_empty() {
             return true;
         }

@@ -152,12 +152,7 @@ fn restore(value: &Value, window: &mut Window, cx: &mut App) -> Result<(), Strin
         }
     }
     for file in CenterPanes::file_views(cx) {
-        if let Some(path) = file.read(cx).restored_workspace_path(&key) {
-            let name = format!(
-                "document:{}",
-                serde_json::to_string(&(&key.machine, &key.checkout_root, path))
-                    .expect("document identity")
-            );
+        if let Some(name) = file.read(cx).restored_identity(&key) {
             identities.insert(name, PanelId::from(file.entity_id()));
         }
     }

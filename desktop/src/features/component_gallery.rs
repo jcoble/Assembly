@@ -21,6 +21,7 @@ use crate::inline_field::{
     ChoiceOption, FieldRule, FieldValue, FormRule, FormSaveRequested, InlineField, InlineForm,
     NumberFormat, SaveFailure, SaveRequested,
 };
+use crate::section_card::SectionCard;
 
 const NEED_KEYS: [&str; 2] = ["gallery-question", "gallery-fails"];
 
@@ -420,6 +421,20 @@ impl Render for ComponentGallery {
                             .child("Every shared piece, on sample data held in memory. Text follows the interface size and colours follow the theme in Settings."),
                     )
                     .child(ActivitySection::new("gallery-chips", "Chips").child(chips))
+                    .child(
+                        ActivitySection::new("gallery-cards", "Section cards")
+                            .subtitle("A lifted sheet with an icon, a title and a count chip above zero.")
+                            .child(
+                                SectionCard::new(IconName::Files, "Files touched")
+                                    .count(3)
+                                    .child(div().text_color(muted).child("What the card holds.")),
+                            )
+                            .child(
+                                SectionCard::new(IconName::Bot, "Session")
+                                    .count(0)
+                                    .child(div().text_color(muted).child("No count, so no chip.")),
+                            ),
+                    )
                     .child(
                         ActivitySection::new("gallery-fields", "Fields that save themselves")
                             .subtitle("Enter or leaving saves, a pick saves, and Escape restores.")

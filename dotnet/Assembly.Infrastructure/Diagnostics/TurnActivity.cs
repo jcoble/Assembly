@@ -15,6 +15,7 @@ internal sealed class TurnActivity
     private readonly Lock _lock = new();
     private IntPtr _token;
     private bool _held;
+    private TaskCompletionSource _idle = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public bool Held
     {
@@ -33,6 +34,26 @@ internal sealed class TurnActivity
             else if (OperatingSystem.IsMacOS())
                 End();
             _held = held;
+            if (!held)
+            {
+                _idle.TrySetResult();
+                _idle = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+        }
+    }
+
+    /// <summary>Finishes when no turn is running, now or the moment the last one ends.</summary>
+    public async Task WhenIdleAsync(CancellationToken ct)
+    {
+        while (true)
+        {
+            Task idle;
+            lock (_lock)
+            {
+                if (!_held) return;
+                idle = _idle.Task;
+            }
+            await idle.WaitAsync(ct);
         }
     }
 

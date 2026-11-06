@@ -40,7 +40,7 @@ public static class SessionPaths
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(root, relative)));
         if (full == root)
             return root;
-        if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        if (!full.StartsWith(Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             throw new CallFailed("that path is outside the session's folder");
         for (var at = full; at != root; at = Path.GetDirectoryName(at)!)
         {

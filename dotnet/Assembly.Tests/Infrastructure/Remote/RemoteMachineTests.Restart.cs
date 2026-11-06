@@ -99,6 +99,9 @@ public sealed partial class RemoteMachineTests
         await box.InsertAsync(prompt, "restart-offline-helper-provider");
         await ProviderInsertionAsync(_box, BoxToken, helperId, "restart-offline-helper", "restart-offline-helper-provider");
         await UntilRestartStateAsync(parent, helperId, "running");
+        // The card also reads running while the prompt is in flight, then idle for the moment before the engine says
+        // running, and a lagging mirror can still be showing the last turn. Only this turn's running has to survive a restart.
+        await Until(() => MirrorHasBoxRunning(helperId));
 
         await _desktop!.DisposeAsync();
         await using var down = new MachinesSocketTests.StubRemote { DropVersion = true };
@@ -286,6 +289,37 @@ public sealed partial class RemoteMachineTests
                 "forbidden" or "bad_args" or "fact_refused") codes.Add(code);
         }
         return $"terminal_write_errors={terminalErrors}; feed_errors={feedErrors}; codes={string.Join(',', codes.Distinct())}";
+    }
+
+    /// <summary>The desktop's copy of the helper has reached the box's own running session, not an earlier turn's.</summary>
+    private bool MirrorHasBoxRunning(string helperId)
+    {
+        var box = SessionRow(_boxHome, helperId, """
+            SELECT state,version FROM engine_session
+              WHERE id=$helper AND machine=(SELECT machine_id FROM engine_meta WHERE singleton=1)
+            """);
+        var mirror = SessionRow(_desktopHome, helperId, """
+            SELECT json_extract(r.row_json,'$.state'),r.version FROM engine_mirror_row r
+              JOIN engine_mirror m ON m.machine=r.machine AND m.generation=r.generation AND m.state='live'
+              WHERE r.entity_kind='session' AND r.entity_id=$helper
+            """);
+        return box is { State: "running" } && mirror is { State: "running" } && mirror.Value.Version >= box.Value.Version;
+    }
+
+    private static (string State, long Version)? SessionRow(string home, string helperId, string sql)
+    {
+        using var db = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(home, "assembly.db"),
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        db.Open();
+        using var command = db.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("$helper", helperId);
+        using var row = command.ExecuteReader();
+        return row.Read() ? (row.GetString(0), row.GetInt64(1)) : null;
     }
 
     private static void RestartDatabaseStatus(string label, string home, string parent, string helperId)

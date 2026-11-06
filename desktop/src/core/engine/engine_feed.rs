@@ -145,6 +145,9 @@ impl EngineFeed {
             .filter_map(super::engine_items::NeedItem::of)
             .collect()
     }
+    pub fn stopped_steps_of(&self, session: &SessionKey) -> usize {
+        self.store.stopped_steps_of(session)
+    }
     pub fn session(&self, key: &SessionKey) -> Option<super::engine_items::SessionItem> {
         self.store
             .item(&EngineKey {

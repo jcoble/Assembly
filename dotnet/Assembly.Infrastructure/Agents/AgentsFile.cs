@@ -28,6 +28,25 @@ public sealed class AgentsFile : IReadOnlyList<AgentDescriptor>
         Volatile.Write(ref _snapshot, snapshot);
     }
 
+    /// <summary>
+    /// For a host starting up: an agents file it can't use is a reason not to start, said plainly, rather than a crash that
+    /// leaves a core file each time the service tries again. Null means it said why.
+    /// </summary>
+    public static AgentsFile? OpenOrSay(string path, TextWriter error)
+    {
+        if (!File.Exists(path))
+        {
+            error.WriteLine($"There's no agents file at {path}, so this host didn't start.");
+            return null;
+        }
+        try { return new AgentsFile(path); }
+        catch (Exception failure) when (failure is CallFailed or IOException or UnauthorizedAccessException)
+        {
+            error.WriteLine($"The agents file {path} can't be used ({(failure as CallFailed)?.Reason ?? failure.Message}), so this host didn't start.");
+            return null;
+        }
+    }
+
     public void BindOwner(string machine, ITopics topics)
     {
         if (string.IsNullOrEmpty(machine) || topics is null) throw Refusal("configuration_unavailable");

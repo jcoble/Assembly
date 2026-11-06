@@ -1,10 +1,10 @@
 // The single dev serve path, also used by app:dev. Source is always selected from an explicit commit.
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { adapterSources, backendIdentity, committedVersion, remoteBehindExit, requireCleanBackend, lane, sourcesDigest, type Lane } from './dev-remote-identity.ts';
+import { adapterSources, backendIdentity, committedVersion, remoteBehindExit, requireCleanBackend, lane, sourcesDigest, versionOrder, type Lane } from './dev-remote-identity.ts';
 import { command, lifetime, quote, sshOptions } from './dev-remote-process.ts';
 import { probeSource, type Probe } from './dev-remote-probe.ts';
-import { toolKey } from './dev-toolchain.ts';
+import { keepNewer, toolKey } from './dev-toolchain.ts';
 import { stage } from './dev-remote-timing.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -23,7 +23,7 @@ try {
     if (commit !== await git('rev-parse', 'origin/main') || commit !== await git('rev-parse', 'HEAD') || await git('status', '--porcelain'))
       throw new Error('main host requires a clean checkout of origin/main');
   }
-  // "check" compares the one version number (desktop/Cargo.toml) and changes nothing: a launch runs it first. "1" is the one update, which waits
+  // "check" compares the one version number (desktop/Cargo.toml), by order, and changes nothing: a launch runs it first. "1" is the one update, which waits
   // for a busy host to go idle. The serve command itself refuses a busy host. Both of those match the build exactly.
   const mode = process.env.ASSEMBLY_DEV_REMOTE_SYNC;
   if (mode !== 'check') await requireCleanBackend(root, owner.signal);
@@ -35,9 +35,17 @@ try {
   const sources = await sourcesDigest(adapterSources, file => command('git', ['show', `${commit}:${file}`], { cwd: root, signal: owner.signal, raw: true }).catch(() => { owner.signal.throwIfAborted(); return undefined; }));
   const read = `export PATH="$HOME/.local/bin:$HOME/.dotnet:/usr/local/bin:/usr/bin:/bin"; node --input-type=module -e ${quote(probeSource)} ${quote(JSON.stringify(target))}`;
   const probe = JSON.parse(await command('ssh', [...sshOptions, 'workbox-test', read], { signal: owner.signal })) as Probe;
+  const version = await committedVersion(root, commit, owner.signal);
+  const order = probe.missing ? 'older' : versionOrder(probe.version, version);
+  // The update's whole rule: nothing older goes over something newer, by any route that reaches this script.
+  if (order === 'newer') {
+    console.log(`Workbox Test ${target.unit} is on version ${probe.version}, newer than this checkout's ${version}, so nothing was deployed. This checkout is the side that's behind: pull to update it.`);
+    process.exit();
+  }
   if (mode === 'check') {
-    const version = await committedVersion(root, commit, owner.signal);
-    if (!probe.missing && probe.version === version)
+    if (order === 'unknown')
+      console.log(`Workbox Test ${target.unit} says version ${probe.version}, which can't be compared with this checkout's ${version}; nothing to do`);
+    else if (order === 'same')
       console.log(`Workbox Test ${target.unit} is on version ${version} (host commit ${probe.commit}); nothing to do`);
     else {
       console.log(`Workbox Test ${target.unit} is on version ${probe.missing ? 'none, not installed' : probe.version ?? 'unknown'}; this checkout is on ${version}`);
@@ -48,7 +56,7 @@ try {
   const actual = probe.missing ? 'not installed' : probe.backendIdentity ?? 'unknown';
   const wanted = identity;
   identityCheck();
-  const adaptersCurrent = probe.adapterOK && probe.launcherSha === launcher && (managed ? probe.toolsKey === toolKey(managed.versions, sources, 'linux-x64') : probe.adapterSources === sources);
+  const adaptersCurrent = probe.adapterOK && probe.launcherSha === launcher && (managed ? probe.toolsKey === toolKey(keepNewer(managed.versions, probe.toolVersions), sources, 'linux-x64') : probe.adapterSources === sources);
   if (actual === wanted && adaptersCurrent) {
     console.log(`Workbox Test ${target.unit} already matches ${wanted} (host commit ${probe.commit}); no deploy`);
   } else {

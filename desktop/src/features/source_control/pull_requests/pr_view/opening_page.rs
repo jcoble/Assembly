@@ -2,7 +2,7 @@
 //! says who owns it, or the question of which project, when more than one holds it.
 use super::super::pr_parts::{PrHeading, loading_line};
 use super::{PrPane, Selected};
-use crate::core::intents::open_url::OpenUrl;
+use crate::core::intents::open_url::OpenInBrowser;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::control_ids as ids;
 use crate::core::ui::access::{Control as _, Named as _};
@@ -126,7 +126,8 @@ impl PrPane {
                     .disabled(url.is_none())
                     .on_click(move |_, window, cx| {
                         if let Some(url) = &opened {
-                            window.dispatch_action(Box::new(OpenUrl { url: url.clone() }), cx);
+                            window
+                                .dispatch_action(Box::new(OpenInBrowser { url: url.clone() }), cx);
                         }
                     }),
             );

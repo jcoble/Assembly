@@ -28,7 +28,7 @@ public static class FileRead
         return Chunk(bytes, offset);
     }
 
-    internal static async Task<byte[]> CaptureAsync(string root, string path, CancellationToken cancellationToken)
+    internal static async Task<byte[]> CaptureAsync(string root, string path, CancellationToken cancellationToken, Action? recheck = null)
     {
         for (var attempt = 0; attempt < 2; attempt++)
         {
@@ -55,6 +55,7 @@ public static class FileRead
                     break;
                 count += read;
             }
+            recheck?.Invoke();
             var after = new FileInfo(SessionPaths.ResolveFile(root, path));
             if (after.Exists && after.Length == length && after.LastWriteTimeUtc == modified && count == length)
             {

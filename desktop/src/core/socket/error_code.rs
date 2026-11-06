@@ -42,7 +42,11 @@ impl ErrorCode {
             | "operation_id_conflict"
             | "install_busy"
             | "operation_capacity"
-            | "operation_unknown" => ErrorCode::Refused { code: code.into() },
+            | "operation_unknown"
+            | "not_a_path"
+            | "not_full_path"
+            | "not_regular"
+            | "remote_older" => ErrorCode::Refused { code: code.into() },
             "uncertain" => ErrorCode::Uncertain {
                 machine: machine.unwrap_or_default(),
             },

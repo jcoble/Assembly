@@ -25,7 +25,7 @@ use crate::core::{
 pub fn project(repo_url: &str) -> &str {
     let url = repo_url.trim_end_matches(['/', '\\']);
     let url = url.strip_suffix(".git").unwrap_or(url);
-    url.rsplit(['/', '\\']).next().unwrap_or(url)
+    super::lightbox::last_part(url)
 }
 
 /// What the header calls the session's project.

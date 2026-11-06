@@ -48,6 +48,8 @@ pub struct Projects {
     pub loading: bool,
     pub failure: Option<String>,
     revision: Option<i64>,
+    /// A list read has answered, so the rows are what the backend holds rather than not known yet.
+    answered: bool,
     generation: u64,
     read: Option<Task<()>>,
     _feed: Task<()>,
@@ -61,6 +63,11 @@ impl Projects {
         let projects = cx.new(|cx| Self::new(socket, cx));
         cx.set_global(GlobalProjects(projects.clone()));
         Some(projects)
+    }
+    /// What's listed so far, for drawing. Whoever draws it holds [`Self::get`] so that it's there and heard.
+    pub fn listed(cx: &App) -> &[ProjectRecord] {
+        cx.try_global::<GlobalProjects>()
+            .map_or(&[], |global| global.0.read(cx).rows())
     }
     fn new(socket: Entity<SocketClient>, cx: &mut Context<Self>) -> Self {
         let mut subscription = socket.read(cx).subscribe("projects", None);
@@ -80,6 +87,7 @@ impl Projects {
             loading: false,
             failure: None,
             revision: None,
+            answered: false,
             generation: 0,
             read: None,
             _feed: feed,
@@ -126,6 +134,10 @@ impl Projects {
     }
     pub fn rows(&self) -> &[ProjectRecord] {
         &self.rows
+    }
+    /// Whether a list read has answered, with rows or a failure; before then an empty list says nothing.
+    pub fn answered(&self) -> bool {
+        self.answered
     }
     fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
         let (state, items) = match update {
@@ -185,6 +197,7 @@ impl Projects {
                 }
                 projects.loading = false;
                 projects.read = None;
+                projects.answered = true;
                 match answer {
                     Outcome::Ok(page) => {
                         if !more {

@@ -48,8 +48,9 @@ internal static class DisplayQueries
                 'answerComplete',json(CASE WHEN t.answer_json IS NULL THEN 'null' WHEN length(CAST(t.answer_json AS BLOB))<=32768 AND (json_type(t.answer_json)='text' OR json_type(t.answer_json)='object' AND json_extract(t.presentation_json,'$.inputMode') IN ('permission','form')) THEN 'true' ELSE 'false' END),
                 'answerUtf8Bytes',length(CAST(t.answer_json AS BLOB)),
                 'answerText',CASE WHEN length(CAST(t.answer_json AS BLOB))<=32768 AND json_type(t.answer_json)='text' THEN json_extract(t.answer_json,'$') END,
-                'answeredBy',t.answered_by,'answeredMs',t.answered_ms,'answeredOrigin',json(t.answered_origin_json))
-            """.Replace("t.presentation_json", "CASE WHEN length(CAST(t.presentation_json AS BLOB))<=32768 THEN t.presentation_json END", StringComparison.Ordinal);
+                'answeredBy',t.answered_by,'answeredMs',t.answered_ms,'answeredOrigin',json(t.answered_origin_json),
+                'forOwner',json(CASE WHEN EXISTS(SELECT 1 FROM engine_needs_me n WHERE n.id=t.id AND n.machine=t.machine AND FOR_OWNER) THEN 'true' ELSE 'false' END))
+            """.Replace("FOR_OWNER", Assembly.Application.Common.Engine.OwnerAttention.Need, StringComparison.Ordinal).Replace("t.presentation_json", "CASE WHEN length(CAST(t.presentation_json AS BLOB))<=32768 THEN t.presentation_json END", StringComparison.Ordinal);
         var fields = Columns(kind).Split(',').Select(column =>
             $"'{CamelCase(column)}',t.{column}");
         if (kind is "run" or "step")

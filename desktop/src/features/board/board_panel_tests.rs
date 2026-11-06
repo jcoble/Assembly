@@ -30,7 +30,7 @@ fn need(id: &str, state: &str) -> EngineItem {
     item(
         "needs_me",
         id,
-        json!({"sessionId":"s","kind":"question","state":state,"text":format!("Question {id}"),"createdMs":1}),
+        json!({"sessionId":"s","forOwner":true,"kind":"question","state":state,"text":format!("Question {id}"),"createdMs":1}),
     )
 }
 

@@ -24,6 +24,7 @@ use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::activity::run_view::now_ms;
 use crate::core::ui::row_drop_down::{GrowingBody, RowDropDowns};
 use crate::core::ui::three_line_row::row_height;
+use crate::features::projects::projects::{ProjectRecord, Projects};
 use crate::features::sessions::drop_down::native_details::NativeDetails;
 use gpui_kit::assets::IconName;
 
@@ -38,13 +39,15 @@ pub fn default_tab(open_questions: usize, has_run: bool) -> SessionTab {
 }
 
 /// A question outranks what it's doing, since that's what the owner can act on.
-pub fn row_chip(session: &SessionItem, open_owner_questions: usize) -> (String, Tone) {
-    if open_owner_questions > 0 {
-        let plural = if open_owner_questions == 1 { "" } else { "s" };
-        return (
-            format!("{open_owner_questions} question{plural}"),
-            Tone::Warning,
-        );
+pub fn row_chip(
+    session: &SessionItem,
+    open_owner_questions: usize,
+    stopped_steps: usize,
+) -> (String, Tone) {
+    // An approval is waiting too, so the chip doesn't call everything a question.
+    let needs = open_owner_questions + stopped_steps;
+    if needs > 0 {
+        return (super::board_sections::heading(needs), Tone::Warning);
     }
     match session.state.as_str() {
         "running" | "starting" => ("Working".into(), Tone::Info),
@@ -100,10 +103,19 @@ pub fn task_label(url: &str) -> SharedString {
     found.map_or_else(|| "Task".into(), |key| key.to_owned().into())
 }
 
+/// The project's name. An id is no label, so a project this machine's registry doesn't list just isn't named.
+pub fn project_label(project_id: Option<&str>, projects: &[ProjectRecord]) -> Option<SharedString> {
+    let id = project_id?;
+    projects
+        .iter()
+        .find(|project| project.id == id)
+        .map(|project| project.title.clone().into())
+}
+
 fn open_owner_questions(session: &SessionKey, data: &BoardData) -> usize {
     data.needs
         .values()
-        .filter(|need| need.state == "open" && need.for_owner() && need.session == *session)
+        .filter(|need| need.state == "open" && need.for_owner && need.session == *session)
         .count()
 }
 
@@ -120,7 +132,11 @@ pub fn session_entry(
     let key = card_key(&session.key);
     let run = data.run_of(session);
     let steps = run.map(|run| data.steps_of(run)).unwrap_or_default();
-    let (chip, tone) = row_chip(session, open_owner_questions(&session.session_key(), data));
+    let (chip, tone) = row_chip(
+        session,
+        open_owner_questions(&session.session_key(), data),
+        data.stopped_steps_of(&session.session_key()),
+    );
     let prs = data.prs_for(session);
     let machine = machine_label(&session.key.machine, feed, cx);
     let task = session
@@ -162,11 +178,13 @@ pub fn session_entry(
             .to_owned()
             .into(),
         ),
-        project: session
-            .project_id
-            .clone()
-            .or(run.and_then(|run| run.project_id.clone()))
-            .map(Into::into),
+        project: project_label(
+            session
+                .project_id
+                .as_deref()
+                .or(run.and_then(|run| run.project_id.as_deref())),
+            Projects::listed(cx),
+        ),
         step: steps
             .iter()
             .find(|step| step.state == "running")

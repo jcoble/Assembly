@@ -536,4 +536,27 @@ public sealed partial class SessionHostTests
         }
         finally { Directory.Delete(folder, true); }
     }
+
+    // Claude's Read names no folder, so its relative path is read against the checkout the session opened in: one
+    // inside stays a session path, one that leaves it becomes absolute.
+    [Fact]
+    public async Task A_relative_tool_path_with_no_folder_on_the_call_joins_the_session_s_checkout()
+    {
+        _host.Send("read it");
+        await Kinds(2);
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        await agent.ReadAsync("session/prompt");
+
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","title":"Read","kind":"read","status":"pending","rawInput":{"file_path":"src/helper.rs"}}""");
+        var tool = (await Rows(1)).Single();
+
+        Assert.Equal("tool", tool.Kind);
+        Assert.Equal("src/helper.rs", tool.Payload.GetProperty("path").GetString());
+
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t2","title":"Read","kind":"read","status":"pending","rawInput":{"file_path":"../outside.rs"}}""");
+        var outside = (await Rows(1)).Single();
+        var parent = Path.GetDirectoryName(_sessionStore.Root(_session)!.TrimEnd('/'))!;
+        Assert.Equal(parent + "/outside.rs", outside.Payload.GetProperty("path").GetString());
+    }
 }

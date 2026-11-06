@@ -172,7 +172,7 @@ impl Composer {
         let (Some(session), Some(key)) = (self.session.clone(), self.session_key.clone()) else {
             return;
         };
-        let file = path.rsplit(['/', '\\']).next().unwrap_or(path).to_string();
+        let file = crate::features::session::view::lightbox::last_part(path).to_string();
         let (client, source, serial) = (
             self.client.clone(),
             self.expected_source.clone(),

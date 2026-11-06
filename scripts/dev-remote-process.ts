@@ -27,7 +27,8 @@ export function command(command: string, args: string[], options: { cwd?: string
 export function lifetime(remote = false) {
   const owner = new AbortController();
   const stop = () => owner.abort();
-  for (const event of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.once(event, stop);
+  // Not once: the default action would come back after the first, and a second signal would kill this mid-stop.
+  for (const event of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(event, stop);
   if (remote) { process.stdin.resume(); process.stdin.once('end', stop); }
   return { signal: owner.signal, close() { if (remote) process.stdin.pause(); } };
 }

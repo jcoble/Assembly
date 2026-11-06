@@ -100,7 +100,7 @@ impl RenderOnce for SentMessage {
             });
         let images = self.images.iter().enumerate().map(|(at, (path, name))| {
             let on_action = self.on_action.clone();
-            let file = path.rsplit(['/', '\\']).next().unwrap_or(path).to_string();
+            let file = super::lightbox::last_part(path).to_string();
             div()
                 .id(SharedString::from(format!("{}:image:{at}", self.key)))
                 .px_2()

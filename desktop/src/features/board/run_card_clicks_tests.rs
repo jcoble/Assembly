@@ -49,7 +49,18 @@ async fn open<'a>(run: Value, steps: Vec<Value>, cx: &'a mut TestAppContext) -> 
         run: json!({"run":run,"steps":steps,"next":null}),
         ..Seeded::default()
     };
-    let mut engine = TestEngine::start(seeded, &[("runs", Some("r"))], cx).await;
+    opened(seeded, &[("runs", Some("r"))], "the run's steps", cx).await
+}
+
+/// The card once its read has settled, one way or the other.
+async fn opened<'a>(
+    seeded: Seeded,
+    scopes: &[(&str, Option<&str>)],
+    settled: &'static str,
+    cx: &'a mut TestAppContext,
+) -> Card<'a> {
+    let mut engine = TestEngine::start(seeded, scopes, cx).await;
+    cx.update(crate::core::state::machines::Machines::start);
     let key = EngineKey {
         machine: MACHINE.into(),
         kind: "run".into(),
@@ -75,9 +86,15 @@ async fn open<'a>(run: Value, steps: Vec<Value>, cx: &'a mut TestAppContext) -> 
     visual.simulate_resize(gpui_kit::size(gpui_kit::px(900.), gpui_kit::px(1200.)));
     let changed = engine.changed.clone();
     draw(visual);
-    until("the run's steps", &mut engine.changes, &changed, || {
+    until(settled, &mut engine.changes, &changed, || {
         draw(visual);
-        visual.read(|cx| card.read(cx).reader.read(cx).view().is_some())
+        visual.read(|cx| {
+            let reader = card.read(cx).reader.read(cx);
+            reader.view().is_some()
+                || reader
+                    .error()
+                    .is_some_and(|words| !words.starts_with("Loading"))
+        })
     })
     .await;
     draw(visual);
@@ -372,4 +389,69 @@ async fn an_offline_machine_says_since_when_and_its_rows_controls_send_nothing(
     card.engine.barrier(card.cx).await;
     assert!(card.engine.commands().is_empty());
     assert!(card.cx.read(|cx| card.card.read(cx).action.is_none()));
+}
+
+fn last_known(refused: (&'static str, &'static str)) -> Seeded {
+    Seeded {
+        items: vec![
+            run("running"),
+            step("second", "pending", &[]),
+            step("first", "succeeded", &[]),
+        ],
+        run_refused: Some(refused),
+        ..Seeded::default()
+    }
+}
+
+#[gpui::test]
+async fn a_machine_that_cant_be_reached_shows_its_last_known_steps_and_no_error(
+    cx: &mut TestAppContext,
+) {
+    let seeded = last_known(("unreachable", "Workbox Test is reconnecting"));
+    let scopes = [("runs", None), ("runs", Some("r"))];
+    let card = opened(seeded, &scopes, "the last known steps", cx).await;
+    card.cx.read(|cx| {
+        let reader = card.card.read(cx).reader.read(cx);
+        assert!(reader.is_last_known());
+        assert_eq!(reader.error(), None);
+        assert_eq!(reader.view().unwrap().steps.len(), 2);
+    });
+}
+
+#[gpui::test]
+async fn a_card_on_its_last_known_steps_reads_again_when_the_machine_returns(
+    cx: &mut TestAppContext,
+) {
+    use crate::core::state::machines::Machines;
+    let seeded = last_known(("unreachable", "Workbox Test is reconnecting"));
+    let scopes = [("runs", None), ("runs", Some("r"))];
+    let mut card = opened(seeded, &scopes, "the last known steps", cx).await;
+    card.engine.state.lock().unwrap().run_refused = None;
+    card.cx.update(|_, cx| {
+        let machines = Machines::try_global(cx).unwrap();
+        machines.update(cx, |_, cx| cx.notify());
+    });
+    let (changed, reader) = (
+        card.engine.changed.clone(),
+        card.cx.read(|cx| card.card.read(cx).reader.clone()),
+    );
+    let cx = &mut *card.cx;
+    until("the fresh read", &mut card.engine.changes, &changed, || {
+        cx.run_until_parked();
+        cx.read(|cx| !reader.read(cx).is_last_known())
+    })
+    .await;
+}
+
+#[gpui::test]
+async fn a_machine_that_really_differs_is_the_one_case_that_says_so(cx: &mut TestAppContext) {
+    let words = "Workbox Test is now a different machine from the one this belongs to";
+    let seeded = last_known(("engine_differs", words));
+    let scopes = [("runs", None), ("runs", Some("r"))];
+    let card = opened(seeded, &scopes, "the machine's words", cx).await;
+    card.cx.read(|cx| {
+        let reader = card.card.read(cx).reader.read(cx);
+        assert!(!reader.is_last_known());
+        assert_eq!(reader.error(), Some(words));
+    });
 }

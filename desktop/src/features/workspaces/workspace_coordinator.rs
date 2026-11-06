@@ -1,4 +1,5 @@
 //! One revision-fenced workspace transition. The navigator supplies an already validated owning checkout key.
+use super::drafts_guard::Drafts;
 use crate::core::socket::{client::SocketClient, outcome::Outcome, update::Update};
 pub use crate::core::state::workspace_panes::WorkspaceKey;
 use crate::core::state::workspace_panes::WorkspacePanes;
@@ -84,6 +85,8 @@ pub struct WorkspaceCoordinator {
     guarding: Option<Task<()>>,
     watching: Option<Task<()>>,
     pub status: Option<String>,
+    /// The words of the last capture refused while a file operation ran, which an already saved layout clears.
+    capture_refused: Option<String>,
 }
 impl EventEmitter<WorkspaceSaved> for WorkspaceCoordinator {}
 impl EventEmitter<WorkspaceActivated> for WorkspaceCoordinator {}
@@ -108,6 +111,7 @@ impl WorkspaceCoordinator {
             guarding: None,
             watching: None,
             status: None,
+            capture_refused: None,
         });
         cx.set_global(Current(view.clone()));
         view
@@ -127,14 +131,19 @@ impl WorkspaceCoordinator {
         window: &Window,
         cx: &App,
     ) -> Result<Option<gpui_kit::component::dock::DockAreaState>, String> {
+        // With no workspace open, an outside file belongs to none, so it isn't saved by the back door either.
         if self.current_target().is_none() {
-            return Ok(Some(state.clone()));
+            return super::legacy_layout::strip_outside(state).map(Some);
         }
         let views = crate::core::ui::center_panes::CenterPanes::file_views(cx);
         if views.is_empty() {
             return super::legacy_layout::prune_refs(state, &[]).map(Some);
         }
         let Some(current) = &self.current else {
+            if views.iter().all(|view| view.read(cx).is_outside()) {
+                let state = super::legacy_layout::strip_outside(state)?;
+                return super::legacy_layout::prune_refs(&state, &[]).map(Some);
+            }
             return Ok(None);
         };
         if !current.writable || current.revision == 0 {
@@ -203,6 +212,8 @@ impl WorkspaceCoordinator {
             "The workspace open was cancelled; the current workspace remains open.".into(),
             cx,
         );
+        // Only its navigator cancels it, having moved on (most often to a newer session): it ends quietly.
+        self.status = None;
     }
     fn refuse(&mut self, reason: String, cx: &mut Context<Self>) {
         if !self.active_request {
@@ -268,6 +279,10 @@ impl WorkspaceCoordinator {
         if !self.active_request {
             return;
         }
+        // Outside tabs opened with no workspace close when one opens, so a draft in one is asked about first.
+        if self.current.is_none() && !Drafts::Unowned.keys(cx).is_empty() {
+            return self.guard(Drafts::Unowned, window, cx);
+        }
         if self.current.is_none() && !self.migrate_legacy(window, cx) {
             return;
         }
@@ -277,13 +292,8 @@ impl WorkspaceCoordinator {
         let Some(current) = &self.current else {
             return;
         };
-        if cx
-            .try_global::<crate::features::files::document_store::DocumentStore>()
-            .is_none_or(|docs| {
-                docs.dirty_keys(&current.key.machine, &current.key.checkout_root)
-                    .is_empty()
-            })
-        {
+        let drafts = Drafts::Checkout(current.key.clone());
+        if drafts.keys(cx).is_empty() {
             self.refuse(
                 self.status
                     .clone()
@@ -292,8 +302,12 @@ impl WorkspaceCoordinator {
             );
             return;
         }
+        self.guard(drafts, window, cx);
+    }
+    /// Asks about `drafts`, then carries on with the transition, or refuses it on Cancel.
+    fn guard(&mut self, drafts: Drafts, window: &mut Window, cx: &mut Context<Self>) {
         let generation = self.generation;
-        let guard = super::drafts_guard::run(current.key.clone(), window, cx);
+        let guard = super::drafts_guard::run(drafts, window, cx);
         let handle = window.window_handle();
         self.guarding = Some(cx.spawn(async move |view, cx| {
             let safe = guard.await;
@@ -448,6 +462,9 @@ impl WorkspaceCoordinator {
 #[cfg(test)]
 #[path = "workspace_coordinator_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "workspace_coordinator_cancel_tests.rs"]
+mod workspace_coordinator_cancel_tests;
 
 #[cfg(test)]
 #[path = "workspace_rootless_tests.rs"]
@@ -473,3 +490,11 @@ mod saving;
 #[cfg(test)]
 #[path = "workspace_layout_tests.rs"]
 mod layout_tests;
+
+#[cfg(test)]
+#[path = "workspace_outside_tests.rs"]
+mod outside_tests;
+
+#[cfg(test)]
+#[path = "workspace_outside_save_tests.rs"]
+mod outside_save_tests;

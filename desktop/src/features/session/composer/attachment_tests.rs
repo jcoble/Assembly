@@ -177,3 +177,30 @@ fn an_image_type_comes_from_its_extension() {
     assert_eq!(Attachment::mime_of("notes.txt"), None);
     assert_eq!(Attachment::mime_of("png"), None);
 }
+
+// Pins: g0-session#25
+#[test]
+fn the_shared_lines_read_the_same_in_both_parsers() {
+    let lines: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../dotnet/Assembly.Tests/Fixtures/attached-image-lines.json"
+    ))
+    .unwrap();
+    let lines = lines.as_array().unwrap();
+    assert!(!lines.is_empty());
+    for case in lines {
+        let line = case["line"].as_str().unwrap();
+        let (_, attached) = Attachment::split_lines(line);
+        match case["path"].as_str() {
+            Some(path) => {
+                let name = case["name"].as_str().unwrap();
+                assert_eq!(attached.len(), 1, "{line}");
+                assert_eq!(
+                    (attached[0].0.as_str(), attached[0].1.as_str()),
+                    (path, name),
+                    "{line}"
+                );
+            }
+            None => assert!(attached.is_empty(), "{line}"),
+        }
+    }
+}
