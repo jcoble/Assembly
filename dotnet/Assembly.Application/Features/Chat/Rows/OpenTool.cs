@@ -10,7 +10,7 @@ namespace Assembly.Application.Features.Chat.Rows;
 /// A tool call that hasn't finished: everything its updates have said so far, merged, and what its last row
 /// and detail said, so a row goes out only when the line changes.
 /// </summary>
-internal sealed class OpenTool(string itemId, string? runId = null)
+internal sealed class OpenTool(string itemId, string? runId = null, string? sessionFolder = null)
 {
     private ToolCallFields _fields = new();
     private string? _lastLine;
@@ -49,8 +49,8 @@ internal sealed class OpenTool(string itemId, string? runId = null)
         var input = _fields.Input is { } fields && (fields.ValueKind != JsonValueKind.Object || fields.EnumerateObject().Any()) ? fields.GetRawText() : null;
         // Some agents fill the shown text with a description while the tool runs, so it counts as output only at the end.
         var output = _fields.Output ?? (IsDone ? _fields.ContentText : null);
-        var path = ToolSummary.Path(_fields.Input)
-            ?? ToolSummary.InFolder(_fields.Diffs?.SelectMany(diff => diff.Paths).FirstOrDefault() ?? _fields.Paths?[0], _fields.Input);
+        var path = ToolSummary.Path(_fields.Input, sessionFolder)
+            ?? ToolSummary.InFolder(_fields.Diffs?.SelectMany(diff => diff.Paths).FirstOrDefault() ?? _fields.Paths?[0], _fields.Input, sessionFolder);
         var detail = new ToolDetail(ItemId, input, output, diff?.Text, path,
             TerminalIds: _fields.TerminalIds, AcpSessionId: _fields.AcpSessionId,
             OutputSource: _fields.Output is not null ? "raw" : output is not null ? "content" : null);

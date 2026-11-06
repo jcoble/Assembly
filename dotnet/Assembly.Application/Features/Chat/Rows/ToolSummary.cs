@@ -28,33 +28,44 @@ internal static class ToolSummary
     }
 
     /// <summary>The path the call named, joined onto the folder the call ran in when it is relative.</summary>
-    public static string? Path(JsonElement? input)
+    public static string? Path(JsonElement? input, string? sessionFolder = null)
     {
         if (input is not { ValueKind: JsonValueKind.Object } fields)
             return null;
         foreach (var key in (string[])["file_path", "path"])
             if (fields.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String)
-                return InFolder(value.GetString(), input);
+                return InFolder(value.GetString(), input, sessionFolder);
         return null;
     }
 
     /// <summary>
-    /// A relative path joined onto the call's own <c>workdir</c>, else its <c>cwd</c>, when that folder is absolute. The join
-    /// is folded lexically, since a path with a <c>.</c> or <c>..</c> component can't be opened: <c>/w/app</c> and
-    /// <c>../lib/a.rs</c> give <c>/w/lib/a.rs</c>. A join that would climb above <c>/</c> is no path at all. Anything else
-    /// is unchanged.
+    /// A relative path joined onto the folder the call ran in: its own <c>workdir</c>, else its <c>cwd</c>, when that folder
+    /// is absolute; otherwise the session's folder, with a relative call folder inside it. The join is folded lexically,
+    /// since a path with a <c>.</c> or <c>..</c> component can't be opened: <c>/w/app</c> and <c>../lib/a.rs</c> give
+    /// <c>/w/lib/a.rs</c>. A join that would climb above <c>/</c> is no path at all. With no absolute folder to join, or
+    /// a path that is already absolute or under <c>~</c>, the path is unchanged.
     /// </summary>
-    public static string? InFolder(string? path, JsonElement? input)
+    public static string? InFolder(string? path, JsonElement? input, string? sessionFolder = null)
     {
-        if (path is null || System.IO.Path.IsPathRooted(path) || path.StartsWith('~') || input is not { ValueKind: JsonValueKind.Object } fields)
+        if (path is null || System.IO.Path.IsPathRooted(path) || path.StartsWith('~'))
             return path;
+        var callFolder = CallFolder(input);
+        if (callFolder is not null && System.IO.Path.IsPathRooted(callFolder))
+            return Folded(callFolder + '/' + path);
+        if (sessionFolder is null || !System.IO.Path.IsPathRooted(sessionFolder))
+            return path;
+        return Folded(sessionFolder + '/' + (callFolder is null ? path : callFolder + '/' + path));
+    }
+
+    /// <summary>The call's own <c>workdir</c>, else its <c>cwd</c>, when it names one.</summary>
+    private static string? CallFolder(JsonElement? input)
+    {
+        if (input is not { ValueKind: JsonValueKind.Object } fields)
+            return null;
         foreach (var key in (string[])["workdir", "cwd"])
-        {
-            if (!fields.TryGetProperty(key, out var value) || value.ValueKind != JsonValueKind.String || value.GetString() is not { Length: > 0 } folder)
-                continue;
-            return System.IO.Path.IsPathRooted(folder) ? Folded(folder + '/' + path) : path;
-        }
-        return path;
+            if (fields.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } folder)
+                return folder;
+        return null;
     }
 
     /// <summary>An absolute path with its <c>.</c> parts dropped and each <c>..</c> taking off the part before it, or null
