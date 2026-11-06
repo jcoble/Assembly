@@ -15,17 +15,8 @@ public sealed class HomeInUseExitTests : IDisposable
     {
         File.WriteAllText(Path.Combine(_home, "agents.json"), "[]");
         var errors = new StringWriter();
-        var stderr = Console.Error;
-        Console.SetError(errors);
-        try
-        {
-            using var held = HomeLock.Take(_home, update: true);
-            Assert.Equal(DesktopServe.HomeInUseExit, await DesktopServe.MainAsync(["--home", _home, "--token-file", Path.Combine(_home, "env"), "--port", "0"]));
-        }
-        finally
-        {
-            Console.SetError(stderr);
-        }
+        using (HomeLock.Take(_home, update: true))
+            Assert.Equal(DesktopServe.HomeInUseExit, await DesktopServe.MainAsync(["--home", _home, "--token-file", Path.Combine(_home, "env"), "--port", "0"], errors));
 
         var line = Assert.Single(errors.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries));
         Assert.Contains($"home in use by pid {Environment.ProcessId}", line, StringComparison.Ordinal);
