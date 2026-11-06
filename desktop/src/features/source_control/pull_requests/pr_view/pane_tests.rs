@@ -342,6 +342,8 @@ fn a_pasted_http_pull_request_link_opens_as_a_link(cx: &mut TestAppContext) {
     }
 }
 
+#[path = "pane_link_wait_tests.rs"]
+mod link_wait_tests;
 #[path = "pane_opening_tests.rs"]
 mod opening_tests;
 #[path = "pane_project_tests.rs"]

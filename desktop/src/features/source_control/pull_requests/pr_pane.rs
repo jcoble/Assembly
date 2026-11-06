@@ -67,6 +67,8 @@ pub struct PrPane {
     failure: Option<String>,
     /// A pasted link to a repository Assembly doesn't have, and the words saying so.
     missing_link: Option<(String, String)>,
+    /// A link followed before the projects were known, waiting for them or for the connection to end.
+    waiting_link: Option<WaitingLink>,
     _queue: Subscription,
     _detail: Option<[Subscription; 2]>,
     _projects: Option<Subscription>,
@@ -194,6 +196,7 @@ impl PrPane {
         let project_heard = projects.as_ref().map(|projects| {
             cx.observe(projects, |pane: &mut Self, _, cx| {
                 pane.sync_scope(cx);
+                pane.route_waiting_link(false, cx);
                 cx.notify();
             })
         });
@@ -216,6 +219,7 @@ impl PrPane {
             projects,
             failure: None,
             missing_link: None,
+            waiting_link: None,
             _queue: queue_heard,
             _detail: None,
             _projects: project_heard,
@@ -516,6 +520,7 @@ fn selected_source(session: Option<&str>, cx: &App) -> Option<ExpectedRowSource>
 mod render;
 #[path = "pr_view/pane_search.rs"]
 mod search_run;
+use search_run::WaitingLink;
 #[cfg(test)]
 #[path = "pr_view/pane_tests.rs"]
 mod tests;

@@ -1,6 +1,14 @@
 //! The pull request pane's search: typing searches after a short pause, a link waits for Enter.
 use super::*;
 use crate::core::navigation::web_links::web_address;
+use crate::core::socket::{client::SocketClient, connection_state::ConnectionState};
+
+/// A followed link held until the pushed projects say whether a project holds its repository.
+pub(super) struct WaitingLink {
+    target: PrTarget,
+    /// Hears the connection end, which answers the link with the projects known by then.
+    _ended: Option<Subscription>,
+}
 
 impl PrPane {
     /// A pull request named by a link, pasted here or followed from anywhere, as the old `openLink` did. A link to the
@@ -9,6 +17,7 @@ impl PrPane {
     /// offers the page on GitHub.
     pub(super) fn open_linked(&mut self, target: PrTarget, cx: &mut Context<Self>) {
         self.missing_link = None;
+        self.waiting_link = None;
         let listed = self.queue.read(cx).page.items.iter();
         let sessions = self.session.is_some()
             && listed
@@ -17,6 +26,44 @@ impl PrPane {
         if sessions {
             return self.select_pr(Some(target.repository), target.number, cx);
         }
+        if !self.projects_answered(cx) {
+            return self.wait_for_projects(target, cx);
+        }
+        self.open_through_project(target, cx);
+    }
+    /// Whether the projects say which repositories Assembly has: a list read answered, or there is no backend to ask.
+    fn projects_answered(&self, cx: &App) -> bool {
+        let projects = self.projects.as_ref();
+        projects.is_none_or(|projects| projects.read(cx).answered())
+    }
+    /// Holds the link until the pushed projects answer, or the connection ends first.
+    fn wait_for_projects(&mut self, target: PrTarget, cx: &mut Context<Self>) {
+        let ended = SocketClient::try_global(cx).map(|socket| {
+            cx.subscribe(&socket, |pane: &mut Self, _, state, cx| {
+                if matches!(
+                    state,
+                    ConnectionState::Disconnected | ConnectionState::Refused { .. }
+                ) {
+                    pane.route_waiting_link(true, cx);
+                    cx.notify();
+                }
+            })
+        });
+        self.waiting_link = Some(WaitingLink {
+            target,
+            _ended: ended,
+        });
+    }
+    /// The waiting link, routed once the projects have answered, or with what is known when the connection `ended`.
+    pub(super) fn route_waiting_link(&mut self, ended: bool, cx: &mut Context<Self>) {
+        if self.waiting_link.is_none() || !(ended || self.projects_answered(cx)) {
+            return;
+        }
+        if let Some(waiting) = self.waiting_link.take() {
+            self.open_through_project(waiting.target, cx);
+        }
+    }
+    fn open_through_project(&mut self, target: PrTarget, cx: &mut Context<Self>) {
         match target.clone().among(&self.project_repositories(cx)) {
             Some(found) => {
                 self.follow_to_holder(&found.repository, cx);
@@ -89,6 +136,7 @@ impl PrPane {
         } else {
             self.failure = None;
             self.missing_link = None;
+            self.waiting_link = None;
             let text: String = text.chars().take(MAX_SEARCH).collect();
             self.queue
                 .update(cx, |queue, cx| queue.set_search(text, cx));
