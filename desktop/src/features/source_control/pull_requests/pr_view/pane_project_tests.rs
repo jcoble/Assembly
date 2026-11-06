@@ -215,6 +215,42 @@ async fn a_followed_link_to_a_repository_that_is_no_project_says_so_as_a_pasted_
     assert!(calls(&fake.seen, "resolve_source").is_empty());
 }
 
+// Proof fixes brief item 4: a pasted link's notice shows on the list, so a followed link's notice closes an open
+// page first rather than landing on the list behind it.
+#[gpui::test]
+async fn a_followed_link_s_notice_closes_the_open_page_so_it_can_be_seen(cx: &mut TestAppContext) {
+    let mut fake = fake(cx, json!([holder(LANE, "lane")]), Source::Answers);
+    let window = cx.add_empty_window();
+    let pane = pane_with_projects(&mut fake, window).await;
+    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_pr(Some("o/r".into()), 7, cx)));
+    until("the open page", &mut fake.changes, &fake.changed, || {
+        window.run_until_parked();
+        window.update(|_, cx| pane.read(cx).detail.is_some())
+    })
+    .await;
+    window.update(|_, cx| {
+        pane.update(cx, |pane, cx| {
+            pane.apply_intent(
+                OpenPullRequests {
+                    session_id: None,
+                    repo: Some("other/r".into()),
+                    number: Some(1),
+                },
+                cx,
+            )
+        })
+    });
+    window.run_until_parked();
+    window.update(|_, cx| {
+        let pane = pane.read(cx);
+        assert!(pane.missing_link.is_some(), "the notice");
+        assert!(
+            pane.detail.is_none() && pane.selected.is_none(),
+            "the list is in front"
+        );
+    });
+}
+
 #[gpui::test]
 async fn a_followed_link_to_a_project_s_repository_opens_it_whatever_its_case(
     cx: &mut TestAppContext,

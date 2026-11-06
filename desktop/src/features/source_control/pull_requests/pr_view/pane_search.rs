@@ -70,6 +70,8 @@ impl PrPane {
                 self.select_in_project(found.repository, found.number, cx)
             }
             None => {
+                // A pasted link's notice shows on the list, so an open page goes first and the notice is seen.
+                self.close_detail(cx);
                 self.missing_link = Some((
                     format!(
                         "github.com/{} is not a project in Assembly, so #{} cannot open here. Add the repository as a project, or open it on GitHub.",
