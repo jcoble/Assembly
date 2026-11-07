@@ -64,7 +64,7 @@ public sealed partial class NewProjectTests
                 return Task.FromResult(new GhRun(0, """{"html_url":"https://github.com/owner/repo/pull/7#issuecomment-1"}""", ""));
             }
             Reads++;
-            return Task.FromResult(new GhRun(0, args[0] == "pr" ? """{"number":7,"headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"OPEN"}""" : "[]", ""));
+            return Task.FromResult(new GhRun(0, args[0] == "pr" ? """{"number":7,"headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"OPEN"}""" : args[1] == "graphql" ? """{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}""" : "[]", ""));
         }
     }
 }

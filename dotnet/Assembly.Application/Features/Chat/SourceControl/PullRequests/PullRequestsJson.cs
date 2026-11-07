@@ -9,4 +9,5 @@ namespace Assembly.Application.Features.Chat.SourceControl.PullRequests;
 [JsonSerializable(typeof(PullRequestWriter.ReviewCommentPayload))]
 [JsonSerializable(typeof(PullRequestWriter.BodyPayload))]
 [JsonSerializable(typeof(PullRequestWriter.MergePayload))]
+[JsonSerializable(typeof(PullRequestWriter.UpdateBranchPayload))]
 internal sealed partial class PullRequestsJson : JsonSerializerContext;

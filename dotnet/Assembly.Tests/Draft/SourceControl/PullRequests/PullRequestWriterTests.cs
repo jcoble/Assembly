@@ -155,7 +155,7 @@ public sealed class PullRequestWriterTests
                 return Task.FromResult(Create is null ? WriteResult : Create(args, input));
             }
             var text = args[0] == "pr" ? JsonSerializer.Serialize(new { number = 7, state = "OPEN", isDraft = Draft, mergeable = Mergeable, headRefOid = Head, baseRefOid = Base, url = "https://github.com/owner/repo/pull/7" })
-                : args[1].Contains("/files?") ? """[{"filename":"code.cs","patch":"@@ -0,0 +1 @@\n+added"}]""" : "[]";
+                : args[1].Contains("/files?") ? """[{"filename":"code.cs","patch":"@@ -0,0 +1 @@\n+added"}]""" : args[1] == "graphql" ? """{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}""" : "[]";
             return Task.FromResult(new GhRun(0, text, ""));
         }
     }

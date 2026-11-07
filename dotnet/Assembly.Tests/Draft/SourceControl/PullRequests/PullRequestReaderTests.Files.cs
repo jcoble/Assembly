@@ -19,7 +19,7 @@ public sealed partial class PullRequestReaderTests
             if (args[0] == "pr") return Answer(View);
             var endpoint = args[^1];
             if (endpoint.Contains("/files?")) return Answer("""[{"filename":"new name.rs","previous_filename":"old name.rs","status":"renamed","additions":1,"deletions":1}]""");
-            if (endpoint.Contains("/comments?")) return Answer("[]");
+            if (args[1] == "graphql") return Answer("""{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}""");
             reads.Add(endpoint); return Answer(endpoint.Contains("ref=bbbb") ? "old\n" : "new λ\n");
         });
         var reader = new PullRequestReader(repo.Git, gh, repo.Root, new GitTextPatch(repo.Git));
@@ -40,7 +40,7 @@ public sealed partial class PullRequestReaderTests
         {
             if (args[0] == "pr") return Answer(View);
             if (args[^1].Contains("/files?")) return Answer("""[{"filename":"binary","status":"added"}]""");
-            if (args[^1].Contains("/comments?")) return Answer("[]");
+            if (args[1] == "graphql") return Answer("""{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}""");
             if (!raw) return new GhRun(0, "lossy replacement", "");
             return new GhRun(0, "lossy replacement", "") { OutputBytes = new byte[] { 255 } };
         }

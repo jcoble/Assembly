@@ -12,7 +12,7 @@ namespace Assembly.Application.Features.Chat.SourceControl.PullRequests;
 public sealed record PullRequestCreated(int Number, string Url, string Head);
 
 /// <summary>Every hosted write is preceded by current GitHub identity checks and is sent exactly once.</summary>
-public sealed class PullRequestWriter(IGit git, IGh gh, PullRequestReader reader)
+public sealed partial class PullRequestWriter(IGit git, IGh gh, PullRequestReader reader)
 {
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(120);
     public async Task<PullRequestCreated> CreateAsync(string root, string @base, string title, string description, bool draft, CancellationToken ct)
@@ -40,9 +40,11 @@ public sealed class PullRequestWriter(IGit git, IGh gh, PullRequestReader reader
             || parts[2] != "pull" || !int.TryParse(parts[3], out var number) || number <= 0) throw Unconfirmed();
         return new(number, url, branch);
     }
-    public async Task<string> ReviewAsync(string root, int number, string expectedHead, string body, IReadOnlyList<LineComment> comments, CancellationToken ct, string? expectedRepository = null, Action? ensureCurrent = null)
+    public async Task<string> ReviewAsync(string root, int number, string expectedHead, string body, IReadOnlyList<LineComment> comments, CancellationToken ct, string? expectedRepository = null, Action? ensureCurrent = null, string verdict = "COMMENT")
     {
-        Body(body, 20_000, "Write an overall review comment before submitting");
+        if (verdict is not ("COMMENT" or "APPROVE" or "REQUEST_CHANGES")) throw new CallBadArguments("Choose comment, approve or request changes.");
+        // An approval may stand alone; a comment or a request for changes says what it's about.
+        if (verdict != "APPROVE" || !string.IsNullOrWhiteSpace(body)) Body(body, 20_000, "Write an overall review comment before submitting");
         if (comments.Count > 20) throw new CallBadArguments("Review draft is too large");
         var detail = await Current(root, number, expectedHead, "submitting", ct, expectedRepository);
         foreach (var comment in comments)
@@ -51,14 +53,14 @@ public sealed class PullRequestWriter(IGit git, IGh gh, PullRequestReader reader
             if (!detail.Files.Any(file => file.Path == comment.Path && comment.IsIn(file.Patch)))
                 throw new CallFailed("A line comment is outside the current diff. Refresh and inspect it before submitting.");
         }
-        return await Write(root, detail, "reviews", "POST", new ReviewPayload(detail.HeadSha, body.Trim(), "COMMENT",
+        return await Write(root, detail, "reviews", "POST", new ReviewPayload(detail.HeadSha, body.Trim(), verdict,
             comments.Select(comment => new ReviewCommentPayload(comment.Path, comment.Line, comment.Side, comment.Body.Trim())).ToArray()),
             PullRequestsJson.Default.ReviewPayload, ct, ensureCurrent: ensureCurrent);
     }
     public async Task<string> ReplyAsync(string root, int number, string expectedHead, long commentId, string body, CancellationToken ct, string? expectedRepository = null, Action? ensureCurrent = null)
     {
         Body(body, 10_000, "Invalid review reply");
-        var detail = await Current(root, number, expectedHead, "replying", ct, expectedRepository);
+        var detail = await Current(root, number, expectedHead, "replying", ct, expectedRepository, closedToo: true);
         if (commentId <= 0 || !detail.Comments.Any(comment => comment.Id == commentId.ToString(CultureInfo.InvariantCulture) && comment.Path is not null && comment.ReplyToId is null))
             throw new CallFailed("That review thread is no longer available. Refresh the PR.");
         return await Write(root, detail, $"comments/{commentId}/replies", "POST", new BodyPayload(body.Trim()), PullRequestsJson.Default.BodyPayload, ct, ensureCurrent: ensureCurrent);
@@ -66,7 +68,7 @@ public sealed class PullRequestWriter(IGit git, IGh gh, PullRequestReader reader
     public async Task<string> CommentAsync(string root, int number, string expectedHead, string body, CancellationToken ct, string? expectedRepository = null, Action? ensureCurrent = null)
     {
         Body(body, 20_000, "Invalid pull request comment");
-        var detail = await Current(root, number, expectedHead, "commenting", ct, expectedRepository);
+        var detail = await Current(root, number, expectedHead, "commenting", ct, expectedRepository, closedToo: true);
         return await Write(root, detail, "comments", "POST", new BodyPayload(body.Trim()), PullRequestsJson.Default.BodyPayload, ct, issue: true, ensureCurrent: ensureCurrent);
     }
     public async Task<string> MergeAsync(string root, int number, string method, string expectedHead, string expectedBase, CancellationToken ct, string? expectedRepository = null, Action? ensureCurrent = null)
@@ -83,12 +85,12 @@ public sealed class PullRequestWriter(IGit git, IGh gh, PullRequestReader reader
         if (merged.ValueKind != JsonValueKind.True) throw Unconfirmed();
         return detail.Url;
     }
-    private async Task<PullRequestDetail> Current(string root, int number, string expectedHead, string action, CancellationToken ct, string? expectedRepository = null)
+    private async Task<PullRequestDetail> Current(string root, int number, string expectedHead, string action, CancellationToken ct, string? expectedRepository = null, bool closedToo = false)
     {
         if (number <= 0 || !Sha(expectedHead)) throw new CallBadArguments("Invalid pull request target");
         var detail = expectedRepository is null ? await reader.DetailAsync(root, number, ct) :
             await reader.ProjectDetailAsync(root, expectedRepository, number, ct);
-        if (detail.State != "OPEN" || !string.Equals(detail.HeadSha, expectedHead, StringComparison.OrdinalIgnoreCase))
+        if ((detail.State != "OPEN" && !closedToo) || !string.Equals(detail.HeadSha, expectedHead, StringComparison.OrdinalIgnoreCase))
             throw new CallFailed($"This pull request changed or closed. Refresh it before {action}.");
         return detail;
     }

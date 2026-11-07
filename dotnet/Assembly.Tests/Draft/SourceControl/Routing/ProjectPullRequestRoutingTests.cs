@@ -86,7 +86,7 @@ public sealed class ProjectPullRequestRoutingTests
         {
             Reads++; Roots.Add(folder);
             if (BeforeRead is { } before) await before();
-            return new GhRun(0, args[0] == "pr" ? """{"number":7,"title":"Remote PR","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"OPEN"}""" : "[]", "");
+            return new GhRun(0, args[0] == "pr" ? """{"number":7,"title":"Remote PR","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"OPEN"}""" : args[1] == "graphql" ? """{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}""" : "[]", "");
         }
     }
 }

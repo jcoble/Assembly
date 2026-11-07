@@ -132,8 +132,7 @@ public sealed partial class GitOperations : IAsyncDisposable
         if (request.InstanceId != InstanceId) throw new CallFailed("stale_instance");
         if (request.OperationId == Guid.Empty || request.Args.ValueKind != JsonValueKind.Object || request.Machine is not null)
             throw new CallFailed("bad_args");
-        if (request.Action is not ("fetch" or "pull" or "push" or "publish" or "createPr" or "review" or "reply" or "comment" or "merge" or
-            "draftCommitMessage" or "draftPr" or "draftReview" or "createProject" or "prepareProjectFolder")) throw new CallFailed("forbidden");
+        if (!GitSessionOperations.Supports(request.Action) && request.Action is not ("createProject" or "prepareProjectFolder")) throw new CallFailed("forbidden");
         if (request.Action is "createProject" or "prepareProjectFolder")
         {
             if (request.Session is not null || request.ProjectId is not null) throw new CallFailed("bad_args");
@@ -147,7 +146,11 @@ public sealed partial class GitOperations : IAsyncDisposable
         else if (string.IsNullOrWhiteSpace(request.Session)) throw new CallFailed("bad_args");
     }
 
-    internal static bool ProjectPrAction(string? action) => action is "draftReview" or "review" or "reply" or "comment" or "merge";
+    internal static bool ProjectPrAction(string? action) => action is "draftReview" or "draftComment" or "checkLog" or "conflicts" or "review" or "reply" or "comment" or
+        "merge" or "resolveThread" or "ready" or "updateBranch" or "rerunFailed";
+    /// <summary>Actions that change nothing anywhere: an interruption cancels them rather than leaving their outcome uncertain.</summary>
+    internal static bool ReadOnlyAction(string? action) => action is "createProject" or "prepareProjectFolder" or "draftCommitMessage" or "draftPr" or "draftReview" or
+        "draftComment" or "checkLog" or "conflicts";
 
     public GitOperationStatus Status(Guid operationId)
     {
@@ -364,7 +367,7 @@ public sealed partial class GitOperations : IAsyncDisposable
             {
                 if (entry.CancellationRequested) throw new OperationCanceledException(linked.Token);
                 entry.Safety = safety.Token; entry.State = "running"; entry.Version++;
-                if (entry.Request.Action is not ("createProject" or "prepareProjectFolder" or "draftCommitMessage" or "draftPr" or "draftReview")) entry.Mutation = true;
+                if (!ReadOnlyAction(entry.Request.Action)) entry.Mutation = true;
                 running = Snapshot(id, entry);
             }
             Publish(running);

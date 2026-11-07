@@ -15,7 +15,8 @@ namespace Assembly.Infrastructure.Chat.SourceControl;
 /// <summary>Fixed session producers run inside the existing host-owned Git operation and checkout lease.</summary>
 internal sealed class GitSessionOperations(SessionStore sessions, IGit git, PullRequestWriter prs, CheckoutWrites writes, GitOperations operations, GitDrafts drafts, PullRequestReader reader, IAppDatabase db)
 {
-    internal static bool Supports(string? action) => action is "fetch" or "pull" or "push" or "publish" or "createPr" or "review" or "reply" or "comment" or "merge" or "draftCommitMessage" or "draftPr" or "draftReview";
+    internal static bool Supports(string? action) => action is "fetch" or "pull" or "push" or "publish" or "createPr" or "review" or "reply" or "comment" or "merge" or "draftCommitMessage" or "draftPr" or "draftReview" or
+        "draftComment" or "checkLog" or "conflicts" or "resolveThread" or "ready" or "updateBranch" or "rerunFailed";
     internal void RequireSession(string session)
     {
         if (FolderView.IsView(session)) return;
@@ -70,10 +71,23 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
             "push" => Bind(request.Args, GitSessionOperationsJson.Default.SyncArgs, GitWritesJson.Default.GitWriteResult, (a, path, ct) => sync.PushAsync(path, Branch(a), ct)),
             "publish" => Bind(request.Args, GitSessionOperationsJson.Default.SyncArgs, GitWritesJson.Default.GitWriteResult, (a, path, ct) => sync.PublishAsync(path, Branch(a), a.Remote ?? throw new CallBadArguments("Choose a remote."), ct)),
             "createPr" => Bind(request.Args, GitSessionOperationsJson.Default.CreateArgs, GitSessionOperationsJson.Default.PullRequestCreated, (a, path, ct) => prs.CreateAsync(path, a.Base, a.Title, a.Description, a.Draft, ct)),
-            "review" => Bind(request.Args, GitSessionOperationsJson.Default.ReviewArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.ReviewAsync(path, a.Number, a.ExpectedHead, a.Body, a.Comments, ct, request.ProjectId is null ? null : request.ExpectedRepository, ensureCurrent)),
+            "review" => Bind(request.Args, GitSessionOperationsJson.Default.ReviewArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.ReviewAsync(path, a.Number, a.ExpectedHead, a.Body, a.Comments, ct, Repository(request), ensureCurrent, a.Verdict ?? "COMMENT")),
             "reply" => Bind(request.Args, GitSessionOperationsJson.Default.ReplyArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.ReplyAsync(path, a.Number, a.ExpectedHead, a.CommentId, a.Body, ct, request.ProjectId is null ? null : request.ExpectedRepository, ensureCurrent)),
             "comment" => Bind(request.Args, GitSessionOperationsJson.Default.CommentArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.CommentAsync(path, a.Number, a.ExpectedHead, a.Body, ct, request.ProjectId is null ? null : request.ExpectedRepository, ensureCurrent)),
             "merge" => Bind(request.Args, GitSessionOperationsJson.Default.MergeArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.MergeAsync(path, a.Number, a.Method, a.ExpectedHead, a.ExpectedBase, ct, request.ProjectId is null ? null : request.ExpectedRepository, ensureCurrent)),
+            "resolveThread" => Bind(request.Args, GitSessionOperationsJson.Default.ResolveArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.ResolveThreadAsync(path, a.Number, a.ExpectedHead, a.ThreadId, a.Resolved, ct, Repository(request), ensureCurrent)),
+            "ready" => Bind(request.Args, GitSessionOperationsJson.Default.ReadyArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.ReadyAsync(path, a.Number, a.ExpectedHead, a.Ready, ct, Repository(request), ensureCurrent)),
+            "updateBranch" => Bind(request.Args, GitSessionOperationsJson.Default.PrArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.UpdateBranchAsync(path, a.Number, a.ExpectedHead, ct, Repository(request), ensureCurrent)),
+            "rerunFailed" => Bind(request.Args, GitSessionOperationsJson.Default.RunArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.RerunFailedAsync(path, a.Number, a.ExpectedHead, a.RunId, ct, Repository(request), ensureCurrent)),
+            "checkLog" => Bind(request.Args, GitSessionOperationsJson.Default.JobArgs, GitSessionOperationsJson.Default.PrCheckLog, (a, path, ct) => reader.CheckLogAsync(path, Repository(request), a.Number, a.JobId, ct)),
+            "conflicts" => Bind(request.Args, GitSessionOperationsJson.Default.PrArgs, GitSessionOperationsJson.Default.PrConflicts, (a, path, ct) => reader.ConflictsAsync(path, Repository(request), a.Number, a.ExpectedHead, ct)),
+            "draftComment" => Bind(request.Args, GitSessionOperationsJson.Default.DraftCommentArgs, GitSessionOperationsJson.Default.String, async (a, path, ct) =>
+            {
+                var detail = request.ProjectId is null ? await reader.DetailAsync(path, a.Number, ct) : await reader.ProjectDetailAsync(path, request.ExpectedRepository!, a.Number, ct);
+                if (detail.HeadSha != a.ExpectedHead) throw new CallFailed("The PR head changed. Refresh and try again.");
+                ensureCurrent?.Invoke();
+                return await drafts.CommentAsync(detail, a.Target, a.Intent ?? "", ct);
+            }),
             "draftCommitMessage" => async (path, ct) => JsonSerializer.SerializeToElement(await drafts.CommitMessageAsync(path, ct), GitSessionOperationsJson.Default.String),
             "draftPr" => Bind(request.Args, GitSessionOperationsJson.Default.DraftPrArgs, GitSessionOperationsJson.Default.PullRequestDraft, async (a, path, ct) =>
             {
@@ -91,6 +105,7 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
             _ => throw new CallFailed("forbidden")
         };
     }
+    private static string? Repository(GitOperationStart request) => request.ProjectId is null ? null : request.ExpectedRepository;
     private static string Branch(SyncArgs args) => args.ExpectedBranch ?? throw new CallBadArguments("Refresh the current branch before continuing.");
     private static Func<string, CancellationToken, Task<JsonElement>> Bind<TArgs, TResult>(JsonElement json, JsonTypeInfo<TArgs> input, JsonTypeInfo<TResult> output,
         Func<TArgs, string, CancellationToken, Task<TResult>> execute) where TArgs : class
@@ -107,9 +122,15 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
     internal sealed record CreateArgs([property: JsonRequired] string Base, [property: JsonRequired] string Title,
         [property: JsonRequired] string Description, bool Draft);
     internal sealed record ReviewArgs(int Number, [property: JsonRequired] string ExpectedHead, [property: JsonRequired] string Body,
-        [property: JsonRequired] IReadOnlyList<LineComment> Comments);
+        [property: JsonRequired] IReadOnlyList<LineComment> Comments, string? Verdict = null);
     internal sealed record ReplyArgs(int Number, [property: JsonRequired] string ExpectedHead, long CommentId, [property: JsonRequired] string Body);
     internal sealed record CommentArgs(int Number, [property: JsonRequired] string ExpectedHead, [property: JsonRequired] string Body);
+    internal sealed record PrArgs(int Number, [property: JsonRequired] string ExpectedHead);
+    internal sealed record ResolveArgs(int Number, [property: JsonRequired] string ExpectedHead, [property: JsonRequired] string ThreadId, bool Resolved);
+    internal sealed record ReadyArgs(int Number, [property: JsonRequired] string ExpectedHead, bool Ready);
+    internal sealed record RunArgs(int Number, [property: JsonRequired] string ExpectedHead, long RunId);
+    internal sealed record JobArgs(int Number, long JobId);
+    internal sealed record DraftCommentArgs(int Number, [property: JsonRequired] string ExpectedHead, [property: JsonRequired] CommentTarget Target, string? Intent);
     internal sealed record MergeArgs(int Number, [property: JsonRequired] string Method, [property: JsonRequired] string ExpectedHead, [property: JsonRequired] string ExpectedBase);
 }
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
@@ -125,4 +146,12 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
 [JsonSerializable(typeof(GitSessionOperations.DraftReviewArgs))]
 [JsonSerializable(typeof(GitSessionOperations.PullRequestDraft))]
 [JsonSerializable(typeof(ReviewDraft))]
+[JsonSerializable(typeof(GitSessionOperations.PrArgs))]
+[JsonSerializable(typeof(GitSessionOperations.ResolveArgs))]
+[JsonSerializable(typeof(GitSessionOperations.ReadyArgs))]
+[JsonSerializable(typeof(GitSessionOperations.RunArgs))]
+[JsonSerializable(typeof(GitSessionOperations.JobArgs))]
+[JsonSerializable(typeof(GitSessionOperations.DraftCommentArgs))]
+[JsonSerializable(typeof(PrCheckLog))]
+[JsonSerializable(typeof(PrConflicts))]
 internal sealed partial class GitSessionOperationsJson : JsonSerializerContext;

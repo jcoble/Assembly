@@ -83,7 +83,7 @@ public sealed partial class GitSessionOperationsTests
         {
             if (args.Contains("POST")) { Writes++; throw new GhInterrupted("lost", new IOException("fixture"), ct); }
             Reads++; OnRead?.Invoke();
-            return Task.FromResult(new GhRun(0, args[0] == "pr" ? """{"number":7,"state":"OPEN","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}""" : "[]", ""));
+            return Task.FromResult(new GhRun(0, args[0] == "pr" ? """{"number":7,"state":"OPEN","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}""" : args[1] == "graphql" ? """{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}""" : "[]", ""));
         }
     }
 }

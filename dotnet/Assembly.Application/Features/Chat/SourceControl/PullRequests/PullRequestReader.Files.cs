@@ -10,7 +10,7 @@ public sealed partial class PullRequestReader
     private async Task<PrFileContext> FileCore(string root, string? repository, int number, string path, string baseSha, string headSha, CancellationToken ct)
     {
         ValidatePath(path); ValidateRevision(baseSha); ValidateRevision(headSha);
-        var detail = repository is null ? await DetailAsync(root, number, ct) : await ProjectDetailAsync(root, repository, number, ct);
+        var detail = await Read(root, repository, number, ct);
         if (detail.BaseSha != baseSha || detail.HeadSha != headSha) throw new CallFailed("This pull request changed. Refresh it before reading the file.");
         var file = detail.Files.FirstOrDefault(file => file.Path == path) ?? throw new CallFailed("That file is not in this pull request.");
         var oldPath = file.PreviousPath ?? file.Path; ValidatePath(oldPath);
