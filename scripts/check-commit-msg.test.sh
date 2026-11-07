@@ -54,6 +54,13 @@ expect 0 "a fix with No-test passes" work $'fix: typo\n\nNo-test: a comment only
 expect 0 "a fix that changes a test with an accented name passes" work $'fix: names\n\nArchitecture: unchanged\nCommitted-by: Claude' 'dotnet/Assembly.Tests/résumé.cs'
 expect 0 "a fix with No-test above a long body passes" work $'fix: x\n\nNo-test: r\n'"$(seq 20000)"$'\nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/x.rs
 expect 0 "a subject that only starts with fixup isn't a fix" work $'fixup the docs\n\nArchitecture: unchanged\nCommitted-by: Claude' desktop/src/x.rs
+# Test changes need no TEST-CHANGE line: the edit hook stops agents, and commits and pushes never refuse a test change.
+mkdir -p desktop/src && printf 'fn keeps() {\n assert_eq!(a, 1);\n}\n' >desktop/src/view_tests.rs && git add desktop/src/view_tests.rs
+git -c user.name=t -c user.email=t@t commit -q -m 'seed a test'
+printf 'fn keeps() {\n assert_eq!(a, 2);\n}\n' >desktop/src/view_tests.rs && git add desktop/src/view_tests.rs
+expect 0 "a test-only commit changing an assertion, with no TEST-CHANGE line, passes" work "$ok"
+git rm -q desktop/src/view_tests.rs
+expect 0 "a commit deleting a test, with no TEST-CHANGE line, passes" work "$ok"
 expect 1 "a message without Architecture: unchanged stops it" work $'Subject\n\nCommitted-by: Claude'
 expect 0 "Architecture: unchanged in any case passes" work $'Subject\n\narchitecture: Unchanged\nCommitted-by: Claude'
 expect 1 "changing the old architecture copy still needs an acknowledgement" work $'Subject\n\nCommitted-by: Claude' docs/architecture.md

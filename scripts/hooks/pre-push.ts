@@ -26,6 +26,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const branch = git(['branch', '--show-current']);
     for (const update of updates(input)) for (const commit of outgoing(update, git)) commits.add(commit);
     for (const commit of commits) execFileSync('bash', ['scripts/check-commit-msg.sh', '--commit', commit, branch], { stdio: 'inherit' });
-    process.stdout.write('Pre-push: outgoing commit messages, architecture declarations and test integrity passed; no build or test suite was started.\n');
+    process.stdout.write('Pre-push: outgoing commit messages and architecture declarations passed; no build or test suite was started.\n');
   } catch (error) { process.stderr.write('Pre-push stopped: ' + String(error) + '\n'); process.exitCode = 1; }
 }
