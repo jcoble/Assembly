@@ -172,6 +172,14 @@ impl PrDetail {
             .into_any_element()
         };
         let open = detail.state == "OPEN";
+        let reply_in_thread = self.reply.as_ref().is_some_and(|reply| {
+            (detail.threads.iter()).any(|thread| {
+                thread
+                    .comment_ids
+                    .first()
+                    .is_some_and(|id| *id == reply.id.to_string())
+            })
+        });
         let activity = v_flex()
             .gap_2()
             .pt_4()
@@ -187,7 +195,7 @@ impl PrDetail {
                 activity_rows(detail)
                     .into_iter()
                     .enumerate()
-                    .map(|(index, row)| self.activity_row(index, row, open, cx)),
+                    .map(|(index, row)| self.activity_row(detail, index, row, window, cx)),
             );
         column
             .child(heading)
@@ -204,19 +212,19 @@ impl PrDetail {
             )
             .child(body)
             .child(activity)
-            .children(self.reply_box(window, cx))
-            .when(open, |column| {
-                column
-                    .child(self.composer(window, cx))
-                    .child(self.merge_card(detail, cx))
+            .when(!reply_in_thread, |column| {
+                column.children(self.reply_box(window, cx))
             })
+            .child(self.composer(window, cx))
+            .when(open, |column| column.child(self.merge_card(detail, cx)))
             .into_any_element()
     }
     fn activity_row(
         &self,
+        detail: &PullRequestDetail,
         index: usize,
         row: ActivityRow,
-        open: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.theme();
@@ -307,7 +315,7 @@ impl PrDetail {
                     Some(line) => format!("{path}:{line}"),
                     None => path.clone(),
                 });
-                let can_reply = open && comment.reply_id().is_some();
+                let can_reply = comment.reply_id().is_some();
                 let id = format!("pr-comment-body:{index}");
                 let reply = can_reply.then(|| {
                     let target = comment.clone();
@@ -342,6 +350,9 @@ impl PrDetail {
                     .children(reply.map(|reply| div().pl(px(36.)).mb_2().child(reply)))
                     .into_any_element()
             }
+            ActivityRow::Thread {
+                thread, comments, ..
+            } => self.thread_card(detail, thread, comments, window, cx),
             ActivityRow::Review { at, review } => {
                 let id = format!("pr-review-body:{index}");
                 let has_body = !review.body.trim().is_empty();

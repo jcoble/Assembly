@@ -146,3 +146,32 @@ impl Composer {
         self.set_target(key, source, window, cx);
     }
 }
+impl Composer {
+    /// Puts words in a session's draft, after anything already typed there, so its own Send sends them. A session not
+    /// on screen keeps them until it is.
+    pub fn stage_text(
+        &mut self,
+        key: SessionKey,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let joined = |held: &str| {
+            if held.trim().is_empty() {
+                text.to_string()
+            } else {
+                format!("{}\n\n{text}", held.trim_end())
+            }
+        };
+        if self.session_key.as_ref() == Some(&key) {
+            let value = joined(&self.draft.read(cx).value());
+            self.draft
+                .update(cx, |draft, cx| draft.set_value(value, window, cx));
+            self.draft_changed(cx);
+        } else {
+            let draft = self.drafts.entry(key).or_default();
+            draft.0 = joined(&draft.0);
+        }
+        cx.notify();
+    }
+}

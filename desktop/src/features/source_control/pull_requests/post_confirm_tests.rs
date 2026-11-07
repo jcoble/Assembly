@@ -20,7 +20,7 @@ fn changed_head_refuses_confirmation_and_the_exact_review_targets_remain_in_the_
         ))
         .unwrap();
     draft.update_comment(&id, " Exact line ".into());
-    let request = PostRequest::review(&draft, &identity()).unwrap();
+    let request = PostRequest::review(&draft, &identity(), "COMMENT").unwrap();
     assert_eq!(request.body(), "Exact review");
     assert_eq!(request.comments()[0].path, "ü.rs");
     assert_eq!(request.comments()[0].side, "LEFT");
@@ -35,7 +35,7 @@ fn changed_head_refuses_confirmation_and_the_exact_review_targets_remain_in_the_
 fn each_confirmation_names_only_what_it_is_tied_to() {
     let mut draft = ReviewDraft::new(identity());
     draft.body = "Review".into();
-    let review = PostRequest::review(&draft, &identity()).unwrap();
+    let review = PostRequest::review(&draft, &identity(), "COMMENT").unwrap();
     assert_eq!(review.fact().as_deref(), Some("head aaaaaaaaaa"));
     let reply = PostRequest::reply(identity(), 41, "Reply".into()).unwrap();
     assert_eq!(reply.fact().as_deref(), Some("comment 41"));

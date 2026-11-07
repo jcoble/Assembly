@@ -31,8 +31,8 @@ public sealed partial class PullRequestReader
             {
                 if (!row.TryGetProperty("databaseId", out var idValue) || idValue.ValueKind != JsonValueKind.Number) continue;
                 var id = idValue.GetInt64();
-                comments.Add(new PullRequestComment(id.ToString(CultureInfo.InvariantCulture), Text(row, "author", "login"), Text(row, "body"), Text(row, "createdAt"), path, line, side, first)
-                { BodyBlocks = SafeMarkdown.Parse(Text(row, "body")) });
+                comments.Add(new PullRequestComment(id.ToString(CultureInfo.InvariantCulture), Text(row, "author", "login"), GitHubText.Tidy(Text(row, "body")), Text(row, "createdAt"), path, line, side, first)
+                { BodyBlocks = SafeMarkdown.Parse(GitHubText.Tidy(Text(row, "body"))) });
                 first ??= id;
                 ids.Add(id.ToString(CultureInfo.InvariantCulture));
             }

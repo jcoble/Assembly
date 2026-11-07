@@ -81,6 +81,39 @@ impl SessionPane {
                 });
             },
         );
+        // Asked from elsewhere, such as a pull request: the words wait in the session's composer and it opens.
+        cx.on_action(|ask: &crate::core::intents::ask_session::AskSession, cx| {
+            let ask = ask.clone();
+            let Some(handle) = cx
+                .active_window()
+                .or_else(|| cx.windows().into_iter().next())
+            else {
+                return;
+            };
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let Some(pane) = CenterPanes::find::<SessionPane>("Chat", cx) else {
+                        return;
+                    };
+                    pane.update(cx, |pane, cx| {
+                        pane.composer.update(cx, |composer, cx| {
+                            composer.stage_text(ask.key.clone(), &ask.text, window, cx)
+                        });
+                        pane.uncover(&ask.key);
+                        pane.request_open(
+                            crate::core::intents::session_open::SessionOpenRequest {
+                                key: ask.key,
+                                request_id: uuid::Uuid::new_v4().to_string(),
+                                target:
+                                    crate::core::intents::session_open::SessionOpenTarget::Engine,
+                            },
+                            window,
+                            cx,
+                        )
+                    });
+                });
+            });
+        });
     }
 
     /// Only the navigator commits prepared rows; selection notifications never start another open.

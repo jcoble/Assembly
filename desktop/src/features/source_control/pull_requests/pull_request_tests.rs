@@ -54,6 +54,7 @@ fn a_row_says_its_checks_only_when_the_backend_did() {
     let pr = |checks: Option<&str>, summary: Option<&str>| PullRequestSummary {
         checks: checks.map(String::from),
         check_summary: summary.map(String::from),
+        review_decision: None,
         ..PullRequestSummary::default()
     };
     assert_eq!(pr(None, None).check_line(), None);

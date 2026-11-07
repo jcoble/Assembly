@@ -2,7 +2,7 @@
 //! checks and merge stand. The words are the old Pull requests tab's.
 use super::pull_request::{
     CheckTone, PullRequestCheck, PullRequestComment, PullRequestDetail, PullRequestFile,
-    PullRequestReview,
+    PullRequestReview, PullRequestThread,
 };
 use crate::features::sessions::history::age::age;
 
@@ -45,6 +45,12 @@ pub enum ActivityRow {
         at: String,
         comment: PullRequestComment,
     },
+    /// A review thread on a line: its comments in order, and whether it's resolved or outdated.
+    Thread {
+        at: String,
+        thread: PullRequestThread,
+        comments: Vec<PullRequestComment>,
+    },
     Review {
         at: String,
         review: PullRequestReview,
@@ -58,11 +64,13 @@ impl ActivityRow {
             | Self::Closed { at }
             | Self::Commit { at, .. }
             | Self::Comment { at, .. }
+            | Self::Thread { at, .. }
             | Self::Review { at, .. } => at,
         }
     }
 }
-/// Everything that happened on the pull request, oldest first. A review that only carries line comments isn't a row.
+/// Everything that happened on the pull request, oldest first. A line comment shows in its thread, at the thread's first
+/// comment; a review that only carries line comments isn't a row.
 pub fn activity_rows(pr: &PullRequestDetail) -> Vec<ActivityRow> {
     let mut rows = vec![ActivityRow::Opened {
         at: pr.created_at.clone(),
@@ -74,9 +82,34 @@ pub fn activity_rows(pr: &PullRequestDetail) -> Vec<ActivityRow> {
         oid: commit.oid.clone(),
         headline: commit.headline.clone(),
     }));
-    rows.extend(pr.comments.iter().map(|comment| ActivityRow::Comment {
-        at: comment.created_at.clone(),
-        comment: comment.clone(),
+    let threaded = |comment: &PullRequestComment| {
+        pr.threads
+            .iter()
+            .any(|thread| thread.comment_ids.contains(&comment.id))
+    };
+    rows.extend(
+        pr.comments
+            .iter()
+            .filter(|comment| !threaded(comment))
+            .map(|comment| ActivityRow::Comment {
+                at: comment.created_at.clone(),
+                comment: comment.clone(),
+            }),
+    );
+    rows.extend(pr.threads.iter().filter_map(|thread| {
+        let comments: Vec<_> = (thread.comment_ids.iter())
+            .filter_map(|id| {
+                pr.comments
+                    .iter()
+                    .find(|comment| comment.id == *id)
+                    .cloned()
+            })
+            .collect();
+        Some(ActivityRow::Thread {
+            at: comments.first()?.created_at.clone(),
+            thread: thread.clone(),
+            comments,
+        })
     }));
     rows.extend(
         pr.reviews
@@ -99,6 +132,13 @@ pub fn activity_rows(pr: &PullRequestDetail) -> Vec<ActivityRow> {
     }
     rows.sort_by(|left, right| left.at().cmp(right.at()));
     rows
+}
+/// A job that didn't run (skipped or neutral): it counts as passing for merging but reads as quiet.
+pub fn skipped(check: &PullRequestCheck) -> bool {
+    matches!(
+        check.conclusion.to_lowercase().as_str(),
+        "skipped" | "neutral"
+    )
 }
 pub fn check_tone(check: &PullRequestCheck) -> CheckTone {
     let value = if check.conclusion.is_empty() {
@@ -140,28 +180,6 @@ pub fn check_word(check: &PullRequestCheck) -> String {
         .find(|value| !value.is_empty())
         .map_or("unknown", String::as_str);
     words_of(word)
-}
-/// The merge card's first line, and whether it reads as settled.
-pub fn checks_fact(checks: &[PullRequestCheck]) -> (bool, String) {
-    if checks.is_empty() {
-        return (false, "No checks reported".into());
-    }
-    let good = passing(checks);
-    (
-        good == checks.len(),
-        format!("{good} of {} checks successful", checks.len()),
-    )
-}
-/// The merge card's second line, and whether it reads as settled.
-pub fn mergeable_fact(mergeable: &str) -> (bool, &'static str) {
-    match mergeable {
-        "MERGEABLE" => (true, "This branch has no conflicts with the base branch."),
-        "CONFLICTING" => (false, "This branch has conflicts with the base branch."),
-        _ => (
-            false,
-            "GitHub is still checking whether this branch can merge.",
-        ),
-    }
 }
 pub fn merge_method_label(method: &str) -> &'static str {
     match method {

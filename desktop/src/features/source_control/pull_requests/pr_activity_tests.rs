@@ -14,6 +14,7 @@ fn check(status: &str, conclusion: &str) -> PullRequestCheck {
         status: status.into(),
         conclusion: conclusion.into(),
         url: String::new(),
+        ..Default::default()
     }
 }
 // Pins: old PullRequestWorkspace.svelte Summary page.
@@ -71,19 +72,6 @@ fn checks_read_as_failing_passing_or_a_count() {
         "1 failing"
     );
     assert_eq!(check_word(&check("IN_PROGRESS", "")), "in progress");
-}
-#[test]
-fn the_merge_card_says_how_checks_and_conflicts_stand() {
-    assert_eq!(checks_fact(&[]), (false, "No checks reported".to_string()));
-    assert_eq!(
-        checks_fact(&[check("COMPLETED", "SUCCESS")]),
-        (true, "1 of 1 checks successful".to_string())
-    );
-    assert!(mergeable_fact("MERGEABLE").0);
-    assert_eq!(
-        mergeable_fact("UNKNOWN").1,
-        "GitHub is still checking whether this branch can merge."
-    );
 }
 #[test]
 fn the_post_button_counts_its_line_comments() {

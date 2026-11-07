@@ -105,6 +105,13 @@ impl PrThreads {
     pub(super) fn shown(&self) -> &ThreadsBody {
         &self.shown
     }
+    /// The sessions shown, by key and title, for asking an agent.
+    pub(super) fn sessions(&self) -> Vec<(SessionKey, String)> {
+        match &self.shown {
+            ThreadsBody::One { key, title } => vec![(key.clone(), title.clone())],
+            _ => Vec::new(),
+        }
+    }
     pub(super) fn set_repository(&mut self, repository: String, cx: &mut Context<Self>) {
         self.repository = Some(repository);
         if self.active {

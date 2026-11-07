@@ -1,6 +1,6 @@
 //! The Summary page's side column: short rows for the threads, comments, reviews and checks, in the old screen's shape.
 use super::super::{
-    pr_activity::{capitalized, check_summary, check_tone, check_word, words_of},
+    pr_activity::{capitalized, check_summary, check_tone, check_word, skipped, words_of},
     pr_parts::avatar,
     pull_request::{CheckTone, PullRequestCheck, PullRequestComment, PullRequestReview},
 };
@@ -38,12 +38,21 @@ fn meta(word: String, cx: &App) -> Div {
         .text_color(cx.theme().muted_foreground)
         .child(word)
 }
-fn comment_row(comment: &PullRequestComment) -> impl IntoElement + use<> {
-    let body = comment
-        .body
-        .split_whitespace()
+/// A comment as one plain line: Markdown's marks, headings and table rules are left out of a preview.
+fn plain_line(body: &str) -> String {
+    body.split_whitespace()
+        .filter(|word| {
+            !word
+                .chars()
+                .all(|c| matches!(c, '|' | '-' | ':' | '#' | '>'))
+        })
+        .map(|word| word.replace(['*', '`'], ""))
+        .filter(|word| !word.is_empty())
         .collect::<Vec<_>>()
-        .join(" ");
+        .join(" ")
+}
+fn comment_row(comment: &PullRequestComment) -> impl IntoElement + use<> {
+    let body = plain_line(&comment.body);
     let author = comment.author.as_str();
     let text = format!("{author} {body}").trim_start().to_owned();
     let name = (!author.is_empty()).then(|| {
@@ -73,9 +82,15 @@ fn review_row(review: &PullRequestReview, cx: &App) -> impl IntoElement + use<> 
         )
         .child(meta(capitalized(&words_of(&review.state)), cx))
 }
-fn check_row(index: usize, check: &PullRequestCheck, cx: &App) -> impl IntoElement + use<> {
+/// A check opens the Checks page, where a failed one shows the part of its log that failed.
+fn check_row(
+    index: usize,
+    check: &PullRequestCheck,
+    cx: &mut Context<PrDetail>,
+) -> impl IntoElement + use<> {
     let theme = cx.theme();
     let color = match check_tone(check) {
+        _ if skipped(check) => theme.muted_foreground,
         CheckTone::Passing => theme.success,
         CheckTone::Failing => theme.danger,
         _ => theme.warning,
@@ -86,20 +101,17 @@ fn check_row(index: usize, check: &PullRequestCheck, cx: &App) -> impl IntoEleme
         check.name.clone()
     };
     let word = meta(capitalized(&check_word(check)), cx);
-    let url = check.url.clone();
+    let hover = cx.theme().secondary_hover;
     row()
+        .id(SharedString::from(format!("pr-check:{index}")))
+        .px_1()
+        .rounded(px(4.))
+        .cursor_pointer()
+        .hover(move |row| row.bg(hover))
+        .on_click(cx.listener(|view, _, _, cx| view.select_page(Page::Checks, cx)))
         .child(div().flex_none().size(px(8.)).rounded_full().bg(color))
         .child(div().min_w_0().truncate().child(name))
-        .child(if url.is_empty() {
-            word.into_any_element()
-        } else {
-            word.id(SharedString::from(format!("pr-check:{index}")))
-                .cursor_pointer()
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(Box::new(OpenInBrowser { url: url.clone() }), cx)
-                })
-                .into_any_element()
-        })
+        .child(word)
 }
 impl PrDetail {
     pub(super) fn side_column(

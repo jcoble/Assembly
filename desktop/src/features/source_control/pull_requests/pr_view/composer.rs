@@ -1,10 +1,12 @@
 //! The Summary page's comment box and reply box. One box writes the review draft's text: alone it posts a comment,
 //! with line comments it posts a review. Posting always goes through the confirm dialog.
 use super::super::{post_confirm, review_draft::LineComment};
+use super::helper_writer::Spot;
 use super::*;
 use crate::core::theme::text::TextRole;
 use gpui_kit::component::diff::{DiffLinePosition, DiffSide};
 use gpui_kit::component::input::{InputEvent, Textarea};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -22,7 +24,7 @@ impl PrDetail {
             let input = cx.new(|cx| {
                 TextareaState::new(window, cx)
                     .default_value(body)
-                    .placeholder("Leave a comment")
+                    .placeholder("Leave a comment, or notes for the helper to write it from")
                     .auto_grow(2, 8)
             });
             let heard = cx.subscribe(
@@ -44,7 +46,14 @@ impl PrDetail {
             input.update(cx, |input, cx| input.set_value(text, window, cx));
         }
         if self.reply.is_some() && self.reply_input.is_none() {
-            self.reply_input = Some(cx.new(|cx| TextareaState::new(window, cx).auto_grow(3, 8)));
+            self.reply_input = Some(cx.new(|cx| {
+                TextareaState::new(window, cx)
+                    .placeholder("Write a reply, or notes for the helper to write it from")
+                    .auto_grow(3, 8)
+            }));
+        }
+        if let (Some(text), Some(input)) = (self.pending_reply.take(), &self.reply_input) {
+            input.update(cx, |input, cx| input.set_value(text, window, cx));
         }
     }
     fn open_post(
@@ -63,7 +72,7 @@ impl PrDetail {
     }
     fn preview_post(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let request = self
-            .current_identity()
+            .read_identity()
             .ok_or_else(|| "Refresh first. Your comment is kept.".to_string())
             .and_then(|identity| {
                 let review = self
@@ -71,22 +80,30 @@ impl PrDetail {
                     .as_ref()
                     .ok_or_else(|| "Refresh first. Your comment is kept.".to_string())?;
                 let review = review.read(cx);
-                if review.comments.is_empty() {
+                if review.comments.is_empty() && self.verdict == "COMMENT" {
                     PostRequest::comment(identity, review.body.clone())
                 } else {
-                    PostRequest::review(review, &identity)
+                    PostRequest::review(review, &identity, self.verdict)
                 }
             });
         self.open_post(request, window, cx);
     }
     fn preview_reply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let request = match (self.current_identity(), &self.reply, &self.reply_input) {
+        let request = match (self.read_identity(), &self.reply, &self.reply_input) {
             (Some(identity), Some(reply), Some(input)) => {
                 PostRequest::reply(identity, reply.id, input.read(cx).value().to_string())
             }
             _ => Err("Refresh first. Your reply is kept.".to_string()),
         };
         self.open_post(request, window, cx);
+    }
+    /// The pull request a post is checked against: an open one for a review, as read for a comment or reply.
+    pub fn post_identity(&self, request: &PostRequest) -> Option<ReviewIdentity> {
+        if request.is_review() {
+            self.current_identity()
+        } else {
+            self.read_identity()
+        }
     }
     pub fn writes_free(&self, cx: &App) -> bool {
         self.writes.read(cx).free(cx)
@@ -98,7 +115,7 @@ impl PrDetail {
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
         let identity = self
-            .current_identity()
+            .post_identity(request)
             .ok_or_else(|| "Refresh before posting. Your draft is kept.".to_string())?;
         self.posted = None;
         self.writes
@@ -127,6 +144,10 @@ impl PrDetail {
                         number: self.number,
                     });
                 }
+            }
+            WriteDone::Acted { act } => {
+                self.acted = Some(act.done());
+                self.refresh(cx);
             }
         }
     }
@@ -290,12 +311,35 @@ impl PrDetail {
         let writes_free = self.writes_free(cx);
         let has_text = !review.body.trim().is_empty();
         let lines: Vec<_> = review.comments.clone();
-        let label = super::super::pr_activity::post_label(lines.len());
+        let open = self
+            .detail
+            .as_ref()
+            .is_some_and(|detail| detail.state == "OPEN");
+        let verdict = if open { self.verdict } else { "COMMENT" };
+        let label = match verdict {
+            "APPROVE" if lines.is_empty() => "Approve".to_string(),
+            "APPROVE" => format!(
+                "Approve · {}",
+                super::super::pr_activity::post_label(lines.len())
+                    .trim_start_matches("Post review · ")
+            ),
+            "REQUEST_CHANGES" => "Request changes".to_string(),
+            _ => super::super::pr_activity::post_label(lines.len()),
+        };
+        let writing = self.helper_writing(Spot::Comment, cx);
+        let can_undo = self.can_undo(Spot::Comment, cx);
+        let helper_error = self.helper_error(Spot::Comment, cx);
+        let target = cx.entity().downgrade();
         let drafter = self.drafter.read(cx);
         let drafting = drafter.busy;
-        let draft_error = drafter.error.clone();
+        let draft_error = drafter.error.clone().or(helper_error);
         let review_entity = self.review.clone();
-        let can_post = has_text && writes_free && self.current_identity().is_some();
+        let identity = if verdict == "COMMENT" && lines.is_empty() {
+            self.read_identity()
+        } else {
+            self.current_identity()
+        };
+        let can_post = (has_text || verdict == "APPROVE") && writes_free && identity.is_some();
         v_flex()
             .gap_2()
             .p_3()
@@ -345,6 +389,7 @@ impl PrDetail {
                     .gap_2()
                     .child(
                         Button::new("pr-post")
+                            .primary()
                             .small()
                             .label(label)
                             .disabled(!can_post)
@@ -352,18 +397,67 @@ impl PrDetail {
                                 cx.listener(|view, _, window, cx| view.preview_post(window, cx)),
                             ),
                     )
+                    .when(open, |row| {
+                        row.child(
+                            Button::new("pr-verdict")
+                                .ghost()
+                                .small()
+                                .icon(IconName::ChevronDown)
+                                .tooltip("Comment, approve or request changes")
+                                .dropdown_menu(move |menu, _, _| {
+                                    ["COMMENT", "APPROVE", "REQUEST_CHANGES"].into_iter().fold(menu, |menu, choice| {
+                                        let target = target.clone();
+                                        menu.item(PopupMenuItem::new(verdict_label(choice)).checked(choice == verdict).on_click(
+                                            move |_, _, cx| {
+                                                _ = target.update(cx, |view, cx| {
+                                                    view.verdict = choice;
+                                                    cx.notify();
+                                                });
+                                            },
+                                        ))
+                                    })
+                                }),
+                        )
+                    })
+                    .child(div().flex_1())
                     .child(
-                        Button::new("pr-draft")
+                        Button::new("pr-helper-write")
                             .ghost()
                             .small()
-                            .label(if drafting {
-                                "Drafting…"
+                            .icon(IconName::Sparkles)
+                            .label(if writing {
+                                "Writing…"
+                            } else if has_text {
+                                "Write from my notes"
                             } else {
-                                "Draft with utility model"
+                                "Suggest a comment"
                             })
-                            .disabled(drafting)
-                            .on_click(cx.listener(|view, _, _, cx| view.draft_with_helper(cx))),
+                            .loading(writing)
+                            .disabled(writing || drafting)
+                            .on_click(cx.listener(|view, _, _, cx| view.write_with_helper(Spot::Comment, cx))),
                     )
+                    .when(can_undo, |row| {
+                        row.child(
+                            Button::new("pr-helper-undo")
+                                .ghost()
+                                .small()
+                                .icon(IconName::Undo2)
+                                .label("Undo")
+                                .on_click(cx.listener(|view, _, _, cx| view.undo_helper(cx))),
+                        )
+                    })
+                    .when(open, |row| {
+                        row.child(
+                            Button::new("pr-draft")
+                                .ghost()
+                                .small()
+                                .label(if drafting { "Drafting…" } else { "Draft a review" })
+                                .tooltip("The utility model reads the changes and drafts a review with line comments.")
+                                .loading(drafting)
+                                .disabled(drafting || writing)
+                                .on_click(cx.listener(|view, _, _, cx| view.draft_with_helper(cx))),
+                        )
+                    })
                     .when(has_text || !review.comments.is_empty(), |row| {
                         row.child(
                             Button::new("pr-discard")
@@ -386,9 +480,15 @@ impl PrDetail {
             Some(line) => format!("{}:{line}", reply.path),
             None => reply.path.clone(),
         };
+        let spot = Spot::Reply(reply.id);
+        let writing = self.helper_writing(spot, cx);
+        let can_undo = self.can_undo(spot, cx);
+        let helper_error = self.helper_error(spot, cx);
+        let danger = cx.theme().danger;
+        let has_text = !input.read(cx).value().trim().is_empty();
         let can_send = !input.read(cx).value().trim().is_empty()
             && self.writes_free(cx)
-            && self.current_identity().is_some();
+            && self.read_identity().is_some();
         Some(
             v_flex()
                 .gap_2()
@@ -404,9 +504,44 @@ impl PrDetail {
                         .child(format!("Reply to {} on {place}", reply.author)),
                 )
                 .child(Textarea::new(input).appearance(false))
+                .children(helper_error.map(|error| {
+                    div()
+                        .text_role(TextRole::Body, cx)
+                        .text_color(danger)
+                        .child(error)
+                }))
                 .child(
                     h_flex()
                         .gap_2()
+                        .child(
+                            Button::new("pr-reply-helper")
+                                .ghost()
+                                .small()
+                                .icon(IconName::Sparkles)
+                                .label(if writing {
+                                    "Writing…"
+                                } else if has_text {
+                                    "Write from my notes"
+                                } else {
+                                    "Suggest a reply"
+                                })
+                                .loading(writing)
+                                .disabled(writing)
+                                .on_click(cx.listener(move |view, _, _, cx| {
+                                    view.write_with_helper(spot, cx)
+                                })),
+                        )
+                        .when(can_undo, |row| {
+                            row.child(
+                                Button::new("pr-reply-undo")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::Undo2)
+                                    .label("Undo")
+                                    .on_click(cx.listener(|view, _, _, cx| view.undo_helper(cx))),
+                            )
+                        })
+                        .child(div().flex_1())
                         .child(
                             Button::new("pr-reply-cancel")
                                 .ghost()
@@ -430,5 +565,12 @@ impl PrDetail {
                 )
                 .into_any_element(),
         )
+    }
+}
+fn verdict_label(verdict: &str) -> &'static str {
+    match verdict {
+        "APPROVE" => "Approve",
+        "REQUEST_CHANGES" => "Request changes",
+        _ => "Comment",
     }
 }

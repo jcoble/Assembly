@@ -46,8 +46,9 @@ public sealed partial class PullRequestWriter
         var detail = await Current(root, number, expectedHead, "updating its branch", ct, expectedRepository);
         var answer = await Send(root, ["api", "--method", "PUT", $"repos/{detail.Repository}/pulls/{number}/update-branch", "--input", "-"],
             new UpdateBranchPayload(detail.HeadSha), PullRequestsJson.Default.UpdateBranchPayload, ct, ensureCurrent);
+        // GitHub accepts the update and merges in the background; its message is the confirmation.
         if (!answer.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.String) throw Unconfirmed();
-        return message.GetString()!;
+        return detail.Url;
     }
     /// <summary>Runs a workflow run's failed jobs again. The run must be one of this pull request's current checks.</summary>
     public async Task<string> RerunFailedAsync(string root, int number, string expectedHead, long runId, CancellationToken ct, string? expectedRepository = null, Action? ensureCurrent = null)

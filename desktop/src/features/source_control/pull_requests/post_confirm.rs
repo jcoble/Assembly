@@ -12,7 +12,8 @@ use serde_json::{Value, json};
 
 #[derive(Clone)]
 enum Action {
-    Review(Vec<LineComment>),
+    /// Line comments and the verdict: COMMENT, APPROVE or REQUEST_CHANGES.
+    Review(Vec<LineComment>, &'static str),
     Reply(u64),
     Comment,
 }
@@ -23,8 +24,14 @@ pub struct PostRequest {
     action: Action,
 }
 impl PostRequest {
-    pub fn review(draft: &ReviewDraft, current: &ReviewIdentity) -> Result<Self, String> {
-        if !draft.can_post(current) {
+    /// A review: line comments, a verdict, or both. Only an approval may say nothing.
+    pub fn review(
+        draft: &ReviewDraft,
+        current: &ReviewIdentity,
+        verdict: &'static str,
+    ) -> Result<Self, String> {
+        let silent_approval = verdict == "APPROVE" && draft.body.trim().is_empty();
+        if !draft.can_post(current) && !(silent_approval && draft.can_post_lines(current)) {
             return Err("Refresh first, and check every review comment before posting.".into());
         }
         Ok(Self {
@@ -40,6 +47,7 @@ impl PostRequest {
                         target
                     })
                     .collect(),
+                verdict,
             ),
         })
     }
@@ -73,16 +81,22 @@ impl PostRequest {
     }
     pub fn comments(&self) -> &[LineComment] {
         match &self.action {
-            Action::Review(comments) => comments,
+            Action::Review(comments, _) => comments,
             _ => &[],
         }
     }
     pub fn is_reply(&self) -> bool {
         matches!(self.action, Action::Reply(_))
     }
+    /// A review is tied to an open pull request's head; a comment or reply can go on a closed one.
+    pub fn is_review(&self) -> bool {
+        matches!(self.action, Action::Review(..))
+    }
     fn title(&self) -> &'static str {
         match self.action {
-            Action::Review(_) => "Post this review?",
+            Action::Review(_, "APPROVE") => "Approve this pull request?",
+            Action::Review(_, "REQUEST_CHANGES") => "Request changes?",
+            Action::Review(..) => "Post this review?",
             Action::Reply(_) => "Post this reply?",
             Action::Comment => "Post this comment?",
         }
@@ -90,7 +104,7 @@ impl PostRequest {
     /// What follows the pull request's name at the top: the head a review is tied to, or the comment a reply answers.
     fn fact(&self) -> Option<String> {
         match self.action {
-            Action::Review(_) => Some(format!(
+            Action::Review(..) => Some(format!(
                 "head {}",
                 self.identity.head.chars().take(10).collect::<String>()
             )),
@@ -100,7 +114,7 @@ impl PostRequest {
     }
     pub(super) fn action(&self) -> &'static str {
         match self.action {
-            Action::Review(_) => "review",
+            Action::Review(..) => "review",
             Action::Reply(_) => "reply",
             Action::Comment => "comment",
         }
@@ -113,7 +127,10 @@ impl PostRequest {
         }
         let mut args = json!({"number":self.identity.number,"expectedHead":self.identity.head,"body":self.body});
         match &self.action {
-            Action::Review(comments) => args["comments"] = json!(comments),
+            Action::Review(comments, verdict) => {
+                args["comments"] = json!(comments);
+                args["verdict"] = json!(verdict);
+            }
             Action::Reply(id) => args["commentId"] = json!(id),
             Action::Comment => {}
         }
@@ -139,7 +156,7 @@ pub fn open(request: PostRequest, detail: WeakEntity<PrDetail>, window: &mut Win
 }
 impl PostConfirm {
     fn current(&self, cx: &App) -> Option<ReviewIdentity> {
-        self.detail.upgrade()?.read(cx).current_identity()
+        self.detail.upgrade()?.read(cx).post_identity(&self.request)
     }
     fn free(&self, cx: &App) -> bool {
         self.detail
@@ -206,7 +223,11 @@ impl Render for PostConfirm {
                     .border_color(border)
                     .text_role(TextRole::Meta, cx)
                     .font_family(mono)
-                    .child(self.request.body.clone()),
+                    .child(if self.request.body.is_empty() {
+                        "No comment, just the approval.".to_string()
+                    } else {
+                        self.request.body.clone()
+                    }),
             )
             .children(self.request.comments().iter().map(|comment| {
                 h_flex()

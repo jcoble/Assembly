@@ -3,19 +3,21 @@ use super::super::{
     pr_activity::{pr_state, repo_name},
     pr_parts::{age_label, avatar, state_icon, tone_color},
     pr_search::{PrScope, PrState},
-    pull_request::PullRequestSummary,
+    pull_request::{CheckTone, PullRequestSummary},
 };
 use super::*;
+use crate::activity::{StatusChip, Tone};
 use crate::core::intents::open_url::OpenInBrowser;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids as ids;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonRounded, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex,
 };
@@ -104,21 +106,22 @@ impl PrPane {
                     .child(Input::new(&self.search).small()),
             )
             .child(
-                ButtonGroup::new("pr-state")
-                    .compact()
-                    .outline()
-                    .small()
+                h_flex()
+                    .gap(px(2.))
+                    .p(px(3.))
+                    .rounded_full()
+                    .bg(cx.theme().muted)
                     .children(PrState::ALL.into_iter().map(|option| {
                         Button::new(option.label())
+                            .ghost()
+                            .small()
+                            .rounded(ButtonRounded::Size(px(999.)))
                             .label(option.label())
                             .selected(option == state)
-                    }))
-                    .on_click(cx.listener(|pane, picked: &Vec<usize>, _, cx| {
-                        if let Some(state) = picked.first().and_then(|ix| PrState::ALL.get(*ix)) {
-                            let state = *state;
-                            pane.queue
-                                .update(cx, |queue, cx| queue.select_state(state, cx));
-                        }
+                            .on_click(cx.listener(move |pane, _, _, cx| {
+                                pane.queue
+                                    .update(cx, |queue, cx| queue.select_state(option, cx))
+                            }))
                     })),
             )
             .child(
@@ -153,6 +156,7 @@ impl PrPane {
         let key = format!("{}:{}", pr.repository, pr.number);
         let opened = pr.clone();
         ListItem::new(SharedString::from(format!("pr-row:{key}")))
+            .w_full()
             .px_3()
             .py_2()
             .border_b_1()
@@ -194,12 +198,13 @@ impl PrPane {
                             .gap_2()
                             .text_role(TextRole::Body, cx)
                             .text_color(muted)
+                            .children(row_marks(&pr, cx))
                             .children(avatar(&pr.author))
-                            .children(age_label(
+                            .child(div().w(px(60.)).flex().justify_end().children(age_label(
                                 format!("pr-row-age:{key}").into(),
                                 &pr.updated_at,
                                 " ago",
-                            )),
+                            ))),
                     ),
             )
     }
@@ -336,6 +341,7 @@ impl PrPane {
                             .collect()
                     }),
                 )
+                .w_full()
                 .flex_1()
                 .min_h_0(),
             )
@@ -352,6 +358,34 @@ impl PrPane {
                 )
             }))
     }
+}
+/// What a row says about review and checks: a chip for a decision that matters and a mark for the head's checks.
+fn row_marks(pr: &PullRequestSummary, cx: &App) -> Vec<AnyElement> {
+    let review = match pr.review_decision.as_deref() {
+        Some("APPROVED") => Some(("Approved", Tone::Success)),
+        Some("CHANGES_REQUESTED") => Some(("Changes requested", Tone::Danger)),
+        _ => None,
+    };
+    let checks = pr.check_line().and_then(|(text, tone)| {
+        let (icon, color) = match tone {
+            CheckTone::Passing => (IconName::CircleCheck, cx.theme().success),
+            CheckTone::Failing => (IconName::CircleX, cx.theme().danger),
+            CheckTone::Pending => (IconName::Clock, cx.theme().warning),
+            CheckTone::Quiet => return None,
+        };
+        let id = SharedString::from(format!("pr-row-checks:{}:{}", pr.repository, pr.number));
+        Some(
+            div()
+                .id(id)
+                .tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
+                .child(Icon::new(icon).size(px(14.)).text_color(color)),
+        )
+    });
+    review
+        .map(|(words, tone)| StatusChip::new(words, tone).into_any_element())
+        .into_iter()
+        .chain(checks.map(IntoElement::into_any_element))
+        .collect()
 }
 fn project_name(title: &str, machine: &str) -> String {
     if machine.is_empty() || machine == "local" {

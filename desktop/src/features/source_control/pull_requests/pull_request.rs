@@ -19,6 +19,8 @@ pub struct PullRequestSummary {
     /// `passing`, `failing`, `pending` or `none`, when the backend knows.
     pub checks: Option<String>,
     pub check_summary: Option<String>,
+    /// GitHub's review decision: `APPROVED`, `CHANGES_REQUESTED`, `REVIEW_REQUIRED` or empty.
+    pub review_decision: Option<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CheckTone {
@@ -127,6 +129,11 @@ pub struct PullRequestDetail {
     pub state: String,
     pub is_draft: bool,
     pub mergeable: String,
+    /// GitHub's merge state: `BEHIND` when the base moved on, `BLOCKED`, `CLEAN`, `DIRTY`, `UNSTABLE`.
+    #[serde(default)]
+    pub merge_state: String,
+    #[serde(default)]
+    pub review_decision: String,
     pub created_at: String,
     pub merged_at: String,
     pub merged_by: String,
@@ -138,6 +145,20 @@ pub struct PullRequestDetail {
     pub checks: Vec<PullRequestCheck>,
     pub files: Vec<PullRequestFile>,
     pub more_files: bool,
+    #[serde(default)]
+    pub threads: Vec<PullRequestThread>,
+}
+/// A review thread on a file: its comments by id, oldest first, and whether it's resolved or outdated.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PullRequestThread {
+    pub id: String,
+    pub path: String,
+    pub line: Option<usize>,
+    pub side: String,
+    pub resolved: bool,
+    pub outdated: bool,
+    pub comment_ids: Vec<String>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,13 +198,49 @@ pub struct PullRequestCommit {
     pub author: String,
     pub committed_at: String,
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestCheck {
     pub name: String,
     pub status: String,
     pub conclusion: String,
     pub url: String,
+    #[serde(default)]
+    pub workflow: String,
+    #[serde(default)]
+    pub started_at: String,
+    #[serde(default)]
+    pub completed_at: String,
+    /// An Actions job names its run and job, so its log and re-run stay in the app.
+    #[serde(default)]
+    pub run_id: Option<u64>,
+    #[serde(default)]
+    pub job_id: Option<u64>,
+}
+/// A failed job's log from the step that failed to its error.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PrCheckLog {
+    pub job_id: u64,
+    pub step: String,
+    pub steps: Vec<String>,
+    pub lines: Vec<String>,
+    pub cut: bool,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PrConflictFile {
+    pub path: String,
+    pub regions: Vec<String>,
+    pub cut: bool,
+}
+/// The files that conflict when the head merges into the base, with Git's conflict regions.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PrConflicts {
+    pub base_sha: String,
+    pub head_sha: String,
+    pub files: Vec<PrConflictFile>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

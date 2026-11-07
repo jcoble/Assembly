@@ -14,6 +14,7 @@ use super::{
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::control_ids as ids;
 use crate::core::ui::access::{Control as _, Named as _};
+use crate::core::ui::row_drop_down::RowDropDowns;
 use crate::core::{
     intents::open_url::OpenInBrowser,
     socket::{client::SocketClient, outcome::Outcome},
@@ -27,23 +28,40 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::time::Duration;
 
+#[path = "pr_view/actions.rs"]
+mod actions;
+#[path = "pr_view/ask_sheet.rs"]
+mod ask_sheet;
+#[path = "pr_view/checks_page.rs"]
+mod checks_page;
 #[path = "pr_view/composer.rs"]
 mod composer;
+#[path = "pr_view/helper_writer.rs"]
+mod helper_writer;
+#[path = "pr_view/lookups.rs"]
+mod lookups;
 #[path = "pr_view/merge_card.rs"]
 mod merge_card;
+#[path = "pr_view/page_bar.rs"]
+mod page_bar;
+#[path = "pr_view/readiness.rs"]
+mod readiness;
 #[path = "pr_view/side_column.rs"]
 mod side_column;
 #[path = "pr_view/summary.rs"]
 mod summary;
+#[path = "pr_view/thread_card.rs"]
+mod thread_card;
 #[path = "pr_view/threads.rs"]
 mod threads;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Summary,
+    Checks,
     Changes,
 }
 /// The person asked to go back to the list.
@@ -95,11 +113,30 @@ pub struct PrDetail {
     main_scroll: ScrollHandle,
     side_scroll: ScrollHandle,
     threads: Entity<threads::PrThreads>,
+    lookups: Entity<lookups::PrLookups>,
+    /// The one failed-check log or conflict list open on the page.
+    drops: Entity<RowDropDowns>,
+    /// The resolved threads unfolded in the activity, one at a time.
+    thread_drops: Entity<RowDropDowns>,
+    /// The thread a resolve or reopen is running on.
+    acting_on: Option<String>,
+    /// What the posted review says: COMMENT, APPROVE or REQUEST_CHANGES.
+    verdict: &'static str,
+    /// The utility model writing a comment or reply, where, and what it can undo.
+    writer: Entity<GitOperation>,
+    writing: Option<helper_writer::Writing>,
+    undo: Option<helper_writer::Undo>,
+    last_spot: Option<helper_writer::Spot>,
+    pending_reply: Option<String>,
+    /// What the last thread, draft, branch or re-run write did, once GitHub took it.
+    acted: Option<&'static str>,
     read: Option<Task<()>>,
     _review: Option<Subscription>,
     _drafter: Subscription,
+    _writer: Subscription,
     _writes: [Subscription; 2],
     _threads: Subscription,
+    _lookups: [Subscription; 3],
 }
 impl EventEmitter<PrBack> for PrDetail {}
 impl EventEmitter<PrMerged> for PrDetail {}
@@ -131,6 +168,8 @@ impl PrDetail {
     ) -> Self {
         let drafter = cx.new(|_| GitOperation::default());
         let drafter_heard = cx.observe(&drafter, |view: &mut Self, _, cx| view.draft_changed(cx));
+        let writer = cx.new(|_| GitOperation::default());
+        let writer_heard = cx.observe(&writer, |view: &mut Self, _, cx| view.writer_changed(cx));
         let writes = cx.new(|cx| PrWrites::new(owner.clone(), cx));
         let writes_heard = [
             cx.observe(&writes, |_, _, cx| cx.notify()),
@@ -140,6 +179,14 @@ impl PrDetail {
         ];
         let threads = cx.new(|cx| threads::PrThreads::new(&owner, repository.clone(), number, cx));
         let threads_heard = cx.observe(&threads, |_, _, cx| cx.notify());
+        let lookups = cx.new(|_| lookups::PrLookups::new(owner.clone()));
+        let drops = cx.new(|_| RowDropDowns::default());
+        let thread_drops = cx.new(|_| RowDropDowns::default());
+        let lookups_heard = [
+            cx.observe(&lookups, |_, _, cx| cx.notify()),
+            cx.observe(&drops, |_, _, cx| cx.notify()),
+            cx.observe(&thread_drops, |_, _, cx| cx.notify()),
+        ];
         let mut detail = Self {
             owner,
             repository,
@@ -172,11 +219,24 @@ impl PrDetail {
             main_scroll: ScrollHandle::new(),
             side_scroll: ScrollHandle::new(),
             threads,
+            lookups,
+            drops,
+            thread_drops,
+            acting_on: None,
+            verdict: "COMMENT",
+            writer,
+            writing: None,
+            undo: None,
+            last_spot: None,
+            pending_reply: None,
+            acted: None,
             read: None,
             _review: None,
             _drafter: drafter_heard,
+            _writer: writer_heard,
             _writes: writes_heard,
             _threads: threads_heard,
+            _lookups: lookups_heard,
         };
         if active {
             detail.refresh(cx);
@@ -246,6 +306,7 @@ impl PrDetail {
                             view.repository=Some(detail.repository.clone());view.needs_refresh=false;
                             view.threads.update(cx,|threads,cx|threads.set_repository(detail.repository.clone(),cx));
                             view.writes.update(cx,|writes,_|writes.show_read(detail.repository.clone(),detail.local_root.clone()));
+                            view.lookups.update(cx,|lookups,cx|lookups.show_read(&detail,cx));
                             if view.review.is_none(){
                                 let review=cx.new(|_|ReviewDraft::new(ReviewIdentity{repository:detail.repository.clone(),number:detail.number,head:detail.head_sha.clone(),base:detail.base_sha.clone()}));
                                 view._review=Some(cx.observe(&review,|_,_,cx|cx.notify()));view.review=Some(review);
@@ -259,20 +320,10 @@ impl PrDetail {
         }));
         cx.notify();
     }
+    /// The pull request as read while it's open: what reviews and merges are tied to.
     pub fn current_identity(&self) -> Option<ReviewIdentity> {
-        if self.loading || self.needs_refresh {
-            return None;
-        }
-        let detail = self.detail.as_ref()?;
-        if detail.state != "OPEN" {
-            return None;
-        }
-        Some(ReviewIdentity {
-            repository: detail.repository.clone(),
-            number: detail.number,
-            head: detail.head_sha.clone(),
-            base: detail.base_sha.clone(),
-        })
+        let open = self.detail.as_ref()?.state == "OPEN";
+        self.read_identity().filter(|_| open)
     }
     fn sync_files(&mut self, cx: &mut Context<Self>) {
         if self.page != Page::Changes {
@@ -324,152 +375,6 @@ impl PrDetail {
             });
         }));
         cx.notify();
-    }
-    fn page_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let border = cx.theme().border;
-        let (success, danger, well) = (cx.theme().success, cx.theme().danger, cx.theme().muted);
-        let pill = || h_flex().items_center().rounded_full().bg(well);
-        let totals = self
-            .detail
-            .as_ref()
-            .map(|detail| change_totals(&detail.files));
-        let on_changes = self.page == Page::Changes;
-        let url = (self.detail.as_ref().map(|detail| detail.url.clone()))
-            .or_else(|| self.row.as_ref().map(|row| row.url.clone()))
-            .filter(|url| !url.is_empty());
-        let posting = self.writes.read(cx).posting(cx);
-        h_flex()
-            .px_3()
-            .py_2()
-            .gap_2()
-            .border_b_1()
-            .border_color(border)
-            .child(
-                Button::new("pr-back")
-                    .control(ids::pr::BACK, "All pull requests")
-                    .ghost()
-                    .small()
-                    .icon(IconName::ChevronLeft)
-                    .tooltip("All pull requests")
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PrBack))),
-            )
-            .child(
-                pill()
-                    .gap(px(2.))
-                    .p(px(3.))
-                    .child(
-                        Button::new("pr-page-summary")
-                            .ghost()
-                            .small()
-                            .rounded(ButtonRounded::Size(px(999.)))
-                            .label("Summary")
-                            .selected(!on_changes)
-                            .on_click(
-                                cx.listener(|view, _, _, cx| view.select_page(Page::Summary, cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("pr-page-changes")
-                            .named("Changes")
-                            .ghost()
-                            .small()
-                            .rounded(ButtonRounded::Size(px(999.)))
-                            .selected(on_changes)
-                            .on_click(
-                                cx.listener(|view, _, _, cx| view.select_page(Page::Changes, cx)),
-                            )
-                            .child(h_flex().gap_1().child("Changes").children(totals.map(
-                                |(added, removed)| {
-                                    h_flex()
-                                        .gap_1()
-                                        .child(div().text_color(success).child(format!("+{added}")))
-                                        .child(
-                                            div().text_color(danger).child(format!("−{removed}")),
-                                        )
-                                },
-                            ))),
-                    ),
-            )
-            .child(div().flex_1())
-            .when(on_changes, |bar| {
-                bar.child(
-                    ButtonGroup::new("pr-mode")
-                        .compact()
-                        .outline()
-                        .small()
-                        .child(
-                            Button::new("pr-mode-unified")
-                                .label("Unified")
-                                .selected(self.mode == DiffMode::Unified),
-                        )
-                        .child(
-                            Button::new("pr-mode-split")
-                                .label("Side by side")
-                                .selected(self.mode == DiffMode::Split),
-                        )
-                        .on_click(cx.listener(|view, picked: &Vec<usize>, _, cx| {
-                            let mode = if picked.first() == Some(&1) {
-                                DiffMode::Split
-                            } else {
-                                DiffMode::Unified
-                            };
-                            view.select_mode(mode, cx);
-                        })),
-                )
-            })
-            .child(
-                pill()
-                    .gap(px(2.))
-                    .p(px(2.))
-                    .child(
-                        Button::new("pr-copy-link")
-                            .named(if self.copied.is_some() {
-                                "Link copied"
-                            } else {
-                                "Copy link"
-                            })
-                            .ghost()
-                            .small()
-                            .rounded(ButtonRounded::Size(px(999.)))
-                            .icon(IconName::Link)
-                            .tooltip(if self.copied.is_some() {
-                                "Link copied"
-                            } else {
-                                "Copy link"
-                            })
-                            .disabled(url.is_none())
-                            .on_click(cx.listener(|view, _, _, cx| view.copy_link(cx))),
-                    )
-                    .child(
-                        Button::new("pr-refresh")
-                            .control(ids::pr::REFRESH, "Refresh this pull request")
-                            .ghost()
-                            .small()
-                            .rounded(ButtonRounded::Size(px(999.)))
-                            .icon(IconName::RefreshCw)
-                            .tooltip("Refresh this pull request")
-                            .disabled(self.loading || posting)
-                            .on_click(cx.listener(|view, _, _, cx| view.refresh(cx))),
-                    )
-                    .child(
-                        Button::new("pr-open-web")
-                            .control(ids::pr::OPEN_WEB, "Open on GitHub")
-                            .ghost()
-                            .small()
-                            .rounded(ButtonRounded::Size(px(999.)))
-                            .icon(IconName::ExternalLink)
-                            .tooltip("Open on GitHub")
-                            .disabled(url.is_none())
-                            .on_click(move |_, window, cx| {
-                                if let Some(url) = &url {
-                                    window.dispatch_action(
-                                        Box::new(OpenInBrowser { url: url.clone() }),
-                                        cx,
-                                    );
-                                }
-                            }),
-                    ),
-            )
     }
     fn changes_page(&self, detail: &PullRequestDetail, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
@@ -528,6 +433,7 @@ impl Render for PrDetail {
         let danger = cx.theme().danger;
         let detail = self.detail.clone();
         let post_error = self.writes.read(cx).post_error(cx);
+        let act_error = self.writes.read(cx).act_error(cx);
         let page = match (&detail, self.page) {
             (Some(detail), Page::Changes) => self.changes_page(detail, cx),
             (None, Page::Changes) => v_flex()
@@ -536,17 +442,30 @@ impl Render for PrDetail {
                 .p_3()
                 .when(self.loading, |page| page.child(loading_line(cx)))
                 .into_any_element(),
+            (Some(detail), Page::Checks) => self.checks_page(detail, cx),
             (detail, _) => self.summary_page(detail.as_ref(), window, cx),
         };
+        let acted = self.acted.map(|acted| {
+            crate::notice_strip::NoticeStrip::new("pr-acted", acted, crate::activity::Tone::Success)
+                .action(
+                    "Dismiss",
+                    cx.listener(|view, _, _, cx| {
+                        view.acted = None;
+                        cx.notify();
+                    }),
+                )
+        });
         v_flex()
             .size_full()
             .min_h_0()
             .child(self.page_bar(cx))
+            .children(acted)
             .children(
                 self.failure
                     .clone()
                     .into_iter()
                     .chain(post_error)
+                    .chain(act_error)
                     .map(|error| {
                         div()
                             .px_3()

@@ -62,9 +62,11 @@ impl ReviewDraft {
         self.comments.retain(|comment| comment.id != id);
     }
     pub fn can_post(&self, current: &ReviewIdentity) -> bool {
+        !self.body.trim().is_empty() && self.body.len() <= 20_000 && self.can_post_lines(current)
+    }
+    /// The line comments are fit to post on this head, whatever the overall comment says.
+    pub fn can_post_lines(&self, current: &ReviewIdentity) -> bool {
         self.identity == *current
-            && !self.body.trim().is_empty()
-            && self.body.len() <= 20_000
             && self.comments.len() <= 20
             && self.comments.iter().all(|comment| {
                 !comment.target.body.trim().is_empty() && comment.target.body.len() <= 10_000

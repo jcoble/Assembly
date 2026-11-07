@@ -1,5 +1,6 @@
 //! A card: a sheet lifted off its panel by the foreground at low opacity, with a muted icon, a title and, when there
-//! is something to count, a count chip, then whatever it holds. Nothing in it expands.
+//! is something to count, a count chip, and any controls at the heading's end, then whatever it holds. Nothing in it
+//! expands.
 use crate::activity::{StatusChip, Tone};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
@@ -12,6 +13,7 @@ pub struct SectionCard {
     icon: IconName,
     title: SharedString,
     count: Option<usize>,
+    actions: Vec<AnyElement>,
     children: Vec<AnyElement>,
 }
 
@@ -21,6 +23,7 @@ impl SectionCard {
             icon,
             title: title.into(),
             count: None,
+            actions: Vec::new(),
             children: Vec::new(),
         }
     }
@@ -28,6 +31,12 @@ impl SectionCard {
     /// The chip shows only above zero.
     pub fn count(mut self, count: usize) -> Self {
         self.count = Some(count);
+        self
+    }
+
+    /// A control at the end of the heading, such as a button that acts on the whole card.
+    pub fn action(mut self, action: impl IntoElement) -> Self {
+        self.actions.push(action.into_any_element());
         self
     }
 }
@@ -64,6 +73,9 @@ impl RenderOnce for SectionCard {
                         .debug_selector(move || selector)
                         .child(StatusChip::new(count.to_string(), Tone::Neutral)),
                 )
+            })
+            .when(!self.actions.is_empty(), |heading| {
+                heading.child(h_flex().flex_none().gap_1().children(self.actions))
             });
         v_flex()
             .w_full()

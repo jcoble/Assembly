@@ -13,7 +13,7 @@ public sealed partial class PullRequestReader(IGit git, IGh gh, string applicati
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(120);
     private const int DetailBytes = 3_000_000;
     private const string ViewFields = "number,title,body,url,author,headRefName,baseRefName,headRefOid,baseRefOid,state,isDraft,mergeable,mergeStateStatus,reviewDecision,createdAt,mergedAt,mergedBy,closedAt,commits,comments,reviews,reviewRequests,statusCheckRollup";
-    private const string SearchQuery = "query($query:String!,$first:Int!,$after:String){search(query:$query,type:ISSUE_ADVANCED,first:$first,after:$after){issueCount pageInfo{hasNextPage endCursor} nodes{... on PullRequest{number title url isDraft updatedAt state headRefName baseRefName repository{nameWithOwner} author{login}}}}}";
+    private const string SearchQuery = "query($query:String!,$first:Int!,$after:String){search(query:$query,type:ISSUE_ADVANCED,first:$first,after:$after){issueCount pageInfo{hasNextPage endCursor} nodes{... on PullRequest{number title url isDraft updatedAt state headRefName baseRefName repository{nameWithOwner} author{login} reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}";
     public async Task<PullRequestPage> ListForRootAsync(string root, string state, string? search, string? cursor, CancellationToken ct) =>
         await ListAsync([await Repository(root, ct)], state, search, cursor, ct);
     public async Task<PullRequestPage> ListAsync(IReadOnlyList<string> repositories, string state, string? search, string? cursor, CancellationToken ct)
@@ -36,7 +36,8 @@ public sealed partial class PullRequestReader(IGit git, IGh gh, string applicati
         {
             var repository = Text(row, "repository", "nameWithOwner");
             if (!allowed.Contains(repository)) continue;
-            items.Add(new(repository, null, Number(row, "number"), Text(row, "title"), Text(row, "url"), Bool(row, "isDraft"), Text(row, "updatedAt"), Text(row, "state"), Text(row, "author", "login"), Text(row, "headRefName"), Text(row, "baseRefName")));
+            items.Add(new(repository, null, Number(row, "number"), Text(row, "title"), Text(row, "url"), Bool(row, "isDraft"), Text(row, "updatedAt"), Text(row, "state"), Text(row, "author", "login"), Text(row, "headRefName"), Text(row, "baseRefName"))
+            { Checks = RollupWord(row), ReviewDecision = Text(row, "reviewDecision") });
         }
         var info = Required(found, "pageInfo");
         return new(items, Bool(info, "hasNextPage") ? Text(info, "endCursor") : null, Number(found, "issueCount"));
@@ -56,8 +57,8 @@ public sealed partial class PullRequestReader(IGit git, IGh gh, string applicati
         var (inline, threads) = await Threads(root, repository, number, ct);
         if (changed.ValueKind != JsonValueKind.Array) throw new CallFailed("GitHub returned invalid pull request files.");
         var files = changed.EnumerateArray().Select(row => new PullRequestFile(Text(row, "filename"), Optional(row, "previous_filename"), Text(row, "status"), Number(row, "additions"), Number(row, "deletions"), Optional(row, "patch"))).ToArray();
-        var comments = Array(view, "comments").Select(row => new PullRequestComment(Text(row, "id"), Text(row, "author", "login"), Text(row, "body"), Text(row, "createdAt"), null, null, null, null) { BodyBlocks = SafeMarkdown.Parse(Text(row, "body")) }).Concat(inline).ToArray();
-        var reviews = Array(view, "reviews").Select(row => new PullRequestReview(Text(row, "author", "login"), Text(row, "body"), Text(row, "state"), Text(row, "submittedAt")) { BodyBlocks = SafeMarkdown.Parse(Text(row, "body")) }).ToArray();
+        var comments = Array(view, "comments").Select(row => new PullRequestComment(Text(row, "id"), Text(row, "author", "login"), GitHubText.Tidy(Text(row, "body")), Text(row, "createdAt"), null, null, null, null) { BodyBlocks = SafeMarkdown.Parse(GitHubText.Tidy(Text(row, "body"))) }).Concat(inline).ToArray();
+        var reviews = Array(view, "reviews").Select(row => new PullRequestReview(Text(row, "author", "login"), GitHubText.Tidy(Text(row, "body")), Text(row, "state"), Text(row, "submittedAt")) { BodyBlocks = SafeMarkdown.Parse(GitHubText.Tidy(Text(row, "body"))) }).ToArray();
         var commits = Array(view, "commits").Select(row => new PullRequestCommit(Text(row, "oid"), Text(row, "messageHeadline"), Array(row, "authors").Select(author => Text(author, "login")).FirstOrDefault() ?? "", Text(row, "committedDate"))).ToArray();
         var reviewers = Array(view, "reviewRequests").Select(row => Optional(row, "login") ?? Text(row, "name")).ToArray();
         var checks = Array(view, "statusCheckRollup").Select(Check).ToArray();
@@ -65,7 +66,7 @@ public sealed partial class PullRequestReader(IGit git, IGh gh, string applicati
             .Concat(reviews.Select(review => new PullRequestTimeline("review", review.Author, review.Body, review.SubmittedAt)))
             .Concat(commits.Select(commit => new PullRequestTimeline("commit", commit.Author, commit.Headline, commit.CommittedAt, commit.Oid)))
             .OrderBy(item => DateTimeOffset.TryParse(item.CreatedAt, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date) ? date : DateTimeOffset.MinValue).ToArray();
-        var detail = new PullRequestDetail(repository, root, number, Text(view, "title"), Text(view, "body"), Text(view, "url"), Text(view, "author", "login"), Text(view, "headRefName"), Text(view, "baseRefName"), Text(view, "headRefOid"), Text(view, "baseRefOid"), Text(view, "state"), Bool(view, "isDraft"), Text(view, "mergeable"), Text(view, "reviewDecision"), Text(view, "createdAt"), Text(view, "mergedAt"), Text(view, "mergedBy", "login"), Text(view, "closedAt"), commits, comments, reviews, reviewers, checks, files, files.Length == 100, timeline) { BodyBlocks = SafeMarkdown.Parse(Text(view, "body")), MergeState = Text(view, "mergeStateStatus"), Threads = threads };
+        var detail = new PullRequestDetail(repository, root, number, Text(view, "title"), Text(view, "body"), Text(view, "url"), Text(view, "author", "login"), Text(view, "headRefName"), Text(view, "baseRefName"), Text(view, "headRefOid"), Text(view, "baseRefOid"), Text(view, "state"), Bool(view, "isDraft"), Text(view, "mergeable"), Text(view, "reviewDecision"), Text(view, "createdAt"), Text(view, "mergedAt"), Text(view, "mergedBy", "login"), Text(view, "closedAt"), commits, comments, reviews, reviewers, checks, files, files.Length == 100, timeline) { BodyBlocks = SafeMarkdown.Parse(GitHubText.Tidy(Text(view, "body"))), MergeState = Text(view, "mergeStateStatus"), Threads = threads };
         if (Size(detail) <= DetailBytes) return detail;
         foreach (var index in Enumerable.Range(0, files.Length).OrderByDescending(index => files[index].Patch?.Length ?? 0))
         {
@@ -74,6 +75,13 @@ public sealed partial class PullRequestReader(IGit git, IGh gh, string applicati
             if (Size(detail) <= DetailBytes) return detail;
         }
         throw new CallFailed("This pull request detail is too large. Open it on GitHub.");
+    }
+    /// <summary>The list row's checks, from the head commit's rollup: GitHub's five states read as four words.</summary>
+    private static string RollupWord(JsonElement row)
+    {
+        var head = row.TryGetProperty("commits", out var commits) && commits.ValueKind == JsonValueKind.Object ? Array(commits, "nodes").LastOrDefault() : default;
+        var state = head.ValueKind == JsonValueKind.Object ? Text(head, "commit", "statusCheckRollup", "state") : "";
+        return state switch { "SUCCESS" => "passing", "FAILURE" or "ERROR" => "failing", "PENDING" or "EXPECTED" => "pending", _ => "none" };
     }
     /// <summary>An Actions job's details link names its run and job: <c>/{repo}/actions/runs/{run}/job/{job}</c>.</summary>
     private static PullRequestCheck Check(JsonElement row)

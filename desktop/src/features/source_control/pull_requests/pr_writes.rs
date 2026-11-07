@@ -13,11 +13,57 @@ use serde_json::Value;
 pub enum WriteKind {
     Post { reply: bool },
     Merge,
+    Act(PrAct),
+}
+/// The writes that move a pull request along without posting anything.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PrAct {
+    Resolve,
+    Reopen,
+    Ready,
+    BackToDraft,
+    UpdateBranch,
+    Rerun,
+}
+impl PrAct {
+    fn action(self) -> &'static str {
+        match self {
+            Self::Resolve | Self::Reopen => "resolveThread",
+            Self::Ready | Self::BackToDraft => "ready",
+            Self::UpdateBranch => "updateBranch",
+            Self::Rerun => "rerunFailed",
+        }
+    }
+    /// What the button says while it runs.
+    pub fn doing(self) -> &'static str {
+        match self {
+            Self::Resolve => "Resolving…",
+            Self::Reopen => "Reopening…",
+            Self::Ready => "Marking ready…",
+            Self::BackToDraft => "Converting…",
+            Self::UpdateBranch => "Updating…",
+            Self::Rerun => "Starting…",
+        }
+    }
+    /// What the page says once GitHub took it.
+    pub fn done(self) -> &'static str {
+        match self {
+            Self::Resolve => "Thread resolved.",
+            Self::Reopen => "Thread reopened.",
+            Self::Ready => "Marked ready for review.",
+            Self::BackToDraft => "Converted to a draft.",
+            Self::UpdateBranch => {
+                "GitHub is merging the base into this branch. Checks will run again."
+            }
+            Self::Rerun => "The failed jobs are running again.",
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum WriteDone {
     Posted { reply: bool, url: String },
     Merged { url: String },
+    Acted { act: PrAct },
 }
 pub struct PrWrites {
     owner: PrOwner,
@@ -80,6 +126,7 @@ impl PrWrites {
                     cx.emit(WriteDone::Posted { reply, url })
                 }
                 (Some(Some(url)), Some(WriteKind::Merge)) => cx.emit(WriteDone::Merged { url }),
+                (Some(Some(_)), Some(WriteKind::Act(act))) => cx.emit(WriteDone::Acted { act }),
                 (Some(_), _) => self.not_confirmed = true,
                 (None, _) => {}
             }
@@ -103,6 +150,18 @@ impl PrWrites {
         self.refuse_if_occupied(cx)?;
         let args = request.args()?;
         self.start(WriteKind::Merge, "merge", args, cx)
+    }
+    /// Resolves a thread, marks ready, updates the branch or re-runs jobs. The args name the pull request and head.
+    pub fn act(&mut self, act: PrAct, args: Value, cx: &mut Context<Self>) -> Result<(), String> {
+        self.refuse_if_occupied(cx)?;
+        self.start(WriteKind::Act(act), act.action(), args, cx)
+    }
+    /// The act running now, so its own button can say so.
+    pub fn acting(&self, cx: &App) -> Option<PrAct> {
+        match self.kind {
+            Some(WriteKind::Act(act)) if self.busy(cx) => Some(act),
+            _ => None,
+        }
     }
     fn refuse_if_occupied(&self, cx: &App) -> Result<(), String> {
         if self.free(cx) {
@@ -172,6 +231,9 @@ impl PrWrites {
                 Some(WriteKind::Merge) => {
                     "The merge was not confirmed. Refresh before trying again.".into()
                 }
+                Some(WriteKind::Act(_)) => {
+                    "GitHub didn't confirm that. Refresh before trying again.".into()
+                }
                 _ => "The post was not confirmed. Refresh before trying again.".into(),
             });
         }
@@ -180,6 +242,12 @@ impl PrWrites {
     /// What went wrong with a post: the old screen put this at the top of the page.
     pub fn post_error(&self, cx: &App) -> Option<String> {
         matches!(self.kind, Some(WriteKind::Post { .. }))
+            .then(|| self.message(cx))
+            .flatten()
+    }
+    /// What went wrong with a thread, draft, branch or re-run; the page shows it at the top as a post's.
+    pub fn act_error(&self, cx: &App) -> Option<String> {
+        matches!(self.kind, Some(WriteKind::Act(_)))
             .then(|| self.message(cx))
             .flatten()
     }
