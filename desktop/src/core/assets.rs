@@ -79,7 +79,13 @@ gpui_kit::assets::icon_assets!(
         Coffee,
         Container,
         Table,
-        Binary
+        Binary,
+        ImageUp,
+        ShieldCheck,
+        ShieldAlert,
+        FolderPlus,
+        Link,
+        Monitor
     ]
 );
 

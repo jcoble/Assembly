@@ -65,3 +65,21 @@ fn the_context_cards_have_their_heading_icons() {
         assert!(svg.starts_with(b"<svg"), "{path} is an SVG");
     }
 }
+
+#[test]
+fn the_attach_menu_permission_pill_and_approval_card_have_their_icons() {
+    // The add menu's Attach images, the permission pill's shield, an approval card's shield, the projects screen's
+    // new folder, a pull request's link and a new session's computer slot; none is in the kit's default set.
+    for icon in [
+        IconName::ImageUp,
+        IconName::ShieldCheck,
+        IconName::ShieldAlert,
+        IconName::FolderPlus,
+        IconName::Link,
+        IconName::Monitor,
+    ] {
+        let path = icon.path();
+        let svg = AppAssets.load(&path).expect("loads").expect("is there");
+        assert!(svg.starts_with(b"<svg"), "{path} is an SVG");
+    }
+}
