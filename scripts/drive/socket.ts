@@ -1,5 +1,4 @@
-// Small socket framing shared only by the retained diagnostic scripts. The caller owns its deadline.
-import { pathToFileURL } from 'node:url';
+// Small socket framing for the driver and the row-log diagnostic. The caller owns its deadline.
 
 export type Frame = { t: string; [key: string]: any };
 export type Welcome = { t: 'welcome'; protocol: number; machine: string; format: number; commit: string | null };
@@ -117,18 +116,3 @@ export async function connectSocket(api: string, token: string, options: Options
   } catch (error) { await close(); throw error; }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new Error('socket scenario did not complete within 10 seconds')), 10_000);
-  let connection: Awaited<ReturnType<typeof connectSocket>> | undefined;
-  try {
-    connection = await connectSocket(process.env.CHECK4_HOST_API!, process.env.CHECK4_HOST_TOKEN!, {
-      signal: controller.signal, machine: process.env.CHECK4_HOST_NAME, commit: process.env.CHECK4_HOST_COMMIT
-    });
-    console.log(`ok hello is answered with welcome from ${connection.welcome.machine}`);
-    try { await connection.call('check4', 'nothing'); throw new Error('unknown call succeeded'); }
-    catch (error) { if (!(error instanceof Error) || !error.message.startsWith('not_found:')) throw error; }
-    console.log('ok an unknown call answers not_found');
-  } catch (error) { console.log(`fail socket scenario: ${(error as Error).message}`); process.exitCode = 1; }
-  finally { clearTimeout(timeout); await connection?.close(); }
-}

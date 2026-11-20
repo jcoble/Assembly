@@ -1,12 +1,11 @@
 // Exact row catch-up at the subscription's initial seq; tokens travel only in hello.
-import { pathToFileURL } from 'node:url';
 import { connectSocket } from './socket.ts';
 
 export type Row = { seq: number; prevSeq?: number; kind: string; runId?: string; itemId?: string;
   firstSeq: number; payload: Record<string, any> };
 export type RowPage = { rows: Row[]; hasBefore: boolean; before: number | null };
 type Options = { api: string; token: string; session: string; after?: number; signal: AbortSignal;
-  followMs?: number; untilRun?: string; onRow?: (row: Row) => void };
+  followMs?: number; untilRun?: string; follow?: boolean; onRow?: (row: Row) => void };
 
 // Omit after on subscribe: state.seq is the snapshot cut, not a bounded resume's starting seq.
 // Hold concurrent live rows until bulk catch-up reaches the cut. Never infer completion from silence.
@@ -68,9 +67,10 @@ export async function readRows(options: Options): Promise<{ rows: Row[]; cut: nu
       if (previous > cut) throw new Error(`catch-up skipped snapshot ${cut}`);
     }
     if (streamError) throw streamError;
-    const ended = () => options.untilRun == null || rows.some(row =>
+    // follow: keep taking live rows until the caller's signal ends the read.
+    const ended = () => !options.follow && (options.untilRun == null || rows.some(row =>
       row.kind === 'turn' && row.runId === options.untilRun &&
-      ['finished', 'failed', 'cancelled'].includes(row.payload.state));
+      ['finished', 'failed', 'cancelled'].includes(row.payload.state)));
     if (options.followMs != null && options.followMs > 0)
       followTimer = setTimeout(() => { followingEnded = true; wake?.(); }, options.followMs);
     for (;;) {
@@ -92,38 +92,3 @@ export async function readRows(options: Options): Promise<{ rows: Row[]; cut: nu
   }
 }
 
-export async function checkRows(env: NodeJS.ProcessEnv, signal: AbortSignal): Promise<void> {
-  if (!env.CHECK4_RUN) throw new Error('CHECK4_RUN is required');
-  const options = { api: env.CHECK4_API!, token: env.CHECK4_TOKEN!, session: env.CHECK4_SESSION!, signal };
-  await readRows({ ...options, untilRun: env.CHECK4_RUN });
-  // A fresh cut after the turn ends accounts for the final message replacing transient deltas.
-  const { rows, cut } = await readRows(options);
-  if (rows.length === 0) throw new Error('the socket from 0 sent no rows');
-  console.log(`ok the socket from 0 sent ${rows.length} rows`);
-  const skipped = rows.filter(row => row.seq !== row.prevSeq! + 1).length;
-  console.log(`ok every row's prevSeq is the row before it, and seqs only rise (${skipped} skip past deleted deltas)`);
-  if (rows.at(-1)!.seq < cut) throw new Error(`the socket stopped before snapshot ${cut}`);
-  console.log(`ok the socket reaches the newest row (${rows.at(-1)!.seq})`);
-  if (rows.length >= 2) {
-    const index = Math.floor(rows.length / 2);
-    const middle = rows[index - 1]!.seq;
-    const resumed = await readRows({ ...options, after: middle });
-    if (resumed.rows[0]?.seq !== rows[index]!.seq || resumed.rows[0]?.prevSeq !== middle)
-      throw new Error(`the socket from ${middle} resumed at the wrong row`);
-    console.log(`ok the socket from ${middle} starts at ${rows[index]!.seq} with prevSeq ${middle}`);
-  }
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const deadline = new AbortController();
-  const timer = setTimeout(() => deadline.abort(new Error('rows check exceeded 90 seconds')), 90_000);
-  try {
-    if (process.argv[2] === '--check') await checkRows(process.env, deadline.signal);
-    else {
-      const result = await readRows({ api: process.env.CHECK4_API!, token: process.env.CHECK4_TOKEN!,
-        session: process.env.CHECK4_SESSION!, after: Number(process.argv[2] ?? 0), signal: deadline.signal });
-      console.log(JSON.stringify(result.rows.map(({ seq, prevSeq }) => ({ seq, prevSeq }))));
-    }
-  } catch (error) { console.error(`fail rows: ${(error as Error).message}`); process.exitCode = 1; }
-  finally { clearTimeout(timer); }
-}
