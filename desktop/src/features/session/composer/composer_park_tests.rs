@@ -191,3 +191,27 @@ fn a_send_that_fails_while_another_session_opens_goes_back_to_its_own_draft(
     });
     assert_eq!(draft(&composer, cx), "for one");
 }
+
+#[gpui::test]
+fn keys_typed_once_a_session_opens_go_after_its_saved_draft(cx: &mut TestAppContext) {
+    let (composer, _, _, cx) = open(cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s2".into()), window, cx)
+    });
+    type_in(&composer, "saved", cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s1".into()), window, cx);
+        composer.park("s2".into(), None, window, cx);
+        composer.focus_input(window, cx);
+    });
+    cx.simulate_input("ty");
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s2".into()), window, cx)
+    });
+    cx.simulate_input("ped");
+    assert_eq!(
+        draft(&composer, cx),
+        "saved\ntyped",
+        "what is typed after the open lands follows the joined draft"
+    );
+}

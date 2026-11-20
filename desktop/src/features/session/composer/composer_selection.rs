@@ -68,8 +68,7 @@ impl Composer {
         self.session_key = key;
         self.expected_source = source;
         self.source_valid = self.session_key.is_some();
-        self.draft
-            .update(cx, |draft, cx| draft.set_value(text, window, cx));
+        self.show_draft(text, window, cx);
         self.attachments = attachments;
         self.slash_selected = None;
         self.owner = None;
@@ -92,7 +91,8 @@ impl Composer {
     }
     /// Another session was picked and its open is on the way: what is typed from now on is that session's draft, and
     /// nothing sends until the open lands (`set_target`). Picking the session still bound brings its own draft back.
-    /// A rail pick names only the session; its owner comes when the open finds it (`parked_owner`).
+    /// A rail pick names only the session; its owner comes when the open finds it (`parked_owner`). A composer with no
+    /// session yet parks too, with no draft of its own to put aside.
     pub fn park(
         &mut self,
         id: String,
@@ -100,29 +100,29 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(bound) = self.session_key.clone() else {
-            return;
-        };
-        if self.parked.as_ref().map_or(&bound.id, |parked| &parked.id) == &id {
+        let bound = self.session_key.clone();
+        let showing = self.parked.as_ref().map(|parked| &parked.id);
+        if showing.or(bound.as_ref().map(|bound| &bound.id)) == Some(&id) {
             if let Some(key) = key {
                 self.parked_owner(key);
             }
             return;
         }
-        if id == bound.id {
+        if bound.as_ref().is_some_and(|bound| bound.id == id) {
             self.unpark(window, cx);
             return;
         }
-        match self.parked.take() {
-            Some(parked) => {
+        match (self.parked.take(), bound) {
+            (Some(parked), _) => {
                 let loaded = parked.loaded;
                 let left = self.parked_key(parked, None);
                 self.keep(left, !loaded, cx);
             }
-            None => {
+            (None, Some(bound)) => {
                 self.invalidate_source(cx);
                 self.keep(bound, false, cx);
             }
+            (None, None) => {}
         }
         let (text, attachments) = key
             .as_ref()
@@ -130,11 +130,19 @@ impl Composer {
             .unwrap_or_default();
         let loaded = key.is_some();
         self.parked = Some(Parked { id, key, loaded });
-        self.draft
-            .update(cx, |draft, cx| draft.set_value(text, window, cx));
+        self.show_draft(text, window, cx);
         self.attachments = attachments;
         self.slash_selected = None;
         cx.notify();
+    }
+    /// Shows `text` in the box with the caret at its end, as a textarea given a new value has it, so keys typed next
+    /// follow it.
+    fn show_draft(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        let end = text.len();
+        self.draft.update(cx, |draft, cx| {
+            draft.set_value(text, window, cx);
+            draft.set_selected_range(end..end, cx);
+        });
     }
     /// Puts the box's draft away under `key`; `join` adds it after a draft already saved there instead of replacing it.
     fn keep(&mut self, key: SessionKey, join: bool, cx: &mut Context<Self>) {
