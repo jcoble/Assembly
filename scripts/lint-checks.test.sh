@@ -143,6 +143,9 @@ rm -rf "$r"
 # with no .NET file in it, and runs on a .cs change.
 r=$(dotnet_repo_with 50-dotnet-format.sh) || exit 1
 expect 0 "dotnet format: the prospective tree passes" "$r" 50-dotnet-format.sh
+# The probe cases need only the project the probe is in (Assembly.Domain references nothing), not the whole solution.
+sed -i '/<Project /{/Assembly\.Domain\//!d}' "$r/dotnet/Assembly.slnx"
+commit_all "$r"
 printf 'namespace Assembly.Domain;\n\npublic static class FormatProbe\n{\n        public static int One() => 1;\n}\n' \
   >"$r/dotnet/Assembly.Domain/FormatProbe.cs"
 expect 1 "dotnet format: a badly indented file fails" "$r" 50-dotnet-format.sh
