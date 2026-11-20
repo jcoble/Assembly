@@ -6,6 +6,7 @@
 # Run on the Workbox from a lane worktree (.lane). Exit codes: 0 up (blocked logins listed), 1 failed.
 # Each resource is written to $DATA/bench/pids as it starts, so a failure or a signal unwinds only what started.
 # Logins are checked but don't stop up: a case whose agent can't sign in is reported BLOCKED by the journey.
+# How to use it and read what it writes: docs/operations/bench.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/lane-env.sh
