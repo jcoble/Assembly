@@ -77,7 +77,7 @@ public sealed partial class AttachmentStore : IPromptImages
             if (new FileInfo(reference).Length > MaxBytes) return null;
             bytes = await File.ReadAllBytesAsync(reference, cancellationToken);
         }
-        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { return null; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
         return bytes.Length <= MaxBytes && type.Matches(bytes) ? new PromptImage(bytes, type.ContentType) : null;
     }
 
