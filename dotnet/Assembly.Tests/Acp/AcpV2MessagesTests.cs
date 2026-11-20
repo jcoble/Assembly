@@ -34,6 +34,18 @@ public sealed class AcpV2MessagesTests
     public void CanSteer_reads_meta_steering(string line, bool expected) =>
         Assert.Equal(expected, JsonSerializer.Deserialize(line, AcpJsonContext.Default.InitializeResponse)!.CanSteer);
 
+    [Theory]
+    [InlineData(CodexInitialize, SteerRoute.SteeringCall)]
+    [InlineData("""{"protocolVersion":2,"capabilities":{"_meta":{"claudeCode":{"promptQueueing":true}}}}""", SteerRoute.PromptQueue)]
+    [InlineData("""{"protocolVersion":2,"capabilities":{"_meta":{"claudeCode":{"promptQueueing":true}}},"_meta":{"steering":{"supported":true}}}""", SteerRoute.SteeringCall)]
+    [InlineData("""{"protocolVersion":2,"capabilities":{"_meta":{"claudeCode":{"promptQueueing":false}}}}""", SteerRoute.None)]
+    public void Steering_route_follows_what_initialize_advertises(string line, SteerRoute expected)
+    {
+        var response = JsonSerializer.Deserialize(line, AcpJsonContext.Default.InitializeResponse)!;
+        Assert.Equal(expected, response.Steering);
+        Assert.Equal(expected != SteerRoute.None, response.CanSteer);
+    }
+
     [Fact]
     public void Delete_is_an_advertised_session_capability() =>
         Assert.True(JsonSerializer.Deserialize(CodexInitialize, AcpJsonContext.Default.InitializeResponse)!.CanDelete);
