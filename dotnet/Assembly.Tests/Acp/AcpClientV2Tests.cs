@@ -138,6 +138,47 @@ public sealed class AcpClientV2Tests
         }
     }
 
+    [Theory]
+    [InlineData("queue echo then reply", "echo:m-2,inserted,idle!,idle")]
+    [InlineData("queue reply then echo", "inserted,echo:m-2,idle!,idle")]
+    [InlineData("steering call", "inserted,idle!,idle")]
+    [InlineData("queue refused", "idle!,idle")]
+    [InlineData("steering call, reasonless end", "inserted,idle!,idle")]
+    public async Task Steer_insertion_and_prompt_end_are_marked_in_pipe_order(string order, string expected)
+    {
+        var agent = new FakeAgent(); await using var client = Connect(agent);
+        await Initialize(agent, client, order.StartsWith("steering call", StringComparison.Ordinal) ? SteeringCall : PromptQueue);
+        var run = client.PromptAsync("s", [TextBlock.Of("hi")], default); var prompt = await agent.ReadAsync();
+        await Ack(agent, "m-1"); await Update(agent, Running); await agent.ReplyAsync(prompt, """{"messageId":"m-1"}""");
+        var steer = client.Steer("s", [TextBlock.Of("also")], default); var request = await agent.ReadAsync();
+        switch (order)
+        {
+            case "queue echo then reply": await Ack(agent, "m-2"); await agent.ReplyAsync(request, """{"messageId":"m-2"}"""); break;
+            case "queue reply then echo": await agent.ReplyAsync(request, """{"messageId":"m-2"}"""); await Ack(agent, "m-2"); break;
+            case "queue refused": await agent.ReplyErrorAsync(request, -32800, "Request cancelled"); break;
+            default: await agent.ReplyAsync(request, """{"outcome":"injected"}"""); break;
+        }
+        // The prompt's end: an active boundary ends on a reasonless idle too; the idle after it ends nothing.
+        await Update(agent, order == "steering call, reasonless end" ? """{"sessionUpdate":"state_update","state":"idle"}""" : End);
+        await Update(agent, """{"sessionUpdate":"state_update","state":"idle"}""");
+        var seen = new List<string>();
+        var count = expected.Split(',').Length + 2;
+        while (seen.Count < count)
+        {
+            var update = await client.Updates.ReadAsync().AsTask().WaitAsync(Bounded);
+            seen.Add(update.Kind switch
+            {
+                AcpClient.SteerInsertedKind => update.Update.GetProperty("steerId").GetString() == steer.Id ? "inserted" : "inserted elsewhere",
+                "user_message_chunk" => "echo:" + update.Update.GetProperty("messageId").GetString(),
+                "state_update" => update.Update.GetProperty("state").GetString() + (update.EndsPrompt ? "!" : ""),
+                _ => update.Kind
+            });
+        }
+        Assert.Equal("echo:m-1,running," + expected, string.Join(',', seen));
+        Assert.Equal(order == "queue refused" ? SteerOutcome.PromptRequired : SteerOutcome.Injected, await steer.Delivered.WaitAsync(Bounded));
+        Assert.Equal("end_turn", (await run.Ended.WaitAsync(Bounded)).StopReason);
+    }
+
     [Fact]
     public async Task Cancel_completes_on_idle_cancelled()
     {

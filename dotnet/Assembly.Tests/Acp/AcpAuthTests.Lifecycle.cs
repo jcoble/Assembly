@@ -26,7 +26,7 @@ public sealed partial class AcpAuthTests
         await using var rpc = new JsonRpcConnection(agent.ClientReads,
             new BeforeWrite(agent.ClientWrites, () => Assert.True(Volatile.Read(ref registered) > 0)), target, TranscriptLog.Discard());
         var call = rpc.RequestAsync("probe", JsonSerializer.SerializeToElement(new { }), default,
-            onReply: () => Interlocked.Increment(ref replied), onRequest: id => Volatile.Write(ref registered, id), onSettled: () => Interlocked.Increment(ref settled));
+            onReply: _ => Interlocked.Increment(ref replied), onRequest: id => Volatile.Write(ref registered, id), onSettled: () => Interlocked.Increment(ref settled));
         var request = await agent.ReadAsync(); Assert.Equal(registered, request.GetProperty("id").GetInt64());
         var result = error ? "\"error\":{\"code\":-32800,\"message\":\"Cancelled\"}" : "\"result\":{}";
         await agent.SendAsync("{\"jsonrpc\":\"2.0\",\"id\":" + registered + "," + result + "}\n{\"jsonrpc\":\"2.0\",\"method\":\"after\",\"params\":{}}");
@@ -52,7 +52,7 @@ public sealed partial class AcpAuthTests
         {
             if (mode == "write") agent.BreakInput();
             var call = rpc.RequestAsync("probe", JsonSerializer.SerializeToElement(new { }), cancel.Token,
-                onReply: () => Interlocked.Increment(ref replied), onRequest: id => registered = id, onSettled: () => Interlocked.Increment(ref settled));
+                onReply: _ => Interlocked.Increment(ref replied), onRequest: id => registered = id, onSettled: () => Interlocked.Increment(ref settled));
             if (mode != "write")
             {
                 await agent.ReadAsync();

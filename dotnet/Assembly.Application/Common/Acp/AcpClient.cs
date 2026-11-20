@@ -24,6 +24,8 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
     public event Action<string>? SessionResumed;
     private readonly BackgroundWork _prompts = new(TimeProvider.System, Console.Error);
     private SteerRoute _steering;
+    /// <summary>The update kind of a steer's insertion, written in pipe order where its reply sat; never on the wire.</summary>
+    public const string SteerInsertedKind = "_assembly/steer_inserted";
 
     public AcpClient(Stream fromAgent, Stream toAgent, IPermissionPolicy permissions, TranscriptLog transcript)
     {
@@ -74,7 +76,7 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
         try
         {
             return await RequestAsync(AcpMethods.SessionResume, request, AcpJsonContext.Default.ResumeSessionRequest,
-                AcpJsonContext.Default.ResumeSessionResponse, cancellationToken, () =>
+                AcpJsonContext.Default.ResumeSessionResponse, cancellationToken, _ =>
                 {
                     _resuming.TryRemove(request.SessionId, out var resumed);
                     SessionResumed?.Invoke(request.SessionId);
@@ -145,12 +147,12 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
         switch (_steering)
         {
             case SteerRoute.SteeringCall:
-                _prompts.Start("ACP steer " + sessionId, closing => SteerCallAsync(sessionId, prompt, delivered, closing));
+                _prompts.Start("ACP steer " + sessionId, closing => SteerCallAsync(sessionId, id, prompt, delivered, closing));
                 break;
             case SteerRoute.PromptQueue:
                 var foreground = For(sessionId);
                 var pending = foreground.Begin();
-                _prompts.Start("ACP queued prompt " + sessionId, closing => QueuePromptAsync(sessionId, prompt, foreground, pending, delivered, closing));
+                _prompts.Start("ACP queued prompt " + sessionId, closing => QueuePromptAsync(sessionId, id, prompt, foreground, pending, delivered, closing));
                 break;
             default:
                 throw new InvalidOperationException("This agent takes no message while a turn runs.");
@@ -158,13 +160,18 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
         return new SteerRun(id, delivered.Task.WaitAsync(cancellationToken));
     }
 
-    private async Task SteerCallAsync(string sessionId, IReadOnlyList<TextBlock> prompt, TaskCompletionSource<SteerOutcome> delivered, CancellationToken closing)
+    private async Task SteerCallAsync(string sessionId, string steerId, IReadOnlyList<TextBlock> prompt, TaskCompletionSource<SteerOutcome> delivered, CancellationToken closing)
     {
         try
         {
             var response = await RequestAsync(AcpMethods.SessionSteering,
                 new SteerRequest(sessionId, prompt, new SteerMeta(new SteerOptions("promptRequired"))),
-                AcpJsonContext.Default.SteerRequest, AcpJsonContext.Default.SteerResponse, closing);
+                AcpJsonContext.Default.SteerRequest, AcpJsonContext.Default.SteerResponse, closing, result =>
+                {
+                    if (result.ValueKind == JsonValueKind.Object && result.TryGetProperty("outcome", out var outcome) && outcome.ValueKind == JsonValueKind.String
+                        && outcome.GetString() == "injected")
+                        PublishInsertion(sessionId, steerId);
+                });
             delivered.TrySetResult(response.Outcome switch
             {
                 "injected" => SteerOutcome.Injected,
@@ -176,16 +183,22 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
         catch (Exception error) { Fail(delivered, error); }
     }
 
-    private async Task QueuePromptAsync(string sessionId, IReadOnlyList<TextBlock> prompt, Foreground foreground, Foreground.Pending pending,
+    private async Task QueuePromptAsync(string sessionId, string steerId, IReadOnlyList<TextBlock> prompt, Foreground foreground, Foreground.Pending pending,
         TaskCompletionSource<SteerOutcome> delivered, CancellationToken closing)
     {
         try
         {
+            // The reply is the insertion: bind it and mark it where it sits in the pipe.
             var response = await RequestAsync(AcpMethods.SessionPrompt, new PromptRequest(sessionId, prompt),
-                AcpJsonContext.Default.PromptRequest, AcpJsonContext.Default.PromptResponse, closing);
+                AcpJsonContext.Default.PromptRequest, AcpJsonContext.Default.PromptResponse, closing, result =>
+                {
+                    if (result.ValueKind != JsonValueKind.Object || !result.TryGetProperty("messageId", out var bound)
+                        || bound.ValueKind != JsonValueKind.String || bound.GetString() is not { Length: > 0 } messageId) return;
+                    foreground.Inserted(pending, messageId);
+                    PublishInsertion(sessionId, steerId);
+                });
             if (string.IsNullOrEmpty(response.MessageId))
                 throw new JsonRpcException(JsonRpcException.InternalError, "session/prompt returned no messageId.");
-            foreground.Inserted(pending, response.MessageId);
             delivered.TrySetResult(SteerOutcome.Injected);
             // Nothing decides a run from a queued prompt's end; it is awaited only so its fault is observed.
             try { await pending.Ended.Task.WaitAsync(closing); } catch { }
@@ -202,6 +215,12 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
             _ = pending.Ended.Task.Exception;
             Fail(delivered, error);
         }
+    }
+
+    private void PublishInsertion(string sessionId, string steerId)
+    {
+        using var update = JsonDocument.Parse($$"""{"sessionUpdate":"{{SteerInsertedKind}}","steerId":"{{steerId}}"}""");
+        _updates.Writer.TryWrite(new SessionNotification(sessionId, update.RootElement.Clone()));
     }
 
     // The caller may have stopped waiting; the fault is still observed here.
@@ -316,7 +335,8 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
             if (update.Kind == "state_update") resuming.Snapshot = update;
             return;
         }
-        if (update.Kind == "state_update") For(update.SessionId).Read(update, () => PublishAccepted(update));
+        if (update.Kind == "state_update")
+            For(update.SessionId).Read(update, () => PublishAccepted(update), () => PublishAccepted(update with { EndsPrompt = true }));
         else if (_foreground.TryGetValue(update.SessionId, out var foreground))
             foreground.Read(update, () => PublishAccepted(update));
         else PublishAccepted(update);
@@ -349,7 +369,7 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
     private Foreground For(string sessionId) => _foreground.GetOrAdd(sessionId, _ => new Foreground());
 
     private async Task<TResponse> RequestAsync<TRequest, TResponse>(string method, TRequest request,
-        JsonTypeInfo<TRequest> requestType, JsonTypeInfo<TResponse> responseType, CancellationToken cancellationToken, Action? onReply = null)
+        JsonTypeInfo<TRequest> requestType, JsonTypeInfo<TResponse> responseType, CancellationToken cancellationToken, Action<JsonElement>? onReply = null)
     {
         var result = await _rpc.RequestAsync(method, JsonSerializer.SerializeToElement(request, requestType), cancellationToken, onReply);
         return result.Deserialize(responseType)

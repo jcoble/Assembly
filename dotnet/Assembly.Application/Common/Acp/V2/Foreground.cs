@@ -81,7 +81,11 @@ internal sealed class Foreground : IDisposable
         EndWorkIfIdle();
     }
 
-    public void Read(SessionNotification notification, Action? publishAccepted = null)
+    /// <summary>
+    /// Reads one update in pipe order. A <c>state_update</c> that ends a boundary not ended before is published through
+    /// <paramref name="publishEnded"/> when given; everything else through <paramref name="publishAccepted"/>.
+    /// </summary>
+    public void Read(SessionNotification notification, Action? publishAccepted = null, Action? publishEnded = null)
     {
         lock (_gate)
         {
@@ -109,12 +113,18 @@ internal sealed class Foreground : IDisposable
                 _work.Dispose();
                 _work = new CancellationTokenSource();
             }
+            var ended = false;
             foreach (var boundary in _messages.Values.Where(b => b.Acknowledged && b.End is null))
             {
                 if (state.State is "running" or "requires_action") boundary.Active = true;
-                else if (state.State == "idle" && (boundary.Active || state.StopReason is not null)) boundary.End = state;
+                else if (state.State == "idle" && (boundary.Active || state.StopReason is not null))
+                {
+                    boundary.End = state;
+                    ended = true;
+                }
             }
-            publishAccepted?.Invoke();
+            if (ended && publishEnded is not null) publishEnded();
+            else publishAccepted?.Invoke();
             if (state is { State: "idle", StopReason: "cancelled" })
             {
                 foreach (var cancel in _cancels) cancel.TrySetResult();

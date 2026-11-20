@@ -19,7 +19,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     private readonly TranscriptLog _transcript;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     // Each request's reply, and what to run on the reader thread as a success reply arrives (see RequestAsync).
-    private readonly record struct Pending(TaskCompletionSource<JsonElement> Reply, Action? OnReply, Action? OnSettled);
+    private readonly record struct Pending(TaskCompletionSource<JsonElement> Reply, Action<JsonElement>? OnReply, Action? OnSettled);
     private readonly ConcurrentDictionary<long, Pending> _pending = new();
     // Taken to remove a pending request, so a caller that gave up never sees its OnReply run after it returns.
     private readonly Lock _removing = new();
@@ -44,12 +44,13 @@ public sealed class JsonRpcConnection : IAsyncDisposable
 
     /// <summary>
     /// Sends a request and waits for its reply. <paramref name="onReply"/>, if given, runs on the reader thread as a
-    /// success reply arrives, before any later line is read, so it falls in pipe order with the notifications around
-    /// it. The request hook registers the numeric ID before any write; the settled hook fences it exactly once,
-    /// including errors and local removal, before a later line can be dispatched. Hooks must not block or throw.
-    /// A reply that comes after the caller gave up runs nothing.
+    /// success reply arrives, with the reply's result, before any later line is read, so it falls in pipe order with
+    /// the notifications around it. The request hook registers the numeric ID before any write; the settled hook
+    /// fences it exactly once, including errors and local removal, before a later line can be dispatched. Hooks must
+    /// not block; a reply hook that throws faults only its own request. A reply that comes after the caller gave up
+    /// runs nothing.
     /// </summary>
-    public async Task<JsonElement> RequestAsync(string method, JsonElement parameters, CancellationToken cancellationToken, Action? onReply = null,
+    public async Task<JsonElement> RequestAsync(string method, JsonElement parameters, CancellationToken cancellationToken, Action<JsonElement>? onReply = null,
         Action<long>? onRequest = null, Action? onSettled = null)
     {
         var id = Interlocked.Increment(ref _lastId);
@@ -159,16 +160,32 @@ public sealed class JsonRpcConnection : IAsyncDisposable
             else if (hasId && id.TryGetInt64(out var number))
             {
                 Pending pending;
+                Exception? hookFailed = null;
                 lock (_removing)
                 {
                     if (!_pending.TryRemove(number, out pending))
                         return;
                     if (!root.TryGetProperty("error", out _))
-                        pending.OnReply?.Invoke();
+                        hookFailed = RunReplyHook(pending, root);
                     pending.OnSettled?.Invoke();
                 }
-                Settle(pending.Reply, root);
+                if (hookFailed is not null) pending.Reply.TrySetException(hookFailed);
+                else Settle(pending.Reply, root);
             }
+        }
+    }
+
+    private static Exception? RunReplyHook(Pending pending, JsonElement response)
+    {
+        try
+        {
+            pending.OnReply?.Invoke(response.TryGetProperty("result", out var result) ? result : default);
+            return null;
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"A JSON-RPC reply hook failed: {error}");
+            return error;
         }
     }
 

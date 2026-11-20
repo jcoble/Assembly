@@ -15,4 +15,8 @@ public sealed record SessionNotification(string SessionId, JsonElement Update)
             ? kind.GetString() ?? ""
             : "";
 
+    /// <summary>Set by the client on the idle that ended a prompt's boundary; never on the wire.</summary>
+    [JsonIgnore]
+    public bool EndsPrompt { get; init; }
+
 }
