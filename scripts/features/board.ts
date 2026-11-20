@@ -29,6 +29,11 @@ class Client {
     }
   }
   async ready() { return await this.take(f => f.t === 'welcome'); }
+  async sub(topic: string, key: string) {
+    const id = ++this.id;
+    this.send({ t: 'sub', id, topic, key });
+    return { id, state: await this.take(f => f.sub === id && f.t === 'state') };
+  }
   async response(feature: string, method: string, args: object) {
     const id = ++this.id;
     this.send({ t: 'call', id, feature, method, args });
