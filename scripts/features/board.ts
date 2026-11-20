@@ -1,5 +1,6 @@
 // Board proof uses only host-authenticated owner calls and the real provider's configured MCP reporting tool.
 import { randomUUID } from 'node:crypto';
+import { newSession } from './new-session.ts';
 
 type OwnerPromptAccepted = { sessionId: string; state: 'queued' };
 type Frame = { t: string; id?: number; sub?: number; code?: string; message?: string; result?: any; machine?: string; engine?: string; items?: any[]; events?: any[]; more?: boolean };
@@ -67,7 +68,7 @@ async function main() {
   const source = await desktop.call('sessions', 'resolve_source', { routeMachine: route });
   const machine = source.machine as string;
   const expected = route ? source : null;
-  const created = await desktop.call('sessions', 'create', { agent: env.CHECK4_AGENT, repoUrl: env.CHECK4_REPO, machine: route, parentSessionId: null, title: null });
+  const created = await newSession(desktop, env.CHECK4_AGENT!, env.CHECK4_REPO!, route);
   const session = created.sessionId as string;
   const rows = await desktop.sub('rows', session);
   async function prompt(text: string) {
