@@ -185,7 +185,7 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
             var config = sessions.ConfigForEngineInitialization(scope, session.SessionId);
             var captured = config.ConfigTarget is null ? null
                 : ((AgentDescriptor Descriptor, IReadOnlyDictionary<string, string> Environment, string TargetId)?)
-                    ConfigTargetIdentity.Capture(launcher, session.Agent, config.ConfigTarget);
+                    ConfigTargetIdentity.Capture(launcher, session.Agent);
             if (projectId is null && parentLocation is null && preparation is null)
                 Directory.CreateDirectory(folder);
             launcher.ValidateFolder(folder);
