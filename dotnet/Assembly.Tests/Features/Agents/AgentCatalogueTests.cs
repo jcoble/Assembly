@@ -268,7 +268,7 @@ public sealed class AgentCatalogueTests
             await catalogue.CheckAsync(Agent, captured, CancellationToken.None);
             await catalogue.CheckAsync(Agent, CancellationToken.None);
             Assert.Equal(suppliedTarget, targets[0]);
-            Assert.NotEqual(suppliedTarget, targets[1]);
+            Assert.Equal(suppliedTarget, targets[1]);
         }
         finally { Environment.SetEnvironmentVariable(key, null); }
     }
