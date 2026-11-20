@@ -4,11 +4,15 @@ using System.Text.Json.Serialization.Metadata;
 using System.Threading.Channels;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
+using Assembly.Application.Common.Acp.V1;
 using Assembly.Application.Common.Acp.V2;
 
 namespace Assembly.Application.Common.Acp;
 
-/// <summary>One ACP v2 connection. Adapter differences stay outside this client.</summary>
+/// <summary>
+/// One ACP connection, read as version 2. A version 1 agent's traffic is turned into the version 2 shape here
+/// (<c>AcpClient.V1.cs</c>), so nothing above the client learns the version. Adapter differences stay outside this client.
+/// </summary>
 public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
 {
     private readonly IPermissionPolicy _permissions;
@@ -55,10 +59,14 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
     public async Task<InitializeResponse> InitializeAsync(Implementation clientInfo, bool terminalAuthentication,
         CancellationToken cancellationToken)
     {
-        var response = await RequestAsync(AcpMethods.Initialize,
+        var reply = await _rpc.RequestAsync(AcpMethods.Initialize, JsonSerializer.SerializeToElement(
             new InitializeRequest(AcpProtocol.Version, clientInfo, ClientCapabilities.WithTerminalAuthentication(terminalAuthentication)),
-            AcpJsonContext.Default.InitializeRequest, AcpJsonContext.Default.InitializeResponse, cancellationToken);
-        if (response.ProtocolVersion != AcpProtocol.Version)
+            AcpJsonContext.Default.InitializeRequest), cancellationToken);
+        _version = ProtocolShape.Of(reply);
+        var response = (_version == ProtocolShape.Version1 ? InitializeNormalizer.Normalize(reply) : reply)
+            .Deserialize(AcpJsonContext.Default.InitializeResponse)
+            ?? throw new JsonRpcException(JsonRpcException.InternalError, $"{AcpMethods.Initialize} returned no result.");
+        if (_version != ProtocolShape.Version1 && response.ProtocolVersion != AcpProtocol.Version)
             throw new JsonRpcException(-32022, $"ACP version {response.ProtocolVersion} is unsupported; Assembly requires version 2.");
         _authMethods = response.AuthMethods;
         _steering = response.Steering;
@@ -109,6 +117,7 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
 
     public PromptRun PromptAsync(string sessionId, IReadOnlyList<ContentBlock> prompt, CancellationToken cancellationToken)
     {
+        if (_version == ProtocolShape.Version1) return PromptV1(sessionId, prompt, cancellationToken);
         var foreground = For(sessionId);
         var pending = foreground.Begin();
         _prompts.Start("ACP prompt " + sessionId, SendPromptAsync);
@@ -232,6 +241,11 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
 
     public async Task CancelAsync(string sessionId, CancellationToken cancellationToken)
     {
+        if (_version == ProtocolShape.Version1)
+        {
+            await CancelV1Async(sessionId, cancellationToken);
+            return;
+        }
         if (_nativeParents.TryGetValue(sessionId, out var parent) && !parent.Conflicted
             && _sessionPolicies.TryGetValue(parent.Id, out var policy))
             policy.Cancelling(sessionId);
@@ -261,8 +275,10 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
         switch (method)
         {
             case AcpMethods.SessionRequestPermission:
-                var request = parameters.Deserialize(AcpJsonContext.Default.RequestPermissionRequest)
+                var request = (_version == ProtocolShape.Version1 ? PermissionNormalizer.Normalize(parameters) : parameters)
+                    .Deserialize(AcpJsonContext.Default.RequestPermissionRequest)
                     ?? throw new JsonRpcException(JsonRpcException.InvalidParams, "Missing permission request.");
+                if (_version == ProtocolShape.Version1) Taken(request.SessionId);
                 var outcome = await AskAsync(request.SessionId, PermissionOutcome.Cancelled,
                     (policy, token) => policy.AllowAutomaticBoardUpdates && request.ToolTitle == "mcp__assembly__board_update"
                         && request.Options.FirstOrDefault(option => option.Kind == "allow_once") is { } allow
@@ -329,6 +345,11 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
         if (method != AcpMethods.SessionUpdate ||
             parameters.Deserialize(AcpJsonContext.Default.SessionNotification) is not { } update)
             return;
+        if (_version == ProtocolShape.Version1)
+        {
+            OnUpdateV1(update);
+            return;
+        }
         if (_resuming.TryGetValue(update.SessionId, out var resuming))
         {
             // Replay text is not live traffic, but v2's required current-state snapshot remains authoritative.
