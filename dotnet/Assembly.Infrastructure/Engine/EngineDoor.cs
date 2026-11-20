@@ -5,6 +5,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Engine;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Application.Features.Chat.Sessions.Drafts;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Hosting;
@@ -89,7 +90,7 @@ public sealed partial class EngineDoor(EngineRuntime runtime, SessionStore sessi
             var result = runtime.Commands.ApplyOwnerPrompt(scope, context, prepared);
             if (!result.Applied) throw new CallFailed(result.Error == "command_id_conflict" ? "client_id_conflict" : result.Error ?? "owner prompt refused");
             // The sent draft goes with the accept, as the old app's send cleared it.
-            Assembly.Application.Features.Chat.Sessions.Drafts.DraftStore.Clear(scope, request.Session);
+            DraftStore.Clear(scope, request.Session);
             return new(request.Session, id, request.ClientId, "queued", result.Version, result.Seq, result.Epoch, null);
         };
     }
@@ -166,6 +167,24 @@ public sealed partial class EngineDoor(EngineRuntime runtime, SessionStore sessi
         }
         var apply = await PrepareLocalNeedAnswerAsync(request with { ExpectedSource = null }, stop.Token);
         return Commit(captured, call, apply);
+    }
+
+    /// <summary>Saves the session's unsent draft on the machine it runs on, as the old app's set_draft did.</summary>
+    public async Task<Func<IWriteScope, bool>> PrepareSourceDraftAsync(string session, SessionDraft draft, ExpectedSource source, CallContext call)
+    {
+        var captured = await CaptureChatAsync(session, source, call);
+        using var stop = Stop(call, captured);
+        BeforeEffect(captured, call);
+        if (captured.Machine is RemoteMachine remote)
+        {
+            await remote.SetDraftBoundAsync(session, draft, captured.Live!, stop.Token);
+            return Commit(captured, call, _ => true);
+        }
+        return Commit(captured, call, scope =>
+        {
+            DraftStore.Set(scope, session, draft, time.GetUtcNow().ToUnixTimeMilliseconds());
+            return true;
+        });
     }
 
     public async Task<Func<IWriteScope, bool>> PrepareStopAsync(string session, string run, ExpectedSource source, CallContext call)

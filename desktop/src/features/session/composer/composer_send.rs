@@ -249,6 +249,8 @@ impl Composer {
                                 let draft = composer.drafts.entry(prompt_key.clone()).or_default();
                                 if draft.0.is_empty() && draft.1.is_empty() {
                                     *draft = (typed, attached);
+                                    // The send saved the emptied box; the text it put back is the draft now.
+                                    composer.save_kept(&prompt_key, cx);
                                 } else {
                                     composer
                                         .failed_drafts
@@ -261,6 +263,8 @@ impl Composer {
                                     .draft
                                     .update(cx, |draft, cx| draft.set_value(typed, window, cx));
                                 composer.attachments = attached;
+                                // set_value sends no change, so the restored text is saved here, as the old app did.
+                                composer.save_shown(cx);
                                 cx.notify();
                             } else {
                                 composer

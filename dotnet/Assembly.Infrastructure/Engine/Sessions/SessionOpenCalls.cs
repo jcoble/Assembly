@@ -70,7 +70,7 @@ internal sealed class SessionOpenCalls(IAppDatabase db, EngineRuntime runtime, S
         }
         else if (resolved.SessionId != target.Session || resolved.ReadOnly != (target.Kind == "historical")) throw Changed();
         guardRemote.EnsureCurrent();
-        return resolved with { Generation = expected.Generation, RouteMachine = expected.RouteMachine, Draft = null };
+        return resolved with { Generation = expected.Generation, RouteMachine = expected.RouteMachine };
     }
 
     private static CallFailed Changed() => new("The selected session source changed.", "source_changed");

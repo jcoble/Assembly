@@ -167,9 +167,9 @@ public sealed partial class GitCheckoutScopeTests
     }
     private sealed class GuardLease(IExpectedSourceGuard inner) : IExpectedSourceGuard
     {
-        internal bool Disposed;
+        internal readonly TaskCompletionSource Disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public CancellationToken Changed => inner.Changed;
         public void EnsureCurrent() => inner.EnsureCurrent();
-        public void Dispose() { if (Disposed) return; Disposed = true; inner.Dispose(); }
+        public void Dispose() { if (Disposed.Task.IsCompleted) return; inner.Dispose(); Disposed.TrySetResult(); }
     }
 }

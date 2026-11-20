@@ -61,7 +61,7 @@ internal sealed class FakeLink : IAgentLink
 
     public async Task<JsonElement> ReadAsync(string method)
     {
-        var message = await _agent.ReadAsync();
+        var message = await _agent.ReadAsync(method);
         Assert.Equal(method, message.GetProperty("method").GetString());
         return message;
     }

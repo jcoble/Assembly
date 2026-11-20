@@ -12,8 +12,8 @@ internal sealed record SessionOpenTarget(string Kind, string Machine, string Ses
 internal sealed record SessionOpenTargetRead(string Kind, string Machine, long Generation, string? RouteMachine,
     string SessionId, string? ParentSessionId, string? ItemId, long? Seq, string? PayloadSessionId,
     bool ReadOnly, bool HasHistoryRows, SessionOpenKey OriginalKey, ulong RequestId, string? CheckoutRoot,
-    // A live local session's saved draft, read with the open so the box doesn't show empty first. A remote session's
-    // answer never carries one: its draft is the remote machine's (not ported).
+    // A live session's saved draft, read with the open on the machine it runs on, so the box doesn't show empty first.
+    // A remote's answer passes through as it came; an older remote's carries none.
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     Assembly.Application.Features.Chat.Sessions.Drafts.SessionDraft? Draft = null)
 {

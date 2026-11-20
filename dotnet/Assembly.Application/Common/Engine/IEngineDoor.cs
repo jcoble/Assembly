@@ -29,6 +29,8 @@ public interface IEngineDoor
         string? target, ExpectedSource source, CallContext call) => throw Unavailable();
     Task<OwnerPromptPage> ReadSourceOwnerPromptsAsync(OwnerPromptReadArgs request, CallContext call) => throw Unavailable();
     Task<OwnerPromptChunk> ReadSourceOwnerPromptChunkAsync(OwnerPromptChunkArgs request, CallContext call) => throw Unavailable();
+    Task<Func<IWriteScope, bool>> PrepareSourceDraftAsync(string session, Features.Chat.Sessions.Drafts.SessionDraft draft,
+        ExpectedSource source, CallContext call) => throw Unavailable();
 
     private static CallFailed Unavailable() => new("Source-bound chat commands are unavailable.", "source_changed");
 }
