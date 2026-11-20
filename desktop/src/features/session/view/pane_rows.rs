@@ -92,7 +92,12 @@ impl SessionPane {
                             crate::features::session::composer::attachment::Attachment::split_lines(
                                 text,
                             );
+                        // In the reading column, where the confirmed row lands, so the bubble doesn't jump.
                         return v_flex()
+                            .w_full()
+                            .max_w(CHAT_COLUMN)
+                            .mx_auto()
+                            .px_4()
                             .gap_1()
                             .child(SentMessage {
                                 key: item.key.clone(),
@@ -107,7 +112,12 @@ impl SessionPane {
                                 open: self.kept.get(&item.key).is_some_and(|kept| kept.open),
                                 on_action: self.on_action.clone(),
                             })
-                            .child(line(state.clone(), muted, cx))
+                            .child(
+                                div()
+                                    .text_role(TextRole::Meta, cx)
+                                    .text_color(muted)
+                                    .child(state.clone()),
+                            )
                             .when(state.starts_with("Failed:"), |column| {
                                 let on_action = self.on_action.clone();
                                 let client_id = self
