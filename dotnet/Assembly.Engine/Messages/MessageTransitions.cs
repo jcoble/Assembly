@@ -60,7 +60,9 @@ public static partial class MessageTransitions
         List<EffectDraft> effects = [];
         if (outcome.State == "next_turn" && outcome.CompletedTurn is null)
         {
-            // A need that opened before this receipt keeps the session at needs_me, as a state change would.
+            // A send receipt can land after an approval opened, even when the adapter sent both in the same write.
+            // An open need must keep the session at needs_me, the same rule SessionTransitions.SetState applies;
+            // only the activity becomes running.
             var sessionState = s.QueryFirst("""
                 SELECT COUNT(*) FROM engine_needs_me WHERE session_id=$id AND state='open'
                 """, r => r.Long(0), new SqlArg("$id", current.To)) > 0 ? "needs_me" : "running";
