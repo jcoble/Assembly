@@ -260,7 +260,7 @@ impl SessionPane {
             timeline.set_session(Some(key.id.clone()), Vec::new(), cx)
         });
         self.composer.update(cx, |composer, cx| {
-            composer.offer_saved(&key, saved_draft);
+            composer.offer_saved(&key, saved_draft, source.clone());
             composer.set_target(
                 (!read_only).then(|| key.clone()),
                 (!read_only).then(|| source.clone()),

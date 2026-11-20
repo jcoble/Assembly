@@ -1,10 +1,11 @@
-//! A local session's unsent draft is saved on its machine (`drafts/set`) as it changes, and comes back with the
-//! session's open (`sessions/open_target`), so it outlasts a restart, as the old app's did. The `drafts` map stays
-//! this run's working copy: every change to it is saved, so after a restart the saved draft is the only one there is.
-//! A session saves here only once its saved draft has come into this composer, so a save never replaces text it
-//! hasn't seen. A remote session's open brings none (its draft is the remote machine's, not ported), so it never saves.
+//! A session's unsent draft is saved on the machine it runs on (`drafts/set`, through its source) as it changes,
+//! and comes back with the session's open (`sessions/open_target`), so it outlasts a restart, as the old app's did.
+//! The `drafts` map stays this run's working copy: every change to it is saved, so after a restart the saved draft is
+//! the only one there is. A session saves here only once its saved draft has come into this composer, so a save never
+//! replaces text it hasn't seen. An older remote's open brings none, so its sessions never save.
 use super::*;
 use crate::core::engine::SessionKey;
+use crate::core::socket::row_source::ExpectedRowSource;
 use futures_channel::oneshot;
 use serde::{Deserialize, Serialize};
 
@@ -34,11 +35,17 @@ pub(super) struct DraftSave {
 impl Composer {
     /// The open brought `key`'s saved draft. The first one in this run joins in front of whatever this run already
     /// holds for the session (text typed while its open was on the way); a later one is older than this run's own.
-    pub fn offer_saved(&mut self, key: &SessionKey, saved: Option<SavedDraft>) {
+    /// Saves go where the session runs, through `source`; each open names it again.
+    pub fn offer_saved(
+        &mut self,
+        key: &SessionKey,
+        saved: Option<SavedDraft>,
+        source: ExpectedRowSource,
+    ) {
         let Some(saved) = saved else {
             return;
         };
-        if !self.saved_drafts.insert(key.clone()) {
+        if self.saved_drafts.insert(key.clone(), source).is_some() {
             return;
         }
         // What the box shows for the picked session was typed in this run: it joins the saved draft when the open lands.
@@ -102,7 +109,7 @@ impl Composer {
     }
 
     fn save_draft(&mut self, key: SessionKey, draft: SavedDraft, cx: &mut Context<Self>) {
-        if !self.saved_drafts.contains(&key) {
+        if !self.saved_drafts.contains_key(&key) {
             return;
         }
         match self.draft_saves.get_mut(&key) {
@@ -112,8 +119,8 @@ impl Composer {
     }
 
     fn send_save(&mut self, key: SessionKey, draft: SavedDraft, cx: &mut Context<Self>) {
-        let args =
-            json!({ "session": key.id, "text": draft.text, "attachments": draft.attachments });
+        let args = json!({ "session": key.id, "text": draft.text, "attachments": draft.attachments,
+            "expectedSource": self.saved_drafts.get(&key) });
         let call = self.client.call("drafts", "set", args, None, cx);
         let saved = key.clone();
         let call = cx.spawn(async move |composer, cx| {

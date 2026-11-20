@@ -8,6 +8,7 @@ use super::Composer;
 use super::draft_saves::SavedDraft;
 use super::tests::{draft, open};
 use crate::core::engine::SessionKey;
+use crate::core::socket::row_source::ExpectedRowSource;
 use crate::features::session::client::fake_client::FakeClient;
 use crate::features::session::client::session_client::CallError;
 
@@ -25,6 +26,14 @@ fn saved(text: &str) -> Option<SavedDraft> {
     })
 }
 
+fn local_source() -> ExpectedRowSource {
+    ExpectedRowSource {
+        machine: "owner".into(),
+        generation: 0,
+        route_machine: None,
+    }
+}
+
 /// An open landing on `id` with the saved draft its answer carried.
 fn land(
     composer: &Entity<Composer>,
@@ -33,7 +42,7 @@ fn land(
     cx: &mut VisualTestContext,
 ) {
     composer.update_in(cx, |composer, window, cx| {
-        composer.offer_saved(&owned(id), draft);
+        composer.offer_saved(&owned(id), draft, local_source());
         composer.set_session(Some(id.into()), window, cx)
     });
 }
@@ -137,6 +146,7 @@ fn one_save_goes_at_a_time_and_the_newest_text_follows_it(cx: &mut TestAppContex
     );
 }
 
+// An older remote's open carries no draft field: the box opens empty and nothing is saved.
 #[gpui::test]
 fn a_remote_sessions_open_brings_no_saved_draft_and_it_saves_nothing(cx: &mut TestAppContext) {
     let (composer, client, _, cx) = open(cx);
@@ -188,5 +198,37 @@ fn retrying_a_failed_prompt_keeps_a_different_draft_saved_after_the_retrys_send(
         draft(&reopened, cx),
         "a different draft",
         "and comes back from the saved copy"
+    );
+}
+
+#[gpui::test]
+fn a_remote_sessions_draft_comes_with_its_open_and_saves_through_its_source(
+    cx: &mut TestAppContext,
+) {
+    let (composer, client, _, cx) = open(cx);
+    let key = SessionKey {
+        machine: "workbox-engine".into(),
+        id: "r1".into(),
+    };
+    let source = ExpectedRowSource {
+        machine: "workbox-engine".into(),
+        generation: 3,
+        route_machine: Some("workbox-test".into()),
+    };
+    composer.update_in(cx, |composer, window, cx| {
+        composer.offer_saved(&key, saved("kept on the remote"), source.clone());
+        composer.set_target(Some(key.clone()), Some(source.clone()), window, cx)
+    });
+    assert_eq!(draft(&composer, cx), "kept on the remote");
+    type_text(&composer, "kept on the remote, edited", cx);
+    let (_, args) = (client.calls().into_iter())
+        .rfind(|(call, _)| call == "drafts/set")
+        .expect("a save");
+    assert_eq!(args["session"], json!("r1"));
+    assert_eq!(args["text"], json!("kept on the remote, edited"));
+    assert_eq!(
+        args["expectedSource"],
+        json!(source),
+        "it goes where the session runs"
     );
 }
