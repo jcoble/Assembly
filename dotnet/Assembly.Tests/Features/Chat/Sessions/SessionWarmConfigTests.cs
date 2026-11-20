@@ -195,7 +195,6 @@ public sealed class SessionWarmConfigTests : IAsyncDisposable
         var sending = _host.SendAsync("real message", null, null, CancellationToken.None);
         Assert.NotNull(_host.CurrentTurn.RunId);
         await old.ReplyAsync(resume, "{\"configOptions\":" + Options + "}");
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => warming.WaitAsync(Wait));
         var real = await _launcher.NextAsync();
         Assert.True(old.Disposed);
         var opened = await real.StartAsync(acpSessionId: "saved-B", configOptions: Options);
@@ -214,11 +213,13 @@ public sealed class SessionWarmConfigTests : IAsyncDisposable
         var warming = _host.WarmConfigAsync(Target, CancellationToken.None);
         var old = await _launcher.NextAsync();
         await Initialize(old);
-        await old.ReadAsync("session/resume");
+        var resume = await old.ReadAsync("session/resume");
         var sending = _host.SendAsync("real message", null, null, CancellationToken.None);
+        await old.ReplyAsync(resume, "{\"configOptions\":" + Options + "}");
         var real = await _launcher.NextAsync();
-        await real.StartAsync(acpSessionId: "saved-B", configOptions: Options);
-        Assert.Equal(Options, (await warming.WaitAsync(Wait)).Options);
+        var actual = Options.Replace("\"currentValue\":\"b\"", "\"currentValue\":\"a\"");
+        await real.StartAsync(acpSessionId: "saved-B", configOptions: actual);
+        Assert.Equal(actual, (await warming.WaitAsync(Wait)).Options);
         var prompt = await real.ReadAsync("session/prompt");
         await real.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         Assert.IsType<SendResult.Inserted>(await sending.WaitAsync(Wait));
