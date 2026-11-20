@@ -309,11 +309,15 @@ fn a_send_pressed_while_settings_load_goes_once_with_the_edited_text_when_ready(
     composer.update_in(cx, |composer, window, cx| {
         composer.set_start_loading(true);
         composer.set_start_state(false, false, None, cx);
-        composer.draft.update(cx, |draft, cx| draft.set_value("First", window, cx));
+        composer
+            .draft
+            .update(cx, |draft, cx| draft.set_value("First", window, cx));
         composer.send(window, cx);
         composer.send(window, cx);
         assert!(composer.start_queued());
-        composer.draft.update(cx, |draft, cx| draft.set_value("Edited", window, cx));
+        composer
+            .draft
+            .update(cx, |draft, cx| draft.set_value("Edited", window, cx));
         composer.set_start_loading(false);
         composer.set_start_state(true, false, None, cx);
     });
@@ -330,7 +334,9 @@ fn a_send_pressed_while_settings_load_is_dropped_when_they_fail(cx: &mut TestApp
     composer.update_in(cx, |composer, window, cx| {
         composer.set_start_loading(true);
         composer.set_start_state(false, false, None, cx);
-        composer.draft.update(cx, |draft, cx| draft.set_value("Kept", window, cx));
+        composer
+            .draft
+            .update(cx, |draft, cx| draft.set_value("Kept", window, cx));
         composer.send(window, cx);
         composer.set_start_loading(false);
         composer.set_start_state(false, false, None, cx);
