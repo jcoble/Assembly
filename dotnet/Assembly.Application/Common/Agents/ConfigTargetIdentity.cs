@@ -66,7 +66,8 @@ public static class ConfigTargetIdentity
         var current = launcher.Agents.FirstOrDefault(agent => agent.Id == descriptor.Id);
         if (current is null || current.Cli != descriptor.Cli
             || current.VendorFamily != descriptor.VendorFamily
-            || ConfigTargetIdentity.Of(current, effectiveEnvironment) != ConfigTargetIdentity.Of(descriptor, effectiveEnvironment)
+            // A configured descriptor declares its Env, as Capture and SameDeclaredEnvironment read it.
+            || Of(current with { DeclaredEnv = current.Env }, effectiveEnvironment) != Of(descriptor, effectiveEnvironment)
             || !SameDeclaredEnvironment(current.Env, descriptor.DeclaredEnv))
             throw new CallFailed("The selected agent configuration changed. Select it again.");
         return current;
