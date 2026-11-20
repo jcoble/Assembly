@@ -22,7 +22,6 @@ test('a second managed dev launch runs no build, install or seed process', { tim
     write(join(root, 'desktop/Cargo.toml'), 'native fixture');
     write(join(root, 'dotnet/Assembly.Desktop/Assembly.Desktop.csproj'), '<Project/>');
     write(join(root, 'dotnet/Assembly.Remote/Assembly.Remote.csproj'), '<Project/>');
-    write(join(root, 'scripts/adapters/claude-launcher.ts'), 'launcher');
     write(join(root, 'scripts/lane-env.sh'), `DATA="$HOME/assembly-dotnet-example"\nDESKTOP_PORT=18817\nTOKEN_FILE=test\nBOX_PORT=9817\nBOX_TOKEN_FILE=test\nLANE_NAME=example\n`);
     write(join(root, 'dotnet/scripts/workbox.sh'), '#!/bin/sh\necho remote-check >> "$MANAGED_TEST_LOG"\necho "remote is right; no deploy"\ntouch "$MANAGED_TEST_MARKER"\n');
     const loader = join(top, 'registry-fixture.ts');
@@ -46,9 +45,9 @@ for(const id of ['claude','codex']){const file=path.join(prefix,'node_modules/.b
     write(join(root, 'scripts/installer-fixture.ts'), `import fs from 'node:fs';import path from 'node:path';
 const [adapters,descriptor]=process.argv.slice(2),bundle=path.join(adapters,'bundles','test'),bin=process.env.PATH!.split(':')[0];
 const write=(file:string,text:string)=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,text)};
-write(path.join(bundle,'claude-launcher.ts'),'launcher');write(path.join(bundle,'node_modules/@agentclientprotocol/codex-acp/dist/index.js'),'adapter');
+write(path.join(bundle,'node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js'),'claude');write(path.join(bundle,'node_modules/@agentclientprotocol/codex-acp/dist/index.js'),'adapter');
 for(const name of ['claude-agent-acp','codex-acp'])write(path.join(bundle,'node_modules/@agentclientprotocol',name,'package.json'),JSON.stringify({version:'1.2.3'}));
-write(descriptor,JSON.stringify([{id:'claude',cli:path.join(bin,'claude'),args:[path.join(bundle,'claude-launcher.ts')]},{id:'codex',cli:path.join(bin,'codex'),args:[path.join(bundle,'node_modules/@agentclientprotocol/codex-acp/dist/index.js')]}]));
+write(descriptor,JSON.stringify([{id:'claude',cli:path.join(bin,'claude'),args:[path.join(bundle,'node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js')]},{id:'codex',cli:path.join(bin,'codex'),args:[path.join(bundle,'node_modules/@agentclientprotocol/codex-acp/dist/index.js')]}]));
 `);
     const native = `#!${process.execPath}\nconst fs=require('node:fs'),path=require('node:path'),marker=process.env.MANAGED_TEST_MARKER;fs.appendFileSync(process.env.MANAGED_TEST_LOG,'native launch\\n');\n`;
     write(join(top, 'native-template'), native, 0o755);

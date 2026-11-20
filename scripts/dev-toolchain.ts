@@ -37,8 +37,6 @@ export async function toolsCurrent(adapters: string, descriptor: string, key: st
       if (!file.path.startsWith(adapters + '/') || !(await fs.realpath(file.path)).startsWith(adapters + '/')) return false;
       if (JSON.parse(await fs.readFile(file.path, 'utf8')).version !== file.version) return false;
     }
-    if (!state.launcherPath?.startsWith(adapters + '/') || !(await fs.realpath(state.launcherPath)).startsWith(adapters + '/')) return false;
-    if (createHash('sha256').update(await fs.readFile(state.launcherPath)).digest('hex') !== state.launcherSha) return false;
     for (const file of state.entries) if (!file.startsWith(adapters + '/') || !(await fs.realpath(file)).startsWith(adapters + '/') || !(await fs.stat(file)).isFile()) return false;
     return true;
   } catch { return false; }
@@ -85,7 +83,6 @@ export async function ensureTools(root: string, adapters: string, descriptor: st
   for (const path of [adapters, descriptor, join(adapters, 'clis'), join(adapters, 'assets'), join(adapters, 'bundles')]) safePath(path, false);
   for (const name of packages) if (!/^\d+\.\d+\.\d+$/.test(versions[name] ?? '')) throw Error('invalid managed version for ' + name);
   versions = keepNewer(versions, await installedVersions(adapters, descriptor));
-  const launcher = createHash('sha256').update(await fs.readFile(join(root, 'scripts/adapters/claude-launcher.ts'))).digest('hex');
   const sources = await checkoutSources(root);
   const key = toolKey(versions, sources, target);
   if (await toolsCurrent(adapters, descriptor, key)) return { key, changed: false };
@@ -111,9 +108,8 @@ export async function ensureTools(root: string, adapters: string, descriptor: st
   try {
     const { claude: { args: [claude] }, codex: { args: [codex] } } = await readAgents(descriptor);
     if (claude.startsWith(adapters + '/bundles/') && codex.startsWith(adapters + '/bundles/')) {
-      const bundle = dirname(claude);
-      keepAdapters = createHash('sha256').update(await fs.readFile(claude)).digest('hex') === launcher
-        && JSON.parse(await fs.readFile(join(adapters, 'dev-tools.json'), 'utf8')).sources === sources;
+      const bundle = claude.split('/node_modules/')[0];
+      keepAdapters = JSON.parse(await fs.readFile(join(adapters, 'dev-tools.json'), 'utf8')).sources === sources;
       for (const name of packages.slice(0, 2)) keepAdapters &&= JSON.parse(await fs.readFile(join(bundle, 'node_modules', name, 'package.json'), 'utf8')).version === versions[name];
     }
   } catch { }
@@ -139,12 +135,12 @@ export async function ensureTools(root: string, adapters: string, descriptor: st
   for (const [index, id] of ['claude', 'codex'].entries()) {
     const agent = agents[id];
     if (agent?.cli !== join(cli, 'node_modules/.bin', id) || !agent.args?.[0]?.startsWith(adapters + '/bundles/')) throw Error('managed provider descriptor did not adopt current tools');
-    const bundle = index === 0 ? dirname(agent.args[0]) : agent.args[0].slice(0, -'/node_modules/@agentclientprotocol/codex-acp/dist/index.js'.length);
+    const bundle = agent.args[0].split('/node_modules/')[0];
     packageRecords.push({ path: join(bundle, 'node_modules', packages[index], 'package.json'), version: versions[packages[index]] });
     packageRecords.push({ path: join(cli, 'node_modules', packages[index + 2], 'package.json'), version: versions[packages[index + 2]] });
     entries.push(agent.args[0], agent.cli);
   }
-  const state = { key, sources, versions, launcherPath: agents.claude.args[0], launcherSha: launcher, packages: packageRecords, entries, descriptorSha: createHash('sha256').update(await fs.readFile(descriptor)).digest('hex') };
+  const state = { key, sources, versions, packages: packageRecords, entries, descriptorSha: createHash('sha256').update(await fs.readFile(descriptor)).digest('hex') };
   const temporary = join(adapters, 'dev-tools.' + randomUUID());
   await fs.writeFile(temporary, JSON.stringify(state), { mode: 0o600, flag: 'wx' });
   await fs.rename(temporary, join(adapters, 'dev-tools.json'));

@@ -167,14 +167,13 @@ cp "$GITHUB_FIXTURE/$(basename "$url")" "$out"
         }
         Write("package.json", "{}");
         Write("package-lock.json", "{}");
-        Write("claude-launcher.ts", "// launcher");
         foreach (var (name, version) in new[] { ("claude-agent-acp", "1.0.0"), ("codex-acp", "2.0.0") })
         {
             Write($"node_modules/@agentclientprotocol/{name}/package.json", JsonSerializer.Serialize(new { version }));
             Write($"node_modules/@agentclientprotocol/{name}/dist/index.js", "// adapter");
         }
         var file = Path.Combine(Github, "assembly-adapters-linux-x64.tar.gz");
-        Run("tar", "-czf", file, "-C", bundle, "package.json", "package-lock.json", "claude-launcher.ts", "node_modules");
+        Run("tar", "-czf", file, "-C", bundle, "package.json", "package-lock.json", "node_modules");
         object Smoke(string version) => new { protocolVersion = 2, info = new { version }, canSteer = true };
         File.WriteAllText(Path.Combine(Github, "assembly-adapters-linux-x64.json"), JsonSerializer.Serialize(new Dictionary<string, object>
         {
@@ -183,7 +182,7 @@ cp "$GITHUB_FIXTURE/$(basename "$url")" "$out"
             ["versions"] = new Dictionary<string, string> { ["claude-agent-acp"] = "1.0.0", ["codex-acp"] = "2.0.0" },
             ["entrypoints"] = new Dictionary<string, string>
             {
-                ["claude-agent-acp"] = "claude-launcher.ts",
+                ["claude-agent-acp"] = "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
                 ["codex-acp"] = "node_modules/@agentclientprotocol/codex-acp/dist/index.js",
             },
             ["archive"] = new { file = "assembly-adapters-linux-x64.tar.gz", sha256 = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(file))) },

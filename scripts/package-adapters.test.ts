@@ -45,16 +45,12 @@ for (const [name, change, expected] of [
 }));
 
 test("scheduled comparison: changing the launcher or the packager changes the recorded inputs", () => fixture(async root => {
-  mkdirSync(join(root, "scripts/adapters"), { recursive: true });
-  writeFileSync(join(root, "scripts/adapters/claude-launcher.ts"), "launcher");
+  mkdirSync(join(root, "scripts"), { recursive: true });
   writeFileSync(join(root, "scripts/package-adapters.ts"), "packager");
   const first = await packagingDigest(root);
   assert.equal(await packagingDigest(root), first);
-  writeFileSync(join(root, "scripts/adapters/claude-launcher.ts"), "changed");
-  const second = await packagingDigest(root);
-  assert.notEqual(second, first);
   writeFileSync(join(root, "scripts/package-adapters.ts"), "changed");
-  assert.notEqual(await packagingDigest(root), second);
+  assert.notEqual(await packagingDigest(root), first);
 }));
 
 test("only exact stable versions of both supported adapters are accepted", () => {

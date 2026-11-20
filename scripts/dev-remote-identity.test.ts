@@ -31,7 +31,6 @@ for (const [file, onList] of [
   ['dotnet/Assembly.Infrastructure/Workflows/RemoteWorkflowMirror.cs', false],
   ['dotnet/Assembly.Engine/README.md', false],
   ['dotnet/notes/reconnect-later-remote.md', false],
-  ['scripts/adapters/claude-launcher.ts', false],
   ['scripts/package-adapters.ts', false],
   ['dotnet/scripts/agents-file.sh', false],
   ['scripts/dev-toolchain.ts', false],
@@ -47,9 +46,9 @@ test('everything on the list is also a build input, so an exact match covers it 
 });
 
 test('adapters, launchers and their scripts have their own check, and an exact match still covers them', async () => {
-  for (const file of ['scripts/adapters/claude-launcher.ts', 'scripts/package-adapters.ts', 'dotnet/scripts/agents-file.sh', 'scripts/dev-toolchain.ts'])
+  for (const file of ['scripts/package-adapters.ts', 'dotnet/scripts/agents-file.sh', 'scripts/dev-toolchain.ts'])
     assert.ok(adapterInput(file) && backendInput(file));
-  const digest = (launcher: string) => sourcesDigest(adapterSources, async file => file.endsWith('claude-launcher.ts') ? launcher : 'same');
+  const digest = (packager: string) => sourcesDigest(adapterSources, async file => file === 'scripts/package-adapters.ts' ? packager : 'same');
   assert.equal(await digest('a'), await digest('a'));
   assert.notEqual(await digest('a'), await digest('b'));
   assert.notEqual(await sourcesDigest(adapterSources, async () => undefined), await digest('a'));
@@ -63,7 +62,7 @@ test('the one version number is the package version, not a dependency called ver
 test('the guard takes the hard contracts only; the rest of the list is the author\'s judgment', () => {
   for (const file of ['dotnet/Assembly.Infrastructure/Socket/SocketJson.cs', 'dotnet/Assembly.Application/Features/Chat/Rows/RowStore.cs', 'dotnet/Assembly.Domain/Rows/Row.cs',
     'dotnet/Assembly.Engine/Persistence/EngineSchema.cs', 'dotnet/Assembly.Application/Features/Chat/Sessions/SessionStore.cs', 'dotnet/Assembly.Infrastructure/Persistence/AppDatabase.cs',
-    'dotnet/Assembly.Application/Common/Acp/AcpProtocol.cs', 'dotnet/Assembly.Infrastructure/Agents/AgentsFile.cs', 'scripts/package-adapters.ts', 'scripts/adapters/claude-launcher.ts']) assert.ok(hardContract(file), file);
+    'dotnet/Assembly.Application/Common/Acp/AcpProtocol.cs', 'dotnet/Assembly.Infrastructure/Agents/AgentsFile.cs', 'scripts/package-adapters.ts']) assert.ok(hardContract(file), file);
   for (const file of ['dotnet/Assembly.Engine/EngineCommands.cs', 'dotnet/Assembly.Application/Features/Chat/Sessions/SendFeature.cs', 'dotnet/Assembly.Infrastructure/Git/GitRun.cs',
     'dotnet/Assembly.Remote/Serve/ServeRun.cs', 'dotnet/Assembly.Infrastructure/Remote/RemoteMachine.cs', 'desktop/src/main.rs', 'scripts/workbox-serve.ts']) assert.ok(!hardContract(file), file);
 });

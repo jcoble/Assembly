@@ -14,9 +14,9 @@ if (lane.number !== 0 && fs.readFileSync(root + '/lane-number', 'utf8').trim() !
 const unitFile = path.join(process.env.HOME, '.config/systemd/user', lane.unit + '.service');
 function adapters() {
 const agents = JSON.parse(fs.readFileSync(root + '/serve/agents.json', 'utf8'));
-let adapterOK = true, launcherSha = '';
+let adapterOK = true;
 const contracts = [
- ['claude','claude-agent-acp','claude-launcher.ts'],
+ ['claude','claude-agent-acp','node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js'],
  ['codex','codex-acp','node_modules/@agentclientprotocol/codex-acp/dist/index.js']
 ];
 for (const [id, name, relative] of contracts) {
@@ -31,8 +31,7 @@ for (const [id, name, relative] of contracts) {
    && installed.version === manifest.versions?.[name] && manifest.smoke?.[name]?.info?.version === installed.version;
 
 }
-launcherSha = createHash('sha256').update(fs.readFileSync(agents.find(a=>a.id===contracts[0][0]).args[0])).digest('hex');
-return {adapterOK,launcherSha};
+return {adapterOK};
 }
 if (process.argv[2] === '--adapters') { console.log(JSON.stringify(adapters())); process.exit(0); }
 if (!fs.existsSync(unitFile)) { console.log(JSON.stringify({missing:true})); process.exit(0); }
@@ -53,7 +52,7 @@ const cmdline = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\0')
 if (cmdline[1] !== dll || !cmdline.includes('serve')) throw Error('running process differs from unit');
 const token = fs.readFileSync(flag('--token-file'), 'utf8').split('\n').find(x=>x.startsWith('ASSEMBLY_TOKEN='))?.slice(15);
 if (!token) throw Error('lane token is unavailable');
-let adapterOK=false,launcherSha='';try{({adapterOK,launcherSha}=adapters())}catch{}
+let adapterOK=false;try{({adapterOK}=adapters())}catch{}
 let toolsKey, toolVersions, adapterSources;
 try {
  const state=JSON.parse(fs.readFileSync(root+'/adapters/dev-tools.json','utf8'));
@@ -71,7 +70,7 @@ socket.onmessage=e=>{
   console.error('host did not provide a compatible authenticated identity');process.exit(1);
  }
  clearTimeout(deadline);socket.close();process.stdin.pause();
- console.log(JSON.stringify({commit:frame.commit,backendIdentity:frame.backendIdentity,version:frame.version,engine:frame.engine,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,launcherSha,toolsKey,toolVersions,adapterSources}));
+ console.log(JSON.stringify({commit:frame.commit,backendIdentity:frame.backendIdentity,version:frame.version,engine:frame.engine,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,toolsKey,toolVersions,adapterSources}));
 };
 `;
-export type Probe = { missing?: boolean; commit: string; backendIdentity?: string; version?: unknown; toolsKey?: string; toolVersions?: Record<string, string>; adapterSources?: string; engine: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean; launcherSha: string };
+export type Probe = { missing?: boolean; commit: string; backendIdentity?: string; version?: unknown; toolsKey?: string; toolVersions?: Record<string, string>; adapterSources?: string; engine: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean };

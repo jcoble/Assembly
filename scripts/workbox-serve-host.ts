@@ -56,13 +56,12 @@ try {
   const identity = await backendIdentity(process.cwd(), request.commit, owner.signal);
   if (identity !== request.identity) throw Error('source identity differs after transfer');
   let desiredTools = request.managed ? toolKey(keepNewer(request.managed.versions, before.toolVersions), request.sources, 'linux-x64') : undefined;
-  const adaptersCurrent = before.adapterOK && before.launcherSha === request.launcher && (request.managed ? before.toolsKey === desiredTools : before.adapterSources === request.sources);
+  const adaptersCurrent = before.adapterOK && (request.managed ? before.toolsKey === desiredTools : before.adapterSources === request.sources);
   const current = before.backendIdentity === identity;
   if (current && adaptersCurrent) {
     console.log(`Workbox Test ${target.unit} already matches after acquiring the lane lock; no deploy`);
   } else {
     if (!before.missing) await idle(before.pid);
-    // Built from this checkout's launcher: a published release can only match the launcher it was packaged with.
     let toolsChanged = false;
     if (request.managed || before.missing || !adaptersCurrent) {
       await fs.mkdir(join(root, 'serve'), { recursive: true });
@@ -71,8 +70,8 @@ try {
       if (request.managed) desiredTools = tools.key;
     }
     const adapterState = before.missing || request.managed || !adaptersCurrent ? await probe(true) : before;
-    if (!adapterState.adapterOK || adapterState.launcherSha !== request.launcher)
-      throw Error('lane ACP 2 adapter bundle still differs from this checkout launcher after updating it');
+    if (!adapterState.adapterOK)
+      throw Error('lane ACP 2 adapter bundle is still not valid after updating it');
     if (!before.missing) await idle(before.pid);
     // A running host read its adapters when it started, so new ones need the restart; an idle host loses nothing.
     if (current && !toolsChanged) {

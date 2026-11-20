@@ -19,8 +19,7 @@ cp "$here/scripts/lane-env.sh" "$tmp/src/scripts/"
 cp "$here/dotnet/scripts/workbox.sh" "$tmp/src/dotnet/scripts/"
 # serve runs the guard in workbox-serve.ts; without it every serve case would stop only because node failed.
 cp "$here"/scripts/workbox-serve.ts "$here"/scripts/dev-remote-*.ts "$here"/scripts/dev-toolchain.ts "$tmp/src/scripts/"
-mkdir -p "$tmp/src/scripts/adapters" "$tmp/src/dotnet/Assembly.Remote"
-cp "$here/scripts/adapters/claude-launcher.ts" "$tmp/src/scripts/adapters/"
+mkdir -p "$tmp/src/dotnet/Assembly.Remote"
 echo "<Project/>" >"$tmp/src/dotnet/Assembly.Remote/Assembly.Remote.csproj"
 git -C "$tmp/src" init -q -b main
 git -C "$tmp/src" add -A

@@ -10,10 +10,10 @@ import { writeRemoteBackendPackage, REMOTE_BACKEND_TARGET } from './remote-backe
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL('../', import.meta.url));
 
-// Everything scripts/dev-remote-tools.ts reaches: the toolchain and what it imports, the launcher and the packager.
+// Everything scripts/dev-remote-tools.ts reaches: the toolchain and what it imports, the packager and the installer.
 export async function toolScripts(from: string) {
   const scripts = (await fs.readdir(join(from, 'scripts'))).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
-  return [...scripts.map(file => 'scripts/' + file), 'scripts/adapters/claude-launcher.ts', 'dotnet/scripts/agents-file.sh'];
+  return [...scripts.map(file => 'scripts/' + file), 'dotnet/scripts/agents-file.sh'];
 }
 
 if (import.meta.filename === process.argv[1]) {

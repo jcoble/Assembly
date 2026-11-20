@@ -37,7 +37,7 @@ public sealed partial class RemoteReleaseInstallTests
         Assert.Equal(manifest, File.ReadAllText(Path.Combine(Installed, "serve/backend-manifest.json")));
         Assert.Equal(unit, File.ReadAllText(UnitFile));
         Assert.Contains("restart", SystemctlLog, StringComparison.Ordinal);
-        Assert.Contains("claude-launcher.ts", File.ReadAllText(AgentsFile), StringComparison.Ordinal);
+        Assert.Contains("claude-agent-acp/dist/index.js", File.ReadAllText(AgentsFile), StringComparison.Ordinal);
     }
 
     [Fact]
