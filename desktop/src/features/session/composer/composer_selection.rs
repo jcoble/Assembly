@@ -20,14 +20,16 @@ impl Composer {
             self.invalidate_source(cx);
             return;
         }
-        if self.session_key == key
+        if self.parked.is_none()
+            && self.session_key == key
             && self.expected_source == source
             && (key.is_none() || self.source_valid)
         {
             return;
         }
         self.invalidate_source(cx);
-        if let Some(left) = self.session_key.take() {
+        // A parked draft was typed for the picked session, whose own draft the old one's was already put aside for.
+        if let Some(left) = self.parked.take().or_else(|| self.session_key.take()) {
             let text = self.draft.read(cx).value().to_string();
             self.drafts
                 .insert(left, (text, std::mem::take(&mut self.attachments)));
@@ -72,6 +74,44 @@ impl Composer {
         self.read_config(cx);
         self.read_pending(cx);
         cx.notify();
+    }
+    /// Another session was picked and its open is on the way: what is typed from now on is that session's draft, and
+    /// nothing sends until the open lands (`set_target`). Picking the session still bound brings its own draft back.
+    pub fn park(&mut self, key: SessionKey, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bound) = self.session_key.clone() else {
+            return;
+        };
+        if self.parked.as_ref().unwrap_or(&bound) == &key {
+            return;
+        }
+        if key == bound {
+            self.unpark(window, cx);
+            return;
+        }
+        if self.parked.is_none() {
+            self.invalidate_source(cx);
+        }
+        let left = self.parked.replace(key.clone()).unwrap_or(bound);
+        let text = self.draft.read(cx).value().to_string();
+        self.drafts
+            .insert(left, (text, std::mem::take(&mut self.attachments)));
+        let (text, attachments) = self.drafts.remove(&key).unwrap_or_default();
+        self.draft
+            .update(cx, |draft, cx| draft.set_value(text, window, cx));
+        self.attachments = attachments;
+        self.slash_selected = None;
+        cx.notify();
+    }
+    /// The picked session's open didn't land: what was typed stays its draft, and the bound session comes back.
+    pub fn unpark(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.parked.is_some() {
+            self.set_target(
+                self.session_key.clone(),
+                self.expected_source.clone(),
+                window,
+                cx,
+            );
+        }
     }
     /// Not an error of this composer's: the pane owning the session decides what to say and reopens it.
     pub(super) fn source_lost(&mut self, cx: &mut Context<Self>) {

@@ -300,6 +300,12 @@ impl SessionPane {
                 )
             })
             .collect();
+        // What is typed from the pick on belongs to the picked session, even before its rows come.
+        if let Some(request) = request.as_ref() {
+            let key = request.key.clone();
+            self.composer
+                .update(cx, |composer, cx| composer.park(key, window, cx));
+        }
         let classify_online = request
             .as_ref()
             .is_some_and(|request| matches!(&request.target, SessionOpenTarget::Engine));
@@ -350,6 +356,8 @@ impl SessionPane {
             self._page = None;
             self._loads.clear();
             self.status = error.message.clone().into();
+        } else {
+            self.unpark_composer(pending.window, cx);
         }
         if let Some((generation, _)) = pending.workspace.take()
             && let Some(coordinator) =
@@ -365,6 +373,21 @@ impl SessionPane {
             self.unknown_open_result(pending.request_id, error, cx);
         }
         cx.notify();
+    }
+    /// The session still on screen gets its composer back once nothing else is opening. Deferred, since a cancel can come
+    /// inside the window's own update; an open started meanwhile has parked the composer for itself.
+    fn unpark_composer(&self, window: AnyWindowHandle, cx: &mut Context<Self>) {
+        let pane = cx.weak_entity();
+        cx.defer(move |cx| {
+            _ = window.update(cx, |_, window, cx| {
+                _ = pane.update(cx, |pane, cx| {
+                    if pane.pending_open.is_none() {
+                        pane.composer
+                            .update(cx, |composer, cx| composer.unpark(window, cx));
+                    }
+                });
+            });
+        });
     }
     pub(super) fn unknown_open_result(
         &mut self,
