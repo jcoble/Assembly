@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
 using Assembly.Application.Common.Calls;
@@ -49,7 +50,7 @@ public sealed partial class SessionHost
                 }
                 if (admission?.ExpiresMs <= Now()) return new SendResult.Failed("expired");
                 if (_turn is not null) return new SendResult.Busy();
-                var turn = new RunningTurn(Guid.NewGuid().ToString(), new StageTimes(_time)) { Delivery = admission };
+                var turn = new RunningTurn(Guid.NewGuid().ToString(), new StageTimes(_time)) { Delivery = admission, AttachmentIds = attachmentIds.ToArray() };
                 PrepareObservation(turn, Now());
                 if (admission is not null && (turn.Observation is not { } observedStart ||
                     observedStart.SessionId != admission.SessionId || observedStart.Epoch != admission.Epoch))
@@ -164,6 +165,9 @@ public sealed partial class SessionHost
     {
         ct.ThrowIfCancellationRequested();
         if (admission is not null && !CurrentAdmission(admission, text, clientId, senderLabel, fromSessionId)) throw new CallFailed("The delivery owner changed.");
+        bool acceptsImages;
+        lock (_gate) acceptsImages = _turn?.Session?.Adapter.Init.AcceptsImages == true;
+        var prompt = await PromptContent.BuildAsync(_images, _sessionId, text, admission?.AttachmentIds ?? [], acceptsImages, ct);
         Task<SteerDeliveryResult> sending;
         var owns = false;
         lock (_gate)
@@ -185,7 +189,7 @@ public sealed partial class SessionHost
                 if (turn is null) return new(SteerResult.NotRunning);
                 if (turn.Session is not { } session || !session.Adapter.Init.CanSteer) return new(SteerResult.PromptRequired);
                 if (admission is not null && !CurrentAdmission(admission, text, clientId, senderLabel, fromSessionId)) throw new CallFailed("The delivery owner changed.");
-                sending = SettleSteerAsync(SendSteer(session, text, clientId, senderLabel, fromSessionId, admission));
+                sending = SettleSteerAsync(SendSteer(session, prompt, text, clientId, senderLabel, fromSessionId, admission));
                 if (clientId is not null) _steering[clientId] = (text, senderLabel, fromSessionId, sending);
                 owns = true;
             }
@@ -264,10 +268,10 @@ public sealed partial class SessionHost
     private TaskCompletionSource? _readerPaused;
 
     // Called with the lock held, so finalization's keep decision sees the message or the message sees no turn.
-    private PendingSteer SendSteer(OpenSession session, string text, string? clientId, string? label, string? fromSessionId,
-        OwningSendAdmission? admission)
+    private PendingSteer SendSteer(OpenSession session, IReadOnlyList<ContentBlock> prompt, string text, string? clientId, string? label,
+        string? fromSessionId, OwningSendAdmission? admission)
     {
-        var run = session.Adapter.Link.Client.Steer(session.AcpSessionId, [TextBlock.Of(text)], CancellationToken.None);
+        var run = session.Adapter.Link.Client.Steer(session.AcpSessionId, prompt, CancellationToken.None);
         var steer = new PendingSteer(run, text, clientId, label, fromSessionId, admission?.AttachmentIds.ToArray(), admission?.FromMachine);
         _steers[run.Id] = steer;
         return steer;

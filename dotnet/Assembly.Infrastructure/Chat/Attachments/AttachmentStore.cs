@@ -7,9 +7,9 @@ namespace Assembly.Infrastructure.Chat.Attachments;
 
 /// <summary>
 /// Images the composer attaches, one folder per session, each under a fresh name. The prompt carries the file's
-/// path, and the agent reads the file itself. Only names this store made are served back.
+/// path; an agent that takes images in its prompt gets the image itself. Only names this store made are served back.
 /// </summary>
-public sealed partial class AttachmentStore
+public sealed partial class AttachmentStore : IPromptImages
 {
     public const int MaxBytes = 20 * 1024 * 1024;
 
@@ -65,6 +65,20 @@ public sealed partial class AttachmentStore
         var data = new byte[Math.Min(AttachmentsFeature.ChunkBytes, size - offset)];
         await file.ReadExactlyAsync(data, ct);
         return new AttachmentPiece(data, size, type.ContentType);
+    }
+
+    /// <summary>The saved image a prompt names, when this store made it and its bytes are its type within the limit.</summary>
+    public async Task<PromptImage?> ReadAsync(string sessionId, string reference, CancellationToken cancellationToken)
+    {
+        if (!Owns(sessionId, reference) || TypeOfName(Path.GetFileName(reference)) is not { } type) return null;
+        byte[] bytes;
+        try
+        {
+            if (new FileInfo(reference).Length > MaxBytes) return null;
+            bytes = await File.ReadAllBytesAsync(reference, cancellationToken);
+        }
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { return null; }
+        return bytes.Length <= MaxBytes && type.Matches(bytes) ? new PromptImage(bytes, type.ContentType) : null;
     }
 
     /// <summary>The image's type if <paramref name="name"/> could be one of our names, else null.</summary>

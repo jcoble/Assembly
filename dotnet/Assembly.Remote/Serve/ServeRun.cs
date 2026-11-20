@@ -149,6 +149,7 @@ public static class ServeRun
             var cutover = new SessionCutover(db, sessionStore, launcher, options.Checkouts, TimeProvider.System, helperCards: helperCards,
                 projectRoots: projectRoots, projectUse: projectRoots, owningHome: owningHome);
             var checkoutWrites = new CheckoutWrites();
+            var attachments = new AttachmentStore(options.Attachments);
             engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits,
                 cutover: cutover,
                 effectsFactory: runtime =>
@@ -157,7 +158,8 @@ public static class ServeRun
                     sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work,
                         titler: agents is null ? null : new SessionTitler(sessionStore, store, utility),
                         feed: new EngineFeed(runtime, Console.Out, TimeProvider.System, helperCards),
-                        mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens));
+                        mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens),
+                        images: attachments);
                     sessions.BindHelperWorking(helperCards.Working, helperCards.Refresh);
                     sessions.BindNativeSessions(new Assembly.Infrastructure.Engine.Handoff.NativeSessionProducer(db, sessionStore));
                     workflowReceipts = WorkflowReceipts.Create(db, runtime.Machine, sessions);
@@ -195,7 +197,6 @@ public static class ServeRun
             helperCards.Start(registry.Helpers.Row);
             var gate = new McpGate(engine, sessionLimits, TimeProvider.System);
             answers = new NeedAnswers(gate, engine, registry, TimeProvider.System);
-            var attachments = new AttachmentStore(options.Attachments);
             var machines = new MachineSet(new LocalMachine(hub, sessionStore, registry, attachments));
             board = new BoardTools(sessionStore, registry, boardTransitions, boardQueries, hostStop.Token);
             var workflowCalls = new Assembly.Infrastructure.Workflows.WorkflowCalls(boardQueries, board.AnswerAsync);
