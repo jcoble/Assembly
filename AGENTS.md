@@ -16,6 +16,7 @@ Mobile is a first-class client. Include affected phone flows when changing share
 
 ## Project requirements
 
+- Read the [coding practices](https://app.notion.com/p/41e394b0689d812d8e77da536e185228) before writing code: cancelling background work, comments (Rust needs them), code shape, data, UI and tests.
 - Fast and light: low CPU/RAM/GPU, responsive interaction and small messages. Cancel unneeded work, dispose of resources and keep idle features idle; animations end.
 - Minimize timers. No repeated timer per rail/list row; a timer must serve a real need, have an owner and stop with it.
 - Keep provider differences at adapter boundaries and shared behavior consistent across configured providers. Idle adapters are disposable; resume the provider session rather than keeping processes alive for switching.
