@@ -82,6 +82,8 @@ async function once(name: string, agent: Agent, machine: Machine, out: string, b
       if (typeof session !== 'string') throw new Failed('the session was made', JSON.stringify(created));
       feed = openRows(bench.api, token, session);
       await ax.focusSessions();
+      // The rail draws only the rows on screen, so the search narrows it to the bench project's sessions.
+      await ax.type('sessions.search', 'notes');
       await ax.click(`rows.session.${session}`);
       await ax.focusChat();
       return feed;

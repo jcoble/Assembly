@@ -10,7 +10,7 @@ const AGENT_DESKTOP = process.env.AGENT_DESKTOP ?? 'agent-desktop';
 
 type Bounds = { x: number; y: number; width: number; height: number };
 export type Node = { role: string; name?: string; ref_id?: string; states?: string[]; native_id?: { value?: string }; bounds?: Bounds; children?: Node[] };
-type Answer = { ok: boolean; data?: unknown; error?: { code: string; message: string } };
+type Answer = { ok: boolean; data?: unknown; error?: { code: string; message: string; disposition?: { delivery?: string; retry?: string } } };
 
 export function run(args: string[]): Answer {
   try {
@@ -79,14 +79,23 @@ export function pressWindow(x: number, y: number): void {
   pressAt(window.x + x, window.y + (y < 0 ? window.height + y : y));
 }
 
+/** An action whose input went out and only agent-desktop's own check afterwards (is a dialog in the way?) could not
+ * settle. It happened; the journey checks its effect through the rows and the tree, and doing it again would do it
+ * twice. */
+function delivered(answer: Answer): boolean {
+  const details = (answer.error as { details?: { kind?: string; after_action?: { steps?: { outcome?: string }[] } } } | undefined)?.details;
+  return details?.kind === 'post_action_verification' && Boolean(details.after_action?.steps?.every(step => step.outcome === 'succeeded'));
+}
+
 /** Finds `id` in a fresh snapshot and clicks it with that snapshot's ref; `headed` presses the pointer instead. */
 export async function click(id: string, headed = false): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     const node = await waitFor(id);
     if (headed) return press(id, snapshot(true));
     const answer = run(['click', node!.ref_id!]);
-    if (answer.ok) return;
-    // A window that is still laying out refuses a click as unstable; look again.
+    if (answer.ok || delivered(answer)) return;
+    // A window that is still laying out refuses a click as unstable; look again. One that was delivered is never
+    // clicked again (a second Send would send twice).
     if (attempt >= 4) throw new Error(`click ${id}: ${answer.error?.code} ${answer.error?.message}`);
     await delay(400);
   }
@@ -105,11 +114,28 @@ export async function pick(id: string): Promise<void> {
   }
 }
 
-/** Puts `text` into the field `id`. */
+/** Replaces what the field `id` holds with `text`. The kit's text fields offer only focus to the tree, so the text is
+ * typed as keys (`--headed`) into the focused field, after selecting what was there. */
 export async function type(id: string, text: string): Promise<void> {
-  const node = await waitFor(id);
-  const answer = run(['type', node!.ref_id!, text]);
-  if (!answer.ok) throw new Error(`type into ${id}: ${answer.error?.code} ${answer.error?.message}`);
+  // The pointer goes to the field; a field the window is still laying out has no bounds yet, so look again.
+  for (let attempt = 0; ; attempt++) {
+    await waitFor(id);
+    const tree = snapshot(true);
+    if (nodeWithId(tree, id)?.bounds) { press(id, tree); break; }
+    if (attempt >= 4) throw new Error(`${id} has no bounds to press`);
+    await delay(250);
+  }
+  const select = run(['--headed', 'press', 'ctrl+a']);
+  if (!select.ok) throw new Error(`select the text of ${id}: ${select.error?.code} ${select.error?.message}`);
+  for (let attempt = 0; ; attempt++) {
+    const node = await waitFor(id);
+    const answer = run(['--headed', 'type', node!.ref_id!, text]);
+    if (answer.ok || delivered(answer)) return;
+    // A refusal that sent nothing says it is safe to retry (a ref taken while the window redrew); look again.
+    if (answer.error?.disposition?.retry !== 'safe' || attempt >= 4)
+      throw new Error(`type into ${id}: ${answer.error?.code} ${answer.error?.message}`);
+    await delay(400);
+  }
 }
 
 /** Gives the chat pane focus, so its composer is in the tree (the kit's panels publish only the focused pane): the one
