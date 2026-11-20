@@ -224,6 +224,22 @@ public static class NeedTransitions
                 r.IsNull(4) ? null : r.Text(4), "cancelled", c.Epoch, "session_ended")),
         new SqlArg("$now", c.NowMs), new("$actor", c.Actor.Id), new("$origin", OriginJson(c)), new("$session", c.EntityId));
 
+    /// <summary>
+    /// A stopped turn withdraws the questions it asked itself (ask_owner), as the old app withdrew its cards. A provider's
+    /// own request is settled by the host when the turn is cancelled; a sign-in prompt and a workflow step's need outlive it.
+    /// </summary>
+    internal static IReadOnlyList<EventDraft> CancelForStoppedTurn(IWriteScope s, CommandContext c) => s.Query("""
+        UPDATE engine_needs_me SET state='cancelled',version=version+1,updated_ms=$now,answer_json=NULL,
+          answered_by=$actor,answered_ms=$now,answered_origin_json=$origin
+        WHERE session_id=$session AND state='open' AND provider_request_id IS NULL AND step_id IS NULL
+          AND NOT (kind='confirmation' AND chat_row_id IS NULL AND json_array_length(options_json)=2
+            AND json_extract(options_json,'$[0]')='sign_in' AND json_extract(options_json,'$[1]')='dismiss')
+        RETURNING id,version,run_id,step_id,addressee_session_id
+        """, r => new EventDraft("needs_me.answered", "needs_me", r.Text(0), r.Long(1), false,
+            new(c.EntityId, r.IsNull(2) ? null : r.Text(2), r.IsNull(3) ? null : r.Text(3),
+                r.IsNull(4) ? null : r.Text(4), "cancelled", c.Epoch, "turn_stopped")),
+        new SqlArg("$now", c.NowMs), new("$actor", c.Actor.Id), new("$origin", OriginJson(c)), new("$session", c.EntityId));
+
     public static CommandResult Expire(IWriteScope s, CommandContext c, MessageExpiryPolicy? expiryPolicy = null) => Apply(s, c, new ResolveNeed("expired", null), expiryPolicy);
 
     public static long? NextDeadline(IAppDatabase db) => db.QueryFirst(
