@@ -280,3 +280,63 @@ fn busy_start_keeps_the_captured_editor_and_images_unchanged_until_the_form_rele
     assert!(client.config_calls().is_empty());
     assert!(client.engine_calls().is_empty());
 }
+
+fn requested(
+    composer: &gpui::Entity<Composer>,
+    cx: &mut gpui::VisualTestContext,
+) -> (Rc<RefCell<Vec<String>>>, gpui::Subscription) {
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let observed = requests.clone();
+    let subscription = cx.update(|_, cx| {
+        cx.subscribe(composer, move |_, event: &ComposerEvent, _| {
+            if let ComposerEvent::StartRequested { text, .. } = event {
+                observed.borrow_mut().push(text.clone());
+            }
+        })
+    });
+    (requests, subscription)
+}
+
+#[gpui::test]
+fn a_send_pressed_while_settings_load_goes_once_with_the_edited_text_when_ready(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    let fake = FakeClient::default();
+    let (composer, cx) =
+        cx.add_window_view(move |window, cx| Composer::new_start_draft(Rc::new(fake), window, cx));
+    let (requests, _events) = requested(&composer, cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_start_loading(true);
+        composer.set_start_state(false, false, None, cx);
+        composer.draft.update(cx, |draft, cx| draft.set_value("First", window, cx));
+        composer.send(window, cx);
+        composer.send(window, cx);
+        assert!(composer.start_queued());
+        composer.draft.update(cx, |draft, cx| draft.set_value("Edited", window, cx));
+        composer.set_start_loading(false);
+        composer.set_start_state(true, false, None, cx);
+    });
+    assert_eq!(*requests.borrow(), vec!["Edited".to_string()]);
+}
+
+#[gpui::test]
+fn a_send_pressed_while_settings_load_is_dropped_when_they_fail(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let fake = FakeClient::default();
+    let (composer, cx) =
+        cx.add_window_view(move |window, cx| Composer::new_start_draft(Rc::new(fake), window, cx));
+    let (requests, _events) = requested(&composer, cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_start_loading(true);
+        composer.set_start_state(false, false, None, cx);
+        composer.draft.update(cx, |draft, cx| draft.set_value("Kept", window, cx));
+        composer.send(window, cx);
+        composer.set_start_loading(false);
+        composer.set_start_state(false, false, None, cx);
+        assert!(!composer.start_queued());
+        composer.set_start_state(true, false, None, cx);
+        assert_eq!(composer.draft.read(cx).value().as_ref(), "Kept");
+    });
+    assert!(requests.borrow().is_empty());
+}

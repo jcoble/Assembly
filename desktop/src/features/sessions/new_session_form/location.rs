@@ -168,7 +168,10 @@ impl NewSessionForm {
                 .location_source
                 .as_ref()
                 .is_some_and(|source| source.current(cx));
+        // While the agent's settings load, a send is kept and goes once they arrive.
+        let loading = self.backend_connected && (self.loading || self.discovering);
         self.start_composer.update(cx, |composer, cx| {
+            composer.set_start_loading(loading);
             composer.set_start_state(ready, false, None, cx)
         });
     }

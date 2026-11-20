@@ -40,6 +40,10 @@ impl StagedAttachment {
 pub(super) struct StartDraft {
     pub(super) ready: bool,
     pub(super) busy: bool,
+    /// The form is still loading what a start needs (the agent's settings).
+    pub(super) loading: bool,
+    /// A send pressed while loading, sent once the form is ready.
+    pub(super) queued: bool,
 }
 type ProviderSlot = std::rc::Rc<dyn Fn(&App) -> Option<SharedString>>;
 type ElementSlot = std::rc::Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
@@ -67,10 +71,20 @@ impl Composer {
         composer.start_draft = Some(StartDraft {
             ready: false,
             busy: false,
+            loading: false,
+            queued: false,
         });
         composer
     }
-    /// Presentation of the form's actual create/checkout state; performs no backend work.
+    /// Whether the form is still loading what a start needs; a send pressed meanwhile waits for it. Set before
+    /// [`Self::set_start_state`].
+    pub fn set_start_loading(&mut self, loading: bool) {
+        if let Some(start) = self.start_draft.as_mut() {
+            start.loading = loading;
+        }
+    }
+    /// Presentation of the form's actual create/checkout state; performs no backend work. A send pressed while the
+    /// form was loading goes now if it became ready, and is dropped if loading ended without it (the draft stays).
     pub fn set_start_state(
         &mut self,
         ready: bool,
@@ -83,7 +97,15 @@ impl Composer {
         };
         start.ready = ready;
         start.busy = busy;
+        let loading = start.loading;
+        let send = start.queued && ready && !busy;
+        if send || !loading {
+            start.queued = false;
+        }
         self.error = error.map(Into::into);
+        if send {
+            self.send_start(cx);
+        }
         cx.notify();
     }
     pub fn set_start_slots(&mut self, slots: StartSlots, cx: &mut Context<Self>) {
@@ -96,6 +118,18 @@ impl Composer {
     pub(super) fn start_busy(&self) -> bool {
         self.start_draft.as_ref().is_some_and(|start| start.busy)
     }
+    /// A send was pressed while loading and waits for the form to be ready.
+    pub(super) fn start_queued(&self) -> bool {
+        self.start_draft.as_ref().is_some_and(|start| start.queued)
+    }
+    /// The send button takes a press: to send now, or to send once loading ends.
+    pub(super) fn start_accepts_send(&self) -> bool {
+        self.start_ready()
+            || self
+                .start_draft
+                .as_ref()
+                .is_some_and(|start| start.loading && !start.busy && !start.queued)
+    }
     pub(super) fn start_ready(&self) -> bool {
         self.start_draft
             .as_ref()
@@ -107,6 +141,10 @@ impl Composer {
     }
     pub(super) fn send_start(&mut self, cx: &mut Context<Self>) {
         if !self.start_ready() {
+            if self.start_accepts_send() && self.has_start_content(cx) {
+                self.start_draft.as_mut().expect("start draft").queued = true;
+                cx.notify();
+            }
             return;
         }
         let text = self.draft.read(cx).value().trim().to_string();
@@ -128,6 +166,9 @@ impl Composer {
         self.start_draft.as_mut().expect("start draft").busy = true;
         cx.emit(ComposerEvent::StartRequested { text, images });
         cx.notify();
+    }
+    fn has_start_content(&self, cx: &App) -> bool {
+        !self.draft.read(cx).value().trim().is_empty() || !self.attachments.is_empty()
     }
     pub(super) fn stage_image(
         &mut self,
