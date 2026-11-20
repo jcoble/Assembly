@@ -232,3 +232,50 @@ fn a_remote_sessions_draft_comes_with_its_open_and_saves_through_its_source(
         "it goes where the session runs"
     );
 }
+
+// The old app's ConversationSurface.svelte:494: a send that fails puts its text back and saves it, so the emptied
+// copy its send saved first doesn't stand in for it after a restart.
+#[gpui::test]
+fn a_failed_send_saves_the_text_it_puts_back_for_a_local_and_a_remote_session(
+    cx: &mut TestAppContext,
+) {
+    let (composer, client, _, cx) = open(cx);
+    let remote = ExpectedRowSource {
+        machine: "workbox-engine".into(),
+        generation: 3,
+        route_machine: Some("workbox-test".into()),
+    };
+    let sessions = [
+        (owned("s1"), local_source()),
+        (
+            SessionKey {
+                machine: "workbox-engine".into(),
+                id: "r1".into(),
+            },
+            remote,
+        ),
+    ];
+    for (key, source) in sessions {
+        composer.update_in(cx, |composer, window, cx| {
+            composer.offer_saved(&key, saved(""), source.clone());
+            composer.set_target(Some(key.clone()), Some(source.clone()), window, cx)
+        });
+        type_text(&composer, "not sent yet", cx);
+        // The emptied box is saved, then the send fails.
+        client.queue_answer(Ok(json!({ "ok": true })));
+        client.queue_answer(Err(CallError::Aborted));
+        composer.update_in(cx, |composer, window, cx| composer.send(window, cx));
+        cx.run_until_parked();
+        assert_eq!(draft(&composer, cx), "not sent yet", "the text is back");
+        let (_, args) = (client.calls().into_iter())
+            .rfind(|(call, _)| call == "drafts/set")
+            .expect("a save");
+        assert_eq!(args["session"], json!(key.id));
+        assert_eq!(
+            args["text"],
+            json!("not sent yet"),
+            "and saved after the emptied copy"
+        );
+        assert_eq!(args["expectedSource"], json!(source));
+    }
+}
