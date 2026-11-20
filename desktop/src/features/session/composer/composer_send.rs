@@ -201,8 +201,10 @@ impl Composer {
                         // unless something new was typed there, and a resend keeps its clientId in case the first
                         // did land. Images don't follow a draft to another session.
                         Err(error) => {
+                            // A parked box holds another session's draft, so the failed prompt goes to its own.
                             let selected = composer.session.as_ref() == Some(&session)
-                                && composer.session_key.as_ref() == Some(&prompt_key);
+                                && composer.session_key.as_ref() == Some(&prompt_key)
+                                && composer.parked.is_none();
                             if composer
                                 .delivered
                                 .get(&prompt_key)
