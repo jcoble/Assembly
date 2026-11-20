@@ -13,3 +13,5 @@ obj/
 evidence/*/four-way/*
 !evidence/*/four-way/summary.json
 !evidence/*/four-way/summary.md
+evidence/
+shell.zip

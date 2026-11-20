@@ -1,8 +1,6 @@
 {
   "permissions": {
-    "deny": [
-      "Edit(**/.claude/settings.json)"
-    ]
+    "deny": ["Edit(**/.claude/settings.json)"]
   },
   "hooks": {
     "PreToolUse": [
@@ -21,6 +19,10 @@
           {
             "type": "command",
             "command": "node \"$CLAUDE_PROJECT_DIR/scripts/hooks/merge-guard.ts\""
+          },
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-test-changes.ts\""
           }
         ]
       },
