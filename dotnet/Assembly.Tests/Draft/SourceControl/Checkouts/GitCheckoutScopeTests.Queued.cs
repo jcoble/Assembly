@@ -37,13 +37,13 @@ public sealed partial class GitCheckoutScopeTests
             // the held send. This avoids timing assumptions about the tiny dispatcher-to-queue scheduling interval.
             var frame = JsonSerializer.Deserialize(JsonSerializer.Serialize(new { t = "call", id = 77, feature = "git", method = "status", args = f.Args(selected: true) }, Wire), SocketJson.Default.InFrame)!;
             var answer = await f.Dispatcher.AnswerAsync(frame, 77, connection, default);
-            using (var parsed = JsonDocument.Parse(answer)) Assert.Equal("result", parsed.RootElement.GetProperty("t").GetString());
+            using (var parsed = JsonDocument.Parse(answer)) Assert.True(parsed.RootElement.GetProperty("t").GetString() == "result", Encoding.UTF8.GetString(answer.Span));
             var guard = Assert.IsType<GuardLease>(f.Captured);
             connection.Send(answer, new SourceBoundReply(77, guard));
             await invalidate(); socket.Release.TrySetResult();
             await socket.Take(); // The unrelated held result.
             AssertCode(await socket.Take(), "source_changed");
-            Assert.True(guard.Disposed);
+            await guard.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(20)); // The send loop disposes the lease after the send.
             Assert.Equal(WebSocketState.Open, socket.State);
             f.SetRoot(f.Root);
             socket.Feed(JsonSerializer.Serialize(new { t = "call", id = 78, feature = "git", method = "branches", args = f.Args() }, Wire));

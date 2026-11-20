@@ -381,7 +381,7 @@ public sealed class RemoteConnectionsTests
         else db.Writer.Write("test.remove", scope => { store.Remove(scope, "box"); return 0; });
         await disposed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await connections.DisposeAsync();
-        await stub.NoLiveAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await stub.SettledAsync().WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(0, stub.LiveOpen);
         Assert.NotNull(sessions.Get("running"));
         Assert.Equal(2, rows.RowsAfter("running", 0).Count);

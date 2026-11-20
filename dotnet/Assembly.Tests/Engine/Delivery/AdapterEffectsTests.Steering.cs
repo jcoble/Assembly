@@ -149,11 +149,13 @@ public sealed partial class AdapterEffectsTests
         var (agent, effect, steering) = await ExecutingSteerAsync(f);
         var steer = OwnerPromptIdentity.MessageId(f.Session.SessionId, SteerClient);
         await agent.ReadAsync("session/prompt");
+        var turn = f.Hosts.For(f.Session.SessionId).CurrentTurn.Done;
         // The turn ends with the message still waiting, so the session is kept for it; the host then shuts down. Older
         // events are skipped, so the wait below is for this turn's end.
         while (f.Events.Reader.TryRead(out _)) { }
         await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
         await f.StateAsync("engine_session", f.Session.SessionId, "idle");
+        await turn.WaitAsync(DeliveryWait); // Engine idle is published before the turn finishes saving its end and decides to keep the session.
         var restarting = f.RestartAsync();
         await agent.CloseAsync();
         var receipt = await steering.WaitAsync(DeliveryWait);
