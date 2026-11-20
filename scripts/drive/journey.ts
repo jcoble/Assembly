@@ -5,7 +5,7 @@
 // It reads the bench's state (bench.sh up). A provider failure is BLOCKED, never FAIL. Whatever happens, a run this
 // journey started is stopped and its end awaited before the sockets close.
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as ax from './ax.ts';
 import { startVideo, shot, type Video } from './record.ts';
@@ -53,7 +53,7 @@ function report(name: string, result: Result, rows: Row[]): string {
     if (step.seen) lines.push('', '```', step.seen, '```', '');
   }
   lines.push('', '## Rows of the session', '', '```', ...rows.map(describe), '```');
-  if (result.state === 'FAIL') lines.push('', 'Also here: fail.png (the window when it failed), app-log.txt (the last 30 lines of the backend log), video.mp4.');
+  if (result.state === 'FAIL') lines.push('', 'Also here: fail.png (the window when it failed; for a failure before the session opened, the window as it was), app-log.txt (the backend log from this case\'s start), video.mp4.');
   return lines.join('\n') + '\n';
 }
 
@@ -62,6 +62,9 @@ async function once(name: string, agent: Agent, machine: Machine, out: string, b
   const token = readFileSync(bench.tokenFile, 'utf8').match(/^ASSEMBLY_TOKEN=(.*)$/m)?.[1];
   if (!token) throw new Error('no backend token in the bench token file');
   const kase = `${agent} on ${machine}`;
+  // The backend log is shared by every case and run on the lane: a failure report shows only what this case added.
+  let logStart = 0;
+  try { logStart = statSync(bench.appLog).size; } catch {}
   const result: Result = { case: kase, state: 'PASS', reason: '', steps: [] };
   const control = new AbortController();
   const stop = () => control.abort(new Error('interrupted'));
@@ -118,7 +121,10 @@ async function once(name: string, agent: Agent, machine: Machine, out: string, b
     else { result.state = 'FAIL'; result.reason = (error as Error).message.split('\n')[0]!; }
     if (result.state === 'FAIL') {
       try { shot(join(out, 'fail.png')); } catch {}
-      try { writeFileSync(join(out, 'app-log.txt'), readFileSync(bench.appLog, 'utf8').split('\n').slice(-31).join('\n')); } catch {}
+      try {
+        const log = readFileSync(bench.appLog);
+        writeFileSync(join(out, 'app-log.txt'), log.subarray(logStart <= log.length ? logStart : 0));
+      } catch {}
     }
   } finally {
     // Never leave the agent working: stop every run of this session that hasn't ended, and wait for its end before
