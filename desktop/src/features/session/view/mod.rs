@@ -4,6 +4,7 @@
 
 pub mod activity_card;
 pub mod ask_row;
+pub mod chat_row;
 pub mod grow;
 pub mod header;
 pub mod item_row;

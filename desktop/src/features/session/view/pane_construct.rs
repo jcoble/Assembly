@@ -17,23 +17,33 @@ impl SessionPane {
             let Some(pane) = pane.upgrade() else {
                 return div().into_any_element();
             };
-            let (row, fresh, fold, space) = pane.update(cx, |pane, cx| {
+            let (row, fresh, fold, space, access) = pane.update(cx, |pane, cx| {
                 (
                     pane.row(entry, cx),
                     pane.fresh_key(entry),
                     pane.open_fold_of(entry),
                     pane.space_under(entry),
+                    pane.row_access(entry),
                 )
             });
             let row = match fresh {
                 Some(key) => fade_in(key, row, window, cx),
                 None => row,
             };
-            // The space under a row by what it is (pane_rows.rs), inside the row so it grows with it.
-            let row = div()
-                .when(!last, |row| row.pb(space))
-                .child(row)
-                .into_any_element();
+            // The space under a row by what it is (pane_rows.rs), inside the row so it grows with it. An item's row is
+            // also a list item in the accessibility tree (chat_row.rs).
+            let row = match access {
+                Some((key, label)) => {
+                    crate::features::session::view::chat_row::chat_row(&key, label)
+                        .when(!last, |row| row.pb(space))
+                        .child(row)
+                        .into_any_element()
+                }
+                None => div()
+                    .when(!last, |row| row.pb(space))
+                    .child(row)
+                    .into_any_element(),
+            };
             // A fold's work grows in place as the fold opens and shuts.
             match fold {
                 Some((key, open, toggled_at)) => {
