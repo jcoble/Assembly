@@ -29,6 +29,8 @@ impl Composer {
         }
         self.draft
             .update(cx, |draft, cx| draft.set_value("", window, cx));
+        // The send's accept clears the saved draft; this keeps a save still waiting from bringing it back after.
+        self.save_shown(cx);
         let attachment_ids: Vec<String> = attached
             .iter()
             .filter_map(|attachment| match &attachment.state {

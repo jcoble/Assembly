@@ -159,6 +159,7 @@ impl Composer {
         self.attachments.retain(|attachment| attachment.id != id);
         self.uploads.remove(&id);
         self.previews.remove(&id);
+        self.save_shown(cx);
         cx.notify();
     }
 
@@ -310,6 +311,7 @@ impl Composer {
                                 Ok(path) => AttachmentState::Saved { path },
                                 Err(error) => AttachmentState::Failed(error.reason().into()),
                             };
+                            composer.save_shown(cx);
                             cx.notify();
                         }
                     })
