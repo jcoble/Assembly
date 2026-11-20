@@ -451,6 +451,16 @@ impl Composer {
             .collect()
     }
 
+    /// The draft's text and whether it has the keys, for other features' tests.
+    #[cfg(test)]
+    pub fn draft_state(&self, window: &Window, cx: &App) -> (String, bool) {
+        let draft = self.draft.read(cx);
+        (
+            draft.value().to_string(),
+            draft.focus_handle(cx).is_focused(window),
+        )
+    }
+
     /// Types into the draft as a key press would, for other features' tests.
     #[cfg(test)]
     pub fn type_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {

@@ -496,6 +496,9 @@ mod workspace;
 #[path = "navigation/pane_discovery.rs"]
 mod discovery;
 #[cfg(test)]
+#[path = "tests/rail_pick_focus_tests.rs"]
+mod rail_pick_focus_tests;
+#[cfg(test)]
 #[path = "tests/session_route_tests.rs"]
 mod route_tests;
 
