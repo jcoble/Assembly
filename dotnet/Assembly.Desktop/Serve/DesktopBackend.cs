@@ -296,7 +296,8 @@ public sealed class DesktopBackend : IAsyncDisposable
                             ? new SessionTitler(sessionStore, store, utility)
                             : null,
                         feed: new EngineFeed(runtime, log, TimeProvider.System, helperCards),
-                        mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens));
+                        mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens),
+                        images: attachments);
                     sessions.BindHelperWorking(helperCards.Working, helperCards.Refresh);
                     sessions.BindNativeSessions(new Assembly.Infrastructure.Engine.Handoff.NativeSessionProducer(db, sessionStore));
                     workflowReceipts = WorkflowReceipts.Create(db, runtime.Machine, sessions);
