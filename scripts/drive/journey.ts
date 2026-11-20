@@ -1,6 +1,6 @@
 // Runs one journey for one case (an agent on a machine) in the bench's window, and writes what a person needs to judge
 // it in a minute: report.md (each step, ok or failed, and for a failure what was expected and what the rows showed),
-// result.json, the case's video, and on a failure a screenshot and the end of the app log.
+// result.json, the case's video, and on a failure a screenshot and the end of the backend log.
 //   node scripts/journeys/<name>.ts <claude|codex> <local|workbox-test> <output folder>
 // It reads the bench's state (bench.sh up). A provider failure is BLOCKED, never FAIL. Whatever happens, a run this
 // journey started is stopped and its end awaited before the sockets close.
@@ -53,7 +53,7 @@ function report(name: string, result: Result, rows: Row[]): string {
     if (step.seen) lines.push('', '```', step.seen, '```', '');
   }
   lines.push('', '## Rows of the session', '', '```', ...rows.map(describe), '```');
-  if (result.state === 'FAIL') lines.push('', 'Also here: fail.png (the window when it failed), app-log.txt (the last 30 lines of the app log), video.mp4.');
+  if (result.state === 'FAIL') lines.push('', 'Also here: fail.png (the window when it failed), app-log.txt (the last 30 lines of the backend log), video.mp4.');
   return lines.join('\n') + '\n';
 }
 

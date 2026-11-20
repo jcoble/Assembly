@@ -110,7 +110,7 @@ XML
   DISPLAY=$display xwininfo -id "$(head -1 "$DATA/ui-check/window")" | grep -q 'Absolute upper-left Y:  0'
 
   say 'machine, projects and logins'
-  BENCH_STATE=$state BENCH_PIDS=$pids BENCH_DISPLAY=$display BENCH_DBUS=$DBUS_SESSION_BUS_ADDRESS BENCH_APP_LOG=$DATA/ui-check/app.log \
+  BENCH_STATE=$state BENCH_PIDS=$pids BENCH_DISPLAY=$display BENCH_DBUS=$DBUS_SESSION_BUS_ADDRESS BENCH_APP_LOG=$profile/backend.log \
     DESKTOP_PORT=$DESKTOP_PORT TOKEN_FILE=$TOKEN_FILE BOX_PORT=$BOX_PORT BOX_TOKEN_FILE=$BOX_TOKEN_FILE BOX_DATA=$BOX_DATA \
     DATA=$DATA node scripts/drive/bench-setup.ts
   trap - ERR INT TERM
