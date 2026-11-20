@@ -201,6 +201,7 @@ impl Composer {
         h_flex()
             .flex_none()
             .min_w_0()
+            .ml_auto()
             .gap_1()
             .children(footer)
             .when_some(self.meter.clone(), |trail, meter| {
