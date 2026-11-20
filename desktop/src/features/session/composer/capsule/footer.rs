@@ -159,11 +159,13 @@ impl Composer {
             Slot::Send { steer } => {
                 let waiting = !self.all_saved();
                 let disabled = if self.start_draft.is_some() {
-                    empty || !self.start_ready()
+                    empty || !self.start_accepts_send()
                 } else {
                     empty || waiting || offline
                 };
-                let words = if steer {
+                let words = if self.start_queued() {
+                    "Sends when the agent settings load"
+                } else if steer {
                     "Steer current turn"
                 } else {
                     "Send message"

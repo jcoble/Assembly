@@ -8,7 +8,10 @@ namespace Assembly.Application.Common.Agents;
 public sealed record ConfigTarget(string Id, string Name, string? TargetId = null,
     string? AccountContext = null, string? ProviderTargetId = null);
 
-/// <summary>Opaque identity of the exact descriptor and effective launch environment.</summary>
+/// <summary>
+/// Opaque identity of the exact descriptor and the launch values of the variables it declares. Inherited variables
+/// (SSH_AUTH_SOCK, TERM_SESSION_ID…) change between logins and terminals, so they aren't part of it.
+/// </summary>
 public static class ConfigTargetIdentity
 {
     public static StringComparer EnvironmentComparer => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
@@ -33,8 +36,10 @@ public static class ConfigTargetIdentity
         foreach (var arg in descriptor.Args) writer.Write(arg);
         writer.Write(descriptor.Air?.Count ?? 0);
         foreach (var air in descriptor.Air ?? []) writer.Write(air);
+        var declared = descriptor.DeclaredEnv ?? new Dictionary<string, string>();
         var canonical = new Dictionary<string, string>(EnvironmentComparer);
-        foreach (var (key, value) in effectiveEnvironment) canonical[key] = value;
+        foreach (var (key, value) in effectiveEnvironment)
+            if (declared.ContainsKey(key)) canonical[key] = value;
         writer.Write(canonical.Count);
         foreach (var (key, value) in canonical.OrderBy(x => x.Key, EnvironmentComparer))
         {
@@ -61,7 +66,8 @@ public static class ConfigTargetIdentity
         var current = launcher.Agents.FirstOrDefault(agent => agent.Id == descriptor.Id);
         if (current is null || current.Cli != descriptor.Cli
             || current.VendorFamily != descriptor.VendorFamily
-            || ConfigTargetIdentity.Of(current, effectiveEnvironment) != ConfigTargetIdentity.Of(descriptor, effectiveEnvironment)
+            // A configured descriptor declares its Env, as Capture and SameDeclaredEnvironment read it.
+            || Of(current with { DeclaredEnv = current.Env }, effectiveEnvironment) != Of(descriptor, effectiveEnvironment)
             || !SameDeclaredEnvironment(current.Env, descriptor.DeclaredEnv))
             throw new CallFailed("The selected agent configuration changed. Select it again.");
         return current;

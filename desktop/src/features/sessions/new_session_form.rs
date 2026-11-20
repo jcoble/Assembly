@@ -327,14 +327,16 @@ impl NewSessionForm {
         self.config = None;
         self.discovering = false;
         self.error = SharedString::default();
-        self.sync_start_state(cx);
+        // The start state syncs once this read began or could not, so a send kept while loading isn't dropped between.
         if !self.backend_connected || Machines::offline(self.machine.as_deref(), cx) {
             self.error = "Agent settings unavailable: the selected machine is disconnected.".into();
+            self.sync_start_state(cx);
             cx.notify();
             return;
         }
         let cwd = self.cwd.clone().unwrap_or_default();
         if !std::path::Path::new(&cwd).is_absolute() || self.agent.is_none() {
+            self.sync_start_state(cx);
             cx.notify();
             return;
         }
@@ -342,6 +344,7 @@ impl NewSessionForm {
             self.error =
                 "Agent settings unavailable: this backend did not advertise a composer target."
                     .into();
+            self.sync_start_state(cx);
             cx.notify();
             return;
         };
@@ -351,6 +354,7 @@ impl NewSessionForm {
         let args = json!({"agent":agent,"targetId":target,"cwd":cwd,"machine":machine});
         let call = self.client.call("config", "discover", args, None, cx);
         self.discovering = true;
+        self.sync_start_state(cx);
         self._discover = Some(cx.spawn(async move |form, cx| {
             let answer = call.await;
             _ = form.update(cx, |form, cx| {

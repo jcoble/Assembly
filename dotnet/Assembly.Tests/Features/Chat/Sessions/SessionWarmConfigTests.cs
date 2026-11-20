@@ -195,13 +195,32 @@ public sealed class SessionWarmConfigTests : IAsyncDisposable
         var sending = _host.SendAsync("real message", null, null, CancellationToken.None);
         Assert.NotNull(_host.CurrentTurn.RunId);
         await old.ReplyAsync(resume, "{\"configOptions\":" + Options + "}");
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => warming.WaitAsync(Wait));
         var real = await _launcher.NextAsync();
         Assert.True(old.Disposed);
         var opened = await real.StartAsync(acpSessionId: "saved-B", configOptions: Options);
         Assert.Equal("saved-B", opened.GetProperty("params").GetProperty("sessionId").GetString());
         var prompt = await real.ReadAsync("session/prompt");
         Assert.Equal("real message", prompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
+        await real.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
+        Assert.IsType<SendResult.Inserted>(await sending.WaitAsync(Wait));
+        await real.CloseAsync();
+    }
+
+    [Fact]
+    public async Task A_settings_read_a_send_supersedes_answers_from_the_turns_own_session()
+    {
+        _store.SetAcpSession(_session.SessionId, "saved-B");
+        var warming = _host.WarmConfigAsync(Target, CancellationToken.None);
+        var old = await _launcher.NextAsync();
+        await Initialize(old);
+        var resume = await old.ReadAsync("session/resume");
+        var sending = _host.SendAsync("real message", null, null, CancellationToken.None);
+        await old.ReplyAsync(resume, "{\"configOptions\":" + Options + "}");
+        var real = await _launcher.NextAsync();
+        var actual = Options.Replace("\"currentValue\":\"b\"", "\"currentValue\":\"a\"");
+        await real.StartAsync(acpSessionId: "saved-B", configOptions: actual);
+        Assert.Equal(actual, (await warming.WaitAsync(Wait)).Options);
+        var prompt = await real.ReadAsync("session/prompt");
         await real.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         Assert.IsType<SendResult.Inserted>(await sending.WaitAsync(Wait));
         await real.CloseAsync();

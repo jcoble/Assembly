@@ -16,13 +16,15 @@ internal sealed class NativeResume(SessionStore sessionStore, IAgentLauncher lau
         var resolver = Resolver ?? throw new CallFailed("Native sessions are unavailable.", "unsupported");
         var session = sessionStore.Get(sessionId) ?? throw new CallFailed("The session no longer exists.", "missing");
         if (session.AcpSessionId != expectedPublicId) throw new CallFailed("Native identity changed.", "writer_elsewhere");
-        var captured = ConfigTargetIdentity.Capture(launcher, session.Agent, sessionStore.Config(sessionId).ConfigTarget);
+        // The session goes on with its agent's current configuration, as an open does (SessionOpener).
+        var captured = ConfigTargetIdentity.Capture(launcher, session.Agent);
         var saved = sessionStore.NativeLaunch(sessionId);
         var launchFolder = saved?.Folder ?? sessionStore.Location(session)?.Folder ?? throw new CallFailed("This session has no working folder.", "no_folder");
         var launch = NativeLaunchContext.Capture(captured.Descriptor, captured.Environment, captured.TargetId, expectedPublicId, launchFolder)
             ?? throw new CallFailed("This provider has no native session files.", "unsupported");
-        if (saved is null) sessionStore.RetainNativeLaunch(sessionId, launch);
-        else if (saved != launch) throw new CallFailed("Native launch changed.", "writer_elsewhere");
+        if (saved is not null && saved with { LaunchBindingId = launch.LaunchBindingId } != launch)
+            throw new CallFailed("Native launch changed.", "writer_elsewhere");
+        if (saved != launch) sessionStore.RetainNativeLaunch(sessionId, launch);
         launcher.ValidateFolder(folder);
         validate();
         var source = resolver.Resolve(launch, sessionId, folder);

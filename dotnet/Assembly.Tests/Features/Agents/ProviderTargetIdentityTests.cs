@@ -14,7 +14,7 @@ public sealed class ProviderTargetIdentityTests
     {
         var descriptor = new AgentDescriptor("a", "Name", "cmd", ["ab", "c"], null, Air: ["air"]);
         var env = new Dictionary<string, string> { ["HOME"] = "/same" };
-        Assert.Equal("03b684106ca43ac3f1d64dea87693645d614c9e6af67b56b588b938a503d28aa", ConfigTargetIdentity.Of(descriptor, env));
+        Assert.Equal("33e8cbd046107d6339cbe49e3a74913c5ce44b3244442ab14caffe1478bc195a", ConfigTargetIdentity.Of(descriptor, env));
         Assert.NotEqual(ConfigTargetIdentity.Of(descriptor, env), ConfigTargetIdentity.Of(descriptor with { Args = ["a", "bc"] }, env));
         Assert.NotEqual(ConfigTargetIdentity.Of(descriptor, env), ConfigTargetIdentity.Of(descriptor with { Air = ["different"] }, env));
         Assert.Equal(ConfigTargetIdentity.Of(descriptor with { Air = null }, env), ConfigTargetIdentity.Of(descriptor with { Air = [] }, env));

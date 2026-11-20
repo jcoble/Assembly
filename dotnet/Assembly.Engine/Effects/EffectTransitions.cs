@@ -180,16 +180,18 @@ public static class EffectTransitions
         if (effect.Kind == "workflow_receipt") { ReceiptTransitions.Confirm(s, c, effect, receipt, StepTransitions.CompleteCheckedReceipt, ReviewTransitions.Finished, expiryPolicy); return; }
         if (effect.Kind is "workflow_setup" or "workflow_workspace") { WorkspaceTransitions.Confirm(s, c, effect, receipt); return; }
         if (AuthEffectBinding.IsAuth(effect.Kind) || effect.Kind == "release") return;
-        var session = s.QueryFirst("SELECT version,epoch,state,cancel_requested FROM engine_session WHERE id=$id",
-            r => (Version: r.Long(0), Epoch: r.Long(1), State: r.Text(2), CancelRequested: r.Long(3) != 0), new SqlArg("$id", effect.SessionId));
+        var session = s.QueryFirst("SELECT version,epoch,state,cancel_requested,activity_state FROM engine_session WHERE id=$id",
+            r => (Version: r.Long(0), Epoch: r.Long(1), State: r.Text(2), CancelRequested: r.Long(3) != 0, Activity: r.Text(4)), new SqlArg("$id", effect.SessionId));
         var target = c with { EntityId = effect.SessionId!, ExpectedVersion = session.Version, Epoch = session.Epoch };
         CommandResult? result = null;
         if (effect.Kind is "start" or "stop")
         {
             var data = receipt.Data.Deserialize(EngineJson.Default.SessionEffectData)!;
             // Provider facts can settle a start/stop before its ordered effect confirms. The matching
-            // state is already applied; a handoff fence still differs and must never be overwritten.
-            if (session.State != data.State || session.CancelRequested)
+            // state is already applied; a handoff fence still differs and must never be overwritten. A session waiting
+            // on its owner is compared by what its agent is doing, as SetState reads it.
+            var current = session.State == "needs_me" ? session.Activity : session.State;
+            if (current != data.State || session.CancelRequested)
                 result = SessionTransitions.Apply(s, target, new SetSessionState(data.State, data.ProviderSessionId, data.Reason), 0, 0, expiryPolicy: expiryPolicy);
             if (effect.Kind == "stop" && result is not { Applied: false }) CancelStoppedSteps(s, target);
         }

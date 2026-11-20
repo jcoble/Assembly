@@ -120,7 +120,7 @@ public sealed class SessionInitialConfigTests : IDisposable
                 initialConfig: new(target, new Dictionary<string, string> { ["model"] = "wire" })));
             Assert.Equal("late-fixture", Environment.GetEnvironmentVariable(key));
             Assert.Equal(target, _store.Config(created.SessionId).ConfigTarget);
-            Assert.NotEqual(target, ConfigTargetIdentity.Capture(actual, "claude").TargetId);
+            Assert.Equal(target, ConfigTargetIdentity.Capture(actual, "claude").TargetId);
             Assert.Equal(0, actual.Launches);
         }
         finally { Environment.SetEnvironmentVariable(key, prior); }
