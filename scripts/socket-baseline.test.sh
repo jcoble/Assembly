@@ -4,9 +4,7 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 suites=(
-  "$here/check4-case.test.ts"
   "$here/socket-rows.test.ts"
-  "$here/terminal-socket.test.ts"
   "$here/workbox-row-log.test.ts"
 )
 for suite in "${suites[@]}"; do

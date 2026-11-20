@@ -59,7 +59,7 @@ case "${1:-}" in
     chmod 700 "$home/runtime"
     # The backend home needs the providers; the adapters install once into this lane's DATA.
     dotnet/scripts/agents-file.sh "$DATA/adapters" "$profile/agents.json"
-    # The backend token goes in TOKEN_FILE, where scripts/check4.sh and the other scripts read it.
+    # The backend token goes in TOKEN_FILE, where scripts/bench.sh and the other scripts read it.
     lane_config=$(mktemp "$home/backend/lane.json.XXXXXX")
     cat > "$lane_config" <<JSON
 {"port":$DESKTOP_PORT,"home":"$profile","tokenFile":"$TOKEN_FILE","remotePort":$BOX_PORT,"remoteTokenFile":"$BOX_TOKEN_FILE"}

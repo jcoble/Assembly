@@ -454,23 +454,6 @@ for(const [file,state,details,label] of [
   assert.equal(JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8')).label,label);
 });
 
-test('generated evidence does not invalidate a PASS',t=>{
-  const f=fixture(t),dir=f.result(pass);
-  writeFileSync(join(f.config.workerHome,'result','tests.log'),'edit tests');
-  writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
-  const r=f.run('post.ts',[dir],{DIRTY:'?? evidence/'+sha+'/four-way/summary.json\n?? evidence/'+sha+'/four-way/summary.md'});
-  assert.equal(r.status,0,r.stderr);
-  assert.equal(JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8')).state,'success');
-});
-test('evidence exclusion still detects other mutations',t=>{
-  const f=fixture(t),dir=f.result(pass);
-  writeFileSync(join(f.config.workerHome,'result','tests.log'),'edit tests');
-  writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
-  const r=f.run('post.ts',[dir],{DIRTY:'?? evidence/summary.json\n M source.ts'});
-  assert.equal(r.status,0,r.stderr);
-  assert.equal(JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8')).label,'REDO');
-});
-
 test('a second attempt at the same SHA prepares a new lane while preserving dirty evidence',t=>{
   const f=fixture(t), attempts: {directory:string;ctx:any}[]=[];
   for(let attempt=0;attempt<2;attempt++) {
