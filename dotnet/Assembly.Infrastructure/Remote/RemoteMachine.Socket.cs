@@ -476,10 +476,12 @@ internal sealed partial class RemoteMachine
         socket.Options.SetRequestHeader("Authorization", $"Bearer {_token}");
         var uri = new UriBuilder(_address) { Scheme = _address.Scheme == "https" ? "wss" : "ws", Path = path };
         await socket.ConnectAsync(uri.Uri, cancellationToken);
-        await SendFrameAsync(socket, $"{{\"t\":\"hello\",\"protocol\":1,\"token\":{JsonSerializer.Serialize(_token, RowJsonContext.Rows.String)}}}", cancellationToken);
-        var welcome = await ReadFrameAsync(socket, cancellationToken);
-        if (welcome.GetProperty("t").GetString() != "welcome" || welcome.GetProperty("protocol").GetInt32() != 1)
-            throw new IOException("remote socket handshake failed");
+        await SendFrameAsync(socket, $"{{\"t\":\"hello\",\"protocol\":{Socket.SocketConnection.Protocol},\"token\":{JsonSerializer.Serialize(_token, RowJsonContext.Rows.String)}}}", cancellationToken);
+        var welcome = await ReadHelloAnswerAsync(socket, cancellationToken);
+        if (welcome.GetProperty("t").GetString() != "welcome") throw new IOException("remote socket handshake failed");
+        var protocol = welcome.GetProperty("protocol").GetInt32();
+        if (protocol < Socket.SocketConnection.Protocol) throw ProtocolRefused(protocol);
+        if (protocol != Socket.SocketConnection.Protocol) throw new IOException("remote socket handshake failed");
         // Copied rows must have this computer's format, before any reachable status or subscription.
         var format = welcome.TryGetProperty("format", out var value) ? value.GetInt32() : 0;
         if (format != RowStore.FormatVersion)

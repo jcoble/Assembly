@@ -24,7 +24,7 @@ public sealed partial class GitCheckoutScopeTests
     {
         f.SetRoot(f.Root);
         using var socket = new PausedSocket();
-        socket.Feed("{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":1}");
+        socket.Feed("{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":2}");
         var connection = new SocketConnection(socket, f.Dispatcher, TimeProvider.System);
         var running = connection.RunAsync(Encoding.UTF8.GetBytes("isolated-token"), f.Hosts.Mac.Fixture.Machine, default, f.Hosts.Mac.Fixture.Machine);
         try

@@ -36,7 +36,7 @@ public sealed partial class AdapterEffectsTests
                 var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
                 using var socket = new ClientWebSocket();
                 await socket.ConnectAsync(new($"ws://{address.Authority}/socket"), default);
-                await SocketSend(socket, """{"t":"hello","token":"isolated-token","protocol":1}""");
+                await SocketSend(socket, """{"t":"hello","token":"isolated-token","protocol":2}""");
                 Assert.Equal("welcome", (await SocketRead(socket)).GetProperty("t").GetString());
                 var answer = kind == "permission" ? JsonSerializer.SerializeToElement("yes")
                     : JsonSerializer.SerializeToElement(new { action = "accept", content = new { body = "Owner response λ", blank = "" } });

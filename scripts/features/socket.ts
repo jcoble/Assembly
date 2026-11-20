@@ -77,9 +77,9 @@ export async function connectSocket(api: string, token: string, options: Options
       waiting.add(failed);
       socket.onopen = () => { waiting.delete(failed); resolve(); };
     });
-    send({ t: 'hello', token, protocol: 1 });
+    send({ t: 'hello', token, protocol: 2 });
     const welcome = await wait(frame => frame.t === 'welcome' || frame.t === 'error') as Welcome;
-    if (welcome.protocol !== 1 || !Number.isInteger(welcome.format) || welcome.format !== (options.format ?? 5))
+    if (welcome.protocol !== 2 || !Number.isInteger(welcome.format) || welcome.format !== (options.format ?? 5))
       throw new Error('incompatible socket protocol or row format');
     if (!welcome.machine || (options.machine && label(welcome.machine) !== label(options.machine)))
       throw new Error('socket welcome names the wrong machine');

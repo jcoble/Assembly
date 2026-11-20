@@ -507,7 +507,7 @@ public sealed class RowsExpectedSourceTests
         {
             var socket = new ClientWebSocket();
             await socket.ConnectAsync(new UriBuilder(_address) { Scheme = "ws", Path = bulk ? "/socket/bulk" : "/socket" }.Uri, CancellationToken.None);
-            await Send(socket, new { t = "hello", protocol = 1, token = "rows-token" });
+            await Send(socket, new { t = "hello", protocol = 2, token = "rows-token" });
             Assert.Equal("welcome", Type(await Read(socket))); return socket;
         }
         internal async Task Block(WebSocket client)

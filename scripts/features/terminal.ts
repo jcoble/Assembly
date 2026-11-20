@@ -32,7 +32,7 @@ async function connect(api: string, token: string) {
     socket.onerror = () => reject(new Error('the terminal socket failed to open'));
   });
   socket.onerror = closed;
-  socket.send(JSON.stringify({ t: 'hello', token, protocol: 1 }));
+  socket.send(JSON.stringify({ t: 'hello', token, protocol: 2 }));
   await wait(frame => frame.t === 'welcome');
   let id = 0;
   const request = async (method: string, args = {}) => {

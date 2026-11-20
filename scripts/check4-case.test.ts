@@ -57,7 +57,7 @@ async function server(handler: (peer: Peer, frame: any) => void, machine = 'fixt
         frames.push({ path: request.url!, frame });
         if (frame.t === 'hello') {
           assert.equal(frame.token, token);
-          peer.send({ t: 'welcome', protocol: 1, machine, format: 5, ...(build === undefined ? {} : { commit: build }) }, true);
+          peer.send({ t: 'welcome', protocol: 2, machine, format: 5, ...(build === undefined ? {} : { commit: build }) }, true);
         } else handler(peer, frame);
       }
     });

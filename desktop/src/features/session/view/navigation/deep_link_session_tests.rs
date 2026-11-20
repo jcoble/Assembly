@@ -190,7 +190,7 @@ async fn a_connected_app_without_chat_still_waits(cx: &mut TestAppContext) {
     let (host, opens, cx) = window(cx);
     let backend = FakeBackend::start(|frame| match frame["t"].as_str() {
         Some("hello") => vec![Reply::Frame(
-            json!({"t": "welcome", "protocol": 1, "machine": "box", "engine": "owner"}),
+            json!({"t": "welcome", "protocol": 2, "machine": "box", "engine": "owner"}),
         )],
         _ => vec![],
     });

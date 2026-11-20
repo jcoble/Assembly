@@ -291,7 +291,7 @@ public sealed partial class EngineForwardTests
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new UriBuilder(host.Address) { Scheme = "ws", Path = bulk ? "/socket/bulk" : "/socket" }.Uri, default);
-        await Send(socket, """{"t":"hello","token":"isolated-token","protocol":1}""");
+        await Send(socket, """{"t":"hello","token":"isolated-token","protocol":2}""");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString());
         return socket;
     }

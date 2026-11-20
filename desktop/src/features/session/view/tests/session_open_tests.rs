@@ -209,7 +209,7 @@ async fn a_real_post_commit_codec_failure_reports_refusal_with_the_target_transc
             frame["topic"].as_str(),
         ) {
             (Some("hello"), ..) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"box","engine":"owner"}),
+                json!({"t":"welcome","protocol":2,"machine":"box","engine":"owner"}),
             )],
             (Some("call"), Some("sessions"), Some("open_target"), _) => {
                 vec![Reply::Frame(json!({"t":"result","id":id,"result":{

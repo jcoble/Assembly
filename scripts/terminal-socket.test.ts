@@ -60,7 +60,7 @@ async function websocketServer(receive: (path: string, frame: Frame, send: (valu
     async close() { for (const peer of peers) peer.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); },
   };
 }
-const welcome = (machine: string) => ({ t: 'welcome', protocol: 1, machine, format: 5, commit: 'a'.repeat(40) });
+const welcome = (machine: string) => ({ t: 'welcome', protocol: 2, machine, format: 5, commit: 'a'.repeat(40) });
 const owner = 'case-owner', repo = '/safe/fixture/repository';
 const hostToken = 'private-host-token', desktopToken = 'private-desktop-token';
 const remoteId = 'assembly-remote-terminal://workbox-test/fixture';
@@ -72,7 +72,7 @@ async function scenario(options: Scenario = {}) {
   const output = Buffer.from('input:terminal-input\n40 120\n');
   const host = await websocketServer((path, frame, send) => {
     assert.equal(path, '/socket/terminal');
-    if (frame.t === 'hello') { assert.equal(frame.token, hostToken); assert.equal(frame.protocol, 1); send(welcome('workbox-test')); return; }
+    if (frame.t === 'hello') { assert.equal(frame.token, hostToken); assert.equal(frame.protocol, 2); send(welcome('workbox-test')); return; }
     if (frame.t === 'sub') {
       assert.deepEqual({ topic: frame.topic, key: frame.key, after: frame.after }, { topic: 'terminal', key: 'local-terminal', after: 0 });
       sub = frame.id; send({ t: 'state', sub, items: [] }); return;
@@ -100,7 +100,7 @@ async function scenario(options: Scenario = {}) {
   const desktop = await websocketServer((path, frame, send, peer) => {
     assert(['/socket', '/socket/terminal'].includes(path));
     if (frame.t === 'hello') {
-      assert.equal(frame.token, desktopToken); assert.equal(frame.protocol, 1);
+      assert.equal(frame.token, desktopToken); assert.equal(frame.protocol, 2);
       send({ ...welcome('desktop'), ...(options.create === 'wrong-format' && path === '/socket' ? { format: 4 } : {}) }); return;
     }
     const result = (value: unknown) => send({ t: 'result', id: frame.id, result: value });

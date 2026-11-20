@@ -58,7 +58,7 @@ public sealed partial class ChatSocketTests
 
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(_realAddress, CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","token":"chat-token","protocol":1}""");
+        await SendAsync(socket, """{"t":"hello","token":"chat-token","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;
     }

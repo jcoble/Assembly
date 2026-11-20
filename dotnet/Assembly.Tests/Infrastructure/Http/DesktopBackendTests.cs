@@ -78,7 +78,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         socket.Options.SetRequestHeader("Authorization", $"Bearer {Token}");
         await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}{path}?token={Token}"), deadline.Token);
-        await SendTextAsync(socket, """{"t":"hello","token":"wrong","protocol":1}""");
+        await SendTextAsync(socket, """{"t":"hello","token":"wrong","protocol":2}""");
         var buffer = new byte[1024];
         var answer = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), deadline.Token);
         Assert.Equal(WebSocketMessageType.Close, answer.MessageType);
@@ -226,7 +226,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         // A bearer header alone must not authorize an invalid first-frame token.
         refused.Options.SetRequestHeader("Authorization", $"Bearer {Token}");
         await refused.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}{path}"), CancellationToken.None);
-        await SendTextAsync(refused, $$"""{"t":"hello","token":"{{token}}","protocol":1}""");
+        await SendTextAsync(refused, $$"""{"t":"hello","token":"{{token}}","protocol":2}""");
         var buffer = new byte[1024];
         var answer = await refused.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(WebSocketMessageType.Close, answer.MessageType);
@@ -238,7 +238,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     {
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
 
         await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"clock","key":"second"}""");
@@ -251,7 +251,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     {
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
 
         await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"no-such-session"}""");
@@ -278,12 +278,12 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     {
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}{path}"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":2}""");
         using var frame = JsonDocument.Parse(await ReadTextAsync(socket));
         var welcome = frame.RootElement;
         Assert.Equal("welcome", welcome.GetProperty("t").GetString());
         Assert.Equal(Environment.MachineName, welcome.GetProperty("machine").GetString());
-        Assert.Equal(1, welcome.GetProperty("protocol").GetInt32());
+        Assert.Equal(2, welcome.GetProperty("protocol").GetInt32());
         Assert.Equal(Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion, welcome.GetProperty("format").GetInt32());
         using var db = new SqliteConnection(new SqliteConnectionStringBuilder
         { DataSource = Path.Combine(_home, "assembly.db"), Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
@@ -303,7 +303,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}{path}"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
         return socket;
     }
@@ -313,7 +313,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     {
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
 
         await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"sessions","key":"no-such-session"}""");
@@ -326,7 +326,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     {
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
 
         await SendTextAsync(socket, """{"t":"call","id":1,"feature":"send","method":"stop","args":{"runId":"no-such-run"}}""");
@@ -339,7 +339,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     {
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
 
         await SendTextAsync(socket, """{"t":"call","id":1,"feature":"config","method":"get","args":{"session":"no-such-session"}}""");
@@ -353,7 +353,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     {
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket/bulk"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
 
         await SendTextAsync(socket, """{"t":"call","id":1,"feature":"attachments","method":"begin","args":{"session":"no-such-session","mime":"image/png","size":10}}""");
@@ -383,7 +383,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     {
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":2}""");
         using var welcome = JsonDocument.Parse(await ReadTextAsync(socket));
         Assert.Matches("^[0-9a-f]{40}$", welcome.RootElement.GetProperty("commit").GetString());
         var sessionId = await CreateSessionAsync();

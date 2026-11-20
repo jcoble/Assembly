@@ -59,7 +59,7 @@ async fn open(cx: &mut TestAppContext) -> Open<'_> {
         let mut seen = answered.lock().unwrap();
         let replies = match (frame["t"].as_str(), frame["method"].as_str()) {
             (Some("hello"), _) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"box","engine":"owner"}),
+                json!({"t":"welcome","protocol":2,"machine":"box","engine":"owner"}),
             )],
             (Some("sub"), _) if frame["stream"] == "engine" => {
                 seen.subscriptions.push(id.clone());

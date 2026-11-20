@@ -284,7 +284,7 @@ public sealed class ChatExpectedSourceTests
     {
         var socket = new ClientWebSocket(); using var stop = new CancellationTokenSource(Wait);
         await socket.ConnectAsync(new Uri($"ws://{address.Authority}/socket{(bulk ? "/bulk" : "")}"), stop.Token);
-        await Send(socket, "{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":1}");
+        await Send(socket, "{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":2}");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static async Task<JsonElement> Call(WebSocket socket, int id, string feature, string method, JsonElement args, ExpectedSource? frameSource = null)

@@ -120,7 +120,7 @@ public sealed class BoardSocketTests
         {
             var socket = new ClientWebSocket();
             await socket.ConnectAsync(new UriBuilder(Address) { Scheme = "ws", Path = "/socket" }.Uri, CancellationToken.None);
-            await Send(socket, """{"t":"hello","protocol":1,"token":"board-test"}""");
+            await Send(socket, """{"t":"hello","protocol":2,"token":"board-test"}""");
             Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString());
             return socket;
         }

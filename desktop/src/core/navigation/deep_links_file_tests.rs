@@ -107,7 +107,7 @@ impl Harness<'_> {
                 frame["method"].as_str(),
             ) {
                 (Some("hello"), ..) => vec![Reply::Frame(
-                    json!({"t": "welcome", "protocol": 1, "machine": "box", "engine": "owner"}),
+                    json!({"t": "welcome", "protocol": 2, "machine": "box", "engine": "owner"}),
                 )],
                 (Some("call"), Some("files"), Some("owner")) => {
                     let args = frame["args"].clone();

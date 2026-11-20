@@ -88,7 +88,7 @@ fn engine_identity_is_cleared_until_the_reconnected_welcome_names_its_owner() {
                 entered.send(()).unwrap();
                 ready.recv_timeout(DEADLINE).unwrap();
             }
-            return vec![Reply::Frame(json!({"t":"welcome","protocol":1,
+            return vec![Reply::Frame(json!({"t":"welcome","protocol":2,
                 "machine":"Friendly display name", "engine": if welcomes == 1 { "engine-a" } else { "engine-b" }}))];
         }
         if frame["t"] == "call" {
@@ -127,7 +127,7 @@ fn unapplied_scoped_pages_are_replayed_and_a_stale_delivery_cannot_ack_a_reconne
     let backend = FakeBackend::start(|frame| {
         if frame["t"] == "hello" {
             return vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"owner"}),
+                json!({"t":"welcome","protocol":2,"machine":"friendly","engine":"owner"}),
             )];
         }
         if frame["t"] == "sub" {
@@ -215,7 +215,7 @@ fn bulk_connection_generation_changes_even_when_the_same_engine_reconnects() {
                 entered.send(()).unwrap();
                 ready.recv_timeout(DEADLINE).unwrap();
             }
-            return vec![Reply::Frame(json!({"t":"welcome","protocol":1,
+            return vec![Reply::Frame(json!({"t":"welcome","protocol":2,
                 "machine":"Friendly display name","engine":"same-engine"}))];
         }
         if frame["t"] == "call" {

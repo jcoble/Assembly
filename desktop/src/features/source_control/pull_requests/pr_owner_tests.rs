@@ -145,7 +145,7 @@ async fn resolving_asks_for_the_projects_route_and_refuses_another_engines_answe
     let backend = FakeBackend::start(move |frame| {
         if frame["t"] == "hello" {
             return vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"box","engine":"box"}),
+                json!({"t":"welcome","protocol":2,"machine":"box","engine":"box"}),
             )];
         }
         if frame["t"] != "call" {

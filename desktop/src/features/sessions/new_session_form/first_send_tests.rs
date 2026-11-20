@@ -25,7 +25,7 @@ async fn unknown_create_looks_up_the_original_source_and_id_before_an_explicit_s
     let backend = FakeBackend::start(move |frame| {
         if frame["t"] == "hello" {
             return vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"fixture-host","engine":"box"}),
+                json!({"t":"welcome","protocol":2,"machine":"fixture-host","engine":"box"}),
             )];
         }
         seen.lock().unwrap().push(frame.clone());

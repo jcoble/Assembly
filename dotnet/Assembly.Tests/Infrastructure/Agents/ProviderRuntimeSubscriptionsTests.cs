@@ -188,7 +188,7 @@ internal sealed class ProviderRuntimeRemoteFixture : IAsyncDisposable
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{Hosts.Mac.Address.Authority}/socket"), default);
-        await Send(socket, """{"t":"hello","token":"isolated-token","protocol":1}""");
+        await Send(socket, """{"t":"hello","token":"isolated-token","protocol":2}""");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString());
         return socket;
     }

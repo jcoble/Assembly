@@ -136,7 +136,7 @@ async function main() {
     socket.onopen = resolve;
     socket.onerror = () => reject(new Error('the socket failed to open'));
   });
-  socket.send(JSON.stringify({ t: 'hello', token, protocol: 1 }));
+  socket.send(JSON.stringify({ t: 'hello', token, protocol: 2 }));
   await frame((got) => got.t === 'welcome', 10_000, 'hello is answered with welcome');
 
   socket.send(JSON.stringify({ t: 'sub', id: 1, topic: 'sessions', key: session }));

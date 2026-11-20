@@ -99,7 +99,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
             {
                 using var socket = await context.WebSockets.AcceptWebSocketAsync();
                 await ReadAsync(socket);
-                await SendAsync(socket, $$"""{"t":"welcome","protocol":1,"format":{{format}}}""");
+                await SendAsync(socket, $$"""{"t":"welcome","protocol":2,"format":{{format}}}""");
             }
         });
         _app.Map("/socket/bulk", async context =>
@@ -154,7 +154,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         _bulkRead = async socket =>
         {
             await ReadAsync(socket);
-            await SendAsync(socket, $$"""{"t":"welcome","protocol":1,"format":{{RowStore.FormatVersion}},"engine":"{{_ownerEngine.Machine}}"}""");
+            await SendAsync(socket, $$"""{"t":"welcome","protocol":2,"format":{{RowStore.FormatVersion}},"engine":"{{_ownerEngine.Machine}}"}""");
             using var call = JsonDocument.Parse(await ReadAsync(socket));
             // The catch-up has read no rows. The send's user and started rows arrive afterwards,
             // through the live subscription, even if its empty read response is still in flight.
@@ -307,7 +307,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{_address.Authority}/socket{(bulk ? "/bulk" : "")}"), CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","protocol":1,"token":"token"}""");
+        await SendAsync(socket, """{"t":"hello","protocol":2,"token":"token"}""");
         using var welcome = JsonDocument.Parse(await ReadAsync(socket));
         Assert.Equal("welcome", welcome.RootElement.GetProperty("t").GetString());
         return socket;

@@ -63,10 +63,10 @@ const socket = new WebSocket('ws://127.0.0.1:' + lane.port + '/socket');
 // A deadline for one handshake, never a retry or a poll.
 const deadline = setTimeout(()=>{console.error('host welcome timed out');process.exit(1)},8000);
 socket.onerror=()=>{console.error('host socket unreachable');process.exit(1)};
-socket.onopen=()=>socket.send(JSON.stringify({t:'hello',protocol:1,token}));
+socket.onopen=()=>socket.send(JSON.stringify({t:'hello',protocol:2,token}));
 socket.onmessage=e=>{
  const frame=JSON.parse(String(e.data));
- if(frame.t!=='welcome' || frame.machine!=='workbox-test' || frame.protocol!==1 || frame.format!==5 || !/^[a-f0-9]{40}$/.test(frame.commit??'')) {
+ if(frame.t!=='welcome' || frame.machine!=='workbox-test' || frame.protocol!==2 || frame.format!==5 || !/^[a-f0-9]{40}$/.test(frame.commit??'')) {
   console.error('host did not provide a compatible authenticated identity');process.exit(1);
  }
  clearTimeout(deadline);socket.close();process.stdin.pause();

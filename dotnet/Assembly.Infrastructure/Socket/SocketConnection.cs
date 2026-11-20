@@ -18,7 +18,7 @@ namespace Assembly.Infrastructure.Socket;
 /// </summary>
 internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls, TimeProvider time, bool bulk = false, bool terminal = false)
 {
-    internal const int Protocol = 1;
+    internal const int Protocol = 2;
     internal const int MaxFrame = 4 * 1024 * 1024;
     private const long MaxWaiting = 16 * 1024 * 1024;
     private static long _last;
@@ -165,7 +165,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
         if (_closing is { } closing)
             await CloseAsync(closing.Status, closing.Reason);
         else if (Read(text) is not { T: "hello", Protocol: Protocol } hello)
-            await CloseAsync((WebSocketCloseStatus)4400, "expected a hello");
+            await CloseAsync((WebSocketCloseStatus)4400, $"expected a hello with protocol {Protocol}");
         else if (hello.Token is null || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(hello.Token), token))
             await CloseAsync((WebSocketCloseStatus)4401, "unauthorized");
         else

@@ -25,7 +25,7 @@ async fn pane(
 ) -> (FakeBackend, Entity<SessionPane>, &mut VisualTestContext) {
     let backend = FakeBackend::start(|frame| match frame["t"].as_str() {
         Some("hello") => vec![Reply::Frame(
-            json!({"t": "welcome", "protocol": 1, "machine": "box", "engine": "local"}),
+            json!({"t": "welcome", "protocol": 2, "machine": "box", "engine": "local"}),
         )],
         _ => Vec::new(),
     });

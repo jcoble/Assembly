@@ -326,7 +326,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
         Commit("s", 10);
         var socket = new HeldSocket();
         var connection = new SocketConnection(socket, _calls, TimeProvider.System);
-        socket.Receive("""{"t":"hello","token":"held","protocol":1}""");
+        socket.Receive("""{"t":"hello","token":"held","protocol":2}""");
         var running = connection.RunAsync(Encoding.UTF8.GetBytes("held"), "test-machine", CancellationToken.None);
         Assert.StartsWith("""{"t":"welcome""", await socket.SentAsync());
 
@@ -394,7 +394,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(address, CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","token":"rows-token","protocol":1}""");
+        await SendAsync(socket, """{"t":"hello","token":"rows-token","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;
     }

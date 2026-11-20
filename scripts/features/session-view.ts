@@ -63,7 +63,7 @@ async function main() {
       opened.onopen = resolve;
       opened.onerror = () => reject(new Error(`${path} failed to open`));
     });
-    opened.send(JSON.stringify({ t: 'hello', token, protocol: 1 }));
+    opened.send(JSON.stringify({ t: 'hello', token, protocol: 2 }));
     await frame((got) => got.t === 'welcome', 10_000, `${path}'s hello is answered with welcome`);
   }
 

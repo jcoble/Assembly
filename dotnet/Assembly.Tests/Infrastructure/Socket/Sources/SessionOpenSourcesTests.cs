@@ -166,7 +166,7 @@ public sealed class SessionOpenSourcesTests
     private static async Task<ClientWebSocket> Open(Uri address)
     {
         var socket = new ClientWebSocket(); await socket.ConnectAsync(new UriBuilder(address) { Scheme = "ws", Path = "/socket" }.Uri, default);
-        await socket.SendAsync(Encoding.UTF8.GetBytes("{\"t\":\"hello\",\"protocol\":1,\"token\":\"isolated-token\"}"), WebSocketMessageType.Text, true, default);
+        await socket.SendAsync(Encoding.UTF8.GetBytes("{\"t\":\"hello\",\"protocol\":2,\"token\":\"isolated-token\"}"), WebSocketMessageType.Text, true, default);
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static async Task<JsonElement> Call(WebSocket socket, int id, string args)

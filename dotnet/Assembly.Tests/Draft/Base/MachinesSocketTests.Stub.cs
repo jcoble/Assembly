@@ -45,6 +45,8 @@ public sealed partial class MachinesSocketTests
         public int StopStatus { get; set; } = 202;
         public bool Drop { get; set; }
         public bool DropVersion { get; set; }
+        // A remote on an older protocol closes the hello with 4400 and this reason (TSK-1692).
+        public string? HelloClose { get; set; }
         public bool HangVersion { get; set; }
         public bool Pings { get; set; } = true;
         public string[] LiveRows { get; set; } = [];
@@ -181,6 +183,11 @@ public sealed partial class MachinesSocketTests
                                     Interlocked.Increment(ref VersionHits);
                                     VersionStarted.TrySetResult();
                                 }
+                                if (HelloClose is { } refusal)
+                                {
+                                    await socket.CloseAsync((WebSocketCloseStatus)4400, refusal, context.RequestAborted);
+                                    return;
+                                }
                                 if (DropVersion || Interlocked.Decrement(ref DropWelcomes) >= 0) { context.Abort(); return; }
                                 if (HangVersion)
                                 {
@@ -189,7 +196,7 @@ public sealed partial class MachinesSocketTests
                                     finally { Interlocked.Increment(ref VersionAborted); VersionCancelled.TrySetResult(); }
                                     return;
                                 }
-                                await Send($$"""{"t":"welcome","protocol":1,"machine":"box","format":{{Format}},"commit":{{JsonSerializer.Serialize(Commit)}},"backendIdentity":{{JsonSerializer.Serialize(BackendIdentity)}},"version":{{JsonSerializer.Serialize(Version)}},"engine":{{JsonSerializer.Serialize(EngineMachine)}}}""");
+                                await Send($$"""{"t":"welcome","protocol":2,"machine":"box","format":{{Format}},"commit":{{JsonSerializer.Serialize(Commit)}},"backendIdentity":{{JsonSerializer.Serialize(BackendIdentity)}},"version":{{JsonSerializer.Serialize(Version)}},"engine":{{JsonSerializer.Serialize(EngineMachine)}}}""");
                                 break;
                             case "sub":
                                 if (json.TryGetProperty("stream", out var stream) && stream.GetString() == "engine")

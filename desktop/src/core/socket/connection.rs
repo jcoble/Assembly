@@ -25,7 +25,7 @@ use super::in_frame::InFrame;
 use super::open_failure::OpenFailure;
 use super::out_frame::OutFrame;
 
-pub(super) const PROTOCOL: u32 = 1;
+pub(super) const PROTOCOL: u32 = 2;
 /// How long opening may take, connected to welcomed, on the same machine.
 const OPENING: Duration = Duration::from_secs(5);
 /// How long one send may take in all.

@@ -126,6 +126,20 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes, T
     /// <summary>Each time a remote says hello: a good moment to check it, with no timer. Set once, on the root.</summary>
     public Action<string>? Welcomed { get; set; }
 
+    /// <summary>A remote refused this computer's hello because it runs an older socket protocol (TSK-1692).</summary>
+    public void ProtocolOlder(string machine)
+    {
+        if (_parent is { } parent)
+        {
+            lock (parent._gate) if (_active) parent.ProtocolOlder(machine);
+            return;
+        }
+        RefusedForProtocol?.Invoke(machine);
+    }
+
+    /// <summary>Where an older remote's update starts. Set once, on the root.</summary>
+    public Action<string>? RefusedForProtocol { get; set; }
+
     /// <summary>The update check's latest answer for a machine; a null name is this machine.</summary>
     public void Updates(string? machine, IReadOnlyList<UpdateItem> updates)
     {

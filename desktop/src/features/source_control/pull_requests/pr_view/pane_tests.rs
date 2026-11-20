@@ -144,7 +144,7 @@ fn fake(cx: &mut TestAppContext, projects: Value, first: Source) -> Fake {
     let backend = FakeBackend::start(move |frame| {
         if frame["t"] == "hello" {
             return vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"box","engine":"box"}),
+                json!({"t":"welcome","protocol":2,"machine":"box","engine":"box"}),
             )];
         }
         let _ = heard.unbounded_send(());

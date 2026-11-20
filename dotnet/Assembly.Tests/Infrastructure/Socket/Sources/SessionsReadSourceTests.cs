@@ -168,7 +168,7 @@ public sealed class SessionsReadSourceTests
     {
         var socket = new ClientWebSocket(); using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await socket.ConnectAsync(new Uri($"ws://{address.Authority}/socket"), timeout.Token);
-        await Send(socket, "{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":1}");
+        await Send(socket, "{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":2}");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static async Task<JsonElement> Mark(WebSocket socket, int id, SessionsFeature.ReadArgs args, ExpectedSource? frame = null)

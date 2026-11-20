@@ -212,7 +212,7 @@ fn welcome_engine_subscription(engine: Option<&str>, owner: Option<&str>, expect
     let expected_wire = expected.clone();
     let backend = FakeBackend::start(move |frame| match frame["t"].as_str() {
         Some("hello") => {
-            let mut welcome = json!({"t":"welcome", "protocol":1, "machine":"display-host"});
+            let mut welcome = json!({"t":"welcome", "protocol":2, "machine":"display-host"});
             if let Some(engine) = &engine {
                 welcome["engine"] = json!(engine);
             }

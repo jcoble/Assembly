@@ -388,7 +388,7 @@ public sealed class FileRemotePathTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri("ws://" + _hosts.Mac.Address.Authority + (bulk ? "/socket/bulk" : "/socket")), CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","protocol":1,"token":"isolated-token"}""");
+        await SendAsync(socket, """{"t":"hello","protocol":2,"token":"isolated-token"}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;
     }

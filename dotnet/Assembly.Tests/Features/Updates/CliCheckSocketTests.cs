@@ -83,7 +83,7 @@ public sealed class CliCheckSocketTests
     {
         var socket = new ClientWebSocket(); using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
         await socket.ConnectAsync(new Uri($"ws://{address.Authority}/socket"), timeout.Token);
-        await Send(socket, new { t = "hello", protocol = 1, token = "cli-token" });
+        await Send(socket, new { t = "hello", protocol = 2, token = "cli-token" });
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static Task Send(ClientWebSocket socket, object value) => socket.SendAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value)), WebSocketMessageType.Text, true, CancellationToken.None);

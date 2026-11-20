@@ -128,7 +128,7 @@ public sealed partial class RemoteMachineTests
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{_desktop!.Address.Authority}/socket"), CancellationToken.None);
-        await SocketSendAsync(socket, $$"""{"t":"hello","token":"{{DesktopToken}}","protocol":1}""");
+        await SocketSendAsync(socket, $$"""{"t":"hello","token":"{{DesktopToken}}","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await SocketReadAsync(socket));
         return socket;
     }

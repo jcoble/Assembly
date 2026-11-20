@@ -145,7 +145,7 @@ public sealed class SessionCutoverDoorTests
         public async Task<ClientWebSocket> Open()
         {
             var socket = new ClientWebSocket(); await socket.ConnectAsync(new($"ws://{Address.Authority}/socket"), CancellationToken.None);
-            await Send(socket, """{"t":"hello","token":"token","protocol":1}"""); Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString());
+            await Send(socket, """{"t":"hello","token":"token","protocol":2}"""); Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString());
             return socket;
         }
         public async ValueTask DisposeAsync()

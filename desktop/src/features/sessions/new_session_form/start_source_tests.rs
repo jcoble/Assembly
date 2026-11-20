@@ -20,7 +20,7 @@ async fn source_discovery_names_local_explicitly_and_rejects_a_replaced_bulk_lif
     let backend = FakeBackend::start(move |frame| {
         if frame["t"] == "hello" {
             return vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"fixture-host","engine":"box"}),
+                json!({"t":"welcome","protocol":2,"machine":"fixture-host","engine":"box"}),
             )];
         }
         observed.lock().unwrap().push(frame.clone());
