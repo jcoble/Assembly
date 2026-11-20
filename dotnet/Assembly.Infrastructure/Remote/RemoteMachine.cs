@@ -8,6 +8,7 @@ using System.Text.Json;
 using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Features.Chat.Rows.Copies;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
@@ -53,6 +54,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         _sessionStore = sessionStore;
         _status = status;
         _follower = new RemoteFollower(hub, RowsAsync, ReadRowsAsync, ProbeAsync, RefreshAsync, AddSubagentSession, log);
+        _download = StartDownloads();
     }
 
     public string? Name => _name;
@@ -65,13 +67,16 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
     // A subagent's session, made on the remote by its parent's session, is known here from its parent's row.
     private void AddSubagentSession(string parentSessionId, StoredRow row)
     {
-        if (row.Payload.GetProperty("sessionId").GetString() is not { } childId || _sessionStore.Get(childId) is not null
-            || _sessionStore.Get(parentSessionId) is not { } parent)
+        if (row.Payload.GetProperty("sessionId").GetString() is not { } childId || _sessionStore.Get(childId) is not null)
             return;
-        var agent = row.Payload.TryGetProperty("agent", out var named) && named.GetString() is { } helperAgent ? helperAgent : parent.Agent;
+        // A parent known only from the machine's mirror has no record here; its mirrored row names its agent and folder.
+        if ((_sessionStore.Get(parentSessionId) is { } known ? (known.Agent, known.RepoUrl) : _hub.Copies.MirroredSession(parentSessionId))
+            is not ({ } parentAgent, { } parentRepo))
+            return;
+        var agent = row.Payload.TryGetProperty("agent", out var named) && named.GetString() is { } helperAgent ? helperAgent : parentAgent;
         try
         {
-            _sessionStore.Add(childId, agent, parent.RepoUrl, _name, parentSessionId,
+            _sessionStore.Add(childId, agent, parentRepo, _name, parentSessionId,
                 helper: row.Payload.TryGetProperty("helper", out var helper) && helper.ValueKind == JsonValueKind.True);
         }
         // The machine's mirror recorded this session since the look-up above, and what it recorded stays.
@@ -81,6 +86,9 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         }
         if (row.Payload.GetProperty("title").GetString() is { } title)
             _sessionStore.SetTitle(childId, title, "prompt");
+        // The card names the child's native session, which a native open looks the child up by (TSK-1692).
+        if (row.ItemId is { } item && item.StartsWith(CopyRecords.SubagentItem, StringComparison.Ordinal) && item.Length > CopyRecords.SubagentItem.Length)
+            _sessionStore.SetAcpSession(childId, item[CopyRecords.SubagentItem.Length..]);
     }
 
     public async Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken)
@@ -487,6 +495,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         await Terminals.DisposeAsync();
         await _socketStop.CancelAsync();
         await _follower.DisposeAsync();
+        await Download.DisposeAsync();
         if (_socketRun is not null) await _socketRun;
         await JoinSessionPublications();
         await Task.WhenAll(relayLeases);

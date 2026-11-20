@@ -112,6 +112,31 @@ public sealed class RemoteCopyStoreTests : IDisposable
         Assert.Equal(new RemoteCopy("s1", Box, false, 9), _rows.Copies.RemoteCopyOf("s1"));
     }
 
+    // A child copied before cards named native sessions has none; its parent's newest card names it, and one set stays.
+    [Fact]
+    public void Adoption_fills_native_child_ids_from_the_parent_s_cards()
+    {
+        Mirror(Box, "workbox-test", generation: 1);
+        MirrorRow(Box, "parent", generation: 1);
+        Forward("parent", 2);
+        Card("parent", 3, "child", "native-old");
+        Card("parent", 4, "child", "native-new");
+        Card("parent", 5, "named", "native-other");
+        var sessions = Sessions();
+        sessions.Add("child", "codex", "/test", "workbox-test", parentSessionId: "parent");
+        sessions.Add("named", "codex", "/test", "workbox-test", parentSessionId: "parent");
+        sessions.SetAcpSession("named", "native-kept");
+
+        _rows.Copies.AdoptRemoteCopies();
+
+        Assert.Equal("native-new", Sessions().Get("child")?.AcpSessionId);
+        Assert.Equal("native-kept", Sessions().Get("named")?.AcpSessionId);
+    }
+
+    private void Card(string session, long seq, string child, string native) => Assert.True(_rows.Copy(new StoredRow(session, seq, "run",
+        $"{CopyRecords.SubagentItem}{native}", "subagent", JsonSerializer.SerializeToElement(new { sessionId = child, title = child }),
+        seq, PrevSeq: seq - 1)));
+
     private SessionStore Sessions() => SessionStore.Open(_f.Db, TimeProvider.System, "checkouts");
 
     private void Mirror(string machine, string name, long generation) => _f.Db.Writer.Write("test.mirror", scope => scope.Execute("""

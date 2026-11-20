@@ -357,6 +357,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         Remote.Fixture.SeedSession();
     }
     internal RemoteMachine ConnectedMachine => _machine!;
+    internal LiveHub MacHub => _hub ?? throw new InvalidOperationException("No mirror started");
     internal RemoteConnections Connections => _connections ?? throw new InvalidOperationException("No configured connection owner");
     public Task DisconnectMirror() => _connections!.ConnectionAsync("workbox-test", false, default);
     public async Task StopMirror()

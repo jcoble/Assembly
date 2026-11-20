@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using Assembly.Domain.Rows;
 using Assembly.Application.Common.Topics;
 using Assembly.Application.Features.Chat;
+using Assembly.Application.Features.Chat.Rows.Copies;
 using Assembly.Application.Features.Chat.Sessions;
 
 namespace Assembly.Application.Features.Chat.Rows;
@@ -74,6 +75,46 @@ public sealed class LiveHub : IDisposable
             Push(row.SessionId, [row]);
             return true;
         }
+    }
+
+    /// <summary>Which remote sessions here are saved copies. Its saves go through the hub's own doors below.</summary>
+    public CopyRecords Copies => _store.Copies;
+
+    /// <summary>
+    /// Saves a download's first chunk (TSK-1692): rows already here are skipped and the next seq never goes back, so a
+    /// live row copied meanwhile is saved once. Nothing is pushed: the rows are history above an open window's own,
+    /// read by its page calls. The session's summary takes them, as a copied row's does.
+    /// </summary>
+    public CopyStart StartCopy(string sessionId, string machine, BeforeChunk first)
+    {
+        var rows = first.Rows.Select(RowWire.Read).ToList();
+        CopyStart start;
+        lock (_gate)
+        {
+            start = _store.Copies.Start(sessionId, machine, rows, first.Facts);
+            Summarize(sessionId, [.. rows.OrderBy(row => row.Seq)]);
+        }
+        return start;
+    }
+
+    /// <summary>Saves older rows below the copy's first seq. Nothing is pushed and the summary stays: they're older.</summary>
+    public IReadOnlyList<StoredRow> Backfill(string sessionId, IReadOnlyList<StoredRow> rows)
+    {
+        lock (_gate)
+            return _store.Copies.Backfill(sessionId, rows);
+    }
+
+    /// <summary>A forward copy the follower made becomes a copy still downloading.</summary>
+    public void AdoptCopy(string sessionId, string machine, long head)
+    {
+        lock (_gate)
+            _store.Copies.Adopt(sessionId, machine, head);
+    }
+
+    public void CompleteCopy(string sessionId)
+    {
+        lock (_gate)
+            _store.Copies.MarkComplete(sessionId);
     }
 
     /// <summary>
@@ -220,6 +261,11 @@ public sealed class LiveHub : IDisposable
                 if (!rows.All(subscriber.Queue.Writer.TryWrite))
                     Close(subscriber, new LiveFellBehind());
             }
+        Summarize(sessionId, rows);
+    }
+
+    private void Summarize(string sessionId, IReadOnlyList<StoredRow> rows)
+    {
         var summaryChanged = _summaries?.Apply(sessionId, rows) == true;
         // Every committed row that can move a session between the rail's tabs, change which ask it shows or its
         // branch tells the rail, whether or not the summary changed: the open ask it shows can change while one stays open.

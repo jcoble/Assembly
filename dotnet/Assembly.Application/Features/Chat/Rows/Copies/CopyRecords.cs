@@ -10,7 +10,7 @@ public sealed record RemoteCopy(string Session, string Machine, bool Complete, l
 /// The saved copy of a remote session (TSK-1692). A copy belongs to the owning machine's engine id only, never to a
 /// mirror generation. Its oldest and last seqs are its rows' own, never stored.
 /// </summary>
-public sealed class CopyRecords(IAppDatabase db, IAtomicWriter writer)
+public sealed partial class CopyRecords(IAppDatabase db, IAtomicWriter writer)
 {
     /// <summary>
     /// Each remote session's owning engine machine: its mirrored session row at the mirror's current generation, or,
@@ -41,6 +41,14 @@ public sealed class CopyRecords(IAppDatabase db, IAtomicWriter writer)
         "SELECT session_id,machine,state,head FROM remote_copy WHERE machine=$machine ORDER BY session_id", ReadCopy,
         CancellationToken.None, new SqlArg("$machine", machine));
 
+    /// <summary>A mirrored session's provider and folder, for a session with no record of its own here.</summary>
+    public (string Provider, string Folder)? MirroredSession(string session) => db.QueryFirst("""
+        SELECT json_extract(r.row_json,'$.provider'), json_extract(r.row_json,'$.folder') FROM engine_mirror_row r
+        JOIN engine_mirror m ON m.machine=r.machine AND m.generation=r.generation AND m.state<>'retired'
+        WHERE r.entity_kind='session' AND r.entity_id=$session
+          AND json_type(r.row_json,'$.provider')='text' AND json_type(r.row_json,'$.folder')='text'
+        """, row => ((string, string)?)(row.Text(0), row.Text(1)), CancellationToken.None, new SqlArg("$session", session));
+
     /// <summary>The copy's oldest saved seq, or null when it holds no rows.</summary>
     public long? FirstSeq(string session) => db.QueryFirst(
         "SELECT MIN(seq) FROM rows WHERE session_id=$session", row => row.IsNull(0) ? (long?)null : row.Long(0),
@@ -59,15 +67,36 @@ public sealed class CopyRecords(IAppDatabase db, IAtomicWriter writer)
 
     /// <summary>
     /// An install from before saved copies holds forward copies, each a prefix from seq 1: each becomes a copy still
-    /// downloading, for its owner, so the one hole check validates it. Run at startup; a second run adopts nothing.
+    /// downloading, for its owner, so the one hole check validates it. A child facade the follower made before it
+    /// recorded native ids gets its native id from its parent's card, so a native open finds it here. Run at startup;
+    /// a second run adopts nothing.
     /// </summary>
-    public int AdoptRemoteCopies() => writer.Write("rows.adopt-copies", scope => scope.Execute($"""
-        WITH {RemoteOwners}
-        INSERT INTO remote_copy(session_id,machine,state,head)
-        SELECT o.session_id, o.machine, 'downloading', NULL FROM owned o
-        WHERE EXISTS (SELECT 1 FROM rows WHERE rows.session_id=o.session_id)
-          AND NOT EXISTS (SELECT 1 FROM remote_copy c WHERE c.session_id=o.session_id)
-        """));
+    public int AdoptRemoteCopies() => writer.Write("rows.adopt-copies", scope =>
+    {
+        var adopted = scope.Execute($"""
+            WITH {RemoteOwners}
+            INSERT INTO remote_copy(session_id,machine,state,head)
+            SELECT o.session_id, o.machine, 'downloading', NULL FROM owned o
+            WHERE EXISTS (SELECT 1 FROM rows WHERE rows.session_id=o.session_id)
+              AND NOT EXISTS (SELECT 1 FROM remote_copy c WHERE c.session_id=o.session_id)
+            """);
+        scope.Execute($"""
+            WITH cards AS (
+              SELECT r.session_id AS parent, json_extract(r.payload,'$.sessionId') AS child,
+                substr(r.item_id, {SubagentItem.Length + 1}) AS native, MAX(r.seq)
+              FROM rows r JOIN remote_copy c ON c.session_id=r.session_id
+              WHERE r.kind='subagent' AND r.item_id LIKE '{SubagentItem}%' AND length(r.item_id)>{SubagentItem.Length}
+              GROUP BY r.session_id, json_extract(r.payload,'$.sessionId'))
+            UPDATE session_info SET acp_session_id=(SELECT native FROM cards WHERE cards.parent=session_info.parent_session_id
+              AND cards.child=session_info.session_id)
+            WHERE acp_session_id IS NULL AND EXISTS (SELECT 1 FROM cards WHERE cards.parent=session_info.parent_session_id
+              AND cards.child=session_info.session_id)
+            """);
+        return adopted;
+    });
+
+    /// <summary>A subagent card's item id is this and the child's native session id.</summary>
+    internal const string SubagentItem = "subagent:";
 
     private static RemoteCopy ReadCopy(IRow row) =>
         new(row.Text(0), row.Text(1), row.Text(2) == "complete", row.IsNull(3) ? null : row.Long(3));

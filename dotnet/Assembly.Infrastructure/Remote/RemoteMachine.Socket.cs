@@ -39,6 +39,7 @@ internal sealed partial class RemoteMachine
                 _socket = socket;
                 _socketOpenedAt = _time.GetTimestamp();
                 BeginSessionPublications(socket);
+                _download?.Connected();
                 SocketOpened?.Invoke();
                 return socket;
             }
