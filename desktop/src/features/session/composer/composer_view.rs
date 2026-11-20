@@ -522,13 +522,13 @@ mod park_tests;
 #[path = "live_config_tests.rs"]
 mod live_config_tests;
 
+#[path = "composer_draft_saves.rs"]
+mod draft_saves;
 #[cfg(test)]
 #[path = "qualified_tests.rs"]
 mod qualified_tests;
 #[path = "composer_selection.rs"]
 mod selection;
-#[path = "composer_draft_saves.rs"]
-mod draft_saves;
 pub use draft_saves::SavedDraft;
 #[cfg(test)]
 #[path = "tests/draft_saves_tests.rs"]
