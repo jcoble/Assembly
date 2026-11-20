@@ -7,6 +7,9 @@ use gpui_kit::{Context, Window};
 pub(super) struct Parked {
     id: String,
     key: Option<SessionKey>,
+    /// The owner's saved draft is in the box. A pick that names only the session never guesses one by id, since the
+    /// same id can be another owner's; what is typed then joins the owner's draft once the open lands.
+    loaded: bool,
 }
 impl Composer {
     pub fn set_target(
@@ -34,14 +37,17 @@ impl Composer {
         }
         self.invalidate_source(cx);
         // A parked draft was typed for the picked session, whose own draft the old one's was already put aside for.
-        let left = match self.parked.take() {
-            Some(parked) => Some(self.parked_key(parked, key.as_ref())),
-            None => self.session_key.take(),
-        };
-        if let Some(left) = left {
-            let text = self.draft.read(cx).value().to_string();
-            self.drafts
-                .insert(left, (text, std::mem::take(&mut self.attachments)));
+        match self.parked.take() {
+            Some(parked) => {
+                let loaded = parked.loaded;
+                let left = self.parked_key(parked, key.as_ref());
+                self.keep(left, !loaded, cx);
+            }
+            None => {
+                if let Some(left) = self.session_key.take() {
+                    self.keep(left, false, cx);
+                }
+            }
         }
         let (text, mut attachments) = key
             .as_ref()
@@ -107,27 +113,43 @@ impl Composer {
             self.unpark(window, cx);
             return;
         }
-        let left = match self.parked.take() {
-            Some(parked) => self.parked_key(parked, None),
+        match self.parked.take() {
+            Some(parked) => {
+                let loaded = parked.loaded;
+                let left = self.parked_key(parked, None);
+                self.keep(left, !loaded, cx);
+            }
             None => {
                 self.invalidate_source(cx);
-                bound
+                self.keep(bound, false, cx);
             }
-        };
-        let text = self.draft.read(cx).value().to_string();
-        self.drafts
-            .insert(left, (text, std::mem::take(&mut self.attachments)));
-        let key = key.or_else(|| self.drafts.keys().find(|key| key.id == id).cloned());
+        }
         let (text, attachments) = key
             .as_ref()
             .and_then(|key| self.drafts.remove(key))
             .unwrap_or_default();
-        self.parked = Some(Parked { id, key });
+        let loaded = key.is_some();
+        self.parked = Some(Parked { id, key, loaded });
         self.draft
             .update(cx, |draft, cx| draft.set_value(text, window, cx));
         self.attachments = attachments;
         self.slash_selected = None;
         cx.notify();
+    }
+    /// Puts the box's draft away under `key`; `join` adds it after a draft already saved there instead of replacing it.
+    fn keep(&mut self, key: SessionKey, join: bool, cx: &mut Context<Self>) {
+        let mut text = self.draft.read(cx).value().to_string();
+        let mut attachments = std::mem::take(&mut self.attachments);
+        if join && let Some((saved, mut kept)) = self.drafts.remove(&key) {
+            text = [saved, text]
+                .into_iter()
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            kept.append(&mut attachments);
+            attachments = kept;
+        }
+        self.drafts.insert(key, (text, attachments));
     }
     /// The open found the picked session's owner.
     pub fn parked_owner(&mut self, key: SessionKey) {
@@ -146,14 +168,20 @@ impl Composer {
             })
     }
     /// The picked session's open didn't land: what was typed stays its draft, and the bound session comes back.
+    /// The session keeps its owner, which only an open that lands names again, so its settings come back.
     pub fn unpark(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.parked.is_some() {
-            self.set_target(
-                self.session_key.clone(),
-                self.expected_source.clone(),
-                window,
-                cx,
-            );
+        if self.parked.is_none() {
+            return;
+        }
+        let owner = self.owner.clone();
+        self.set_target(
+            self.session_key.clone(),
+            self.expected_source.clone(),
+            window,
+            cx,
+        );
+        if let Some((agent, machine, route)) = owner {
+            self.set_owner(Some(agent), machine, route, cx);
         }
     }
     /// Not an error of this composer's: the pane owning the session decides what to say and reopens it.

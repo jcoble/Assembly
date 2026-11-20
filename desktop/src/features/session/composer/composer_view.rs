@@ -498,6 +498,10 @@ mod target;
 mod tests;
 
 #[cfg(test)]
+#[path = "composer_park_tests.rs"]
+mod park_tests;
+
+#[cfg(test)]
 #[path = "live_config_tests.rs"]
 mod live_config_tests;
 

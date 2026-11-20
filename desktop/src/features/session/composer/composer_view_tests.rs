@@ -38,7 +38,7 @@ pub(super) fn open(
     (composer, client, (events, subscription), cx)
 }
 
-fn type_and_send(composer: &Entity<Composer>, text: &str, cx: &mut VisualTestContext) {
+pub(super) fn type_and_send(composer: &Entity<Composer>, text: &str, cx: &mut VisualTestContext) {
     composer.update_in(cx, |composer, window, cx| {
         composer.draft.update(cx, |draft, cx| {
             draft.set_value(text.to_string(), window, cx)
@@ -248,127 +248,6 @@ fn each_session_keeps_its_unsent_draft(cx: &mut TestAppContext) {
     });
     set("s2", &composer, cx);
     assert_eq!(draft(&composer, cx), "");
-    set("s1", &composer, cx);
-    assert_eq!(draft(&composer, cx), "for one");
-}
-
-fn owned(id: &str) -> crate::core::engine::SessionKey {
-    crate::core::engine::SessionKey {
-        machine: "owner".into(),
-        id: id.into(),
-    }
-}
-
-fn type_in(composer: &Entity<Composer>, text: &str, cx: &mut VisualTestContext) {
-    composer.update_in(cx, |composer, window, cx| {
-        composer.draft.update(cx, |draft, cx| {
-            draft.set_value(text.to_string(), window, cx)
-        })
-    });
-}
-
-#[gpui::test]
-fn text_typed_while_a_picked_session_opens_is_its_draft_and_never_sends_to_the_one_left(
-    cx: &mut TestAppContext,
-) {
-    let (composer, client, _, cx) = open(cx);
-    composer.update_in(cx, |composer, window, cx| {
-        composer.set_session(Some("s1".into()), window, cx)
-    });
-    type_in(&composer, "for one", cx);
-    composer.update_in(cx, |composer, window, cx| {
-        composer.park("s2".into(), Some(owned("s2")), window, cx)
-    });
-    assert_eq!(
-        draft(&composer, cx),
-        "",
-        "the picked session's draft is on screen at once"
-    );
-    type_and_send(&composer, "for two", cx);
-    assert!(
-        client.calls().is_empty(),
-        "nothing sends before the open lands"
-    );
-    assert_eq!(
-        draft(&composer, cx),
-        "for two",
-        "and the press keeps the text"
-    );
-    composer.update_in(cx, |composer, window, cx| {
-        composer.set_session(Some("s2".into()), window, cx)
-    });
-    assert_eq!(
-        draft(&composer, cx),
-        "for two",
-        "the open lands on what was typed"
-    );
-    composer.update_in(cx, |composer, window, cx| {
-        composer.set_session(Some("s1".into()), window, cx)
-    });
-    assert_eq!(
-        draft(&composer, cx),
-        "for one",
-        "the session left keeps only its own"
-    );
-}
-
-#[gpui::test]
-fn an_open_that_does_not_land_gives_the_session_on_screen_its_draft_back(cx: &mut TestAppContext) {
-    let (composer, client, _, cx) = open(cx);
-    composer.update_in(cx, |composer, window, cx| {
-        composer.set_session(Some("s1".into()), window, cx)
-    });
-    type_in(&composer, "for one", cx);
-    composer.update_in(cx, |composer, window, cx| {
-        composer.park("s2".into(), Some(owned("s2")), window, cx)
-    });
-    type_in(&composer, "for two", cx);
-    composer.update_in(cx, |composer, window, cx| composer.unpark(window, cx));
-    assert_eq!(draft(&composer, cx), "for one");
-    client.queue_owner_accepted();
-    composer.update_in(cx, |composer, window, cx| composer.send(window, cx));
-    cx.run_until_parked();
-    let calls = client.calls();
-    assert_eq!(calls.len(), 1, "the session on screen sends again");
-    assert_eq!(
-        (&calls[0].1["session"], &calls[0].1["text"]),
-        (&json!("s1"), &json!("for one"))
-    );
-    composer.update_in(cx, |composer, window, cx| {
-        composer.set_session(Some("s2".into()), window, cx)
-    });
-    assert_eq!(
-        draft(&composer, cx),
-        "for two",
-        "what was typed for the pick stays its draft"
-    );
-}
-
-#[gpui::test]
-fn a_rail_pick_names_only_the_session_and_still_shows_and_keeps_its_draft(cx: &mut TestAppContext) {
-    let (composer, client, _, cx) = open(cx);
-    let set = |session: &str, composer: &Entity<Composer>, cx: &mut VisualTestContext| {
-        composer.update_in(cx, |composer, window, cx| {
-            composer.set_session(Some(session.into()), window, cx)
-        });
-    };
-    set("s2", &composer, cx);
-    type_in(&composer, "for two", cx);
-    set("s1", &composer, cx);
-    type_in(&composer, "for one", cx);
-    composer.update_in(cx, |composer, window, cx| {
-        composer.park("s2".into(), None, window, cx)
-    });
-    assert_eq!(
-        draft(&composer, cx),
-        "for two",
-        "found by the session alone"
-    );
-    type_and_send(&composer, "for two, more", cx);
-    assert!(client.calls().is_empty());
-    composer.update(cx, |composer, _| composer.parked_owner(owned("s2")));
-    set("s2", &composer, cx);
-    assert_eq!(draft(&composer, cx), "for two, more");
     set("s1", &composer, cx);
     assert_eq!(draft(&composer, cx), "for one");
 }
