@@ -303,8 +303,9 @@ impl SessionPane {
         // What is typed from the pick on belongs to the picked session, even before its rows come.
         if let Some(request) = request.as_ref() {
             let key = request.key.clone();
-            self.composer
-                .update(cx, |composer, cx| composer.park(key, window, cx));
+            self.composer.update(cx, |composer, cx| {
+                composer.park(key.id.clone(), Some(key), window, cx)
+            });
         }
         let classify_online = request
             .as_ref()

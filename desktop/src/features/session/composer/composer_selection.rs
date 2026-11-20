@@ -3,6 +3,11 @@ use super::Composer;
 use crate::core::{engine::SessionKey, socket::row_source::ExpectedRowSource};
 use crate::features::session::composer::attachment::AttachmentState;
 use gpui_kit::{Context, Window};
+/// The session picked while its open is still on the way; its owner is known once the open has found it.
+pub(super) struct Parked {
+    id: String,
+    key: Option<SessionKey>,
+}
 impl Composer {
     pub fn set_target(
         &mut self,
@@ -29,7 +34,11 @@ impl Composer {
         }
         self.invalidate_source(cx);
         // A parked draft was typed for the picked session, whose own draft the old one's was already put aside for.
-        if let Some(left) = self.parked.take().or_else(|| self.session_key.take()) {
+        let left = match self.parked.take() {
+            Some(parked) => Some(self.parked_key(parked, key.as_ref())),
+            None => self.session_key.take(),
+        };
+        if let Some(left) = left {
             let text = self.draft.read(cx).value().to_string();
             self.drafts
                 .insert(left, (text, std::mem::take(&mut self.attachments)));
@@ -77,30 +86,64 @@ impl Composer {
     }
     /// Another session was picked and its open is on the way: what is typed from now on is that session's draft, and
     /// nothing sends until the open lands (`set_target`). Picking the session still bound brings its own draft back.
-    pub fn park(&mut self, key: SessionKey, window: &mut Window, cx: &mut Context<Self>) {
+    /// A rail pick names only the session; its owner comes when the open finds it (`parked_owner`).
+    pub fn park(
+        &mut self,
+        id: String,
+        key: Option<SessionKey>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(bound) = self.session_key.clone() else {
             return;
         };
-        if self.parked.as_ref().unwrap_or(&bound) == &key {
+        if self.parked.as_ref().map_or(&bound.id, |parked| &parked.id) == &id {
+            if let Some(key) = key {
+                self.parked_owner(key);
+            }
             return;
         }
-        if key == bound {
+        if id == bound.id {
             self.unpark(window, cx);
             return;
         }
-        if self.parked.is_none() {
-            self.invalidate_source(cx);
-        }
-        let left = self.parked.replace(key.clone()).unwrap_or(bound);
+        let left = match self.parked.take() {
+            Some(parked) => self.parked_key(parked, None),
+            None => {
+                self.invalidate_source(cx);
+                bound
+            }
+        };
         let text = self.draft.read(cx).value().to_string();
         self.drafts
             .insert(left, (text, std::mem::take(&mut self.attachments)));
-        let (text, attachments) = self.drafts.remove(&key).unwrap_or_default();
+        let key = key.or_else(|| self.drafts.keys().find(|key| key.id == id).cloned());
+        let (text, attachments) = key
+            .as_ref()
+            .and_then(|key| self.drafts.remove(key))
+            .unwrap_or_default();
+        self.parked = Some(Parked { id, key });
         self.draft
             .update(cx, |draft, cx| draft.set_value(text, window, cx));
         self.attachments = attachments;
         self.slash_selected = None;
         cx.notify();
+    }
+    /// The open found the picked session's owner.
+    pub fn parked_owner(&mut self, key: SessionKey) {
+        if let Some(parked) = self.parked.as_mut().filter(|parked| parked.id == key.id) {
+            parked.key = Some(key);
+        }
+    }
+    /// Where a parked draft is kept: under its session's owner, else the one the open lands on, else the bound one's.
+    pub(super) fn parked_key(&self, parked: Parked, landing: Option<&SessionKey>) -> SessionKey {
+        parked
+            .key
+            .or_else(|| landing.filter(|key| key.id == parked.id).cloned())
+            .unwrap_or_else(|| SessionKey {
+                machine: self.machine.clone().unwrap_or_default(),
+                id: parked.id,
+            })
     }
     /// The picked session's open didn't land: what was typed stays its draft, and the bound session comes back.
     pub fn unpark(&mut self, window: &mut Window, cx: &mut Context<Self>) {

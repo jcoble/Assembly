@@ -277,7 +277,7 @@ fn text_typed_while_a_picked_session_opens_is_its_draft_and_never_sends_to_the_o
     });
     type_in(&composer, "for one", cx);
     composer.update_in(cx, |composer, window, cx| {
-        composer.park(owned("s2"), window, cx)
+        composer.park("s2".into(), Some(owned("s2")), window, cx)
     });
     assert_eq!(
         draft(&composer, cx),
@@ -320,7 +320,7 @@ fn an_open_that_does_not_land_gives_the_session_on_screen_its_draft_back(cx: &mu
     });
     type_in(&composer, "for one", cx);
     composer.update_in(cx, |composer, window, cx| {
-        composer.park(owned("s2"), window, cx)
+        composer.park("s2".into(), Some(owned("s2")), window, cx)
     });
     type_in(&composer, "for two", cx);
     composer.update_in(cx, |composer, window, cx| composer.unpark(window, cx));
@@ -342,6 +342,35 @@ fn an_open_that_does_not_land_gives_the_session_on_screen_its_draft_back(cx: &mu
         "for two",
         "what was typed for the pick stays its draft"
     );
+}
+
+#[gpui::test]
+fn a_rail_pick_names_only_the_session_and_still_shows_and_keeps_its_draft(cx: &mut TestAppContext) {
+    let (composer, client, _, cx) = open(cx);
+    let set = |session: &str, composer: &Entity<Composer>, cx: &mut VisualTestContext| {
+        composer.update_in(cx, |composer, window, cx| {
+            composer.set_session(Some(session.into()), window, cx)
+        });
+    };
+    set("s2", &composer, cx);
+    type_in(&composer, "for two", cx);
+    set("s1", &composer, cx);
+    type_in(&composer, "for one", cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.park("s2".into(), None, window, cx)
+    });
+    assert_eq!(
+        draft(&composer, cx),
+        "for two",
+        "found by the session alone"
+    );
+    type_and_send(&composer, "for two, more", cx);
+    assert!(client.calls().is_empty());
+    composer.update(cx, |composer, _| composer.parked_owner(owned("s2")));
+    set("s2", &composer, cx);
+    assert_eq!(draft(&composer, cx), "for two, more");
+    set("s1", &composer, cx);
+    assert_eq!(draft(&composer, cx), "for one");
 }
 
 // Pins: g0-session#22

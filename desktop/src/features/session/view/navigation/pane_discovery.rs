@@ -54,6 +54,10 @@ impl SessionPane {
         };
         self.open_serial = serial;
         self.install_pending(None, request_id, cut, serial, window, cx);
+        // A rail pick: what is typed from now on belongs to the picked session, before the open has found its owner.
+        self.composer.update(cx, |composer, cx| {
+            composer.park(session.clone(), None, window, cx)
+        });
         let call = self
             .client
             .call("sessions", "resolve_source", args, None, cx);
@@ -84,6 +88,8 @@ impl SessionPane {
                     request_id: pending.request_id.clone(),
                     target,
                 };
+                pane.composer
+                    .update(cx, |composer, _| composer.parked_owner(request.key.clone()));
                 let pending = pane
                     .pending_open
                     .as_mut()

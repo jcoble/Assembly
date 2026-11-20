@@ -108,7 +108,7 @@ pub struct Composer {
     machine: Option<String>,
     failed_drafts: HashMap<crate::core::engine::SessionKey, (String, Vec<Attachment>)>,
     /// The session picked while its open is still on the way: the draft on screen is its, and nothing sends.
-    parked: Option<crate::core::engine::SessionKey>,
+    parked: Option<selection::Parked>,
     delivered: HashMap<crate::core::engine::SessionKey, std::collections::HashSet<String>>,
     /// How many sends this composer has named, for the next clientId.
     named: u64,
