@@ -333,7 +333,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                 });
             // After the engine schema opens and before any remote connects: forward copies an older install saved
             // become saved copies still downloading, so the first connection checks them.
-            var adopted = store.AdoptRemoteCopies();
+            var adopted = store.Copies.AdoptRemoteCopies();
             if (adopted > 0) log.WriteLine($"adopted {adopted} remote session copy(ies) to check");
             var registry = sessions!;
             helperCards.Start(registry.Helpers.Row);

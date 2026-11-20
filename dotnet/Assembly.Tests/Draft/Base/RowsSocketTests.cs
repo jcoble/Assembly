@@ -276,6 +276,30 @@ public sealed class RowsSocketTests : IAsyncLifetime
         Assert.Equal(Enumerable.Range(1, RowsFeature.PageLimit).Select(n => (long)n), rows.Select(row => row.PrevSeq!.Value));
     }
 
+    // TSK-1692: a download's reads are bulk calls, refused on the window's socket.
+    [Fact]
+    public async Task The_new_reads_are_on_the_bulk_socket()
+    {
+        Commit("s", 3);
+        using var bulk = await OpenBulkAsync();
+        await SendAsync(bulk, """{"t":"call","id":1,"feature":"rows","method":"before","args":{"session":"s","items":100}}""");
+        using (var chunk = JsonDocument.Parse(await ReadAsync(bulk)))
+        {
+            var result = chunk.RootElement.GetProperty("result");
+            Assert.Equal([3L, 2, 1], result.GetProperty("rows").EnumerateArray().Select(row => row.GetProperty("seq").GetInt64()));
+            Assert.Equal(3, result.GetProperty("facts").GetProperty("head").GetInt64());
+        }
+        await SendAsync(bulk, """{"t":"call","id":2,"feature":"rows","method":"heads","args":{"sessions":["s"]}}""");
+        using (var heads = JsonDocument.Parse(await ReadAsync(bulk)))
+            Assert.Equal(3, heads.RootElement.GetProperty("result").GetProperty("sessions").GetProperty("s").GetProperty("count").GetInt64());
+
+        using var socket = await OpenAsync();
+        await SendAsync(socket, """{"t":"call","id":1,"feature":"rows","method":"before","args":{"session":"s"}}""");
+        Assert.Contains("\"not_found\"", await ReadAsync(socket));
+        await SendAsync(socket, """{"t":"call","id":2,"feature":"rows","method":"heads","args":{"sessions":["s"]}}""");
+        Assert.Contains("\"not_found\"", await ReadAsync(socket));
+    }
+
     // The window's socket dropping ends its rows sub like an unsub, and the session's last watcher going is told.
     [Fact]
     public async Task A_dropped_socket_s_rows_sub_leaves_its_session_unwatched()

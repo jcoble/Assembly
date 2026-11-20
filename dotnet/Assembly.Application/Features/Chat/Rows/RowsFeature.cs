@@ -13,7 +13,7 @@ namespace Assembly.Application.Features.Chat.Rows;
 /// resume, and <c>rows/page</c> for the history above it. A resume catches up at most a page; one further behind, or a
 /// first open, starts from the session's last seq, and the page call loads the history before it.
 /// </summary>
-internal sealed class RowsFeature : IFeature
+internal sealed partial class RowsFeature : IFeature
 {
     public const string Topic = "rows";
 
@@ -60,6 +60,7 @@ internal sealed class RowsFeature : IFeature
 
     public void Register(ICallRegistry calls)
     {
+        RegisterCopyReads(calls);
         // Under the Topics lock, so a row saved meanwhile is in the catch-up or published after it (5.7). It reads the
         // store, never the hub, whose lock is taken before the Topics one when it publishes.
         Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state = (session, after, call) =>

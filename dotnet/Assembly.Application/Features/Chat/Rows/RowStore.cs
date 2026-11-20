@@ -3,6 +3,7 @@ using System.Text;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Chat.Rows.Context;
+using Assembly.Application.Features.Chat.Rows.Copies;
 using Assembly.Application.Features.Chat.Rows.Markdown;
 using Assembly.Domain.Markdown;
 using Assembly.Domain.Rows;
@@ -29,7 +30,15 @@ public sealed partial class RowStore
     {
         _db = db;
         _writer = writer;
+        Copies = new CopyRecords(db, writer);
+        History = new HistoryReads(db);
     }
+
+    /// <summary>Which remote sessions' rows here are saved copies, and of which machine (TSK-1692).</summary>
+    public CopyRecords Copies { get; }
+
+    /// <summary>The reads another machine's saved copy downloads from (TSK-1692).</summary>
+    public HistoryReads History { get; }
 
     public static RowStore Open(IAppDatabase db)
     {
@@ -459,12 +468,12 @@ public sealed partial class RowStore
             reader => reader.Text(0), cancellationToken, new SqlArg("$session", sessionId), new SqlArg("$limit", limit),
             new SqlArg("$tail", tail));
 
-    private static long NextSeq(IWriteScope scope, string sessionId) =>
+    internal static long NextSeq(IWriteScope scope, string sessionId) =>
         scope.QueryFirst("SELECT next_seq FROM sessions WHERE session_id = $session;", row => row.Long(0),
             new SqlArg("$session", sessionId));
 
     /// <summary>A message row is the full form of its deltas, so they go once it's saved.</summary>
-    private static void DeleteDeltasOfFinished(IWriteScope scope, string sessionId, string? itemId, string kind)
+    internal static void DeleteDeltasOfFinished(IWriteScope scope, string sessionId, string? itemId, string kind)
     {
         if (kind == RowKind.Message)
             scope.Execute("DELETE FROM rows WHERE session_id = $session AND item_id = $item AND kind = 'delta';", new SqlArg("$session", sessionId), new SqlArg("$item", itemId));
@@ -493,7 +502,7 @@ public sealed partial class RowStore
     private static JsonElement WholeDelta(string text) =>
         JsonSerializer.SerializeToElement(new DeltaPayload(0, SafeMarkdown.Parse(text), text), RowJsonContext.Rows.DeltaPayload);
 
-    private static StoredRow ReadRow(IRow reader)
+    internal static StoredRow ReadRow(IRow reader)
     {
         using var payload = JsonDocument.Parse(reader.Text(5));
         return new StoredRow(reader.Text(0), reader.Long(1), Text(reader, 2), Text(reader, 3), reader.Text(4),

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Features.Chat.Rows.Copies;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Tests.Engine;
 
@@ -36,14 +37,14 @@ public sealed class RemoteCopyStoreTests : IDisposable
         _f.SeedSession("local");
         Forward("local", 2);
 
-        Assert.Equal(2, _rows.AdoptRemoteCopies());
+        Assert.Equal(2, _rows.Copies.AdoptRemoteCopies());
 
-        Assert.Equal(new RemoteCopy("mirrored", Box, false, null), _rows.RemoteCopyOf("mirrored"));
-        Assert.Equal(new RemoteCopy("facade", Box, false, null), _rows.RemoteCopyOf("facade"));
-        Assert.Null(_rows.RemoteCopyOf("local"));
+        Assert.Equal(new RemoteCopy("mirrored", Box, false, null), _rows.Copies.RemoteCopyOf("mirrored"));
+        Assert.Equal(new RemoteCopy("facade", Box, false, null), _rows.Copies.RemoteCopyOf("facade"));
+        Assert.Null(_rows.Copies.RemoteCopyOf("local"));
         Assert.Equal(3, _rows.LastSeq("mirrored"));
-        Assert.Equal(1, _rows.FirstSeq("mirrored"));
-        Assert.Equal(0, _rows.AdoptRemoteCopies());
+        Assert.Equal(1, _rows.Copies.FirstSeq("mirrored"));
+        Assert.Equal(0, _rows.Copies.AdoptRemoteCopies());
     }
 
     [Fact]
@@ -55,9 +56,9 @@ public sealed class RemoteCopyStoreTests : IDisposable
         _f.SeedSession("contradicted"); // engine_session says this machine owns it
         MirrorRow(Box, "empty", generation: 1);
 
-        Assert.Equal(0, _rows.AdoptRemoteCopies());
-        Assert.Null(_rows.RemoteCopyOf("contradicted"));
-        Assert.Null(_rows.RemoteCopyOf("empty"));
+        Assert.Equal(0, _rows.Copies.AdoptRemoteCopies());
+        Assert.Null(_rows.Copies.RemoteCopyOf("contradicted"));
+        Assert.Null(_rows.Copies.RemoteCopyOf("empty"));
     }
 
     // Pins: spec test 13 (store half): the copy is keyed by the machine id alone.
@@ -67,15 +68,15 @@ public sealed class RemoteCopyStoreTests : IDisposable
         Mirror(Box, "workbox-test", generation: 1);
         MirrorRow(Box, "s1", generation: 1);
         Forward("s1", 2);
-        _rows.AdoptRemoteCopies();
+        _rows.Copies.AdoptRemoteCopies();
 
         _f.Db.Writer.Write("test.snapshot", scope => scope.Execute("""
             UPDATE engine_mirror SET generation=2 WHERE machine=$m;
             UPDATE engine_mirror_row SET generation=2 WHERE machine=$m;
             """, new SqlArg("$m", Box)));
 
-        Assert.Equal(new RemoteCopy("s1", Box, false, null), _rows.RemoteCopyOf("s1"));
-        Assert.Equal(["s1"], _rows.RemoteCopiesOn(Box).Select(copy => copy.Session));
+        Assert.Equal(new RemoteCopy("s1", Box, false, null), _rows.Copies.RemoteCopyOf("s1"));
+        Assert.Equal(["s1"], _rows.Copies.RemoteCopiesOn(Box).Select(copy => copy.Session));
     }
 
     [Fact]
@@ -84,14 +85,14 @@ public sealed class RemoteCopyStoreTests : IDisposable
         Mirror(Box, "workbox-test", generation: 1);
         Sessions().Add("s1", "codex", "/test", "workbox-test");
         Forward("s1", 3);
-        _rows.AdoptRemoteCopies();
+        _rows.Copies.AdoptRemoteCopies();
         _f.Db.Writer.Write("test.details", scope => scope.Execute("""
             INSERT INTO tool_details(session_id,item_id,output) VALUES('s1','t1','out');
             INSERT INTO tool_terminal_refs(session_id,item_id,acp_session_id,terminal_id,ordinal,current) VALUES('s1','t1','a','term',0,1);
             INSERT INTO acp_terminal_details(session_id,acp_session_id,terminal_id,output) VALUES('s1','a','term',x'00');
             """));
 
-        _f.Db.Writer.Write("test.drop", scope => { _rows.DropCopy(scope, "s1"); return 0; });
+        _f.Db.Writer.Write("test.drop", scope => { CopyRecords.DropCopy(scope, "s1"); return 0; });
 
         foreach (var table in new[] { "rows", "tool_details", "tool_terminal_refs", "acp_terminal_details", "sessions", "remote_copy" })
             Assert.Equal(0, _f.Number($"SELECT COUNT(*) FROM {table} WHERE session_id='s1'"));
@@ -104,11 +105,11 @@ public sealed class RemoteCopyStoreTests : IDisposable
         Mirror(Box, "workbox-test", generation: 1);
         MirrorRow(Box, "s1", generation: 1);
         Forward("s1", 2);
-        _rows.AdoptRemoteCopies();
+        _rows.Copies.AdoptRemoteCopies();
 
-        _f.Db.Writer.Write("test.mark", scope => { _rows.MarkDownloading(scope, "s1", 9); return 0; });
+        _f.Db.Writer.Write("test.mark", scope => { CopyRecords.MarkDownloading(scope, "s1", 9); return 0; });
 
-        Assert.Equal(new RemoteCopy("s1", Box, false, 9), _rows.RemoteCopyOf("s1"));
+        Assert.Equal(new RemoteCopy("s1", Box, false, 9), _rows.Copies.RemoteCopyOf("s1"));
     }
 
     private SessionStore Sessions() => SessionStore.Open(_f.Db, TimeProvider.System, "checkouts");
