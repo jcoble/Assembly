@@ -121,10 +121,12 @@ async function once(name: string, agent: Agent, machine: Machine, out: string, b
       try { writeFileSync(join(out, 'app-log.txt'), readFileSync(bench.appLog, 'utf8').split('\n').slice(-31).join('\n')); } catch {}
     }
   } finally {
-    // Never leave the agent working: stop a run still going and wait for its end before closing anything.
+    // Never leave the agent working: stop every run of this session that hasn't ended, and wait for its end before
+    // closing anything. A run is known from its user row too, so a message whose turn is still starting (or waiting
+    // for the current one, as a steer that missed its turn does) is stopped as well.
     const rows = feed?.all() ?? [];
     const ended = (run: string) => rows.some(row => row.kind === 'turn' && row.runId === run && row.payload?.state !== 'started');
-    const running = [...new Set(rows.filter(row => row.kind === 'turn' && row.payload?.state === 'started').map(row => row.runId!))].filter(run => !ended(run));
+    const running = [...new Set(rows.filter(row => (row.kind === 'turn' || row.kind === 'user') && row.runId).map(row => row.runId!))].filter(run => !ended(run));
     for (const run of running) {
       try {
         await socket.call('send', 'stop', { runId: run, session });
