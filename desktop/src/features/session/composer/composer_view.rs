@@ -107,8 +107,12 @@ pub struct Composer {
     message_subscriptions: HashMap<String, Subscription>,
     machine: Option<String>,
     failed_drafts: HashMap<crate::core::engine::SessionKey, (String, Vec<Attachment>)>,
-    /// The sessions whose saved draft is in `drafts` or the box; only they save (composer_draft_saves.rs).
-    saved_drafts: std::collections::HashSet<crate::core::engine::SessionKey>,
+    /// The sessions whose saved draft is in `drafts` or the box, with the source each saves through; only they save
+    /// (composer_draft_saves.rs).
+    saved_drafts: HashMap<
+        crate::core::engine::SessionKey,
+        crate::core::socket::row_source::ExpectedRowSource,
+    >,
     draft_saves: HashMap<crate::core::engine::SessionKey, draft_saves::DraftSave>,
     saves_done: Vec<futures_channel::oneshot::Sender<()>>,
     /// The session picked while its open is still on the way: the draft on screen is its, and nothing sends.
@@ -241,7 +245,7 @@ impl Composer {
             message_subscriptions: HashMap::new(),
             machine: None,
             failed_drafts: HashMap::new(),
-            saved_drafts: Default::default(),
+            saved_drafts: HashMap::new(),
             draft_saves: HashMap::new(),
             saves_done: Vec::new(),
             parked: None,

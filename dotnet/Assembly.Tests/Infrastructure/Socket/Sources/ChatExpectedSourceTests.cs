@@ -7,6 +7,7 @@ using Assembly.Application.Common.Engine;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Application.Features.Chat.Sessions.Drafts;
 using Assembly.Domain.Events;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Chat;
@@ -19,7 +20,7 @@ using Assembly.Tests.Infrastructure.Remote;
 
 namespace Assembly.Tests.Infrastructure.Socket;
 
-public sealed class ChatExpectedSourceTests
+public sealed partial class ChatExpectedSourceTests
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
@@ -166,7 +167,7 @@ public sealed class ChatExpectedSourceTests
         Func<IEngineDoor, IEngineDoor>? decorate = null)
     {
         var installed = Build(host, connections, decorate);
-        Register(host, calls, installed); return installed;
+        Register(host, calls, installed, connections); return installed;
     }
     private static Installed Build(TwoHosts.Host host, RemoteConnections? connections = null, Func<IEngineDoor, IEngineDoor>? decorate = null)
     {
@@ -179,9 +180,11 @@ public sealed class ChatExpectedSourceTests
         if (decorate is not null) door = decorate(door);
         return new(machine, door, machines, sources);
     }
-    private static void Register(TwoHosts.Host host, ICallRegistry calls, Installed installed)
+    private static void Register(TwoHosts.Host host, ICallRegistry calls, Installed installed, RemoteConnections? connections = null)
     {
         new SendFeature(host.Sessions, installed.Machines, host.NeedHub, installed.Door).Register(calls);
+        new DraftsFeature(installed.Door).Register(calls);
+        new SessionOpenCalls(host.Fixture.Db, host.Runtime, host.Sessions, installed.Machines, connections).Register(calls);
         new ConfigFeature(host.Sessions, installed.Machines, installed.Door).Register(calls);
         new RowsFeature(host.NeedHub, RowStore.Open(host.Fixture.Db), host.Sessions, installed.Machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), installed.Sources).Register(calls);
     }
