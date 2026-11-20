@@ -11,6 +11,30 @@ pub(super) struct Parked {
     /// same id can be another owner's; what is typed then joins the owner's draft once the open lands.
     loaded: bool,
 }
+impl Parked {
+    /// The session it was picked for, once its owner is known.
+    pub(super) fn key(&self) -> Option<SessionKey> {
+        self.key.clone()
+    }
+    /// `key`'s saved draft came with its open: what the box shows for it was typed in this run, so it joins that.
+    pub(super) fn saved_arrived(&mut self, key: &SessionKey) {
+        if self
+            .key
+            .as_ref()
+            .map_or(self.id == key.id, |own| own == key)
+        {
+            self.loaded = false;
+        }
+    }
+}
+/// `later` after `earlier`, a line apart when both have text.
+pub(super) fn joined(earlier: String, later: String) -> String {
+    [earlier, later]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 impl Composer {
     pub fn set_target(
         &mut self,
@@ -149,15 +173,12 @@ impl Composer {
         let mut text = self.draft.read(cx).value().to_string();
         let mut attachments = std::mem::take(&mut self.attachments);
         if join && let Some((saved, mut kept)) = self.drafts.remove(&key) {
-            text = [saved, text]
-                .into_iter()
-                .filter(|part| !part.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
+            text = joined(saved, text);
             kept.append(&mut attachments);
             attachments = kept;
         }
-        self.drafts.insert(key, (text, attachments));
+        self.drafts.insert(key.clone(), (text, attachments));
+        self.save_kept(&key, cx);
     }
     /// The open found the picked session's owner.
     pub fn parked_owner(&mut self, key: SessionKey) {

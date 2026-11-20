@@ -406,6 +406,11 @@ impl SessionPane {
         (at.elapsed() < FADE_FOR).then(|| key.clone())
     }
 
+    /// The chat's composer, for the window's close to wait on its draft saves.
+    pub fn composer_entity(&self) -> Entity<Composer> {
+        self.composer.clone()
+    }
+
     /// The timeline's entries, for tests.
     #[cfg(test)]
     pub fn entries(&self, cx: &App) -> Vec<Entry> {

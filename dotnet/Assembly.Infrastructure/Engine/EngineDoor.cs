@@ -88,6 +88,8 @@ public sealed partial class EngineDoor(EngineRuntime runtime, SessionStore sessi
                 time.GetUtcNow().ToUnixTimeMilliseconds());
             var result = runtime.Commands.ApplyOwnerPrompt(scope, context, prepared);
             if (!result.Applied) throw new CallFailed(result.Error == "command_id_conflict" ? "client_id_conflict" : result.Error ?? "owner prompt refused");
+            // The sent draft goes with the accept, as the old app's send cleared it.
+            Assembly.Application.Features.Chat.Sessions.Drafts.DraftStore.Clear(scope, request.Session);
             return new(request.Session, id, request.ClientId, "queued", result.Version, result.Seq, result.Epoch, null);
         };
     }

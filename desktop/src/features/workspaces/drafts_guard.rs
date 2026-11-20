@@ -4,6 +4,7 @@
 use crate::core::state::workspace_panes::{WorkspaceKey, WorkspacePanes};
 use crate::core::ui::center_panes::CenterPanes;
 use crate::features::files::document_store::{DocumentKey, DocumentStore};
+use crate::features::session::view::session_pane::SessionPane;
 use futures_channel::oneshot;
 use gpui_kit::*;
 use std::cell::{Cell, RefCell};
@@ -62,17 +63,25 @@ pub fn guard_close(window: &mut Window, cx: &mut App) {
     let asking = Rc::new(Cell::new(false));
     let held: Rc<RefCell<Option<Task<()>>>> = Rc::default();
     window.on_window_should_close(cx, move |window, cx| {
-        if Drafts::Unowned.keys(cx).is_empty() {
+        let saving = chat_saves(cx);
+        if saving.is_none() && Drafts::Unowned.keys(cx).is_empty() {
             return true;
         }
         if asking.replace(true) {
             return false;
         }
-        let guard = run(Drafts::Unowned, window, cx);
         let (handle, asking) = (window.window_handle(), asking.clone());
         // Only a finished task is replaced here, since a new one starts only once the last has answered.
         *held.borrow_mut() = Some(cx.spawn(async move |cx| {
-            let safe = guard.await;
+            // The chat's draft saves finish first, as the old app waited for its save on leaving the box.
+            if let Some(saved) = saving {
+                let _ = saved.await;
+            }
+            let guard = handle.update(cx, |_, window, cx| run(Drafts::Unowned, window, cx));
+            let safe = match guard {
+                Ok(guard) => guard.await,
+                Err(_) => false,
+            };
             asking.set(false);
             if safe {
                 let _ = handle.update(cx, |_, window, _| window.remove_window());
@@ -80,6 +89,13 @@ pub fn guard_close(window: &mut Window, cx: &mut App) {
         }));
         false
     });
+}
+
+/// Resolves once the chat composer's draft saves have finished; `None` when none is going.
+fn chat_saves(cx: &mut App) -> Option<oneshot::Receiver<()>> {
+    let chat = CenterPanes::find::<SessionPane>("Chat", cx)?;
+    let composer = chat.read(cx).composer_entity();
+    composer.update(cx, |composer, _| composer.saves_finished())
 }
 
 pub fn run(drafts: Drafts, window: &mut Window, cx: &mut App) -> Task<bool> {

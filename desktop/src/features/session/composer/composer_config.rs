@@ -139,6 +139,7 @@ impl Composer {
         let draft = self.draft.read(cx).value();
         self.slash_selected = SlashCommand::query(&draft).map(|_| 0);
         self.slash_scroll.scroll_to_item(0);
+        self.save_shown(cx);
         cx.notify();
     }
 

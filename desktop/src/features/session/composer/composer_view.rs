@@ -107,6 +107,10 @@ pub struct Composer {
     message_subscriptions: HashMap<String, Subscription>,
     machine: Option<String>,
     failed_drafts: HashMap<crate::core::engine::SessionKey, (String, Vec<Attachment>)>,
+    /// The sessions whose saved draft is in `drafts` or the box; only they save (composer_draft_saves.rs).
+    saved_drafts: std::collections::HashSet<crate::core::engine::SessionKey>,
+    draft_saves: HashMap<crate::core::engine::SessionKey, draft_saves::DraftSave>,
+    saves_done: Vec<futures_channel::oneshot::Sender<()>>,
     /// The session picked while its open is still on the way: the draft on screen is its, and nothing sends.
     parked: Option<selection::Parked>,
     delivered: HashMap<crate::core::engine::SessionKey, std::collections::HashSet<String>>,
@@ -237,6 +241,9 @@ impl Composer {
             message_subscriptions: HashMap::new(),
             machine: None,
             failed_drafts: HashMap::new(),
+            saved_drafts: Default::default(),
+            draft_saves: HashMap::new(),
+            saves_done: Vec::new(),
             parked: None,
             delivered: HashMap::new(),
             named: 0,
@@ -515,11 +522,17 @@ mod park_tests;
 #[path = "live_config_tests.rs"]
 mod live_config_tests;
 
+#[path = "composer_draft_saves.rs"]
+mod draft_saves;
 #[cfg(test)]
 #[path = "qualified_tests.rs"]
 mod qualified_tests;
 #[path = "composer_selection.rs"]
 mod selection;
+pub use draft_saves::SavedDraft;
+#[cfg(test)]
+#[path = "tests/draft_saves_tests.rs"]
+mod draft_saves_tests;
 #[path = "composer_send.rs"]
 mod send;
 

@@ -85,6 +85,7 @@ public sealed partial class SessionStore
             bool Missing(string sql) => scope.QueryFirst(sql, row => row.Long(0)) == 0;
             Chat.Schema.RenameOldNames(scope);
             scope.Execute(Schema);
+            scope.Execute(Drafts.DraftStore.Schema);
             if (Missing(HasMachine))
                 scope.Execute("ALTER TABLE session_info ADD COLUMN machine TEXT;");
             if (Missing(HasSessionCost))

@@ -4,6 +4,7 @@ use crate::core::{
     intents::session_open::{SessionOpenRequest, SessionOpenTarget},
     socket::row_source::ExpectedRowSource,
 };
+use crate::features::session::composer::composer_view::SavedDraft;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -20,6 +21,8 @@ pub(crate) struct OpenTarget {
     )]
     pub has_history_rows: bool,
     pub recorded_checkout_root: Option<String>,
+    /// A live local session's saved draft, read with the open; a remote session's answer carries none.
+    pub saved_draft: Option<SavedDraft>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -40,6 +43,8 @@ struct Read {
     checkout_root: Option<String>,
     expected_source: ExpectedRowSource,
     transcript_only: bool,
+    #[serde(default)]
+    draft: Option<SavedDraft>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -162,6 +167,7 @@ pub(crate) fn parse_response(
         read_only: read.read_only,
         has_history_rows: read.has_history_rows,
         recorded_checkout_root: read.checkout_root,
+        saved_draft: read.draft.filter(|_| !read.read_only),
     })
 }
 fn kind(target: &SessionOpenTarget) -> &'static str {
