@@ -214,24 +214,99 @@ public sealed class AcpClientV1Tests
         Assert.Equal(2, replay.Recording.Answers.Count);
     }
 
+    private const string MuseSession = "01a1fb07-ac0e-7643-9237-67d62364b5f2";
+
+    /// <summary>Muse with its session resumed, its model set and the prompt's model error played, as recorded.</summary>
+    private static async Task<(Replay Replay, PromptRun Run)> MuseModelErrorAsync()
+    {
+        var replay = await StartAsync("acp-v1/muse-resume.jsonl");
+        var resume = replay.Client.ResumeSessionAsync(new(MuseSession, "/fixture", []), default);
+        await replay.Recording.PlayToReplyAsync(2);
+        await resume.WaitAsync(Bounded);
+        var model = replay.Client.SetConfigOptionAsync(MuseSession, "model", "muse-spark-1.3", default);
+        await replay.Recording.PlayToReplyAsync(3);
+        await model.WaitAsync(Bounded);
+        var run = replay.Client.PromptAsync(MuseSession, [TextBlock.Of("recorded")], default);
+        await replay.Recording.PlayToReplyAsync(4);
+        return (replay, run);
+    }
+
     [Fact]
     public async Task A_model_error_after_only_a_config_update_leaves_the_prompt_not_inserted()
     {
-        const string session = "01a1fb07-ac0e-7643-9237-67d62364b5f2";
-        await using var replay = await StartAsync("acp-v1/muse-resume.jsonl");
-        var resume = replay.Client.ResumeSessionAsync(new(session, "/fixture", []), default);
-        await replay.Recording.PlayToReplyAsync(2);
-        await resume.WaitAsync(Bounded);
-        var model = replay.Client.SetConfigOptionAsync(session, "model", "muse-spark-1.3", default);
-        await replay.Recording.PlayToReplyAsync(3);
-        await model.WaitAsync(Bounded);
-
-        var run = replay.Client.PromptAsync(session, [TextBlock.Of("recorded")], default);
-        await replay.Recording.PlayToReplyAsync(4);
+        var (replay, run) = await MuseModelErrorAsync();
+        await using var _ = replay;
         var error = await Assert.ThrowsAsync<JsonRpcException>(() => run.Inserted.WaitAsync(Bounded));
         Assert.Equal(JsonRpcException.InternalError, error.Code);
         await Assert.ThrowsAsync<JsonRpcException>(() => run.Ended.WaitAsync(Bounded));
         Assert.Contains(Published(replay.Client), update => update.Kind == "config_option_update");
+    }
+
+    [Fact]
+    public async Task Close_on_an_adapter_without_the_method_does_not_error()
+    {
+        var (replay, run) = await MuseModelErrorAsync();
+        await using var _ = replay;
+        await Assert.ThrowsAsync<JsonRpcException>(() => run.Ended.WaitAsync(Bounded));
+
+        var close = replay.Client.CloseSessionAsync(MuseSession, default);
+        await replay.Recording.PlayToReplyAsync(5);
+        await close.WaitAsync(Bounded);
+    }
+
+    [Fact]
+    public async Task A_resumed_session_runs_a_turn_and_closes()
+    {
+        const string session = FirstSession;
+        await using var replay = await StartAsync("acp-v1/agy-resume.jsonl");
+        var resume = replay.Client.ResumeSessionAsync(new(session, "/fixture", []), default);
+        await replay.Recording.PlayToReplyAsync(2);
+        await resume.WaitAsync(Bounded);
+
+        var result = await PromptAsync(replay, session, 3);
+        Assert.Equal(("end_turn", 15163L - 13117L), (result.StopReason, result.Usage?.InputTokens));
+        Assert.Contains(Published(replay.Client), update => update.Kind == "agent_message_chunk");
+
+        var close = replay.Client.CloseSessionAsync(session, default);
+        await replay.Recording.PlayToReplyAsync(4);
+        await close.WaitAsync(Bounded);
+    }
+
+    [Fact]
+    public async Task Version_1_login_sends_authenticate()
+    {
+        await using var replay = await StartAsync(Antigravity);
+        var login = replay.Client.LoginAsync("oauth-personal", _ => { }, default);
+        var request = await replay.Agent.ReadAsync(AcpMethods.Authenticate);
+        Assert.Equal(AcpMethods.Authenticate, request.GetProperty("method").GetString());
+        Assert.Equal("oauth-personal", request.GetProperty("params").GetProperty("methodId").GetString());
+        // Made-up reply: the recordings were signed in. The spec's authenticate reply is an empty object.
+        await replay.Agent.ReplyAsync(request, "{}");
+        await login.WaitAsync(Bounded);
+    }
+
+    [Fact]
+    public async Task Version_1_logout_is_sent_when_advertised()
+    {
+        await using var replay = await StartAsync(Antigravity);
+        Assert.True(replay.Initialized.CanLogout);
+        var logout = replay.Client.LogoutAsync(default);
+        var request = await replay.Agent.ReadAsync(AcpMethods.Logout);
+        Assert.Equal(AcpMethods.Logout, request.GetProperty("method").GetString());
+        await replay.Agent.ReplyAsync(request, "{}");
+        await logout.WaitAsync(Bounded);
+    }
+
+    [Fact]
+    public async Task Version_1_logout_sends_nothing_when_not_advertised()
+    {
+        await using var replay = await StartAsync("acp-v1/muse-main.jsonl");
+        Assert.False(replay.Initialized.CanLogout);
+        await replay.Client.LogoutAsync(default).WaitAsync(Bounded);
+        // The client's next line must be the recorded session/new, so nothing was sent for the logout.
+        var session = replay.Client.NewSessionAsync(new("/fixture", []), default);
+        await replay.Recording.PlayToReplyAsync(2);
+        await session.WaitAsync(Bounded);
     }
 
     [Theory]

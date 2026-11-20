@@ -21,6 +21,14 @@ public sealed partial class AcpClient
     // Sent but not yet taken, by session. A version 1 agent runs one prompt per session at a time.
     private readonly ConcurrentDictionary<string, UntakenPrompt> _untaken = new();
     private readonly OpenTools _openTools = new();
+    private bool _logoutV1;
+
+    /// <summary>Version 1 has no sign-out method of its own: <c>logout</c> is sent only when the agent advertised it.</summary>
+    private async Task LogoutV1Async(CancellationToken ct)
+    {
+        if (!_logoutV1) return;
+        await RequestAsync(AcpMethods.Logout, new AuthLogoutRequest(), AcpJsonContext.Default.AuthLogoutRequest, AcpJsonContext.Default.AuthResponse, ct);
+    }
 
     private PromptRun PromptV1(string sessionId, IReadOnlyList<ContentBlock> prompt, CancellationToken cancellationToken)
     {

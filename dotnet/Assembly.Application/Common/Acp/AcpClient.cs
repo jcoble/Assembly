@@ -67,8 +67,9 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
             .Deserialize(AcpJsonContext.Default.InitializeResponse)
             ?? throw new JsonRpcException(JsonRpcException.InternalError, $"{AcpMethods.Initialize} returned no result.");
         if (_version != ProtocolShape.Version1 && response.ProtocolVersion != AcpProtocol.Version)
-            throw new JsonRpcException(-32022, $"ACP version {response.ProtocolVersion} is unsupported; Assembly requires version 2.");
+            throw new JsonRpcException(-32022, $"ACP version {response.ProtocolVersion} is unsupported; Assembly accepts versions 1 and 2.");
         _authMethods = response.AuthMethods;
+        _logoutV1 = _version == ProtocolShape.Version1 && response.CanLogout;
         _steering = response.Steering;
         return response;
     }
@@ -103,6 +104,10 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
         {
             await RequestAsync(AcpMethods.SessionClose, new CloseSessionRequest(sessionId),
                 AcpJsonContext.Default.CloseSessionRequest, AcpJsonContext.Default.CloseSessionResponse, cancellationToken);
+        }
+        catch (JsonRpcException error) when (_version == ProtocolShape.Version1 && error.Code == JsonRpcException.MethodNotFound)
+        {
+            // Some version 1 adapters (Muse) have no session/close; the session is closed on our side all the same.
         }
         finally
         {

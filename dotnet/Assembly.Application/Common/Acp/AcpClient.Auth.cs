@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
+using Assembly.Application.Common.Acp.V1;
 
 namespace Assembly.Application.Common.Acp;
 
@@ -46,7 +47,7 @@ public sealed partial class AcpClient
         var attempt = new LoginAttempt(onUrl, consent, ct);
         try
         {
-            var result = await _rpc.RequestAsync(AcpMethods.AuthLogin,
+            var result = await _rpc.RequestAsync(_version == ProtocolShape.Version1 ? AcpMethods.Authenticate : AcpMethods.AuthLogin,
                 JsonSerializer.SerializeToElement(new AuthLoginRequest(methodId), AcpJsonContext.Default.AuthLoginRequest), ct,
                 onRequest: id =>
                 {
@@ -71,6 +72,11 @@ public sealed partial class AcpClient
 
     public async Task LogoutAsync(CancellationToken ct)
     {
+        if (_version == ProtocolShape.Version1)
+        {
+            await LogoutV1Async(ct);
+            return;
+        }
         if (_authMethods.Count == 0) return;
         await RequestAsync(AcpMethods.AuthLogout, new AuthLogoutRequest(), AcpJsonContext.Default.AuthLogoutRequest, AcpJsonContext.Default.AuthResponse, ct);
     }
