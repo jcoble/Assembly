@@ -1,7 +1,7 @@
 //! A local session's unsent draft comes back with its open and is saved as it changes (the old app's drafts).
 
 use gpui::TestAppContext;
-use gpui_kit::{Entity, VisualTestContext};
+use gpui_kit::{AppContext as _, Entity, VisualTestContext};
 use serde_json::{Value, json};
 
 use super::Composer;
@@ -9,6 +9,7 @@ use super::draft_saves::SavedDraft;
 use super::tests::{draft, open};
 use crate::core::engine::SessionKey;
 use crate::features::session::client::fake_client::FakeClient;
+use crate::features::session::client::session_client::CallError;
 
 fn owned(id: &str) -> SessionKey {
     SessionKey {
@@ -142,4 +143,50 @@ fn a_remote_sessions_open_brings_no_saved_draft_and_it_saves_nothing(cx: &mut Te
     land(&composer, "s1", None, cx);
     type_text(&composer, "kept in memory", cx);
     assert!(saves(&client).is_empty());
+}
+
+#[gpui::test]
+fn retrying_a_failed_prompt_keeps_a_different_draft_saved_after_the_retrys_send(
+    cx: &mut TestAppContext,
+) {
+    let (composer, client, _, cx) = open(cx);
+    land(&composer, "s1", saved(""), cx);
+    type_text(&composer, "first try", cx);
+    // The send saves the emptied box first, then the send itself fails.
+    client.queue_answer(Err(CallError::Aborted));
+    client.queue_answer(Err(CallError::Aborted));
+    composer.update_in(cx, |composer, window, cx| composer.send(window, cx));
+    cx.run_until_parked();
+    let client_id = (client.calls().into_iter())
+        .find(|(call, _)| call == "send/send")
+        .and_then(|(_, args)| args["clientId"].as_str().map(str::to_string))
+        .expect("the first send");
+    type_text(&composer, "a different draft", cx);
+    client.queue_owner_accepted();
+    composer.update_in(cx, |composer, window, cx| {
+        composer.retry_pending(&client_id, window, cx)
+    });
+    cx.run_until_parked();
+    let calls = client.calls();
+    let retry = calls.iter().rposition(|(call, _)| call == "send/send");
+    let last_save = calls.iter().rposition(|(call, _)| call == "drafts/set");
+    assert!(
+        last_save > retry,
+        "the kept draft is saved after the retry, whose accept clears the saved draft"
+    );
+    let saved_text = calls[last_save.unwrap()].1["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(saved_text, "a different draft");
+    // A new composer, as after a restart, opening s1 with the copy that was saved.
+    let fresh = client.clone();
+    let reopened =
+        cx.update(|window, cx| cx.new(|cx| Composer::new(std::rc::Rc::new(fresh), window, cx)));
+    land(&reopened, "s1", saved(&saved_text), cx);
+    assert_eq!(
+        draft(&reopened, cx),
+        "a different draft",
+        "and comes back from the saved copy"
+    );
 }

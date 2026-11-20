@@ -90,7 +90,7 @@ impl Composer {
                 }
             })
             .collect();
-        if self.draft.read(cx).value() == typed
+        let resends_the_draft = self.draft.read(cx).value() == typed
             && self
                 .attachments
                 .iter()
@@ -98,8 +98,8 @@ impl Composer {
                     AttachmentState::Saved { path } => Some(path),
                     _ => None,
                 })
-                .eq(pending.request.attachment_ids.iter())
-        {
+                .eq(pending.request.attachment_ids.iter());
+        if resends_the_draft {
             self.draft
                 .update(cx, |draft, cx| draft.set_value("", window, cx));
             attached = std::mem::take(&mut self.attachments);
@@ -113,6 +113,10 @@ impl Composer {
         self.error = None;
         self.retry_ids.remove(&owner_key);
         self.submit(session, pending.request, typed, attached, window, cx);
+        // The retry's accept clears the saved draft; a different draft kept in the box is saved again after it.
+        if !resends_the_draft {
+            self.save_shown(cx);
+        }
     }
 
     pub fn recover_pending(&mut self, cx: &mut Context<Self>) {
