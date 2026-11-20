@@ -9,6 +9,7 @@ use gpui_kit::{Entity, Focusable as _, VisualTestContext};
 use serde_json::json;
 
 use super::SessionPane;
+use super::test_navigation::{NavigationFixture, NavigationHost};
 use crate::core::intents::session_open::SessionOpenTarget;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
@@ -105,4 +106,51 @@ async fn a_historical_open_leaves_the_keys_where_they_were(cx: &mut TestAppConte
         (String::new(), false),
         "a read-only open has no draft to type in"
     );
+}
+
+#[gpui::test]
+async fn text_typed_during_the_first_pick_after_startup_stays_once_the_open_lands(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    cx.update(gpui_kit::init);
+    cx.update(SelectedSession::init);
+    let (host, cx) = cx.add_window_view(|_, _| NavigationHost::default());
+    let mut nav = cx.update(|window, cx| NavigationFixture::new(false, window, cx));
+    nav.operational();
+    host.update(cx, |host, cx| {
+        host.pane = Some(nav.pane.clone());
+        cx.notify();
+    });
+    nav.ready(cx).await;
+    nav.pane.update_in(cx, |pane, window, cx| {
+        window.focus(&pane.focus_handle(cx), cx)
+    });
+    nav.hold_target();
+    nav.pane.update_in(cx, |pane, window, cx| {
+        pane.request_current_route(
+            None,
+            "s2".into(),
+            "pick-1".into(),
+            SessionOpenTarget::Engine,
+            window,
+            cx,
+        )
+    });
+    nav.call_entered("open_target").await;
+    cx.simulate_input("xyz");
+    assert_eq!(
+        draft(&nav.pane, cx),
+        ("xyz".into(), true),
+        "the first pick's draft has the keys while its open is on the way"
+    );
+    nav.control("release_target", json!({}), cx).await;
+    nav.opened("s2", cx).await;
+    assert_eq!(
+        draft(&nav.pane, cx),
+        ("xyz".into(), true),
+        "what was typed during the open is still there, with the keys, once it lands"
+    );
+    cx.simulate_input("ab");
+    assert_eq!(draft(&nav.pane, cx), ("xyzab".into(), true));
 }
