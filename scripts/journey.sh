@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs a journey in the bench's window (scripts/bench.sh up first), once per case: Claude, then Codex, on each machine.
 #   scripts/journey.sh <name> [local|workbox-test|all]     (default all)
-# Each case writes report.md, result.json and video.mp4 (and on a failure fail.png and app-log.txt) under
+# Each case writes report.md, result.json, video.mp4 and app-log.txt (and on a failure fail.png) under
 # $DATA/journeys/<utc>-<name>/<agent>-<machine>/; summary.md has one line per case.
 # A case whose login the bench found failing is BLOCKED: provider without running.
 # Exit codes: 0 every case passed, 1 a case failed, 3 nothing failed but a case was blocked.

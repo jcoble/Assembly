@@ -1,6 +1,6 @@
 // Runs one journey for one case (an agent on a machine) in the bench's window, and writes what a person needs to judge
 // it in a minute: report.md (each step, ok or failed, and for a failure what was expected and what the rows showed),
-// result.json, the case's video, and on a failure a screenshot and the end of the backend log.
+// result.json, the case's video, app-log.txt (the backend log from the case's start) and on a failure a screenshot.
 //   node scripts/journeys/<name>.ts <claude|codex> <local|workbox-test> <output folder>
 // It reads the bench's state (bench.sh up). A provider failure is BLOCKED, never FAIL. Whatever happens, a run this
 // journey started is stopped and its end awaited before the sockets close.
@@ -53,7 +53,7 @@ function report(name: string, result: Result, rows: Row[]): string {
     if (step.seen) lines.push('', '```', step.seen, '```', '');
   }
   lines.push('', '## Rows of the session', '', '```', ...rows.map(describe), '```');
-  if (result.state === 'FAIL') lines.push('', 'Also here: fail.png (the window when it failed; for a failure before the session opened, the window as it was), app-log.txt (the backend log from this case\'s start), video.mp4.');
+  if (result.state === 'FAIL') lines.push('', 'Also here: fail.png (the window when it failed; for a failure before the session opened, the window as it was), app-log.txt, video.mp4.');
   return lines.join('\n') + '\n';
 }
 
@@ -119,13 +119,7 @@ async function once(name: string, agent: Agent, machine: Machine, out: string, b
     const blocked = providerBlock(feed?.all() ?? []);
     if (blocked) { result.state = 'BLOCKED'; result.reason = `provider: ${blocked}`; }
     else { result.state = 'FAIL'; result.reason = (error as Error).message.split('\n')[0]!; }
-    if (result.state === 'FAIL') {
-      try { shot(join(out, 'fail.png')); } catch {}
-      try {
-        const log = readFileSync(bench.appLog);
-        writeFileSync(join(out, 'app-log.txt'), log.subarray(logStart <= log.length ? logStart : 0));
-      } catch {}
-    }
+    if (result.state === 'FAIL') try { shot(join(out, 'fail.png')); } catch {}
   } finally {
     // Never leave the agent working: stop every run of this session that hasn't ended, and wait for its end before
     // closing anything. A run is known from its user row too, so a message whose turn is still starting (or waiting
@@ -144,6 +138,10 @@ async function once(name: string, agent: Agent, machine: Machine, out: string, b
     await feed?.close();
     await socket.close();
     process.off('SIGINT', stop); process.off('SIGTERM', stop);
+    try {
+      const log = readFileSync(bench.appLog);
+      writeFileSync(join(out, 'app-log.txt'), log.subarray(logStart <= log.length ? logStart : 0));
+    } catch {}
     atomic(join(out, 'result.json'), JSON.stringify(result, null, 2) + '\n');
     atomic(join(out, 'report.md'), report(name, result, feed?.all() ?? []));
   }

@@ -14,9 +14,14 @@ bash scripts/bench.sh down                     # always, also after a failure
 ```
 
 - Each case writes `report.md` (every step, and for a failure what was expected and what the rows showed),
-  `result.json` and `video.mp4` under `$DATA/journeys/<utc>-chat-steer/<agent>-<machine>/`, with `summary.md` one level up.
-  A failure adds `fail.png` and `app-log.txt`. `$DATA` comes from `scripts/lane-env.sh`.
-  - `app-log.txt` is the lane's backend log from the moment the case started, so lines from earlier cases and runs are not in it.
+  `result.json`, `video.mp4` and `app-log.txt` under `$DATA/journeys/<utc>-chat-steer/<agent>-<machine>/`, with
+  `summary.md` one level up. A failure adds `fail.png`. `$DATA` comes from `scripts/lane-env.sh`.
+  - `app-log.txt` is the lane's backend log from the moment the case started, so lines from earlier cases and runs are
+    not in it: count `socket lost` or `fell behind` for a case there.
+  - The backend log itself is `appLog` in `$DATA/bench/state.json` (`backend.log` in the lane's seeded dev profile,
+    `~/assembly-dev/worktrees/<lane>-<hash>/`). Every bench run on the lane appends to it, and its lines have no timestamps.
+  - `$DATA/mac/backend.log` is not the bench's: it belongs to the lane profile that `dotnet/scripts/desktop.sh serve`
+    and `app:dev` use, so it is stale or empty for a bench run.
   - `fail.png` is the window at the failure. A failure before the session opens (at session creation) happens before the
     window changes, so the picture shows the window as it was (often the previous case's session) with no error; the
     report's failed step has the error.
