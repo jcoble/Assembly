@@ -150,12 +150,12 @@ fn typing_a_slash_lists_the_commands_and_enter_picks_one_into_the_draft(cx: &mut
     cx.simulate_keystrokes("down");
     assert_eq!(cx.update(|_, cx| composer.read(cx).slash_selected), Some(1));
     cx.simulate_keystrokes("up enter");
-    assert_eq!(draft(&composer, cx), "/review what to look at");
+    assert_eq!(draft(&composer, cx), "/review ");
     let selected = cx.update(|_, cx| composer.read(cx).draft.read(cx).selected_range());
     assert_eq!(
         selected,
-        8..23,
-        "the hint is selected, so typing replaces it"
+        8..8,
+        "the caret waits after the name, with no hint typed in"
     );
     assert!(listed(&composer, cx).is_empty());
     assert!(client.calls().is_empty(), "a pick sends nothing");

@@ -140,11 +140,14 @@ impl Composer {
         let offline = self.offline.is_some() || !self.operational();
         let empty = !content;
         let running = self.running.is_some();
-        match slot(running, content, self.can_steer) {
+        // A held draft can't be sent, so a running turn offers Stop.
+        match slot(running, content && self.locked.is_none(), self.can_steer) {
+            // Its square is a child, not an icon, and the kit sizes only an icon button from `with_size`, so the
+            // size is set here or the button shrinks to the square.
             Slot::Stop => Button::new("composer:stop")
                 .danger()
                 .rounded(pill)
-                .with_size(SEND_SIZE)
+                .size(SEND_SIZE)
                 .disabled(offline)
                 .tooltip("Stop generation")
                 .control(ids::STOP, "Stop generation")
@@ -200,6 +203,7 @@ impl Composer {
         h_flex()
             .flex_none()
             .min_w_0()
+            .ml_auto()
             .gap_1()
             .children(footer)
             .when_some(self.meter.clone(), |trail, meter| {

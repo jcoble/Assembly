@@ -88,7 +88,7 @@ pub struct Composer {
     _engine: Subscription,
     /// The owning agent's name, for the draft's hint and the settings menus.
     agent_name: Option<SharedString>,
-    /// The agent is waiting on an answer elsewhere, so the draft and its controls hold.
+    /// The agent is waiting on an answer elsewhere, so the draft holds; Stop and the settings stay.
     locked: Option<Lock>,
     /// What the agent is waiting on, answered inside the box. The session pane sets it as it draws.
     answer: Option<AnswerPanel>,

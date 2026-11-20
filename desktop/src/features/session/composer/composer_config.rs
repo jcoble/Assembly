@@ -151,11 +151,12 @@ impl Composer {
         else {
             return;
         };
-        let (text, hint) = command.pick();
+        let text = command.pick();
+        let end = text.len();
         self.slash_selected = None;
         self.draft.update(cx, |draft, cx| {
             draft.set_value(text, window, cx);
-            draft.set_selected_range(hint, cx);
+            draft.set_selected_range(end..end, cx);
             draft.focus(window, cx);
         });
         cx.notify();

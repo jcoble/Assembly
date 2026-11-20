@@ -10,7 +10,9 @@ use crate::core::ui::access::control_ids::composer as ids;
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Textarea;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, GlobalState, Icon, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -105,9 +107,6 @@ impl Render for Composer {
             .when(shape.one_line, |prompt| prompt.flex_1())
             .when(shape.relaxed, |prompt| prompt.w_full().min_h(OPEN_DRAFT))
             .when(!shape.relaxed && !shape.one_line, |prompt| prompt.w_full())
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                focus.focus(window, cx)
-            })
             .child(
                 Textarea::new(&self.draft)
                     .control(ids::INPUT, "Message")
@@ -122,7 +121,8 @@ impl Render for Composer {
                     }),
             );
         let lead = (!locked).then(|| self.add_button(cx));
-        let trail = (!locked).then(|| self.trail(shape.compact, content, window, cx));
+        // A card waiting on an answer holds the draft, not the turn: Stop and the settings stay, as in the old composer.
+        let trail = Some(self.trail(shape.compact, content, window, cx));
         let sub_bar = match self.start_slots.clone() {
             Some(slots) => Some((slots.sub_bar)(window, cx)),
             None => self.branch.clone().map(|branch| {
@@ -160,7 +160,7 @@ impl Render for Composer {
         } else {
             theme.muted
         };
-        let inside = if shape.one_line {
+        let inside = (if shape.one_line {
             h_flex()
                 .gap_2()
                 .pl(px(16.))
@@ -195,7 +195,17 @@ impl Render for Composer {
                             .child("Drop images to attach them"),
                     )
                 })
-        };
+        })
+        // A press anywhere in the box that no control took puts the caret in the draft. It's marked handled, as the
+        // text field marks its own, or the focusable pane around the box takes the focus straight back; and the kit
+        // must not start a window text selection on it.
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            if !window.default_prevented() {
+                focus.focus(window, cx);
+                window.prevent_default();
+                GlobalState::suppress_text_selection(cx);
+            }
+        });
         let capsule = v_flex()
             .children(self.answer.clone())
             .child(inside)

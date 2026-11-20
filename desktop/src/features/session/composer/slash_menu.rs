@@ -7,13 +7,6 @@ use serde::Deserialize;
 pub struct SlashCommand {
     pub name: String,
     pub description: String,
-    pub input: Option<SlashInput>,
-}
-
-/// ACP's command input: the hint a pick selects, so typing replaces it.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct SlashInput {
-    pub hint: Option<String>,
 }
 
 impl SlashCommand {
@@ -46,18 +39,10 @@ impl SlashCommand {
             .collect()
     }
 
-    /// The draft after a pick, and the byte range to select (the hint). A "$" name goes in as is, with no slash.
-    pub fn pick(&self) -> (String, std::ops::Range<usize>) {
-        let head = format!(
-            "{}{} ",
-            if self.name.starts_with('$') { "" } else { "/" },
-            self.name
-        );
-        let hint = self
-            .input
-            .as_ref()
-            .and_then(|input| input.hint.as_deref())
-            .unwrap_or_default();
-        (format!("{head}{hint}"), head.len()..head.len() + hint.len())
+    /// The draft after a pick: the name and a space, as the old composer did. Its input hint isn't text to send, so it
+    /// stays out. A "$" name goes in as is, with no slash.
+    pub fn pick(&self) -> String {
+        let slash = if self.name.starts_with('$') { "" } else { "/" };
+        format!("{slash}{} ", self.name)
     }
 }
