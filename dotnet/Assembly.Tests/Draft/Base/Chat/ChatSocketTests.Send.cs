@@ -286,10 +286,12 @@ public sealed partial class ChatSocketTests
         var accepted = Accepted(await ReadAsync(socket), session.SessionId, "c14");
         var steering = await agent.ReadAsync("_session/steering");
         await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
-        var closing = await agent.ReadAsync("session/close");
+        // The session is kept while the steer is registered, so the agent's reply comes before the close.
         await agent.ReplyAsync(steering, """{"outcome":"injected"}""");
         await Delivered(session.SessionId, "c14");
-        await agent.ReplyAsync(closing, "{}");
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"running"}""");
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
+        await agent.ReplyAsync(await agent.ReadAsync("session/close"), "{}");
         await CallAsync(socket, 3, "send", "send", Args(session.SessionId, "also this", "c14"));
         Assert.Equal(accepted, Accepted(await ReadAsync(socket), session.SessionId, "c14"));
         Assert.Equal(1, UserRows(session.SessionId, "c14"));

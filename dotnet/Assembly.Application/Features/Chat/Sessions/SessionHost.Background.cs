@@ -24,21 +24,27 @@ public sealed partial class SessionHost
         decimal? sessionCost;
         lock (_gate)
             sessionCost = _converter.SessionCost;
-        await CloseAsync(kept.Session, stages: null, sessionCost, lost, kept.Pump);
-        _session.Release();
-        await kept.Ticking.CancelAsync();
-        await kept.Ticks;
-        kept.Ticking.Dispose();
-        MarkHandoffExecutionCompleted(kept.ReleaseTurn, clean: !lost);
-        PublishReleased(kept.ReleaseTurn);
-        _log.WriteLine($"session {_sessionId}: kept session closed");
+        try
+        {
+            await CloseAsync(kept.Session, stages: null, sessionCost, lost, kept.Pump);
+        }
+        finally
+        {
+            _session.Release();
+            await kept.Ticking.CancelAsync();
+            await kept.Ticks;
+            kept.Ticking.Dispose();
+            MarkHandoffExecutionCompleted(kept.ReleaseTurn, clean: !lost);
+            PublishReleased(kept.ReleaseTurn);
+            _log.WriteLine($"session {_sessionId}: kept session closed");
+        }
     }
 
     // Called with the lock held: a kept session with nothing left on it closes.
     private void CloseIfDone()
     {
         if (_kept is not { } kept || _turn is not null || _tasks.Count > 0 || _subagents.AnyRunning || _startedWorking()
-            || Now() < kept.TasksDueBy)
+            || _steers.Count > 0 || Now() < kept.TasksDueBy)
             return;
         _kept = null;
         _lastTurn = Task.Run(() => CloseKeptAsync(kept, lost: false));
@@ -68,7 +74,7 @@ public sealed partial class SessionHost
             EndSelfRun(new TurnEnded(cycle.At, "end_turn", null), collector, terminals);
     }
 
-    // Called with the lock held.
+    // Called with the lock held. A run started while a message waits has no note: it may be that message's run.
     private void StartSelfRun(long at, RowBatch? collector = null)
     {
         var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -83,7 +89,7 @@ public sealed partial class SessionHost
         PrepareObservation(_turn, at);
         _kept = _kept! with { ReleaseTurn = _turn };
         if (_kept is { } kept) BindPolicy(kept.Session, _turn);
-        Apply(new RunStarted(at, _turn.RunId, "Continued after a background task finished"), collector);
+        Apply(new RunStarted(at, _turn.RunId, _steers.Count > 0 ? null : "Continued after a background task finished"), collector);
         _log.WriteLine($"session {_sessionId} run {_turn.RunId}: started by the agent");
     }
 
@@ -96,6 +102,7 @@ public sealed partial class SessionHost
         Apply(end, batch);
         ended.Add(new(turn, end));
         _turn = null;
+        MarkKept();
         if (collector is null)
             CommitReaderBatch(batch, turn.Observation, turn.Session?.AcpSessionId ?? "", [end], ended);
     }
@@ -126,6 +133,11 @@ public sealed partial class SessionHost
         {
             session.Adapter.Link.Client.SetSessionPolicy(session.AcpSessionId, null);
             session.Adapter.Updates.Forget(session.AcpSessionId);
+            lock (_gate)
+            {
+                ResumeReader();
+                FaultSteers(new IOException("The session closed before the agent took the message."));
+            }
             await pump;
             lock (_gate)
             {
@@ -146,8 +158,14 @@ public sealed partial class SessionHost
         {
             while (await updates.WaitToReadAsync())
             {
+                Task? paused;
                 lock (_gate)
+                {
                     Drain(updates);
+                    paused = _readerPaused?.Task;
+                }
+                // Stopped at a prompted turn's end: what follows waits until that turn is finalized.
+                if (paused is not null) await paused;
             }
         }
         catch (Exception error)
@@ -157,6 +175,7 @@ public sealed partial class SessionHost
 
         lock (_gate)
         {
+            FaultSteers(new IOException("The agent's updates ended before it took the message."));
             // A kept session's updates end only when its adapter does (closing it takes it out of _kept first).
             if (_kept is not { } kept || kept.Updates != updates)
                 return;
@@ -181,6 +200,7 @@ public sealed partial class SessionHost
                 {
                     Apply(new ClockTick(Now()));
                     EndIfQuiet();
+                    BoundSteers();
                     CloseIfDone();
                 }
             }
@@ -203,7 +223,7 @@ public sealed partial class SessionHost
     // Called with the lock held.
     private void Drain(ChannelReader<SessionNotification> updates)
     {
-        while (updates.TryRead(out var update))
+        while (_readerPaused is null && updates.TryRead(out var update))
         {
             _turn?.Stages.Mark("first update");
             var events = _updateReader.Read(update, Now());
@@ -211,6 +231,8 @@ public sealed partial class SessionHost
             var observed = _turn?.Observation;
             var fallback = _kept?.Observation;
             List<TerminalTurn> terminals = [];
+            IReadOnlyList<AgentEvent> facts = events;
+            List<PendingSteer> inserted = [];
             foreach (var agentEvent in events)
             {
                 switch (agentEvent)
@@ -250,6 +272,10 @@ public sealed partial class SessionHost
                     case CycleEnded cycle:
                         EndCycle(cycle, batch, terminals);
                         break;
+                    case SteerInserted steerInserted:
+                        if (Insert(steerInserted, batch, ref facts) is { } steer) inserted.Add(steer);
+                        observed ??= _turn?.Observation;
+                        break;
                     default:
                         // New work the agent does with no prompt running, on a session kept for background work. A
                         // late update to an earlier tool call (Codex's backgrounded command finishing) isn't.
@@ -268,7 +294,24 @@ public sealed partial class SessionHost
                 prompted.TerminalObserved = true;
                 prompted.TerminalCost = _converter.SessionCost;
             }
-            CommitReaderBatch(batch, observed ?? fallback, update.SessionId, events, terminals);
+            IReadOnlyList<StoredRow> saved;
+            try
+            {
+                saved = CommitReaderBatch(batch, observed ?? fallback, update.SessionId, facts, terminals);
+            }
+            catch (Exception error)
+            {
+                foreach (var steer in inserted)
+                {
+                    _steers.Remove(steer.Run.Id);
+                    Fail(steer, error);
+                }
+                throw;
+            }
+            foreach (var steer in inserted) Recorded(steer, saved);
+            // The reader stops at a prompted turn's end; that turn's finalization lets it go on (see RunAsync).
+            if (update.EndsPrompt && _turn is { SelfStarted: false })
+                _readerPaused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
         CloseIfDone();

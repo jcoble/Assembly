@@ -86,9 +86,10 @@ public sealed partial class SessionHost
             _feed.Replied(scope, observed, new(turn.RunId, session?.AcpSessionId, turn.ProviderMessageId, turn.SelfStarted, end.At));
     }
 
-    private void CommitReaderBatch(RowBatch batch, SessionObservation? observed, string acpSessionId,
+    private IReadOnlyList<StoredRow> CommitReaderBatch(RowBatch batch, SessionObservation? observed, string acpSessionId,
         IReadOnlyList<AgentEvent> events, IReadOnlyList<TerminalTurn> terminals)
     {
+        IReadOnlyList<StoredRow> rows;
         List<RunningTurn> completed = [];
         List<(RunningTurn Turn, AuthTerminalProof Proof)> proofs = [];
         List<(RunningTurn Turn, long Seq)> savedAuth = [];
@@ -105,7 +106,7 @@ public sealed partial class SessionHost
         try
         {
             var hasFacts = events.Any(e => e is TurnStarted or TurnEnded or TurnFailed or AgentLost or ToolCallChanged);
-            _hub.Publish(_sessionId, batch, _feed is null || observed is null || !hasFacts && terminals.Count == 0 ? null : scope =>
+            rows = _hub.Publish(_sessionId, batch, _feed is null || observed is null || !hasFacts && terminals.Count == 0 ? null : scope =>
             {
                 if (early is not null) BlockAuthTerminal(scope, foreground!, early);
                 foreach (var proof in proofs)
@@ -132,6 +133,7 @@ public sealed partial class SessionHost
         foreach (var turn in completed) turn.FeedCompleted = true;
         foreach (var saved in savedAuth) saved.Turn.AuthTerminalSeq = saved.Seq;
         foreach (var terminal in terminals) terminal.Turn.Ended?.TrySetResult();
+        return rows;
     }
     // Only the actual owning execution supplies Engine auth authority. Compatibility sends keep their ordinary terminal path.
     private AuthTerminalProof? CaptureAuthTerminal(RunningTurn turn, string? acpSessionId, AgentEvent end)
