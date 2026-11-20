@@ -196,11 +196,13 @@ impl Render for Composer {
                     )
                 })
         })
-        // A press anywhere in the box that no control took puts the caret in the draft. The kit would otherwise start
-        // a window text selection on it, which takes the focus straight back.
+        // A press anywhere in the box that no control took puts the caret in the draft. It's marked handled, as the
+        // text field marks its own, or the focusable pane around the box takes the focus straight back; and the kit
+        // must not start a window text selection on it.
         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
             if !window.default_prevented() {
                 focus.focus(window, cx);
+                window.prevent_default();
                 GlobalState::suppress_text_selection(cx);
             }
         });
