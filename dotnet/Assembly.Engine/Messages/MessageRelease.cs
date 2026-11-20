@@ -55,7 +55,9 @@ public static class MessageRelease
             new("$attempt", message.Attempt), new("$epoch", session.Epoch), new("$machine", c.Machine));
         if (reserved == 0) return changed;
         effects.Add(new($"send/{message.Id}/{message.Attempt + 1}", "send", sessionId, session.Run,
-         JsonSerializer.SerializeToElement(new DeliverMessage(message.Id, sessionId, message.Framed ? MessageText.Prompt(message.Label, message.Text) : message.Text, message.Label, session.State == "idle" ? "prompt" : "steer", message.ClientId, session.Version, message.Framed ? null : false, message.Framed ? null : JsonSerializer.Deserialize(message.Attachments, EngineJson.Default.IReadOnlyListString), message.Framed ? message.TargetEpoch : message.HeldEpoch), EngineJson.Default.DeliverMessage)));
+         JsonSerializer.SerializeToElement(new DeliverMessage(message.Id, sessionId, message.Framed ? MessageText.Prompt(message.Label, message.Text) : message.Text, message.Label, session.State == "idle" ? "prompt" : "steer", message.ClientId, session.Version, message.Framed ? null : false, message.Framed ? null : JsonSerializer.Deserialize(message.Attachments, EngineJson.Default.IReadOnlyListString), message.Framed ? message.TargetEpoch : message.HeldEpoch), EngineJson.Default.DeliverMessage),
+         // A steer waits on the agent, so it has its own order: a stop or an answer on the session goes ahead of it.
+         OrderKey: session.State == "idle" ? null : "steer/" + sessionId));
         changed.Add(new("message.changed", "message", message.Id, message.Version + 1, false, new(sessionId, null, null, message.From, "queued", session.Epoch)));
         return changed;
     }
