@@ -68,8 +68,7 @@ impl Composer {
         self.session_key = key;
         self.expected_source = source;
         self.source_valid = self.session_key.is_some();
-        self.draft
-            .update(cx, |draft, cx| draft.set_value(text, window, cx));
+        self.show_draft(text, window, cx);
         self.attachments = attachments;
         self.slash_selected = None;
         self.owner = None;
@@ -130,11 +129,19 @@ impl Composer {
             .unwrap_or_default();
         let loaded = key.is_some();
         self.parked = Some(Parked { id, key, loaded });
-        self.draft
-            .update(cx, |draft, cx| draft.set_value(text, window, cx));
+        self.show_draft(text, window, cx);
         self.attachments = attachments;
         self.slash_selected = None;
         cx.notify();
+    }
+    /// Shows `text` in the box with the caret at its end, as a textarea given a new value has it, so keys typed next
+    /// follow it.
+    fn show_draft(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        let end = text.len();
+        self.draft.update(cx, |draft, cx| {
+            draft.set_value(text, window, cx);
+            draft.set_selected_range(end..end, cx);
+        });
     }
     /// Puts the box's draft away under `key`; `join` adds it after a draft already saved there instead of replacing it.
     fn keep(&mut self, key: SessionKey, join: bool, cx: &mut Context<Self>) {
