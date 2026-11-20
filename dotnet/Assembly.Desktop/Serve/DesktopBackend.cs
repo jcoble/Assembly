@@ -331,6 +331,10 @@ public sealed class DesktopBackend : IAsyncDisposable
                         row => row.IsNull(0) ? null : row.Text(0), new SqlArg("$id", effectId));
                     if (childId is not null) helperCards.Observe(scope, childId);
                 });
+            // After the engine schema opens and before any remote connects: forward copies an older install saved
+            // become saved copies still downloading, so the first connection checks them.
+            var adopted = store.AdoptRemoteCopies();
+            if (adopted > 0) log.WriteLine($"adopted {adopted} remote session copy(ies) to check");
             var registry = sessions!;
             helperCards.Start(registry.Helpers.Row);
             var gate = new McpGate(engine, sessionLimits, TimeProvider.System);
