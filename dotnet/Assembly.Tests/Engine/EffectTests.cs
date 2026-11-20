@@ -510,6 +510,35 @@ public sealed class EffectTests
         Assert.Equal("cancelled", f.Text("SELECT state FROM engine_step_attempt WHERE step_id='step' AND attempt=1"));
     }
 
+    [Fact]
+    public async Task A_stop_confirms_at_once_when_the_idle_fact_landed_first_and_a_need_is_still_open()
+    {
+        var topics = new Topics();
+        using var f = new EngineFixture(topics: topics);
+        f.SeedSession(state: "running");
+        Assert.True(f.Apply(new OpenNeed("s", null, null, "confirmation", "Sign in?", ["sign_in", "dismiss"], null, null, null),
+            "auth", actor: new(ActorKind.System, "test")).Applied);
+        Assert.Equal("needs_me", f.State("engine_session", "s"));
+        long Version() => f.Number("SELECT version FROM engine_session WHERE id='s'");
+        Assert.True(f.Apply(new StopSession(), "s", version: Version()).Applied);
+        // The provider reports the turn idle before the ordered stop effect confirms.
+        Assert.True(f.Apply(new SetSessionState("idle", null, null), "s", version: Version(),
+            actor: new(ActorKind.System, "adapter")).Applied);
+        var fake = new FakeEffects
+        {
+            Execute = (_, _) => Task.FromResult(new EffectReceipt(EffectDisposition.Confirmed,
+                JsonSerializer.SerializeToElement(new SessionEffectData("idle", null, null), EngineJson.Default.SessionEffectData), null))
+        };
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
+        var events = Channel.CreateUnbounded<EngineEvent>();
+        using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
+        if (f.Text("SELECT state FROM engine_outbox WHERE kind='stop'") != "done")
+            await Until(events, e => e.EntityKind == "effect" && e.Data.State == "done");
+        Assert.Equal("done", f.Text("SELECT state FROM engine_outbox WHERE kind='stop'"));
+        Assert.Null(f.Text("SELECT last_error FROM engine_outbox WHERE kind='stop'"));
+        Assert.Equal("open", f.State("engine_needs_me", "auth"));
+    }
+
     private sealed class Retention(long deadline) : IEngineRetention
     {
         public TaskCompletionSource Applied { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

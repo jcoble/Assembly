@@ -243,6 +243,8 @@ public static partial class SessionTransitions
             return Refused(context, "invalid_transition", current);
         var activity = command.State is "idle" or "running" ? command.State : current.Activity;
         var state = command.State;
+        List<EventDraft> events = [];
+        if (stopAcknowledged && command.State == "idle") events.AddRange(NeedTransitions.CancelForStoppedTurn(scope, context));
         if (state is "idle" or "running" && scope.QueryFirst("""
                 SELECT COUNT(*) FROM engine_needs_me WHERE session_id=$id AND state='open'
                 """, r => r.Long(0), new SqlArg("$id", context.EntityId)) > 0)
@@ -257,7 +259,6 @@ public static partial class SessionTransitions
             new("$lost", command.State == "lost" ? context.NowMs : null), new("$id", context.EntityId),
             new("$ack", stopAcknowledged ? 1 : 0));
         List<EffectDraft> effects = [];
-        List<EventDraft> events = [];
         if (command.State == "lost") events.AddRange(WaitForLostWorkflowWorker(scope, context));
         if (stopAcknowledged)
             events.AddRange(MessageTransitions.ReleaseHeld(scope, context, context.EntityId, command.State == "ended", effects));

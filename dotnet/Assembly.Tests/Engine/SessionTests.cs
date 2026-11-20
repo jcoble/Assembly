@@ -2,6 +2,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Messages;
+using Assembly.Engine.NeedsMe;
 
 namespace Assembly.Tests.Engine;
 
@@ -31,6 +32,22 @@ public sealed class SessionTests
         Assert.True(f.Apply(new SetSessionState("ended", null, null), "s", version: 1,
             actor: new(ActorKind.System, "adapter")).Applied);
         Assert.Equal("ended", f.State("engine_session", "s"));
+    }
+
+    [Fact]
+    public void A_stopped_turn_withdraws_its_own_question_and_sends_the_next_message()
+    {
+        using var f = new EngineFixture(); f.SeedSession("s", "running");
+        Assert.True(f.Apply(new OpenNeed("s", null, null, "question", "Which option?", [], null, null, null), "asked",
+            actor: new(ActorKind.Session, "s")).Applied);
+        long Version() => f.Number("SELECT version FROM engine_session WHERE id='s'");
+        Assert.True(f.Apply(new StopSession(), "s", version: Version()).Applied);
+        Assert.True(f.Apply(new SendMessage(null, "s", "after stop", "interrupt"), "m").Applied);
+        Assert.True(f.Apply(new SetSessionState("idle", null, null), "s", version: Version(),
+            actor: new(ActorKind.System, "adapter")).Applied);
+        Assert.Equal("cancelled", f.State("engine_needs_me", "asked"));
+        Assert.Equal("idle", f.State("engine_session", "s"));
+        Assert.Equal(1, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='send'"));
     }
 
     [Theory]

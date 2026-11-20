@@ -49,7 +49,7 @@ impl Render for Composer {
         let locked = self.locked.is_some();
         let shape = look(Facts {
             content,
-            sending: self.running.is_some() || self.start_busy(),
+            sending: self.running.is_some() || self.start_busy() || self.start_queued(),
             settled: self.turn_settled,
             locked,
             dragging: self.dragging,

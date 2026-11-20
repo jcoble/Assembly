@@ -46,9 +46,11 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         if (strictResumeId is not null && (strictResumeId.Length == 0 || session.AcpSessionId != strictResumeId))
             throw new CallFailed("The accepted public session identity changed.", "handoff_execution_changed");
         var config = sessionStore.Config(sessionId);
-        if (targetId is not null && (targetId.Length == 0 || config.ConfigTarget is { } stored && stored != targetId))
+        if (targetId is not null && targetId.Length == 0)
             throw new CallFailed("Select the agent configuration again.");
-        var captured = ConfigTargetIdentity.Capture(launcher, session.Agent, targetId ?? config.ConfigTarget);
+        // Only a target the caller shows is held to the agent's configuration. The one stored when the session began
+        // isn't: after a restart or an adapter update the session goes on with its agent's current configuration.
+        var captured = ConfigTargetIdentity.Capture(launcher, session.Agent, targetId);
         var pendingInitial = session.AcpSessionId is null && config.ConfigTarget is not null;
         var location = sessionStore.Location(session) ?? throw new CallFailed($"This session has no working folder: {sessionId}");
         if (!location.Ready)

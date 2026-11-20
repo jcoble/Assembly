@@ -25,6 +25,7 @@ public sealed partial class SessionHost
     private async Task<SessionConfig> WarmOrPickAsync(string target, KeyValuePair<string, string>? pick, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        var requested = pick;
         if (string.IsNullOrEmpty(target)) throw new CallFailed("Select the agent configuration again.");
         var info = _sessionStore.Get(_sessionId) ?? throw new CallFailed("unknown session");
         Task? opening;
@@ -69,7 +70,13 @@ public sealed partial class SessionHost
         }
         if (previous is not null)
         {
-            var result = owns ? await previous : await previous.WaitAsync(ct);
+            SessionConfig result;
+            try { result = owns ? await previous : await previous.WaitAsync(ct); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // A real turn (or a newer read) stopped this read, not the caller: the settings come from that session.
+                return await WarmOrPickAsync(target, requested, ct);
+            }
             if (pick is null) return result;
             return await WarmOrPickAsync(target, pick, ct);
         }
