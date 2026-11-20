@@ -201,7 +201,7 @@ public sealed partial class SessionHost
     private async Task<SteerDeliveryResult> InjectAsync(RunningTurn turn, OpenSession session, string text, string? clientId, string? label, OwningSendAdmission? admission, CancellationToken ct, string? fromSessionId = null)
     {
         if (admission is not null && !CurrentAdmission(admission, text, clientId, label, fromSessionId)) throw new CallFailed("The delivery owner changed.");
-        var outcome = await session.Adapter.Link.Client.SteerAsync(session.AcpSessionId, [TextBlock.Of(text)], ct);
+        var outcome = await session.Adapter.Link.Client.Steer(session.AcpSessionId, [TextBlock.Of(text)], ct).Delivered;
         if (outcome != SteerOutcome.Injected) return new(outcome == SteerOutcome.PromptRequired ? SteerResult.PromptRequired : SteerResult.NotRunning);
         Assembly.Application.Common.Engine.UserRowReference? userRow = null;
         lock (_gate)

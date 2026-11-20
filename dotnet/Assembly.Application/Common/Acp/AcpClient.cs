@@ -23,6 +23,7 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
     private readonly ConcurrentDictionary<string, ResumeState> _resuming = new();
     public event Action<string>? SessionResumed;
     private readonly BackgroundWork _prompts = new(TimeProvider.System, Console.Error);
+    private SteerRoute _steering;
 
     public AcpClient(Stream fromAgent, Stream toAgent, IPermissionPolicy permissions, TranscriptLog transcript)
     {
@@ -58,6 +59,7 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
         if (response.ProtocolVersion != AcpProtocol.Version)
             throw new JsonRpcException(-32022, $"ACP version {response.ProtocolVersion} is unsupported; Assembly requires version 2.");
         _authMethods = response.AuthMethods;
+        _steering = response.Steering;
         return response;
     }
 
@@ -129,18 +131,84 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
         }
     }
 
-    public async Task<SteerOutcome> SteerAsync(string sessionId, IReadOnlyList<TextBlock> prompt, CancellationToken cancellationToken)
+    /// <summary>
+    /// Sends a message into the session's running turn by the route the agent advertised at initialize: the
+    /// <c>_session/steering</c> call, or a <c>session/prompt</c> the agent queues into its turn. The request itself is
+    /// never cancelled from here, so the agent's answer is always read; <paramref name="cancellationToken"/> ends only
+    /// the caller's wait. Only the agent's refusal (<c>promptRequired</c>, or -32800 for a queued prompt) is
+    /// <see cref="SteerOutcome.PromptRequired"/>; a cancelled wait is never a refusal.
+    /// </summary>
+    public SteerRun Steer(string sessionId, IReadOnlyList<TextBlock> prompt, CancellationToken cancellationToken)
     {
-        var response = await RequestAsync(AcpMethods.SessionSteering,
-            new SteerRequest(sessionId, prompt, new SteerMeta(new SteerOptions("promptRequired"))),
-            AcpJsonContext.Default.SteerRequest, AcpJsonContext.Default.SteerResponse, cancellationToken);
-        return response.Outcome switch
+        var delivered = new TaskCompletionSource<SteerOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var id = Guid.NewGuid().ToString("N");
+        switch (_steering)
         {
-            "injected" => SteerOutcome.Injected,
-            "promptRequired" => SteerOutcome.PromptRequired,
-            _ => throw new JsonRpcException(JsonRpcException.InternalError,
-                $"Unexpected steering outcome with idleBehavior promptRequired: {response.Outcome}.")
-        };
+            case SteerRoute.SteeringCall:
+                _prompts.Start("ACP steer " + sessionId, closing => SteerCallAsync(sessionId, prompt, delivered, closing));
+                break;
+            case SteerRoute.PromptQueue:
+                var foreground = For(sessionId);
+                var pending = foreground.Begin();
+                _prompts.Start("ACP queued prompt " + sessionId, closing => QueuePromptAsync(sessionId, prompt, foreground, pending, delivered, closing));
+                break;
+            default:
+                throw new InvalidOperationException("This agent takes no message while a turn runs.");
+        }
+        return new SteerRun(id, delivered.Task.WaitAsync(cancellationToken));
+    }
+
+    private async Task SteerCallAsync(string sessionId, IReadOnlyList<TextBlock> prompt, TaskCompletionSource<SteerOutcome> delivered, CancellationToken closing)
+    {
+        try
+        {
+            var response = await RequestAsync(AcpMethods.SessionSteering,
+                new SteerRequest(sessionId, prompt, new SteerMeta(new SteerOptions("promptRequired"))),
+                AcpJsonContext.Default.SteerRequest, AcpJsonContext.Default.SteerResponse, closing);
+            delivered.TrySetResult(response.Outcome switch
+            {
+                "injected" => SteerOutcome.Injected,
+                "promptRequired" => SteerOutcome.PromptRequired,
+                _ => throw new JsonRpcException(JsonRpcException.InternalError,
+                    $"Unexpected steering outcome with idleBehavior promptRequired: {response.Outcome}.")
+            });
+        }
+        catch (Exception error) { Fail(delivered, error); }
+    }
+
+    private async Task QueuePromptAsync(string sessionId, IReadOnlyList<TextBlock> prompt, Foreground foreground, Foreground.Pending pending,
+        TaskCompletionSource<SteerOutcome> delivered, CancellationToken closing)
+    {
+        try
+        {
+            var response = await RequestAsync(AcpMethods.SessionPrompt, new PromptRequest(sessionId, prompt),
+                AcpJsonContext.Default.PromptRequest, AcpJsonContext.Default.PromptResponse, closing);
+            if (string.IsNullOrEmpty(response.MessageId))
+                throw new JsonRpcException(JsonRpcException.InternalError, "session/prompt returned no messageId.");
+            foreground.Inserted(pending, response.MessageId);
+            delivered.TrySetResult(SteerOutcome.Injected);
+            // Nothing decides a run from a queued prompt's end; it is awaited only so its fault is observed.
+            try { await pending.Ended.Task.WaitAsync(closing); } catch { }
+        }
+        catch (JsonRpcException refused) when (refused.Code == JsonRpcException.RequestCancelled)
+        {
+            foreground.Failed(pending, refused);
+            _ = pending.Ended.Task.Exception;
+            delivered.TrySetResult(SteerOutcome.PromptRequired);
+        }
+        catch (Exception error)
+        {
+            foreground.Failed(pending, error);
+            _ = pending.Ended.Task.Exception;
+            Fail(delivered, error);
+        }
+    }
+
+    // The caller may have stopped waiting; the fault is still observed here.
+    private static void Fail(TaskCompletionSource<SteerOutcome> delivered, Exception error)
+    {
+        delivered.TrySetException(error);
+        _ = delivered.Task.Exception;
     }
 
     public async Task CancelAsync(string sessionId, CancellationToken cancellationToken)
