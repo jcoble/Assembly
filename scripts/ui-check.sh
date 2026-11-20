@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Native GPUI window on a private Xvfb display. Run from this lane's checkout.
-# Build first, only when sources change (one build at a time, after free -g):
+# scripts/bench.sh up does all of the below and more (accessibility, a window manager, the machine and both projects,
+# logins) and is the usual way to start it; journeys (scripts/journey.sh) then drive it by accessibility id.
+# By hand: ulimit -n 65536, then build first, only when sources change (one build at a time, after free -g):
 # . scripts/lane-env.sh; export CARGO_TARGET_DIR=$DATA/target
 # nice -n 10 cargo build --locked --manifest-path desktop/Cargo.toml
 # export NUGET_HTTP_CACHE_PATH=$DATA/ui-check/nuget-http-cache MSBUILDDISABLENODEREUSE=1
@@ -58,7 +60,8 @@ case "${1:-}" in
     mkdir -p "$home/runtime" "$home/cache" "$home/data" "$profile"
     chmod 700 "$home/runtime"
     # The backend home needs the providers; the adapters install once into this lane's DATA.
-    dotnet/scripts/agents-file.sh "$DATA/adapters" "$profile/agents.json"
+    # ASSEMBLY_LOCAL_ADAPTERS, when set (scripts/bench.sh), is a locally built bundle to install instead of the release.
+    dotnet/scripts/agents-file.sh "$DATA/adapters" "$profile/agents.json" ${ASSEMBLY_LOCAL_ADAPTERS:+"$ASSEMBLY_LOCAL_ADAPTERS"}
     # The backend token goes in TOKEN_FILE, where scripts/bench.sh and the other scripts read it.
     lane_config=$(mktemp "$home/backend/lane.json.XXXXXX")
     cat > "$lane_config" <<JSON
