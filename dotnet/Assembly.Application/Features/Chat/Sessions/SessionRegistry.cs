@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Application.Features.Chat.Sessions.Mcp;
 using System.Collections.Concurrent;
 using Assembly.Application.Common;
@@ -25,6 +26,7 @@ public sealed partial class SessionRegistry : IAsyncDisposable, Assembly.Applica
     private readonly TextWriter _log;
     private readonly BackgroundWork _work;
     private readonly SessionTitler? _titler;
+    private readonly IPromptImages? _images;
     private readonly ISessionFeed? _feed;
     private readonly SessionMcp _mcp;
     public Assembly.Application.Common.Engine.INativeSessionResolver? NativeSessions { get; private set; }
@@ -38,8 +40,10 @@ public sealed partial class SessionRegistry : IAsyncDisposable, Assembly.Applica
     private HelperProjection? _helperProjection;
 
     public SessionRegistry(LiveHub hub, SessionStore sessionStore, IAgentLauncher launcher, TimeProvider time, TextWriter log,
-        BackgroundWork work, SessionTitler? titler = null, ISessionFeed? feed = null, SessionMcp? mcp = null)
+        BackgroundWork work, SessionTitler? titler = null, ISessionFeed? feed = null, SessionMcp? mcp = null,
+        IPromptImages? images = null)
     {
+        _images = images;
         _feed = feed;
         _hub = hub;
         _sessionStore = sessionStore;
@@ -77,7 +81,7 @@ public sealed partial class SessionRegistry : IAsyncDisposable, Assembly.Applica
         _hosts.GetOrAdd(sessionId, id =>
         {
             return new SessionHost(id, _hub, _sessionStore, _opener, _time, _log, _work, () => StartedWorking(id), HelperTurnEnded, _mcp.Revoke,
-                _titler, _feed);
+                _titler, _feed, _images);
         });
 
     /// <summary>Whether a session the session's agent started has a turn running.</summary>

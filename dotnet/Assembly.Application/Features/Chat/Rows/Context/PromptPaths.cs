@@ -17,15 +17,22 @@ public static class PromptPaths
 
     public static (IReadOnlyList<string> Named, IReadOnlyList<AttachedImage> Attached) Of(string text)
     {
+        var (body, attached) = Split(text);
+        return (Named(body), [.. attached.Select(line => line.Image)]);
+    }
+
+    /// <summary>The text before its trailing "Attached image:" lines, and each of those lines with the image it names.</summary>
+    public static (string Body, IReadOnlyList<(string Line, AttachedImage Image)> Attached) Split(string text)
+    {
         var lines = text.Split('\n');
-        var attached = new List<AttachedImage>();
+        var attached = new List<(string, AttachedImage)>();
         var end = lines.Length;
         while (end > 0 && Reference(lines[end - 1]) is { } image)
         {
-            attached.Insert(0, image);
+            attached.Insert(0, (lines[end - 1], image));
             end--;
         }
-        return (Named(string.Join('\n', lines[..end])), attached);
+        return (string.Join('\n', lines[..end]), attached);
     }
 
     /// <summary>One "Attached image: /path (name)" line, with " thumbnail: /path" after it when the old app wrote one.</summary>

@@ -107,7 +107,7 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
         RequestAsync(AcpMethods.SessionSetConfigOption, new SetConfigOptionRequest(sessionId, configId, value),
             AcpJsonContext.Default.SetConfigOptionRequest, AcpJsonContext.Default.SetConfigOptionResponse, cancellationToken);
 
-    public PromptRun PromptAsync(string sessionId, IReadOnlyList<TextBlock> prompt, CancellationToken cancellationToken)
+    public PromptRun PromptAsync(string sessionId, IReadOnlyList<ContentBlock> prompt, CancellationToken cancellationToken)
     {
         var foreground = For(sessionId);
         var pending = foreground.Begin();
@@ -140,7 +140,7 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
     /// the caller's wait. Only the agent's refusal (<c>promptRequired</c>, or -32800 for a queued prompt) is
     /// <see cref="SteerOutcome.PromptRequired"/>; a cancelled wait is never a refusal.
     /// </summary>
-    public SteerRun Steer(string sessionId, IReadOnlyList<TextBlock> prompt, CancellationToken cancellationToken)
+    public SteerRun Steer(string sessionId, IReadOnlyList<ContentBlock> prompt, CancellationToken cancellationToken)
     {
         var delivered = new TaskCompletionSource<SteerOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
         var id = Guid.NewGuid().ToString("N");
@@ -160,7 +160,7 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
         return new SteerRun(id, delivered.Task.WaitAsync(cancellationToken));
     }
 
-    private async Task SteerCallAsync(string sessionId, string steerId, IReadOnlyList<TextBlock> prompt, TaskCompletionSource<SteerOutcome> delivered, CancellationToken closing)
+    private async Task SteerCallAsync(string sessionId, string steerId, IReadOnlyList<ContentBlock> prompt, TaskCompletionSource<SteerOutcome> delivered, CancellationToken closing)
     {
         try
         {
@@ -183,7 +183,7 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
         catch (Exception error) { Fail(delivered, error); }
     }
 
-    private async Task QueuePromptAsync(string sessionId, string steerId, IReadOnlyList<TextBlock> prompt, Foreground foreground, Foreground.Pending pending,
+    private async Task QueuePromptAsync(string sessionId, string steerId, IReadOnlyList<ContentBlock> prompt, Foreground foreground, Foreground.Pending pending,
         TaskCompletionSource<SteerOutcome> delivered, CancellationToken closing)
     {
         try

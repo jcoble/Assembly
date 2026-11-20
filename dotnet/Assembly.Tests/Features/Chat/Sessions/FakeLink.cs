@@ -26,12 +26,14 @@ internal sealed class FakeLink : IAgentLink
 
     /// <summary>Answers <c>initialize</c>, then <see cref="OpenAsync"/>.</summary>
     public async Task<JsonElement> StartAsync(
-        string acpSessionId = AcpSessionId, bool canSteer = true, string? configOptions = null, bool promptQueueing = false)
+        string acpSessionId = AcpSessionId, bool canSteer = true, string? configOptions = null, bool promptQueueing = false,
+        bool images = false)
     {
         var initialize = await ReadAsync("initialize");
         var steering = canSteer ? "\"steering\":{\"supported\":true}" : "";
         var queueing = promptQueueing ? ",\"_meta\":{\"claudeCode\":{\"promptQueueing\":true}}" : "";
-        await _agent.ReplyAsync(initialize, $$$"""{"protocolVersion":2,"capabilities":{"session":{}{{{queueing}}}},"authMethods":[],"_meta":{{{{steering}}}}}""");
+        var session = images ? "{\"prompt\":{\"image\":{}}}" : "{}";
+        await _agent.ReplyAsync(initialize, $$$"""{"protocolVersion":2,"capabilities":{"session":{{{session}}}{{{queueing}}}},"authMethods":[],"_meta":{{{{steering}}}}}""");
         return await OpenAsync(acpSessionId, configOptions);
     }
 
