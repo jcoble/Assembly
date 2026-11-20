@@ -60,12 +60,16 @@ public static partial class MessageTransitions
         List<EffectDraft> effects = [];
         if (outcome.State == "next_turn" && outcome.CompletedTurn is null)
         {
+            // A need that opened before this receipt keeps the session at needs_me, as a state change would.
+            var sessionState = s.QueryFirst("""
+                SELECT COUNT(*) FROM engine_needs_me WHERE session_id=$id AND state='open'
+                """, r => r.Long(0), new SqlArg("$id", current.To)) > 0 ? "needs_me" : "running";
             var sessionVersion = s.QueryFirst("""
-                UPDATE engine_session SET state='running',activity_state='running',version=version+1,updated_ms=$now
+                UPDATE engine_session SET state=$state,activity_state='running',version=version+1,updated_ms=$now
                 WHERE id=$id RETURNING version
-                """, r => r.Long(0), new("$now", c.NowMs), new("$id", current.To));
+                """, r => r.Long(0), new("$state", sessionState), new("$now", c.NowMs), new("$id", current.To));
             events.Add(new("session.changed", "session", current.To, sessionVersion, false,
-                new(current.To, recipient.RunId, null, null, "running", recipient.Epoch)));
+                new(current.To, recipient.RunId, null, null, sessionState, recipient.Epoch)));
         }
         var recipientVersion = s.QueryFirst("SELECT version FROM engine_session WHERE id=$id", r => r.Long(0), new SqlArg("$id", current.To));
         var releasedVersion = s.QueryFirst("""
