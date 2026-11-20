@@ -122,7 +122,8 @@ impl Render for Composer {
                     }),
             );
         let lead = (!locked).then(|| self.add_button(cx));
-        let trail = (!locked).then(|| self.trail(shape.compact, content, window, cx));
+        // A card waiting on an answer holds the draft, not the turn: Stop and the settings stay, as in the old composer.
+        let trail = Some(self.trail(shape.compact, content, window, cx));
         let sub_bar = match self.start_slots.clone() {
             Some(slots) => Some((slots.sub_bar)(window, cx)),
             None => self.branch.clone().map(|branch| {

@@ -140,7 +140,8 @@ impl Composer {
         let offline = self.offline.is_some() || !self.operational();
         let empty = !content;
         let running = self.running.is_some();
-        match slot(running, content, self.can_steer) {
+        // A held draft can't be sent, so a running turn offers Stop.
+        match slot(running, content && self.locked.is_none(), self.can_steer) {
             Slot::Stop => Button::new("composer:stop")
                 .danger()
                 .rounded(pill)
