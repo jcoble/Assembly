@@ -21,9 +21,11 @@ internal sealed class FakeAgent
 
     public Stream ClientWrites => _toAgent.Writer.AsStream();
 
-    public async Task<JsonElement> ReadAsync()
+    public async Task<JsonElement> ReadAsync(string? waitingFor = null)
     {
-        var line = await _reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        string? line;
+        try { line = await _reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (TimeoutException) { throw new TimeoutException($"The client sent the agent nothing in 5 s{(waitingFor is null ? "" : $" while the test waited for {waitingFor}")}."); }
         Assert.NotNull(line);
         using var document = JsonDocument.Parse(line);
         return document.RootElement.Clone();

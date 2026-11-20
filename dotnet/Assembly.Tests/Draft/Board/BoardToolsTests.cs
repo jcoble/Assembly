@@ -357,7 +357,8 @@ public sealed class BoardToolsTests
         var endpoint = new McpEndpointReady(tokens);
         var limits = new SessionLimits(() => 1, () => 5);
         await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, limits,
-            cutover: new(f.Db, sessions, launcher, checkouts, f.Time), effectsReady: endpoint.Ready);
+            cutover: new(f.Db, sessions, launcher, checkouts, f.Time),
+            effectsReady: new TaskCompletionSource().Task); // The test claims and completes effects by hand, so the worker never runs.
         await using var registry = new SessionRegistry(hub, sessions, launcher, f.Time, TextWriter.Null, work,
             feed: new EngineFeed(runtime, TextWriter.Null, f.Time), mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens));
         var machines = new MachineSet(new FakeMachine(null, sessions));
@@ -384,8 +385,9 @@ public sealed class BoardToolsTests
                 new Assembly.Application.Common.Database.SqlArg("$id", effectId))!;
             var effect = new Assembly.Engine.Effects.Effect(effectId, "start", sessionId, null, JsonDocument.Parse(payload).RootElement, 1);
             var receipt = await new AdapterEffects(f.Db, registry, sessions, RowStore.Open(f.Db)).ExecuteAsync(effect, default);
-            Assert.True(runtime.Submit(context with { CommandId = Guid.NewGuid(), ExpectedVersion = 1 },
-                new Assembly.Engine.Effects.CompleteEffect(receipt)).Applied);
+            var completed = runtime.Submit(context with { CommandId = Guid.NewGuid(), ExpectedVersion = 1 },
+                new Assembly.Engine.Effects.CompleteEffect(receipt));
+            Assert.True(completed.Applied, completed.Error);
         }
         await Start(parent.SessionId);
         registry.For(parent.SessionId).Send("start");

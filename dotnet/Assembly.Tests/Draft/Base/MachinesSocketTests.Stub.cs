@@ -52,6 +52,11 @@ public sealed partial class MachinesSocketTests
         public TaskCompletionSource VersionCancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private TaskCompletionSource _noLive = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task NoLiveAsync() { lock (_liveOpen) return _liveOpen.Values.Sum() == 0 ? Task.CompletedTask : _noLive.Task; }
+        private int _handlers; // Open /socket requests: one still reading buffered frames can register a /live link yet.
+        private TaskCompletionSource _settled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        /// <summary>Done once no /live link is open and every /socket request has ended, so none can still open one.</summary>
+        public Task SettledAsync() { lock (_liveOpen) return Settled() ? Task.CompletedTask : _settled.Task; }
+        private bool Settled() => _handlers == 0 && _liveOpen.Values.Sum() == 0;
         public int VersionHits;
         public int VersionAborted;
         public int AgentsHits;
@@ -156,13 +161,14 @@ public sealed partial class MachinesSocketTests
             });
             _app.Map("/socket/{**path}", async (HttpContext context) =>
             {
+                using var handler = Handling();
                 using var socket = await context.WebSockets.AcceptWebSocketAsync();
                 if (SocketBackend is { } backend)
                 {
                     await ForwardSocketAsync(socket, backend, context);
                     return;
                 }
-                var subscriptions = new List<string>();
+                var subscriptions = new List<(long Id, string Session)>();
                 async Task Send(string json) => await socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, context.RequestAborted);
                 try
                 {
@@ -212,7 +218,7 @@ public sealed partial class MachinesSocketTests
                                     break;
                                 }
                                 var session = json.GetProperty("key").GetString()!;
-                                subscriptions.Add(session);
+                                subscriptions.Add((json.GetProperty("id").GetInt64(), session));
                                 Interlocked.Increment(ref LiveHits);
                                 lock (_liveOpen)
                                 {
@@ -223,8 +229,8 @@ public sealed partial class MachinesSocketTests
                                 await Send($$"""{"t":"state","sub":{{json.GetProperty("id")}},"seq":{{json.GetProperty("after")}},"items":[]}""");
                                 break;
                             case "unsub":
-                                // This fixture's follower tests only unsubscribe the oldest active session.
-                                if (subscriptions.Count > 0) { Close(subscriptions[0]); subscriptions.RemoveAt(0); }
+                                var unsubscribed = subscriptions.FindIndex(item => item.Id == json.GetProperty("id").GetInt64());
+                                if (unsubscribed >= 0) { Close(subscriptions[unsubscribed].Session); subscriptions.RemoveAt(unsubscribed); }
                                 break;
                             case "call":
                                 var id = json.GetProperty("id");
@@ -296,7 +302,7 @@ public sealed partial class MachinesSocketTests
                     }
                 }
                 catch (Exception error) when (error is OperationCanceledException or WebSocketException) { }
-                finally { foreach (var session in subscriptions) Close(session); }
+                finally { foreach (var (_, session) in subscriptions) Close(session); }
             });
             map?.Invoke(_app);
             await _app.StartAsync();
@@ -309,6 +315,29 @@ public sealed partial class MachinesSocketTests
             {
                 _liveOpen[session]--;
                 if (_liveOpen.Values.Sum() == 0) _noLive.TrySetResult();
+                if (Settled()) _settled.TrySetResult();
+            }
+        }
+
+        private IDisposable Handling()
+        {
+            lock (_liveOpen)
+            {
+                if (_settled.Task.IsCompleted) _settled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                _handlers++;
+            }
+            return new Handler(this);
+        }
+
+        private sealed class Handler(StubRemote owner) : IDisposable
+        {
+            public void Dispose()
+            {
+                lock (owner._liveOpen)
+                {
+                    owner._handlers--;
+                    if (owner.Settled()) owner._settled.TrySetResult();
+                }
             }
         }
 

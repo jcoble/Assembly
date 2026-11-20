@@ -12,19 +12,18 @@ public sealed class LoopbackForwardTests
     [InlineData("[::1]", 1)]
     public async Task The_actual_ready_listener_uses_the_same_port_and_only_the_required_loopbacks(string host, int count)
     {
-        var port = FreePort();
         IReadOnlyList<(string Bind, string Target)>? actual = null;
-        RemoteTunnel? process = null;
-        await using var opened = await LoopbackForward.OpenAsync("inert-profile", host, port, TextWriter.Null, default,
+        RemoteTunnel? process = null; var started = 0;
+        await using var opened = await OpenOnFreePort("inert-profile", host, TextWriter.Null, default,
             (forwards, selectedPort) =>
             {
-                Assert.Equal(port, selectedPort); actual = forwards;
-                return process = Listener(forwards, port);
+                actual = forwards; started = selectedPort;
+                return process = Listener(forwards, selectedPort);
             });
         Assert.NotNull(actual); Assert.Equal(count, actual.Count);
         Assert.All(actual, item => Assert.Equal(host == "[::1]" ? "[::1]" : host, item.Target));
         Assert.Equal(host == "localhost" ? new[] { "127.0.0.1", "[::1]" } : new[] { host }, actual.Select(item => item.Bind));
-        Assert.Equal(port, opened.Port); Assert.True(opened.Pid > 0); Assert.Equal(1, process!.Starts);
+        Assert.Equal(started, opened.Port); Assert.True(opened.Pid > 0); Assert.Equal(1, process!.Starts);
         Assert.False(opened.Lost.IsCompleted);
     }
 
@@ -42,7 +41,7 @@ public sealed class LoopbackForwardTests
     public async Task A_single_run_exit_completes_loss_and_final_join_without_a_restart()
     {
         RemoteTunnel? process = null;
-        await using var forward = await LoopbackForward.OpenAsync("inert-profile", "127.0.0.1", FreePort(), TextWriter.Null, default,
+        await using var forward = await OpenOnFreePort("inert-profile", "127.0.0.1", TextWriter.Null, default,
             (forwards, port) => process = Listener(forwards, port));
         System.Diagnostics.Process.GetProcessById(forward.Pid).Kill(entireProcessTree: true);
         await forward.Lost.WaitAsync(TimeSpan.FromSeconds(10));
@@ -53,9 +52,9 @@ public sealed class LoopbackForwardTests
     [Fact]
     public async Task Disposal_joins_only_the_exact_forward_and_does_not_report_loss()
     {
-        await using var other = await LoopbackForward.OpenAsync("other-profile", "127.0.0.1", FreePort(), TextWriter.Null, default,
+        await using var other = await OpenOnFreePort("other-profile", "127.0.0.1", TextWriter.Null, default,
             (f, p) => Listener(f, p));
-        var owned = await LoopbackForward.OpenAsync("inert-profile", "127.0.0.1", FreePort(), TextWriter.Null, default,
+        var owned = await OpenOnFreePort("inert-profile", "127.0.0.1", TextWriter.Null, default,
             (f, p) => Listener(f, p));
         await owned.DisposeAsync(); await owned.Completion;
         Assert.Equal(0, owned.Pid); Assert.False(owned.Lost.IsCompleted);
@@ -67,7 +66,7 @@ public sealed class LoopbackForwardTests
     {
         using var stop = new CancellationTokenSource(); RemoteTunnel? process = null;
         var starting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var open = LoopbackForward.OpenAsync("inert-profile", "127.0.0.1", FreePort(), TextWriter.Null, stop.Token, (_, _) =>
+        var open = OpenOnFreePort("inert-profile", "127.0.0.1", TextWriter.Null, stop.Token, (_, _) =>
         {
             process = RemoteTunnel.Wrapped(["python3", "-c", "import select; select.select([],[],[])"], TextWriter.Null, restart: false);
             starting.TrySetResult(); return process;
@@ -94,6 +93,25 @@ public sealed class LoopbackForwardTests
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
         return ((IPEndPoint)listener.LocalEndpoint).Port;
+    }
+
+    // A port that was free when picked can be bound by a parallel test before the open binds it, so that open tries a fresh port.
+    private static async Task<LoopbackForward> OpenOnFreePort(string sshDestination, string host, TextWriter log, CancellationToken cancel,
+        Func<IReadOnlyList<(string Bind, string Target)>, int, RemoteTunnel> start)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var port = FreePort();
+            try
+            {
+                return await LoopbackForward.OpenAsync(sshDestination, host, port, log, cancel, (forwards, selected) =>
+                {
+                    Assert.Equal(port, selected);
+                    return start(forwards, selected);
+                });
+            }
+            catch (CallbackPortInUse) when (attempt < 5) { }
+        }
     }
 
     internal static RemoteTunnel Listener(IReadOnlyList<(string Bind, string Target)> forwards, int port)
