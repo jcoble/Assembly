@@ -131,7 +131,7 @@ public static class Scenarios
         var completed = c.Updates.WaitForAsync(update => update.Kind == "tool_call_update"
             && update.Update.GetProperty("toolCallId").GetString() == toolId
             && update.Update.TryGetProperty("status", out var status) && status.GetString() is "completed" or "failed", completion.Token);
-        var steered = await c.Agent.Client.SteerAsync(c.SessionId, [TextBlock.Of("Also, once the loop is done, say how many files are in this folder.")], c.Deadline);
+        var steered = await c.Agent.Client.Steer(c.SessionId, [TextBlock.Of("Also, once the loop is done, say how many files are in this folder.")], c.Deadline).Delivered;
         var response = await prompt;
         await c.Updates.DrainAsync();
         var after = c.Updates.BeginTurn();

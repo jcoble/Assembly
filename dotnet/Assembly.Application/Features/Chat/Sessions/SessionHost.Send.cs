@@ -184,7 +184,8 @@ public sealed partial class SessionHost
                 var turn = _turn;
                 if (turn is null) return new(SteerResult.NotRunning);
                 if (turn.Session is not { } session || !session.Adapter.Init.CanSteer) return new(SteerResult.PromptRequired);
-                sending = InjectAsync(turn, session, text, clientId, senderLabel, admission, ct, fromSessionId);
+                if (admission is not null && !CurrentAdmission(admission, text, clientId, senderLabel, fromSessionId)) throw new CallFailed("The delivery owner changed.");
+                sending = SettleSteerAsync(SendSteer(session, text, clientId, senderLabel, fromSessionId, admission));
                 if (clientId is not null) _steering[clientId] = (text, senderLabel, fromSessionId, sending);
                 owns = true;
             }
@@ -196,24 +197,6 @@ public sealed partial class SessionHost
                 lock (_gate)
                     if (_steering.TryGetValue(clientId, out var active) && ReferenceEquals(active.Send, sending)) _steering.Remove(clientId);
         }
-    }
-
-    private async Task<SteerDeliveryResult> InjectAsync(RunningTurn turn, OpenSession session, string text, string? clientId, string? label, OwningSendAdmission? admission, CancellationToken ct, string? fromSessionId = null)
-    {
-        if (admission is not null && !CurrentAdmission(admission, text, clientId, label, fromSessionId)) throw new CallFailed("The delivery owner changed.");
-        var outcome = await session.Adapter.Link.Client.SteerAsync(session.AcpSessionId, [TextBlock.Of(text)], ct);
-        if (outcome != SteerOutcome.Injected) return new(outcome == SteerOutcome.PromptRequired ? SteerResult.PromptRequired : SteerResult.NotRunning);
-        Assembly.Application.Common.Engine.UserRowReference? userRow = null;
-        lock (_gate)
-        {
-            var batch = _converter.Apply(new TurnSteered(Now(), turn.RunId, text, clientId, label, fromSessionId,
-                UserItemId: Guid.NewGuid().ToString(), AttachmentIds: admission?.AttachmentIds.ToArray(), FromMachine: admission?.FromMachine));
-            var saved = _hub.Publish(_sessionId, batch);
-            var user = saved.Single(value => value.Kind == "user");
-            if (turn.Observation is { } observed) userRow = new(user.Seq, turn.RunId, observed.Epoch);
-        }
-        _sessionStore.Touch(_sessionId);
-        return new(SteerResult.Injected, userRow);
     }
 
     private void SameContent(string clientId, string sent, string? from, string? capturedLabel, string text, string? fromSessionId, string? label)
@@ -252,5 +235,167 @@ public sealed partial class SessionHost
         await done.WaitAsync(ct);
     }
 
+    // Messages sent into a running turn. The agent takes one at a point in its stream, where the reader records it;
+    // a message it refuses goes back to the sender to be sent as the next prompt.
 
+    /// <summary>A message sent to the agent that it has neither taken nor refused yet.</summary>
+    private sealed class PendingSteer(SteerRun run, string text, string? clientId, string? label, string? fromSessionId,
+        IReadOnlyList<string>? attachmentIds, string? fromMachine)
+    {
+        public SteerRun Run { get; } = run;
+        public string Text { get; } = text;
+        public string? ClientId { get; } = clientId;
+        public string? Label { get; } = label;
+        public string? FromSessionId { get; } = fromSessionId;
+        public IReadOnlyList<string>? AttachmentIds { get; } = attachmentIds;
+        public string? FromMachine { get; } = fromMachine;
+        public string ItemId { get; } = Guid.NewGuid().ToString();
+        /// <summary>Set once the reader has saved the message's row; faulted if it never will be.</summary>
+        public TaskCompletionSource<UserRowReference?> Recorded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Guarded by the host's lock.
+        public RunningTurn? Turn { get; set; }
+        public long? KeptSince { get; set; }
+        public long? CancelSentAt { get; set; }
+    }
+
+    // The messages the open ACP session's agent has yet to take or refuse, by steer id. Guarded by _gate.
+    private readonly Dictionary<string, PendingSteer> _steers = [];
+    // Set while the reader waits at a prompted turn's end for that turn to be finalized. Guarded by _gate.
+    private TaskCompletionSource? _readerPaused;
+
+    // Called with the lock held, so finalization's keep decision sees the message or the message sees no turn.
+    private PendingSteer SendSteer(OpenSession session, string text, string? clientId, string? label, string? fromSessionId,
+        OwningSendAdmission? admission)
+    {
+        var run = session.Adapter.Link.Client.Steer(session.AcpSessionId, [TextBlock.Of(text)], CancellationToken.None);
+        var steer = new PendingSteer(run, text, clientId, label, fromSessionId, admission?.AttachmentIds.ToArray(), admission?.FromMachine);
+        _steers[run.Id] = steer;
+        return steer;
+    }
+
+    /// <summary>
+    /// The message's outcome: refused by the agent, or taken and recorded. Anything else (a fault, the session or
+    /// adapter ending first) leaves it uncertain, and the wait throws.
+    /// </summary>
+    private async Task<SteerDeliveryResult> SettleSteerAsync(PendingSteer steer)
+    {
+        if (await Task.WhenAny(steer.Run.Delivered, steer.Recorded.Task) == steer.Run.Delivered
+            && steer.Run.Delivered is not { IsCompletedSuccessfully: true, Result: SteerOutcome.Injected })
+        {
+            // Refused, or its request failed: the agent will never take it, so the session doesn't wait on it. A
+            // failure stays uncertain and is thrown.
+            lock (_gate)
+            {
+                _steers.Remove(steer.Run.Id);
+                CloseIfDone();
+            }
+            await steer.Run.Delivered;
+            return new(SteerResult.PromptRequired);
+        }
+        var row = await steer.Recorded.Task;
+        _sessionStore.Touch(_sessionId);
+        return new(SteerResult.Injected, row);
+    }
+
+    // Called with the lock held, by the reader: the agent took a message here. It goes in the run open now, or starts
+    // the next one on a kept session.
+    private PendingSteer? Insert(SteerInserted inserted, RowBatch batch, ref IReadOnlyList<AgentEvent> facts)
+    {
+        if (!_steers.TryGetValue(inserted.SteerId, out var steer)) return null;
+        if (_turn is null && _kept is not null)
+        {
+            StartSelfRun(inserted.At, batch);
+            facts = [.. facts, new TurnStarted(inserted.At, _turn!.RunId, "")];
+        }
+        if (_turn is not { } turn) return null;
+        if (turn.SelfStarted) turn.LastEventAt = inserted.At;
+        Apply(new TurnSteered(inserted.At, turn.RunId, steer.Text, steer.ClientId, steer.Label, steer.FromSessionId,
+            steer.ItemId, steer.AttachmentIds, steer.FromMachine), batch);
+        steer.Turn = turn;
+        return steer;
+    }
+
+    // Called with the lock held, once the batch with the message's row is saved.
+    private void Recorded(PendingSteer steer, IReadOnlyList<StoredRow> saved)
+    {
+        _steers.Remove(steer.Run.Id);
+        var row = saved.FirstOrDefault(value => value.Kind == "user" && value.Payload.TryGetProperty("itemId", out var id)
+            && id.GetString() == steer.ItemId);
+        steer.Recorded.TrySetResult(row is null || steer.Turn?.Observation is not { } observed
+            ? null : new UserRowReference(row.Seq, steer.Turn.RunId, observed.Epoch));
+    }
+
+    // Called with the lock held: these messages will never be recorded on this session.
+    private void FaultSteers(Exception error)
+    {
+        foreach (var steer in _steers.Values) Fail(steer, error);
+        _steers.Clear();
+    }
+
+    private static void Fail(PendingSteer steer, Exception error)
+    {
+        steer.Recorded.TrySetException(error);
+        _ = steer.Recorded.Task.Exception;
+    }
+
+    // Called with the lock held: the session was kept with these messages waiting on it.
+    private void MarkKept()
+    {
+        var now = Now();
+        foreach (var steer in _steers.Values) steer.KeptSince ??= now;
+    }
+
+    // Called with the lock held: the reader goes on past a prompted turn's end.
+    private void ResumeReader()
+    {
+        _readerPaused?.TrySetResult();
+        _readerPaused = null;
+    }
+
+    // Called with the lock held, by the ticker: a kept session waits on a message for at most two quiet periods, a
+    // cancel after the first and a close after the second, and the close itself is limited by the adapter.
+    private void BoundSteers()
+    {
+        if (_kept is not { } kept || _steers.Count == 0) return;
+        var now = Now();
+        if (_steers.Values.Any(steer => steer.CancelSentAt is { } sent && now - sent >= QuietMs))
+        {
+            ForceCloseKept(kept);
+            return;
+        }
+        if (_turn is not null || !_steers.Values.Any(steer => steer.CancelSentAt is null && steer.KeptSince is { } since && now - since >= QuietMs))
+            return;
+        foreach (var steer in _steers.Values) steer.CancelSentAt ??= now;
+        _log.WriteLine($"session {_sessionId}: the agent hasn't taken a waiting message for {QuietMs / 1000} s, so it's cancelled");
+        _work.Start("cancel waiting message " + _sessionId, stopping => CancelQuietlyAsync(kept.Session, stopping));
+    }
+
+    // Called with the lock held. The run on the session ends and the messages fault before the close is awaited, so
+    // nothing here waits on the agent.
+    private void ForceCloseKept(KeptSession kept)
+    {
+        _log.WriteLine($"session {_sessionId}: the agent never settled a waiting message, so its session closes");
+        try
+        {
+            if (_turn is { SelfStarted: true } self)
+            {
+                try { EndSelfRun(new TurnEnded(Now(), "cancelled", null)); }
+                finally
+                {
+                    _turn = null;
+                    self.Ended?.TrySetResult();
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"session {_sessionId}: the run's end wasn't saved: {error.Message}");
+        }
+        finally
+        {
+            FaultSteers(new IOException("The agent neither took nor refused the message, so its session was closed."));
+            _kept = null;
+            _lastTurn = Task.Run(() => CloseKeptAsync(kept, lost: false));
+        }
+    }
 }

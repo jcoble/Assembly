@@ -10,7 +10,6 @@ import { ensureNpm, ensureTools, packages, type ToolVersions } from './dev-toolc
 function fixture() {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'dev-toolchain-'));
   const write = (path: string, text: string) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
-  write(join(root, 'scripts/adapters/claude-launcher.ts'), 'launcher');
   return { root, write, close: () => rmSync(root, { recursive: true, force: true }) };
 }
 const fakeNpm = async () => '/fixture/npm/bin';
@@ -30,10 +29,10 @@ test('dependency check skips all install/build work on the second launch, and ke
     } else if (tool === 'bash') {
       const bundle = join(adapters, 'bundles', 'validated');
       const bin = options.env.PATH.split(':')[0];
-      f.write(join(bundle, 'claude-launcher.ts'), 'launcher');
+      f.write(join(bundle, 'node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js'), 'claude');
       f.write(join(bundle, 'node_modules/@agentclientprotocol/codex-acp/dist/index.js'), 'adapter');
       for (const name of packages.slice(0, 2)) f.write(join(bundle, 'node_modules', name, 'package.json'), JSON.stringify({ version: desired[name] }));
-      f.write(descriptor, JSON.stringify([{ id: 'claude', cli: join(bin, 'claude'), args: [join(bundle, 'claude-launcher.ts')] }, { id: 'codex', cli: join(bin, 'codex'), args: [join(bundle, 'node_modules/@agentclientprotocol/codex-acp/dist/index.js')] }]));
+      f.write(descriptor, JSON.stringify([{ id: 'claude', cli: join(bin, 'claude'), args: [join(bundle, 'node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js')] }, { id: 'codex', cli: join(bin, 'codex'), args: [join(bundle, 'node_modules/@agentclientprotocol/codex-acp/dist/index.js')] }]));
     }
     return '';
   };
@@ -65,12 +64,12 @@ test('a registry that goes backwards never puts an older adapter or CLI over a n
       f.write(join(stage, 'assembly-adapters-linux-x64.json'), '{}');
     } else if (tool === 'bash') {
       const bundle = join(adapters, 'bundles/one');
-      f.write(join(bundle, 'claude-launcher.ts'), 'launcher');
+      f.write(join(bundle, 'node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js'), 'claude');
       const bin = (options?.env?.PATH ?? '').split(':')[0];
       for (const [name, version] of Object.entries(JSON.parse(bundled) as Record<string, string>)) f.write(join(bundle, 'node_modules/@agentclientprotocol', name, 'package.json'), JSON.stringify({ version }));
       f.write(join(bundle, 'node_modules/@agentclientprotocol/codex-acp/dist/index.js'), 'codex');
       for (const id of ['claude', 'codex']) f.write(join(bin, id), id);
-      f.write(descriptor, JSON.stringify([{ id: 'claude', cli: join(bin, 'claude'), args: [join(bundle, 'claude-launcher.ts')] }, { id: 'codex', cli: join(bin, 'codex'), args: [join(bundle, 'node_modules/@agentclientprotocol/codex-acp/dist/index.js')] }]));
+      f.write(descriptor, JSON.stringify([{ id: 'claude', cli: join(bin, 'claude'), args: [join(bundle, 'node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js')] }, { id: 'codex', cli: join(bin, 'codex'), args: [join(bundle, 'node_modules/@agentclientprotocol/codex-acp/dist/index.js')] }]));
     }
     return '';
   };

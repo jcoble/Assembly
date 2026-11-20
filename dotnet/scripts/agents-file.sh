@@ -42,7 +42,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The descriptor itself identifies the active immutable bundle. Validate its exact launcher and Codex paths
+# The descriptor itself identifies the active immutable bundle. Validate its exact Claude and Codex paths
 # against the bundle manifest and installed package versions before allowing it to serve as an offline cache.
 cache_state=$(python3 -I - "$out" "$bundle_root" "$target" <<'PY' 2>/dev/null || true
 import json, os, re, sys
@@ -50,11 +50,11 @@ out, root, target = sys.argv[1:]
 try:
     agents = {a["id"]: a for a in json.load(open(out, encoding="utf-8"))}
     claude, codex = agents["claude"], agents["codex"]
-    launcher = claude["args"][0]
-    bundle = os.path.dirname(launcher)
+    claude_entry = claude["args"][0]
+    bundle = claude_entry.split("/node_modules/")[0]
     root = os.path.realpath(root)
     bundle_real = os.path.realpath(bundle)
-    if os.path.commonpath([root, bundle_real]) != root or launcher != os.path.join(bundle_real, "claude-launcher.ts"):
+    if os.path.commonpath([root, bundle_real]) != root or claude_entry != os.path.join(bundle_real, "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"):
         raise ValueError("Claude entry is outside the adapters bundle cache")
     expected_codex = os.path.join(bundle_real, "node_modules/@agentclientprotocol/codex-acp/dist/index.js")
     if codex["args"][0] != expected_codex:
@@ -67,7 +67,7 @@ try:
         raise ValueError("Cached provider identity is invalid")
     if local and tag != "local-sha256-" + manifest.get("archive", {}).get("sha256", ""):
         raise ValueError("Cached local archive identity is invalid")
-    if manifest.get("schemaVersion") != 1 or manifest.get("entrypoints", {}).get("claude-agent-acp") != "claude-launcher.ts":
+    if manifest.get("schemaVersion") != 1 or manifest.get("entrypoints", {}).get("claude-agent-acp") != "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js":
         raise ValueError("Cached manifest is invalid")
     if manifest.get("entrypoints", {}).get("codex-acp") != "node_modules/@agentclientprotocol/codex-acp/dist/index.js":
         raise ValueError("Cached Codex manifest entry is invalid")
@@ -81,7 +81,6 @@ try:
     if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", versions["codex-acp"]):
         raise ValueError("Cached Codex version is invalid")
     for relative, package, version in [
-        ("claude-launcher.ts", None, None),
         ("package.json", None, None),
         ("package-lock.json", None, None),
         ("node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js", "claude-agent-acp", versions["claude-agent-acp"]),
@@ -161,7 +160,7 @@ expected_archive = "assembly-adapters-" + target + ".tar.gz"
 if manifest.get("schemaVersion") != 1 or manifest.get("target") != target or manifest.get("archive", {}).get("file") != expected_archive:
     raise ValueError("provider manifest target mismatch")
 entries = manifest.get("entrypoints", {})
-if entries.get("claude-agent-acp") != "claude-launcher.ts" or entries.get("codex-acp") != "node_modules/@agentclientprotocol/codex-acp/dist/index.js":
+if entries.get("claude-agent-acp") != "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js" or entries.get("codex-acp") != "node_modules/@agentclientprotocol/codex-acp/dist/index.js":
     raise ValueError("provider manifest entrypoint mismatch")
 versions = manifest.get("versions", {})
 for name in ("claude-agent-acp", "codex-acp"):
@@ -187,7 +186,7 @@ import sys
 members = [line.strip().rstrip("/") for line in open(sys.argv[1], encoding="utf-8")]
 if any(name.startswith("/") or ".." in name.split("/") for name in members):
     raise ValueError("provider archive contains an unsafe path")
-required = ["package.json", "package-lock.json", "claude-launcher.ts",
+required = ["package.json", "package-lock.json",
             "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
             "node_modules/@agentclientprotocol/codex-acp/dist/index.js"]
 missing = [name for name in required if name not in members]
@@ -208,7 +207,7 @@ manifest = json.load(open(os.path.join(bundle, "provider-manifest.json"), encodi
 if manifest.get("target") != target: raise ValueError("staged bundle target mismatch")
 versions = manifest["versions"]
 for relative, package in [
-    ("claude-launcher.ts", None), ("package.json", None), ("package-lock.json", None),
+    ("package.json", None), ("package-lock.json", None),
     ("node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js", "claude-agent-acp"),
     ("node_modules/@agentclientprotocol/codex-acp/dist/index.js", "codex-acp"),
 ]:
@@ -266,17 +265,17 @@ try:
         path = os.path.join(codex_home, "config.toml")
         config = tomllib.load(open(path, "rb")) if os.path.exists(path) else {}
         codex["mcp_servers"] = {name: {"enabled": False} for name in sorted(config.get("mcp_servers", {}))}
-    claude_env = {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
+    claude_env = {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1", "CLAUDE_CODE_ENTRYPOINT": "assembly"}
     if os.environ["ASSEMBLY_CLAUDEAI_MCP"] == "off": claude_env["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false"
     node, adapters = os.environ["ASSEMBLY_NODE"], os.environ["ASSEMBLY_ADAPTERS"]
     generated = [
         {"id": "claude", "vendorFamily": "claude", "name": "Claude Code", "command": node,
-         "args": [os.path.join(adapters, "claude-launcher.ts")], "env": claude_env},
+         "args": [os.path.join(adapters, "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js")], "env": claude_env},
         {"id": "codex", "vendorFamily": "codex", "name": "Codex", "command": node,
          "args": [os.path.join(adapters, "node_modules/@agentclientprotocol/codex-acp/dist/index.js")], "env": {"CODEX_CONFIG": json.dumps(codex)}},
     ]
     installer_fields = {"id", "vendorFamily", "name", "command", "args", "env"}
-    installer_env = {"codex": {"CODEX_CONFIG"}, "claude": {"CLAUDE_CODE_ENABLE_TODO_TOOLS", "ENABLE_CLAUDEAI_MCP_SERVERS"}}
+    installer_env = {"codex": {"CODEX_CONFIG"}, "claude": {"CLAUDE_CODE_ENABLE_TODO_TOOLS", "CLAUDE_CODE_ENTRYPOINT", "ENABLE_CLAUDEAI_MCP_SERVERS"}}
     for agent in generated:
         old = prior.get(agent["id"])
         if old is None:
@@ -297,7 +296,7 @@ try:
     agents.extend(a for a in generated if a["id"] not in prior)
     encoded = (json.dumps(agents, indent=2) + "\n").encode("utf-8")
     validated = {a["id"]: a for a in json.loads(encoded)}
-    for name, relative in [("claude", "claude-launcher.ts"), ("codex", "node_modules/@agentclientprotocol/codex-acp/dist/index.js")]:
+    for name, relative in [("claude", "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"), ("codex", "node_modules/@agentclientprotocol/codex-acp/dist/index.js")]:
         if validated[name]["args"] != [os.path.join(bundle, relative)]: raise ValueError("descriptor entry mismatch")
         if not os.path.isfile(os.path.join(stage if final_bundle else bundle, relative)): raise ValueError("validated bundle is unavailable")
     if "air" in validated["codex"]: raise ValueError("Codex descriptor must not opt into AIR")

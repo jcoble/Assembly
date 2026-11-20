@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { validateVersions, smokeAdapter, archiveBundle, compareClaudeEntrypoints, validateHistoricalProviderAsset, compareWithLastProviderRelease, packagingDigest, releaseBehind } from "./package-adapters.ts";
+import { validateVersions, smokeAdapter, archiveBundle, packagingDigest, releaseBehind } from "./package-adapters.ts";
 
 const versions = { "claude-agent-acp": "0.99.1", "codex-acp": "2.5.0" };
 function fixture(run: (root: string) => unknown) {
@@ -45,16 +45,12 @@ for (const [name, change, expected] of [
 }));
 
 test("scheduled comparison: changing the launcher or the packager changes the recorded inputs", () => fixture(async root => {
-  mkdirSync(join(root, "scripts/adapters"), { recursive: true });
-  writeFileSync(join(root, "scripts/adapters/claude-launcher.ts"), "launcher");
+  mkdirSync(join(root, "scripts"), { recursive: true });
   writeFileSync(join(root, "scripts/package-adapters.ts"), "packager");
   const first = await packagingDigest(root);
   assert.equal(await packagingDigest(root), first);
-  writeFileSync(join(root, "scripts/adapters/claude-launcher.ts"), "changed");
-  const second = await packagingDigest(root);
-  assert.notEqual(second, first);
   writeFileSync(join(root, "scripts/package-adapters.ts"), "changed");
-  assert.notEqual(await packagingDigest(root), second);
+  assert.notEqual(await packagingDigest(root), first);
 }));
 
 test("only exact stable versions of both supported adapters are accepted", () => {
@@ -108,80 +104,6 @@ console.log(JSON.stringify([{ tag_name: "assembly-providers-1-1", draft: false, 
   assert.match(call.stdin, /Authorization: Bearer fixture-secret/);
   assert.ok(!call.args.join(" ").includes("fixture-secret"));
 }));
-test("stock Claude comparison logs the current upstream diff and the first-publication case", () => fixture(root => {
-  const prior = join(root, "prior-index.js"), current = join(root, "current-index.js"), messages: string[] = [];
-  writeFileSync(prior, "const startup = 'old';\n");
-  writeFileSync(current, "const startup = 'new';\n");
-  compareClaudeEntrypoints(prior, current, "assembly-providers-101-1", line => messages.push(line));
-  assert.match(messages.join("\n"), /Claude upstream dist\/index\.js changes since assembly-providers-101-1/);
-  assert.match(messages.join("\n"), /-const startup = 'old'/);
-  assert.match(messages.join("\n"), /\+const startup = 'new'/);
-  messages.length = 0;
-  compareClaudeEntrypoints(undefined, current, undefined, line => messages.push(line));
-  assert.match(messages[0], /first publication/);
-}));
-test("historical protocol 1 baseline validates its recorded raw entrypoint against a protocol 2 candidate", () => fixture(root => {
-  const archive = join(root, "previous.tar.gz"), manifestPath = join(root, "previous.json");
-  const previous = join(root, "previous-index.js"), current = join(root, "current-index.js"), messages: string[] = [];
-  writeFileSync(archive, "historical archive fixture");
-  const manifest = {
-    schemaVersion: 1, target: "linux-x64", versions: { "claude-agent-acp": "0.99.1", "codex-acp": "2.5.0" },
-    entrypoints: { "claude-agent-acp": "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js" },
-    archive: { file: "assembly-adapters-linux-x64.tar.gz", sha256: createHash("sha256").update(readFileSync(archive)).digest("hex") },
-    smoke: { "claude-agent-acp": { protocolVersion: 1, agentInfo: { version: "0.99.1" } } },
-  };
-  writeFileSync(manifestPath, JSON.stringify(manifest));
-  const baseline = validateHistoricalProviderAsset(manifestPath, archive, "linux-x64");
-  assert.equal(baseline.entrypoints["claude-agent-acp"], "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js");
-  writeFileSync(previous, "const startup = 'protocol-1 baseline';\n");
-  writeFileSync(current, "const startup = 'protocol-2 candidate';\n");
-  compareClaudeEntrypoints(previous, current, "assembly-providers-101-1", line => messages.push(line));
-  assert.match(messages.join("\n"), /protocol-1 baseline/);
-  assert.match(messages.join("\n"), /protocol-2 candidate/);
-  manifest.archive.sha256 = "0".repeat(64);
-  writeFileSync(manifestPath, JSON.stringify(manifest));
-  assert.throws(() => validateHistoricalProviderAsset(manifestPath, archive, "linux-x64"), /Corrupted historical provider archive/);
-}));
-test("daily comparison uses raw Claude vendor entrypoint from a v2 baseline, not its launcher", () => fixture(root => {
-  const releaseDir = join(root, "release"), previousBundle = join(releaseDir, "bundle"), currentBundle = join(root, "current");
-  const vendorPath = "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js";
-  const previousVendor = join(previousBundle, vendorPath);
-  const currentVendor = join(currentBundle, vendorPath);
-  mkdirSync(join(previousBundle, "node_modules/@agentclientprotocol/claude-agent-acp/dist"), { recursive: true });
-  mkdirSync(join(currentBundle, "node_modules/@agentclientprotocol/claude-agent-acp/dist"), { recursive: true });
-  writeFileSync(join(previousBundle, "claude-launcher.ts"), "// DISTINCT_OLD_LAUNCHER_TEXT\n");
-  writeFileSync(previousVendor, "const vendorSetup = 'previous upstream setup';\n");
-  writeFileSync(currentVendor, "const vendorSetup = 'current upstream setup';\n");
-  const archive = join(releaseDir, "assembly-adapters-linux-x64.tar.gz");
-  execFileSync("tar", ["-czf", archive, "-C", previousBundle, "claude-launcher.ts", "node_modules"]);
-  const manifest = {
-    schemaVersion: 1, target: "linux-x64", versions: { "claude-agent-acp": "0.99.1", "codex-acp": "2.5.0" },
-    entrypoints: { "claude-agent-acp": "claude-launcher.ts", "codex-acp": "node_modules/@agentclientprotocol/codex-acp/dist/index.js" },
-    archive: { file: "assembly-adapters-linux-x64.tar.gz", sha256: createHash("sha256").update(readFileSync(archive)).digest("hex") },
-  };
-  writeFileSync(join(releaseDir, "assembly-adapters-linux-x64.json"), JSON.stringify(manifest));
-  const releases = [{ tagName: "assembly-providers-300-1", isDraft: false, isPrerelease: false, publishedAt: "2026-11-01T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"] }];
-  writeFileSync(join(root, "releases.json"), JSON.stringify(releases));
-  fakeReleaseApi(root);
-  const oldPath = process.env.PATH, oldReleases = process.env.RELEASES, oldReleaseDir = process.env.RELEASE_DIR;
-  process.env.PATH = root + ":" + (oldPath ?? "");
-  process.env.RELEASES = join(root, "releases.json");
-  process.env.RELEASE_DIR = releaseDir;
-  try {
-    const output: string[] = [];
-    const scratch = join(root, "smoke");
-    mkdirSync(scratch);
-    compareWithLastProviderRelease("linux-x64", currentBundle, scratch, line => output.push(line));
-    assert.match(output.join("\n"), /Claude upstream dist\/index\.js changes since assembly-providers-300-1/);
-    assert.match(output.join("\n"), /-const vendorSetup = 'previous upstream setup'/);
-    assert.match(output.join("\n"), /\+const vendorSetup = 'current upstream setup'/);
-    assert.doesNotMatch(output.join("\n"), /DISTINCT_OLD_LAUNCHER_TEXT|claude-launcher\.ts/);
-  } finally {
-    if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath;
-    if (oldReleases === undefined) delete process.env.RELEASES; else process.env.RELEASES = oldReleases;
-    if (oldReleaseDir === undefined) delete process.env.RELEASE_DIR; else process.env.RELEASE_DIR = oldReleaseDir;
-  }
-}));
 test("smoke requires protocol 2 and steering", () => fixture(async root => {
   const entry = join(root, "adapter.cjs");
   writeFileSync(entry, String.raw`const lines = require("node:readline").createInterface({ input: process.stdin });
@@ -198,24 +120,30 @@ lines.on("line", line => {
   assert.equal(result.info.name, "fixture");
   assert.equal(result.steeringSessionNotFound, true);
 }));
-test("smoke stops the bundle when the launcher cannot steer", () => fixture(async root => {
+test("smoke stops the bundle when an adapter cannot steer", () => fixture(async root => {
   const entry = join(root, "no-steering.cjs");
   writeFileSync(entry, String.raw`process.stdin.once("data", data => console.log(JSON.stringify({ id: JSON.parse(String(data)).id, result: { protocolVersion: 2, info: { version: "1" } } })));`);
   await assert.rejects(smokeAdapter(entry, root), /does not advertise ACP v2 steering/);
 }));
-test("smoke notes when dist/index.js already steers", () => fixture(async root => {
-  const entry = join(root, "stock.cjs");
-  writeFileSync(entry, String.raw`process.stdin.once("data", data => console.log(JSON.stringify({ id: JSON.parse(String(data)).id, result: { protocolVersion: 2, info: { version: "1" }, _meta: { steering: { supported: true } } } })));`);
-  const result = await smokeAdapter(entry, root, false);
-  assert.equal(result._meta.steering.supported, true);
+test("smoke accepts prompt queueing without a steering route", () => fixture(async root => {
+  const entry = join(root, "queueing.cjs"), seen = join(root, "methods");
+  writeFileSync(entry, String.raw`const fs = require("node:fs");
+require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+  const request = JSON.parse(line);
+  fs.appendFileSync(process.env.HOME + "/methods", request.method + "\n");
+  if (request.method === "initialize") console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: 2, info: { version: "1" }, capabilities: { _meta: { claudeCode: { promptQueueing: true } } } } }));
+});`);
+  const result = await smokeAdapter(entry, root);
+  assert.equal(result.capabilities._meta.claudeCode.promptQueueing, true);
+  assert.equal(readFileSync(seen, "utf8"), "initialize\n");
 }));
 test("stdin stays open while the adapter initializes asynchronously", () => fixture(async root => {
   const entry = join(root, "async.cjs");
   writeFileSync(entry, String.raw`process.stdin.on("end", () => process.exit(0));
 process.stdin.once("data", data => require("node:fs").readFile(__filename, () => {
-  console.log(JSON.stringify({ id: JSON.parse(String(data)).id, result: { protocolVersion: 2 } }));
+  console.log(JSON.stringify({ id: JSON.parse(String(data)).id, result: { protocolVersion: 2, capabilities: { _meta: { claudeCode: { promptQueueing: true } } } } }));
 }));`);
-  assert.equal((await smokeAdapter(entry, root, false)).protocolVersion, 2);
+  assert.equal((await smokeAdapter(entry, root)).protocolVersion, 2);
 }));
 test("invalid ACP response fails instead of treating process startup as proof", () => fixture(async root => {
   const entry = join(root, "broken.cjs");
@@ -227,12 +155,11 @@ test("an adapter that exits before initializing fails with its error", () => fix
   writeFileSync(entry, 'console.error("fixture cannot launch"); process.exit(7);');
   await assert.rejects(smokeAdapter(entry, root), /fixture cannot launch/);
 }));
-test("bundle contains the launcher and the manifest names it", () => fixture(root => {
+test("bundle manifest names the stock Claude entry", () => fixture(root => {
   const bundle = join(root, "bundle"), output = join(root, "out");
   mkdirSync(bundle); mkdirSync(output);
   writeFileSync(join(bundle, "package.json"), JSON.stringify({ private: true }));
   writeFileSync(join(bundle, "package-lock.json"), '{"lockfileVersion":3}');
-  writeFileSync(join(bundle, "claude-launcher.ts"), "// launcher fixture");
   for (const [name, version] of Object.entries(versions)) {
     const dir = join(bundle, "node_modules", "@agentclientprotocol", name);
     mkdirSync(join(dir, "dist"), { recursive: true });
@@ -247,8 +174,8 @@ test("bundle contains the launcher and the manifest names it", () => fixture(roo
   mkdirSync(unpack);
   execFileSync("tar", ["-xzf", archive, "-C", unpack]);
   assert.equal(readFileSync(join(unpack, "package-lock.json"), "utf8"), '{"lockfileVersion":3}');
-  assert.equal(readFileSync(join(unpack, "claude-launcher.ts"), "utf8"), "// launcher fixture");
-  assert.equal(manifest.entrypoints["claude-agent-acp"], "claude-launcher.ts");
+  assert.ok(!existsSync(join(unpack, "claude-launcher.ts")));
+  assert.equal(manifest.entrypoints["claude-agent-acp"], "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js");
   assert.equal(manifest.entrypoints["codex-acp"], "node_modules/@agentclientprotocol/codex-acp/dist/index.js");
   for (const entry of Object.values(manifest.entrypoints)) assert.ok(readFileSync(join(unpack, entry)).length);
   assert.deepEqual(JSON.parse(readFileSync(join(output, "assembly-adapters-darwin-arm64.json"), "utf8")), manifest);

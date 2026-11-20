@@ -17,14 +17,13 @@ make_asset() {
     "$bundle/node_modules/@agentclientprotocol/codex-acp/dist"
   echo '{"private":true}' >"$bundle/package.json"
   echo '{"lockfileVersion":3}' >"$bundle/package-lock.json"
-  echo "export const launcher = '$marker';" >"$bundle/claude-launcher.ts"
   [[ "$obsolete" != yes ]] || echo old-only >"$bundle/obsolete-upstream-file.txt"
   for pair in "claude-agent-acp $claude_version" "codex-acp $codex_version"; do
     read -r name version <<<"$pair"
     echo "{\"version\":\"$version\"}" >"$bundle/node_modules/@agentclientprotocol/$name/package.json"
     echo "// $marker $name" >"$bundle/node_modules/@agentclientprotocol/$name/dist/index.js"
   done
-  local members=(package.json package-lock.json claude-launcher.ts node_modules)
+  local members=(package.json package-lock.json node_modules)
   [[ "$obsolete" != yes ]] || members+=(obsolete-upstream-file.txt)
   tar -czf "$folder/assembly-adapters-$target.tar.gz" -C "$bundle" "${members[@]}"
   if [[ "$truncate" == yes ]]; then
@@ -39,7 +38,7 @@ path, target, claude, codex, checksum = sys.argv[1:]
 versions = {"claude-agent-acp": claude, "codex-acp": codex}
 manifest = {
     "schemaVersion": 1, "target": target, "versions": versions,
-    "entrypoints": {"claude-agent-acp": "claude-launcher.ts", "codex-acp": "node_modules/@agentclientprotocol/codex-acp/dist/index.js"},
+    "entrypoints": {"claude-agent-acp": "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js", "codex-acp": "node_modules/@agentclientprotocol/codex-acp/dist/index.js"},
     "archive": {"file": "assembly-adapters-" + target + ".tar.gz", "sha256": checksum},
     "smoke": {name: {"protocolVersion": 2, "info": {"version": version}, "canSteer": True} for name, version in versions.items()},
 }
@@ -124,8 +123,9 @@ checks = {
  "claude_connectors_on": "ENABLE_CLAUDEAI_MCP_SERVERS" not in claude_env,
  "user_mcp_on": "mcp_servers" not in codex and "plugins" not in codex,
  "cli_paths": agents["claude"].get("cli", "").endswith("/claude") and "cli" not in agents["codex"],
+ "claude_entrypoint": claude_env.get("CLAUDE_CODE_ENTRYPOINT") == "assembly",
  "vendor_families": agents["claude"].get("vendorFamily") == "claude" and agents["codex"].get("vendorFamily") == "codex",
- "entries": agents["claude"]["args"][0].endswith("/claude-launcher.ts") and agents["codex"]["args"][0].endswith("/node_modules/@agentclientprotocol/codex-acp/dist/index.js") and "air" not in agents["codex"],
+ "entries": agents["claude"]["args"][0].endswith("/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js") and agents["codex"]["args"][0].endswith("/node_modules/@agentclientprotocol/codex-acp/dist/index.js") and "air" not in agents["codex"],
 }
 assert checks[condition], (condition, agents)
 PY
@@ -146,6 +146,7 @@ grep -Fq 'CODEX_HOME must not be empty when configured' "$tmp/empty-codex-home.e
 echo "ok   explicitly empty CODEX_HOME refuses config lookup and preserves the descriptor"
 expect_config "selects newest complete provider release, not app latest or incomplete/draft releases" entries
 expect_config "records explicit adapter vendor families" vendor_families
+expect_config "Claude is started with CLAUDE_CODE_ENTRYPOINT=assembly" claude_entrypoint
 python3 - "$tmp/curl-calls.jsonl" <<'PY'
 import json, sys
 calls = [json.loads(line) for line in open(sys.argv[1])]
@@ -162,7 +163,7 @@ expect_config "a CLI on PATH is named by full path" cli_paths PATH="$tmp/bin:/us
 active_bundle=$(python3 - "$tmp/agents.json" <<'PY'
 import json, os, sys
 agents = {a["id"]: a for a in json.load(open(sys.argv[1]))}
-print(os.path.dirname(agents["claude"]["args"][0]))
+print(agents["claude"]["args"][0].split("/node_modules/")[0])
 PY
 )
 [[ "$(cat "$active_bundle/provider-tag")" == assembly-providers-202-1 ]]
@@ -225,7 +226,7 @@ p=sys.argv[1]; releases=json.load(open(p)); releases.append({"tagName":"assembly
 PY
 if ! run_agents 2>"$tmp/truncated.err"; then echo "FAIL truncated archive fallback: $(cat "$tmp/truncated.err")"; exit 1; fi
 [[ "$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)" == "$before_descriptor" ]]
-[[ "$(cat "$active_bundle/claude-launcher.ts")" == "export const launcher = 'selected';" ]]
+[[ "$(cat "$active_bundle/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js")" == "// selected claude-agent-acp" ]]
 grep -Fq 'retaining validated cached bundle assembly-providers-202-1' "$tmp/truncated.err"
 [[ -z "$(find "$tmp/adapters/bundles" -maxdepth 1 -type d -name '.install.*' -print -quit)" ]]
 [[ -z "$(find "$tmp/adapters/bundles" -maxdepth 1 -type d -name 'assembly-providers-206-1-*' -print -quit)" ]]
@@ -239,7 +240,7 @@ PY
 printf '[mcp_servers.alpha\n' >"$tmp/home/.codex/config.toml"
 if run_agents 2>"$tmp/toml.err"; then echo "FAIL malformed TOML unexpectedly succeeded"; exit 1; fi
 [[ "$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)" == "$before_descriptor" ]]
-[[ "$(cat "$active_bundle/claude-launcher.ts")" == "export const launcher = 'selected';" ]]
+[[ "$(cat "$active_bundle/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js")" == "// selected claude-agent-acp" ]]
 grep -Fq 'TOMLDecodeError' "$tmp/toml.err"
 [[ -z "$(find "$tmp/adapters/bundles" -maxdepth 1 -type d -name '.install.*' -print -quit)" ]]
 [[ -z "$(find "$tmp/adapters/bundles" -maxdepth 1 -type d -name 'assembly-providers-207-1-*' -print -quit)" ]]
@@ -254,13 +255,13 @@ printf '[mcp_servers.alpha]\ncommand = "alpha"\n' >"$tmp/home/.codex/config.toml
 run_agents
 new_bundle=$(python3 - "$tmp/agents.json" <<'PY'
 import json, os, sys
-agents={a["id"]:a for a in json.load(open(sys.argv[1]))}; print(os.path.dirname(agents["claude"]["args"][0]))
+agents={a["id"]:a for a in json.load(open(sys.argv[1]))}; print(agents["claude"]["args"][0].split("/node_modules/")[0])
 PY
 )
 [[ "$(cat "$new_bundle/provider-tag")" == assembly-providers-208-1 ]]
 [[ ! -e "$new_bundle/obsolete-upstream-file.txt" ]]
 [[ -e "$active_bundle/obsolete-upstream-file.txt" ]]
-[[ "$(cat "$new_bundle/claude-launcher.ts")" == "export const launcher = 'replacement';" ]]
+[[ "$(cat "$new_bundle/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js")" == "// replacement claude-agent-acp" ]]
 echo "ok   atomic version switch removes obsolete upstream files and retains previous bundle"
 
 # A settings save owns the exact existing provider ID; the installer replaces only its ACP invocation/defaults.
@@ -276,6 +277,7 @@ try:
     for agent in agents:
         agent.update(cli=None if agent["id"] == "claude" else "/fixture/selected-codex", cliArgs=["--owner-option"], shadowHome="", ownerExtra={"keep": True})
         agent["env"]["OWNER_EXTRA"] = "keep"
+        if agent["id"] == "claude": agent["env"]["CLAUDE_CODE_ENTRYPOINT"] = "other"
         agent["env"]["CODEX_HOME" if agent["id"] == "codex" else "CLAUDE_CONFIG_DIR"] = private if agent["id"] == "codex" else ""
     agents.append({"id": "unrelated", "name": "Owner provider", "command": "/fixture/unrelated", "args": ["unchanged"], "env": {"KEEP": "unchanged"}})
     with open(path, "w") as output: json.dump(agents, output)
@@ -290,8 +292,9 @@ for name in ("claude", "codex"):
     assert a["cli"] == (None if name == "claude" else "/fixture/selected-codex")
     assert a["cliArgs"] == ["--owner-option"] and a["shadowHome"] == "" and a["ownerExtra"] == {"keep": True}
     assert a["env"]["OWNER_EXTRA"] == "keep"
-    assert a["args"][0].endswith("claude-launcher.ts" if name == "claude" else "codex-acp/dist/index.js")
+    assert a["args"][0].endswith("claude-agent-acp/dist/index.js" if name == "claude" else "codex-acp/dist/index.js")
 assert agents["claude"]["env"]["CLAUDE_CONFIG_DIR"] == ""
+assert agents["claude"]["env"]["CLAUDE_CODE_ENTRYPOINT"] == "assembly"
 assert agents["codex"]["env"]["CODEX_HOME"] == sys.argv[2]
 assert json.loads(agents["codex"]["env"]["CODEX_CONFIG"])["mcp_servers"] == {"owner_only": {"enabled": False}}
 assert agents["unrelated"] == {"id": "unrelated", "name": "Owner provider", "command": "/fixture/unrelated", "args": ["unchanged"], "env": {"KEEP": "unchanged"}}
@@ -383,3 +386,38 @@ for(const id of ['claude','codex'])assert.equal(agents.find(a=>a.id===id).cli,pr
 assert.ok(agents.some(a=>a.id==='unrelated'));
 JS
 echo 'ok   managed CLI update reuses validated ACP bundle without querying or downloading a release'
+
+# An installed copy whose only cache is a bundle from the launcher era, upgraded while offline: that cache no longer
+# validates, so the install fails and leaves the descriptor and the old bundle exactly as they were.
+legacy="$tmp/legacy-adapters/bundles/assembly-providers-150-1-old"
+mkdir -p "$legacy/node_modules/@agentclientprotocol/claude-agent-acp/dist" "$legacy/node_modules/@agentclientprotocol/codex-acp/dist"
+echo "export const launcher = 'legacy';" >"$legacy/claude-launcher.ts"
+echo '{"private":true}' >"$legacy/package.json"
+echo '{"lockfileVersion":3}' >"$legacy/package-lock.json"
+printf 'assembly-providers-150-1\n' >"$legacy/provider-tag"
+python3 -I - "$legacy" "$tmp/legacy-agents.json" <<'PY'
+import json, os, sys
+bundle, out = sys.argv[1:]
+versions = {"claude-agent-acp": "0.99.0", "codex-acp": "2.4.0"}
+for name, version in versions.items():
+    open(os.path.join(bundle, "node_modules/@agentclientprotocol", name, "package.json"), "w").write(json.dumps({"version": version}))
+    open(os.path.join(bundle, "node_modules/@agentclientprotocol", name, "dist/index.js"), "w").write("// legacy " + name)
+json.dump({"schemaVersion": 1, "target": "linux-x64", "versions": versions,
+    "entrypoints": {"claude-agent-acp": "claude-launcher.ts", "codex-acp": "node_modules/@agentclientprotocol/codex-acp/dist/index.js"},
+    "archive": {"file": "assembly-adapters-linux-x64.tar.gz", "sha256": "0" * 64},
+    "smoke": {name: {"protocolVersion": 2, "info": {"version": version}, "canSteer": True} for name, version in versions.items()}},
+    open(os.path.join(bundle, "provider-manifest.json"), "w"))
+json.dump([{"id": "claude", "vendorFamily": "claude", "name": "Claude Code", "command": "node", "args": [os.path.join(bundle, "claude-launcher.ts")], "env": {}},
+    {"id": "codex", "vendorFamily": "codex", "name": "Codex", "command": "node", "args": [os.path.join(bundle, "node_modules/@agentclientprotocol/codex-acp/dist/index.js")], "env": {}}],
+    open(out, "w"))
+PY
+legacy_descriptor=$(sha256sum "$tmp/legacy-agents.json" | cut -d' ' -f1)
+legacy_tree=$(cd "$legacy" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+if env -u CODEX_HOME HOME="$tmp/home" PATH="$tmp/bin:/usr/bin:/bin" FAKE_RELEASES_FILE="$tmp/releases.json" FAKE_ASSET_ROOT="$tmp/releases" FAKE_FAIL_LIST=1 \
+  bash "$here/../dotnet/scripts/agents-file.sh" "$tmp/legacy-adapters" "$tmp/legacy-agents.json" 2>"$tmp/legacy.err"; then
+  echo "FAIL an offline upgrade over a launcher-era cache unexpectedly succeeded"; exit 1
+fi
+grep -Fq 'no valid cached bundle exists' "$tmp/legacy.err"
+[[ "$(sha256sum "$tmp/legacy-agents.json" | cut -d' ' -f1)" == "$legacy_descriptor" ]]
+[[ "$(cd "$legacy" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)" == "$legacy_tree" ]]
+echo "ok   an offline upgrade over a launcher-era cache fails and keeps its descriptor and bundle"

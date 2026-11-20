@@ -114,8 +114,11 @@ echo 'PASS live native-launch cwd without app.pid refuses'
 # A recorded ui-check backend remains identifiable by its executable even with another cwd.
 data=$fixture_home/assembly-dotnet-example
 mkdir -p "$data/ui-check/backend"
-cp "$(command -v sleep)" "$data/ui-check/backend/Assembly.Desktop"
-(cd "$fixture" && exec "$data/ui-check/backend/Assembly.Desktop" 300) &
+# A copy of this bash runs under any name (a multi-call coreutils sleep refuses to, and macOS kills a copied system
+# binary). It waits in the read builtin on a FIFO nobody writes, so it stays one process at this path until killed.
+cp "$BASH" "$data/ui-check/backend/Assembly.Desktop"
+mkfifo "$fixture/backend-hold"
+(cd "$fixture" && exec "$data/ui-check/backend/Assembly.Desktop" -c 'read -r -t 300 <> "$1"' backend "$fixture/backend-hold") &
 backend=$!
 children+=("$backend")
 wait_fixture_path "$backend" txt "$data/ui-check/backend/Assembly.Desktop"

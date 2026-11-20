@@ -19,6 +19,14 @@ public sealed class AcpClientV2Tests
         """{"sessionUpdate":"user_message_chunk","messageId":"ID","content":{"type":"text","text":"hi"}}""".Replace("ID", id));
     private const string Running = """{"sessionUpdate":"state_update","state":"running"}""";
     private const string End = """{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""";
+    private const string SteeringCall = """{"protocolVersion":2,"capabilities":{},"_meta":{"steering":{"supported":true}}}""";
+    private const string PromptQueue = """{"protocolVersion":2,"capabilities":{"_meta":{"claudeCode":{"promptQueueing":true}}}}""";
+    private static async Task Initialize(FakeAgent agent, AcpClient client, string response)
+    {
+        var call = client.InitializeAsync(new("fixture", "1"), default);
+        await agent.ReplyAsync(await agent.ReadAsync(), response);
+        await call.WaitAsync(Bounded);
+    }
 
     [Fact]
     public async Task Prompt_completes_on_its_own_idle_when_updates_race_the_response()
@@ -89,11 +97,86 @@ public sealed class AcpClientV2Tests
     [Fact]
     public async Task Steer_prompt_required_is_returned_without_waiting()
     {
-        var agent = new FakeAgent(); await using var client = Connect(agent);
-        var call = client.SteerAsync("s", [TextBlock.Of("hi")], default); var request = await agent.ReadAsync();
+        var agent = new FakeAgent(); await using var client = Connect(agent); await Initialize(agent, client, SteeringCall);
+        var call = client.Steer("s", [TextBlock.Of("hi")], default).Delivered; var request = await agent.ReadAsync();
         Assert.Equal("promptRequired", request.GetProperty("params").GetProperty("_meta").GetProperty("steering").GetProperty("idleBehavior").GetString());
         await agent.ReplyAsync(request, """{"outcome":"promptRequired"}""");
         Assert.Equal(SteerOutcome.PromptRequired, await call.WaitAsync(Bounded));
+    }
+
+    [Theory]
+    [InlineData("reply")]
+    [InlineData("refused")]
+    [InlineData("caller cancelled")]
+    public async Task Queueing_steer_is_a_session_prompt_settled_only_by_the_adapter(string answer)
+    {
+        var agent = new FakeAgent(); await using var client = Connect(agent); await Initialize(agent, client, PromptQueue);
+        using var waiting = new CancellationTokenSource();
+        var call = client.Steer("s", [TextBlock.Of("also")], waiting.Token).Delivered; var request = await agent.ReadAsync();
+        Assert.Equal("session/prompt", request.GetProperty("method").GetString());
+        Assert.False(call.IsCompleted);
+        switch (answer)
+        {
+            case "reply":
+                await Ack(agent, "m-2"); await agent.ReplyAsync(request, """{"messageId":"m-2"}""");
+                Assert.Equal(SteerOutcome.Injected, await call.WaitAsync(Bounded));
+                break;
+            case "refused":
+                await agent.ReplyErrorAsync(request, -32800, "Request cancelled");
+                Assert.Equal(SteerOutcome.PromptRequired, await call.WaitAsync(Bounded));
+                break;
+            default:
+                waiting.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call.WaitAsync(Bounded));
+                // The wire request was never cancelled: the agent's late answer is still read, and the pipe still works.
+                await Ack(agent, "m-2"); await agent.ReplyAsync(request, """{"messageId":"m-2"}""");
+                var cancel = client.CancelAsync("s", default);
+                Assert.Equal("session/cancel", (await agent.ReadAsync()).GetProperty("method").GetString());
+                await Update(agent, """{"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled"}""");
+                await cancel.WaitAsync(Bounded);
+                break;
+        }
+    }
+
+    [Theory]
+    [InlineData("queue echo then reply", "echo:m-2,inserted,idle!,idle")]
+    [InlineData("queue reply then echo", "inserted,echo:m-2,idle!,idle")]
+    [InlineData("steering call", "inserted,idle!,idle")]
+    [InlineData("queue refused", "idle!,idle")]
+    [InlineData("steering call, reasonless end", "inserted,idle!,idle")]
+    public async Task Steer_insertion_and_prompt_end_are_marked_in_pipe_order(string order, string expected)
+    {
+        var agent = new FakeAgent(); await using var client = Connect(agent);
+        await Initialize(agent, client, order.StartsWith("steering call", StringComparison.Ordinal) ? SteeringCall : PromptQueue);
+        var run = client.PromptAsync("s", [TextBlock.Of("hi")], default); var prompt = await agent.ReadAsync();
+        await Ack(agent, "m-1"); await Update(agent, Running); await agent.ReplyAsync(prompt, """{"messageId":"m-1"}""");
+        var steer = client.Steer("s", [TextBlock.Of("also")], default); var request = await agent.ReadAsync();
+        switch (order)
+        {
+            case "queue echo then reply": await Ack(agent, "m-2"); await agent.ReplyAsync(request, """{"messageId":"m-2"}"""); break;
+            case "queue reply then echo": await agent.ReplyAsync(request, """{"messageId":"m-2"}"""); await Ack(agent, "m-2"); break;
+            case "queue refused": await agent.ReplyErrorAsync(request, -32800, "Request cancelled"); break;
+            default: await agent.ReplyAsync(request, """{"outcome":"injected"}"""); break;
+        }
+        // The prompt's end: an active boundary ends on a reasonless idle too; the idle after it ends nothing.
+        await Update(agent, order == "steering call, reasonless end" ? """{"sessionUpdate":"state_update","state":"idle"}""" : End);
+        await Update(agent, """{"sessionUpdate":"state_update","state":"idle"}""");
+        var seen = new List<string>();
+        var count = expected.Split(',').Length + 2;
+        while (seen.Count < count)
+        {
+            var update = await client.Updates.ReadAsync().AsTask().WaitAsync(Bounded);
+            seen.Add(update.Kind switch
+            {
+                AcpClient.SteerInsertedKind => update.Update.GetProperty("steerId").GetString() == steer.Id ? "inserted" : "inserted elsewhere",
+                "user_message_chunk" => "echo:" + update.Update.GetProperty("messageId").GetString(),
+                "state_update" => update.Update.GetProperty("state").GetString() + (update.EndsPrompt ? "!" : ""),
+                _ => update.Kind
+            });
+        }
+        Assert.Equal("echo:m-1,running," + expected, string.Join(',', seen));
+        Assert.Equal(order == "queue refused" ? SteerOutcome.PromptRequired : SteerOutcome.Injected, await steer.Delivered.WaitAsync(Bounded));
+        Assert.Equal("end_turn", (await run.Ended.WaitAsync(Bounded)).StopReason);
     }
 
     [Fact]
@@ -143,8 +226,8 @@ public sealed class AcpClientV2Tests
     [Fact]
     public async Task Started_new_turn_is_a_protocol_error_with_prompt_required_steering()
     {
-        var agent = new FakeAgent(); await using var client = Connect(agent);
-        var call = client.SteerAsync("s", [TextBlock.Of("hi")], default); var request = await agent.ReadAsync();
+        var agent = new FakeAgent(); await using var client = Connect(agent); await Initialize(agent, client, SteeringCall);
+        var call = client.Steer("s", [TextBlock.Of("hi")], default).Delivered; var request = await agent.ReadAsync();
         await agent.ReplyAsync(request, """{"outcome":"startedNewTurn"}""");
         await Assert.ThrowsAsync<JsonRpcException>(() => call.WaitAsync(Bounded));
     }

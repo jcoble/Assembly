@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { command } from './dev-remote-process.ts';
 
 // The Remote -> Infrastructure -> Application/Engine -> Domain project closure. Common MSBuild/NuGet inputs
-// and the ACP 2 launcher contract are included; Rust, Desktop, tests and deployment tooling are not build inputs.
+// and the ACP 2 adapter contract are included; Rust, Desktop, tests and deployment tooling are not build inputs.
 // An exact match on these is what a check before a PR requires: side effects of a difference can't always be known.
 export function backendInput(file: string) {
   return /^dotnet\/Assembly\.(Remote|Infrastructure|Application|Engine|Domain)\//.test(file)
@@ -13,10 +13,10 @@ export function backendInput(file: string) {
     || adapterInput(file)
     || ['scripts/dev-remote-build-profile.ts', 'scripts/dev-remote-identity.ts', 'scripts/dev-remote-process.ts'].includes(file);
 }
-// Adapters, launchers and their scripts live on local and on every remote. Their digest goes in each bundle's manifest,
+// Adapters and their scripts live on local and on every remote. Their digest goes in each bundle's manifest,
 // where the one update check, the daily job and ensureTools all read it. A change here updates adapters on both machines,
 // the same way; it needs no backend build, so it isn't what makes the backend differ.
-export const adapterSources = ['scripts/adapters/claude-launcher.ts', 'scripts/package-adapters.ts', 'dotnet/scripts/agents-file.sh', 'scripts/dev-toolchain.ts'];
+export const adapterSources = ['scripts/package-adapters.ts', 'dotnet/scripts/agents-file.sh', 'scripts/dev-toolchain.ts'];
 export function adapterInput(file: string) {
   return adapterSources.includes(file);
 }
@@ -44,7 +44,7 @@ export function digestInputs(inputs: string[], version: string) {
   return createHash('sha256').update(`assembly-dev-remote-v3:ACP2:${version}\n` + [...inputs].sort().join('\n')).digest('hex');
 }
 // Where the two sides can't work together until the remote changes: the socket protocol and frames, row and message shapes,
-// the database on data the remote holds, and the adapter and launcher contract. The commit hook refuses a change to one of
+// the database on data the remote holds, and the adapter contract. The commit hook refuses a change to one of
 // these that doesn't raise the version number. Everything else on the list is the author's judgment.
 const hardContracts = new RegExp([
   String.raw`^dotnet/Assembly\.Infrastructure/Socket/`,

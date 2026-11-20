@@ -14,15 +14,29 @@ public sealed record InitializeResponse(
     [JsonConverter(typeof(AuthMethodsConverter))]
     public IReadOnlyList<AuthMethod> AuthMethods { get; init; } = AuthMethods ?? [];
 
-    /// <summary>Whether the agent takes <c>_session/steering</c> (<c>_meta.steering.supported</c>).</summary>
+    /// <summary>
+    /// How a message reaches a running turn: <c>_session/steering</c> when <c>_meta.steering.supported</c>, else a
+    /// <c>session/prompt</c> sent mid-turn when <c>capabilities._meta.claudeCode.promptQueueing</c>, else not at all.
+    /// </summary>
     [JsonIgnore]
-    public bool CanSteer =>
-        Meta is { ValueKind: JsonValueKind.Object } meta
-        && meta.TryGetProperty("steering", out var steering) && steering.ValueKind == JsonValueKind.Object
-        && steering.TryGetProperty("supported", out var supported) && supported.ValueKind == JsonValueKind.True;
+    public SteerRoute Steering =>
+        IsTrue(Meta, "steering", "supported") ? SteerRoute.SteeringCall
+        : IsTrue(Capabilities, "_meta", "claudeCode", "promptQueueing") ? SteerRoute.PromptQueue
+        : SteerRoute.None;
+
+    [JsonIgnore]
+    public bool CanSteer => Steering != SteerRoute.None;
 
     [JsonIgnore]
     public bool CanDelete => Capabilities.ValueKind == JsonValueKind.Object
         && Capabilities.TryGetProperty("session", out var session) && session.ValueKind == JsonValueKind.Object
         && session.TryGetProperty("delete", out var delete) && delete.ValueKind == JsonValueKind.Object;
+
+    private static bool IsTrue(JsonElement? root, params string[] path)
+    {
+        if (root is not { } node) return false;
+        foreach (var name in path)
+            if (node.ValueKind != JsonValueKind.Object || !node.TryGetProperty(name, out node)) return false;
+        return node.ValueKind == JsonValueKind.True;
+    }
 }

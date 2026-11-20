@@ -145,11 +145,13 @@ public sealed partial class SessionHost
         var keep = false;
         var toolsOpen = false;
         var title = false;
+        Exception? endFailed = null;
         lock (_gate)
         {
             try
             {
-                // Everything the agent sent before its answer has arrived by now, so it goes in before the end.
+                // Everything the agent sent before its answer has arrived by now, so it goes in before the end. The
+                // reader stops at this prompt's end, so what came after it is read once the turn is finalized.
                 if (session is not null && updates is not null)
                 {
                     session.Adapter.Updates.Flush();
@@ -186,6 +188,7 @@ public sealed partial class SessionHost
             catch (Exception error)
             {
                 Console.Error.WriteLine($"session {_sessionId}: the turn's end wasn't saved: {error.Message}");
+                endFailed = error;
             }
             finally
             {
@@ -194,11 +197,19 @@ public sealed partial class SessionHost
                 sessionCost = _converter.SessionCost;
                 _turn = null;
                 turn.Opened.TrySetResult();
-                // Background work still going keeps the session, and with it the work, alive.
+                // Background work still going keeps the session, and with it the work, alive; so does a message the
+                // agent may still take, and anything it sent after this turn's end. A turn whose end wasn't saved
+                // starts no run for a message.
+                if (endFailed is not null) FaultSteers(endFailed);
                 var working = _tasks.Count > 0 || _subagents.AnyRunning || _startedWorking();
-                keep = session is not null && updates is not null && !lost && !_shuttingDown && (working || toolsOpen);
+                var waiting = _steers.Count > 0;
+                keep = session is not null && updates is not null && !lost && !_shuttingDown && (working || toolsOpen || waiting || updates.Count > 0);
                 if (keep)
-                    _kept = new KeptSession(session!, updates!, pump, ticking, ticks, TasksDueBy: working ? 0 : Now() + TaskGraceMs, turn.Observation, turn);
+                {
+                    _kept = new KeptSession(session!, updates!, pump, ticking, ticks, TasksDueBy: working || waiting ? 0 : Now() + TaskGraceMs, turn.Observation, turn);
+                    MarkKept();
+                }
+                ResumeReader();
             }
         }
 

@@ -111,7 +111,8 @@ public sealed class RowConverter
                 break;
             case TurnSteered steered:
                 // The agent's answer so far is finished; what follows answers the new message too. A message taken
-                // just as its turn ended still goes on that turn, never on a newer one.
+                // just as its turn ended still goes on that turn, never on a newer one. Its row is written where the
+                // agent took it, so it is acknowledged in the same write.
                 if (_turn?.RunId == steered.RunId)
                 {
                     CloseThinking(batch, steered.At);
@@ -119,7 +120,7 @@ public sealed class RowConverter
                 }
                 var steeredPaths = PromptPaths.Of(steered.Text);
                 batch.Rows.Add(new NewRow(steered.RunId, null, RowKind.User, JsonSerializer.SerializeToElement(
-                    new UserPayload(steered.Text, steered.FromSessionId, steered.ClientId, SenderLabel: steered.SenderLabel,
+                    new UserPayload(steered.Text, steered.FromSessionId, steered.ClientId, new UserAcknowledgment("steer_injected", null), SenderLabel: steered.SenderLabel,
                         ItemId: steered.UserItemId, AttachmentIds: steered.AttachmentIds, FromMachine: steered.FromMachine,
                         Named: NullIfEmpty(steeredPaths.Named), Attached: NullIfEmpty(steeredPaths.Attached)), RowJsonContext.Rows.UserPayload), steered.At));
                 break;

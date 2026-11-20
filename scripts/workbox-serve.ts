@@ -1,5 +1,4 @@
 // The single dev serve path, also used by app:dev. Source is always selected from an explicit commit.
-import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { adapterSources, backendIdentity, committedVersion, remoteBehindExit, requireCleanBackend, lane, sourcesDigest, versionOrder, type Lane } from './dev-remote-identity.ts';
 import { command, lifetime, quote, sshOptions } from './dev-remote-process.ts';
@@ -31,7 +30,6 @@ try {
   const identity = await backendIdentity(root, commit, owner.signal);
   const managed = process.env.ASSEMBLY_DEV_SYNC_REQUEST ? JSON.parse(process.env.ASSEMBLY_DEV_SYNC_REQUEST) : undefined;
   if (managed && (managed.owner?.name !== target.name || managed.owner?.number !== target.number)) throw Error('managed checkout and remote lane identity differ; no remote operation performed');
-  const launcher = createHash('sha256').update(await command('git', ['show', `${commit}:scripts/adapters/claude-launcher.ts`], { cwd: root, signal: owner.signal, raw: true })).digest('hex');
   const sources = await sourcesDigest(adapterSources, file => command('git', ['show', `${commit}:${file}`], { cwd: root, signal: owner.signal, raw: true }).catch(() => { owner.signal.throwIfAborted(); return undefined; }));
   const read = `export PATH="$HOME/.local/bin:$HOME/.dotnet:/usr/local/bin:/usr/bin:/bin"; node --input-type=module -e ${quote(probeSource)} ${quote(JSON.stringify(target))}`;
   const probe = JSON.parse(await command('ssh', [...sshOptions, 'workbox-test', read], { signal: owner.signal })) as Probe;
@@ -56,7 +54,7 @@ try {
   const actual = probe.missing ? 'not installed' : probe.backendIdentity ?? 'unknown';
   const wanted = identity;
   identityCheck();
-  const adaptersCurrent = probe.adapterOK && probe.launcherSha === launcher && (managed ? probe.toolsKey === toolKey(keepNewer(managed.versions, probe.toolVersions), sources, 'linux-x64') : probe.adapterSources === sources);
+  const adaptersCurrent = probe.adapterOK && (managed ? probe.toolsKey === toolKey(keepNewer(managed.versions, probe.toolVersions), sources, 'linux-x64') : probe.adapterSources === sources);
   if (actual === wanted && adaptersCurrent) {
     console.log(`Workbox Test ${target.unit} already matches ${wanted} (host commit ${probe.commit}); no deploy`);
   } else {
@@ -66,7 +64,7 @@ try {
     const transfer = stage('transfer');
     await command('git', ['push', '-q', 'ssh://workbox-test/~/assembly.git', `+${commit}:refs/heads/dev-sync-${name || 'main'}`], { cwd: root, signal: owner.signal, live: true });
     transfer({ payload: 'git changed source objects', binaryBytes: 0 });
-    const request = JSON.stringify({ lane: target, commit, identity, launcher, sources, probe, waitForIdle: mode === '1', managed });
+    const request = JSON.stringify({ lane: target, commit, identity, sources, probe, waitForIdle: mode === '1', managed });
     // Kernel-owned lock covers probe, build, package and activation across Mac/Workbox launches. No stale PID lock.
     const checkout = `${target.data}/checkouts/build`;
     const script = `export PATH="$HOME/.local/bin:$HOME/.dotnet:/usr/local/bin:/usr/bin:/bin"; set -eu; `

@@ -60,6 +60,12 @@ public static class HandoffTransitions
         if (s.QueryFirst("SELECT EXISTS(SELECT 1 FROM engine_needs_me WHERE session_id=$id AND state='open')",
             row => row.Long(0), new SqlArg("$id", command.SessionId)) != 0)
             return Refused(c, "needs_attention", session.Version, epoch);
+        // A steer still waiting on the agent belongs to this holder. It has its own order (see MessageRelease), so
+        // the release wouldn't wait for it the way it waits for a prompt.
+        if (s.QueryFirst("""
+            SELECT EXISTS(SELECT 1 FROM engine_outbox WHERE order_key='steer/'||$id AND state NOT IN ('done','failed','dead'))
+            """, row => row.Long(0), new SqlArg("$id", command.SessionId)) != 0)
+            return Refused(c, "busy", session.Version, epoch);
         if (s.QueryFirst("SELECT EXISTS(SELECT 1 FROM engine_session WHERE parent_id=$id AND state NOT IN ('ended','moved'))",
             row => row.Long(0), new SqlArg("$id", command.SessionId)) != 0)
             return Refused(c, "children_running", session.Version, epoch);

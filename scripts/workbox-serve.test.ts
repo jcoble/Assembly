@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, watch, existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -10,7 +9,6 @@ import { adapterSources, digestInputs, remoteBehindExit, sourcesDigest } from '.
 const current = 'a'.repeat(40), previous = 'b'.repeat(40);
 const hostEntries = ['100644 blob ' + '1'.repeat(40) + '\tdotnet/Assembly.Remote/Assembly.Remote.csproj', '100644 blob ' + '3'.repeat(40) + '\tdotnet/Assembly.Infrastructure/Notion/NotionCalls.cs'];
 const previousIdentity = digestInputs(hostEntries, 'none');
-const launcher = createHash('sha256').update('launcher\n').digest('hex');
 const sources = await sourcesDigest(adapterSources, async () => 'launcher\n');
 const fakeGit = `#!/usr/bin/env node
 import fs from 'node:fs';
@@ -42,7 +40,7 @@ if (args.at(-1).startsWith('flock ')) {
   child.on('close',code=>process.exit(code));
  } else console.log('deployed backend; authenticated host commit ${current}');
 } else if(state.missing) console.log(JSON.stringify({missing:true}));
-else console.log(JSON.stringify({commit:'${previous}',backendIdentity:'${previousIdentity}',version:state.hostVersion===undefined?'none':state.hostVersion,engine:'test-engine',dll:'/lane/bin/old/backend/Assembly.Remote.dll',pid:'123',unitSha:'f'.repeat(64),adapterOK:true,launcherSha:'${launcher}',toolsKey:state.toolsKey,adapterSources:'${sources}',seedCohort:state.seedCohort}));
+else console.log(JSON.stringify({commit:'${previous}',backendIdentity:'${previousIdentity}',version:state.hostVersion===undefined?'none':state.hostVersion,engine:'test-engine',dll:'/lane/bin/old/backend/Assembly.Remote.dll',pid:'123',unitSha:'f'.repeat(64),adapterOK:true,toolsKey:state.toolsKey,adapterSources:'${sources}',seedCohort:state.seedCohort}));
 `;
 /** A fake that waits until the test writes `release`, after writing its pid to `started`. It also ends, with 1, when
  * the test removes `root` or the test host (`TEST_HOST`) is gone, so a failed or killed test leaves nothing running. */

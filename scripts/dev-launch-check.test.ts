@@ -10,7 +10,6 @@ function fixture() {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'dev-launch-check-'));
   const write = (path: string, text: string) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
   execFileSync('git', ['init', '-q'], { cwd: root });
-  write(join(root, 'scripts/adapters/claude-launcher.ts'), 'launcher');
   write(join(root, 'dotnet/Assembly.Remote/Assembly.Remote.csproj'), '<Project/>');
   write(join(root, 'desktop/src/main.rs'), 'native');
   execFileSync('git', ['add', '.'], { cwd: root });

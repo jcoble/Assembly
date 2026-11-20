@@ -8,6 +8,8 @@ public sealed class JsonRpcException(int code, string message, JsonElement? data
     public const int InvalidParams = -32602;
     public const int MethodNotFound = -32601;
     public const int InternalError = -32603;
+    /// <summary>The agent dropped the request before acting on it, as on <c>session/cancel</c> or <c>session/close</c>.</summary>
+    public const int RequestCancelled = -32800;
 
     public int Code { get; } = code;
     public AcpError Error { get; } = new(code, message, data);

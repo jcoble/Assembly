@@ -182,6 +182,9 @@ public sealed class UpdateReader
                     _idle = false;
                 }
                 break;
+            case AcpClient.SteerInsertedKind:
+                if (String(update, "steerId") is { Length: > 0 } steerId) events.Add(new SteerInserted(at, steerId));
+                break;
             case "usage_update": // Also emitted by both adapters at protocol 2.
                 events.Add(Usage(update, at));
                 break;

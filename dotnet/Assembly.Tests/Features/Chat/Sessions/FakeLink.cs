@@ -26,11 +26,12 @@ internal sealed class FakeLink : IAgentLink
 
     /// <summary>Answers <c>initialize</c>, then <see cref="OpenAsync"/>.</summary>
     public async Task<JsonElement> StartAsync(
-        string acpSessionId = AcpSessionId, bool canSteer = true, string? configOptions = null)
+        string acpSessionId = AcpSessionId, bool canSteer = true, string? configOptions = null, bool promptQueueing = false)
     {
         var initialize = await ReadAsync("initialize");
         var steering = canSteer ? "\"steering\":{\"supported\":true}" : "";
-        await _agent.ReplyAsync(initialize, $$$"""{"protocolVersion":2,"capabilities":{"session":{}},"authMethods":[],"_meta":{{{{steering}}}}}""");
+        var queueing = promptQueueing ? ",\"_meta\":{\"claudeCode\":{\"promptQueueing\":true}}" : "";
+        await _agent.ReplyAsync(initialize, $$$"""{"protocolVersion":2,"capabilities":{"session":{}{{{queueing}}}},"authMethods":[],"_meta":{{{{steering}}}}}""");
         return await OpenAsync(acpSessionId, configOptions);
     }
 
@@ -71,6 +72,10 @@ internal sealed class FakeLink : IAgentLink
     /// <summary>Answers <paramref name="request"/> and sends a text in the same write, so the client reads both at once.</summary>
     public Task ReplyThenTextAsync(JsonElement request, string resultJson, string text, string messageId) =>
         _agent.SendAsync($$"""{"jsonrpc":"2.0","id":{{request.GetProperty("id").GetRawText()}},"result":{{resultJson}}}""" + "\n" + Update(Text(text, messageId), AcpSessionId));
+
+    /// <summary>Answers <paramref name="request"/> and sends an update in the same write, so the client reads both at once.</summary>
+    public Task ReplyThenUpdateAsync(JsonElement request, string resultJson, string updateJson) =>
+        _agent.SendAsync($$"""{"jsonrpc":"2.0","id":{{request.GetProperty("id").GetRawText()}},"result":{{resultJson}}}""" + "\n" + Update(updateJson, AcpSessionId));
 
     private static string Update(string updateJson, string acpSessionId) =>
         $$$"""{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"{{{acpSessionId}}}","update":{{{updateJson}}}}}""";
