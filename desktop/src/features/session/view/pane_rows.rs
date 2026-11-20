@@ -83,7 +83,7 @@ impl SessionPane {
         let item = self.view.items.get(*at)?;
         Some((
             item.key.clone(),
-            crate::features::session::view::chat_row::row_label(item),
+            crate::features::session::view::item_row::row_label(item),
         ))
     }
 

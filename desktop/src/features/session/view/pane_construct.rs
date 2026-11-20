@@ -31,10 +31,10 @@ impl SessionPane {
                 None => row,
             };
             // The space under a row by what it is (pane_rows.rs), inside the row so it grows with it. An item's row is
-            // also a list item in the accessibility tree (chat_row.rs).
+            // also a list item in the accessibility tree (item_row.rs).
             let row = match access {
                 Some((key, label)) => {
-                    crate::features::session::view::chat_row::chat_row(&key, label)
+                    crate::features::session::view::item_row::chat_row(&key, label)
                         .when(!last, |row| row.pb(space))
                         .child(row)
                         .into_any_element()
