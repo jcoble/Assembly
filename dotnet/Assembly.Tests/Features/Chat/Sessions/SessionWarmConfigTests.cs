@@ -208,6 +208,24 @@ public sealed class SessionWarmConfigTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_settings_read_a_send_supersedes_answers_from_the_turns_own_session()
+    {
+        _store.SetAcpSession(_session.SessionId, "saved-B");
+        var warming = _host.WarmConfigAsync(Target, CancellationToken.None);
+        var old = await _launcher.NextAsync();
+        await Initialize(old);
+        await old.ReadAsync("session/resume");
+        var sending = _host.SendAsync("real message", null, null, CancellationToken.None);
+        var real = await _launcher.NextAsync();
+        await real.StartAsync(acpSessionId: "saved-B", configOptions: Options);
+        Assert.Equal(Options, (await warming.WaitAsync(Wait)).Options);
+        var prompt = await real.ReadAsync("session/prompt");
+        await real.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
+        Assert.IsType<SendResult.Inserted>(await sending.WaitAsync(Wait));
+        await real.CloseAsync();
+    }
+
+    [Fact]
     public async Task Never_answering_cancelled_warm_retires_only_its_process_and_fences_native_id_until_other_borrower_exits()
     {
         var borrowing = _pool.GetAsync(new StageTimes(_time), CancellationToken.None);
