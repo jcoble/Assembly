@@ -117,19 +117,26 @@ impl Composer {
             });
         });
         let offline = self.offline.is_some() || !self.operational();
+        // Keyed by the target, so a menu left open closes when another session takes the composer.
         Some(
-            ConfigPills {
-                provider: self
-                    .agent_name
-                    .clone()
-                    .unwrap_or_else(|| "the agent".into()),
-                options,
-                on_select,
-                disabled: offline || !self.backend_connected || self.advertised_target.is_none(),
-                saving: self.picking > 0,
-                compact,
-            }
-            .into_any_element(),
+            div()
+                .id(("composer:settings", generation as usize))
+                .flex_none()
+                .min_w_0()
+                .child(ConfigPills {
+                    provider: self
+                        .agent_name
+                        .clone()
+                        .unwrap_or_else(|| "the agent".into()),
+                    options,
+                    on_select,
+                    disabled: offline
+                        || !self.backend_connected
+                        || self.advertised_target.is_none(),
+                    saving: self.picking > 0,
+                    compact,
+                })
+                .into_any_element(),
         )
     }
 

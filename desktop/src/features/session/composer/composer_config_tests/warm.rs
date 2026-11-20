@@ -327,3 +327,40 @@ fn unknown_actual_effort_uses_only_an_offered_explicit_choice_and_never_a_first_
         assert_eq!(explicit.menus()[0].1, "medium");
     }
 }
+
+#[gpui::test]
+fn an_open_that_does_not_land_gives_the_session_on_screen_its_settings_back(
+    cx: &mut TestAppContext,
+) {
+    let (composer, client, cx) = delayed_on_s1(cx);
+    begin_warm(&composer, &client, cx)
+        .answer
+        .send(Ok(config("opus")))
+        .unwrap();
+    cx.run_until_parked();
+    composer.update_in(cx, |composer, window, cx| {
+        let key = crate::core::engine::SessionKey {
+            machine: "owner".into(),
+            id: "s2".into(),
+        };
+        composer.park("s2".into(), Some(key), window, cx);
+        composer.unpark(window, cx);
+    });
+    // The target reads its config, and naming the owner again reads it once more.
+    for _ in 0..2 {
+        _ = client.take("get", "s1").answer.send(Ok(config("opus")));
+    }
+    client
+        .take("agents", "")
+        .answer
+        .send(Ok(
+            json!({"agents":[{"id":"codex","name":"Codex","targetId":"advertised-owner-1"}]}),
+        ))
+        .unwrap();
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| {
+        let composer = composer.read(cx);
+        composer.operational() && composer.advertised_target.is_some()
+    }));
+    assert_eq!(menus(&composer, cx)[0].1, "opus");
+}
