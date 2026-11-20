@@ -1,6 +1,5 @@
-# On every push to main: pinned tests unchanged without an OK, all of them run and pass, every code commit has a
-# four-way check, and lint passes.
-name: pinned tests and four-way checks
+# On every push to main: pinned tests unchanged without an OK, all of them run and pass, and lint passes.
+name: pinned tests and lint
 on:
   push:
     branches: [main]
