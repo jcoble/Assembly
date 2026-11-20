@@ -1,3 +1,6 @@
+//! Tests for who answers for a pull request: a session, or a project read through the source it captured. The pure
+//! tests check which session, project and root each read and action names; the socket test runs a fake backend to
+//! check that resolving asks for the project's route and refuses an answer from another engine.
 use super::{PrOwner, holders, resolve};
 use crate::core::socket::{
     client::SocketClient,

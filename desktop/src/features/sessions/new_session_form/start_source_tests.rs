@@ -1,3 +1,6 @@
+//! Tests for how the new-session form finds the machine a first send starts on. A fake backend answers the socket's
+//! welcome and the `resolve_source` call, so a test can check that a local start names no route machine, and that an
+//! answer arriving on a bulk socket that has since been replaced is refused rather than used.
 use super::{SocketClient, StartSource, capture};
 use crate::core::socket::{
     endpoint::Endpoint,
