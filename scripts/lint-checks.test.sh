@@ -141,11 +141,6 @@ rm -rf "$r"
 
 # The two .NET checks fail on a probe in a scratch copy. In the commit hook (LINT_STAGED_ONLY=1) each skips a commit
 # with no .NET file in it, and runs on a .cs change.
-# Each full run of either check is a whole-solution format or build of about a minute (two on CI), and there are seven.
-# The format block and the architecture block share nothing, so they run at once, each in its own scratch copies,
-# and print in order once both have ended.
-dotnet_logs=$(mktemp -d)
-(
 r=$(dotnet_repo_with 50-dotnet-format.sh) || exit 1
 expect 0 "dotnet format: the prospective tree passes" "$r" 50-dotnet-format.sh
 # The probe cases need only the project the probe is in (Assembly.Domain references nothing), not the whole solution.
@@ -160,11 +155,7 @@ LINT_STAGED_ONLY=1 expect 0 "dotnet format: the hook skips a commit with nothing
 echo '// touched' >>"$r/dotnet/Assembly.Domain/FormatProbe.cs"
 LINT_STAGED_ONLY=1 expect 1 "dotnet format: the hook runs on a .cs change" "$r" 50-dotnet-format.sh
 rm -rf "$r"
-exit "$failed"
-) >"$dotnet_logs/format" 2>&1 &
-format_cases=$!
 
-(
 r=$(dotnet_repo_with 70-architecture.sh) || exit 1
 expect 0 "architecture: the prospective tree passes" "$r" 70-architecture.sh
 printf 'namespace Assembly.Application;\n\npublic static class ArchitectureProbe\n{\n    public static string Read() => System.IO.File.ReadAllText("x");\n}\n' \
@@ -182,14 +173,6 @@ r=$(dotnet_repo_with 70-architecture.sh) || exit 1
 sed -i 's/^namespace Assembly.Tests.Architecture;/namespace Assembly.Tests.Moved;/' "$r"/dotnet/Assembly.Tests/Architecture/*.cs
 expect 1 "architecture: no architecture test found fails" "$r" 70-architecture.sh
 rm -rf "$r"
-exit "$failed"
-) >"$dotnet_logs/architecture" 2>&1 &
-architecture_cases=$!
-
-wait "$format_cases" || failed=1
-wait "$architecture_cases" || failed=1
-cat "$dotnet_logs/format" "$dotnet_logs/architecture"
-rm -rf "$dotnet_logs"
 
 # scripts/lint.sh runs every lint.d check and fails if any one does.
 r=$(mktemp -d)
