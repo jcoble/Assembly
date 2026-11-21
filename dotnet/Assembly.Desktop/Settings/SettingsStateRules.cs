@@ -78,7 +78,7 @@ internal static class SettingsStateRules
         return null;
     }
 
-    internal static string DeriveProviderMachineState(
+    internal static string? DeriveProviderMachineState(
         SettingsMachine machine,
         string? mirrorState,
         SettingsStateComposer.ProviderRow? providerRow,
@@ -87,8 +87,18 @@ internal static class SettingsStateRules
         bool localDescriptorInvalid,
         SettingsFailure? lastFailure)
     {
+        if (machine.ConnectionState is MachineConnectionState.Offline or MachineConnectionState.Disconnected)
+            return null;
+
+        var nothingKnown = providerRow is null
+            && activeSignIn is null
+            && !explicitlyNotInstalled
+            && !localDescriptorInvalid
+            && lastFailure is null;
+        if (machine.ConnectionState == MachineConnectionState.Checking && nothingKnown && !machine.Machine.Updating)
+            return null;
+
         if (machine.Machine.Updating
-            || machine.ConnectionState == MachineConnectionState.Checking
             || mirrorState == "snapshotting"
             || providerRow?.AuthState == "checking"
             || activeSignIn?.State is "starting" or "finishing")
@@ -96,7 +106,6 @@ internal static class SettingsStateRules
 
         if (explicitlyNotInstalled
             || localDescriptorInvalid
-            || machine.ConnectionState is MachineConnectionState.Offline or MachineConnectionState.Disconnected
             || providerRow?.Reason is "not_installed" or "cannot_start" or "invalid_descriptor")
             return ProviderRowState.Problem;
 
@@ -126,6 +135,9 @@ internal static class SettingsStateRules
 
     internal static string DeriveAggregateProviderState(IReadOnlyList<SettingsProviderMachine> machines)
     {
+        // Only machines with a known (non-null) state contribute; offline/disconnected remotes are skipped.
+        // The local machine is always present and connected, so an enabled provider always has at least
+        // one non-null machine state.
         if (machines.Any(m => m.State == ProviderRowState.Problem))
             return ProviderRowState.Problem;
         if (machines.Any(m => m.State == ProviderRowState.NeedsSignIn))
@@ -189,7 +201,7 @@ internal static class SettingsStateRules
     {
         var machineLabels = machines.ToDictionary(m => m.Key, m => m.DisplayName, StringComparer.Ordinal);
 
-        // 1. Problem: provider problem, update/restart failure, or offline remote machine.
+        // 1. Problem: provider problem or update/restart failure; offline/disconnected machines are skipped.
         var problemProviders = providers.Where(p => p.Enabled && p.State == ProviderRowState.Problem).ToArray();
         if (problemProviders.Length == 1)
         {
@@ -211,11 +223,6 @@ internal static class SettingsStateRules
                 : "Update";
             return new SettingsSummary(SettingsSummary.Problem, $"{action} failed on {failedMachine.DisplayName}.");
         }
-
-        // Spec review point: an unreachable saved remote (not explicitly disconnected) counts as Problem.
-        var offlineMachine = machines.FirstOrDefault(m => m.ConnectionState == MachineConnectionState.Offline);
-        if (offlineMachine is not null)
-            return new SettingsSummary(SettingsSummary.Problem, $"{offlineMachine.DisplayName} is offline.");
 
         // 2. Needs sign-in.
         var signInProviders = providers.Where(p => p.Enabled && p.State == ProviderRowState.NeedsSignIn).ToArray();
