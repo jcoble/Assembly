@@ -64,15 +64,6 @@ const socket = new WebSocket('ws://127.0.0.1:' + lane.port + '/socket');
 const deadline = setTimeout(()=>{console.error('host welcome timed out');process.exit(1)},8000);
 socket.onerror=()=>{console.error('host socket unreachable');process.exit(1)};
 socket.onopen=()=>socket.send(JSON.stringify({t:'hello',protocol:2,token}));
-const state={commit:undefined,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,toolsKey,toolVersions,adapterSources};
-let answered=false;
-// A protocol 1 host refuses the hello with only "expected a hello": it is older and gets the deploy.
-socket.onclose=e=>{
- if(answered) return;
- clearTimeout(deadline);process.stdin.pause();
- if(e.code===4400 && e.reason==='expected a hello') { console.log(JSON.stringify({...state,older:true})); process.exit(0); }
- console.error('host closed the socket: '+e.code+' '+e.reason);process.exit(1);
-};
 socket.onmessage=e=>{
  const frame=JSON.parse(String(e.data));
  if(frame.t!=='welcome' || frame.machine!=='workbox-test' || frame.protocol!==2 || frame.format!==5 || !/^[a-f0-9]{40}$/.test(frame.commit??'')) {
@@ -81,5 +72,14 @@ socket.onmessage=e=>{
  answered=true;clearTimeout(deadline);socket.close();process.stdin.pause();
  console.log(JSON.stringify({...state,commit:frame.commit,backendIdentity:frame.backendIdentity,version:frame.version,engine:frame.engine}));
 };
+const state={commit:undefined,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,toolsKey,toolVersions,adapterSources};
+let answered=false;
+// A host on any other protocol refuses the hello with 4400 "expected a hello…": it is stale and gets the deploy.
+socket.onclose=e=>{
+ if(answered) return;
+ clearTimeout(deadline);process.stdin.pause();
+ if(e.code===4400 && e.reason.startsWith('expected a hello')) { console.log(JSON.stringify({...state,stale:true})); process.exit(0); }
+ console.error('host closed the socket: '+e.code+' '+e.reason);process.exit(1);
+};
 `;
-export type Probe = { missing?: boolean; older?: boolean; commit: string; backendIdentity?: string; version?: unknown; toolsKey?: string; toolVersions?: Record<string, string>; adapterSources?: string; engine?: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean };
+export type Probe = { missing?: boolean; stopped?: boolean; stale?: boolean; commit: string; backendIdentity?: string; version?: unknown; toolsKey?: string; toolVersions?: Record<string, string>; adapterSources?: string; engine?: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean };
