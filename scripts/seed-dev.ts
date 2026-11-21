@@ -33,6 +33,13 @@ export function safePath(input: string, mustExist = true): string {
   while (!existsSync(ancestor)) { suffix.unshift(basename(ancestor)); ancestor = dirname(ancestor); }
   return join(realpathSync(ancestor), ...suffix);
 }
+// An agents file whose adapters are gone starts no provider, so a launch installs over it as it does when there is none.
+export function agentsRunnable(file: string): boolean {
+  try {
+    const agents = JSON.parse(readFileSync(file, 'utf8')) as { command?: unknown; args?: unknown[] }[];
+    return agents.every(agent => [agent.command, agent.args?.[0]].every(path => typeof path !== 'string' || !isAbsolute(path) || existsSync(path)));
+  } catch { return false; }
+}
 export function profileFor(input: string, userHome = homedir()): { root: string; home: string } {
   const root = realpathSync(safePath(input));
   for (const marker of ['desktop/Cargo.toml', 'dotnet/Assembly.Desktop/Assembly.Desktop.csproj']) {

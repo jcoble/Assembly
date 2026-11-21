@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startRemoteUpdate } from './app-dev-remote.ts';
-import { profileFor, seedIfEmpty } from './seed-dev.ts';
+import { agentsRunnable, profileFor, seedIfEmpty } from './seed-dev.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const backend = join(root, 'desktop/target/dev-backend');
@@ -122,8 +122,9 @@ try {
   }, null, 2) + '\n');
   renameSync(temporaryLane, laneFile);
   mkdirSync(home, { recursive: true });
-  // No agents at all means nothing to run. Otherwise the update above, the button and `npm run deploy:remote` install them.
-  if (!managed && !existsSync(join(home, 'agents.json'))) {
+  // No agents, or agents whose adapters are gone, means nothing to run. Otherwise the update above, the button and
+  // `npm run deploy:remote` install them.
+  if (!managed && !agentsRunnable(join(home, 'agents.json'))) {
   const installer = ['dotnet/scripts/agents-file.sh', process.env.ADAPTERS ?? adapters, join(home, 'agents.json')];
   const installed = await attempt('bash', installer);
   // The backend starts with an empty list when there's no agents file, so failing here doesn't stop the app.
