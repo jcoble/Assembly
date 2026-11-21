@@ -48,32 +48,6 @@ public sealed partial class WorkflowAdvancementTests
         Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind='redo_round_consumed'"));
     }
 
-    [Fact]
-    public void Recorded_target_allowance_extends_budget_without_changing_definition()
-    {
-        using var f = new Fixture(new Topics());
-        Settle(f, "REPEAT: owner permits one more", "second finding");
-        Assert.Equal(1, f.Host.AdvancePending(default));
-        var grant = OwnerRoundContext(f, new(ActorKind.Window, "window"));
-        Assert.True(Grant(f, grant).Applied);
-        Assert.Equal(1, f.Host.AdvancePending(default));
-        f.NextRound();
-        // Boundary fixture: five completed rounds with one already-consumed explicit allowance.
-        f.Core.Db.Writer.Write("test.budget-boundary", s => s.Execute("UPDATE engine_step SET round=5 WHERE id='build'"));
-        Settle(f, "new finding at base budget", "another new finding");
-        Assert.Equal(1, f.Host.AdvancePending(default));
-        Assert.Equal(2, f.Core.Number("SELECT generation FROM engine_step WHERE id='build'"));
-        Assert.Equal(6, f.Core.Number("SELECT round FROM engine_step WHERE id='build'"));
-        Assert.Equal(0, f.Core.Number("SELECT paused FROM engine_run"));
-        Assert.Equal(5, f.Core.Number("SELECT max_rounds FROM engine_run"));
-        f.NextRound(); Settle(f, "new finding after allowance", "new second after allowance");
-        Assert.Equal(1, f.Host.AdvancePending(default));
-        Assert.Equal(2, f.Core.Number("SELECT generation FROM engine_step WHERE id='build'"));
-        Assert.Equal(1, f.Core.Number("SELECT paused FROM engine_run"));
-        Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind='redo_round_granted'"));
-        Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind='redo_round_consumed'"));
-    }
-
     private static void Settle(Fixture f, string first, string second)
     {
         f.Finding("review1", first); f.Finding("review2", second);

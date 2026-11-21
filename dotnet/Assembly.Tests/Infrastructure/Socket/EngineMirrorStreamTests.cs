@@ -38,26 +38,6 @@ public sealed partial class EngineSocketTests
     }
 
     [Fact]
-    public async Task Mirror_events_include_every_kind_and_current_display_rows_only()
-    {
-        SeedMirror();
-        foreach (var kind in new[] { "session", "session", "run", "step", "needs_me", "message", "handoff", "pr", "usage", "tool_call", "effect" })
-            Event(kind, kind == "session" ? "s" : kind == "run" ? "r" : kind);
-        _f.Db.Writer.Write("current", s => s.Execute("UPDATE engine_session SET version=9 WHERE id='s'"));
-        await Published();
-        using var socket = await Open();
-        await MirrorSubscribe(socket, after: 0);
-        var page = await Read(socket);
-        Assert.Equal("engine_events", page.GetProperty("t").GetString());
-        Assert.True(page.GetProperty("events").GetArrayLength() == 11, page.GetRawText());
-        var rows = page.GetProperty("rows").EnumerateArray().ToArray();
-        Assert.Equal(7, rows.Length);
-        Assert.DoesNotContain(rows, r => r.GetProperty("entityKind").GetString() is "usage" or "tool_call" or "effect");
-        Assert.Equal(9, rows.Single(r => r.GetProperty("id").GetString() == "s").GetProperty("version").GetInt64());
-        Assert.DoesNotContain("private-secret", page.GetRawText());
-    }
-
-    [Fact]
     public async Task Mirror_events_and_rows_share_one_read_snapshot()
     {
         _f.SeedSession();

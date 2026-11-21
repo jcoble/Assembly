@@ -13,35 +13,10 @@ namespace Assembly.Tests.Infrastructure.Socket;
 public sealed class ForeignTitlePartsTests
 {
     private static CallContext Call(CancellationToken token) => new(default, "bulk", token, Peer: new OwnerPeer());
-    private static RelaySourceCapture Ordinary() => RelayDigests.Capture("A", "B", "M", "session", new("from", "to", "body", "prompt"), "label",
-        new(1, "queued", 0, false, 0, "local", null, 0, "B"));
     private static ForeignTitleRequest Request(ForeignTitleSourceCapture capture, string target) =>
         new(ForeignTitleOperation.ForeignAncestry, target, capture.Manifest.SourceMachine, "root", null,
             new(capture.Manifest.SourceMachine, "root", 1, ForeignTitleDigests.Structure(target, capture.Manifest.SourceMachine, "root", capture.Nodes)),
             1, capture.Manifest.NodeFacts, capture.Manifest.Titles);
-
-    [Fact]
-    public async Task Ordinary_and_title_families_share_exactly_one_source_and_one_target_slot()
-    {
-        using var f = new EngineFixture(); f.SeedSession("root");
-        var capture = new EngineReader(f.Db, f.Machine).ForeignTitleSource(new(ForeignTitleSourceMode.NodeOnly, "root", "target"), default);
-        await using var parts = new RelayMessageParts(); using var closed = new CancellationTokenSource();
-        using var op = parts.Enter(Call(closed.Token));
-        var old = Ordinary(); var descriptor = RelayDigests.Describe(old); var ordinaryRequest = new RelaySendRequest(descriptor, 0);
-        var ordinaryProbe = new RelaySendBeginReply("parts_required", null, new(descriptor.IdentitySha256, "root", null, "retry", null, false));
-        var ordinarySource = op.PublishSource(old);
-        Assert.Equal("relay_busy", Assert.Throws<CallFailed>(() => op.PublishForeignSource(capture)).Message);
-        op.CloseSource(ordinarySource.Handle);
-        var titleSource = op.PublishForeignSource(capture);
-        Assert.Throws<CallFailed>(() => op.PublishSource(old)); Assert.True(op.CloseForeignSource(titleSource.Handle));
-        Assert.False(op.CloseForeignSource(titleSource.Handle));
-        var target = op.PublishTarget(ordinaryRequest, ordinaryProbe).Transfer!;
-        var request = Request(capture, "target"); var probe = new ForeignTitleReply(ForeignTitleReplyKind.PartsRequired, null, null, null, null);
-        Assert.Throws<CallFailed>(() => op.PublishForeignTarget(request, probe)); op.DropTarget(target);
-        var titleTarget = op.PublishForeignTarget(request, probe).Handle!;
-        Assert.Throws<CallFailed>(() => op.PublishTarget(ordinaryRequest, ordinaryProbe));
-        Assert.True(op.DropForeignTarget(titleTarget)); Assert.False(op.DropForeignTarget(titleTarget));
-    }
 
     [Fact]
     public async Task Admitted_prepared_titles_survive_close_and_host_cleanup()

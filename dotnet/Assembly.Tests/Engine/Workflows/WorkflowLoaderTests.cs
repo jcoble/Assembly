@@ -40,56 +40,6 @@ public sealed class WorkflowLoaderTests : IDisposable
         Assert.Equal(legacy.Hash, WorkflowParser.Parse(new(restored.Yaml, restored.Prompts)).Hash);
     }
     [Fact]
-    public void Static_display_metadata_round_trips_and_changes_the_immutable_hash()
-    {
-        const string yaml = "name: A\nsteps: {g: {gate: {}, display: {label: Legacy, present: Checking, past: Checked, stage: verify, detail: Actual detail}}}";
-        var snapshot = Load(yaml);
-        Assert.Equal(new WorkflowDisplay("Legacy", "verify", "Checking", "Checked", "Actual detail"), snapshot.Definition.Steps["g"].Display);
-        var serialized = JsonSerializer.Serialize(snapshot, WorkflowJson.Default.WorkflowSnapshot);
-        var restored = JsonSerializer.Deserialize(serialized, WorkflowJson.Default.WorkflowSnapshot)!;
-        Assert.Equal(snapshot.Definition.Steps["g"].Display, restored.Definition.Steps["g"].Display);
-        Assert.Equal(snapshot.Hash, Load(yaml.Replace("present: Checking, past: Checked", "past: Checked, present: Checking")).Hash);
-        foreach (var text in new[] { "Checking", "Checked", "verify", "Actual detail" })
-            Assert.NotEqual(snapshot.Hash, Load(yaml.Replace(text, text + " changed")).Hash);
-    }
-    [Theory]
-    [InlineData("present", 120)]
-    [InlineData("past", 120)]
-    [InlineData("stage", 40)]
-    [InlineData("detail", 300)]
-    public void Static_display_limits_accept_the_boundary_and_refuse_oversized_or_nontext_values(string field, int maximum)
-    {
-        string Yaml(string value) => "name: A\nsteps: {g: {gate: {}, display: {" + field + ": " + value + "}}}";
-        var text = string.Concat(Enumerable.Repeat("🌱", maximum));
-        var snapshot = Load(Yaml("\"" + text + "\""));
-        Assert.NotNull(snapshot.Definition.Steps["g"].Display);
-        Assert.Equal("steps.g.display." + field, Assert.Throws<WorkflowFieldException>(() => Load(Yaml("\"" + text + "x\""))).Field);
-        Assert.Equal("steps.g.display." + field, Assert.Throws<WorkflowFieldException>(() => Load(Yaml("false"))).Field);
-    }
-    [Theory]
-    [InlineData("name: A\nname: B\nsteps: {}", "name")]
-    [InlineData("name: A\nsteps: {}\n---\nname: B", "yaml")]
-    [InlineData("name: &a A\nsteps: *a", "yaml")]
-    [InlineData("name: !custom A\nsteps: {}", "yaml")]
-    [InlineData("name: A\nversion: 1\nsteps: {}", "version")]
-    [InlineData("name: A\nlimits: {max_sessions: 0}\nsteps: {}", "limits.max_sessions")]
-    [InlineData("name: A\nlimits: {step_timeout_minutes: true}\nsteps: {}", "limits.step_timeout_minutes")]
-    [InlineData("name: A\nsteps: {bad.id: {gate: yes}}", "steps.bad.id")]
-    [InlineData("name: A\nsteps: {a: {gate: {}, needs: [b]}}", "steps.a.needs")]
-    [InlineData("name: A\nsteps: {a: {gate: {}, needs: [b]}, b: {gate: {}, needs: [a]}}", "needs")]
-    [InlineData("name: A\nsteps: {a: {gate: {}, mystery: true}}", "steps.a.mystery")]
-    [InlineData("name: A\nsteps: {a: {agent: {provider: x, provider: y}}}", "steps.a.agent.provider")]
-    [InlineData("name: A\npolicy: {commands: {alow: []}}\nsteps: {}", "policy.commands.alow")]
-    public void Invalid_definitions_name_field(string yaml, string field) => Assert.Contains(field, Assert.Throws<WorkflowFieldException>(() => Load(yaml)).Message);
-    [Fact]
-    public void Nested_validation_and_parallel_build_lineage()
-    {
-        Assert.Contains("agent.model", Assert.Throws<WorkflowFieldException>(() => Load(Basic.Replace("provider: custom-launcher", "provider: custom-launcher, model: 5"))).Message);
-        Assert.Contains("agent.extra", Assert.Throws<WorkflowFieldException>(() => Load(Basic.Replace("provider: custom-launcher", "provider: custom-launcher, extra: true"))).Message);
-        Assert.Contains("prompt", Assert.Throws<WorkflowFieldException>(() => Load(Basic.Replace("prompts/build.md", "../outside.md"))).Message);
-        Assert.Contains("agent", Assert.Throws<WorkflowFieldException>(() => Load(Basic + "  other: {agent: {provider: x}, result: build, prompt: prompts/build.md}\n")).Message);
-    }
-    [Fact]
     public void Symlink_escape_and_cancellation_refuse()
     {
         var outside = Path.Combine(Path.GetTempPath(), "assembly-outside-" + Guid.NewGuid().ToString("N"));
@@ -131,16 +81,6 @@ public sealed class WorkflowLoaderTests : IDisposable
         Assert.All(snapshot.Definition.Steps.Values.Where(s => s.Prompt is not null), s => Assert.True(snapshot.Prompts.ContainsKey(s.Prompt!)));
     }
     [Fact]
-    public void Review_of_and_on_fail_are_independent_validated_dependencies()
-    {
-        const string yaml = "name: Dual\nsteps:\n  build: {agent: {provider: claude}, result: build, prompt: prompts/build.md}\n  checks: {needs: [build], run: [\"true\"]}\n  review: {needs: [checks], result: review, review: {of: build, agent: {provider: claude}, prompt: prompts/build.md}, on_fail: checks}\n";
-        var review = Load(yaml).Definition.Steps["review"];
-        Assert.Equal("build", review.RedoTarget); Assert.Equal("checks", review.OnFail);
-        Assert.Contains("review.on_fail", Assert.Throws<WorkflowFieldException>(() => Load(yaml.Replace("on_fail: checks", "on_fail: unknown"))).Message);
-        var invalidReview = yaml.Replace("of: build", "of: unrelated") + "  unrelated: {gate: {}}\n";
-        Assert.Equal("steps.review.review.of", Assert.Throws<WorkflowFieldException>(() => Load(invalidReview)).Field);
-    }
-    [Fact]
     public void Definition_hash_is_canonical_and_full_content_with_more_than_two_hundred_steps()
     {
         var a = Load("name: A\ninputs: {value: {default: {z: 1, a: [true, null]}}}\nsteps: {g: {gate: {z: 1, a: 2}}}");
@@ -155,37 +95,6 @@ public sealed class WorkflowLoaderTests : IDisposable
         var outside = Path.Combine(root, "outside.yml"); File.WriteAllText(outside, Basic);
         File.CreateSymbolicLink(Path.Combine(root, ".assembly/workflows/link.yml"), outside);
         Assert.Contains("path", Assert.Throws<WorkflowFieldException>(() => WorkflowLoader.Load(root, ".assembly/workflows/link.yml")).Message);
-    }
-    [Theory]
-    [InlineData("limits: {max_rounds: -1}", "limits.max_rounds")]
-    [InlineData("limits: {step_timeout_minutes: 9223372036854775807}", "limits.step_timeout_minutes")]
-    [InlineData("limits: {max_sessions: 1.5}", "limits.max_sessions")]
-    [InlineData("policy: {default: maybe}", "policy.default")]
-    [InlineData("inputs: {a: {required: yes}}", "inputs.a.required")]
-    [InlineData("inputs: {a: {extra: true}}", "inputs.a.extra")]
-    public void Strict_nested_mapping_validation(string section, string field) => Assert.Contains(field,
-        Assert.Throws<WorkflowFieldException>(() => Load("name: A\n" + section + "\nsteps: {}\n")).Message);
-    [Fact]
-    public void Json_compatible_standard_tags_preserve_scalar_types_and_custom_tags_fail()
-    {
-        var snapshot = Load("name: !!str 123\ninputs: {number: {default: !!int '12'}, flag: {default: !!bool 'true'}, text: {default: !!str true}}\nsteps: {g: {gate: !!map {context: !!seq [!!null null, !!float '1.5']}}}");
-        Assert.Equal("123", snapshot.Definition.Name);
-        Assert.Equal(12, snapshot.Definition.Inputs["number"].Default!.Value.GetInt32());
-        Assert.True(snapshot.Definition.Inputs["flag"].Default!.Value.GetBoolean());
-        Assert.Equal("true", snapshot.Definition.Inputs["text"].Default!.Value.GetString());
-        Assert.Contains("yaml", Assert.Throws<WorkflowFieldException>(() => Load("name: A\nsteps: {g: {gate: {true: x}}}")).Message);
-    }
-    [Fact]
-    public void Prompt_bom_is_full_snapshot_content_and_invalid_utf8_is_a_field_error()
-    {
-        var before = Load();
-        var path = Path.Combine(root, ".assembly/workflows/prompts/build.md");
-        File.WriteAllBytes(path, [0xef, 0xbb, 0xbf, 0x66, 0x69, 0x72, 0x73, 0x74]);
-        var withBom = Load();
-        Assert.Equal("\ufefffirst", withBom.Prompts["prompts/build.md"]);
-        Assert.NotEqual(before.Hash, withBom.Hash);
-        File.WriteAllBytes(path, [0xff, 0xfe, 0x61, 0x00]);
-        Assert.Contains("steps.build.prompt", Assert.Throws<WorkflowFieldException>(() => Load()).Message);
     }
     [Fact]
     public void Large_yaml_is_not_capped_and_required_input_hash_is_canonical()

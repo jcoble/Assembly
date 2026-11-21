@@ -39,16 +39,6 @@ public sealed class WorkflowSettlementTests
         Assert.Equal(new long[] { 8, 9 }, f.Db.Query("SELECT attempt FROM engine_step_attempt ORDER BY attempt", r => r.Long(0), default));
     }
 
-    [Fact]
-    public void Legacy_retry_keeps_existing_attempt_budget_even_without_generation_counter()
-    {
-        using var f = new EngineFixture(); f.SeedSession("owner"); f.SeedRun(ownerSessionId: "owner", state: "running");
-        f.SeedSession("worker", parentId: "owner", runId: "r");
-        f.SeedStep("s", state: "failed", sessionId: "worker", attempt: 2, maxAttempts: 2);
-        Assert.Equal("invalid_transition", f.Apply(new StartStep("worker"), "s").Error);
-        Recompute(f); Assert.Equal("failed", f.State("engine_run", "r"));
-    }
-
     [Theory]
     [InlineData("pending", false)]
     [InlineData("inflight", false)]

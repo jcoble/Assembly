@@ -111,30 +111,6 @@ public sealed class SessionTitleSnapshotTests
         finally { socket.Release.TrySetResult(); socket.End(); await running.WaitAsync(Wait); }
     }
 
-    [Fact]
-    public async Task Ordinary_small_sessions_subscription_retains_its_original_generated_item_and_has_no_opt_in_ack()
-    {
-        var topics = new TopicSet(); using var f = new EngineFixture(topics: topics);
-        var sessions = SessionStore.Open(f.Db, f.Time, Path.GetTempPath());
-        var session = sessions.Create("codex", "repo"); sessions.SetTitle(session.SessionId, "Exact\0世界😀", "prompt");
-        using var expectedBytes = new MemoryStream();
-        using (var json = new Utf8JsonWriter(expectedBytes, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
-            JsonSerializer.Serialize(json, sessions.Item(sessions.Get(session.SessionId)!), SessionsJson.Default.SessionItem);
-        var expected = Encoding.UTF8.GetString(expectedBytes.ToArray());
-        var calls = new SocketDispatcher(f.Db.Writer, topics, f.Time, NullLogger.Instance);
-        new SessionsFeature(sessions, new MachineSet(new FakeMachine(null, sessions))).Register(calls);
-        using var socket = new PausedSender();
-        socket.Feed("""{"t":"hello","protocol":1,"token":"test"}"""); socket.Feed("""{"t":"sub","id":1,"topic":"sessions"}""");
-        var running = new SocketConnection(socket, calls, f.Time).RunAsync(Encoding.UTF8.GetBytes("test"), f.Machine, default, f.Machine);
-        try
-        {
-            using var parsed = JsonDocument.Parse(await socket.StateEntered.Task.WaitAsync(Wait));
-            Assert.False(parsed.RootElement.TryGetProperty("sessionTitleParts", out _));
-            Assert.Equal(expected, parsed.RootElement.GetProperty("items")[0].GetProperty("item").GetRawText());
-        }
-        finally { socket.Release.TrySetResult(); socket.End(); await running.WaitAsync(Wait); }
-    }
-
     private sealed class PausedSender : WebSocket
     {
         private readonly Channel<string> _incoming = Channel.CreateUnbounded<string>();

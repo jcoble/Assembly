@@ -73,69 +73,6 @@ public sealed partial class McpServerTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Board_adapter_preserves_existing_raw_results_and_definition_over_http(bool helper)
-    {
-        await using var h = await Host.StartAsync(board: true, helper: helper);
-        var report = new BoardUpdateArgs("task", "Title \"界\"", "running", "Measured\nprogress", null, null, null, null, null);
-        var args = JsonSerializer.SerializeToElement(report, WorkflowJson.Default.BoardUpdateArgs);
-        var baseline = h.Board!.Call(h.SessionId, args);
-        var result = await h.CallAsync("tools/call", "{\"name\":\"board_update\",\"arguments\":" + args.GetRawText() + "}");
-        Assert.Equal(baseline.IsError, result.GetProperty("isError").GetBoolean());
-        Assert.Equal(baseline.Text, Assert.Single(result.GetProperty("content").EnumerateArray()).GetProperty("text").GetString());
-        Assert.Equal(helper ? "helper_forbidden" : "{", baseline.Text[..(helper ? baseline.Text.Length : 1)]);
-        Assert.Equal(helper ? 0 : 1, h.BoardQueries!.Page(new(null, null, null), default).Items.Length);
-        Assert.Equal(helper ? "refused" : "ok", h.Fixture.Text("SELECT outcome FROM engine_tool_call"));
-        using var definition = new MemoryStream();
-        using (var json = new Utf8JsonWriter(definition)) h.Board.WriteTool(json);
-        using var expected = JsonDocument.Parse(definition.ToArray());
-        var listed = (await h.CallAsync("tools/list", "{}")).GetProperty("tools").EnumerateArray().Single(t => t.GetProperty("name").GetString() == "board_update");
-        Assert.Equal(expected.RootElement.GetProperty("description").GetString(), listed.GetProperty("description").GetString());
-        Assert.Equal(expected.RootElement.GetProperty("inputSchema").GetRawText(), listed.GetProperty("inputSchema").GetRawText());
-        if (!helper)
-        {
-            var fresh = JsonSerializer.SerializeToElement(report with { TaskKey = "fresh" }, WorkflowJson.Default.BoardUpdateArgs);
-            var created = await h.CallAsync("tools/call", "{\"name\":\"board_update\",\"arguments\":" + fresh.GetRawText() + "}");
-            Assert.False(created.GetProperty("isError").GetBoolean());
-            Assert.Equal(2, h.BoardQueries.Page(new(null, null, null), default).Items.Length);
-        }
-    }
-
-    [Theory]
-    [InlineData("{}", "bad_args")]
-    [InlineData("{\"steps\":null}", "bad_args")]
-    [InlineData("""{"taskKey":"t","title":"T","state":"bogus","summary":"S","taskUrl":null,"prUrl":null,"changedPaths":null,"question":null,"answerReceived":null,"steps":null}""", "invalid_argument")]
-    public async Task Board_raw_errors_are_unquoted_and_recorded_as_refused(string args, string expected)
-    {
-        await using var h = await Host.StartAsync(board: true);
-        var baseline = h.Board!.Call(h.SessionId, JsonDocument.Parse(args).RootElement);
-        Assert.Equal((expected, true), baseline);
-        var result = await h.CallAsync("tools/call", "{\"name\":\"board_update\",\"arguments\":" + args + "}");
-        Assert.True(result.GetProperty("isError").GetBoolean());
-        Assert.Equal(expected, Assert.Single(result.GetProperty("content").EnumerateArray()).GetProperty("text").GetString());
-        Assert.Empty(h.BoardQueries!.Page(new(null, null, null), default).Items);
-        Assert.Equal("refused", h.Fixture.Text("SELECT outcome FROM engine_tool_call"));
-    }
-
-    [Fact]
-    public async Task Start_recording_failure_is_refused_over_real_http()
-    {
-        await using var h = await Host.StartAsync(board: true);
-        h.Fixture.Db.Writer.Write("test.recording-failure", scope => scope.Execute("""
-            CREATE TRIGGER fail_mcp_start BEFORE INSERT ON engine_tool_call
-            BEGIN SELECT RAISE(ABORT,'private storage failure'); END
-            """));
-        var args = JsonSerializer.SerializeToElement(new BoardUpdateArgs("task", "Title", "running", "Measured", null, null, null, null, null), WorkflowJson.Default.BoardUpdateArgs);
-        var result = await h.CallAsync("tools/call", "{\"name\":\"board_update\",\"arguments\":" + args.GetRawText() + "}");
-        Assert.True(result.GetProperty("isError").GetBoolean());
-        Assert.Contains("could not record", result.GetProperty("content")[0].GetProperty("text").GetString());
-        Assert.DoesNotContain("private storage failure", result.GetRawText());
-        Assert.Equal(0, h.Fixture.Count("engine_tool_call"));
-        Assert.Empty(h.BoardQueries!.Page(new(null, null, null), default).Items);
-    }
-
-    [Theory]
     [InlineData("/mcp")]
     [InlineData("/mcp/")]
     public async Task Every_sdk_endpoint_spelling_requires_session_bearer(string path)

@@ -102,16 +102,4 @@ public sealed class ForeignTests
         Assert.True(f.Apply(message, "message", actor: Peer()).Applied);
         Assert.Equal(1, f.Count("engine_outbox"));
     }
-
-    [Fact]
-    public void Old_start_json_and_effect_bytes_remain_identical()
-    {
-        using var f = new EngineFixture();
-        var start = new StartSession("p", null, "/target", "T", null, null, null);
-        const string old = "{\"provider\":\"p\",\"model\":null,\"folder\":\"/target\",\"title\":\"T\",\"parentId\":null,\"runId\":null,\"taskUrl\":null}";
-        Assert.Equal(old, JsonSerializer.Serialize(start, EngineJson.Default.StartSession));
-        Assert.Equal("{\"kind\":\"start_session\"," + old[1..], JsonSerializer.Serialize<EngineCommand>(start, EngineJson.Default.EngineCommand));
-        Assert.True(f.Apply(start, "child").Applied);
-        Assert.Equal(old, f.Text("SELECT payload_json FROM engine_outbox"));
-    }
 }

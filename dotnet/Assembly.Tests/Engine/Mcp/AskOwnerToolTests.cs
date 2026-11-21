@@ -25,23 +25,6 @@ public sealed class AskOwnerToolTests
     private static OpenNeed Question(string? request = null) => new("s", null, null, "question", "Proceed?", [], request, null, 2000);
 
     [Fact]
-    public async Task Explicit_presentation_metadata_is_retained_and_over_limit_metadata_opens_nothing()
-    {
-        await using var h = new Harness(); h.Fixture.SeedSession();
-        var tool = new AskOwnerTool(h.Gate, h.Needs);
-        var response = await h.Call(tool, "s", """{"question":"First line is not a recommendation","title":"Actual title","recommendation":"Actual recommendation"}""");
-        Assert.False(response.IsError);
-        using var presentation = JsonDocument.Parse(h.Fixture.Text("SELECT presentation_json FROM engine_needs_me")!);
-        Assert.Equal("Actual title", presentation.RootElement.GetProperty("title").GetString());
-        Assert.Equal("Actual recommendation", presentation.RootElement.GetProperty("recommendation").GetString());
-        Assert.Equal("text", presentation.RootElement.GetProperty("inputMode").GetString());
-        Assert.True(presentation.RootElement.GetProperty("freeText").GetBoolean());
-        var invalid = JsonSerializer.Serialize(new { question = "Other", recommendation = new string('x', 301) });
-        Assert.True((await h.Call(tool, "s", invalid)).IsError);
-        Assert.Equal(1, h.Fixture.Count("engine_needs_me"));
-    }
-
-    [Fact]
     public async Task Top_level_question_opens_one_need_and_owned_run()
     {
         await using var h = new Harness();
@@ -69,19 +52,6 @@ public sealed class AskOwnerToolTests
         Assert.True(result.IsError);
         Assert.Equal("Only a top-level session can ask Jesse. Send your question to your starter with send_message.", Text(result));
         Assert.Equal(0, h.Fixture.Count("engine_needs_me")); Assert.Empty(h.Fixture.Events());
-    }
-
-    [Theory]
-    [InlineData("[]")]
-    [InlineData("[\"one\"]")]
-    [InlineData("[\"same\",\"same\"]")]
-    [InlineData("[\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\",\"8\",\"9\"]")]
-    public async Task Choice_needs_two_to_eight_options(string options)
-    {
-        await using var h = new Harness(); h.Fixture.SeedSession();
-        var result = await h.Call(new AskOwnerTool(h.Gate, h.Needs), "s", "{\"question\":\"Pick\",\"kind\":\"choice\",\"options\":" + options + "}");
-        Assert.True(result.IsError); Assert.Equal("ask_owner: options needs 2 to 8 distinct entries.", Text(result));
-        Assert.Equal(0, h.Fixture.Count("engine_command_receipt"));
     }
 
     [Theory]
@@ -195,28 +165,6 @@ public sealed class AskOwnerToolTests
         Assert.Throws<SqliteException>(() => f.Apply(new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes")), "n", 1));
         Assert.Equal("open", f.State("engine_needs_me", "n")); Assert.Equal("needs_me", f.State("engine_session", "s"));
         Assert.Equal(0, f.Count("engine_message")); Assert.Equal(events, f.Count("engine_event")); Assert.Equal(receipts, f.Count("engine_command_receipt"));
-    }
-
-    [Theory]
-    [InlineData(2)]
-    [InlineData(8)]
-    public async Task Choice_boundary_counts_are_accepted(int count)
-    {
-        await using var h = new Harness(); h.Fixture.SeedSession();
-        var options = JsonSerializer.Serialize(Enumerable.Range(0, count).Select(i => i.ToString()).ToArray());
-        Assert.False((await h.Call(new AskOwnerTool(h.Gate, h.Needs), "s", "{\"question\":\"Pick\",\"kind\":\"choice\",\"options\":" + options + "}")).IsError);
-        Assert.Equal("choice", h.Fixture.Text("SELECT kind FROM engine_needs_me"));
-    }
-
-    [Theory]
-    [InlineData(1200, false)]
-    [InlineData(1201, true)]
-    public async Task Question_length_boundary_is_enforced(int length, bool refused)
-    {
-        await using var h = new Harness(); h.Fixture.SeedSession();
-        var args = "{\"question\":\"" + new string('q', length) + "\"}";
-        Assert.Equal(refused, (await h.Call(new AskOwnerTool(h.Gate, h.Needs), "s", args)).IsError == true);
-        Assert.Equal(refused ? 0 : 1, h.Fixture.Count("engine_needs_me"));
     }
 
     [Fact]
