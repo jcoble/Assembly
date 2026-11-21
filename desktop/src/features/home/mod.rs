@@ -3,6 +3,7 @@
 
 pub mod home_button;
 pub mod home_panel;
+mod home_panel_advanced;
 mod home_panel_rows;
 pub mod settings_state;
 mod state_words;

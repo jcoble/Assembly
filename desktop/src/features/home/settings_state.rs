@@ -48,12 +48,29 @@ pub struct Provider {
 pub struct ProviderOnMachine {
     /// The machine's key in `machines`: `local` or the remote's name.
     pub machine_key: String,
+    /// That machine's own engine id, which its calls are addressed to; null until it is known.
+    pub engine_machine: Option<String>,
     /// The same four states as the provider's row.
     pub state: Option<String>,
     pub adapter_version: Option<String>,
     pub cli_version: Option<String>,
     pub models: Option<Vec<Model>>,
     pub last_failure: Option<Failure>,
+    /// `provider/account`, the engine row the check command addresses.
+    pub provider_target_id: Option<String>,
+    /// The engine row's version, which a check command must name to be applied.
+    pub version: i64,
+}
+
+/// A provider's Advanced values on one machine, as the backend's runtime call reads and saves them: the CLI
+/// path, the config folder, the account folder and the launch arguments. Empty text means no override.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RuntimeSettings {
+    pub binary_path: Option<String>,
+    pub config_home: Option<String>,
+    pub shadow_home: Option<String>,
+    pub launch_arguments: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]

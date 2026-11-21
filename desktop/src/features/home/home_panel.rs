@@ -4,9 +4,12 @@
 //! open and drops it on close, and dropping it unsubscribes, so a closed panel costs nothing.
 //! Its rows are drawn in `home_panel_rows.rs`.
 
+use std::collections::HashMap;
+
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
 
+use super::home_panel_advanced::MachineEdit;
 use super::settings_state::SettingsState;
 use super::state_words::summary_tone;
 use crate::core::socket::client::SocketClient;
@@ -28,6 +31,12 @@ pub struct HomePanel {
     pub(super) state: Option<SettingsState>,
     /// Which provider's grower is open: one at a time.
     pub(super) drops: Entity<RowDropDowns>,
+    /// Which machine line's Advanced or Details grower is open: one at a time, inside a provider's grower.
+    pub(super) sub_drops: Entity<RowDropDowns>,
+    /// Each machine line's Advanced editor, made when its grower first opens.
+    pub(super) edits: HashMap<String, MachineEdit>,
+    /// Calls the panel has sent and not yet heard back from; dropping the panel cancels them.
+    pub(super) calls: Vec<Task<()>>,
     /// Owns the subscription; dropping the panel drops it, which unsubscribes.
     _feed: Task<()>,
 }
@@ -55,6 +64,9 @@ impl HomePanel {
         Self {
             state: None,
             drops: cx.new(|_| RowDropDowns::default()),
+            sub_drops: cx.new(|_| RowDropDowns::default()),
+            edits: HashMap::new(),
+            calls: Vec::new(),
             _feed: feed,
         }
     }
