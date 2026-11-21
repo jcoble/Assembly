@@ -35,6 +35,7 @@ impl ErrorCode {
             "bad_args" => ErrorCode::BadArgs,
             "timeout" => ErrorCode::Timeout,
             "source_changed"
+            | "runtime_settings_conflict"
             | "checkout_root_changed"
             | "checkout_unavailable"
             | "native_card_changed"

@@ -279,6 +279,7 @@ impl HomePanel {
                 machine_key.clone(),
                 weak.clone(),
             );
+            let (refresh_provider, refresh_machine) = (provider_id.clone(), machine_key.clone());
             let body = move |window: &mut Window, cx: &mut App| -> AnyElement {
                 let Some(panel) = weak.upgrade() else {
                     return Empty.into_any_element();
@@ -287,6 +288,10 @@ impl HomePanel {
                     panel.sub_body(&kind, &provider_id, &machine_key, window, cx)
                 })
             };
+            // Reopening Advanced re-reads its values, so a revision another editor moved is fresh.
+            if !this.sub_drops.read(cx).is_open(&key) {
+                this.refresh_edit(&refresh_provider, &refresh_machine, cx);
+            }
             this.sub_drops
                 .update(cx, |drops, cx| drops.toggle(key, body, cx));
         }))
@@ -361,11 +366,12 @@ fn parse_sub_key(key: &SharedString) -> (String, String, String) {
 
 /// A small ghost text button, as the machine lines' actions are drawn.
 fn small_button(element: String, tree_id: String, label: &'static str) -> Button {
-    Button::new(element)
+    Button::new(element.clone())
         .small()
         .ghost()
         .label(label)
         .control(tree_id, label)
+        .debug_selector(move || element.clone())
 }
 
 /// One machine: its name, its connection, and its update when there is one to mention.

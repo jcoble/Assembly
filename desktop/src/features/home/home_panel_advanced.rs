@@ -17,6 +17,7 @@ use serde_json::json;
 use super::home_panel::HomePanel;
 use super::settings_state::{ProviderOnMachine, RuntimeSettings};
 use crate::core::socket::client::SocketClient;
+use crate::core::socket::error_code::ErrorCode;
 use crate::core::socket::outcome::Outcome;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Control as _;
@@ -32,7 +33,7 @@ const PARTS: [&str; 2] = ["cli-path", "config-folder"];
 #[derive(Default)]
 pub(super) struct MachineEdit {
     /// The text fields, made when the grower first draws with values to show.
-    fields: Option<[Entity<InputState>; 2]>,
+    pub(super) fields: Option<[Entity<InputState>; 2]>,
     /// The values the last read or save returned; the fields are made from these.
     loaded: Option<RuntimeSettings>,
     /// The revision the last read or save returned, which a save must name.
@@ -44,7 +45,7 @@ pub(super) struct MachineEdit {
     /// A save is in flight.
     saving: bool,
     /// What the last save or read has to say, under the fields.
-    notice: Option<String>,
+    pub(super) notice: Option<String>,
 }
 
 /// The key of one machine line's editor in the panel's map.
@@ -134,7 +135,11 @@ impl HomePanel {
                 .gap_2()
                 .items_center()
                 .child(
-                    Button::new("home-advanced-save")
+                    Button::new(format!("home-advanced-save-{provider}-{machine}"))
+                        .debug_selector({
+                            let selector = format!("home-advanced-save-{provider}-{machine}");
+                            move || selector.clone()
+                        })
                         .small()
                         .label("Save")
                         .control(
@@ -240,29 +245,85 @@ impl HomePanel {
         let call = client
             .read(cx)
             .call::<RuntimeReply>("providers", "runtimeSave", args, None);
+        let (provider, engine) = (provider.to_string(), engine_machine.to_string());
         self.calls.push(cx.spawn(async move |this, cx| {
             let outcome = call.await;
-            _ = this.update(cx, |panel, cx| {
-                let edit = panel.edits.entry(key).or_default();
-                edit.saving = false;
-                match outcome {
-                    Outcome::Ok(reply) => {
-                        edit.revision = reply.revision;
-                        edit.loaded = Some(reply.settings);
-                        edit.notice = Some("Saved.".into());
-                    }
-                    Outcome::Failed(failure) => {
-                        edit.notice = Some(if failure.message.is_empty() {
-                            "Couldn't save those settings.".into()
-                        } else {
-                            failure.message.clone()
-                        });
-                    }
-                    Outcome::Aborted => {}
-                }
-                cx.notify();
-            });
+            let stale = this
+                .update(cx, |panel, cx| {
+                    let edit = panel.edits.entry(key.clone()).or_default();
+                    edit.saving = false;
+                    let stale = match outcome {
+                        Outcome::Ok(reply) => {
+                            edit.revision = reply.revision;
+                            edit.loaded = Some(reply.settings);
+                            edit.notice = Some("Saved.".into());
+                            false
+                        }
+                        // Another editor saved first: this editor's revision is stale. The typed
+                        // text stays; the refresh below brings the current values and revision.
+                        Outcome::Failed(failure)
+                            if matches!(&failure.code, ErrorCode::Refused { code } if code == "runtime_settings_conflict") =>
+                        {
+                            edit.notice = Some(
+                                "The settings changed, so this edit wasn't saved. \
+                                 Your text is still here — save again."
+                                    .into(),
+                            );
+                            true
+                        }
+                        Outcome::Failed(failure) => {
+                            edit.notice = Some(if failure.message.is_empty() {
+                                "Couldn't save those settings.".into()
+                            } else {
+                                failure.message.clone()
+                            });
+                            false
+                        }
+                        Outcome::Aborted => false,
+                    };
+                    cx.notify();
+                    stale
+                })
+                .unwrap_or(false);
+            if stale {
+                _ = this.update(cx, |panel, cx| {
+                    panel.start_read(&provider, &engine, &key, cx)
+                });
+            }
         }));
+    }
+
+    /// Re-reads a machine line's values when its Advanced grower is reopened, so a revision another
+    /// editor moved is picked up before the next save. The fields keep what was typed.
+    pub(super) fn refresh_edit(
+        &mut self,
+        provider_id: &str,
+        machine_key: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let key = edit_key(provider_id, machine_key);
+        let Some(edit) = self.edits.get(&key) else {
+            return;
+        };
+        if edit.reading || edit.fields.is_none() {
+            return;
+        }
+        let engine = self.state.as_ref().and_then(|state| {
+            state
+                .providers
+                .iter()
+                .find(|provider| provider.id == provider_id)
+                .and_then(|provider| {
+                    provider
+                        .machines
+                        .iter()
+                        .find(|on| on.machine_key == machine_key)
+                })
+                .and_then(|on| on.engine_machine.clone())
+        });
+        if let Some(engine) = engine {
+            self.start_read(provider_id, &engine, &key, cx);
+        }
     }
 
     /// "Try again" on a failure: sends the engine's check command for this provider on this machine, at
