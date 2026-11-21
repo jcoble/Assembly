@@ -5,8 +5,8 @@
 //!   jump to the end. New: the old app had no dock motion.
 //! - splits and tab groups paint no fill of their own, so the sessions column shows the rail and the rest shows the
 //!   work panel that Frame draws behind them (the design system's "a ground and one panel").
-//! - the sessions column is a raised panel, `RAIL_GAP` in from the window's edges, with the utility strip at its foot,
-//!   as the approved look has it (the design system's look-final/README.md:66); there's no bottom bar.
+//! - the sessions column is a tile, `RAIL_GAP` in from the window's edges, with the utility strip at its foot, as the
+//!   look has it; there's no bottom bar.
 //! - the sessions column uses text chips (side_tabs.rs), the drawer uses its compact tool capsule and overflow menu
 //!   (drawer_buttons.rs), and the chat's title and an open bottom dock's tabs are the kit's.
 //! - a closed bottom dock draws nothing along the foot, and the centre reaches over the strip the kit keeps for it;
@@ -28,11 +28,11 @@ use gpui_kit::component::v_flex;
 use gpui_kit::*;
 
 use super::{drawer_buttons::DrawerButtons, side_tabs};
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{CORNER_TILE, TILE_GAP};
 
-/// The sessions panel's distance from the window's edge and from the work panel (Frame's `PANEL_GAP`).
-const RAIL_GAP: Pixels = px(8.);
-/// The sessions panel's corners.
-const RAIL_RADIUS: Pixels = px(14.);
+/// The sessions tile's distance from the window's edge and from the work tile; the glass shows in it.
+const RAIL_GAP: Pixels = TILE_GAP;
 
 pub struct MotionSkin {
     pub inner: Rc<DockSkin>,
@@ -92,7 +92,9 @@ impl DockAreaRenderer for MotionSkin {
         cx: &mut App,
     ) -> AnyElement {
         let content = if dock.placement() == DockPlacement::Left {
-            let theme = cx.theme();
+            // A tile like the work tile: its darker colour separates it from the glass, with only a faint edge and
+            // no shadow (the look's outline rule).
+            let look = Look::of(cx);
             div()
                 .size_full()
                 .px(RAIL_GAP)
@@ -100,12 +102,10 @@ impl DockAreaRenderer for MotionSkin {
                     v_flex()
                         .size_full()
                         .overflow_hidden()
-                        .rounded(RAIL_RADIUS)
+                        .rounded(CORNER_TILE)
                         .border_1()
-                        // The mock's `.rail` edge (#262628): the theme's border at 60 %.
-                        .border_color(theme.border.opacity(0.6))
-                        .bg(theme.group_box)
-                        .shadow_md()
+                        .border_color(look.tile_edge)
+                        .bg(look.tile)
                         .child(div().flex_1().min_h_0().child(content))
                         .child(self.foot.clone()),
                 )

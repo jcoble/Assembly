@@ -12,6 +12,7 @@ use gpui_kit::component::{Theme, ThemeRegistry};
 use gpui_kit::{App, Window, WindowBackgroundAppearance};
 
 use super::fade;
+use super::look::{OwnKeys, ThemesDir};
 use super::theme_id::ThemeId;
 
 /// The theme files, read in place from the source tree. A packaged app has its own in `Contents/Resources/themes`.
@@ -26,6 +27,8 @@ const MOTION_CEILING: Duration = Duration::from_millis(180);
 /// never the kit's built-in light one. A folder that can't be watched or read still calls `on_ready`: the kit logs it
 /// and loads what it can (registry.rs:105-115, 248-266), and `set` then leaves the kit's default in force.
 pub fn init(dir: PathBuf, cx: &mut App, on_ready: impl Fn(&mut App) + 'static) {
+    // Kept so `set` reads each theme's `assembly` section (look.rs) from the same files the kit loads.
+    cx.set_global(ThemesDir(dir.clone()));
     // Kit 0.8.1 returns Ok once the load task is scheduled; anything that goes wrong after that is logged by the kit.
     if let Err(error) = ThemeRegistry::watch_dir(dir, cx, on_ready) {
         eprintln!(
@@ -34,11 +37,12 @@ pub fn init(dir: PathBuf, cx: &mut App, on_ready: impl Fn(&mut App) + 'static) {
     }
 }
 
-/// Puts `id` in force: makes its file the kit's active theme, sets the window background to blurred for glass and
-/// opaque for the rest, brings the kit's 280 ms slow step and move spring down to 180 ms, and starts the fade from
-/// the old theme (fade.rs). Off macOS there's no blur, so glass gives Assembly. A theme whose file didn't load leaves
-/// the theme in force as it is. The mode follows the file: the kit's `apply_config` puts a dark file in `dark_theme`
-/// and a light one in `light_theme`, and switches to its mode (schema.rs:1064-1103).
+/// Puts `id` in force: makes its file the kit's active theme, reads its file's `assembly` section for the look's own
+/// tokens (look.rs), sets the window background to blurred for glass and opaque for the rest, brings the kit's 280 ms
+/// slow step and move spring down to 180 ms, and starts the fade from the old theme (fade.rs). Off macOS there's no
+/// blur, so glass gives Assembly, drawn opaque. A theme whose file didn't load leaves the theme in force as it is.
+/// The mode follows the file: the kit's `apply_config` puts a dark file in `dark_theme` and a light one in
+/// `light_theme`, and switches to its mode (schema.rs:1064-1103).
 pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
     let id = if id.is_glass() && !cfg!(target_os = "macos") {
         ThemeId::Assembly
@@ -54,6 +58,8 @@ pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
     };
     let before = Theme::global(cx);
     let (old_name, old_ground) = (before.theme_name().clone(), before.background);
+    // Before the kit's colours change, so the redraw their update asks for already has the look's own tokens.
+    OwnKeys::load(id, cx);
     // Applying the file inside the update leaves its colours as applied: the kit reloads over an update only when the
     // mode changed to a theme the update didn't install (theme/mod.rs:310-327).
     Theme::update(cx, |theme| {
@@ -75,7 +81,7 @@ pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
     {
         fade::record(old_ground, cx);
     }
-    window.set_background_appearance(if id.is_glass() {
+    window.set_background_appearance(if id.is_glass() && cfg!(target_os = "macos") {
         WindowBackgroundAppearance::Blurred
     } else {
         WindowBackgroundAppearance::Opaque

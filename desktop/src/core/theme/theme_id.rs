@@ -78,9 +78,9 @@ impl ThemeId {
         }
     }
 
-    /// True for the theme whose window background is blurred.
+    /// True for the themes whose window background is blurred: Assembly's look is glass around dark tiles.
     pub fn is_glass(self) -> bool {
-        self == ThemeId::AssemblyGlass
+        matches!(self, ThemeId::Assembly | ThemeId::AssemblyGlass)
     }
 }
 
