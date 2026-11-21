@@ -90,6 +90,7 @@ const startUpdate = () => {
 };
 let releaseHome: (() => void) | undefined;
 try {
+  releaseHome = await claimHome(isManaged ? profileFor(root).home : home, launch.signal);
   if (isManaged) {
     managed = await (await import('./app-dev-managed.ts')).prepareManagedLane(root, launch.signal);
     home = managed.home;
@@ -99,7 +100,6 @@ try {
     remoteTokenFile = `.config/${managed.target.data}/env`;
     env.ASSEMBLY_REMOTE = 'workbox-test';
   }
-  releaseHome = await claimHome(home, launch.signal);
   if (managed || (lane.status === 0 && laneName)) startUpdate();
   const cache = existsSync(join(root, '.git')) ? await import('./dev-build-cache.ts') : undefined;
   const publish = async () => run('dotnet', [
