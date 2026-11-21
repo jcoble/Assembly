@@ -1,3 +1,5 @@
+//! The rail's words for a session that didn't open.
+
 use super::refusal_words;
 use crate::core::engine::EngineRefusal;
 
@@ -32,4 +34,17 @@ fn a_session_that_isnt_found_says_what_to_check() {
                  check the Sessions list.";
     assert_eq!(refusal_words(None, &refused), words);
     assert_eq!(refusal_words(Some("Workbox"), &refused), words);
+}
+
+// TSK-1692: a remote session never saved here says which machine to connect, in the backend's words.
+#[test]
+fn a_session_not_saved_here_says_which_machine_to_connect() {
+    let refused = EngineRefusal {
+        code: "not_saved".into(),
+        message: "Not saved on this machine. Connect workbox-test to open it.".into(),
+    };
+    assert_eq!(
+        refusal_words(Some("workbox-test"), &refused),
+        "Not saved on this machine. Connect workbox-test to open it."
+    );
 }

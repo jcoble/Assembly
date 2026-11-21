@@ -17,6 +17,10 @@ pub(super) enum RowStep {
     Gap,
 }
 
+#[cfg(test)]
+#[path = "rows_feed_tests.rs"]
+mod tests;
+
 impl RowsFeed {
     pub fn step(&mut self, seq: i64, prev_seq: Option<i64>) -> RowStep {
         if self.last_seq.is_some_and(|last| seq <= last) {

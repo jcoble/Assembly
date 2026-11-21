@@ -416,3 +416,20 @@ fn only_what_an_open_was_built_on_stops_it() {
         &item(2, "claude", "idle", "idle", Some("p"))
     ));
 }
+
+// TSK-1692: a remote session's saved copy stays open while its machine is offline, so an action that needs the machine
+// (a touched file, an attachment image) says so instead of failing silently.
+#[gpui::test]
+async fn an_action_that_needs_an_offline_machine_says_so_on_a_remote_session(
+    cx: &mut TestAppContext,
+) {
+    use crate::features::session::client::session_client::CallError;
+    let (nav, cx) = on_a_remote_session(cx).await;
+    nav.pane.update(cx, |pane, cx| {
+        let offline = CallError::Unreachable {
+            machine: "workbox-test".into(),
+        };
+        pane.say_failed("Couldn't open the image", offline, cx);
+        assert_eq!(pane.status.as_ref(), "On workbox-test, which is offline.");
+    });
+}
