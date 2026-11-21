@@ -5,7 +5,6 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThemeId {
     Assembly,
-    AssemblyGlass,
     AssemblyLight,
     Houston,
     Dracula,
@@ -18,13 +17,13 @@ pub enum ThemeId {
 }
 
 impl ThemeId {
-    /// The theme the app opens with, and the one an unknown id gives.
+    /// The theme the app opens with, and the one an unknown id gives. The retired "assembly-glass" gives it too, and
+    /// it is the glass look now.
     pub const DEFAULT: ThemeId = ThemeId::Assembly;
 
     /// Every theme, in the order a chooser lists them.
-    pub const ALL: [ThemeId; 11] = [
+    pub const ALL: [ThemeId; 10] = [
         ThemeId::Assembly,
-        ThemeId::AssemblyGlass,
         ThemeId::AssemblyLight,
         ThemeId::Houston,
         ThemeId::Dracula,
@@ -48,7 +47,6 @@ impl ThemeId {
     pub fn as_str(self) -> &'static str {
         match self {
             ThemeId::Assembly => "assembly",
-            ThemeId::AssemblyGlass => "assembly-glass",
             ThemeId::AssemblyLight => "assembly-light",
             ThemeId::Houston => "houston",
             ThemeId::Dracula => "dracula",
@@ -65,7 +63,6 @@ impl ThemeId {
     pub fn theme_name(self) -> &'static str {
         match self {
             ThemeId::Assembly => "Assembly",
-            ThemeId::AssemblyGlass => "Assembly Glass",
             ThemeId::AssemblyLight => "Assembly Light",
             ThemeId::Houston => "Houston",
             ThemeId::Dracula => "Dracula",
@@ -78,9 +75,9 @@ impl ThemeId {
         }
     }
 
-    /// True for the themes whose window background is blurred: Assembly's look is glass around dark tiles.
+    /// True for the theme whose window background is blurred: Assembly's look is glass around dark tiles.
     pub fn is_glass(self) -> bool {
-        matches!(self, ThemeId::Assembly | ThemeId::AssemblyGlass)
+        self == ThemeId::Assembly
     }
 }
 

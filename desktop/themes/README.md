@@ -1,6 +1,6 @@
 # Themes
 
-Each file here is one gpui-kit theme (gpui-component 0.8.1's `ThemeSet` with one theme in it). The setting is one
+Each file here is one gpui-kit theme (gpui-component 0.9.0's `ThemeSet` with one theme in it). The setting is one
 theme id, the file's stem; `src/core/theme/theme_id.rs` lists the ids, and an id that isn't one of them gives
 `assembly`. There is no light/dark toggle: the mode follows the theme picked (`mode` in its file), so the light themes
 put the window in light mode and the rest in dark.
@@ -13,8 +13,7 @@ false.
 
 | Id | File | Kit name | Comes from |
 | --- | --- | --- | --- |
-| assembly | assembly.json | Assembly | The design system Assembly, the approved look (Jesse, 2026-10-27 19:46Z; version 1793120046-6eb7) |
-| assembly-glass | assembly-glass.json | Assembly Glass | New: Assembly with a blurred window behind translucent grounds (macOS only) |
+| assembly | assembly.json | Assembly | The app's look, settled by Jesse on 2026-11-21: [Assembly look: the rule sheet](https://app.notion.com/p/41f394b0689d81f6bd5dd1a4bae1b24e). Glass around dark tiles (see "Assembly: the look") |
 | assembly-light | assembly-light.json | Assembly Light | New: the design system's structure on white, a full light theme |
 | houston | houston.json | Houston | mac-command-bar themeRegistry.ts HOUSTON |
 | dracula | dracula.json | Dracula | themeRegistry.ts DRACULA |
@@ -24,14 +23,16 @@ false.
 | rose-pine-dawn | rose-pine-dawn.json | Rosé Pine Dawn | New, a full light theme: @rose-pine/palette 4.0.1 `dawn`, with thememirror 2.0.1's syntax |
 | ayu-light | ayu-light.json | Ayu Light | New, a full light theme: ayu 9.1.0 `light`, with thememirror 2.0.1's syntax |
 
-Off macOS, `assembly-glass` resolves to `assembly`, since Linux has no reliable blur.
+The old `assembly-glass` id (Assembly's earlier look with translucent grounds) was retired when the look became glass;
+a saved `assembly-glass` resolves to `assembly`.
 
 ## What every theme sets
 
-- `font.size` 16 (the window's rem, which stays fixed; our text sizes come from `TextRole`), `mono_font.size` 12 (the design system's `code`, 12/20), `radius` 8 (`radius-sm`),
-  `radius.lg` 16 (`radius-lg`, which the kit uses for dialogs and notifications), `shadow` false. The fonts stay
-  unset, which is the system face and system monospace. The radii are the same in every theme, since shape is the
-  app's, not a theme's.
+- `font.size` 16 (the window's rem, which stays fixed; our text sizes come from `TextRole`), `mono_font.size` 12 (the design system's `code`, 12/20), `shadow` false. The fonts stay
+  unset, which is the system face and system monospace.
+- `radius` and `radius.lg` (the kit's two radii; `radius.lg` is its dialogs and notifications): Assembly sets the
+  look's 12 (fields, rows) and 18 (popovers, dialogs). The other themes keep the earlier 8 and 16. Every other
+  corner, size and gap of the look is in `src/core/theme/metrics.rs`, the same in every theme.
 - The kit has only two radii. The design system's `radius-xs` 6 (tab chips, tree rows, tags), `radius-md` 12 (cards,
   glass menus; the kit's command palette takes a radius of its own), the work panel's `radius-lg`, `radius-xl` 20
   (the composer, the user's bubble) and `radius-full` (pills) are set by the
@@ -52,15 +53,83 @@ Off macOS, `assembly-glass` resolves to `assembly`, since Linux has no reliable 
 - A theme switch fades: the window root draws the old theme's `background` over everything and fades it to clear over
   `duration_normal` on `easing_enter` (src/core/theme/fade.rs). There's no fade when the window first opens, when the
   theme in force is set again, or when the new theme has the same `background`.
-- Kit 0.8.1 has no highlight keys for added, removed and changed lines (highlighter/registry.rs:318-349), so the
-  design system's `add-bg`, `del-bg`, `mint` and `amber` for diffs belong to the diff view that draws them, not to
-  these files.
+- The kit has no highlight keys for added and removed lines, so the look's diff line fills are in the `assembly`
+  section (`diff.added.background`, `diff.removed.background`) for the diff view to read through `Look`.
 
-## Kit key from design-system role
+## Assembly: the look
 
-These are the keys in assembly.json, matched to the design system's tokens by value. The approved look kept the role
-names and changed their values (the design system Assembly, version 1793120046-6eb7), so assembly.json, assembly-glass.json and assembly-light.json
-are this table with the new values, apart from the exceptions listed under it.
+assembly.json is the rule sheet's tokens ([Assembly look: the rule sheet](https://app.notion.com/p/41f394b0689d81f6bd5dd1a4bae1b24e),
+"Colour" to "States"). Views read them by the sheet's names through `Look::of(cx)` (`src/core/theme/look.rs`), which
+names each token's home key; this table is the same map. A token's value is written once in its home key; where the
+kit's own components need the same colour under another key, the file repeats it there (the kit has no references
+between keys), as listed.
+
+Tokens the kit has no key for live in the file's own `assembly` section, which the kit skips; look.rs reads it when a
+theme goes in force and again when the kit reloads this folder. A theme without the section (all the others) gives
+each such token the kit colour `Look::of` names for it, so every theme still draws.
+
+| Sheet token | Home key | Also on |
+| --- | --- | --- |
+| glass | `title_bar.background` (drawn solid off macOS) | |
+| window-line | `window.border` | |
+| on-glass-text-1 | `tab.active.foreground` | |
+| on-glass-text-2 | `tab.foreground` | |
+| on-glass-icon-3 | `assembly` `on_glass.icon` | |
+| on-glass-fill-selected | `tab.active.background` | |
+| on-glass-line (selected, chips) | `title_bar.border` (`assembly` `on_glass.line.selected`, `on_glass.line.chip`) | |
+| on-glass-inset | `assembly` `on_glass.inset` | |
+| tile | `background` | `accordion.background`, `list.background`, `list.even.background`, `list.head.background`, `table.background`, `sidebar.background`, `status_bar.background`, highlight `editor.background` |
+| tile edge (white 7%) | `sidebar.border` | |
+| inset | `tab_bar.segmented.background` | |
+| card | `muted.background` | `group_box.background`, `secondary.background`, `skeleton.background` (the static placeholder) |
+| card-raised | `assembly` `card.raised` | `secondary.hover.background`, `secondary.active.background`, `switch.background` (the switch's off track) |
+| bubble, composer, question, picker-pill (and their outlines) | `assembly` `bubble`, `bubble.border`, `composer`, `composer.border`, `question`, `picker`, `picker.border` | |
+| popover | `popover.background` | |
+| popover edge, popover-card, popover-inset (and outlines) | `assembly` `popover.border`, `popover.card`, `popover.card.border`, `popover.inset`, `popover.inset.border` | |
+| scrim | `overlay` | |
+| line | `border` | `input.border` |
+| line-chip | `assembly` `line.chip` | |
+| line-selected | `list.active.border` | |
+| selected fill (white 7%) | `list.active.background` | `sidebar.accent.background`, `button.secondary.active.background` |
+| row hover and open row (white 3.5%) | `list.hover.background` | `accent.background` (the kit's hover in menus and lists) |
+| hairline | `table.row.border` | `status_bar.border`, `chart.grid` |
+| hairline-strong, tree | `assembly` `hairline.strong`, `tree` | |
+| text-1 | `foreground` | `accent.foreground`, `group_box.foreground`, `popover.foreground`, `secondary.foreground`, `sidebar.accent.foreground`, `link.hover`, `slider.thumb.background`, highlight `editor.foreground`, `editor.active_line_number` |
+| text-2 | `assembly` `text.secondary` | `sidebar.foreground`, `group_box.title.foreground`, `table.head.foreground`, `description_list.label.foreground` (the key-value line's key) |
+| text-3 | `muted.foreground` | highlight `editor.line_number`, syntax `comment` |
+| accent-fill, hover, pressed; white on it | `primary.background`, `primary.hover.background`, `primary.active.background`; `primary.foreground` | `sidebar.primary.background`, `sidebar.primary.foreground` |
+| accent-fill inner edge | `assembly` `accent_fill.edge` | |
+| accent | `caret` | `drag.border`, `progress.bar.background`, `slider.background`, `info.background`, `chart.1`, syntax `keyword` |
+| link (pill outline) | `link` (`assembly` `link.border`) | `link.active`, syntax `link_text` |
+| focus-ring (halo, button ring) | `ring` (`assembly` `ring.halo`, `ring.button`) | |
+| Ready / done | `success.background` | `base.green`, `chart.4`, `chart.bullish` (also the diff's added count) |
+| Working | `caret` (track: `assembly` `state.working.track`) | |
+| Needs you, Update ready | `warning.background` | `base.yellow`, `chart.5` |
+| Waiting | text-2 | |
+| Problem | `danger.background` | `base.red`, `chart.bearish`, highlight `error.border` (also the diff's removed count) |
+| Offline, Idle, a finished sub-task's tick | `assembly` `state.idle` | |
+| Needs-you outlines and washes | `assembly` `need.line.row` (18%), `need.line` (30%), `need.wash.row` (6%), `need.line.card` (24%), `need.wash.banner` (7%), `need.line.button` (40%), `need.text.button` | |
+| Problem outline | `assembly` `danger.line` | |
+| Diff line fills (10%) | `assembly` `diff.added.background`, `diff.removed.background` | |
+
+Not from the sheet, kept or derived from the mockup's CSS (`look-final/style.html`):
+
+- `button.secondary.background` is clear and `button.secondary.hover.background` white 5%: the sheet's secondary
+  button is an outline with no fill. The kit draws that outline from `border`, so it shows at the line's 11%, not the
+  mockup's #474C59.
+- `danger.foreground`, `success.foreground` and `info.foreground` are the tile colour, and `warning.foreground` the
+  mockup's #2A1D08, for text on a state fill (the amber update badge on Home).
+- `drop_target.background`, `selection.background` and the scrollbar keys keep their earlier alphas on the new accent
+  and text colours; `description_list.label.background`, `tab.background` and `tab_bar.background` are clear.
+- `base.blue`, `base.magenta`, `base.cyan` (file-type marks), `chart.2`, `chart.3`, highlight `hint`, and the syntax
+  colours other than `keyword`, `comment`, `link_text` and `title` keep the earlier look's values: the sheet names no
+  colours for them.
+
+## Kit keys by the earlier design-system roles
+
+The other themes were built from this table, and the sections below refer to its roles. These were Assembly's keys
+before the look of 2026-11-21, matched to the design system's tokens by value. Assembly Light is this table with its own
+values, apart from the exceptions listed under it.
 
 | Design-system role | Kit keys |
 | --- | --- |
@@ -93,7 +162,7 @@ are this table with the new values, apart from the exceptions listed under it.
 | aqua, lavender, mint, amber | `chart.2`, `chart.3`, `chart.4`, `chart.5` |
 | the same role as the key without `.light` | `base.*.light` |
 
-Exceptions in the approved look (Assembly, Assembly Glass, Assembly Light):
+Exceptions in the earlier look (Assembly Light):
 
 - `title_bar.background` takes `rail`: the title row sits on the rail with the sessions column.
 - `tab_bar.background` is clear, as in every theme (see "What every theme sets").
@@ -111,7 +180,7 @@ Exceptions in the approved look (Assembly, Assembly Glass, Assembly Light):
 - The status-pill, diff, `code-bg`, `ink-icon` and provider tokens have no kit key. They stay in the design system
   until a view needs them per theme.
 - Houston, Dracula, Tokyo Night, Graphite, Rosé Pine Dawn and Ayu Light keep their own colours; only the radii and the
-  clear tab strip changed in them. Amy and Cobalt take the new Assembly shell, as before.
+  clear tab strip changed in them. Amy and Cobalt kept Assembly's earlier shell; they haven't taken the look of 2026-11-21.
 
 ## The four old themes (Houston, Dracula, Tokyo Night, Graphite)
 
@@ -147,7 +216,7 @@ Tokyo Night and Graphite take the base syntax colours the old editor used for al
 
 ## The ThemeMirror entries (Amy, Cobalt)
 
-Each is Assembly's file with its own editor from thememirror 2.0.1: its syntax colours, and its editor background,
+Each is Assembly's earlier file (before the look of 2026-11-21) with its own editor from thememirror 2.0.1: its syntax colours, and its editor background,
 active-line ground, text and line-number colours from the theme's `settings`. The kit has no theme inheritance, so
 Assembly's `colors` are copied into these files; that is the one place the colours repeat. In the old app each entry
 brought its own editor background, and without it their code reads at about 2-3:1 on our dark ground (Jesse,
@@ -203,22 +272,19 @@ The design system's structure on white, with the same role names: `surface` #fff
 `surface`, `rail` and `raised`. On `selected` the faint ink and the accents are 4.4 to 4.6, and on `selected-strong`
 about 4.1 to 4.3. The syntax colours follow the same roles. Jesse tunes it from here.
 
-## Glass (assembly-glass.json)
+## Glass
 
-The approved look is solid; Glass stays as an optional theme (Jesse asked for "somewhat glass", 11:48Z). It is
-Assembly's values with the window background blurred (`WindowBackgroundAppearance::Blurred`) on macOS and the two
-grounds translucent at 0x78 (0.47): `background` (`surface`, the work panel) and `sidebar.background`,
-`title_bar.background` and `status_bar.background` (`rail`).
+Assembly's look is glass: on macOS `theme::set` makes the window's background blurred
+(`WindowBackgroundAppearance::Blurred`) and Frame paints the glass colour (`title_bar.background`, #2E3340 at 84%) as
+the window's ground. The sessions tile and the work tile sit on it in the tile colour with the 7% edge, 8 apart
+(`metrics::TILE_GAP`), so the glass shows only in the top bar and the gaps. Off macOS there's no blur: the window stays
+opaque and `Look::of` gives the glass at full strength. Nothing inside the window blurs.
 
 - Each dock split frame paints `tab_bar.background` (dock.rs:66) under its tab groups, and each tab group paints
-  `background` (tab_panel.rs:713); tab strips paint `tab_bar.background` too (tab_panel.rs:495 and 688). The window
-  root paints nothing of its own (gpui-base's Root doesn't; gpui-component's Root, if a window uses it, paints
-  `background`, root.rs:723). `tab_bar.background` is clear in every theme, so a pane's ground is the one
-  `background` fill.
-- The rail keys show only once the frame paints the rail from `sidebar.background` (g0-shape's restyle).
-- The rule for other lanes: a view whose text has to stay readable paints its own opaque ground. The chat column
-  (g0-session) and code views paint `list.background` (surface) or highlight `editor.background`, which stay opaque
-  here, and so does `popover.background`.
+  `background` (tab_panel.rs:713); tab strips paint `tab_bar.background` too (tab_panel.rs:495 and 688). MotionSkin
+  takes those fills out, and `tab_bar.background` is clear in every theme, so a pane shows the tile Frame draws.
+- The rule for other lanes: a view whose text has to stay readable sits on a tile, a card or a popover, all opaque.
+  Only the top bar's text sits on glass, in on-glass-text-1 and on-glass-text-2.
 - The kit caps `list.active.background` at 20% and `selection.background` at 30% opacity (schema.rs:1026-1056), in
   every theme.
 

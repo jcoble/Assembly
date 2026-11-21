@@ -40,15 +40,11 @@ pub fn init(dir: PathBuf, cx: &mut App, on_ready: impl Fn(&mut App) + 'static) {
 /// Puts `id` in force: makes its file the kit's active theme, reads its file's `assembly` section for the look's own
 /// tokens (look.rs), sets the window background to blurred for glass and opaque for the rest, brings the kit's 280 ms
 /// slow step and move spring down to 180 ms, and starts the fade from the old theme (fade.rs). Off macOS there's no
-/// blur, so glass gives Assembly, drawn opaque. A theme whose file didn't load leaves the theme in force as it is.
+/// blur, so the window stays opaque and the look draws its glass solid. A theme whose file didn't load leaves the
+/// theme in force as it is.
 /// The mode follows the file: the kit's `apply_config` puts a dark file in `dark_theme` and a light one in
 /// `light_theme`, and switches to its mode (schema.rs:1064-1103).
 pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
-    let id = if id.is_glass() && !cfg!(target_os = "macos") {
-        ThemeId::Assembly
-    } else {
-        id
-    };
     let Some(config) = ThemeRegistry::global(cx)
         .themes()
         .get(id.theme_name())
@@ -259,23 +255,6 @@ mod tests {
                 ThemeId::RosePineDawn.theme_name()
             );
             assert!(!theme.is_dark());
-        });
-    }
-
-    #[gpui::test]
-    fn glass_gives_assembly_off_macos(cx: &mut TestAppContext) {
-        load_themes(cx);
-        set_in_new_window(ThemeId::AssemblyGlass, cx);
-        let expected = if cfg!(target_os = "macos") {
-            ThemeId::AssemblyGlass
-        } else {
-            ThemeId::Assembly
-        };
-        cx.update(|cx| {
-            assert_eq!(
-                Theme::global(cx).theme_name().as_ref(),
-                expected.theme_name()
-            )
         });
     }
 
