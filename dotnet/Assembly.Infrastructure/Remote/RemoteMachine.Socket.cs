@@ -325,7 +325,10 @@ internal sealed partial class RemoteMachine
                         if (frame.TryGetProperty("id", out var engineId) && _engineSubscriptions.TryGetValue(engineId.GetInt64(), out var engineFrames)
                             && frame.GetProperty("t").GetString() is "engine_snapshot" or "engine_events" or "error")
                         {
-                            if (!engineFrames.Writer.TryWrite(frame)) throw new IOException("remote engine queue is full");
+                            // A consumer that fell behind loses only its own stream: the stream ends after the frames it
+                            // holds and its consumer resubscribes from its cursor. Later frames for this id are dropped.
+                            if (!engineFrames.Writer.TryWrite(frame) && engineFrames.Writer.TryComplete())
+                                _log.WriteLine($"remote {_name}: engine stream fell behind; it resumes from its cursor");
                         }
                         else if (ReceiveProviderRuntime(frame, socket)) { }
                         else if ((frame.TryGetProperty("sub", out var gitId) || frame.TryGetProperty("id", out gitId)) &&
@@ -430,7 +433,8 @@ internal sealed partial class RemoteMachine
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct, OwnerConnectionBinding binding)
     {
         var id = Interlocked.Increment(ref _nextSub);
-        // Snapshot pages are pulled. Event pages remain bounded by the socket's existing receive path.
+        // Snapshot pages are pulled; event pages are pushed as they happen. A burst past this buffer ends the stream
+        // after the frames it holds, never the socket; the consumer resubscribes from its cursor.
         var frames = Channel.CreateBounded<JsonElement>(16);
         await _socketSend.WaitAsync(ct);
         try
