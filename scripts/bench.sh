@@ -6,7 +6,19 @@
 # Run on the Workbox from a lane worktree (.lane). Exit codes: 0 up (blocked logins listed), 1 failed.
 # Each resource is written to $DATA/bench/pids as it starts, so a failure or a signal unwinds only what started.
 # Logins are checked but don't stop up: a case whose agent can't sign in is reported BLOCKED by the journey.
-# How to use it and read what it writes: docs/operations/bench.md.
+#
+# A PR verifier works from scripts/verify-pr/prompt.md. On the Workbox, from a lane worktree, nothing of it running:
+#   bash scripts/bench.sh up                  about 1 minute with builds kept; about 2 when the backend is rebuilt and
+#                                             deployed; 3 to 5 when the desktop rebuilds too
+#   bash scripts/journey.sh chat-steer local  or workbox-test / all; about 50 s a case (scripts/journey.sh says more)
+#   bash scripts/bench.sh down                always, also after a failure
+# - up refuses while the lane's bench is up (down first) and with 6 GB or less available (free -g, "available").
+#   It needs Xvfb, openbox, AT-SPI (at-spi2-core), ffmpeg and agent-desktop (~/.local/bin), all on the Workbox.
+# - To look at the window while it is up: . "$DATA/bench/env", then agent-desktop snapshot --app assembly-desktop -i
+#   lists the controls by accessibility id; scripts/drive/ax.ts presses and types by id.
+# - The backend log is appLog in $DATA/bench/state.json. Every bench run on the lane appends to it, without timestamps.
+#   $DATA/mac/backend.log is not the bench's (it belongs to desktop.sh serve and app:dev).
+# - A journey is a short TypeScript file in scripts/journeys/ on scripts/drive/journey.ts; chat-steer is the only one.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/lane-env.sh

@@ -1,8 +1,8 @@
 # Screenshots and videos for a PR
 
 Proof that shows the window (screenshots, frame strips, short videos) goes to Google Drive, never into this repo, and
-the PR and its Notion task link to it. A journey run (`scripts/journey.sh`) writes its report, screenshots and video to
-its output folder; upload what proves the change from there.
+the PR and its Notion task link to it. `evidence/<commit>/four-way/` is separate: that's the check summary, and it is
+committed.
 
 ## Where it runs
 

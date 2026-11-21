@@ -13,8 +13,8 @@ Assembly's backend is .NET; do not install or reset the old Rust backend to test
   Never point a test lane at main's host or data.
 - `scripts/lane.sh` reserves lane numbers on Workbox Test. Create/adopt/remove through that script when authorized;
   removing a lane removes its host and checkout too. Report dirty worktrees instead of deleting them.
-- `scripts/bench.sh up` deploys the lane's host, saves the machine in the local backend and checks the served backend;
-  `scripts/journey.sh` then runs journeys against it.
+- `scripts/check4.sh` reaches the host through the local backend's tunnel and checks the served commit.
+  See [four-scenario check](four-scenario-check.md).
 
 ## Container setup that still needs porting
 
