@@ -127,6 +127,9 @@ export function smokeAdapter(entry: string, home: string): Promise<Record<string
   });
 }
 
+// macOS can drop a .DS_Store into a folder mid-removal (ENOTEMPTY); retry so cleanup never fails a finished build.
+const removeTemporary = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
+
 export function archiveBundle(bundle: string, output: string, target: string, versions: Versions, replace = false) {
   validateVersions(versions);
   if (!targets.includes(target)) throw new Error("Unsupported target: " + target);
@@ -143,7 +146,7 @@ export function archiveBundle(bundle: string, output: string, target: string, ve
     const temporary = join(staging, file);
     execFileSync("tar", ["-czf", temporary, "-C", bundle, "package.json", "package-lock.json", "node_modules"]);
     renameSync(temporary, archive);
-  } finally { rmSync(staging, { recursive: true, force: true }); }
+  } finally { rmSync(staging, removeTemporary); }
   const manifest = {
     schemaVersion: 1, target, nodeMajor: Number(process.versions.node.split(".")[0]), versions,
     entrypoints: { "claude-agent-acp": entrypoint("claude-agent-acp"), "codex-acp": entrypoint("codex-acp") },
@@ -263,7 +266,7 @@ async function main() {
     saveManifest(join(output, "assembly-adapters-" + target + ".json"), verified);
     console.log(JSON.stringify(verified, null, 2));
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    rmSync(scratch, removeTemporary);
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
