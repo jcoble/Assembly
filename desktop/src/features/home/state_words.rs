@@ -3,16 +3,27 @@
 
 use crate::activity::Tone;
 
-/// A provider's row, or one machine's line inside it: Ready, Setting up, Needs sign-in, Problem. `None` is a
-/// provider switched off.
+/// A provider's row: its state, or Off when the backend sends none because it is switched off.
 pub fn provider_state(state: Option<&str>) -> Option<(&'static str, Tone)> {
+    match state {
+        None => Some(("Off", Tone::Neutral)),
+        Some(state) => row_state(state),
+    }
+}
+
+/// One machine's line inside a provider: Ready, Setting up, Needs sign-in, Problem. A machine that is offline or
+/// not checked yet has no state, and its line says nothing; the machine's own row says why.
+pub fn machine_state(state: Option<&str>) -> Option<(&'static str, Tone)> {
+    row_state(state?)
+}
+
+fn row_state(state: &str) -> Option<(&'static str, Tone)> {
     Some(match state {
-        None => ("Off", Tone::Neutral),
-        Some("ready") => ("Ready", Tone::Success),
-        Some("setting_up") => ("Setting up", Tone::Info),
-        Some("needs_sign_in") => ("Needs sign-in", Tone::Warning),
-        Some("problem") => ("Problem", Tone::Danger),
-        Some(_) => return None,
+        "ready" => ("Ready", Tone::Success),
+        "setting_up" => ("Setting up", Tone::Info),
+        "needs_sign_in" => ("Needs sign-in", Tone::Warning),
+        "problem" => ("Problem", Tone::Danger),
+        _ => return None,
     })
 }
 

@@ -91,13 +91,8 @@ impl HomePanel {
                 .into_any_element();
         };
         let summary = &state.summary;
-        let words = match (&summary.message, summary.kind.as_str()) {
-            (Some(message), _) => message.clone(),
-            (None, "nothing") => "Everything is ready.".to_string(),
-            (None, _) => String::new(),
-        };
         let color = summary_tone(&summary.kind).color(cx);
-        say(ids::SUMMARY, words)
+        say(ids::SUMMARY, summary.message.clone())
             .text_role(TextRole::Title, cx)
             .text_color(color)
             .into_any_element()

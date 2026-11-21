@@ -18,15 +18,20 @@ fn pushed() -> Value {
     json!({
         "summary": {"kind": "needs_sign_in", "message": "Codex needs sign-in on Workbox."},
         "providers": [{
-            "id": "codex", "enabled": true, "state": "needs_sign_in", "someNewField": 1,
+            "id": "codex", "name": "Codex", "glyph": "icons/square-terminal.svg", "vendorFamily": "codex",
+            "enabled": true, "state": "needs_sign_in", "models": null,
             "machines": [
-                {"machineKey": "local", "state": "ready", "cliVersion": "0.42.0", "models": [{"id": "gpt-5.4"}], "lastFailure": null},
-                {"machineKey": "Workbox", "state": "needs_sign_in", "models": [], "lastFailure": null}
+                {"machineKey": "local", "state": "ready", "installed": true, "cliVersion": "0.42.0",
+                 "models": [{"id": "gpt-5.4", "name": "GPT-5.4"}], "lastFailure": null},
+                {"machineKey": "Workbox", "state": "needs_sign_in", "installed": true, "models": null,
+                 "lastFailure": {"message": "Codex isn't signed in on Workbox.", "detail": "auth_required"}}
             ]
         }],
         "machines": [
-            {"key": "local", "displayName": "This Mac", "connectionState": "connected", "updateState": "up_to_date"},
-            {"key": "Workbox", "displayName": "Workbox", "connectionState": "connected", "updateState": "up_to_date"}
+            {"key": "local", "displayName": "This Mac", "connectionState": "connected", "updateState": "up_to_date",
+             "waitingOnSessions": false, "machine": {"key": "local", "name": null, "reachable": true}},
+            {"key": "Workbox", "displayName": "Workbox", "connectionState": "connected", "updateState": "up_to_date",
+             "waitingOnSessions": false, "machine": {"key": "Workbox", "name": "Workbox", "reachable": true}}
         ]
     })
 }
@@ -90,10 +95,7 @@ async fn a_press_on_home_opens_the_panel_showing_the_pushed_state(cx: &mut TestA
     let state = cx
         .read(|cx| panel.read(cx).state.clone())
         .expect("a pushed state");
-    assert_eq!(
-        state.summary.message.as_deref(),
-        Some("Codex needs sign-in on Workbox.")
-    );
+    assert_eq!(state.summary.message, "Codex needs sign-in on Workbox.");
     assert_eq!(state.providers[0].state.as_deref(), Some("needs_sign_in"));
     assert_eq!(
         state.providers[0].machines[1].state.as_deref(),

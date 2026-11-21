@@ -1,6 +1,6 @@
 //! The Home panel's two lists. A provider row shows its icon, name and one state, and grows (the shared
 //! `row_drop_down`) into a line per machine: that machine's state, the adapter and CLI versions, the last failure's
-//! plain sentence, and the model list, once when every machine has the same list and per machine where they differ.
+//! plain sentence, and the model list: once when the backend sends one for the provider, else per machine.
 //! A machine row shows its connection and, when there is something to say, its update. Every word comes from a state
 //! the backend pushed (`state_words.rs`).
 
@@ -11,12 +11,11 @@ use gpui_kit::*;
 
 use super::home_panel::HomePanel;
 use super::settings_state::{Machine, Model, Provider, ProviderOnMachine, SettingsState};
-use super::state_words::{connection, provider_state, update};
+use super::state_words::{connection, machine_state, provider_state, update};
 use crate::activity::DotChip;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::control_ids::{home_machine, home_provider, home_provider_machine};
 use crate::core::ui::access::{ExposedElement as _, say};
-use crate::core::ui::provider_name::provider_name;
 use crate::core::ui::row_drop_down::GrowingBody;
 use crate::core::ui::three_line_row::row_height;
 
@@ -41,7 +40,7 @@ impl HomePanel {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = cx.theme();
-        let name = display_name(provider);
+        let name = provider.name.clone();
         let state = provider_state(provider.state.as_deref());
         let open = self.drops.read(cx).is_open(&key);
         let label = match state {
@@ -75,12 +74,7 @@ impl HomePanel {
             .gap_2()
             .cursor_pointer()
             .hover(|row| row.bg(theme.muted))
-            .children(
-                provider
-                    .glyph
-                    .clone()
-                    .map(|glyph| Icon::empty().path(glyph).small()),
-            )
+            .child(Icon::empty().path(provider.glyph.clone()).small())
             .child(
                 div()
                     .flex_1()
@@ -120,16 +114,11 @@ impl HomePanel {
     }
 }
 
-/// A provider's grower: a line per machine, then the model list when every machine has the same one.
+/// A provider's grower: a line per machine, then the model list when the backend says every machine agrees on one.
 fn grower(provider: &Provider, machines: &[Machine], cx: &App) -> AnyElement {
-    let shared_models = provider
-        .machines
-        .windows(2)
-        .all(|pair| pair[0].models == pair[1].models);
-    let models = shared_models
-        .then(|| provider.machines.first())
-        .flatten()
-        .and_then(|first| models_line(&first.models))
+    let shared = provider.models.is_some();
+    let models = (provider.models.as_deref())
+        .and_then(models_line)
         .map(|words| meta(home_provider(&provider.id, "models"), words, cx));
     v_flex()
         .pl(px(36.))
@@ -140,8 +129,10 @@ fn grower(provider: &Provider, machines: &[Machine], cx: &App) -> AnyElement {
             let label = machines
                 .iter()
                 .find(|machine| machine.key == on.machine_key)
-                .map_or(on.machine_key.as_str(), Machine::label);
-            machine_line(&provider.id, label, on, !shared_models, cx)
+                .map_or(on.machine_key.as_str(), |machine| {
+                    machine.display_name.as_str()
+                });
+            machine_line(&provider.id, label, on, !shared, cx)
         }))
         .children(models)
         .into_any_element()
@@ -162,7 +153,7 @@ fn machine_line(
         .collect::<Vec<_>>()
         .join(" · ");
     let models = own_models
-        .then(|| models_line(&on.models))
+        .then(|| on.models.as_deref().and_then(models_line))
         .flatten()
         .map(|words| meta(id("models"), words, cx));
     let failure = on.last_failure.as_ref().map(|failure| {
@@ -183,7 +174,7 @@ fn machine_line(
                         .child(label.to_string()),
                 )
                 .children(
-                    provider_state(on.state.as_deref())
+                    machine_state(on.state.as_deref())
                         .map(|(words, tone)| DotChip::new(words, tone).named(id("state"))),
                 ),
         )
@@ -206,7 +197,7 @@ fn machine_row(machine: &Machine, cx: &App) -> Div {
         .child(
             say(
                 home_machine(&machine.key, "name"),
-                machine.label().to_string(),
+                machine.display_name.clone(),
             )
             .flex_1()
             .min_w_0()
@@ -244,16 +235,8 @@ fn models_line(models: &[Model]) -> Option<String> {
     (!models.is_empty()).then(|| {
         let names = models
             .iter()
-            .map(|model| model.name.as_deref().unwrap_or(&model.id))
+            .map(|model| model.name.as_str())
             .collect::<Vec<_>>();
         format!("Models: {}", names.join(", "))
     })
-}
-
-/// The backend's name for the provider, or its id read as a name.
-fn display_name(provider: &Provider) -> String {
-    provider
-        .name
-        .clone()
-        .unwrap_or_else(|| provider_name(&provider.id))
 }
