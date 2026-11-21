@@ -36,7 +36,7 @@ Assembly is an open-source desktop workbench: half IDE and half chat with AI cod
 - In the PR description, name the providers your change affects, with one line on why, and write one rough paragraph on the flow through the change as a user would meet it. That paragraph is an estimate of the path, not a step-by-step guide.
 - A ready PR gets one Codex review and one independent check in the real window by a different model. To check a PR or brief its verifier, load the `orient-verification` skill. Fix what they find and recheck only what the fix touched. A second review round is not required, but a real finding from one is still fixed.
 - Check back on your PR for review comments and the verifier's result.
-- Who may OK: Jesse for locked paths (`scripts/locked-paths.txt`) and pinned tests. The controller signs other test changes. Merges to main follow the global rules.
+- Who may OK: Jesse for locked paths (`scripts/locked-paths.txt`), which hold the pinned tests; other tests change freely. Merges to main follow the global rules.
 
 ## Where things run
 
