@@ -143,17 +143,23 @@ jobs:
           dotnet build dotnet/Assembly.Remote/Assembly.Remote.csproj
           bash scripts/remote-cli.test.sh
   lint:
-    # scripts/lint.sh runs the retained script checks and native desktop guard; its .NET checks need dotnet.
+    # scripts/lint.sh runs the retained script checks and native desktop guard; its .NET checks need dotnet. On a pull
+    # request dotnet format checks only the projects changed against the base (scripts/lint.d/50-dotnet-format.sh);
+    # every push to main and manual run checks the whole solution.
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
       - run: bash scripts/lint.sh
+        env:
+          LINT_BASE: ${{ github.event.pull_request.base.sha }}
   commits:
     # A pull request's own commits; pushes to main aren't checked, since agent work reaches main through a pull request.
     if: github.event_name == 'pull_request'
