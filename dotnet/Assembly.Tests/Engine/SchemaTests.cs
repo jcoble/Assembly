@@ -167,7 +167,7 @@ public sealed class SchemaTests
 
         Assert.Equal("original-machine", EngineSchema.Open(db, 2000));
 
-        Assert.Equal(15, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(EngineFixture.CurrentSchemaVersion, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
         Assert.Equal(before, StoredRows(db, originalColumns));
         Assert.Equal("s", db.QueryFirst("SELECT order_key FROM engine_outbox WHERE id='effect'", r => r.Text(0), default));
         Assert.Null(db.QueryFirst("SELECT executor_json FROM engine_outbox WHERE id='effect'", r => r.IsNull(0) ? null : r.Text(0), default));

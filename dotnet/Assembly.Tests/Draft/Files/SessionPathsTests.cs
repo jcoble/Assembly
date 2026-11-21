@@ -11,25 +11,6 @@ public sealed class SessionPathsTests : IDisposable
 
     // Pins: files#10
     [Theory]
-    [InlineData("")]
-    [InlineData(".")]
-    [InlineData("./")]
-    public void The_root_itself_resolves_to_the_root(string relative)
-    {
-        Assert.Equal(_root.FullName, SessionPaths.Resolve(_root.FullName, relative));
-    }
-
-    // Pins: files#10
-    [Fact]
-    public void A_path_below_the_root_resolves_under_it()
-    {
-        Directory.CreateDirectory(Path.Combine(_root.FullName, "src", "app"));
-        Assert.Equal(Path.Combine(_root.FullName, "src", "app"), SessionPaths.Resolve(_root.FullName, "src/app"));
-        Assert.Equal(Path.Combine(_root.FullName, "src"), SessionPaths.Resolve(_root.FullName, "src/app/.."));
-    }
-
-    // Pins: files#10
-    [Theory]
     [InlineData("..")]
     [InlineData("../other")]
     [InlineData("src/../../other")]

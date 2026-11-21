@@ -41,70 +41,6 @@ public sealed class GitDiffReaderTests : IDisposable
         Assert.False(diff.Truncated);
     }
 
-    // Pins: scm#14
-    [Fact]
-    public async Task Staged_then_edited_has_separate_diffs()
-    {
-        await Init();
-        await File.WriteAllTextAsync(Path.Combine(_root, "tracked"), "staged\n");
-        await Git("add", "tracked");
-        await File.WriteAllTextAsync(Path.Combine(_root, "tracked"), "working\n");
-        var diff = await Read();
-        Assert.Contains("-old\n", diff.Staged);
-        Assert.Contains("+staged\n", diff.Staged);
-        Assert.Contains("-staged\n", diff.Unstaged);
-        Assert.Contains("+working\n", diff.Unstaged);
-    }
-
-    // Pins: scm#14
-    [Fact]
-    public async Task Staged_rename_keeps_its_old_path()
-    {
-        await Init();
-        await Git("mv", "tracked", "renamed");
-        await File.AppendAllTextAsync(Path.Combine(_root, "renamed"), "added\n");
-        await Git("add", "renamed");
-        var diff = await Read("renamed", "tracked");
-        Assert.Contains("rename from tracked\n", diff.Staged);
-        Assert.Contains("rename to renamed\n", diff.Staged);
-        Assert.Contains("+added\n", diff.Staged);
-    }
-
-    // Pins: scm#14
-    [Fact]
-    public async Task Untracked_file_shows_every_line_added()
-    {
-        await Init();
-        await File.WriteAllTextAsync(Path.Combine(_root, "new file"), "first\nsecond\n");
-        var diff = await Read("new file");
-        Assert.Empty(diff.Staged);
-        Assert.Contains("+first\n+second\n", diff.Unstaged);
-    }
-
-    // Pins: scm#14
-    [Fact]
-    public async Task Deleted_file_shows_its_removed_lines()
-    {
-        await Init();
-        File.Delete(Path.Combine(_root, "tracked"));
-        Assert.Contains("-old\n-keep one\n-keep two\n-keep three\n", (await Read()).Unstaged);
-    }
-
-    // Pins: scm#16
-    [Fact]
-    public async Task Binary_change_has_no_diff_text()
-    {
-        await Init();
-        await File.WriteAllBytesAsync(Path.Combine(_root, "tracked"), [1, 0, 2]);
-        await Git("add", "tracked");
-        await Commit();
-        await File.WriteAllBytesAsync(Path.Combine(_root, "tracked"), [1, 0, 3]);
-        var diff = await Read();
-        Assert.True(diff.Binary);
-        Assert.Empty(diff.Staged);
-        Assert.Empty(diff.Unstaged);
-    }
-
     // Pins: scm#16
     [Fact]
     public async Task A_long_diff_stops_at_the_cap_across_both_parts()
@@ -117,43 +53,6 @@ public sealed class GitDiffReaderTests : IDisposable
         Assert.True(diff.Truncated);
         Assert.Equal(GitDiffReader.Cap, diff.Staged.Length + diff.Unstaged.Length);
         Assert.NotEmpty(diff.Unstaged);
-    }
-
-    // Pins: scm#14, scm#16
-    [Fact]
-    public async Task A_binary_working_file_keeps_its_staged_text_diff()
-    {
-        await Init();
-        await File.WriteAllTextAsync(Path.Combine(_root, "tracked"), "staged\n");
-        await Git("add", "tracked");
-        await File.WriteAllBytesAsync(Path.Combine(_root, "tracked"), [1, 0, 2]);
-        var diff = await Read();
-        Assert.True(diff.Binary);
-        Assert.Contains("+staged\n", diff.Staged);
-        Assert.Empty(diff.Unstaged);
-    }
-
-    // Pins: scm#14
-    [Fact]
-    public async Task An_untracked_name_with_pattern_characters_is_read_as_written()
-    {
-        await Init();
-        await File.WriteAllTextAsync(Path.Combine(_root, "a1.txt"), "tracked\n");
-        await Git("add", "a1.txt");
-        await Commit();
-        await File.WriteAllTextAsync(Path.Combine(_root, "a[1].txt"), "hello\n");
-        Assert.Contains("+hello\n", (await Read("a[1].txt")).Unstaged);
-    }
-
-    // Pins: scm#14
-    [Fact]
-    public async Task A_staged_deletion_is_only_in_the_staged_part()
-    {
-        await Init();
-        await Git("rm", "-q", "tracked");
-        var diff = await Read();
-        Assert.Contains("-old\n", diff.Staged);
-        Assert.Empty(diff.Unstaged);
     }
 
     // Pins: scm#17

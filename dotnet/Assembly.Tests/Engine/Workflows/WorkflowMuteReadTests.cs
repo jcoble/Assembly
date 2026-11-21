@@ -47,7 +47,7 @@ public sealed class WorkflowMuteReadTests
             UPDATE engine_meta SET schema_version=14;
             """));
         f.Reopen();
-        Assert.Equal(15, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(EngineFixture.CurrentSchemaVersion, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(10000, f.Number("SELECT muted_until FROM engine_workflow_settings"));
         Assert.Equal(0, f.Number("SELECT version FROM engine_workflow_settings"));
         f.Reopen(); Assert.Equal(10000, f.Number("SELECT muted_until FROM engine_workflow_settings"));

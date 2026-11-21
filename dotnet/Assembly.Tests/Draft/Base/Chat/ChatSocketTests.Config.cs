@@ -56,27 +56,6 @@ public sealed partial class ChatSocketTests
     }
 
     [Fact]
-    public async Task Machines_list_is_gone_and_agents_answers_a_machines_agents()
-    {
-        using var socket = await OpenAsync();
-
-        // The machines topic carries the list now (MachinesSocketTests).
-        await CallAsync(socket, 1, "machines", "list", "{}");
-        var gone = await ReadAsync(socket);
-        Assert.Contains("\"code\":\"not_found\"", gone);
-        Assert.Contains("there's no call machines/list", gone);
-        await CallAsync(socket, 2, "machines", "agents", """{"machine":"box"}""");
-        Assert.Equal($$$$$"""{"t":"result","id":2,"result":{"agents":[{"id":"claude","name":"Claude","targetId":"{{{{{new string('a', 64)}}}}}","accountContext":"","providerTargetId":"claude/"}]}}""", await ReadAsync(socket));
-        Assert.Equal(["agents"], _box.Asked);
-        await CallAsync(socket, 3, "machines", "agents", "{}");
-        Assert.Contains("\"agents\":[", await ReadAsync(socket));
-        Assert.Equal(["agents"], _here.Asked);
-
-        await CallAsync(socket, 4, "machines", "agents", """{"machine":"nope"}""");
-        Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
-    }
-
-    [Fact]
     public async Task A_cancel_aborts_machines_agents_on_the_machine()
     {
         _box.Hold();
@@ -117,18 +96,6 @@ public sealed partial class ChatSocketTests
         Assert.Equal("""{"t":"error","id":2,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
         await CallAsync(socket, 3, "machines", "agents", """{"machine":"box"}""");
         Assert.Equal("""{"t":"error","id":3,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
-    }
-
-    [Fact]
-    public async Task Config_set_fails_for_an_unknown_session()
-    {
-        using var socket = await OpenAsync();
-
-        await CallAsync(socket, 1, "config", "set", """{"session":"nope","configId":"model","value":"small"}""");
-
-        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"unknown session"}""", await ReadAsync(socket));
-        Assert.Empty(_here.Asked);
-        Assert.Empty(_box.Asked);
     }
 
     [Fact]

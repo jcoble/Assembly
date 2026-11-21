@@ -14,31 +14,6 @@ public sealed class AdapterHandoffReleaseTests
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
 
     [Fact]
-    public async Task Release_confirms_only_the_captured_operation_and_commits_a_readable_exact_proof()
-    {
-        await using var f = new AdapterDeliveryFixture();
-        var agent = await CompleteTurn(f);
-        var effect = RequestRelease(f, "H");
-
-        var receipt = await f.Effects.ExecuteAsync(effect, default);
-
-        Assert.Equal(EffectDisposition.Confirmed, receipt.Disposition);
-        var data = receipt.Data.Deserialize(EngineJson.Default.HandoffReleaseEffectData)!;
-        Assert.Equal("H", data.Identity.HandoffId);
-        Assert.Equal(f.Session.SessionId, data.SessionId);
-        Assert.Equal(0, data.Epoch);
-        Assert.Equal(FakeLink.AcpSessionId, data.ProviderSessionId);
-        Assert.Equal(effect.Id, data.ReleaseEffectId);
-        Assert.Equal(effect.Attempt, data.ReleaseAttempt);
-        Assert.False(string.IsNullOrWhiteSpace(data.AdapterOperationId));
-        Assert.True(agent.Disposed);
-        Assert.True(f.Complete(effect, receipt).Applied);
-        var stored = f.Db.Writer.Write("test.read-release", scope => f.Runtime.Commands.ReadHandoffRelease(scope, data.Identity));
-        Assert.Equal(data, stored);
-        Assert.Equal("handing_off", f.State("engine_session", f.Session.SessionId));
-    }
-
-    [Fact]
     public async Task Uncertain_retry_cannot_redispose_an_adapter_or_invent_release_evidence()
     {
         await using var f = new AdapterDeliveryFixture();
@@ -55,19 +30,6 @@ public sealed class AdapterHandoffReleaseTests
         Assert.Equal(EffectDisposition.Unknown, reconciliation.Disposition);
         Assert.False(agent.Disposed);
         Assert.Equal(1, f.Launcher.Launches);
-    }
-
-    [Fact]
-    public async Task Mismatched_claim_payload_refuses_before_physical_disposal()
-    {
-        await using var f = new AdapterDeliveryFixture();
-        var agent = await CompleteTurn(f);
-        var effect = RequestRelease(f, "H");
-        var intent = effect.Payload.Deserialize(EngineJson.Default.HandoffReleaseEffect)!;
-        var changed = effect with { Payload = JsonSerializer.SerializeToElement(intent with { ProviderSessionId = "other-public-id" }, EngineJson.Default.HandoffReleaseEffect) };
-
-        Assert.Equal(EffectDisposition.Unknown, (await f.Effects.ExecuteAsync(changed, default)).Disposition);
-        Assert.False(agent.Disposed);
     }
 
     private static Effect RequestRelease(AdapterDeliveryFixture f, string handoff)

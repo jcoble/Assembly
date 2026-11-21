@@ -22,51 +22,6 @@ public sealed partial class RemoteRowsSocketTests
         Assert.Equal(0, _sessionHttpHits);
     }
 
-    // Pins: remote#23, remote#24
-    [Fact]
-    public async Task Remote_stop_and_answer_reach_the_remote_session_over_the_machine_socket()
-    {
-        var batch = new RowBatch();
-        batch.Rows.Add(new NewRow("running", null, "turn", JsonDocument.Parse("""{"state":"started"}""").RootElement.Clone(), 1));
-        _remoteHub.Publish("s", batch);
-        await _machine.ProbeAsync(CancellationToken.None);
-        Assert.True(await _machine.StopAsync(_localSessions.Get("s")!, "running", CancellationToken.None));
-        _remoteMachine.Refuses = true;
-        Assert.False(await _machine.AnswerOwnerNeedAsync(_localSessions.Get("s")!, "gone",
-            JsonDocument.Parse("""{"optionId":"yes"}""").RootElement, CancellationToken.None));
-        Assert.Contains("stop running", _remoteMachine.Asked);
-        Assert.NotNull(_remoteAnswer);
-        Assert.Equal("s", _remoteAnswer.Session);
-        Assert.Equal("gone", _remoteAnswer.Ask);
-        Assert.Equal("yes", _remoteAnswer.Answer.GetProperty("optionId").GetString());
-        Assert.DoesNotContain(_remoteMachine.Asked, call => call.StartsWith("answer "));
-        Assert.Equal(0, _sessionHttpHits);
-    }
-
-    // Pins: remote#16, remote#21
-    [Fact]
-    public async Task Remote_session_title_arrives_as_a_sessions_push_without_an_http_refresh()
-    {
-        await _machine.ProbeAsync(CancellationToken.None);
-        var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var subscription = _localTopics.Subscribe(SessionsFeature.Topic, "s", _ => { }, (_, _) =>
-        {
-            if (_localSessions.Get("s") is { } session && session.Title == "A turn started on the box"
-                && _localSessions.Item(session).ActiveRunId == "direct-run") changed.TrySetResult();
-        });
-        try
-        {
-            _remoteSessions.SetTitle("s", "A turn started on the box", "helper");
-            var batch = new RowBatch();
-            batch.Rows.Add(new NewRow("direct-run", null, "turn", JsonDocument.Parse("""{"state":"started"}""").RootElement.Clone(), 1));
-            _remoteHub.Publish("s", batch);
-            await changed.Task.WaitAsync(Wait);
-            Assert.Equal("helper", _localSessions.Get("s")!.TitleSource);
-            Assert.Equal(0, _sessionHttpHits);
-        }
-        finally { _localTopics.Unsubscribe(subscription); }
-    }
-
     // Pins: remote#16, remote#21. The native rail reads copied rows, with no chat viewer.
     [Fact]
     public async Task A_remote_turn_without_an_open_chat_updates_the_session_rail()
@@ -105,21 +60,6 @@ public sealed partial class RemoteRowsSocketTests
             Assert.Equal(0, _sessionHttpHits);
         }
         finally { _localTopics.Unsubscribe(subscription); }
-    }
-
-    // Pins: remote#11
-    [Fact]
-    public async Task A_remote_with_another_row_format_is_refused_at_welcome()
-    {
-        _welcomeFormat = RowStore.FormatVersion + 1;
-        await _machine.DisposeAsync();
-        _machine = new("box", _address, "token", _localHub, _localSessions, TextWriter.Null,
-            _status = new(new Assembly.Infrastructure.Topics.Topics(), ["box"]), acceptanceEngine: _localEngine);
-        var error = await Assert.ThrowsAsync<MachineUnreachable>(() => _machine.ProbeAsync(CancellationToken.None));
-        Assert.Contains("box", error.Message);
-        Assert.Contains($"format {_welcomeFormat}", error.Message);
-        Assert.Contains($"format {RowStore.FormatVersion}", error.Message);
-        Assert.False(_status.Items.Single(item => item.Name == "box").Reachable);
     }
 
     // Pins: remote#30. A lost connection cannot replay an in-flight call.

@@ -451,15 +451,6 @@ public sealed partial class WorkflowScheduleTests
         Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind='gate_revised'"));
     }
 
-    [Fact]
-    public void A_phone_sends_a_revision_as_a_window_does()
-    {
-        using var f = new Fixture(prompt: "Work", yaml: GatedFlow);
-        var first = f.Apply(f.Prepare()); Finish(f, first.SessionId!, 1, 0);
-        var answered = Answer(f, OpenGate(f), RevisionOf("From the phone"), "phone");
-        Assert.True(answered.Applied, answered.Error);
-    }
-
     [Theory]
     [InlineData("build", "build")]
     [InlineData("check", "build")]

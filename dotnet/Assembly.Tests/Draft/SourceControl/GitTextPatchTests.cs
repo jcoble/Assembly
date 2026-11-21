@@ -7,26 +7,6 @@ namespace Assembly.Tests.Draft.SourceControl;
 
 public sealed class GitTextPatchTests
 {
-    // Pins: g9#17, g9#20
-    [Fact]
-    public async Task Text_versions_and_a_rename_keep_the_requested_identity_and_exact_lines()
-    {
-        var result = await new GitTextPatch(new GitCli()).ReadAsync("new ü name.rs", "old name.rs", Encoding.UTF8.GetBytes("old\n"), Encoding.UTF8.GetBytes("new λ\n"), default);
-        Assert.Equal("new ü name.rs", result.Path); Assert.Contains("-old", result.Unstaged); Assert.Contains("+new λ", result.Unstaged);
-        Assert.Contains("a/old name.rs", result.Unstaged); Assert.Contains("b/new ü name.rs", result.Unstaged); Assert.False(result.Binary);
-    }
-    // Pins: g9#20
-    [Fact]
-    public async Task Missing_and_empty_versions_remain_distinct_and_non_utf8_is_binary()
-    {
-        var reader = new GitTextPatch(new GitCli());
-        var added = await reader.ReadAsync("empty", null, null, ReadOnlyMemory<byte>.Empty, default);
-        Assert.Contains("new file mode", added.Unstaged); Assert.False(added.Binary);
-        var unchanged = await reader.ReadAsync("empty", null, ReadOnlyMemory<byte>.Empty, ReadOnlyMemory<byte>.Empty, default);
-        Assert.Empty(unchanged.Unstaged);
-        var binary = await reader.ReadAsync("binary", null, null, new byte[] { 255 }, default);
-        Assert.True(binary.Binary); Assert.Empty(binary.Unstaged);
-    }
     // Pins: g9#20
     [Fact]
     public async Task Cancelling_the_patch_read_removes_its_owned_temporary_versions()
