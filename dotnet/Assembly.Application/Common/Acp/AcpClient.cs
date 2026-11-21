@@ -290,6 +290,10 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
                         ? Task.FromResult(PermissionOutcome.Selected(allow.OptionId))
                         : context is null ? policy.DecideAsync(request, token) : policy.DecideAsync(request, context, token),
                     cancellationToken, context, method, value => JsonSerializer.SerializeToElement(value, AcpJsonContext.Default.PermissionOutcome));
+                // Noted before the answer goes out, so the call the agent runs next is read as this one's run.
+                if (_version == ProtocolShape.Version1)
+                    _openTools.Answered(request.SessionId, parameters, outcome.Outcome == "selected"
+                        && request.Options.Any(option => option.OptionId == outcome.OptionId && option.Kind is "allow_once" or "allow_always"));
                 return JsonSerializer.SerializeToElement(new RequestPermissionResponse(outcome), AcpJsonContext.Default.RequestPermissionResponse);
             case AcpMethods.ElicitationCreate:
                 var question = parameters.Deserialize(AcpJsonContext.Default.ElicitationRequest)

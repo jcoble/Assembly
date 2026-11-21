@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
@@ -135,13 +136,49 @@ public sealed class AcpClientV1Tests
         Assert.EndsWith("/note.txt", asked.ToolCall.GetProperty("content")[0].GetProperty("changes")[0].GetProperty("path").GetString());
         Assert.Equal("allow", Assert.Single(replay.Recording.Answers).GetProperty("outcome").GetProperty("optionId").GetString());
 
+        // The approved call and its run are one tool: A's id, ending completed, and A's "never executed" is dropped.
         var tools = Published(replay.Client).Where(update => update.Update.TryGetProperty("toolCallId", out _)).ToList();
         Assert.All(tools, tool => Assert.Equal("tool_call_update", tool.Kind));
-        Assert.Equal("completed", tools.Last(tool => tool.Update.GetProperty("toolCallId").GetString() == FirstSession + ":3")
-            .Update.GetProperty("status").GetString());
-        // No stop: the agent's own "failed" for the approved call stays failed.
-        Assert.Equal("failed", tools.Last(tool => tool.Update.GetProperty("toolCallId").GetString() == "fca527de00e344c0820bcb4c2834c906")
-            .Update.GetProperty("status").GetString());
+        Assert.All(tools, tool => Assert.Equal("fca527de00e344c0820bcb4c2834c906", tool.Update.GetProperty("toolCallId").GetString()));
+        Assert.Equal("completed", tools[^1].Update.GetProperty("status").GetString());
+        Assert.DoesNotContain(tools, tool => tool.Update.GetProperty("status").GetString() == "failed");
+    }
+
+    /// <summary>
+    /// The recorded approval (prompt 5, lines 14 to 23): A asked, A allowed, its run B in progress and completed, then
+    /// A's "approved but never executed". <paramref name="run"/> is what B does: as recorded, fails instead, or never
+    /// starts (the run's lines are left out); the last two are edits of the recording.
+    /// </summary>
+    [Theory]
+    [InlineData("completed", "completed")]
+    [InlineData("failed", "failed")]
+    [InlineData("none", "failed")]
+    public async Task An_approved_call_and_its_run_show_as_one_tool(string run, string status)
+    {
+        const string approved = "fca527de00e344c0820bcb4c2834c906";
+        await using var replay = await AntigravityAsync();
+        await PromptAsync(replay, FirstSession, 4);
+        Published(replay.Client);
+        var lines = File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Fixtures", Antigravity)).Skip(13).Take(10)
+            .Select(line => JsonNode.Parse(line)!["line"]!.AsObject()).ToList();
+        var turn = replay.Client.PromptAsync(FirstSession, [TextBlock.Of("recorded")], default);
+        var prompt = await replay.Agent.ReadAsync();
+        await replay.Agent.SendAsync(lines[0].ToJsonString() + "\n" + lines[1].ToJsonString()); // A and its approval
+        Assert.Equal("allow", (await replay.Agent.ReadAsync()).GetProperty("result").GetProperty("outcome").GetProperty("optionId").GetString());
+        if (run != "none")
+        {
+            var result = lines[4];
+            result["params"]!["update"]!["status"] = run;
+            await replay.Agent.SendAsync(lines[3].ToJsonString() + "\n" + result.ToJsonString());
+        }
+        await replay.Agent.SendAsync(lines[9].ToJsonString()); // A: "Tool call was approved but never executed."
+        await replay.Agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await turn.Ended.WaitAsync(Bounded);
+
+        var tools = Published(replay.Client).Where(update => update.Update.TryGetProperty("toolCallId", out _)).ToList();
+        Assert.All(tools, tool => Assert.Equal(approved, tool.Update.GetProperty("toolCallId").GetString()));
+        Assert.Equal(status, tools[^1].Update.GetProperty("status").GetString());
+        Assert.Single(tools, tool => tool.Update.GetProperty("status").GetString() is "completed" or "failed");
     }
 
     [Fact]

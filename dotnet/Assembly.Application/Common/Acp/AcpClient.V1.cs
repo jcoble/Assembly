@@ -87,8 +87,11 @@ public sealed partial class AcpClient
     private void OnUpdateV1(SessionNotification received)
     {
         if (_resuming.ContainsKey(received.SessionId)) return; // replay text is not live traffic
-        var update = UpdateNormalizer.Normalize(_openTools.Read(received));
+        if (_openTools.Read(received) is not { } read) return; // an approved call's own report after its run finished
+        var update = UpdateNormalizer.Normalize(read);
         if (SignOfLife.Counts(received.Kind)) Taken(update.SessionId);
+        // After our session/cancel the turn's text is the agent's note on the stop, not an answer.
+        if (update.Kind == "agent_message_chunk" && _openTools.IsStopping(update.SessionId)) return;
         if (_foreground.TryGetValue(update.SessionId, out var foreground))
             foreground.Read(update, () => PublishAccepted(update));
         else PublishAccepted(update);
@@ -102,7 +105,7 @@ public sealed partial class AcpClient
         try
         {
             if (!foreground.Running) return;
-            _openTools.Stopping(sessionId);
+            _openTools.Stop(sessionId);
             await _rpc.NotifyAsync(AcpMethods.SessionCancel,
                 JsonSerializer.SerializeToElement(new CancelNotification(sessionId), AcpJsonContext.Default.CancelNotification), cancellationToken);
             await waiting.Task.WaitAsync(cancellationToken);

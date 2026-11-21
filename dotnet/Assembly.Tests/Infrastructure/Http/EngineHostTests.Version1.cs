@@ -190,6 +190,10 @@ public sealed partial class EngineHostTests
             Assert.NotEmpty(tools);
             Assert.Equal("cancelled", tools[^1]);
             Assert.DoesNotContain("failed", tools);
+            // The agent's note after our cancel ("The request was cancelled by the client.") is not an answer: no message
+            // row, so no rail preview either (the preview is the newest message row's text).
+            Assert.Equal(0L, db.Query("SELECT COUNT(*) FROM rows WHERE kind=$kind", row => row.Long(0), default,
+                new SqlArg("$kind", RowKind.Message))[0]);
         }
         finally { Directory.Delete(home, true); }
     }
