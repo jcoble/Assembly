@@ -125,7 +125,7 @@ TimeoutStopSec=30
       restartTime();
       const answerTime = stage('answer');
       const after = await waitForAnswer({ pid, state: hostState, answer: () => probe(), signal: owner.signal });
-      if (after.backendIdentity !== prepared.identity || after.commit !== prepared.commit || (!before.missing && after.engine !== before.engine) || after.dll !== dll || request.managed && after.toolsKey !== desiredTools) throw Error('new host identity could not be verified; inspect lane host before retrying');
+      if (after.backendIdentity !== prepared.identity || after.commit !== prepared.commit || (!before.missing && !before.older && after.engine !== before.engine) || after.dll !== dll || request.managed && after.toolsKey !== desiredTools) throw Error('new host identity could not be verified; inspect lane host before retrying');
       answerTime();
       // Disk only: a failed cleanup never fails a host that is already verified.
       await pruneReleases(root, [destination, ...(previous ? [previous.directory] : [])])
