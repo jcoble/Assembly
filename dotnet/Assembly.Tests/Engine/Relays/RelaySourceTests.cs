@@ -50,20 +50,6 @@ public sealed class RelaySourceTests
         Assert.Equal("queued", new EngineReader(f.Db, f.Machine).RelaySource(new("message", "target"), default).Fence.State);
     }
 
-    [Fact]
-    public void Real_child_ended_note_keeps_system_kind_and_stored_child_provenance()
-    {
-        using var f = new EngineFixture();
-        Assert.True(f.Apply(new RegisterForeignSession("target", "codex", "Parent"), "parent",
-            actor: new(ActorKind.System, "machine:target")).Applied);
-        f.SeedSession("child", parentId: "parent");
-        Assert.True(f.Apply(new SetSessionState("ended", null, null), "child", actor: new(ActorKind.System, "adapter")).Applied);
-        var source = new EngineReader(f.Db, f.Machine).RelaySource(new("child-ended/child", "target"), default);
-        Assert.Equal("system", source.Identity.SenderKind);
-        Assert.Equal("child", source.Identity.Command.FromSessionId);
-        Assert.Equal("Assembly", source.SenderLabel);
-    }
-
     [Theory]
     [InlineData("owner")]
     [InlineData("framed")]

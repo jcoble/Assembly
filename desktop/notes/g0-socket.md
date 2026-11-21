@@ -63,13 +63,13 @@ On the socket: `sub` with `after` answers `state{seq:S, items:[]}`, then `rows{s
 **Machines**
 - Main: `machines/list` answers `{machines:[name]}` (MachinesFeature.cs:20-21).
 - M1 (base-machines, not merged): each item becomes `{name, kind, reachable, reason}` (MachineStatus.cs:4, MachinesSocketTests.cs:152-155).
-- M2 replaces `machines/list` with a topic (implementation-plan.md:1531-1549).
+- M2 replaces `machines/list` with a topic (Assembly: implementation plan, https://app.notion.com/p/409394b0689d816c9142c5896a64b025).
 
 **Clock.** `clock`/`second` gives `{now}` in Unix ms. It runs only while subscribed, and any other key fails (BackendClock.cs:31-37).
 
 **Drop.** On main, `diagnostics/drop` only closes `/live` subscriptions. The reconnect lane's commit 4f603fc (not merged) makes it end every socket (SocketTests.Drop.cs:9-35). Its "listening on" line is the ready signal (DesktopServe.cs:26-29).
 
-The behavior list is docs/behavior/g0-socket.md.
+The behavior list is g0-socket: behavior list, https://app.notion.com/p/409394b0689d81168a26f446de389169.
 
 ## Step 2 tests
 

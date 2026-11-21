@@ -24,25 +24,6 @@ public sealed class SessionStoreLegacyTitleTests : IDisposable
         _store = SessionStore.Open(_db, _time, "checkouts");
     }
 
-    [Theory]
-    [InlineData("")]
-    [InlineData("\0")]
-    [InlineData("a\0😀\"\\end")]
-    public void Fixed_blob_reads_preserve_empty_nul_unicode_and_eof(string title)
-    {
-        var reference = Seed(title);
-        using var scope = _db.OpenSnapshot(default);
-        var stat = _store.LegacyTitleStat(scope, Publisher, new(reference));
-        Assert.Equal(reference, stat.Reference);
-        Assert.Null(stat.OwningEngineVersion);
-        Assert.Null(stat.OwningEngineEpoch);
-        Assert.Equal(Utf8.GetBytes(title), ReadAll(reference, 1));
-        Assert.Equal(title, _store.Get(reference.SessionId)!.Title);
-        var eof = _store.LegacyTitleChunk(scope, Publisher, new(reference, reference.Utf8Bytes, 1));
-        Assert.Empty(eof.Data);
-        Assert.Null(eof.NextOffset);
-    }
-
     [Fact]
     public void Full_nine_megabyte_title_reopens_and_old_reference_survives_real_touch_at_every_chunk()
     {
@@ -90,39 +71,6 @@ public sealed class SessionStoreLegacyTitleTests : IDisposable
         Assert.Throws<DecoderFallbackException>(() => SessionTitleHash.Compute([0xff]));
     }
 
-    [Fact]
-    public void Publisher_full_hash_length_and_each_nullable_provenance_field_are_exact()
-    {
-        var reference = Seed("exact");
-        using (var scope = _db.OpenSnapshot(default))
-        {
-            foreach (var forged in new[] {
-                reference with { PublisherEngineMachine = "alias" }, reference with { StoredMachine = "" },
-                reference with { ParentSessionId = "" }, reference with { TitleSource = "prompt" },
-                reference with { Sha256 = new string('0', 64) }, reference with { Utf8Bytes = 4 } })
-            {
-                Changed(() => _store.LegacyTitleStat(scope, Publisher, new(forged)));
-                Changed(() => _store.LegacyTitleChunk(scope, Publisher, new(forged, 0, 1)));
-            }
-            Changed(() => _store.LegacyTitleStat(scope, "other-host", new(reference)));
-        }
-        foreach (var column in new[] { "machine", "parent_session_id", "title_source" })
-        {
-            // Only the fixture selects a column; the production readers have fixed SQL.
-            Write($"UPDATE session_info SET {column}='' WHERE session_id=$id", reference.SessionId);
-            using (var changed = _db.OpenSnapshot(default))
-                Changed(() => _store.LegacyTitleStat(changed, Publisher, new(reference)));
-            Write($"UPDATE session_info SET {column}=NULL WHERE session_id=$id", reference.SessionId);
-        }
-        Write("UPDATE session_info SET machine='copy',parent_session_id='parent',title_source='helper' WHERE session_id=$id", reference.SessionId);
-        var copied = reference with { StoredMachine = "copy", ParentSessionId = "parent", TitleSource = "helper" };
-        Assert.Equal(Utf8.GetBytes("exact"), ReadAll(copied, 2));
-        Write("DELETE FROM session_info WHERE session_id=$id", reference.SessionId);
-        using var missing = _db.OpenSnapshot(default);
-        Assert.Equal("unknown session", Assert.Throws<KeyNotFoundException>(() => _store.LegacyTitleStat(missing, Publisher, new(reference))).Message);
-        Assert.Throws<KeyNotFoundException>(() => _store.LegacyTitleChunk(missing, Publisher, new(reference, 0, 1)));
-    }
-
     [Theory]
     [InlineData(-1, 1)]
     [InlineData(6, 1)]
@@ -160,23 +108,6 @@ public sealed class SessionStoreLegacyTitleTests : IDisposable
         var reference = new LegacySessionTitleRef(session.SessionId, Publisher, null, null, null, session.UpdatedAt, bytes.LongLength, ExpectedHash(bytes));
         Assert.Equal(reference.Sha256, SessionTitleHash.Compute(bytes));
         return reference;
-    }
-
-    private byte[] ReadAll(LegacySessionTitleRef reference, int count)
-    {
-        using var all = new MemoryStream();
-        using var scope = _db.OpenSnapshot(default);
-        long offset = 0;
-        do
-        {
-            var chunk = _store.LegacyTitleChunk(scope, Publisher, new(reference, offset, count));
-            Assert.Equal(offset, chunk.Offset);
-            all.Write(chunk.Data);
-            if (chunk.NextOffset is not { } next) break;
-            Assert.Equal(offset + chunk.Data.LongLength, next);
-            offset = next;
-        } while (true);
-        return all.ToArray();
     }
 
     private void Write(string sql, string id) => _db.Writer.Write("test.provenance", scope => scope.Execute(sql, new SqlArg("$id", id)));

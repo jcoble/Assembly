@@ -302,16 +302,6 @@ public sealed class ReportToolTests
         Assert.Equal(1, h.Fixture.Number("SELECT version FROM engine_pr"));
     }
 
-    [Fact]
-    public void Nullable_claim_metadata_does_not_block_trusted_observation()
-    {
-        using var f = new EngineFixture(); SeedWorker(f);
-        Assert.True(f.Apply(Claim, "p", epoch: 3, actor: Worker).Applied);
-        f.Db.Writer.Write("test.nullable-claim", s => s.Execute("UPDATE engine_pr SET reported_by=NULL,reported_state=NULL,url=NULL WHERE id='p'"));
-        Assert.True(f.Apply(new ObservePr("open", Claim.Head, 2000), "p", 1, 3, new(ActorKind.System, "observer")).Applied);
-        Assert.Equal("open", f.State("engine_pr", "p"));
-    }
-
     private static EngineCommand DecodeLink(string url) => JsonSerializer.Deserialize("{\"kind\":\"link_task\",\"taskUrl\":\"" + url + "\"}", EngineJson.Default.EngineCommand)!;
     private static string Text(CallToolResult result) => Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
 

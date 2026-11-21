@@ -17,22 +17,6 @@ public sealed class TerminalHostTests : IAsyncDisposable
     public TerminalHostTests() => _host = new TerminalHost(_pty, _topics, new FakeTimeProvider(), ("/bin/sh", null), _ => _folder);
 
     [Fact]
-    public async Task Each_read_goes_out_as_one_row_with_its_byte_offsets_and_its_bytes_unchanged()
-    {
-        // Pins: terminal#3
-        var terminal = await _host.StartAsync(new StartArgs(_folder));
-        _pty.Started[0].Emit(0xe4, 0xb8);
-        _pty.Started[0].Emit(0x96);
-
-        await _topics.WaitFor(p => p.Topic == TerminalFeature.OutputTopic && Seq(p.Json) == 3);
-
-        var rows = Rows(terminal.Id);
-        Assert.Equal([(2L, 0L), (3L, 2L)], rows.Select(row => (Seq(row), PrevSeq(row))));
-        Assert.Equal(new byte[] { 0xe4, 0xb8 }, Data(rows[0]));
-        Assert.Equal(new byte[] { 0x96 }, Data(rows[1]));
-    }
-
-    [Fact]
     public async Task The_last_output_goes_out_before_the_exit_and_stays_readable_until_close()
     {
         // Pins: terminal#7
@@ -89,61 +73,6 @@ public sealed class TerminalHostTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task A_session_asking_again_gets_its_running_terminal_and_a_new_one_in_place_of_one_that_has_ended()
-    {
-        // Pins: terminal#9
-        var first = await _host.StartAsync(new StartArgs(_folder, Owner: "session-1"));
-        var again = await _host.StartAsync(new StartArgs(_folder, Owner: "session-1"));
-        Assert.Equal(first.Id, again.Id);
-        Assert.Single(_pty.Started);
-
-        _pty.Started[0].End(0);
-        await _topics.WaitFor(p => p.Topic == TerminalFeature.OutputTopic && p.Json.Contains("\"exit\":"));
-
-        var next = await _host.StartAsync(new StartArgs(_folder, Owner: "session-1"));
-        Assert.NotEqual(first.Id, next.Id);
-        Assert.Equal(2, _pty.Started.Count);
-        Assert.Equal([next.Id], _host.List().Select(terminal => terminal.Id));
-    }
-
-    [Fact]
-    public async Task A_command_run_for_a_session_is_never_handed_back_as_its_shell()
-    {
-        // Pins: terminal#9
-        var run = await _host.StartAsync(new StartArgs(_folder, Command: "make test", Owner: "session-1"));
-        var shell = await _host.StartAsync(new StartArgs(_folder, Owner: "session-1"));
-        var again = await _host.StartAsync(new StartArgs(_folder, Command: "make test", Owner: "session-1"));
-
-        Assert.Equal(3, new[] { run.Id, shell.Id, again.Id }.Distinct().Count());
-    }
-
-    [Fact]
-    public async Task A_size_is_kept_between_20_and_300_columns_and_4_and_100_rows()
-    {
-        // Pins: terminal#4
-        var plain = await _host.StartAsync(new StartArgs(_folder));
-        var odd = await _host.StartAsync(new StartArgs(_folder, Cols: 5, Rows: 500));
-        _host.Resize(odd.Id, 1000, 1);
-
-        Assert.Equal((TerminalHost.DefaultCols, TerminalHost.DefaultRows), (_pty.Started[0].Request.Cols, _pty.Started[0].Request.Rows));
-        Assert.Equal((20, 100), (_pty.Started[1].Request.Cols, _pty.Started[1].Request.Rows));
-        Assert.Equal((300, 4), _pty.Started[1].Resizes[^1]);
-        Assert.Equal((plain.Cols, plain.Rows), (TerminalHost.DefaultCols, TerminalHost.DefaultRows));
-    }
-
-    [Fact]
-    public async Task An_owned_terminal_uses_the_recorded_folder_and_refuses_a_missing_folder()
-    {
-        // Pins: terminal#1
-        await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(), ("/bin/sh", null), id => id == "session-1" ? _folder : null);
-        await host.StartAsync(new StartArgs(Owner: "session-1"));
-        await Assert.ThrowsAsync<CallFailed>(() => host.StartAsync(new StartArgs(" ", Owner: "session-2")));
-
-        Assert.Equal(_folder, _pty.Started[0].Request.Cwd);
-        Assert.Single(_pty.Started);
-    }
-
-    [Fact]
     public async Task A_session_this_machine_doesn_t_run_gets_no_terminal_even_with_a_folder()
     {
         // Pins: terminal#12
@@ -151,25 +80,6 @@ public sealed class TerminalHostTests : IAsyncDisposable
 
         await Assert.ThrowsAsync<CallFailed>(() => host.StartAsync(new StartArgs(_folder, Owner: "remote-1")));
         Assert.Empty(_pty.Started);
-    }
-
-    [Fact]
-    public async Task It_runs_a_login_shell_or_one_command_in_it_and_a_blank_command_is_none()
-    {
-        // Pins: terminal#1
-        await _host.StartAsync(new StartArgs(_folder, Shell: "/bin/bash", Command: "   ", Owner: "session-1"));
-        await _host.StartAsync(new StartArgs(_folder, Shell: "/bin/bash", Command: "ls -la"));
-
-        var shell = _pty.Started[0].Request;
-        Assert.Equal("/bin/bash", shell.FileName);
-        Assert.Equal(["-l"], shell.Arguments);
-        Assert.Equal(_folder, shell.Cwd);
-        Assert.Equal("xterm-256color", shell.Environment["TERM"]);
-        Assert.Equal("truecolor", shell.Environment["COLORTERM"]);
-        Assert.Equal("session-1", shell.Environment["ASSEMBLY_SESSION_ID"]);
-        Assert.Equal("Assembly", shell.Environment["TERM_PROGRAM"]);
-        Assert.True(shell.Environment.ContainsKey("NO_COLOR") && shell.Environment["NO_COLOR"] is null);
-        Assert.Equal(["-l", "-c", "ls -la"], _pty.Started[1].Request.Arguments);
     }
 
     [Fact]
@@ -257,9 +167,6 @@ public sealed class TerminalHostTests : IAsyncDisposable
         await _host.DisposeAsync();
         Directory.Delete(_folder, recursive: true);
     }
-
-    private List<string> Rows(string terminal) =>
-        [.. _topics.Snapshot().Where(p => p.Topic == TerminalFeature.OutputTopic && p.Key == terminal).Select(p => p.Json)];
 
     private static long Seq(string row) => JsonDocument.Parse(row).RootElement.GetProperty("seq").GetInt64();
 

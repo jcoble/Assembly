@@ -294,6 +294,9 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         var copy = await SessionAsync(_desktop!, DesktopToken, helperId);
         Assert.Equal((Box, "codex"), (copy.GetProperty("machine").GetString(), copy.GetProperty("agent").GetString()));
 
+        // The desktop's copy can show the helper idle for a moment between its session opening and its prompt being queued
+        // on the box; once the copy has the prompt inserted, the helper reads running for good.
+        await ApiTests.MessageInsertedAsync(_desktop!, DesktopToken, started.GetProperty("messageId").GetString()!);
         // The parent's turn ends; its session stays open while its helper works on the box, once the desktop has that copy.
         await Until(async () => await HelperStateAsync(parent, helperId) == "running");
         await desktop.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "acp-parent");

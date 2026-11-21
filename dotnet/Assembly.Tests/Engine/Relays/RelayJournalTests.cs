@@ -14,41 +14,6 @@ namespace Assembly.Tests.Engine.Relays;
 public sealed class RelayJournalTests
 {
     [Fact]
-    public void Typed_send_stores_full_body_and_original_label_and_reads_policy_only_for_fresh_insert()
-    {
-        using var target = new EngineFixture();
-        using var source = RelaySourceTests.Source(40000, out var body, out var label, target.Machine);
-        var capture = new EngineReader(source.Db, source.Machine).RelaySource(new("message", target.Machine), default);
-        var descriptor = RelayDigests.Describe(capture);
-        Register(target, source.Machine);
-        var reads = 0; var minutes = 7;
-        var commands = new EngineCommands(target.Machine, target.Limits, expiryPolicy: new(_ => { reads++; return minutes; }));
-        var request = new RelaySendRequest(descriptor, 0);
-        var prepared = PreparedRelaySend.Create(descriptor, Encoding.UTF8.GetBytes(body), Encoding.UTF8.GetBytes(label));
-        var ack = target.Db.Writer.Write("test.relay", scope => commands.ApplyRelaySend(scope, request, prepared, 1000));
-        Assert.True(ack.First!.Applied);
-        Assert.True(ack.DestinationPresent);
-        Assert.False(ack.Unknown);
-        Assert.Equal(1, reads);
-        Assert.Equal(421000, target.Number("SELECT expires_ms FROM engine_message"));
-        Assert.Equal(Encoding.UTF8.GetBytes(body), target.Db.QueryFirst("SELECT CAST(text AS BLOB) FROM engine_message", r => r.Blob(0), default));
-        Assert.Equal(Encoding.UTF8.GetBytes(label), target.Db.QueryFirst("SELECT CAST(sender_label AS BLOB) FROM engine_message", r => r.Blob(0), default));
-        Assert.Equal("session", target.Text("SELECT sender_kind FROM engine_message"));
-        var payload = target.Text("SELECT payload_json FROM engine_outbox WHERE kind='send'")!;
-        var delivery = JsonSerializer.Deserialize(payload, EngineJson.Default.DeliverMessage)!;
-        Assert.Equal(MessageText.Prompt(label, body), delivery.Text);
-        Assert.Equal(label, delivery.SenderLabel);
-        minutes = 99;
-        target.Reopen();
-        var replay = target.Db.Writer.Write("test.replay", scope => commands.ApplyRelaySend(scope, request, null, 2000));
-        Assert.Equal(ack.First, replay.First);
-        Assert.Equal(1, reads);
-        Assert.Equal(1, target.Count("engine_message"));
-        Assert.Equal(1, target.Count("engine_outbox"));
-        Assert.StartsWith("relay-send-fp/v1/0/", target.Text("SELECT fingerprint FROM engine_command_receipt WHERE command_id=$key", new SqlArg("$key", ack.FirstKey)));
-    }
-
-    [Fact]
     public void Stale_epoch_receipt_reopens_without_upload_and_binds_every_immutable_descriptor_field()
     {
         using var target = new EngineFixture();

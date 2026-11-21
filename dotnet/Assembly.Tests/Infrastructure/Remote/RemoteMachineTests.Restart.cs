@@ -124,9 +124,14 @@ public sealed partial class RemoteMachineTests
         await using var flaky = new MachinesSocketTests.StubRemote { SocketBackend = _box.Address, DropWelcomes = 1 };
         await flaky.StartAsync();
         _desktop = await DesktopOnAsync(flaky, _desktopHome);
+        // The stored copy can show the helper idle before any link; the engine identity is read only on a link the stub kept.
+        await OwnerVerifiedAsync(_desktop);
 
         await UntilRestartStateAsync(parent, helperId, "idle");
         Assert.True(flaky.VersionHits >= 2);
+        // The desktop goes before the stub it connects through, so the stub has no open link to wait out when it stops.
+        await _desktop.DisposeAsync();
+        _desktop = null;
     }
 
     [Fact]

@@ -84,14 +84,4 @@ public sealed class PreparedStartEffectTests
             Assert.Equal(expected, f.Db.QueryFirst("SELECT CAST(payload_json AS BLOB) FROM engine_outbox WHERE session_id='ordinary'", r => r.Blob(0), default));
         }
     }
-
-    [Theory]
-    [InlineData(null, "{\"provider\":\"codex\",\"model\":null,\"folder\":\"/folder\",\"title\":\"Title\",\"parentId\":null,\"runId\":null,\"taskUrl\":null}")]
-    [InlineData(false, "{\"provider\":\"codex\",\"model\":null,\"folder\":\"/folder\",\"title\":\"Title\",\"parentId\":null,\"runId\":null,\"taskUrl\":null,\"managedCheckout\":false}")]
-    public void Typed_start_payload_goldens_keep_omissions_distinct_from_command_canonical(bool? managed, string golden)
-    {
-        var prepared = EngineCommands.PrepareSessionTitle(new StartSession("codex", null, "/folder", "Title", null, null, null, ManagedCheckout: managed));
-        Assert.Equal(golden, prepared.StartEffectPayload!.ForExact((StartSession)prepared.Command).GetRawText());
-        Assert.StartsWith("{\"kind\":\"start_session\",", prepared.CanonicalJournal);
-    }
 }

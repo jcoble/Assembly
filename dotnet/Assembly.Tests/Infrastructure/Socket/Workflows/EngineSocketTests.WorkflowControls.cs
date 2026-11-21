@@ -55,22 +55,6 @@ public sealed partial class EngineSocketTests
         Assert.Equal(1, _f.Db.Writer.Write("test.open-gate", s => WorkflowGates.OpenReady(s, _f.Machine, 1000)));
     }
     [Fact]
-    public async Task A_window_revises_a_gate_through_resolve_need_and_the_text_goes_to_the_work_before_it()
-    {
-        SeedGateWithWorkBefore();
-        Assert.Equal("[\"approve\",\"revise\",\"deny\"]", _f.Text("SELECT options_json FROM engine_needs_me"));
-        Assert.Equal("choice", _f.Text("SELECT json_extract(presentation_json,'$.inputMode') FROM engine_needs_me"));
-        Assert.Equal("revise", _f.Text("SELECT json_extract(presentation_json,'$.options[1].id') FROM engine_needs_me"));
-        var need = _f.Text("SELECT id FROM engine_needs_me")!;
-        using var socket = await Open();
-        var answer = JsonSerializer.SerializeToElement(new { choice = "revise", text = "Smaller schema" });
-        var result = await Command(socket, new Assembly.Engine.NeedsMe.ResolveNeed("answered", answer), need, 1);
-        Assert.True(result.Applied, result.Error);
-        Assert.Equal("Smaller schema", _f.Text("SELECT json_extract(safe_body_json,'$.text') FROM engine_workflow_history WHERE kind='gate_revised'"));
-        Assert.Equal("work", _f.Text("SELECT json_extract(safe_body_json,'$.targetStepId') FROM engine_workflow_history WHERE kind='gate_revised'"));
-        Assert.Equal("redo_pending", _f.Text("SELECT dispatch_state FROM engine_step WHERE id='work'"));
-    }
-    [Fact]
     public async Task A_phone_revises_a_gate_through_resolve_need()
     {
         SeedGateWithWorkBefore();

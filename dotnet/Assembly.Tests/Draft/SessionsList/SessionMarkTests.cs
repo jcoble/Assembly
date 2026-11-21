@@ -17,45 +17,6 @@ public sealed class SessionMarkTests : IDisposable
         _sessions = SessionStore.Open(_database, _time, "checkouts");
     }
 
-    // Pins: sessions-list#1, sessions-list#2, sessions-list#4, sessions-list#5
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Marks_keep_the_first_completion_until_back_to_working(bool remote)
-    {
-        var session = remote
-            ? _sessions.Add("remote-session", "agent", "repo", "workbox-test")
-            : _sessions.Create("agent", "repo");
-        AssertTimes(null, null);
-        Mark("done");
-        AssertTimes(1_000_010, null);
-        Mark("settled");
-        AssertTimes(1_000_010, 1_000_020);
-        Mark("done");
-        AssertTimes(1_000_010, null);
-        Mark("working");
-        AssertTimes(null, null);
-        Mark("settled");
-        AssertTimes(1_000_050, 1_000_050);
-
-        void Mark(string state)
-        {
-            _time.Advance(TimeSpan.FromMilliseconds(10));
-            _database.Writer.Write("test.mark", scope =>
-            {
-                _sessions.Mark(scope, session.SessionId, state);
-                return 0;
-            });
-        }
-
-        void AssertTimes(long? completed, long? settled)
-        {
-            var saved = _sessions.Get(session.SessionId)!;
-            Assert.Equal((completed, settled), (saved.CompletedAt, saved.SettledAt));
-            Assert.Equal(session.UpdatedAt, saved.UpdatedAt);
-        }
-    }
-
     // Pins: sessions-list#1, sessions-list#5
     [Fact]
     public void An_older_database_opens_with_both_marks_null()

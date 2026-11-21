@@ -1,5 +1,5 @@
 //! The drawer's Source control pane: the selected session's project's branch and changed files, from `git/status`,
-//! read only while the tab is shown (docs/behavior/scm.md). Replaces the old app's git/components/sourceControl/
+//! read only while the tab is shown (Source control and worktrees: behavior list, https://app.notion.com/p/409394b0689d810ca866f3c09de23b25). Replaces the old app's git/components/sourceControl/
 //! status lists. `git/` holds what the backend answers and the one write authority, `panel/` the pane and its menus and
 //! dialogs, `history/` the commit list and the history tab.
 

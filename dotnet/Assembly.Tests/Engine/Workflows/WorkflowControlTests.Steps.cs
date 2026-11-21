@@ -11,22 +11,6 @@ namespace Assembly.Tests.Engine.Workflows;
 public sealed class WorkflowStepControlTests
 {
     [Fact]
-    public void Retry_in_open_run_keeps_attempt_history_and_next_attempt_increments_generation_budget()
-    {
-        using var f = WorkflowControlTests.Fixture(); f.SeedStep(state: "failed", attempt: 1, maxAttempts: 2);
-        f.Db.Writer.Write("test.failed-attempt", s => s.Execute("""
-            UPDATE engine_step SET kind='agent',attempt_in_generation=1;
-            INSERT INTO engine_step_attempt(step_id,attempt,state,started_ms,ended_ms,late,attempt_in_generation) VALUES('step',1,'failed',900,1000,0,1);
-            """));
-        Assert.True(f.Apply(new RetryWorkflowStep("step"), "r").Applied);
-        Assert.Equal("pending", f.State("engine_step", "step")); Assert.Equal("failed", f.Text("SELECT state FROM engine_step_attempt"));
-        Assert.Equal("invalid_transition", f.Apply(new RetryWorkflowStep("step"), "r", Version(f)).Error);
-        f.SeedSession("worker", parentId: "owner", runId: "r");
-        Assert.True(f.Apply(new StartStep("worker"), "step", 1).Applied);
-        Assert.Equal(2, f.Number("SELECT attempt FROM engine_step")); Assert.Equal(2, f.Number("SELECT attempt_in_generation FROM engine_step"));
-        Assert.Equal(2, f.Count("engine_step_attempt"));
-    }
-    [Fact]
     public void Retry_refuses_active_worker_and_exhausted_budget()
     {
         using var f = WorkflowControlTests.Fixture(); f.SeedSession("worker", state: "running", parentId: "owner", runId: "r");

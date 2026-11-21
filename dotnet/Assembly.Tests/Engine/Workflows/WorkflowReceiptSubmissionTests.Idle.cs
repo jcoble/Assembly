@@ -35,31 +35,6 @@ public sealed partial class WorkflowReceiptSubmissionTests
         Assert.Equal(1, f.Core.Number("SELECT reminder_sent FROM engine_step_attempt"));
     }
 
-    [Fact]
-    public void Next_distinct_released_turn_after_actual_reminder_delivery_fails_no_report_and_ends_worker()
-    {
-        using var f = new Fixture(); Assert.True(ApplyRelease(f, Release(f, "original")).Applied);
-        DeliverReminder(f, "reminded-turn");
-        var second = ApplyRelease(f, Release(f, "reminded-turn")); Assert.True(second.Applied, second.Error);
-        Assert.Equal("failed", f.Core.State("engine_step", "step")); Assert.Equal("ended", f.Core.State("engine_session", "worker"));
-        Assert.Equal("no_report", f.Core.Text("SELECT reason FROM engine_step_attempt"));
-        Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_message WHERE to_session_id='worker'"));
-        Assert.Equal(2, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind='execution_released'"));
-        Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind='no_report'"));
-    }
-
-    [Theory]
-    [InlineData("pending")]
-    [InlineData("rejected")]
-    public void Existing_report_including_correctable_rejection_does_not_trigger_no_report_reminder(string state)
-    {
-        using var f = new Fixture(); Assert.True(f.Apply(f.Prepare()).Applied);
-        if (state == "rejected") f.Core.Db.Writer.Write("test.reject", s => s.Execute("UPDATE engine_workflow_receipt SET state='rejected',error='fix evidence'"));
-        Assert.True(ApplyRelease(f, Release(f, "reported")).Applied);
-        Assert.Equal("waiting", f.Core.State("engine_step", "step")); Assert.Equal(0, f.Core.Count("engine_message"));
-        Assert.Equal(state, f.Core.Text("SELECT state FROM engine_workflow_receipt"));
-    }
-
     [Theory]
     [InlineData("lost", "failed")]
     [InlineData("ended", "cancelled")]

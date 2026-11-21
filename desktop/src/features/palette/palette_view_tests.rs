@@ -1,4 +1,4 @@
-//! Tests for the Cmd-K palette (docs/behavior/g0-host.md g0-host#11, #12).
+//! Tests for the Cmd-K palette (G0 host: behavior list, https://app.notion.com/p/409394b0689d81aebe92fabeebe583fd, g0-host#11, #12).
 
 use std::cell::Cell;
 use std::rc::Rc;
