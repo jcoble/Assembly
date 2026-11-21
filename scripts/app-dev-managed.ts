@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, hostname } from 'node:os';
 import { validateOwner, type LaneOwner } from './dev-lane-clean.ts';
-import { agentsRunnable, profileFor, takeLauncherLock } from './seed-dev.ts';
+import { agentsNeedInstall, profileFor, takeLauncherLock } from './seed-dev.ts';
 import { checkoutSources, ensureTools, latestTools, toolKey, toolsCurrent } from './dev-toolchain.ts';
 
 // A lane made by hand or with a copied .lane has no record binding it to this checkout. It still launches, the old
@@ -36,8 +36,9 @@ export async function prepareManagedLane(root: string, signal: AbortSignal) {
     throw Error('managed launch needs its creator-owned lane; copied/adopted reservations cannot update shared resources');
   const home = profile.home, release = takeLauncherLock(home);
   try {
-    // A lane with no tools, or tools that are gone, has nothing to run, so this launch installs them. Otherwise the launch's update does.
-    if (!agentsRunnable(join(home, 'agents.json'))) await ensureTools(root, join(home, 'adapters'), join(home, 'agents.json'), (await managedTools(root, home, signal)).versions, signal);
+    // A lane with no tools, or an adapter that is gone, has nothing to run, so this launch installs them. Otherwise the
+    // launch's update does. The program that runs an adapter is not checked here: ensureTools does not replace it.
+    if (agentsNeedInstall(join(home, 'agents.json'), false)) await ensureTools(root, join(home, 'adapters'), join(home, 'agents.json'), (await managedTools(root, home, signal)).versions, signal);
     return { target, home, owner, release };
   } catch (error) { release(); throw error; }
 }

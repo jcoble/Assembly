@@ -22,10 +22,17 @@ function launch(agents: (root: string) => string) {
   const result = spawnSync(process.execPath, [join(root, 'scripts/app-dev.ts')], { cwd: root, env, encoding: 'utf8' });
   return { root, result, before, after: readFileSync(file, 'utf8'), launched };
 }
-const agentAt = (command: string, entry: string) => JSON.stringify([{ id: 'codex', name: 'Codex', command, args: [entry], env: {} }]);
+const agentAt = (command: string, entry: string) => JSON.stringify([{ id: 'one', name: 'One', command, args: [entry], env: {} }]);
+const adapterIn = (folder: string) => join(folder, 'node_modules/@agentclientprotocol/one-acp/dist/index.js');
+function installedAdapter(root: string) {
+  const entry = adapterIn(join(root, 'installed'));
+  mkdirSync(join(entry, '..'), { recursive: true });
+  writeFileSync(entry, '');
+  return entry;
+}
 
 test('agents whose adapter is gone are installed again before the app opens', () => {
-  const { root, result, after, launched } = launch(root => agentAt(process.execPath, join(root, 'removed/adapters/codex-acp/dist/index.js')));
+  const { root, result, after, launched } = launch(root => agentAt(process.execPath, adapterIn(join(root, 'removed'))));
   try {
     assert.equal(result.status, 0, result.stderr);
     assert.equal(after, 'installed');
@@ -34,23 +41,33 @@ test('agents whose adapter is gone are installed again before the app opens', ()
 });
 
 test('agents whose program is gone are installed again before the app opens', () => {
-  const { root, result, after } = launch(root => agentAt(join(root, 'removed/node'), join(root, 'scripts/app-dev.ts')));
+  const { root, result, after } = launch(root => agentAt(join(root, 'removed/node'), installedAdapter(root)));
   try {
     assert.equal(result.status, 0, result.stderr);
     assert.equal(after, 'installed');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('an agents file that cannot be read is installed again before the app opens', () => {
-  const { root, result, after } = launch(() => '{ not json');
+// The installer cannot repair either of these, so installing would only repeat at every start.
+test('an agents file that cannot be read is left as it is', () => {
+  const { root, result, before, after, launched } = launch(() => '{ not json');
   try {
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(after, 'installed');
+    assert.equal(after, before);
+    assert.ok(existsSync(launched), 'the app was not launched');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('an entry the installer does not provide causes no install when its file is gone', () => {
+  const { root, result, before, after } = launch(root => agentAt(process.execPath, join(root, 'removed/custom/index.js')));
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(after, before);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('agents whose adapter is in place are left as they are', () => {
-  const { root, result, before, after, launched } = launch(root => agentAt(process.execPath, join(root, 'scripts/app-dev.ts')));
+  const { root, result, before, after, launched } = launch(root => agentAt(process.execPath, installedAdapter(root)));
   try {
     assert.equal(result.status, 0, result.stderr);
     assert.equal(after, before);

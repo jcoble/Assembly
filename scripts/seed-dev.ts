@@ -33,11 +33,19 @@ export function safePath(input: string, mustExist = true): string {
   while (!existsSync(ancestor)) { suffix.unshift(basename(ancestor)); ancestor = dirname(ancestor); }
   return join(realpathSync(ancestor), ...suffix);
 }
-// An agents file whose adapters are gone starts no provider, so a launch installs over it as it does when there is none.
-export function agentsRunnable(file: string): boolean {
+// What a launch can put right by installing: no agents file, or an adapter the installer provides (an ACP adapter package)
+// that is gone, and, where the installer also rewrites it, the program that runs one. Any other entry and a file that
+// cannot be read are the owner's: no install changes them, so they never cause one.
+export function agentsNeedInstall(file: string, programs: boolean): boolean {
+  if (!existsSync(file)) return true;
+  const gone = (path: unknown) => typeof path === 'string' && isAbsolute(path) && !existsSync(path);
   try {
     const agents = JSON.parse(readFileSync(file, 'utf8')) as { command?: unknown; args?: unknown[] }[];
-    return agents.every(agent => [agent.command, agent.args?.[0]].every(path => typeof path !== 'string' || !isAbsolute(path) || existsSync(path)));
+    return Array.isArray(agents) && agents.some(agent => {
+      const entry = agent?.args?.[0];
+      if (typeof entry !== 'string' || !entry.includes('/node_modules/@agentclientprotocol/')) return false;
+      return gone(entry) || (programs && gone(agent.command));
+    });
   } catch { return false; }
 }
 export function profileFor(input: string, userHome = homedir()): { root: string; home: string } {
