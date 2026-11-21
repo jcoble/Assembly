@@ -1,5 +1,5 @@
 //! The client against the real desktop backend (`RealBackend`): hello and refusal, calls, topics, the drop and
-//! reconnect. Each test starts its own backend. Pins the draft list in docs/behavior/g0-socket.md.
+//! reconnect. Each test starts its own backend. Pins the draft list in g0-socket: behavior list (https://app.notion.com/p/409394b0689d81168a26f446de389169).
 
 use std::fs;
 use std::process::Command;
