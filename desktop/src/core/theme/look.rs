@@ -46,6 +46,8 @@ struct OwnColours {
     on_glass_line_chip: Option<Colour>,
     #[serde(rename = "on_glass.inset")]
     on_glass_inset: Option<Colour>,
+    #[serde(rename = "on_glass.count")]
+    on_glass_count: Option<Colour>,
     #[serde(rename = "card.raised")]
     card_raised: Option<Colour>,
     bubble: Option<Colour>,
@@ -195,6 +197,8 @@ pub struct Look {
     pub on_glass_line_chip: Hsla,
     /// `assembly` `on_glass.inset`: the "N need you" pill's fill.
     pub on_glass_inset: Hsla,
+    /// `assembly` `on_glass.count`: a count badge's fill on the glass, as Board's count.
+    pub on_glass_count: Hsla,
 
     // Tiles and surfaces.
     /// `background`: the left list, the chat sheet, the drawer, editor panes.
@@ -345,6 +349,7 @@ impl Look {
             on_glass_line_selected: or(own.on_glass_line_selected, theme.title_bar_border),
             on_glass_line_chip: or(own.on_glass_line_chip, theme.title_bar_border),
             on_glass_inset: or(own.on_glass_inset, theme.muted),
+            on_glass_count: or(own.on_glass_count, theme.tab_active),
 
             tile: theme.background,
             tile_edge: theme.sidebar_border,

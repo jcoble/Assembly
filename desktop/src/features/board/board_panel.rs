@@ -558,10 +558,22 @@ impl BoardPanel {
     }
 }
 
-/// The dot's count on the top bar, from the same rows the panel lists.
-pub fn top_bar_badge(feed: &EngineFeed) -> Option<SharedString> {
-    let count = badge_count(&BoardData::read(feed));
-    super::board_queries::badge_label(count).map(Into::into)
+/// The top bar's two counts, from the same rows the panel lists: what needs the owner, as the words of the
+/// "N need you" pill (none at zero), and how many sessions are live, Board's grey count.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TopBarCounts {
+    pub needs: Option<SharedString>,
+    pub live: usize,
+}
+
+impl TopBarCounts {
+    pub fn read(feed: &EngineFeed) -> Self {
+        let data = BoardData::read(feed);
+        Self {
+            needs: super::board_queries::badge_label(badge_count(&data)).map(Into::into),
+            live: super::board_queries::live_top_level(&data).len(),
+        }
+    }
 }
 
 #[path = "board_open.rs"]

@@ -79,7 +79,7 @@ fn tab(
                 cx.stop_propagation();
                 drag.set_drag_offset(offset);
                 drag.set_preview_size(size(px(96.), BAR_HEIGHT));
-                cx.new(|_| Preview(name))
+                cx.new(|_| super::drag_chip::DragChip(name))
             })
         })
         .when(group.is_droppable(), |tab| {
@@ -109,24 +109,6 @@ fn end(group: &TabGroupContext, cx: &App) -> Stateful<Div> {
                     crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
                 })
         })
-}
-
-/// What follows the cursor while a side tab is dragged: its name on a chip.
-struct Preview(&'static str);
-
-impl Render for Preview {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .h(BAR_HEIGHT)
-            .px_3()
-            .flex()
-            .items_center()
-            .rounded(px(6.))
-            .bg(cx.theme().secondary)
-            .text_color(cx.theme().foreground)
-            .text_role(TextRole::Body, cx)
-            .child(self.0)
-    }
 }
 
 /// The row: the segmented control's inset, outlined track holding one segment per visible pane, then the space a

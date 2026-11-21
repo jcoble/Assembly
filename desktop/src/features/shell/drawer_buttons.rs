@@ -17,6 +17,8 @@ use super::default_layout::{
     AGENTS, CONTEXT, FILES, HISTORY, RUN, SOURCE_CONTROL, TASKS, WORKTREES,
 };
 use super::terminal_toggle::menu_item;
+use crate::components::glass_pill::GlassPill;
+use gpui_kit::component::Selectable as _;
 
 const PILL_W: Pixels = px(28.);
 const PILL_H: Pixels = px(24.);
@@ -185,42 +187,29 @@ fn primary(name: &str) -> bool {
     matches!(name, SOURCE_CONTROL | AGENTS | TASKS)
 }
 
-/// The chrome keeps a single, discoverable control while the drawer is closed.
+/// The chrome keeps a single, discoverable control while the drawer is closed: an icon pill on the glass, pressed
+/// while the drawer is open.
 pub fn toggle(dock: Entity<DockArea>, cx: &App) -> impl IntoElement {
     let open = dock.read(cx).is_dock_open(DockPlacement::Right);
-    let theme = cx.theme();
-    div()
-        .id("drawer-toggle")
-        .selected_in_tree(
-            Role::Button,
-            topbar::DRAWER_TOGGLE,
-            "Toggle tools drawer",
-            open,
-        )
-        .debug_selector(|| "drawer-toggle".into())
-        .size(px(30.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_full()
-        .text_color(theme.muted_foreground)
-        .when(open, |button| {
-            button
-                .bg(theme.secondary_hover)
-                .text_color(theme.foreground)
-        })
-        .hover(|button| button.bg(theme.secondary_hover))
-        .cursor_pointer()
-        .tooltip(|window, cx| Tooltip::new("Toggle tools drawer").build(window, cx))
-        .child(Icon::new(IconName::PanelRight).size(px(17.)))
-        .on_click(move |_, window, cx| {
-            cx.defer(
-                crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed,
-            );
-            dock.update(cx, |dock, cx| {
-                dock.toggle_dock(DockPlacement::Right, window, cx)
-            })
-        })
+    div().debug_selector(|| "drawer-toggle".into()).child(
+        GlassPill::icon("drawer-toggle", IconName::PanelRight)
+            .selected_in_tree(
+                Role::Button,
+                topbar::DRAWER_TOGGLE,
+                "Toggle tools drawer",
+                open,
+            )
+            .selected(open)
+            .tooltip("Toggle tools drawer")
+            .on_click(move |_, window, cx| {
+                cx.defer(
+                    crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed,
+                );
+                dock.update(cx, |dock, cx| {
+                    dock.toggle_dock(DockPlacement::Right, window, cx)
+                })
+            }),
+    )
 }
 
 /// The old app's icon for each drawer pane; a pane it didn't have gets a dot.

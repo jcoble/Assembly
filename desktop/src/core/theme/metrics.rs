@@ -90,6 +90,9 @@ pub const KEY_COLUMN_WIDTH: Pixels = px(108.);
 pub const CONNECTION_ROW_HEIGHT: Pixels = px(56.);
 /// A file row.
 pub const FILE_ROW_HEIGHT: Pixels = px(32.);
+/// A count badge's height and narrowest width, as Board's count.
+pub const COUNT_HEIGHT: Pixels = px(20.);
+pub const COUNT_MIN_WIDTH: Pixels = px(22.);
 /// A group header in the left list.
 pub const GROUP_HEIGHT: Pixels = px(32.);
 

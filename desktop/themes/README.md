@@ -78,6 +78,7 @@ each such token the kit colour `Look::of` names for it, so every theme still dra
 | on-glass-fill-selected | `tab.active.background` | |
 | on-glass-line (selected, chips) | `title_bar.border` (`assembly` `on_glass.line.selected`, `on_glass.line.chip`) | |
 | on-glass-inset | `assembly` `on_glass.inset` | |
+| (Board's count fill, white 9%) | `assembly` `on_glass.count` | From the mockup's `.cnt`; the sheet names no token for it. |
 | tile | `background` | `accordion.background`, `list.background`, `list.even.background`, `list.head.background`, `table.background`, `sidebar.background`, `status_bar.background`, highlight `editor.background` |
 | tile edge (white 7%) | `sidebar.border` | |
 | inset | `tab_bar.segmented.background` | |

@@ -118,6 +118,7 @@
         "on_glass.line.selected": "#FFFFFF38",
         "on_glass.line.chip": "#FFFFFF2E",
         "on_glass.inset": "#0C0E1457",
+        "on_glass.count": "#FFFFFF17",
         "card.raised": "#2C2F37",
         "bubble": "#262930",
         "bubble.border": "#3A3E49",
