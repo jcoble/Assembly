@@ -71,8 +71,17 @@ socket.onmessage=e=>{
  if(frame.t!=='welcome' || frame.machine!=='workbox-test' || frame.protocol!==1 || frame.format!==5 || !/^[a-f0-9]{40}$/.test(frame.commit??'')) {
   console.error('host did not provide a compatible authenticated identity');process.exit(1);
  }
- clearTimeout(deadline);socket.close();process.stdin.pause();
- console.log(JSON.stringify({commit:frame.commit,backendIdentity:frame.backendIdentity,version:frame.version,engine:frame.engine,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,toolsKey,toolVersions,adapterSources}));
+ answered=true;clearTimeout(deadline);socket.close();process.stdin.pause();
+ console.log(JSON.stringify({...state,commit:frame.commit,backendIdentity:frame.backendIdentity,version:frame.version,engine:frame.engine}));
+};
+const state={commit:undefined,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,toolsKey,toolVersions,adapterSources};
+let answered=false;
+// A host on any other protocol refuses the hello with 4400 "expected a hello…": it is stale and gets the deploy.
+socket.onclose=e=>{
+ if(answered) return;
+ clearTimeout(deadline);process.stdin.pause();
+ if(e.code===4400 && e.reason.startsWith('expected a hello')) { console.log(JSON.stringify({...state,stale:true})); process.exit(0); }
+ console.error('host closed the socket: '+e.code+' '+e.reason);process.exit(1);
 };
 `;
-export type Probe = { missing?: boolean; stopped?: boolean; commit: string; backendIdentity?: string; version?: unknown; toolsKey?: string; toolVersions?: Record<string, string>; adapterSources?: string; engine: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean };
+export type Probe = { missing?: boolean; stopped?: boolean; stale?: boolean; commit: string; backendIdentity?: string; version?: unknown; toolsKey?: string; toolVersions?: Record<string, string>; adapterSources?: string; engine?: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean };
