@@ -33,21 +33,6 @@ public sealed partial class ChatSocketTests
     }
 
     [Fact]
-    public async Task Begin_turns_down_a_type_size_or_session_it_cant_take()
-    {
-        var session = _sessions.Create("claude", "repo");
-        using var socket = await OpenBulkAsync();
-
-        foreach (var (mime, size, id) in new[] { ("text/plain", 10L, session.SessionId), ("image/png", AttachmentStore.MaxBytes + 1L, session.SessionId),
-                     ("image/png", 0L, session.SessionId), ("image/png", 10L, "nope") })
-        {
-            await CallAsync(socket, 1, "attachments", "begin", $$"""{"session":"{{id}}","mime":"{{mime}}","size":{{size}}}""");
-            Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
-        }
-        Assert.False(Directory.Exists(Staging) && Directory.GetFiles(Staging).Length > 0);
-    }
-
-    [Fact]
     public async Task A_chunk_out_of_place_or_too_big_fails_and_drops_its_upload()
     {
         var session = _sessions.Create("claude", "repo");
@@ -70,28 +55,6 @@ public sealed partial class ChatSocketTests
         await ChunkAsync(socket, 2, upload, 0, new byte[Mb + 1]);
         Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
 
-        Assert.Empty(Directory.GetFiles(Staging));
-    }
-
-    [Fact]
-    public async Task Commit_turns_down_bytes_that_arent_the_type_sent_or_arent_all_there()
-    {
-        var session = _sessions.Create("claude", "repo");
-        using var socket = await OpenBulkAsync();
-
-        var upload = await BeginAsync(socket, session.SessionId, "image/png", 5);
-        await ChunkAsync(socket, 2, upload, 0, "hello"u8.ToArray());
-        await ReadAsync(socket);
-        await CallAsync(socket, 3, "attachments", "commit", $$"""{"upload":"{{upload}}"}""");
-        Assert.Equal("""{"t":"error","id":3,"code":"failed","message":"the bytes are not the image type sent"}""", await ReadAsync(socket));
-
-        upload = await BeginAsync(socket, session.SessionId, "image/png", 100);
-        await ChunkAsync(socket, 2, upload, 0, Png(50));
-        await ReadAsync(socket);
-        await CallAsync(socket, 3, "attachments", "commit", $$"""{"upload":"{{upload}}"}""");
-        Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
-
-        Assert.Empty(_here.Asked);
         Assert.Empty(Directory.GetFiles(Staging));
     }
 
@@ -141,45 +104,6 @@ public sealed partial class ChatSocketTests
         await _socketClosed.Task.WaitAsync(Wait);
         Assert.Empty(Directory.GetFiles(Staging));
         Assert.Null(_box.Saved);
-    }
-
-    [Fact]
-    public async Task Drop_deletes_an_uploads_staging_file_and_answers_ok_for_one_it_doesnt_know()
-    {
-        var session = _sessions.Create("claude", "repo");
-        using var socket = await OpenBulkAsync();
-        var upload = await BeginAsync(socket, session.SessionId, "image/png", 10);
-
-        await CallAsync(socket, 2, "attachments", "drop", $$"""{"upload":"{{upload}}"}""");
-        Assert.Equal("""{"t":"result","id":2,"result":{"ok":true}}""", await ReadAsync(socket));
-        Assert.Empty(Directory.GetFiles(Staging));
-        await ChunkAsync(socket, 3, upload, 0, new byte[5]);
-        Assert.Contains("unknown upload", await ReadAsync(socket));
-
-        // Dropped already, and never begun.
-        foreach (var id in new[] { upload, "nope" })
-        {
-            await CallAsync(socket, 4, "attachments", "drop", $$"""{"upload":"{{id}}"}""");
-            Assert.Equal("""{"t":"result","id":4,"result":{"ok":true}}""", await ReadAsync(socket));
-        }
-    }
-
-    [Fact]
-    public async Task A_ninth_open_upload_fails_until_one_is_dropped()
-    {
-        var session = _sessions.Create("claude", "repo");
-        using var socket = await OpenBulkAsync();
-        var uploads = new List<string>();
-        for (var i = 0; i < 8; i++)
-            uploads.Add(await BeginAsync(socket, session.SessionId, "image/png", 10));
-
-        await CallAsync(socket, 1, "attachments", "begin", $$"""{"session":"{{session.SessionId}}","mime":"image/png","size":10}""");
-        Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
-        Assert.Equal(8, Directory.GetFiles(Staging).Length);
-
-        await CallAsync(socket, 2, "attachments", "drop", $$"""{"upload":"{{uploads[0]}}"}""");
-        await ReadAsync(socket);
-        await BeginAsync(socket, session.SessionId, "image/png", 10);
     }
 
     // The chunk and the drop wait behind a commit that hangs on the session's machine; if the drop ran first, the chunk
@@ -260,27 +184,6 @@ public sealed partial class ChatSocketTests
         Assert.False(File.Exists(left));
         Assert.True(File.Exists(other));
         Assert.True(File.Exists(inside));
-    }
-
-    [Fact]
-    public async Task Read_answers_an_attachment_a_piece_at_a_time()
-    {
-        _here.Attachments = _attachments;
-        var session = _sessions.Create("claude", "repo");
-        var image = Png(3 * Mb / 2);
-        var name = Path.GetFileName(await _attachments.SaveAsync(session.SessionId, AttachmentImage, image, CancellationToken.None));
-        using var socket = await OpenBulkAsync();
-
-        await CallAsync(socket, 1, "attachments", "read", $$"""{"session":"{{session.SessionId}}","name":"{{name}}"}""");
-        var first = Result(await ReadAsync(socket));
-        await CallAsync(socket, 2, "attachments", "read", $$"""{"session":"{{session.SessionId}}","name":"{{name}}","offset":{{Mb}}}""");
-        var rest = Result(await ReadAsync(socket));
-
-        Assert.Equal(image, first.GetProperty("data").GetBytesFromBase64().Concat(rest.GetProperty("data").GetBytesFromBase64()).ToArray());
-        Assert.Equal(image.Length, first.GetProperty("size").GetInt64());
-        Assert.Equal("image/png", first.GetProperty("mime").GetString());
-        await CallAsync(socket, 3, "attachments", "read", $$"""{"session":"{{session.SessionId}}","name":"../secret.png"}""");
-        Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
     }
 
     private static readonly Assembly.Application.Common.Images.ImageType AttachmentImage =

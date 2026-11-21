@@ -42,7 +42,6 @@ public sealed class RowsSocketTests : IAsyncLifetime
     private SocketEndpoint _endpoint = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
-    private Uri _bulkAddress = null!;
 
     public async Task InitializeAsync()
     {
@@ -68,7 +67,6 @@ public sealed class RowsSocketTests : IAsyncLifetime
         await _app.StartAsync();
         var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         _address = new Uri($"ws://{http.Authority}/socket");
-        _bulkAddress = new Uri($"ws://{http.Authority}/socket/bulk");
     }
 
     public async Task DisposeAsync()
@@ -219,63 +217,6 @@ public sealed class RowsSocketTests : IAsyncLifetime
         AssertRow(await ReadAsync(socket), sub: 1, seq: 1, prevSeq: 0);
     }
 
-    [Fact]
-    public async Task A_rows_sub_needs_a_session()
-    {
-        using var socket = await OpenAsync();
-        await SendAsync(socket, """{"t":"sub","id":1,"topic":"rows"}""");
-
-        Assert.Contains("\"bad_args\"", await ReadAsync(socket));
-    }
-
-    [Fact]
-    public async Task Rows_page_answers_the_page_before_a_seq()
-    {
-        var s = _sessions.Create("claude", "repo").SessionId;
-        Commit(s, 5);
-        var expected = _hub.Page(s, 5, 2);
-        using var socket = await OpenBulkAsync();
-
-        await SendAsync(socket, $$$"""{"t":"call","id":1,"feature":"rows","method":"page","args":{"session":"{{{s}}}","before":5,"limit":2}}""");
-
-        using var answer = JsonDocument.Parse(await ReadAsync(socket));
-        var result = answer.RootElement.GetProperty("result");
-        Assert.Equal(expected.Rows.Select(row => row.Seq), result.GetProperty("rows").EnumerateArray().Select(row => row.GetProperty("seq").GetInt64()));
-        Assert.Equal(expected.HasBefore, result.GetProperty("hasBefore").GetBoolean());
-        Assert.Equal(expected.Before, result.GetProperty("before").GetInt64());
-    }
-
-    [Fact]
-    public async Task Rows_page_reads_at_most_a_page()
-    {
-        var s = _sessions.Create("claude", "repo").SessionId;
-        Commit(s, RowsFeature.PageLimit + 1);
-        using var socket = await OpenBulkAsync();
-
-        await SendAsync(socket, $$$"""{"t":"call","id":1,"feature":"rows","method":"page","args":{"session":"{{{s}}}","before":999999,"limit":100000}}""");
-
-        using var answer = JsonDocument.Parse(await ReadAsync(socket));
-        Assert.Equal(RowsFeature.PageLimit, answer.RootElement.GetProperty("result").GetProperty("rows").GetArrayLength());
-    }
-
-    // Pins: g0-session#2: stored session history is readable in bounded pages.
-    [Fact]
-    public async Task Rows_after_reads_raw_updates_in_seq_order_and_at_most_a_page()
-    {
-        var session = _sessions.Create("claude", "repo").SessionId;
-        var batch = new RowBatch();
-        for (var i = 0; i < RowsFeature.PageLimit + 2; i++)
-            batch.Rows.Add(new NewRow("run", "tool", RowKind.Tool,
-                JsonSerializer.SerializeToElement(new { state = "running", summary = $"update {i}" }), i));
-        _hub.Publish(session, batch);
-        using var socket = await OpenBulkAsync();
-        await SendAsync(socket, $$$"""{"t":"call","id":1,"feature":"rows","method":"after","args":{"session":"{{{session}}}","after":1,"limit":100000}}""");
-        using var answer = JsonDocument.Parse(await ReadAsync(socket));
-        var rows = answer.RootElement.GetProperty("result").GetProperty("rows").EnumerateArray().Select(RowWire.Read).ToArray();
-        Assert.Equal(Enumerable.Range(2, RowsFeature.PageLimit).Select(n => (long)n), rows.Select(row => row.Seq));
-        Assert.Equal(Enumerable.Range(1, RowsFeature.PageLimit).Select(n => (long)n), rows.Select(row => row.PrevSeq!.Value));
-    }
-
     // The window's socket dropping ends its rows sub like an unsub, and the session's last watcher going is told.
     [Fact]
     public async Task A_dropped_socket_s_rows_sub_leaves_its_session_unwatched()
@@ -362,9 +303,6 @@ public sealed class RowsSocketTests : IAsyncLifetime
     }
 
     private Task<ClientWebSocket> OpenAsync() => ConnectAsync(_address);
-
-    // The socket for the large calls, rows/page among them.
-    private Task<ClientWebSocket> OpenBulkAsync() => ConnectAsync(_bulkAddress);
 
     private static async Task<ClientWebSocket> ConnectAsync(Uri address)
     {

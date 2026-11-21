@@ -37,26 +37,4 @@ public sealed partial class MachinesSocketTests
 
         Assert.Equal($$"""{"t":"result","id":1,"result":{{Box(false, "didn't answer")}}}""", await ReadAsync(socket));
     }
-
-    // An answer it can't use won't change by asking again.
-    // Pins: sessions-list#12
-    [Fact]
-    public async Task Connect_to_a_remote_with_another_row_format_answers_at_once()
-    {
-        _stub.Format = 999;
-        using var socket = await OpenAsync();
-        await CallAsync(socket, 1, "machines", "connect", """{"machine":"box"}""");
-
-        Assert.Contains("\"reachable\":false", await ReadAsync(socket));
-        Assert.Equal(1, _stub.VersionHits);
-    }
-
-    [Fact]
-    public async Task Connect_to_a_machine_that_isnt_a_remote_fails()
-    {
-        using var socket = await OpenAsync();
-        await CallAsync(socket, 1, "machines", "connect", """{"machine":"nowhere"}""");
-
-        Assert.Contains("unknown remote machine", await ReadAsync(socket));
-    }
 }

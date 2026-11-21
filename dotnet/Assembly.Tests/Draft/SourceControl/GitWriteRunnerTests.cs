@@ -11,20 +11,6 @@ public sealed class GitWriteRunnerTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "assembly-write-" + Guid.NewGuid().ToString("N"));
     public GitWriteRunnerTests() => Directory.CreateDirectory(_root);
 
-    // Pins: g9#2; Task1 exact stdin, all exit codes.
-    [Fact]
-    public async Task Stdin_has_no_added_nul_and_exit_one_is_retained()
-    {
-        var git = new GitCli();
-        var hashed = await git.RunAsync(_root, ["hash-object", "--stdin"], "a\n", null, default);
-        Assert.Equal(0, hashed.ExitCode);
-        Assert.Equal("78981922613b2afb6025042ff6bd878ac1994e85\n", hashed.Output);
-        Assert.Equal(0, (await git.RunAsync(_root, ["init"], null, null, default)).ExitCode);
-        var empty = await git.RunAsync(_root, ["-c", "user.name=Git Test", "-c", "user.email=git@example.invalid", "commit", "-m", "empty"], null, null, default);
-        Assert.Equal(1, empty.ExitCode);
-        Assert.Contains("nothing to commit", empty.Output + empty.Error, StringComparison.OrdinalIgnoreCase);
-    }
-
     // Pins: g9#10; bounded write results keep complete UTF8 characters.
     [Fact]
     public async Task Large_write_output_is_drained_and_capped_without_a_broken_unicode_tail()

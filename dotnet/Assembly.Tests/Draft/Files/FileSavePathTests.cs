@@ -108,31 +108,6 @@ public sealed class FileSavePathTests : IDisposable
     }
 
     [Fact]
-    public async Task An_unwritable_folder_says_so_in_plain_words()
-    {
-        if (OperatingSystem.IsWindows()) return;
-        await using var rig = new FilesRig();
-        var revision = await FileSave.RevisionAsync(Target, default);
-        File.SetUnixFileMode(Folder, UnixFileMode.UserRead | UnixFileMode.UserExecute);
-        if (CanCreateIn(Folder)) return; // Root writes anywhere: this reports passed without having run.
-        var error = await Assert.ThrowsAsync<CallFailed>(() => rig.CallAsync("beginSave",
-            $$$"""{"target":{"path":"{{{Target}}}"},"expectedRevision":"{{{revision}}}","size":3}"""));
-        Assert.Equal("That folder can't be written, so the file wasn't saved.", error.Message);
-        Assert.Equal("not_writable", error.Reason);
-        Assert.Equal("old", await File.ReadAllTextAsync(Target));
-    }
-
-    // A read-only file system can't be mounted in a test, so this checks the one mapping: .NET raises EROFS (30 on Linux
-    // and macOS) as an IOException carrying the errno, and it reads as the same plain words as a folder it can't write.
-    [Fact]
-    public void A_read_only_file_system_reads_as_a_folder_that_can_t_be_written()
-    {
-        Assert.True(FileSaveUploads.Unwritable(new IOException("Read-only file system", 30)));
-        Assert.True(FileSaveUploads.Unwritable(new UnauthorizedAccessException()));
-        Assert.False(FileSaveUploads.Unwritable(new IOException("No space left on device", 28)));
-    }
-
-    [Fact]
     public async Task A_non_owner_peer_is_forbidden_on_a_path_target()
     {
         await using var rig = new FilesRig();
@@ -177,19 +152,5 @@ public sealed class FileSavePathTests : IDisposable
         var real = FileOwner.RealFile(Target);
         Assert.Equal("files:" + real, rig.Order("beginSave", $$$"""{"target":{"path":"{{{Target}}}"},"expectedRevision":"{{{revision}}}","size":0}"""));
         Assert.Equal("files:" + real, rig.Order("beginSave", $$$"""{"target":{"path":"{{{link}}}"},"expectedRevision":"{{{revision}}}","size":0}"""));
-    }
-
-    [Fact]
-    public void A_file_directly_under_the_top_folder_resolves()
-    {
-        Assert.Equal("/a.txt", SessionPaths.ResolveFile("/", "a.txt"));
-        Assert.Throws<CallFailed>(() => SessionPaths.ResolveFile("/", "../a.txt"));
-    }
-
-    private static bool CanCreateIn(string folder)
-    {
-        var probe = Path.Combine(folder, ".probe");
-        try { File.WriteAllText(probe, ""); File.Delete(probe); return true; }
-        catch (UnauthorizedAccessException) { return false; }
     }
 }

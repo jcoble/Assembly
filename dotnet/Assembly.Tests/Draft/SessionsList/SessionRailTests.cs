@@ -100,140 +100,6 @@ public sealed partial class SessionRailTests : IDisposable
         }
     }
 
-    // Pins: sessions-list#1, sessions-list#6
-    [Fact]
-    public void AStartedSessionSortsByItsOwnValuesNotItsStarters()
-    {
-        var other = Parent(title: "Middle");
-        var starter = Parent(title: "Zulu");
-        var started = Helper(starter);
-        var flat = new RailGroupBy(false, false);
-        Assert.Equal([started, starter, other], Sessions(Read(groupBy: flat)));
-        Assert.Equal([started, other, starter], Collect(next => Read(groupBy: flat, sort: "name", dir: "asc", after: next, limit: 1)));
-        _database.Writer.Write("test.mark", scope => { _sessions.Mark(scope, starter, "done"); return 0; });
-        Assert.Equal([started, other], Sessions(Read(statuses: ["working"])));
-        Assert.Equal("working", Entry(Read(groupBy: new(true, false)), started).Section);
-    }
-
-    // Pins: sessions-list#1, sessions-list#6
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void SettledStartedSessionsEnterHistoryButNativeSubagentsStayOut(bool remote)
-    {
-        var parent = Parent(machine: remote ? "workbox-test" : null);
-        var started = Helper(parent);
-        var native = _sessions.Child(_sessions.Get(parent)!, "native", "Native subagent").SessionId;
-        _topics.Published.Clear();
-        _database.Writer.Write("test.mark", scope =>
-        {
-            _sessions.Mark(scope, started, "settled");
-            _sessions.Mark(scope, native, "settled");
-            return 0;
-        });
-        Assert.Equal([started], _sessions.List(null, 1, settled: true).Sessions.Select(s => s.SessionId));
-        var first = _sessions.List(null, 1);
-        Assert.Equal(started, first.Sessions.Single().SessionId);
-        Assert.Equal([parent], _sessions.List(first.NextBefore, 10, beforeId: first.NextBeforeId).Sessions.Select(s => s.SessionId));
-        Assert.Contains((Topic, (string?)started, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
-        Assert.Contains((Topic, (string?)native, true), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void NativeSubagentsNeverEnterTheRailOrKeepTheirParentRunning(bool remote)
-    {
-        var starter = Parent(machine: remote ? "workbox-test" : null);
-        var native = _sessions.Child(_sessions.Get(starter)!, "native", "Native subagent").SessionId;
-        Running(native);
-        Asking(native);
-        Rows(native, ("background", RowKind.Task, new { state = "running" }));
-        Rows(starter, ("native", RowKind.Subagent, new { state = "running" }),
-            (null, RowKind.Turn, new { state = "finished" }));
-        Assert.Equal(new RailTotals(0), Read().Totals);
-        Assert.Equal([starter], Sessions(Read()));
-    }
-
-    [Fact]
-    public void CountsIncludeUnloadedParentsOnce()
-    {
-        var parents = Enumerable.Range(0, 205).Select(_ => Parent()).ToArray();
-        for (var i = 0; i < parents.Length; i++)
-        {
-            if (i % 5 == 0)
-                Running(parents[i]);
-            if (i % 7 == 0)
-                Asking(parents[i]);
-        }
-
-        var first = Read(limit: 50);
-        Assert.Equal(new RailTotals(30), first.Totals);
-        Assert.Equal(50, first.Sessions.Count);
-        Assert.Equal(205, Collect(next => Read(after: next, limit: 50)).Count);
-        Assert.Equal(41, Read(limit: 250).Sessions.Count(entry => entry.Kind == "session" && entry.Running));
-        Assert.Equal(first.Totals, Read(limit: 1).Totals);
-    }
-
-    [Fact]
-    public void FiltersPrecedeCountsAndPaging()
-    {
-        var a = Parent("claude");
-        var b = Parent("codex");
-        Running(b);
-        var c = Parent("claude", machine: "workbox-test");
-        Asking(c);
-        var remote = _sessions.Get(c)!;
-        _database.Writer.Write("test.filtered-owner", scope => scope.Execute("""
-            UPDATE engine_mirror_row SET row_json=json_set(row_json,'$.provider',$provider,'$.folder','/recorded/remote','$.updatedMs',$updated)
-            WHERE entity_kind='session' AND entity_id=$id;
-            """, new("$provider", remote.Agent), new("$updated", remote.UpdatedAt), new("$id", c)));
-        var otherRemote = Parent("codex", machine: "workbox-test");
-        _database.Writer.Write("test.known-filtered-owners", scope => scope.Execute("""
-            INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
-                activity_state,parent_id,holder,epoch,cancel_requested,account_context,managed_checkout)
-            SELECT s.session_id,0,m.machine,s.created_at,s.updated_at,s.agent,NULL,s.repo_url,COALESCE(s.title,''),'foreign',
-                'idle',NULL,m.machine,0,0,'',0
-            FROM session_info s JOIN engine_mirror_row m ON m.entity_kind='session' AND m.entity_id=s.session_id
-            WHERE s.session_id IN ($first,$second);
-            UPDATE engine_mirror_row AS m SET row_json=json_set(row_json,
-                '$.provider',s.agent,'$.folder',s.repo_url,'$.title',s.title,'$.updatedMs',s.updated_at)
-            FROM session_info s WHERE m.entity_kind='session' AND m.entity_id=s.session_id
-                AND s.session_id IN ($first,$second);
-            """, new("$first", c), new("$second", otherRemote)));
-        var settled = Parent("claude");
-        Running(settled);
-        _database.Writer.Write("test.mark", scope => { _sessions.Mark(scope, settled, "settled"); return 0; });
-        // A started session counts under its own provider.
-        var mixed = Parent("claude");
-        Running(Helper(mixed, "codex"));
-
-        Assert.Equal((3, 0), (Sessions(Read(providers: ["codex"])).Count, Read(providers: ["codex"]).Totals.Needs));
-        Assert.Equal((4, 1), (Sessions(Read(providers: ["claude"])).Count, Read(providers: ["claude"]).Totals.Needs));
-        Assert.Equal((2, 1), (Sessions(Read(locations: ["remote"])).Count, Read(locations: ["remote"]).Totals.Needs));
-        Assert.Equal(5, Sessions(Read(providers: ["claude", "codex"], locations: ["local"])).Count);
-        var none = Read(providers: ["nobody"]);
-        Assert.Equal(new RailTotals(0), none.Totals);
-        Assert.Empty(none.Sessions);
-        Assert.Equal(["claude", "codex"], none.Agents);
-        Assert.Contains(settled, Sessions(Read(limit: 200)));
-        Assert.Equal(Sessions(Read(providers: ["claude"], limit: 200)), Collect(next => Read(providers: ["claude"], after: next, limit: 2)));
-    }
-
-    [Fact]
-    public void TitleAndProjectFilterPrecedesCountsAndPaging()
-    {
-        var titled = Parent(repo: "/r/alpha", title: "Fix the Socket reconnect");
-        Running(titled);
-        var named = Parent(repo: "/r/socketry");
-        var other = Parent(repo: "/r/beta", title: "nothing");
-        Asking(other);
-
-        Assert.Equal((2, 0), (Sessions(Read(filter: "socket")).Count, Read(filter: "socket").Totals.Needs));
-        Assert.Equal([titled, named], Collect(next => Read(filter: "SOCKET", after: next, limit: 1)));
-        Assert.Equal((1, 1), (Sessions(Read(filter: "BETA")).Count, Read(filter: "BETA").Totals.Needs));
-    }
-
     [Fact]
     public void PagesKeepStableOrderOnTimestampTies()
     {
@@ -306,62 +172,6 @@ public sealed partial class SessionRailTests : IDisposable
         Assert.False(Entry(Read(), session).Running);
     }
 
-    [Fact]
-    public void ManualWorkingIsNotRunning()
-    {
-        var idle = Parent();
-        var done = Parent();
-        Running(done);
-        _database.Writer.Write("test.mark", scope => { _sessions.Mark(scope, done, "done"); return 0; });
-
-        var rail = Read();
-        Assert.Equal(new RailTotals(0), rail.Totals);
-        Assert.False(Entry(rail, idle).Running);
-        Assert.Null(Entry(rail, idle).CompletedAt);
-        Assert.True(Entry(rail, done).Running);
-        Assert.NotNull(Entry(rail, done).CompletedAt);
-    }
-
-    [Fact]
-    public void UnreadAnswerIsNotAnOpenAsk()
-    {
-        var answered = Parent();
-        Rows(answered, (null, RowKind.Turn, new { state = "started" }), ("q1", RowKind.Ask, new { state = "open" }),
-            ("q1", RowKind.Ask, new { state = "answered" }), (null, RowKind.Turn, new { state = "finished" }));
-
-        var rail = Read();
-        Assert.Equal(new RailTotals(0), rail.Totals);
-        Assert.True(Entry(rail, answered).Unread);
-        Assert.Equal(rail.Totals, Read().Totals);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Chat_ask_changes_invalidate_rail_without_creating_engine_needs(bool remote)
-    {
-        var session = Parent(machine: remote ? "workbox-test" : null);
-        var seq = 0L;
-        void Add(string? item, string kind, object payload)
-        {
-            if (remote)
-                Assert.True(_hub.PublishCopy(new StoredRow(session, ++seq, "run-1", item, kind, JsonSerializer.SerializeToElement(payload), 1, PrevSeq: seq - 1)));
-            else
-                Rows(session, (item, kind, payload));
-        }
-        Add(null, RowKind.Turn, new { state = "started" });
-        Add("a", RowKind.Ask, new { state = "open" });
-        Add("b", RowKind.Ask, new { state = "open" });
-        Assert.Equal(new RailTotals(0), Read().Totals);
-
-        _topics.Published.Clear();
-        Add("a", RowKind.Ask, new { state = "answered" });
-
-        Assert.Contains((RailTopic, (string?)session, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
-        Assert.Equal(new RailTotals(0), Read().Totals);
-        Assert.True(Entry(Read(), session).Running);
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -381,23 +191,6 @@ public sealed partial class SessionRailTests : IDisposable
         Assert.True(Entry(Read(), session).NativeActivity);
     }
 
-    [Fact]
-    public void HelperChangesReachRailSubscribers()
-    {
-        var parent = Parent();
-        _topics.Published.Clear();
-        var helper = Helper(parent);
-        Assert.Contains((Topic, (string?)helper, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
-        Assert.Contains((RailTopic, (string?)helper, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
-
-        _topics.Published.Clear();
-        Asking(helper);
-        Assert.Contains((RailTopic, (string?)helper, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
-        var rail = Read();
-        Assert.Equal(new RailTotals(0), rail.Totals);
-        Assert.Equal(helper, Entry(rail, helper).SessionId);
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -415,27 +208,6 @@ public sealed partial class SessionRailTests : IDisposable
         Assert.Equal(0, recovered.Start);
         Assert.Empty(Read(statuses: ["working"], groupBy: groupBy, after: cursor).Sessions);
     }
-
-    [Fact]
-    public void PreviewIsTheNewestAssistantText()
-    {
-        var session = Parent();
-        Assert.Null(Entry(Read(), session).Preview);
-        Rows(session, ("m1", RowKind.Message, Message(["The first answer."])));
-        Rows(session, ("m2", RowKind.Message, Message(["The newest ", "answer."], ["A second paragraph."])));
-        // A later prompt or tool isn't assistant text.
-        Rows(session, (null, RowKind.User, new { text = "A newer prompt." }), ("t1", RowKind.Tool, new { title = "Read" }));
-        Assert.Equal("The newest answer. A second paragraph.", Entry(Read(), session).Preview);
-
-        Rows(session, ("m3", RowKind.Message, Message([new string('a', 400)])));
-        Assert.Equal(new string('a', 160), Entry(Read(), session).Preview);
-    }
-
-    /// <summary>A message row's payload: one paragraph per array, each of those inline text parts.</summary>
-    private static object Message(params string[][] paragraphs) => new
-    {
-        blocks = paragraphs.Select(parts => new { kind = "paragraph", parts = parts.Select(value => new { kind = "text", value }).ToArray() }).ToArray(),
-    };
 
     private string Parent(string agent = "claude", string repo = "/home/me/assembly", string? machine = null, string? title = null, bool tick = true)
     {

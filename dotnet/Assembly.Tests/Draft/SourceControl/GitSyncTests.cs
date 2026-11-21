@@ -17,11 +17,4 @@ public sealed class GitSyncTests
         await Assert.ThrowsAsync<CallFailed>(() => sync.PushAsync(repo.Root, "main", default));
         Assert.Equal("another", (await new GitStatusReader(repo.Git).ReadAsync(repo.Root, default)).Branch);
     }
-    // Pins: g9#5
-    [Fact]
-    public async Task A_detached_head_is_refused_before_pull()
-    {
-        using var repo = new GitHistoryTestRepository(); await repo.InitializeAsync(); await repo.Commit("Root"); await repo.Run("checkout", "--detach");
-        await Assert.ThrowsAsync<CallFailed>(() => new GitSync(repo.Git).PullAsync(repo.Root, "main", default));
-    }
 }

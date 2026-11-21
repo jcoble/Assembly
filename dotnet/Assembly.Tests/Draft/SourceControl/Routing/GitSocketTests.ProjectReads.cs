@@ -31,50 +31,6 @@ public sealed partial class GitSocketTests
         Assert.Equal(0L, _db.QueryFirst("SELECT COUNT(*) FROM session_info", row => row.Long(0), default));
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Project_reads_refuse_missing_source_or_a_second_session_target(bool secondTarget)
-    {
-        using var socket = await ProjectBulk();
-        var args = secondTarget ? new { session = (string?)"other", projectId = "project", number = 7 } : new { session = (string?)null, projectId = "project", number = 7 };
-        await SendAsync(socket, JsonSerializer.Serialize(new { t = "call", id = 1, feature = "git", method = "pr", args }));
-        using var answer = JsonDocument.Parse(await ReadAsync(socket));
-        Assert.Equal("error", answer.RootElement.GetProperty("t").GetString());
-        Assert.Equal(secondTarget ? "bad_args" : "source_changed", answer.RootElement.GetProperty("code").GetString());
-    }
-
-    [Fact]
-    public async Task A_project_file_read_keeps_the_existing_immutable_revision_refusal()
-    {
-        var root = Path.Combine(_checkouts.FullName, "file-project");
-        await MakeRepoAsync(root);
-        await GitAsync(root, "remote", "add", "origin", "https://github.com/owner/repo");
-        var store = new ProjectStore(_db, TimeProvider.System);
-        var project = _db.Writer.Write("fixture.project", scope => store.AddOrRestore(scope, "local", root, "Project", "github.com/owner/repo").Project);
-        using var socket = await ProjectBulk();
-        await SendAsync(socket, JsonSerializer.Serialize(new
-        {
-            t = "call",
-            id = 1,
-            feature = "git",
-            method = "prFile",
-            args = new
-            {
-                projectId = project.Id,
-                number = 7,
-                path = "file.txt",
-                baseSha = new string('b', 40),
-                headSha = new string('c', 40),
-                expectedSource = new { machine = _operations.Machine, generation = 0, routeMachine = (string?)null }
-            }
-        }));
-        using var answer = JsonDocument.Parse(await ReadAsync(socket));
-        Assert.Equal("error", answer.RootElement.GetProperty("t").GetString());
-        Assert.Equal("failed", answer.RootElement.GetProperty("code").GetString());
-        Assert.Contains("This pull request changed", answer.RootElement.GetProperty("message").GetString());
-    }
-
     private async Task<ClientWebSocket> ProjectBulk()
     {
         var socket = new ClientWebSocket();

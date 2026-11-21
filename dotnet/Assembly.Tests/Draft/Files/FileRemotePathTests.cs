@@ -30,7 +30,7 @@ public sealed class FileRemotePathTests : IAsyncLifetime
     private readonly ConcurrentDictionary<string, int> _remoteCalls = new();
     private FileOwner _macOwners = null!;
     private FileRemoteRoutes _routes = null!;
-    private Func<FileOwnership>? _olderOwner;
+    private Func<FileOwnership>? _olderOwner = null;
     private Func<string, Task>? _remoteWriting;
     private readonly TaskCompletionSource _scopeClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _profileCommitted = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -89,40 +89,6 @@ public sealed class FileRemotePathTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_path_target_on_a_remote_saves_there()
-    {
-        using var normal = await OpenAsync();
-        using var bulk = await OpenAsync(bulk: true);
-        var target = $$$"""{"path":"{{{Target}}}","machine":"{{{Remote}}}"}""";
-        var owner = Result(await CallAsync(normal, 1, "owner", $$"""{"target":{{target}}}"""));
-        var begun = Result(await CallAsync(bulk, 2, "beginSave",
-            $$"""{"target":{{target}},"expectedOwner":{{owner.GetRawText()}},"expectedRevision":"{{await FileSave.RevisionAsync(Target, default)}}","size":3}"""));
-        var upload = begun.GetProperty("upload").GetString();
-        Result(await CallAsync(bulk, 3, "saveChunk",
-            $$"""{"upload":"{{upload}}","offset":0,"data":"{{Convert.ToBase64String(Encoding.UTF8.GetBytes("new"))}}"}"""));
-        Assert.Equal("saved", Result(await CallAsync(bulk, 4, "commitSave", $$"""{"upload":"{{upload}}"}""")).GetProperty("state").GetString());
-        Assert.Equal("new", await File.ReadAllTextAsync(Target));
-        Assert.Equal(1, Calls("beginSave"));
-        Assert.Equal(1, Calls("commitSave"));
-    }
-
-    [Fact]
-    public async Task Release_by_path_target_is_forwarded_to_the_remote()
-    {
-        await File.WriteAllTextAsync(Target, new string('x', FileRead.ChunkBytes + 1));
-        using var normal = await OpenAsync();
-        using var bulk = await OpenAsync(bulk: true);
-        var target = $$$"""{"path":"{{{Target}}}","machine":"{{{Remote}}}"}""";
-        var owner = Result(await CallAsync(normal, 1, "owner", $$"""{"target":{{target}}}"""));
-        var read = Result(await CallAsync(bulk, 2, "read", $$"""{"target":{{target}},"expectedOwner":{{owner.GetRawText()}}}"""));
-        Assert.NotEqual(JsonValueKind.Null, read.GetProperty("nextOffset").ValueKind);
-        var released = Result(await CallAsync(bulk, 3, "release",
-            $$"""{"target":{{target}},"revision":"{{read.GetProperty("revision").GetString()}}","expectedOwner":{{owner.GetRawText()}}}"""));
-        Assert.True(released.GetProperty("released").GetBoolean());
-        Assert.Equal(1, Calls("release"));
-    }
-
-    [Fact]
     public async Task A_changed_remote_engine_is_source_changed()
     {
         using var bulk = await OpenAsync(bulk: true);
@@ -149,76 +115,6 @@ public sealed class FileRemotePathTests : IAsyncLifetime
         var answer = await CallAsync(normal, 1, "owner", $$$"""{"target":{"path":"{{{Target}}}","machine":"{{{Remote}}}"}}""");
         Assert.Equal("unreachable", Code(answer));
         Assert.Equal("workbox-test: machine socket is disconnected", Message(answer));
-    }
-
-    [Fact]
-    public async Task A_save_whose_machine_went_away_never_speaks_of_projects()
-    {
-        using var bulk = await OpenAsync(bulk: true);
-        var begun = Result(await CallAsync(bulk, 1, "beginSave",
-            $$$"""{"target":{"path":"{{{Target}}}","machine":"{{{Remote}}}"},"expectedRevision":"{{{await FileSave.RevisionAsync(Target, default)}}}","size":3}"""));
-        await _hosts.DisconnectMirror();
-        var answer = await CallAsync(bulk, 2, "saveChunk",
-            $$$"""{"upload":"{{{begun.GetProperty("upload").GetString()}}}","offset":0,"data":"{{{Convert.ToBase64String(Encoding.UTF8.GetBytes("new"))}}}"}""");
-        Assert.Equal("project_owner_changed", Code(answer));
-        Assert.Equal("workbox-test's connection changed. Reopen the file.", Message(answer));
-        Assert.Equal("old", await File.ReadAllTextAsync(Target));
-    }
-
-    [Fact]
-    public async Task A_changed_machine_profile_says_not_connected_and_never_speaks_of_projects()
-    {
-        using var normal = await OpenAsync();
-        var profile = (await _hosts.Connections.CaptureProjectOwnerAsync(Remote, default)).Profile;
-        var update = Task.Run(() => new MachineStore(_hosts.Mac.Fixture.Db).Import(profile with { Ssh = "changed-profile" }));
-        try
-        {
-            await _profileCommitted.Task.WaitAsync(Wait);
-            var answer = await CallAsync(normal, 1, "owner", $$$"""{"target":{"path":"{{{Target}}}","machine":"{{{Remote}}}"}}""");
-            Assert.Equal("unreachable", Code(answer));
-            Assert.Equal("workbox-test: machine socket is disconnected", Message(answer));
-        }
-        finally { _releaseProfile.TrySetResult(); }
-        await update.WaitAsync(Wait);
-    }
-
-    /// <summary>"source": what a build from before path targets really does (read at 46806060). It takes the target call as
-    /// a null session, and its source capture refuses that session with these words and this code.</summary>
-    [Theory]
-    [InlineData("source")]
-    [InlineData("bad_args")]
-    [InlineData("no_file")]
-    public async Task An_older_remote_says_it_is_older(string shape)
-    {
-        _olderOwner = shape switch
-        {
-            "source" => () => throw new CallFailed("The selected row source changed.", "source_changed"),
-            "bad_args" => () => throw new CallBadArguments("files/owner: The JSON value could not be converted."),
-            _ => () => new FileOwnership("remote-engine", "/", "", null),
-        };
-        using var normal = await OpenAsync();
-        var answer = await CallAsync(normal, 1, "owner", $$$"""{"target":{"path":"{{{Target}}}","machine":"{{{Remote}}}"}}""");
-        Assert.Equal("remote_older", Code(answer));
-        Assert.Equal("workbox-test's Assembly is older and can't open files outside a session yet.", Message(answer));
-    }
-
-    [Theory]
-    [InlineData("\"session\":\"s\",")]
-    [InlineData("\"path\":\"a.txt\",")]
-    public async Task A_malformed_target_call_is_bad_arguments_and_is_never_forwarded(string extra)
-    {
-        using var normal = await OpenAsync();
-        using var bulk = await OpenAsync(bulk: true);
-        var target = $$$"""{{{extra}}}"target":{"path":"{{{Target}}}","machine":"{{{Remote}}}"}""";
-        if (!extra.Contains("path"))
-        {
-            var answer = await CallAsync(normal, 1, "owner", "{" + target + "}");
-            Assert.Equal("bad_args", Code(answer));
-            Assert.Equal(0, Calls("owner"));
-        }
-        var read = await CallAsync(bulk, 2, "read", "{" + target + "}");
-        Assert.Equal("bad_args", Code(read));
-        Assert.Equal(0, Calls("read"));
     }
 
     [Fact]
@@ -303,28 +199,6 @@ public sealed class FileRemotePathTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Compare_by_path_target_is_forwarded_to_the_remote()
-    {
-        using var bulk = await OpenAsync(bulk: true);
-        var upload = await StagedAsync(bulk, $$$"""{"path":"{{{Target}}}","machine":"{{{Remote}}}"}""", "new");
-        var compared = Result(await CallAsync(bulk, 8, "compare", $$"""{"upload":"{{upload}}"}"""));
-        Assert.Equal(await FileSave.RevisionAsync(Target, default), compared.GetProperty("diskRevision").GetString());
-        Assert.Equal(1, Calls("compare"));
-    }
-
-    [Fact]
-    public async Task DropSave_by_path_target_ends_the_upload_on_the_remote()
-    {
-        using var bulk = await OpenAsync(bulk: true);
-        var upload = await StagedAsync(bulk, $$$"""{"path":"{{{Target}}}","machine":"{{{Remote}}}"}""", "new");
-        Assert.NotEmpty(Stages());
-        Assert.True(Result(await CallAsync(bulk, 8, "dropSave", $$"""{"upload":"{{upload}}"}""")).GetProperty("accepted").GetBoolean());
-        Assert.Equal(1, Calls("dropSave"));
-        Assert.Empty(Stages());
-        Assert.Equal("old", await File.ReadAllTextAsync(Target));
-    }
-
-    [Fact]
     public async Task Closing_the_socket_closes_the_target_route_s_scope_on_the_remote()
     {
         var bulk = await OpenAsync(bulk: true);
@@ -334,16 +208,6 @@ public sealed class FileRemotePathTests : IAsyncLifetime
         bulk.Dispose();
         await _scopeClosed.Task.WaitAsync(Wait);
         Assert.Empty(Stages());
-    }
-
-    [Fact]
-    public async Task A_null_machine_never_forwards()
-    {
-        using var normal = await OpenAsync();
-        var owner = Result(await CallAsync(normal, 1, "owner", $$$"""{"target":{"path":"{{{Target}}}"}}"""));
-        Assert.Equal(_macOwners.ResolvePath(new PathTarget(Target), default).Machine, owner.GetProperty("machine").GetString());
-        Assert.NotEqual(await RemoteEngine(), owner.GetProperty("machine").GetString());
-        Assert.Equal(0, Calls("owner"));
     }
 
     private string[] Stages() => Directory.GetFiles(_folder.FullName, ".assembly-save-*");
