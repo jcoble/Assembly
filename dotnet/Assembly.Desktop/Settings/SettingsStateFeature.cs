@@ -26,6 +26,9 @@ internal sealed class SettingsStateFeature : IFeature, IAsyncDisposable
     private CancellationTokenSource? _watchStop;
     private string? _lastPublished;
     private bool _watching;
+    // Follows BackendClock's _asked pattern: set under Topics._lock -> _gate on subscribe so watcher
+    // teardown can check _topics.HasSubscribers outside _gate without a lock-order inversion.
+    private bool _asked;
     private bool _disposed;
 
     internal SettingsStateFeature(
@@ -61,16 +64,18 @@ internal sealed class SettingsStateFeature : IFeature, IAsyncDisposable
 
     private void EnsureWatching(string initialJson)
     {
+        CancellationTokenSource? start = null;
         lock (_gate)
         {
+            _asked = true;
             if (_disposed || _watching)
                 return;
             _lastPublished = initialJson;
             _watching = true;
-            var watchStop = new CancellationTokenSource();
-            _watchStop = watchStop;
-            _work.Start(Topic, stop => WatchAsync(stop, watchStop));
+            start = new CancellationTokenSource();
+            _watchStop = start;
         }
+        _work.Start(Topic, stop => WatchAsync(stop, start));
     }
 
     private void OnUnsubscribed(string topic, string? key)
@@ -146,12 +151,18 @@ internal sealed class SettingsStateFeature : IFeature, IAsyncDisposable
             foreach (var subscription in subscriptions)
                 _topics.Unsubscribe(subscription);
 
-            CancellationTokenSource? restart = null;
             lock (_gate)
             {
                 if (ReferenceEquals(_watchStop, watchStop))
                     _watchStop = null;
-                if (!_disposed && !hostStop.IsCancellationRequested && _topics.HasSubscribers(Topic))
+                _asked = false;
+            }
+            var hasSubscribers = _topics.HasSubscribers(Topic);
+
+            CancellationTokenSource? restart = null;
+            lock (_gate)
+            {
+                if (!_disposed && !hostStop.IsCancellationRequested && (hasSubscribers || _asked))
                 {
                     restart = new CancellationTokenSource();
                     _watchStop = restart;
