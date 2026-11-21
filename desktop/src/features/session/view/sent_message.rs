@@ -8,11 +8,11 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::core::state::preferences::Preferences;
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::CORNER_BUBBLE;
 
 use super::session_action::{OnAction, SessionAction};
 
-/// The bubble's corners: the design system's radius-xl.
-const BUBBLE_RADIUS: Pixels = px(20.);
 /// The bubble's widest, the approved mock's `.bubble`.
 const BUBBLE_WIDTH: Pixels = px(470.);
 /// A prompt folds past this many lines.
@@ -49,6 +49,7 @@ pub fn shown(text: &str, open: bool) -> (&str, bool) {
 impl RenderOnce for SentMessage {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
+        let look = Look::of(cx);
         let (chat_size, chat_height) =
             Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Chat));
         let (text, long) = shown(&self.text, self.open);
@@ -127,8 +128,10 @@ impl RenderOnce for SentMessage {
                     .py(px(10.))
                     .text_size(chat_size)
                     .line_height(chat_height)
-                    .rounded(BUBBLE_RADIUS)
-                    .bg(theme.secondary)
+                    .rounded(CORNER_BUBBLE)
+                    .bg(look.bubble)
+                    .border_1()
+                    .border_color(look.bubble_border)
                     .gap_1()
                     .when(!text.is_empty(), |bubble| bubble.child(text.to_string()))
                     .children(toggle),

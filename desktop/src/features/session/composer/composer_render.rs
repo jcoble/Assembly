@@ -1,9 +1,11 @@
-//! How the composer draws. One raised box with 12 px corners and no outline at rest, its edge lit by focus, a drag or a
-//! pending answer. At rest it's one slim line when the pane is wide enough: add, the draft, the controls. Content, a
+//! How the composer draws. One raised box in the look's composer colour, with its outline, 20 px corners and its
+//! shadow; the outline turns to the focus ring, the drag colour or amber for focus, a drag or a pending answer. At rest it's one slim line when the pane is wide enough: add, the draft, the controls. Content, a
 //! turn's first five seconds, a pending answer or a drag relaxes it into the draft on its own rows over the controls
 //! (capsule/shape.rs). Under the box sit the new session's sub-bar or the branch, and the hint line. Why something failed
 //! sits above the box, and the "/" list floats just above it.
 
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{CORNER_COMPOSER, composer_shadow};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::composer as ids;
@@ -139,6 +141,7 @@ impl Render for Composer {
         };
         let connecting = self.connecting.is_some();
         let theme = cx.theme();
+        let look = Look::of(cx);
         let offline = (self.offline.as_ref()).map(|machine| {
             SharedString::from(if self.still_offline {
                 format!("{machine} still isn't answering. Send and Stop wait until it does.")
@@ -153,12 +156,12 @@ impl Render for Composer {
         } else if locked {
             theme.warning
         } else {
-            transparent_black()
+            look.composer_border
         };
         let surface = if self.dragging {
             theme.drop_target
         } else {
-            theme.muted
+            look.composer
         };
         let inside = (if shape.one_line {
             h_flex()
@@ -209,10 +212,11 @@ impl Render for Composer {
         let capsule = v_flex()
             .children(self.answer.clone())
             .child(inside)
-            .rounded(px(12.))
+            .rounded(CORNER_COMPOSER)
             .bg(surface)
             .border_1()
             .border_color(edge)
+            .shadow(composer_shadow())
             .on_drag_move::<ExternalPaths>(cx.listener(
                 |composer, event: &DragMoveEvent<ExternalPaths>, _, cx| {
                     let over = event.bounds.contains(&event.event.position);

@@ -9,7 +9,7 @@
 // Later lanes read most of these as they rebuild each screen in the look, so not every one is read yet.
 #![allow(dead_code)]
 
-use gpui_kit::{Pixels, px};
+use gpui_kit::{BoxShadow, Pixels, hsla, point, px};
 
 /// The spacing steps for anything the sheet doesn't size.
 pub const SPACE: [Pixels; 10] = [
@@ -32,7 +32,9 @@ pub const CORNER_PILL: Pixels = px(999.);
 pub const CORNER_FIELD: Pixels = px(12.);
 /// Tiles, the sheet, cards, code blocks, the question card, the error bar.
 pub const CORNER_TILE: Pixels = px(14.);
-/// Message bubbles, popovers, the panel, dialogs.
+/// Message bubbles.
+pub const CORNER_BUBBLE: Pixels = px(18.);
+/// Popovers, the panel, dialogs.
 pub const CORNER_POPOVER: Pixels = px(18.);
 /// The composer.
 pub const CORNER_COMPOSER: Pixels = px(20.);
@@ -90,6 +92,18 @@ pub const CONNECTION_ROW_HEIGHT: Pixels = px(56.);
 pub const FILE_ROW_HEIGHT: Pixels = px(32.);
 /// A group header in the left list.
 pub const GROUP_HEIGHT: Pixels = px(32.);
+
+/// The composer's shadow, black at 30% 10 below and 28 blurred: one of the three things that cast a shadow, with
+/// popovers and dialogs. Black whatever the theme, since a shadow only darkens.
+pub fn composer_shadow() -> Vec<BoxShadow> {
+    vec![BoxShadow {
+        color: hsla(0., 0., 0., 0.3),
+        offset: point(px(0.), px(10.)),
+        blur_radius: px(28.),
+        spread_radius: px(0.),
+        inset: false,
+    }]
+}
 
 /// How a disabled control is drawn: the whole control at this opacity.
 pub const DISABLED_OPACITY: f32 = 0.45;

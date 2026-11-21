@@ -1,11 +1,15 @@
-//! The sessions column uses the kit's outline tabs. Selection and pane drag/drop stay owned by the dock.
+//! The sessions column's tabs (Sessions, Files, Search) as the look's segmented control: an inset track with an
+//! outline, the shown pane's segment in text-1 on the selected fill with the selected line, the others in text-2.
+//! They're drawn here rather than with the kit's tab bar, whose selected tab is fixed to the accent colour. Selection
+//! and pane drag/drop stay owned by the dock.
 
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{CORNER_PILL, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use crate::core::ui::access::Control as _;
+use crate::core::ui::access::ExposedElement as _;
 use crate::core::ui::access::control_ids::side_tab;
 use gpui_kit::component::dock::{DragPanel, TabGroupContext};
-use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _};
+use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -27,19 +31,45 @@ fn tabs(group: &TabGroupContext, cx: &App) -> Vec<(usize, &'static str, bool)> {
         .collect()
 }
 
-/// One tab's root: a click shows its pane, a drag carries it out (unless the group may not be rearranged, as the kit
-/// asks), and a pane dropped on it joins the group there.
-fn tab(group: &TabGroupContext, ix: usize, name: &'static str, cx: &App) -> Tab {
+/// One segment: a click shows its pane, a drag carries it out (unless the group may not be rearranged, as the kit
+/// asks), and a pane dropped on it joins the group there. `shown` draws it as the selected segment.
+fn tab(
+    group: &TabGroupContext,
+    ix: usize,
+    name: &'static str,
+    shown: bool,
+    look: &Look,
+    cx: &App,
+) -> Stateful<Div> {
     let drag = group
         .is_draggable()
         .then(|| group.drag_panel(ix, cx))
         .flatten();
     let drop_target = cx.theme().tokens.drop_target;
     let (select, drop) = (group.clone(), group.clone());
-    Tab::new()
-        .label(name)
-        .control(side_tab(name), name)
+    let hover = look.fill_hover;
+    // A 1px outline on every segment, clear on the unselected ones, so selecting one doesn't shift the row.
+    let (text, fill, line) = match shown {
+        true => (look.text_1, look.fill_selected, look.line_selected),
+        false => (look.text_2, transparent_black(), transparent_black()),
+    };
+    h_flex()
+        .id(("side-tab", ix))
+        .selected_in_tree(Role::Tab, side_tab(name), name, shown)
         .debug_selector(move || format!("side-tab-{name}"))
+        .h_full()
+        .px(SPACE[5])
+        .items_center()
+        .rounded(CORNER_PILL)
+        .border_1()
+        .border_color(line)
+        .bg(fill)
+        .text_color(text)
+        .text_role(TextRole::Meta, cx)
+        .font_weight(FontWeight::MEDIUM)
+        .cursor_pointer()
+        .when(!shown, |tab| tab.hover(move |tab| tab.bg(hover)))
+        .child(name)
         .on_click(move |_, window, cx| {
             select.select_tab(ix,window,cx);
             crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
@@ -99,25 +129,32 @@ impl Render for Preview {
     }
 }
 
-/// The kit supplies the outline shape, selected state, hover, keyboard navigation and horizontal overflow.
+/// The row: the segmented control's inset, outlined track holding one segment per visible pane, then the space a
+/// dropped pane joins at the end.
 pub(super) fn chips(group: &TabGroupContext, _: &mut Window, cx: &mut App) -> AnyElement {
     let tabs = tabs(group, cx);
     if tabs.is_empty() {
         return Empty.into_any_element();
     }
-    let selected = tabs.iter().position(|(_, _, shown)| *shown).unwrap_or(0);
-    TabBar::new("side-tabs")
-        .outline()
-        .small()
-        .h(BAR_HEIGHT)
-        .px_2()
-        .selected_index(selected)
+    let look = Look::of(cx);
+    let track = h_flex()
+        .h_full()
+        .flex_none()
+        .p(SPACE[0])
+        .gap(SPACE[0])
+        .rounded(CORNER_PILL)
+        .bg(look.inset)
+        .border_1()
+        .border_color(look.line)
         .children(
             tabs.into_iter()
-                .map(|(ix, name, _)| tab(group, ix, name, cx)),
-        )
-        // The kit mounts its trailing space only when a suffix or overflow menu is present.
-        .suffix(Empty)
-        .last_empty_space(end(group, cx))
+                .map(|(ix, name, shown)| tab(group, ix, name, shown, &look, cx)),
+        );
+    h_flex()
+        .id("side-tabs")
+        .h(BAR_HEIGHT)
+        .px_2()
+        .child(track)
+        .child(end(group, cx))
         .into_any_element()
 }

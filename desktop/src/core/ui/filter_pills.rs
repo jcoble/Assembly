@@ -6,11 +6,13 @@
 //! each change (`FilterPillsChanged`), reads the picks from `state`, and saves them if it wants to. The old app's
 //! ten-second idle close is dropped: the window keeps no timers.
 
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::CORNER_PILL;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::ExposedElement as _;
 use crate::core::ui::access::control_ids::{filter_back, filter_clear, filter_group, filter_value};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
+use gpui_kit::component::{Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -120,30 +122,29 @@ impl FilterPills {
     }
 }
 
-/// A 26 px round pill: the theme's light primary at medium weight when picked, its secondary fill with muted text
-/// otherwise.
+/// A 26 px round chip, outlined and unfilled as the look draws chips: the chip line and text-2 at rest, and when
+/// picked the selected fill and line with text-1 at medium weight, as a selected row is drawn.
 fn pill(id: impl Into<ElementId>, picked: bool, cx: &App) -> Stateful<Div> {
-    let theme = cx.theme();
-    let (fill, hover, text) = match picked {
-        true => (theme.primary, theme.primary_hover, theme.primary_foreground),
-        false => (
-            theme.secondary,
-            theme.secondary_hover,
-            theme.muted_foreground,
-        ),
+    let look = Look::of(cx);
+    let (fill, line, text) = match picked {
+        true => (look.fill_selected, look.line_selected, look.text_1),
+        false => (transparent_black(), look.line_chip, look.text_2),
     };
+    let hover = look.fill_hover;
     h_flex()
         .id(id)
         .flex_none()
         .h(px(26.))
         .px(px(12.))
-        .rounded(px(999.))
+        .rounded(CORNER_PILL)
         .text_role(TextRole::Meta, cx)
         .bg(fill)
+        .border_1()
+        .border_color(line)
         .text_color(text)
         .when(picked, |pill| pill.font_weight(FontWeight::MEDIUM))
         .cursor_pointer()
-        .hover(move |pill| pill.bg(hover))
+        .when(!picked, |pill| pill.hover(move |pill| pill.bg(hover)))
 }
 
 impl Render for FilterPills {
