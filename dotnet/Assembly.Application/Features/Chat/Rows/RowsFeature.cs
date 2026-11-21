@@ -92,7 +92,7 @@ internal sealed partial class RowsFeature : IFeature
                 bound.EnsureCurrent(); return remote;
             }
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
-            var page = _hub.Page(args.Session, args.Before, Math.Clamp(args.Limit, 1, PageLimit), call.Cancellation);
+            var page = await _hub.PageAsync(args.Session, args.Before, Math.Clamp(args.Limit, 1, PageLimit), call.Cancellation);
             if (bound is not null)
             {
                 bound.Watch(); bound.EnsureCurrent(); return PageJson(page, bound.ActiveRun);

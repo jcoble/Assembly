@@ -96,6 +96,7 @@ internal sealed class RemoteDownload : IAsyncDisposable
     {
         TaskCompletionSource? first;
         lock (_downloading) first = _downloading.GetValueOrDefault(session);
+        _hub.BeginDownload(session);
         try
         {
             if (await StartAsync(session, ct)) _hub.CompleteCopy(session);
@@ -115,6 +116,7 @@ internal sealed class RemoteDownload : IAsyncDisposable
         }
         finally
         {
+            _hub.EndDownload(session);
             lock (_downloading) _downloading.Remove(session);
         }
     }

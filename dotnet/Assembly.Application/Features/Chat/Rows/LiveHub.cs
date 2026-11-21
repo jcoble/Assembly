@@ -23,15 +23,18 @@ public sealed class LiveHub : IDisposable
     private readonly Action<string> _summaryChanged;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, List<LiveSubscription>> _subscribers = [];
+    private readonly DownloadWaits _downloads;
 
     /// <param name="queueLimit">Rows a socket may fall behind before it's closed.</param>
     /// <param name="topics">Where each saved row is also published, on the <c>rows</c> topic under its session.</param>
     /// <param name="summaries">The sessions' summaries, which every saved row updates.</param>
     /// <param name="summaryChanged">Told, under the hub's lock, the session whose summary a row changed.</param>
+    /// <param name="time">The clock a page waiting on a download is bounded by.</param>
     public LiveHub(RowStore store, int queueLimit = 4096, ITopics? topics = null, SessionSummaries? summaries = null,
-        Action<string>? summaryChanged = null)
+        Action<string>? summaryChanged = null, TimeProvider? time = null)
     {
         _store = store;
+        _downloads = new DownloadWaits(time ?? TimeProvider.System);
         _queueLimit = queueLimit;
         _topics = topics;
         _summaries = summaries;
@@ -94,14 +97,18 @@ public sealed class LiveHub : IDisposable
             start = _store.Copies.Start(sessionId, machine, rows, first.Facts);
             Summarize(sessionId, [.. rows.OrderBy(row => row.Seq)]);
         }
+        _downloads.Saved(sessionId);
         return start;
     }
 
     /// <summary>Saves older rows below the copy's first seq. Nothing is pushed and the summary stays: they're older.</summary>
     public IReadOnlyList<StoredRow> Backfill(string sessionId, IReadOnlyList<StoredRow> rows)
     {
+        IReadOnlyList<StoredRow> subagents;
         lock (_gate)
-            return _store.Copies.Backfill(sessionId, rows);
+            subagents = _store.Copies.Backfill(sessionId, rows);
+        _downloads.Saved(sessionId);
+        return subagents;
     }
 
     /// <summary>A forward copy the follower made becomes a copy still downloading.</summary>
@@ -116,6 +123,12 @@ public sealed class LiveHub : IDisposable
         lock (_gate)
             _store.Copies.MarkComplete(sessionId);
     }
+
+    /// <summary>A download of the session runs from now until <see cref="EndDownload"/>; pages below its copy wait on it.</summary>
+    public void BeginDownload(string sessionId) => _downloads.Begin(sessionId);
+
+    /// <summary>The download ended, whole or cut. Every page waiting on it reads again at once.</summary>
+    public void EndDownload(string sessionId) => _downloads.End(sessionId);
 
     /// <summary>
     /// Raised when nobody watches the session's rows any more, by live socket or rows sub, whichever went last; sometimes
@@ -152,6 +165,23 @@ public sealed class LiveHub : IDisposable
     {
         lock (_gate)
             return _store.PageBefore(sessionId, before, limit, cancel);
+    }
+
+    /// <summary>
+    /// A page, as <see cref="Page"/> reads it, of a session that may be a saved copy still downloading (TSK-1692). Such
+    /// a page says there is more history while the copy isn't whole. A page with no rows below a running download waits
+    /// for its next chunk, its end, or 10 s, then reads again; with no download running it answers at once.
+    /// </summary>
+    public async Task<RowPage> PageAsync(string sessionId, long before, int limit, CancellationToken ct)
+    {
+        // The signal is taken before the read, so a chunk saved between the two still wakes the wait.
+        var next = _downloads.Next(sessionId);
+        var page = Page(sessionId, before, limit, ct);
+        if (_store.Copies.RemoteCopyOf(sessionId) is not { Complete: false }) return page;
+        if (page.Rows.Count > 0 || next is null) return page with { HasBefore = true };
+        await _downloads.WaitAsync(next, ct);
+        page = Page(sessionId, before, limit, ct);
+        return page with { HasBefore = page.HasBefore || _store.Copies.RemoteCopyOf(sessionId) is { Complete: false } };
     }
 
     public StoredToolCall? ToolCall(string sessionId, string itemId)
