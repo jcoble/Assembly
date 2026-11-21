@@ -1,56 +1,51 @@
-[Notion](https://app.notion.com/p/409394b0689d8197a38efdfb8d400f84) is the source of truth for Assembly tasks, decisions and all documentation: plans, specs, recon, handoffs and artifact records. Keep task material on its Command Center task and reusable docs in this directory; proof assets live on Google Drive, linked from Notion and PRs.
+[Notion](https://app.notion.com/p/409394b0689d8197a38efdfb8d400f84) is the source of truth for Assembly tasks, decisions and all documentation. Nothing is documented in this repository. Task material (specs, plans, recon, handoffs) goes on its Command Center task, and reusable docs in that directory. Screenshots and videos go on Google Drive, linked from the task and the PR.
 
 # Assembly instructions
 
-These project rules supplement the global instructions in `~/.codex/AGENTS.md`.
+These rules add to the global instructions in `~/.codex/AGENTS.md`. Before changing a file under `desktop/`, `dotnet/` or `scripts/`, read that folder's `AGENTS.md`.
 
-## Purpose and architecture
+## What Assembly is
 
 Assembly is an open-source desktop workbench: half IDE and half chat with AI coding agents, with orchestration, workflows, editor, terminal, Git and browser, using the user's provider subscriptions.
 
-The desktop uses a C# backend and Rust GPUI frontend. The remote relay is a smaller, separate project limited to remote operations the desktop needs. Local/offline use must work; remotes are optional.
+- C# backend in `dotnet/`, Rust GPUI desktop in `desktop/`. The remote relay is a smaller, separate project limited to the remote operations the desktop needs. Local and offline use must work; remotes are optional.
+- Assembly.Engine is the authority for the app's operational state and its transitions: sessions, workflows, the rail and the Build Board. The UI shows the state the backend pushes.
+- The port follows the spec and reviewed plan linked on the task, and the `mac-command-bar` behavior they reference. Report gaps to your parent.
+- The phone is a first-class client that has not been ported yet ([task](https://app.notion.com/p/41f394b0689d817780c8ccbeab5ac1ba)). Until it is, list the phone under what a PR did not cover.
 
-Assembly.Engine is the intended authority for operational state and transitions across sessions, workflows, the rail and Build Board; the UI consumes pushed state. Until the engine work lands, the designated runbook records live coordination state. The completed feature spec and reviewed implementation plan linked on the task govern the port. Follow their referenced `mac-command-bar` behavior and report gaps to the spawning parent.
+## Rules for all code
 
-Mobile is a first-class client. Include affected phone flows when changing shared sessions, relay, orchestration or workflows; verify them on a phone. See [Mobile documentation](https://app.notion.com/p/409394b0689d8163ab23f1907ffb7e88).
-
-## Project requirements
-
-- Fast and light: low CPU/RAM/GPU, responsive interaction and small messages. Cancel unneeded work, dispose of resources and keep idle features idle; animations end.
-- Minimize timers. No repeated timer per rail/list row; a timer must serve a real need, have an owner and stop with it.
-- Keep provider differences at adapter boundaries and shared behavior consistent across configured providers. Idle adapters are disposable; resume the provider session rather than keeping processes alive for switching.
-- Node tooling and one-off scripts use TypeScript. Pin added dependency versions and keep lockfiles current. Use shared theme tokens for colors, spacing and sizes.
+- Read the [coding practices](https://app.notion.com/p/41e394b0689d812d8e77da536e185228) before writing code.
+- Cancel what nobody needs: every async task, background job, timer and long-running operation has an owner that stops it.
+- Fast and light: low CPU, RAM and GPU, responsive interaction, small messages. An idle feature uses nothing. Use spinners and repeating animations sparingly: one spinner can push GPUI to 80-100% CPU.
+- Provider differences stay at the adapter boundary, and shared behavior is the same across providers. Adapters are stock: never patch one. Idle adapters are disposable: resume the provider session instead of keeping a process alive.
+- No API keys for any provider. Assembly uses the user's own sign-ins.
 - Maintain daily packaging of upstream ACP adapter releases.
 
-## Duplicate/Cloned Sessions
-Never run clones or duplicate sessions of yourself. Before starting a session, check what's running and resume the existing one; each feature has one owner until it's fully done
+## Sessions and lanes
 
-## Pull requests
+- One owner per feature until it is done. Never run a clone or duplicate of a session: check what is running and resume it.
+- Keep your open work on your task list. When an item is done or waiting on someone, take the next. When the list is empty, tell your parent. Commit and push often; only PRs wait.
+- The run's runbook holds the agents' coordination state: owners, next step, blockers. It is not app state. It stays within 6,500 characters.
+- [Which model does which work](https://app.notion.com/p/41f394b0689d81908bbceecaab2600a9).
 
-Default to one complete feature per PR, with substeps and fixes kept as commits in that PR. Run focused checks while building, then one feature-level independent acceptance verification and code review. Recheck failed or affected behavior after fixes. Split only for independently shippable parts or a concrete size/risk that makes one PR unsafe to review; record the reason in the task's plan. Technical layers and implementation substeps alone do not justify separate PRs. Follow the global PR-autonomy and merge-permission rules.
+## Tests, pull requests and verification
 
-## Locations and verification
+- While building, run only the tests for what you changed. The whole suites run on GitHub: a ready PR and main run them, and for a draft you start them with `gh workflow run ci.yml --ref <branch>`.
+- One complete feature per PR, with substeps and fixes as commits in it. Split only for parts that ship independently or a size that is unsafe to review, and record the reason in the plan.
+- In the PR description, name the providers your change affects, with one line on why, and write one rough paragraph on the flow through the change as a user would meet it. That paragraph is an estimate of the path, not a step-by-step guide.
+- A ready PR gets one Codex review and one independent check in the real window by a different model. To check a PR or brief its verifier, load the `orient-verification` skill. Fix what they find and recheck only what the fix touched. A second review round is not required, but a real finding from one is still fixed.
+- Check back on your PR for review comments and the verifier's result.
+- Who may OK: Jesse for locked paths (`scripts/locked-paths.txt`) and pinned tests. The controller signs other test changes. Merges to main follow the global rules.
+
+## Where things run
 
 | | Mac | Workbox |
 | --- | --- | --- |
 | Repo | `/Users/blackcolours/dev/work/Assembly` | `/home/blackcolours/dev/work/Assembly` |
 | Worktrees | `/Users/blackcolours/dev/work/worktrees/Assembly/<task>` | `/home/blackcolours/dev/work/worktrees/Assembly/<task>` |
 
-Use isolated app data and realistic seed data from a safe database backup. Never test against the owner's live data/services. Remote tests connect only to Workbox Test (`workbox-test`), never the owner's saved machines. Workbox `/tmp` is disk-backed; do not reconfigure mounts.
-
-When your PR is sent, there will be PR reviews that you should look for and a PR verifier who will verify your work. They may ask you to fix/change something. If you have a parent, they should let you know about these, but if you think of it, check back to see if there are things to fix.
-
-
-## Lanes
-Keep your open work on your task list. When something is done or waiting on someone else, including a PR, take the next item; when the list is empty, tell your parent you're done. Don't wait on commits or pushes: commit and push often, and only PRs wait.
-
-
-## Models
-Use only Claude Code models: Opus 5.5 medium for harder implementation and groundwork, Sonnet 5.5 high for more straightforward work, and Sonnet 5.5 or several Haiku 5.5s for recon. This replaces the global model table for this project.
-
-## Shared UI components
-
-Before building UI, use the components in `desktop/src/components/`; see the [component catalog](https://app.notion.com/p/40e394b0689d81f2962dfc798918a034). Build a missing one there, on GPUI Kit, rather than inside a feature. Rows and cards expand with `core/ui/row_drop_down.rs`; don't write another grower.
+Use isolated app data with realistic seed data. Never test against the owner's live data or services. Remote tests connect only to Workbox Test (`workbox-test`), never the owner's saved machines. Workbox `/tmp` is disk-backed; do not reconfigure mounts.
 
 ## Agent skills
 
