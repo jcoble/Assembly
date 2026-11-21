@@ -61,6 +61,8 @@ internal sealed class TwoHosts : IAsyncDisposable
         public Action<string>? WriteCommitted { get; set; }
         public Func<Task>? Identifying { get; set; }
         public Func<Task>? OpeningBulk { get; set; }
+        /// <summary>An older protocol this host claims: it closes every machine socket's hello as that build does.</summary>
+        public int? ClaimedProtocol { get; set; }
         public bool OmitBulkIdentity { get; set; }
         public string? BulkIdentity { get; set; }
         public int OwnerReadCalls;
@@ -131,7 +133,11 @@ internal sealed class TwoHosts : IAsyncDisposable
             Endpoint = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, engineMachine: Runtime.Machine);
             var bulk = BulkEndpoint = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, bulk: true, engineMachine: OmitBulkIdentity ? null : BulkIdentity ?? Runtime.Machine);
             var terminal = TerminalEndpoint = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, terminal: true, engineMachine: Runtime.Machine);
-            App.Map("/socket", Endpoint.HandleAsync);
+            App.Map("/socket", async context =>
+            {
+                if (ClaimedProtocol is { } older) await RefuseHelloAsync(context, older);
+                else await Endpoint.HandleAsync(context);
+            });
             App.Map("/socket/terminal", async context =>
             {
                 Interlocked.Increment(ref TerminalConnections);
@@ -146,12 +152,21 @@ internal sealed class TwoHosts : IAsyncDisposable
             App.Map("/socket/bulk", async context =>
             {
                 if (OpeningBulk is { } opening) await opening().WaitAsync(context.RequestAborted);
-                await bulk.HandleAsync(context);
+                if (ClaimedProtocol is { } older) await RefuseHelloAsync(context, older);
+                else await bulk.HandleAsync(context);
             });
             App.Lifetime.ApplicationStopping.Register(Endpoint.CloseAll); App.Lifetime.ApplicationStopping.Register(bulk.CloseAll); App.Lifetime.ApplicationStopping.Register(terminal.CloseAll);
             await App.StartAsync();
             _running = true;
             Address = new(App.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
+        }
+        // Reads the hello and closes with 4400, in the words that protocol's build uses: protocol 1 names no number.
+        private static async Task RefuseHelloAsync(Microsoft.AspNetCore.Http.HttpContext context, int protocol)
+        {
+            using var socket = await context.WebSockets.AcceptWebSocketAsync();
+            await socket.ReceiveAsync(new byte[64 * 1024], context.RequestAborted);
+            await socket.CloseAsync((System.Net.WebSockets.WebSocketCloseStatus)4400,
+                protocol == 1 ? "expected a hello" : $"expected a hello with protocol {protocol}", context.RequestAborted);
         }
         public long Through => Runtime.Reader.HighWatermark(default);
         public void Commit(int count, string title = "current", string eventKind = "session.changed") => Fixture.Db.Writer.Write("test.remote", s =>

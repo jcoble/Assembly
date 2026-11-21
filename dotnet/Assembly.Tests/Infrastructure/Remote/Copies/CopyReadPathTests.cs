@@ -216,6 +216,29 @@ public sealed partial class CopyReadPathTests : IAsyncLifetime
         Assert.Empty(_calls);
     }
 
+    // Pins: spec test 18. The remote is still on protocol 1 when this desktop, on protocol 2, connects again.
+    [Fact]
+    public async Task Spec18_a_refused_old_remote_still_opens_saved_sessions_from_the_copy()
+    {
+        Seed("s", 250);
+        Result(await Open(Target("historical")));
+        await DownloadedAsync("s");
+        await _hosts.DisconnectMirror();
+        _hosts.Remote.ClaimedProtocol = 1;
+        _calls.Clear();
+
+        await _hosts.Connections.ConnectionAsync("workbox-test", true, default);
+        var refused = await Assert.ThrowsAsync<MachineUnreachable>(() => _hosts.Connections.ByName("workbox-test")!.ProbeAsync(default));
+        var read = Result(await Open(Target("historical")));
+        var newest = await Page(read, "s");
+        var older = await Page(read, "s", newest.Before);
+
+        Assert.Contains("runs protocol 1; this computer needs 2", refused.Message);
+        Assert.Equal(250, newest.Seqs.Max());
+        Assert.True(older.Seqs.Max() < newest.Seqs.Min());
+        Assert.Empty(_calls);
+    }
+
     // Pins: spec test 19.
     [Fact]
     public async Task Spec19_a_native_subagent_card_opens_its_child_from_the_copy()
