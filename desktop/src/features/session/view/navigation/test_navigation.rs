@@ -87,7 +87,7 @@ impl NavigationFixture {
                 frame["topic"].as_str(),
             ) {
                 (Some("hello"), ..) => vec![Reply::Frame(
-                    json!({"t":"welcome","protocol":1,"machine":"box","engine":state.owner.as_deref().unwrap_or("owner")}),
+                    json!({"t":"welcome","protocol":2,"machine":"box","engine":state.owner.as_deref().unwrap_or("owner")}),
                 )],
                 (Some("call"), Some("sessions"), Some("resolve_source"), _) => vec![result(
                     json!({"machine":"owner","generation":0,"routeMachine":null}),

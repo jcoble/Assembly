@@ -149,7 +149,7 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
     {
         using (var socket = new ClientWebSocket())
         {
-            await socket.ConnectAsync(_address, default); await Send(socket, """{"t":"hello","protocol":1,"token":"wrong"}""");
+            await socket.ConnectAsync(_address, default); await Send(socket, """{"t":"hello","protocol":2,"token":"wrong"}""");
             var result = await socket.ReceiveAsync(new ArraySegment<byte>(new byte[256]), default).WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal(WebSocketMessageType.Close, result.MessageType); Assert.Equal(4401, (int)socket.CloseStatus!);
         }
@@ -319,7 +319,7 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
     private async Task<ClientWebSocket> Open()
     {
         var socket = new ClientWebSocket(); await socket.ConnectAsync(_address, default);
-        await Send(socket, """{"t":"hello","protocol":1,"token":"token"}"""); Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
+        await Send(socket, """{"t":"hello","protocol":2,"token":"token"}"""); Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static CommandResult Result(JsonElement frame) { Assert.Equal("result", frame.GetProperty("t").GetString()); return frame.GetProperty("result").Deserialize(EngineJson.Default.CommandResult)!; }
     private async Task<JsonElement> Location(WebSocket socket, string parent)

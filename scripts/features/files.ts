@@ -28,7 +28,7 @@ class Calls {
     this.socket = new WebSocket(`${api!.replace(/^http/, 'ws')}/socket${bulk ? '/bulk' : ''}`);
     sockets.push(this);
     this.ready = new Promise((resolve, reject) => {
-      this.socket.onopen = () => this.socket.send(JSON.stringify({ t: 'hello', token, protocol: 1 }));
+      this.socket.onopen = () => this.socket.send(JSON.stringify({ t: 'hello', token, protocol: 2 }));
       this.socket.onmessage = event => {
         const frame = JSON.parse(String(event.data)) as Frame;
         if (frame.t === 'welcome') { resolve(); return; }

@@ -70,12 +70,13 @@ impl FakeBackend {
     }
 }
 
-/// Welcomes the token "secret" from machine "box", and refuses any other with 4401, as the backend does.
+/// Welcomes the token "secret" on socket protocol 2 from machine "box", and refuses any other hello with 4401, as the
+/// backend does.
 pub fn hello(frame: &Value) -> Option<Vec<Reply>> {
     (frame["t"] == "hello").then(|| {
-        if frame["token"] == "secret" && frame["protocol"] == 1 {
+        if frame["token"] == "secret" && frame["protocol"] == 2 {
             vec![Reply::Frame(
-                json!({"t": "welcome", "protocol": 1, "machine": "box"}),
+                json!({"t": "welcome", "protocol": 2, "machine": "box"}),
             )]
         } else {
             vec![Reply::Close(4401)]

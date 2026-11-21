@@ -85,9 +85,9 @@ public sealed partial class SocketTests : IAsyncLifetime
 
     [Theory]
     [InlineData("""{"t":"call","id":1,"feature":"notes","method":"echo","args":{}}""", 4400)]
-    [InlineData("""{"t":"hello","token":"socket-token","protocol":2}""", 4400)]
+    [InlineData("""{"t":"hello","token":"socket-token","protocol":3}""", 4400)]
     [InlineData("not json", 4400)]
-    [InlineData("""{"t":"hello","token":"wrong-token","protocol":1}""", 4401)]
+    [InlineData("""{"t":"hello","token":"wrong-token","protocol":2}""", 4401)]
     public async Task A_socket_that_starts_without_a_valid_hello_is_closed_before_any_data(string first, int code)
     {
         using var socket = new ClientWebSocket();
@@ -107,9 +107,9 @@ public sealed partial class SocketTests : IAsyncLifetime
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(_address, CancellationToken.None);
 
-        await SendAsync(socket, """{"t":"hello","token":"socket-token","protocol":1}""");
+        await SendAsync(socket, """{"t":"hello","token":"socket-token","protocol":2}""");
 
-        Assert.Equal($$"""{"t":"welcome","protocol":1,"machine":"test-machine","format":{{Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion}},"commit":{{JsonSerializer.Serialize(BackendBuild.Commit)}},"backendIdentity":{{JsonSerializer.Serialize(BackendBuild.Identity)}},"version":{{JsonSerializer.Serialize(BackendBuild.Version)}}}""", await ReadAsync(socket));
+        Assert.Equal($$"""{"t":"welcome","protocol":2,"machine":"test-machine","format":{{Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion}},"commit":{{JsonSerializer.Serialize(BackendBuild.Commit)}},"backendIdentity":{{JsonSerializer.Serialize(BackendBuild.Identity)}},"version":{{JsonSerializer.Serialize(BackendBuild.Version)}}}""", await ReadAsync(socket));
     }
 
     // Pins: base#10
@@ -376,7 +376,7 @@ public sealed partial class SocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(_address, CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","token":"socket-token","protocol":1}""");
+        await SendAsync(socket, """{"t":"hello","token":"socket-token","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;
     }

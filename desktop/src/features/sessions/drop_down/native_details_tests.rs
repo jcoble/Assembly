@@ -146,7 +146,7 @@ fn fixture(
             frame["topic"].as_str(),
         ) {
             (Some("hello"), ..) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"actual-owner"}),
+                json!({"t":"welcome","protocol":2,"machine":"friendly","engine":"actual-owner"}),
             )],
             (Some("call"), Some("sessions"), Some("resolve_source"), _) => vec![result(
                 json!({"machine":"actual-owner","generation":0,"routeMachine":null}),

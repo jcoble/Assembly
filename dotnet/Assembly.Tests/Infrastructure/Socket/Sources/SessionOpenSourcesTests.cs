@@ -35,7 +35,7 @@ public sealed class SessionOpenSourcesTests
     {
         await using var hosts = new TwoHosts(); await hosts.Start();
         var db = new ObservedDatabase(hosts.Mac.Fixture.Db);
-        var sources = new SessionOpenSources(db, hosts.Mac.Runtime, null);
+        var sources = new SessionOpenSources(db, hosts.Mac.Runtime);
         foreach (var peer in new CallPeer?[] { null, new PhonePeer("paired-device") })
         {
             var error = await Assert.ThrowsAsync<CallFailed>(() => sources.ResolveAsync(new("saved-route"), new(default, "test", Peer: peer)));
@@ -71,7 +71,7 @@ public sealed class SessionOpenSourcesTests
         await using var hosts = new TwoHosts(forwardCommands: true);
         await hosts.Start(); await hosts.StartMirror(); await Ready(hosts);
         var db = hosts.Mac.Fixture.Db;
-        var sources = new SessionOpenSources(db, hosts.Mac.Runtime, hosts.Connections);
+        var sources = new SessionOpenSources(db, hosts.Mac.Runtime);
         // Explicit invalid persisted metadata is a negative fixture, never a positive connection witness.
         db.Writer.Write("test.ambiguous-route", scope => scope.Execute("""
             INSERT INTO engine_mirror(machine,name,generation,through,retained_after,state,updated_ms)
@@ -88,17 +88,21 @@ public sealed class SessionOpenSourcesTests
     }
 
     [Fact]
-    public async Task Offline_route_refuses_and_an_already_resolved_descriptor_is_invalidated_by_disconnect()
+    public async Task An_offline_saved_route_still_resolves_and_a_retired_one_refuses()
     {
         await using var hosts = new TwoHosts(forwardCommands: true);
         await hosts.Start(); await hosts.StartMirror(); await Ready(hosts);
-        var sources = new SessionOpenSources(hosts.Mac.Fixture.Db, hosts.Mac.Runtime, hosts.Connections);
+        var sources = new SessionOpenSources(hosts.Mac.Fixture.Db, hosts.Mac.Runtime);
         var call = Owner();
         var source = await sources.ResolveAsync(new("workbox-test"), call);
         Assert.Equal(Current(hosts), source);
         using var guard = call.SourceGuard!; guard.EnsureCurrent();
+        // A saved session opens from its copy offline (TSK-1692), so a disconnect leaves its route resolvable.
         await hosts.DisconnectMirror();
-        Assert.True(guard.Changed.IsCancellationRequested);
+        guard.EnsureCurrent();
+        Assert.Equal(source, await sources.ResolveAsync(new("workbox-test"), Owner()));
+        hosts.Mac.Fixture.Db.Writer.Write("test.retired-route", scope => scope.Execute(
+            "UPDATE engine_mirror SET state='retired' WHERE machine=$machine", new SqlArg("$machine", hosts.Remote.Fixture.Machine)));
         Assert.Equal("source_changed", Assert.Throws<CallFailed>(guard.EnsureCurrent).Reason);
         Assert.Equal("source_changed", (await Assert.ThrowsAsync<CallFailed>(() => sources.ResolveAsync(new("workbox-test"), Owner()))).Reason);
     }
@@ -108,7 +112,7 @@ public sealed class SessionOpenSourcesTests
     {
         await using var hosts = new TwoHosts(forwardCommands: true);
         await hosts.Start(); await hosts.StartMirror(); await Ready(hosts);
-        var sources = new SessionOpenSources(hosts.Mac.Fixture.Db, hosts.Mac.Runtime, hosts.Connections);
+        var sources = new SessionOpenSources(hosts.Mac.Fixture.Db, hosts.Mac.Runtime);
         var oldCall = Owner();
         var old = await sources.ResolveAsync(new("workbox-test"), oldCall);
         using var oldGuard = oldCall.SourceGuard!;
@@ -166,7 +170,7 @@ public sealed class SessionOpenSourcesTests
     private static async Task<ClientWebSocket> Open(Uri address)
     {
         var socket = new ClientWebSocket(); await socket.ConnectAsync(new UriBuilder(address) { Scheme = "ws", Path = "/socket" }.Uri, default);
-        await socket.SendAsync(Encoding.UTF8.GetBytes("{\"t\":\"hello\",\"protocol\":1,\"token\":\"isolated-token\"}"), WebSocketMessageType.Text, true, default);
+        await socket.SendAsync(Encoding.UTF8.GetBytes("{\"t\":\"hello\",\"protocol\":2,\"token\":\"isolated-token\"}"), WebSocketMessageType.Text, true, default);
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static async Task<JsonElement> Call(WebSocket socket, int id, string args)

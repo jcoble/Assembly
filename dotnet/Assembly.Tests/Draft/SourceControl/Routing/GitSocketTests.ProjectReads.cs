@@ -79,7 +79,7 @@ public sealed partial class GitSocketTests
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri(_address + "/bulk"), default);
-        await SendAsync(socket, """{"t":"hello","token":"git-token","protocol":1}""");
+        await SendAsync(socket, """{"t":"hello","token":"git-token","protocol":2}""");
         await ReadAsync(socket);
         return socket;
     }

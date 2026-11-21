@@ -270,7 +270,7 @@ public sealed class WorkspacesSocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(bulk ? new Uri(address + "/bulk") : address, CancellationToken.None);
-        await Send(socket, "{\"t\":\"hello\",\"token\":\"workspace-test\",\"protocol\":1}");
+        await Send(socket, "{\"t\":\"hello\",\"token\":\"workspace-test\",\"protocol\":2}");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static Task<JsonElement> Call(WebSocket socket, int id, string method, WorkspaceSaveArgs args) =>

@@ -20,6 +20,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     private const string ThisApp = "";
     private readonly HashSet<string> _updating = [];
     private readonly HashSet<string> _started = [];
+    private readonly HashSet<string> _olderProtocol = [];
     private TaskCompletionSource _freed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _restarting;
 
@@ -91,6 +92,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     internal void Begin()
     {
         status.Welcomed = machine => Check(machine, answered: true);
+        status.RefusedForProtocol = machine => work.Start("older protocol update", stop => OlderProtocolAsync(machine, stop));
         if (source.AppNote is { } note) status.Updating(null, false, note);
         // app-dev runs the launch's update itself, so it can start before the desktop is built, and tells this app how it goes.
         if (Environment.GetEnvironmentVariable(DevRemoteSyncStatus.Variable) is { Length: > 0 } path) work.Start("launch update status", async stop =>
@@ -136,6 +138,20 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         }
         status.Updates(machine, items);
         if (reachable && source.StartsRemoteUpdates(machine) && items.Any(item => item.Kind == "backend" && item.State == UpdateItem.Behind)) StartBy(machine);
+    }
+
+    /// <summary>
+    /// A remote that refused this computer's hello for an older protocol gets its backend update, once per app run, through
+    /// the same gate as an automatic one. One this backend doesn't update (a lane remote in dev) is left alone.
+    /// </summary>
+    internal async Task OlderProtocolAsync(string machine, CancellationToken stop)
+    {
+        lock (_olderProtocol) if (!_olderProtocol.Add(machine)) return;
+        if (!source.StartsRemoteUpdates(machine) || status.Items.FirstOrDefault(item => item.Name == machine) is not { CantUpdate: null }) return;
+        var items = UpdateCheck.OlderProtocol(await TryRead(() => remote(machine, stop)), await source.WantedAsync(stop));
+        if (items[0].State != UpdateItem.Behind) return;
+        status.Updates(machine, items);
+        StartBy(machine);
     }
 
     // A check that arrives during an update starts nothing: the end of that update checks every machine again.

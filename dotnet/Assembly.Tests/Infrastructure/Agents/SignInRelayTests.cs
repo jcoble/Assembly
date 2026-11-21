@@ -27,7 +27,7 @@ public sealed class SignInRelayTests
         await h.StartMirror();
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new UriBuilder(h.Mac.Address) { Scheme = "ws", Path = "/socket" }.Uri, default);
-        await Send(socket, """{"t":"hello","token":"isolated-token","protocol":1}""");
+        await Send(socket, """{"t":"hello","token":"isolated-token","protocol":2}""");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString());
         var target = h.Remote.Runtime.Machine;
         Assert.NotEqual("workbox-test", target);

@@ -15,7 +15,7 @@ async function fixture(t: any) {
   const publishDir = path.join(root, 'publish'), sourceDir = path.join(root, 'source'), outputFile = path.join(root, 'out/backend.tar.gz');
   await fs.mkdir(publishDir);
   const source = {
-    'dotnet/Assembly.Infrastructure/Socket/SocketConnection.cs': 'internal const int Protocol = 1;',
+    'dotnet/Assembly.Infrastructure/Socket/SocketConnection.cs': 'internal const int Protocol = 2;',
     'dotnet/Assembly.Application/Features/Chat/Rows/RowStore.cs': 'public const int FormatVersion = 5;'
   };
   for (const [name, text] of Object.entries(source)) { await fs.mkdir(path.dirname(path.join(sourceDir, name)), { recursive: true }); await fs.writeFile(path.join(sourceDir, name), text); }
@@ -44,7 +44,7 @@ test('development bundle contains exact recursive closure, independent hashes an
   assert.equal(hash(manifestBytes), result.manifestSha256);
   const manifest = JSON.parse(manifestBytes.toString());
   assert.equal(manifest.packageType, 'assembly-dotnet-remote-backend-dev'); assert.equal(manifest.buildKind, 'development');
-  assert.equal(manifest.protocol, 1); assert.equal(manifest.format, 5); assert.equal(manifest.target, 'linux-x64');
+  assert.equal(manifest.protocol, 2); assert.equal(manifest.format, 5); assert.equal(manifest.target, 'linux-x64');
   assert.deepEqual(manifest.frameworks, [{ name: 'Microsoft.NETCore.App', version: '10.0.0' }, { name: 'Microsoft.AspNetCore.App', version: '10.0.0' }]);
   assert.deepEqual(entries.slice(1), manifest.files.map((file: any) => file.path));
   for (const file of manifest.files) {
@@ -78,9 +78,9 @@ test('missing required closure preserves an existing output', async t => {
 test('refuses incompatible source protocol and invalid runtime requirements', async t => {
   const input = await fixture(t);
   const protocol = path.join(input.sourceDir, 'dotnet/Assembly.Infrastructure/Socket/SocketConnection.cs');
-  await fs.writeFile(protocol, 'const int Protocol = 2;');
+  await fs.writeFile(protocol, 'const int Protocol = 3;');
   await assert.rejects(writeRemoteBackendPackage(input), /source protocol/);
-  await fs.writeFile(protocol, 'const int Protocol = 1;');
+  await fs.writeFile(protocol, 'const int Protocol = 2;');
   await fs.writeFile(path.join(input.publishDir, 'Assembly.Remote.runtimeconfig.json'), '{}');
   await assert.rejects(writeRemoteBackendPackage(input), /framework requirements/);
   await assert.rejects(fs.stat(input.outputFile), { code: 'ENOENT' });

@@ -61,7 +61,7 @@ public sealed class RemoteWorkflowMirror(string name, Func<RemoteConfig?> curren
             receiver = ReceiveAsync(socket, welcome, subscribed, Wake, connection.Token);
             await SendAsync(socket, json =>
             {
-                json.WriteString("t", "hello"); json.WriteNumber("protocol", 1); json.WriteString("token", remote.Token);
+                json.WriteString("t", "hello"); json.WriteNumber("protocol", Assembly.Infrastructure.Socket.SocketConnection.Protocol); json.WriteString("token", remote.Token);
             }, connection.Token);
             await welcome.Task.WaitAsync(connection.Token);
             await SendAsync(socket, json => { json.WriteString("t", "sub"); json.WriteNumber("id", 0); json.WriteString("topic", "board"); }, connection.Token);

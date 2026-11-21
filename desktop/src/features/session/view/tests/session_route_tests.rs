@@ -34,7 +34,7 @@ async fn supersede_with(use_route: bool, cx: &mut TestAppContext) {
         let id = &frame["id"];
         match (frame["t"].as_str(), frame["method"].as_str()) {
             (Some("hello"), _) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"box","engine":"actual-local"}),
+                json!({"t":"welcome","protocol":2,"machine":"box","engine":"actual-local"}),
             )],
             (Some("call"), Some("resolve_source")) => {
                 if first.is_none() {

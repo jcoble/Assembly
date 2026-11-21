@@ -114,19 +114,19 @@ public sealed partial class ApiTests : IAsyncLifetime
         using var deadline = new CancellationTokenSource(Wait);
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(SocketUri(path), deadline.Token);
-        await socket.SendAsync(Encoding.UTF8.GetBytes($$"""{"t":"hello","token":"{{Token}}","protocol":1}"""), WebSocketMessageType.Text, true, deadline.Token);
+        await socket.SendAsync(Encoding.UTF8.GetBytes($$"""{"t":"hello","token":"{{Token}}","protocol":2}"""), WebSocketMessageType.Text, true, deadline.Token);
         var buffer = new byte[4096];
         var welcome = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), deadline.Token);
         Assert.Equal(WebSocketMessageType.Text, welcome.MessageType);
         using var frame = JsonDocument.Parse(buffer.AsMemory(0, welcome.Count));
         Assert.Equal("welcome", frame.RootElement.GetProperty("t").GetString());
-        Assert.Equal(1, frame.RootElement.GetProperty("protocol").GetInt32());
+        Assert.Equal(2, frame.RootElement.GetProperty("protocol").GetInt32());
         Assert.Equal(RowStore.FormatVersion, frame.RootElement.GetProperty("format").GetInt32());
         Assert.Equal(Environment.MachineName, frame.RootElement.GetProperty("machine").GetString());
         using var refused = new ClientWebSocket();
         refused.Options.SetRequestHeader("Authorization", $"Bearer {Token}");
         await refused.ConnectAsync(SocketUri($"{path}?token={Token}"), deadline.Token);
-        await refused.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","token":"wrong","protocol":1}"""), WebSocketMessageType.Text, true, deadline.Token);
+        await refused.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","token":"wrong","protocol":2}"""), WebSocketMessageType.Text, true, deadline.Token);
         var denied = await refused.ReceiveAsync(new ArraySegment<byte>(buffer), deadline.Token);
         Assert.Equal(WebSocketMessageType.Close, denied.MessageType);
         Assert.Equal(4401, (int)refused.CloseStatus!);
@@ -329,7 +329,7 @@ public sealed partial class ApiTests : IAsyncLifetime
     {
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(SocketUri("/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":2}""");
         var welcome = await ReadFrameAsync(socket);
         Assert.Equal(RowStore.FormatVersion, welcome.GetProperty("format").GetInt32());
         Assert.Equal(Environment.MachineName, welcome.GetProperty("machine").GetString());
@@ -463,7 +463,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         try
         {
             await socket.ConnectAsync(new Uri($"ws://{address.Authority}{path}"), CancellationToken.None).WaitAsync(Wait);
-            await SendTextAsync(socket, JsonSerializer.Serialize(new { t = "hello", token, protocol = 1 }));
+            await SendTextAsync(socket, JsonSerializer.Serialize(new { t = "hello", token, protocol = 2 }));
             Assert.Equal("welcome", (await ReadFrameAsync(socket)).GetProperty("t").GetString());
             return socket;
         }

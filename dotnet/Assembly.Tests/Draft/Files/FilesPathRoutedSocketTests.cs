@@ -178,7 +178,7 @@ public sealed class FilesPathRoutedSocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(bulk ? new Uri(_address + "/bulk") : _address, CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","token":"files-token","protocol":1}""");
+        await SendAsync(socket, """{"t":"hello","token":"files-token","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;
     }

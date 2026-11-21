@@ -175,7 +175,7 @@ public sealed partial class NewProjectTests
             var socket = new ClientWebSocket();
             var address = (remote ? Hosts.Remote : Hosts.Mac).Address;
             await socket.ConnectAsync(new Uri("ws://" + address.Authority + "/socket"), default);
-            await Send(socket, """{"t":"hello","protocol":1,"token":"isolated-token"}"""); await Read(socket);
+            await Send(socket, """{"t":"hello","protocol":2,"token":"isolated-token"}"""); await Read(socket);
             return socket;
         }
         internal async Task Subscribe(ClientWebSocket socket, Guid id, string? machine = null)

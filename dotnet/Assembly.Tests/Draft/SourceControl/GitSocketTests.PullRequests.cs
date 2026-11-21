@@ -17,7 +17,7 @@ public sealed partial class GitSocketTests
         await CallAsync(normal, 2, "git", "status", session.SessionId);
         using var status = JsonDocument.Parse(await ReadAsync(normal)); Assert.Equal("result", status.RootElement.GetProperty("t").GetString());
         using var bulk = new ClientWebSocket(); await bulk.ConnectAsync(new Uri(_address + "/bulk"), default);
-        await SendAsync(bulk, """{"t":"hello","token":"git-token","protocol":1}"""); await ReadAsync(bulk);
+        await SendAsync(bulk, """{"t":"hello","token":"git-token","protocol":2}"""); await ReadAsync(bulk);
         await SendAsync(bulk, call); using var detail = JsonDocument.Parse(await ReadAsync(bulk));
         Assert.Equal(7, detail.RootElement.GetProperty("result").GetProperty("number").GetInt32());
         Assert.Equal("owner/repo", detail.RootElement.GetProperty("result").GetProperty("repository").GetString());

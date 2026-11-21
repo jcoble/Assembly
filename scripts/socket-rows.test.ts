@@ -58,8 +58,8 @@ async function fixture(handler: (peer: Peer, frame: Frame) => void) {
           const frame = JSON.parse(payload.toString());
           frames.push({ path: req.url!, frame });
           if (frame.t === 'hello') {
-            assert.equal(frame.token, token); assert.equal(frame.protocol, 1);
-            send({ t: 'welcome', protocol: 1, machine: 'workbox-test', format: 5, commit: 'a'.repeat(40) });
+            assert.equal(frame.token, token); assert.equal(frame.protocol, 2);
+            send({ t: 'welcome', protocol: 2, machine: 'workbox-test', format: 5, commit: 'a'.repeat(40) });
           } else handler({ path: req.url!, socket, send }, frame);
         } catch (error) { errors.push(error); socket.destroy(); }
       }

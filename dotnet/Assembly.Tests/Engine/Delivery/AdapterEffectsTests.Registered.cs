@@ -28,7 +28,7 @@ public sealed partial class AdapterEffectsTests
             Writer: f.Db.Writer, Topics: f.Topics, Features: [new EngineCalls(f.Runtime, f.Time, needs)], Engine: f.Runtime), 0, out _);
         await app.StartAsync(); var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         using var socket = new ClientWebSocket(); await socket.ConnectAsync(new($"ws://{address.Authority}/socket"), default);
-        await SocketSend(socket, """{"t":"hello","token":"isolated-token","protocol":1}"""); Assert.Equal("welcome", (await SocketRead(socket)).GetProperty("t").GetString());
+        await SocketSend(socket, """{"t":"hello","token":"isolated-token","protocol":2}"""); Assert.Equal("welcome", (await SocketRead(socket)).GetProperty("t").GetString());
         var command = new WindowCommand(Guid.NewGuid(), "registered-message", 0, 0, new SendMessage(null, f.Session.SessionId, "registered body", "prompt"));
         var args = JsonSerializer.Serialize(command, EngineSocketJson.Default.WindowCommand);
         await SocketSend(socket, $$"""{"t":"call","id":1,"feature":"engine","method":"command","args":{{args}}}""");

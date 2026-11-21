@@ -139,7 +139,7 @@ async fn a_dispatched_command_with_a_lost_reply_is_unknown_and_is_not_sent_again
     let mut commands = 0;
     let backend = FakeBackend::start(move |frame| match frame["t"].as_str() {
         Some("hello") => vec![Reply::Frame(
-            json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"real-owner"}),
+            json!({"t":"welcome","protocol":2,"machine":"friendly","engine":"real-owner"}),
         )],
         Some("call") if frame["method"] == "command" => {
             commands += 1;
@@ -214,7 +214,7 @@ async fn a_followed_command_is_asked_once_more_at_the_version_the_refusal_named(
     let seen = sent.clone();
     let backend = FakeBackend::start(move |frame| match frame["t"].as_str() {
         Some("hello") => vec![Reply::Frame(
-            json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"real-owner"}),
+            json!({"t":"welcome","protocol":2,"machine":"friendly","engine":"real-owner"}),
         )],
         Some("call") if frame["method"] == "command" => {
             let mut sent = seen.lock().unwrap();

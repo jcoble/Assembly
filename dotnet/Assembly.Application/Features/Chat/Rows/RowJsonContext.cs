@@ -5,6 +5,7 @@ using Assembly.Domain.Rows;
 using Assembly.Domain.Events;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.Rows.Context;
+using Assembly.Application.Features.Chat.Rows.Copies;
 
 namespace Assembly.Application.Features.Chat.Rows;
 
@@ -44,6 +45,15 @@ namespace Assembly.Application.Features.Chat.Rows;
 [JsonSerializable(typeof(SessionAttachments))]
 [JsonSerializable(typeof(SessionTokens))]
 [JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(IReadOnlyList<string>))]
+[JsonSerializable(typeof(RowsFeature.BeforeArgs))]
+[JsonSerializable(typeof(BeforeChunk))]
+[JsonSerializable(typeof(RowsFeature.HeadsArgs))]
+[JsonSerializable(typeof(RowsFeature.HeadsReply))]
+[JsonSerializable(typeof(RowsFeature.TurnArgs))]
+[JsonSerializable(typeof(RowsFeature.TurnRows))]
+[JsonSerializable(typeof(SavedToolDetail))]
+[JsonSerializable(typeof(IReadOnlyList<SavedToolDetail>))]
 [JsonSerializable(typeof(TerminalExit))]
 [JsonSerializable(typeof(IReadOnlyList<ToolTerminalState>))]
 internal sealed partial class RowJsonContext : JsonSerializerContext

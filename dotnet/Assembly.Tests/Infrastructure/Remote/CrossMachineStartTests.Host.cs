@@ -86,7 +86,7 @@ public sealed partial class CrossMachineStartTests
         internal async Task<ClientWebSocket> Window()
         {
             var socket = new ClientWebSocket(); await socket.ConnectAsync(_windowAddress, default);
-            await Send(socket, """{"t":"hello","protocol":1,"token":"window-token"}""");
+            await Send(socket, """{"t":"hello","protocol":2,"token":"window-token"}""");
             Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
         }
 

@@ -29,7 +29,7 @@ if (mode === 'port') {
     pending.clear();
     socket.close();
   }
-  socket.onopen = () => socket.send(JSON.stringify({ t: 'hello', token: env.CHECK4_TOKEN, protocol: 1 }));
+  socket.onopen = () => socket.send(JSON.stringify({ t: 'hello', token: env.CHECK4_TOKEN, protocol: 2 }));
   socket.onerror = () => fail(new Error('machines socket failed'));
   socket.onclose = () => fail(new Error('machines socket closed'));
   socket.onmessage = event => {

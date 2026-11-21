@@ -46,7 +46,7 @@ async fn conflict_uncertainty_and_source_refusal_keep_the_draft_and_never_replay
             frame["method"].as_str(),
         ) {
             (Some("hello"), ..) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"Friendly","engine":"owner"}),
+                json!({"t":"welcome","protocol":2,"machine":"Friendly","engine":"owner"}),
             )],
             (Some("sub"), _, _) if frame["stream"] == "engine" => {
                 let items = if frame["topic"] == "needs_me" {
@@ -321,7 +321,7 @@ async fn open_row(
             frame["method"].as_str(),
         ) {
             (Some("hello"), ..) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"Friendly","engine":"owner"}),
+                json!({"t":"welcome","protocol":2,"machine":"Friendly","engine":"owner"}),
             )],
             (Some("sub"), _, _) if frame["stream"] == "engine" => vec![Reply::Frame(
                 json!({"t":"engine_snapshot","id":id,"machine":"owner","through":state.need["version"],"items":[state.need.clone()],"more":false}),

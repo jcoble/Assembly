@@ -100,7 +100,7 @@ public sealed class TerminalSocketEngineTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{address.Authority}{path}"), deadline.Token);
-        await socket.SendAsync(Encoding.UTF8.GetBytes($$"""{"t":"hello","token":"{{Token}}","protocol":1}"""), WebSocketMessageType.Text, true, deadline.Token);
+        await socket.SendAsync(Encoding.UTF8.GetBytes($$"""{"t":"hello","token":"{{Token}}","protocol":2}"""), WebSocketMessageType.Text, true, deadline.Token);
         var buffer = new byte[16 * 1024];
         var received = await socket.ReceiveAsync(buffer, deadline.Token);
         using var welcome = JsonDocument.Parse(buffer.AsMemory(0, received.Count));

@@ -215,7 +215,7 @@ internal sealed class RemoteTerminalSocket(string name, Uri address, string toke
                     var connectionCt = connectionStop.Token;
                     var uri = new UriBuilder(address) { Scheme = address.Scheme == "https" ? "wss" : "ws", Path = "/socket/terminal", Query = "" }.Uri;
                     await socket.ConnectAsync(uri, connectionCt);
-                    await SendAsync(socket, new RemoteTerminalFrame("hello", Token: token, Protocol: 1), connectionCt);
+                    await SendAsync(socket, new RemoteTerminalFrame("hello", Token: token, Protocol: SocketConnection.Protocol), connectionCt);
                     var welcome = await ReceiveAsync(socket, connectionCt);
                     var protocol = welcome.TryGetProperty("protocol", out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetInt32(out var parsedProtocol) ? parsedProtocol : 0;
                     if (!welcome.TryGetProperty("t", out var type) || type.ValueKind != JsonValueKind.String || type.GetString() != "welcome" || protocol != SocketConnection.Protocol)

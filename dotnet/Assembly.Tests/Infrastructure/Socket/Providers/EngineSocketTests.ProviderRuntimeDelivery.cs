@@ -34,7 +34,7 @@ public sealed partial class EngineSocketTests
         var connection = new SocketConnection(pair.Server, calls, _f.Time);
         var run = connection.RunAsync(Encoding.UTF8.GetBytes("token"), fixture.Hosts.Mac.Runtime.Machine, default,
             fixture.Hosts.Mac.Runtime.Machine);
-        await Send(pair.Client, """{"t":"hello","token":"token","protocol":1}""");
+        await Send(pair.Client, """{"t":"hello","token":"token","protocol":2}""");
         Assert.Equal("welcome", (await Read(pair.Client)).GetProperty("t").GetString());
         try
         {

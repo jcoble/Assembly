@@ -30,12 +30,12 @@ public sealed class WelcomeSocketTests
         using var socket = new ClientWebSocket();
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await socket.ConnectAsync(host.Address(path), bound.Token);
-        await socket.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","protocol":1,"token":"token"}"""), WebSocketMessageType.Text, true, bound.Token);
+        await socket.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","protocol":2,"token":"token"}"""), WebSocketMessageType.Text, true, bound.Token);
         var bytes = new byte[4096]; var received = await socket.ReceiveAsync(bytes.AsMemory(), bound.Token);
         Assert.Equal(WebSocketMessageType.Text, received.MessageType); Assert.True(received.EndOfMessage);
         using var json = JsonDocument.Parse(bytes.AsMemory(0, received.Count)); var welcome = json.RootElement;
         Assert.Equal("welcome", welcome.GetProperty("t").GetString());
-        Assert.Equal(1, welcome.GetProperty("protocol").GetInt32());
+        Assert.Equal(2, welcome.GetProperty("protocol").GetInt32());
         Assert.Equal("owner-host", welcome.GetProperty("machine").GetString());
         Assert.Equal(RowStore.FormatVersion, welcome.GetProperty("format").GetInt32());
         Assert.Matches("^[a-f0-9]{64}$", welcome.GetProperty("backendIdentity").GetString()!);
@@ -46,8 +46,8 @@ public sealed class WelcomeSocketTests
     }
 
     [Theory]
-    [InlineData("wrong-token", 1, 4401)]
-    [InlineData("token", 2, 4400)]
+    [InlineData("wrong-token", 2, 4401)]
+    [InlineData("token", 3, 4400)]
     public async Task Authentication_or_protocol_refusal_sends_no_welcome(string token, int protocol, int closeCode)
     {
         await using var host = await Host.Start(); using var socket = new ClientWebSocket();
@@ -88,7 +88,7 @@ public sealed class WelcomeSocketTests
         var welcome = new Dictionary<string, object?>
         {
             ["t"] = "welcome",
-            ["protocol"] = 1,
+            ["protocol"] = 2,
             ["machine"] = "owner-host",
             ["format"] = RowStore.FormatVersion,
             ["commit"] = "different-build"
@@ -96,7 +96,7 @@ public sealed class WelcomeSocketTests
         if (failure == "missing_format") welcome.Remove("format");
         if (failure == "wrong_format") welcome["format"] = RowStore.FormatVersion + 1;
         if (failure == "missing_protocol") welcome.Remove("protocol");
-        if (failure == "wrong_protocol") welcome["protocol"] = 2;
+        if (failure == "wrong_protocol") welcome["protocol"] = 3;
         await using var owner = new global::Assembly.Tests.Infrastructure.Remote.TwoHosts();
         await owner.Start(); await owner.StartMirror();
         await using var host = await Host.Start(JsonSerializer.Serialize(welcome));
@@ -111,7 +111,7 @@ public sealed class WelcomeSocketTests
             var actual = failure == "missing_format" ? 0 : RowStore.FormatVersion + 1;
             Assert.Contains($"stores rows in format {actual}; this computer reads format {RowStore.FormatVersion}", error.Message);
         }
-        else Assert.Contains("this computer speaks protocol 1", error.Message);
+        else Assert.Contains("this computer speaks protocol 2", error.Message);
         Assert.Equal(0, await host.AfterWelcome.Task.WaitAsync(bound.Token));
     }
 
@@ -120,7 +120,7 @@ public sealed class WelcomeSocketTests
     {
         await using var owner = new global::Assembly.Tests.Infrastructure.Remote.TwoHosts();
         await owner.Start(); await owner.StartMirror();
-        await using var host = await Host.Start($$"""{"t":"welcome","protocol":1,"machine":"owner-host","engine":"{{owner.Remote.Runtime.Machine}}","format":{{RowStore.FormatVersion}},"commit":"different-build"}""");
+        await using var host = await Host.Start($$"""{"t":"welcome","protocol":2,"machine":"owner-host","engine":"{{owner.Remote.Runtime.Machine}}","format":{{RowStore.FormatVersion}},"commit":"different-build"}""");
         await using var terminal = new RemoteTerminalSocket("test-box", host.Address("/"), "token", new global::Assembly.Infrastructure.Topics.Topics(),
             (_, ct) => owner.ConnectedMachine.CaptureOwnerBindingAsync(owner.Remote.Runtime.Machine, ct));
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(10));

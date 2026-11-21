@@ -16,7 +16,7 @@ use serde_json::json;
 async fn workflow_pages_use_one_bulk_connection_and_keep_definition_order(cx: &mut TestAppContext) {
     let backend = FakeBackend::start(|frame| match frame["t"].as_str() {
         Some("hello") => vec![Reply::Frame(
-            json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"owner"}),
+            json!({"t":"welcome","protocol":2,"machine":"friendly","engine":"owner"}),
         )],
         Some("call") => {
             assert_eq!(frame["feature"], "workflow");
@@ -89,7 +89,7 @@ async fn dropping_the_workflow_read_cancels_the_actual_held_page(cx: &mut TestAp
     let backend = FakeBackend::start(|frame| {
         if frame["t"] == "hello" {
             vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"owner"}),
+                json!({"t":"welcome","protocol":2,"machine":"friendly","engine":"owner"}),
             )]
         } else {
             vec![]

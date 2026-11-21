@@ -13,7 +13,7 @@ class Client {
   constructor(api: string, token: string, path = '/socket') {
     this.socket = new WebSocket(api.replace(/^http/, 'ws') + path);
     this.socket.onmessage = event => { this.frames.push(JSON.parse(String(event.data))); this.changed?.(); };
-    this.socket.onopen = () => this.send({ t: 'hello', protocol: 1, token });
+    this.socket.onopen = () => this.send({ t: 'hello', protocol: 2, token });
     this.socket.onerror = () => { this.frames.push({ t: 'error', message: 'Socket failed' }); this.changed?.(); };
     this.socket.onclose = () => { this.frames.push({ t: 'closed' }); this.changed?.(); };
   }

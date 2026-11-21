@@ -127,7 +127,7 @@ public sealed partial class RemoteMachineTests
             _desktopLauncher, _log, new RemoteConfig(Box, _box.Address, BoxToken), tunnel);
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{desktop.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{DesktopToken}}","protocol":1}""");
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{DesktopToken}}","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
         await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"machines"}""");
         Assert.Contains("\"reachable\":true", await ReadTextAsync(socket));

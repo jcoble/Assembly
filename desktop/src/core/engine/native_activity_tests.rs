@@ -97,7 +97,7 @@ fn backend(
             frame["topic"].as_str(),
         ) {
             (Some("hello"), ..) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"box","engine":"desktop"}),
+                json!({"t":"welcome","protocol":2,"machine":"box","engine":"desktop"}),
             )],
             (Some("sub"), _, _, Some("rows")) => {
                 seen.subs.push((
@@ -424,7 +424,7 @@ async fn native_pushes_coalesce_behind_one_opaque_complete_pass_and_never_instal
             frame["method"].as_str(),
         ) {
             (Some("hello"), ..) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"box","engine":"desktop"}),
+                json!({"t":"welcome","protocol":2,"machine":"box","engine":"desktop"}),
             )],
             (Some("sub"), ..) => {
                 sub = Some(id.clone());

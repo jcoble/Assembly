@@ -48,10 +48,10 @@ public sealed partial class AdapterEffectsTests
             using var socket = new ClientWebSocket(); using var owner = new ClientWebSocket();
             var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
             await socket.ConnectAsync(new("ws://" + address.Authority + "/socket/bulk"), default);
-            await socket.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","protocol":1,"token":"target-test"}"""), WebSocketMessageType.Text, true, default);
+            await socket.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","protocol":2,"token":"target-test"}"""), WebSocketMessageType.Text, true, default);
             Assert.Equal("welcome", (await ParentNeedSocketRead(socket)).GetProperty("t").GetString());
             await owner.ConnectAsync(new("ws://" + address.Authority + "/socket"), default);
-            await owner.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","protocol":1,"token":"target-test"}"""), WebSocketMessageType.Text, true, default);
+            await owner.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","protocol":2,"token":"target-test"}"""), WebSocketMessageType.Text, true, default);
             Assert.Equal("welcome", (await ParentNeedSocketRead(owner)).GetProperty("t").GetString());
             try
             {

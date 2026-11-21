@@ -16,7 +16,7 @@ test('a completed backend is hash-verified and reused without another build; cor
   for(const directory of [source,lane,bin])await fs.mkdir(directory);
   const files={
     'dotnet/Assembly.Remote/Assembly.Remote.csproj':'<Project/>',
-    'dotnet/Assembly.Infrastructure/Socket/SocketConnection.cs':'const int Protocol = 1;',
+    'dotnet/Assembly.Infrastructure/Socket/SocketConnection.cs':'const int Protocol = 2;',
     'dotnet/Assembly.Application/Features/Chat/Rows/RowStore.cs':'const int FormatVersion = 5;',
   };
   for(const [name,content] of Object.entries(files)){await fs.mkdir(join(source,name,'..'),{recursive:true});await fs.writeFile(join(source,name),content)}

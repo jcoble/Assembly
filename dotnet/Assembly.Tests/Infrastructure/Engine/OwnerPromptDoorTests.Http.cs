@@ -83,7 +83,7 @@ public sealed partial class OwnerPromptDoorTests
         using var socket = new ClientWebSocket();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await socket.ConnectAsync(new Uri($"ws://{address.Authority}/socket"), deadline.Token);
-        await socket.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","protocol":1}""").AsMemory(), WebSocketMessageType.Text, true, deadline.Token);
+        await socket.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","protocol":2}""").AsMemory(), WebSocketMessageType.Text, true, deadline.Token);
         var received = await socket.ReceiveAsync(new ArraySegment<byte>(new byte[1024]), deadline.Token);
         Assert.Equal(WebSocketMessageType.Close, received.MessageType);
         Assert.Equal((WebSocketCloseStatus)4401, received.CloseStatus);

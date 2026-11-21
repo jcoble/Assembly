@@ -27,7 +27,7 @@ fn hello_carries_the_token_and_the_welcome_names_the_machine() {
     assert_eq!(client.state(), connected());
     assert_eq!(
         backend.next(),
-        json!({"t": "hello", "token": "secret", "protocol": 1})
+        json!({"t": "hello", "token": "secret", "protocol": 2})
     );
 }
 

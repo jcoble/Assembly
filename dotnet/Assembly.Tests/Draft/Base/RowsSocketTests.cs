@@ -128,6 +128,26 @@ public sealed class RowsSocketTests : IAsyncLifetime
         AssertRow(await ReadAsync(behind), sub: 1, RowsFeature.PageLimit + 2, prevSeq: RowsFeature.PageLimit + 1);
     }
 
+    // Pins: TSK-1692 review focus 4. A saved copy dropped while its window shows it: the window is told to reload from
+    // seq 0, and the rows saved again reach it from there.
+    [Fact]
+    public async Task A_drop_while_open_sends_a_jump_and_the_page_reloads()
+    {
+        Commit("s", 3);
+        _db.Writer.Write("test.copy", scope => scope.Execute(
+            "INSERT INTO remote_copy(session_id,machine,state,head) VALUES('s','box-engine','complete',NULL)"));
+        using var socket = await OpenAsync();
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"s"}""");
+        Assert.Equal("""{"t":"state","sub":1,"seq":3,"items":[]}""", await ReadAsync(socket));
+
+        _hub.DropCopy("s");
+        Assert.Equal("""{"t":"state","sub":1,"seq":0,"items":[]}""", await ReadAsync(socket));
+        Assert.Null(_hub.Copies.RemoteCopyOf("s"));
+
+        Commit("s", 1);
+        AssertRow(await ReadAsync(socket), sub: 1, seq: 1, prevSeq: 0);
+    }
+
     // A copied or restored database can be behind what the page applied: it starts again from the last seq.
     [Fact]
     public async Task An_after_past_the_sessions_last_seq_starts_again_from_the_last_seq()
@@ -276,6 +296,30 @@ public sealed class RowsSocketTests : IAsyncLifetime
         Assert.Equal(Enumerable.Range(1, RowsFeature.PageLimit).Select(n => (long)n), rows.Select(row => row.PrevSeq!.Value));
     }
 
+    // TSK-1692: a download's reads are bulk calls, refused on the window's socket.
+    [Fact]
+    public async Task The_new_reads_are_on_the_bulk_socket()
+    {
+        Commit("s", 3);
+        using var bulk = await OpenBulkAsync();
+        await SendAsync(bulk, """{"t":"call","id":1,"feature":"rows","method":"before","args":{"session":"s","items":100}}""");
+        using (var chunk = JsonDocument.Parse(await ReadAsync(bulk)))
+        {
+            var result = chunk.RootElement.GetProperty("result");
+            Assert.Equal([3L, 2, 1], result.GetProperty("rows").EnumerateArray().Select(row => row.GetProperty("seq").GetInt64()));
+            Assert.Equal(3, result.GetProperty("facts").GetProperty("head").GetInt64());
+        }
+        await SendAsync(bulk, """{"t":"call","id":2,"feature":"rows","method":"heads","args":{"sessions":["s"]}}""");
+        using (var heads = JsonDocument.Parse(await ReadAsync(bulk)))
+            Assert.Equal(3, heads.RootElement.GetProperty("result").GetProperty("sessions").GetProperty("s").GetProperty("count").GetInt64());
+
+        using var socket = await OpenAsync();
+        await SendAsync(socket, """{"t":"call","id":1,"feature":"rows","method":"before","args":{"session":"s"}}""");
+        Assert.Contains("\"not_found\"", await ReadAsync(socket));
+        await SendAsync(socket, """{"t":"call","id":2,"feature":"rows","method":"heads","args":{"sessions":["s"]}}""");
+        Assert.Contains("\"not_found\"", await ReadAsync(socket));
+    }
+
     // The window's socket dropping ends its rows sub like an unsub, and the session's last watcher going is told.
     [Fact]
     public async Task A_dropped_socket_s_rows_sub_leaves_its_session_unwatched()
@@ -302,7 +346,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
         Commit("s", 10);
         var socket = new HeldSocket();
         var connection = new SocketConnection(socket, _calls, TimeProvider.System);
-        socket.Receive("""{"t":"hello","token":"held","protocol":1}""");
+        socket.Receive("""{"t":"hello","token":"held","protocol":2}""");
         var running = connection.RunAsync(Encoding.UTF8.GetBytes("held"), "test-machine", CancellationToken.None);
         Assert.StartsWith("""{"t":"welcome""", await socket.SentAsync());
 
@@ -370,7 +414,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(address, CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","token":"rows-token","protocol":1}""");
+        await SendAsync(socket, """{"t":"hello","token":"rows-token","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;
     }

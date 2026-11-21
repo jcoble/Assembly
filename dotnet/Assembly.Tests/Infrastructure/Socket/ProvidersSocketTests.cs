@@ -166,7 +166,7 @@ public sealed class ProvidersSocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(_address, CancellationToken.None);
-        await Send(socket, new { t = "hello", token = "provider-token", protocol = 1 });
+        await Send(socket, new { t = "hello", token = "provider-token", protocol = 2 });
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString());
         return socket;
     }

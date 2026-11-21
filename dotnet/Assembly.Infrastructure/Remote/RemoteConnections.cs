@@ -95,6 +95,10 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
 
     internal RemoteMachine? ByName(string name) => _active.TryGetValue(name, out var active) ? active.Machine : null;
 
+    /// <summary>Whether the named machine's mirror is live now: connected, with its identity verified.</summary>
+    internal async Task<bool> LiveAsync(string name, CancellationToken ct) =>
+        _active.TryGetValue(name, out var active) && await active.Mirror.CaptureLiveBindingAsync(ct) is not null;
+
     internal RemoteMachine? ByEngineMachine(IAppDatabase db, string machine)
     {
         var name = db.QueryFirst("SELECT name FROM engine_mirror WHERE machine=$machine AND state<>'retired'",

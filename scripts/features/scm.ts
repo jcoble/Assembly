@@ -28,7 +28,7 @@ await new Promise((resolve, reject) => {
   socket.onerror = () => reject(new Error('the socket failed to open'));
 });
 const welcome = new Promise<Frame>((resolve) => (welcomed = resolve));
-socket.send(JSON.stringify({ t: 'hello', token, protocol: 1 }));
+socket.send(JSON.stringify({ t: 'hello', token, protocol: 2 }));
 await welcome;
 
 let next = 0;

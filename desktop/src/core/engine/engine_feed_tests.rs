@@ -13,7 +13,7 @@ use serde_json::json;
 async fn two_consumers_share_a_scope_and_the_last_drop_unsubscribes(cx: &mut TestAppContext) {
     let backend = FakeBackend::start(|frame| match frame["t"].as_str() {
         Some("hello") => vec![Reply::Frame(
-            json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"owner"}),
+            json!({"t":"welcome","protocol":2,"machine":"friendly","engine":"owner"}),
         )],
         Some("sub") => vec![Reply::Frame(
             json!({"t":"engine_snapshot","id":frame["id"],"machine":"owner",
@@ -108,7 +108,7 @@ async fn two_consumers_share_a_scope_and_the_last_drop_unsubscribes(cx: &mut Tes
 async fn sparse_events_fetch_bounded_display_pages_before_the_stream_ack(cx: &mut TestAppContext) {
     let backend = FakeBackend::start(|frame| match frame["t"].as_str() {
         Some("hello") => vec![Reply::Frame(
-            json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"owner"}),
+            json!({"t":"welcome","protocol":2,"machine":"friendly","engine":"owner"}),
         )],
         Some("sub") => vec![Reply::Frame(
             json!({"t":"engine_snapshot","id":frame["id"],"machine":"owner",
@@ -226,7 +226,7 @@ async fn a_replaced_bulk_connection_leaves_the_cut_unapplied_until_pushed_reconn
                     .unwrap();
             }
             vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"owner"}),
+                json!({"t":"welcome","protocol":2,"machine":"friendly","engine":"owner"}),
             )]
         }
         Some("sub") => vec![Reply::Frame(
@@ -348,7 +348,7 @@ async fn refresh_cancels_a_held_old_entities_read_and_applies_the_new_cut_withou
         let mut held = seen.lock().unwrap();
         let replies = match frame["t"].as_str() {
             Some("hello") => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"friendly","engine":"owner"}),
+                json!({"t":"welcome","protocol":2,"machine":"friendly","engine":"owner"}),
             )],
             Some("sub") => {
                 held.subscriptions += 1;

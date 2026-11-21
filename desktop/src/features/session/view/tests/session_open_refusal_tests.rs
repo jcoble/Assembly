@@ -39,7 +39,7 @@ async fn a_source_refusal_on_the_prepared_first_page_preserves_the_outgoing_view
             frame["topic"].as_str(),
         ) {
             (Some("hello"), ..) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"box","engine":"owner"}),
+                json!({"t":"welcome","protocol":2,"machine":"box","engine":"owner"}),
             )],
             (Some("call"), Some("open_target"), _) => {
                 vec![Reply::Frame(json!({"t":"result","id":id,"result":{
@@ -233,7 +233,7 @@ async fn a_source_refusal_while_workspace_read_is_held_invalidates_the_ready_pag
             frame["topic"].as_str(),
         ) {
             (Some("hello"), ..) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"box","engine":"owner"}),
+                json!({"t":"welcome","protocol":2,"machine":"box","engine":"owner"}),
             )],
             (Some("call"), Some("sessions"), Some("open_target"), _) => {
                 vec![Reply::Frame(json!({"t":"result","id":id,"result":{

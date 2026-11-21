@@ -71,7 +71,7 @@ public sealed class SessionsReadSourceTests
         await using var hosts = new TwoHosts(forwardCommands: true);
         var sources = Observe(hosts.Mac, () => hosts.Connections); hosts.Mac.SessionSources = sources;
         await hosts.Start(); Seed(hosts.Remote, "remote-read");
-        var last = Seed(hosts.Mac, "remote-read", "workbox-test"); Seed(hosts.Mac, "local-only");
+        var last = Seed(hosts.Mac, "remote-read", "workbox-test", hosts.Remote.Fixture.Machine); Seed(hosts.Mac, "local-only");
         await hosts.StartMirror(); var expected = Expected(hosts);
         using var socket = await Open(hosts.Mac.Address);
         AssertError(await Mark(socket, 1, new("local-only", last, expected)), "source_changed");
@@ -87,14 +87,16 @@ public sealed class SessionsReadSourceTests
     {
         await using var hosts = new TwoHosts(forwardCommands: true);
         var sources = Observe(hosts.Mac, () => hosts.Connections); hosts.Mac.SessionSources = sources;
-        await hosts.Start(); Seed(hosts.Remote, "held-read"); var last = Seed(hosts.Mac, "held-read", "workbox-test");
+        await hosts.Start(); Seed(hosts.Remote, "held-read"); var last = Seed(hosts.Mac, "held-read", "workbox-test", hosts.Remote.Fixture.Machine);
         await hosts.StartMirror(); var expected = Expected(hosts);
         using var socket = await Open(hosts.Mac.Address);
-        var reached = Signal(); var release = Signal();
-        sources.BeforeDisplay = (scope, ct) =>
+        var reached = Signal();
+        // At the writer's certification, inside its own write, the session's record moves to another route.
+        sources.BeforeDisplay = (scope, _) =>
         {
-            if (scope is null) return;
-            reached.TrySetResult(); release.Task.WaitAsync(TimeSpan.FromSeconds(10), ct).GetAwaiter().GetResult();
+            if (scope is not IWriteScope write) return;
+            write.Execute("UPDATE session_info SET machine='another-route' WHERE session_id='held-read'");
+            reached.TrySetResult();
         };
         var published = 0;
         var subscription = hosts.Mac.Topics.Subscribe("sessions", "held-read", _ => { }, (_, _) => Interlocked.Increment(ref published));
@@ -103,16 +105,31 @@ public sealed class SessionsReadSourceTests
             var audit = hosts.Mac.Fixture.Number("SELECT COUNT(*) FROM audit WHERE what='sessions/read'");
             await SendMark(socket, 1, new("held-read", last, expected));
             await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            var disconnect = hosts.DisconnectMirror();
-            await sources.Invalidated.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            release.TrySetResult(); await disconnect;
             AssertError(await Read(socket), "source_changed");
             Assert.Equal(0, hosts.Mac.Sessions.Get("held-read")!.ReadSeq);
             Assert.Equal(audit, hosts.Mac.Fixture.Number("SELECT COUNT(*) FROM audit WHERE what='sessions/read'"));
             Assert.Equal(0, published);
             await sources.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10)); Assert.Equal(1, sources.Disposals);
         }
-        finally { release.TrySetResult(); hosts.Mac.Topics.Unsubscribe(subscription); }
+        finally { hosts.Mac.Topics.Unsubscribe(subscription); }
+    }
+
+    [Fact]
+    public async Task A_saved_remote_session_marks_read_while_its_machine_is_disconnected()
+    {
+        await using var hosts = new TwoHosts(forwardCommands: true);
+        var sources = Observe(hosts.Mac, () => hosts.Connections); hosts.Mac.SessionSources = sources;
+        await hosts.Start(); Seed(hosts.Remote, "offline-read");
+        var last = Seed(hosts.Mac, "offline-read", "workbox-test", hosts.Remote.Fixture.Machine);
+        await hosts.StartMirror(); var expected = Expected(hosts);
+        await hosts.DisconnectMirror();
+        using var socket = await Open(hosts.Mac.Address);
+        var audit = hosts.Mac.Fixture.Number("SELECT COUNT(*) FROM audit WHERE what='sessions/read'");
+
+        AssertResult(await Mark(socket, 1, new("offline-read", last, expected)));
+
+        Assert.Equal(last, hosts.Mac.Sessions.Get("offline-read")!.ReadSeq);
+        Assert.Equal(audit + 1, hosts.Mac.Fixture.Number("SELECT COUNT(*) FROM audit WHERE what='sessions/read'"));
     }
 
     [Fact]
@@ -156,19 +173,24 @@ public sealed class SessionsReadSourceTests
     private static ExpectedSource Expected(TwoHosts hosts) => hosts.Mac.Fixture.Db.QueryFirst("""
         SELECT machine,generation,name FROM engine_mirror WHERE machine=$machine AND state='live'
         """, row => new ExpectedSource(row.Text(0), row.Long(1), row.Text(2)), default, new SqlArg("$machine", hosts.Remote.Fixture.Machine))!;
-    private static long Seed(TwoHosts.Host host, string session, string? route = null)
+    // copiedFrom: the remote engine whose saved copy these rows are here (TSK-1692).
+    private static long Seed(TwoHosts.Host host, string session, string? route = null, string? copiedFrom = null)
     {
         host.Sessions.Add(session, "codex", "source-derived", route!);
         var rows = RowStore.Open(host.Fixture.Db); var converter = new RowConverter();
         rows.Commit(session, converter.Apply(new TurnStarted(1000, "source-derived-turn", "Historical row")));
         rows.Commit(session, converter.Apply(new TurnEnded(1001, "end_turn", null)));
+        if (copiedFrom is not null)
+            host.Fixture.Db.Writer.Write("test.copy", scope => scope.Execute(
+                "INSERT INTO remote_copy(session_id,machine,state,head) VALUES($session,$machine,'complete',NULL)",
+                new SqlArg("$session", session), new("$machine", copiedFrom)));
         return rows.LastSeq(session);
     }
     private static async Task<ClientWebSocket> Open(Uri address)
     {
         var socket = new ClientWebSocket(); using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await socket.ConnectAsync(new Uri($"ws://{address.Authority}/socket"), timeout.Token);
-        await Send(socket, "{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":1}");
+        await Send(socket, "{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":2}");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static async Task<JsonElement> Mark(WebSocket socket, int id, SessionsFeature.ReadArgs args, ExpectedSource? frame = null)
@@ -207,7 +229,6 @@ public sealed class SessionsReadSourceTests
         {
             private int _disposed;
             private readonly CancellationTokenRegistration _changed = inner.Changed.Register(() => owner.Invalidated.TrySetResult());
-            public override bool Remote => inner.Remote;
             public override CancellationToken Changed => inner.Changed;
             public override void EnsureCurrent() { owner.BeforeCheck?.Invoke(ct); inner.EnsureCurrent(); }
             public override void EnsureDisplayCurrent(IReadScope? scope = null)
@@ -218,10 +239,6 @@ public sealed class SessionsReadSourceTests
             }
             public override void Watch() => inner.Watch();
             public override string? ActiveRun => inner.ActiveRun;
-            public override Task<JsonElement> PageAsync(long before, int limit, CancellationToken cancellation) => inner.PageAsync(before, limit, cancellation);
-            public override Task<SubagentPage> SubagentsAsync(string? after, int limit, CancellationToken cancellation) => inner.SubagentsAsync(after, limit, cancellation);
-            public override async IAsyncEnumerable<JsonElement> WatchAsync(long? after, [EnumeratorCancellation] CancellationToken cancellation)
-            { await foreach (var frame in inner.WatchAsync(after, cancellation)) yield return frame; }
             public override void Dispose() { if (Interlocked.Exchange(ref _disposed, 1) == 0) { _changed.Dispose(); inner.Dispose(); Interlocked.Increment(ref owner.Disposals); owner.Disposed.TrySetResult(); } }
         }
     }
