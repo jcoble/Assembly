@@ -87,7 +87,8 @@ internal sealed record SettingsProviderMachine(
     SettingsFailure? LastFailure,
     string? AccountContext,
     string? ProviderTargetId,
-    long? CheckedMs);
+    long? CheckedMs,
+    long Version);
 
 /// <summary>Last safe failure for a provider on a machine: one plain sentence plus scrubbed raw detail.</summary>
 internal sealed record SettingsFailure(string Message, string Detail);

@@ -30,7 +30,8 @@ internal sealed class SettingsStateComposer(
         string AuthState,
         string? Reason,
         string? FactsJson,
-        long? CheckedMs);
+        long? CheckedMs,
+        long Version);
 
     internal sealed record SignInRow(
         string Machine,
@@ -131,7 +132,7 @@ internal sealed class SettingsStateComposer(
         using var snapshot = db.OpenSnapshot(ct);
 
         var providers = snapshot.Query("""
-            SELECT machine, provider, account_context, installation, auth_state, reason, facts_json, checked_ms
+            SELECT machine, provider, account_context, installation, auth_state, reason, facts_json, checked_ms, version
             FROM engine_provider
             WHERE machine = $machine
             """,
@@ -143,7 +144,8 @@ internal sealed class SettingsStateComposer(
                 row.Text(4),
                 row.IsNull(5) ? null : row.Text(5),
                 row.IsNull(6) ? null : row.Text(6),
-                row.IsNull(7) ? null : row.Long(7)),
+                row.IsNull(7) ? null : row.Long(7),
+                row.Long(8)),
             new SqlArg("$machine", localEngineMachine));
 
         var signIns = snapshot.Query("""
@@ -264,7 +266,8 @@ internal sealed class SettingsStateComposer(
             LastFailure: lastFailure,
             AccountContext: accountContext,
             ProviderTargetId: providerTargetId,
-            CheckedMs: providerRow?.CheckedMs);
+            CheckedMs: providerRow?.CheckedMs,
+            Version: providerRow?.Version ?? 0);
     }
 
     private static IReadOnlyList<ProviderSpec> ResolveProviders(IReadOnlyList<AgentDescriptor> localAgents)
@@ -417,7 +420,8 @@ internal sealed class SettingsStateComposer(
                 authState,
                 ReadString(root, "reason"),
                 ReadString(root, "factsJson"),
-                ReadLong(root, "checkedMs"));
+                ReadLong(root, "checkedMs"),
+                ReadLong(root, "version") ?? 0);
         }
         catch (JsonException)
         {
