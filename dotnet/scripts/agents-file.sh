@@ -31,6 +31,18 @@ if not os.path.isdir(os.path.dirname(path)):
 print(path)
 PY
 )
+# A launch that found an adapter missing asks only for a repair. When the two entries this installer writes can both
+# still start, the missing one is not this installer's to put right, so nothing is fetched and the file is left alone.
+if [[ "${ASSEMBLY_REPAIR_ONLY:-}" == 1 ]] && python3 -I - "$out" <<'PY' 2>/dev/null
+import json, os, sys
+agents = {agent["id"]: agent for agent in json.load(open(sys.argv[1], encoding="utf-8"))}
+for name in ("claude", "codex"):
+    command, entry = agents[name]["command"], agents[name]["args"][0]
+    if not os.path.isfile(entry) or (os.path.isabs(command) and not os.path.exists(command)): sys.exit(1)
+PY
+then
+  exit 0
+fi
 work=$(mktemp -d "$bundle_root/.install.XXXXXX")
 descriptor_tmp=
 published_bundle=

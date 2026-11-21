@@ -122,9 +122,11 @@ try {
   }, null, 2) + '\n');
   renameSync(temporaryLane, laneFile);
   mkdirSync(home, { recursive: true });
-  // No agents, or an installed adapter or its program gone, means nothing to run. Otherwise the update above, the
-  // button and `npm run deploy:remote` install them.
-  if (!managed && agentsNeedInstall(join(home, 'agents.json'), true)) {
+  // No agents, or an adapter or its program gone, means nothing to run. Otherwise the update above, the button and
+  // `npm run deploy:remote` install them. Over a file that is there, the installer is asked only to repair what it
+  // owns, so an entry it cannot put right costs no download at every start.
+  if (!managed && agentsNeedInstall(join(home, 'agents.json'))) {
+  if (existsSync(join(home, 'agents.json'))) env.ASSEMBLY_REPAIR_ONLY = '1';
   const installer = ['dotnet/scripts/agents-file.sh', process.env.ADAPTERS ?? adapters, join(home, 'agents.json')];
   const installed = await attempt('bash', installer);
   // The backend starts with an empty list when there's no agents file, so failing here doesn't stop the app.

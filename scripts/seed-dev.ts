@@ -33,18 +33,17 @@ export function safePath(input: string, mustExist = true): string {
   while (!existsSync(ancestor)) { suffix.unshift(basename(ancestor)); ancestor = dirname(ancestor); }
   return join(realpathSync(ancestor), ...suffix);
 }
-// What a launch can put right by installing: no agents file, or an adapter the installer provides (an ACP adapter package)
-// that is gone, and, where the installer also rewrites it, the program that runs one. Any other entry and a file that
-// cannot be read are the owner's: no install changes them, so they never cause one.
-export function agentsNeedInstall(file: string, programs: boolean): boolean {
+// Whether a launch should ask the installer to look: there is no agents file, or an ACP adapter it lists, or the program
+// that runs one, is gone. Which entries are the installer's to rewrite is the installer's own knowledge, so a launch over
+// an existing file asks it for a repair only (app-dev.ts). A file that cannot be read is the owner's and is left alone.
+export function agentsNeedInstall(file: string): boolean {
   if (!existsSync(file)) return true;
   const gone = (path: unknown) => typeof path === 'string' && isAbsolute(path) && !existsSync(path);
   try {
     const agents = JSON.parse(readFileSync(file, 'utf8')) as { command?: unknown; args?: unknown[] }[];
     return Array.isArray(agents) && agents.some(agent => {
       const entry = agent?.args?.[0];
-      if (typeof entry !== 'string' || !entry.includes('/node_modules/@agentclientprotocol/')) return false;
-      return gone(entry) || (programs && gone(agent.command));
+      return typeof entry === 'string' && entry.includes('/node_modules/@agentclientprotocol/') && (gone(entry) || gone(agent.command));
     });
   } catch { return false; }
 }
