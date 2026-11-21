@@ -244,8 +244,12 @@ public sealed partial class SessionStore : ISessionProjectProjection
     /// The facade of a remote session whose owner the caller has just established in this writer: the row naming its
     /// route. A created session and one only its machine's mirror carries are both recorded here.
     /// </summary>
-    internal SessionInfo RecordCopied(IWriteScope scope, string sessionId, SessionsFeature.CreatedSessionFacts facts, string route,
-        string? projectId, Action<IWriteScope>? accepted = null, Action<IWriteScope>? validate = null)
+    /// <summary>
+    /// Refuses a copied facade whose owner record names another owner, or whose facade here names another route,
+    /// agent, parent or project. It writes nothing, so a chain can be checked whole before any of it is recorded.
+    /// </summary>
+    internal void RefuseCopiedConflict(IReadScope scope, string sessionId, SessionsFeature.CreatedSessionFacts facts, string route,
+        string? projectId)
     {
         if (scope.QueryFirst("""
                 SELECT COUNT(*) FROM engine_session WHERE id=$id AND
@@ -253,11 +257,17 @@ public sealed partial class SessionStore : ISessionProjectProjection
                 """, row => row.Long(0), new SqlArg("$id", sessionId), new("$owner", facts.Machine),
                 new("$agent", facts.Agent), new("$parent", facts.ParentSessionId)) != 0)
             throw new CallFailed("The accepted session identity collides with another owner.", "source_changed");
+        if (Get(scope, sessionId) is { } existing && (existing.Machine != route || existing.Agent != facts.Agent ||
+                existing.ParentSessionId != facts.ParentSessionId || existing.ProjectId is not null && existing.ProjectId != projectId))
+            throw new CallFailed("The copied session identity changed.", "source_changed");
+    }
+
+    internal SessionInfo RecordCopied(IWriteScope scope, string sessionId, SessionsFeature.CreatedSessionFacts facts, string route,
+        string? projectId, Action<IWriteScope>? accepted = null, Action<IWriteScope>? validate = null)
+    {
+        RefuseCopiedConflict(scope, sessionId, facts, route, projectId);
         if (Get(scope, sessionId) is { } existing)
         {
-            if (existing.Machine != route || existing.Agent != facts.Agent || existing.ParentSessionId != facts.ParentSessionId ||
-                existing.ProjectId is not null && existing.ProjectId != projectId)
-                throw new CallFailed("The copied session identity changed.", "source_changed");
             accepted?.Invoke(scope);
             validate?.Invoke(scope);
             var isBare = existing.ProjectId is null && projectId is null && facts.IsBare;

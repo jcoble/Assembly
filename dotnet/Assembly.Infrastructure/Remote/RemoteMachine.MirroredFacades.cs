@@ -20,6 +20,9 @@ internal sealed partial class RemoteMachine
         scope.Execute("SAVEPOINT mirrored_facade");
         try
         {
+            // Every session is checked before any is written: a refusal after the first was recorded would roll its
+            // rows back but not the changes it had already queued to announce.
+            foreach (var session in chain) _sessionStore.RefuseCopiedConflict(scope, session.SessionId, session.Facts, _name, null);
             // The chain's outside parent, when it has one, is already known here, as a created child's is.
             var prefix = chain[0].ParentId is { } parent ? engine.Commands.ReadKnownAncestry(scope, parent) : Array.Empty<ForeignAncestor>();
             if (prefix is null) throw AcceptedSourceChanged();
