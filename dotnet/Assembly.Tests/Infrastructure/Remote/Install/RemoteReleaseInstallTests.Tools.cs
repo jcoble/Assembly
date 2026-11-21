@@ -116,12 +116,12 @@ public sealed partial class RemoteReleaseInstallTests
         Assert.Contains("@openai/codex@1.2.3", ReleaseCliUpdate.Command(new("codex", "1.2.3"), "a"), StringComparison.Ordinal);
     }
 
-    private (LocalReleaseTools Tools, string Agents, string Adapters) LocalFixture(RemoteReleaseFeed feed, RemoteReleaseShell shell, Func<bool>? running = null)
+    private (LocalReleaseTools Tools, string Agents, string Adapters) LocalFixture(RemoteReleaseFeed feed, RemoteReleaseShell shell, Func<bool>? running = null, Func<CancellationToken, Task>? idle = null)
     {
         var data = Path.Combine(Home, "mac");
         Directory.CreateDirectory(data);
         var agents = Path.Combine(data, "agents.json");
-        return (new(feed, shell, agents, Path.Combine(data, "adapters"), running ?? (() => false), Path.Combine(Repository(), "dotnet/scripts/agents-file.sh")), agents, Path.Combine(data, "adapters"));
+        return (new(feed, shell, agents, Path.Combine(data, "adapters"), running ?? (() => false), idle ?? (_ => Task.CompletedTask), Path.Combine(Repository(), "dotnet/scripts/agents-file.sh")), agents, Path.Combine(data, "adapters"));
     }
 
     private RemoteReleaseFeed SignedFeed(out LocalShell shell)
@@ -172,13 +172,19 @@ public sealed partial class RemoteReleaseInstallTests
         if (!OperatingSystem.IsLinux()) return;
         var feed = SignedFeed(out var shell);
         FakeCli("claude", "1.0.0", "2.0.0");
-        var (tools, agents, _) = LocalFixture(feed, shell, () => true);
+        var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (tools, agents, _) = LocalFixture(feed, shell, () => !idle.Task.IsCompleted, stop => idle.Task.WaitAsync(stop));
         File.WriteAllText(agents, "[]");
-        var busy = await Assert.ThrowsAsync<CallFailed>(() => tools.UpdateAsync(new(false, [new("claude", "2.0.0")]), _ => { }, default));
-        Assert.Contains("A session is running", busy.Message, StringComparison.Ordinal);
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var running = tools.UpdateAsync(new(false, [new("claude", "2.0.0")]), note =>
+        {
+            if (note == AppUpdate.WaitingWords) waiting.TrySetResult();
+        }, default);
+        await waiting.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.False(running.IsCompleted);
         Assert.Equal("1.0.0", File.ReadAllText(Path.Combine(Bin, "claude.version")));
-        var (free, _, _) = LocalFixture(feed, shell);
-        await free.UpdateAsync(new(false, [new("claude", "2.0.0")]), _ => { }, default);
+        idle.SetResult();
+        await running.WaitAsync(TimeSpan.FromSeconds(60));
         Assert.Equal("2.0.0", File.ReadAllText(Path.Combine(Bin, "claude.version")).Trim());
     }
 

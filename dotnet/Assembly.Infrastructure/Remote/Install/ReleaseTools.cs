@@ -77,7 +77,7 @@ internal sealed class ThisMachineShell(string? loginShell = null) : RemoteReleas
 /// This computer's adapters and CLIs in a delivered app. Adapters come from the same signed release through the same installer
 /// a remote runs, shipped in the app beside the backend. A new bundle goes beside the one a running session uses.
 /// </summary>
-internal sealed class LocalReleaseTools(RemoteReleaseFeed feed, RemoteReleaseShell shell, string agentsFile, string adapters, Func<bool> sessionRunning, string? installer = null, UpdateProgress? updateProgress = null)
+internal sealed class LocalReleaseTools(RemoteReleaseFeed feed, RemoteReleaseShell shell, string agentsFile, string adapters, Func<bool> sessionRunning, Func<CancellationToken, Task> whenIdle, string? installer = null, UpdateProgress? updateProgress = null)
 {
     private const string RequireTools = "for tool in bash curl tar node python3 sha256sum; do command -v \"$tool\" >/dev/null || { echo \"Missing tool on this computer: $tool\" >&2; exit 1; }; done; " +
         "python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' || { echo 'Updating adapters requires Python 3.11 or newer on this computer' >&2; exit 1; }";
@@ -98,8 +98,12 @@ internal sealed class LocalReleaseTools(RemoteReleaseFeed feed, RemoteReleaseShe
             updateProgress?.Piece(UpdateProgress.ThisMachine);
         }
         if (tools.Clis.Count == 0) return;
-        // Replacing a CLI's files could break a turn it's in the middle of. There's no remote host to wait on here, and pressing the button again is cheap.
-        if (sessionRunning()) throw new CallFailed("A session is running here, so this computer's CLIs weren't updated. Update again when it finishes.", "remote_busy");
+        // Replacing a CLI's files could break a turn it's in the middle of, so it waits for this computer's runs to end, then goes on.
+        if (sessionRunning())
+        {
+            progress(AppUpdate.WaitingWords);
+            await whenIdle(ct);
+        }
         foreach (var cli in tools.Clis)
         {
             progress($"Updating {cli.Family} on this computer…");
