@@ -25,7 +25,8 @@ public sealed class RemoteDownloadTests : IAsyncLifetime
     // Each rows/before call the remote answered: its args and the seqs it sent.
     private readonly ConcurrentQueue<(RowsFeature.BeforeArgs Args, long[] Seqs)> _answered = new();
     private Func<RowsFeature.BeforeArgs, CancellationToken, Task>? _beforeReading;
-    private Action<RowsFeature.BeforeArgs, BeforeChunk>? _beforeAnswered;
+    // Each session whose download reached the bottom: the remote answered it with no rows. Recorded from the start.
+    private readonly ConcurrentDictionary<string, TaskCompletionSource> _bottomed = new();
 
     public async Task InitializeAsync()
     {
@@ -199,14 +200,15 @@ public sealed class RemoteDownloadTests : IAsyncLifetime
     // One download runs at a time, so a second session's first chunk is saved only once this one's download has ended.
     private async Task DownloadedAsync(string session)
     {
-        var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _beforeAnswered = (args, chunk) => { if (args.Session == session && chunk.Rows.Count == 0) ended.TrySetResult(); };
-        if (!(_hosts.MacHub.Copies.RemoteCopyOf(session)?.Complete ?? false)) await ended.Task.WaitAsync(Wait);
+        await Bottomed(session).Task.WaitAsync(Wait);
         var other = $"after-{session}-{Guid.NewGuid():N}";
         Seed(other, 1);
         await Machine.EnsureCopyAsync(other, default).WaitAsync(Wait);
         Assert.True(_hosts.MacHub.Copies.RemoteCopyOf(session)?.Complete);
     }
+
+    private TaskCompletionSource Bottomed(string session) =>
+        _bottomed.GetOrAdd(session, _ => new(TaskCreationOptions.RunContinuationsAsynchronously));
 
     private sealed record Held(Task Reached, Action Release);
 
@@ -280,7 +282,7 @@ public sealed class RemoteDownloadTests : IAsyncLifetime
                 if (value is RowsFeature.BeforeArgs asked && answer is BeforeChunk chunk)
                 {
                     test._answered.Enqueue((asked, [.. chunk.Rows.Select(row => row.GetProperty("seq").GetInt64())]));
-                    test._beforeAnswered?.Invoke(asked, chunk);
+                    if (chunk.Rows.Count == 0) test.Bottomed(asked.Session).TrySetResult();
                 }
                 return answer;
             }, bulk);
