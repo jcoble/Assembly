@@ -41,6 +41,7 @@ if(name==='git') { if(args.includes('--format=%B')) console.log(process.env.TRAI
  if(args.includes('rev-parse')&&args.includes('HEAD')) console.log('${head}');
  if(args.includes('worktree')&&args.includes('add')) { fs.mkdirSync(args.at(-2)); fs.mkdirSync(path.join(args.at(-2),'app')); }
  if(args.includes('worktree')&&args.includes('remove')) fs.rmSync(args.at(-1),{recursive:true});
+ if(args.includes('show')) process.stdout.write(process.env.SHOW_CONTENT||'');
  if(args.includes('--name-only')) {
   if(process.env.DIFF_REPO) { const r=require('node:child_process').spawnSync(process.env.REAL_GIT,['-C',process.env.DIFF_REPO,...args.slice(2)],{encoding:'utf8'});process.stdout.write(r.stdout||'');process.exit(r.status??1); }
   console.log(process.env.DIFF_FILES||'src/code.ts'); }
@@ -57,7 +58,7 @@ if(name==='sudo') { const child=require('node:child_process'); const index=args.
  if(args.includes('/bin/sh')&&args.includes('verify-read-audit')) {console.log(process.env.AUDIT_READABLE==='1'?'READABLE':'DENIED');process.exit(0);}
  if(args.includes('-C')&&(args.includes('iptables')||args.includes('ip6tables'))&&process.env.FAIL_FIREWALL==='1') process.exit(1);
  if(index>=0) { const rest=args.slice(index+2); const env={}; while(rest[0]?.includes('=')){const x=rest.shift();const p=x.indexOf('=');env[x.slice(0,p)]=x.slice(p+1);}
- for(const key of ['CALLS','REPLIES','TRAILERS','DIRTY','AGENT_RESULT','DIFF_FILES','DIFF_REPO','REAL_GIT']) if(process.env[key]!==undefined) env[key]=process.env[key];
+ for(const key of ['CALLS','REPLIES','TRAILERS','DIRTY','AGENT_RESULT','DIFF_FILES','DIFF_REPO','REAL_GIT','SHOW_CONTENT']) if(process.env[key]!==undefined) env[key]=process.env[key];
  const r=child.spawnSync(rest.shift(),rest,{env,encoding:'utf8'}); process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??1); } }
 if(name==='codex'||name==='claude') { const writable=args.flatMap((x,i)=>x==='--add-dir'?[args[i+1]]:[]);
  fs.appendFileSync(process.env.CALLS,JSON.stringify({name:'agent-environment',env:process.env,stdin:fs.readFileSync(0,'utf8'),directories:writable.map(p=>({path:p,exists:fs.existsSync(p)&&fs.statSync(p).isDirectory()}))})+'\n');
@@ -414,9 +415,22 @@ for (const [name,tests,receipt] of [
   const f=fixture(t),dir=f.result({...pass,tests});
   writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
   if(receipt!==undefined) writeFileSync(join(f.config.workerHome,'result','tests.log'),receipt);
-  assert.equal(f.run('post.ts',[dir]).status,0);
+  assert.equal(f.run('post.ts',[dir],{DIFF_FILES:'src/code.ts\nsrc/code.test.ts'}).status,0);
   const saved=JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8'));
   assert.equal(saved.label,'REDO'); assert.equal(saved.state,'failure');
+});
+test('a Rust file with inline tests counts as a changed test, so a PASS without a receipt is REDO',t=>{
+  const f=fixture(t),dir=f.result({...pass,tests:[]});
+  writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
+  assert.equal(f.run('post.ts',[dir],{DIFF_FILES:'desktop/src/panel.rs',SHOW_CONTENT:'fn a() {}\n#[cfg(test)]\nmod tests {}\n'}).status,0);
+  assert.equal(JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8')).label,'REDO');
+});
+test('a PR that changes no test passes on the window check alone',t=>{
+  const f=fixture(t),dir=f.result({...pass,tests:[]});
+  writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
+  assert.equal(f.run('post.ts',[dir]).status,0);
+  const saved=JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8'));
+  assert.equal(saved.label,'PASS'); assert.equal(saved.state,'success');
 });
 test('valid test receipt is uploaded and labeled as the verifier receipt',t=>{
   const f=fixture(t),dir=f.result(pass);

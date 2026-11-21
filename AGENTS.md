@@ -31,12 +31,16 @@ Assembly is an open-source desktop workbench: half IDE and half chat with AI cod
 
 ## Tests, pull requests and verification
 
+- A test is written only when it is one of three kinds: something the app cannot show by use (concurrency, races, cancellation, restarts, dropped connections, large data, hard edge cases); a bug, where the fix starts with a test that fails on it; or one of a few highest-level tests of what the user gets from a usable feature (the socket, or the panel against a scripted backend). Labels, wording, layout, constants, table contents and the shape of the code are not tested, and no pinning test is written until Jesse calls the feature done ([coding practices, Tests](https://app.notion.com/p/41e394b0689d812d8e77da536e185228)).
+- This overrides the test-per-behavior and red-green-refactor defaults of the `tdd`, `solid` and `implement-spec` skills. A spec's "Testing Decisions" section names the tests its feature gets; ask your parent before adding another.
+- A PR lists the tests it adds, one reason each from the three kinds, so the reviewer can refuse the rest.
+- Never change a kept test's assertion to make it pass. When a test fails, the code is wrong unless the behavior was changed on purpose; then the commit names the test in a `TEST-CHANGE:` line and says what changed and why. A reviewer refuses a reason that amounts to "to match the code".
 - While building, run only the tests for what you changed. The whole suites run on GitHub: a ready PR and main run them, and for a draft you start them with `gh workflow run ci.yml --ref <branch>`.
 - One complete feature per PR, with substeps and fixes as commits in it. Split only for parts that ship independently or a size that is unsafe to review, and record the reason in the plan.
 - In the PR description, name the providers your change affects, with one line on why, and write one rough paragraph on the flow through the change as a user would meet it. That paragraph is an estimate of the path, not a step-by-step guide.
 - A ready PR gets one Codex review and one independent check in the real window by a different model. To check a PR or brief its verifier, load the `orient-verification` skill. Fix what they find and recheck only what the fix touched. A second review round is not required, but a real finding from one is still fixed.
 - Check back on your PR for review comments and the verifier's result.
-- Who may OK: Jesse for locked paths (`scripts/locked-paths.txt`) and pinned tests. The controller signs other test changes. Merges to main follow the global rules.
+- Who may OK: Jesse for locked paths (`scripts/locked-paths.txt`), which hold the pinned tests. Merges to main follow the global rules.
 
 ## Where things run
 
