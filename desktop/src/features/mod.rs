@@ -3,6 +3,7 @@
 pub mod board;
 pub mod changes;
 pub mod files;
+pub mod home;
 pub mod meter;
 pub mod palette;
 pub mod projects;

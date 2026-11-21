@@ -1,33 +1,29 @@
-//! `TopBar` owns the title row above the panes, on the rail: the Home button, which keeps the open sessions column's width so the
-//! dividers line up, also while the column's edge is dragged. Its menu opens Build Board and Settings,
-//! and at the right the Terminal button and the drawer toggle. Tool tabs live in the drawer header's capsule/menu
+//! `TopBar` owns the title row above the panes, on the rail: the Home button (`features/home`), whose cap keeps the
+//! open sessions column's width so the dividers line up, also while the column's edge is dragged; the Board button
+//! beside it; and at the right the Terminal button and the drawer toggle. Tool tabs live in the drawer header's capsule/menu
 //! (drawer_buttons.rs). Replaces TopTabRow.svelte's chrome, HomeButton.svelte and the
 //! `window-chrome` markup in routes/+page.svelte.
 
 use crate::features::remote_install::restart_button::RestartButton;
-use gpui_kit::assets::IconName;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{DockArea, DockPlacement};
 use gpui_kit::component::h_flex;
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::*;
 
 use super::{drawer_buttons, terminal_toggle, top_tabs};
 use crate::activity::{DotChip, Tone};
 use crate::core::engine::{EngineChanged, EngineFeed};
-use crate::core::intents::open_settings::OpenSettings;
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::topbar as ids;
 use crate::features::board::ToggleBoard;
 use crate::features::board::board_panel::{BoardMemory, BoardPanel, top_bar_badge};
 use crate::features::board::owner_notify::{OpenNeed, OwnerNotify};
+use crate::features::home::home_button::HomeButton;
 
 /// The row's height, the approved mock's `.titlerow`.
 const HEIGHT: Pixels = px(40.);
-/// The compact Home menu trigger uses the kit's circular button.
-const HOME_SIZE: Pixels = px(26.);
 /// The Home cap's narrowest width, when the sessions column is folded or narrow (routes/+page.svelte:1045-1052).
 const MIN_HOME_WIDTH: Pixels = px(172.);
 
@@ -43,6 +39,8 @@ pub struct TopBar {
     /// How many need the owner, read when the shared rows change.
     badge: Option<SharedString>,
     restart: Entity<RestartButton>,
+    /// Home, its hover slide-out and the providers and connections panel.
+    home: Entity<HomeButton>,
     _feed: Subscription,
     /// A notification's click opens the panel on its question.
     _notifications: Option<Subscription>,
@@ -71,6 +69,7 @@ impl TopBar {
         });
         Self {
             restart: cx.new(RestartButton::new),
+            home: cx.new(|_| HomeButton::default()),
             dock,
             _subscription,
             _notifications,
@@ -126,43 +125,6 @@ impl Render for TopBar {
         } else {
             px(0.)
         };
-        let home = Button::new("home")
-            .primary()
-            .icon(IconName::House)
-            .with_size(HOME_SIZE)
-            .rounded_full()
-            .control(ids::HOME, "Home")
-            .tooltip("Home")
-            .dropdown_menu(|menu, _, _| {
-                menu.min_w(px(190.))
-                    .item(
-                        PopupMenuItem::new("Build Board")
-                            .icon(IconName::LayoutDashboard)
-                            .on_click(|_, window, cx| {
-                                if let Ok(open) = cx.build_action("board::ToggleBoard", None) {
-                                    window.dispatch_action(open, cx);
-                                }
-                            }),
-                    )
-                    .item(PopupMenuItem::new("Projects").on_click(|_, window, cx| {
-                        crate::features::projects::projects_view::open(window, cx)
-                    }))
-                    .separator()
-                    .item(
-                        PopupMenuItem::new("Settings")
-                            .icon(IconName::Settings)
-                            .on_click(|_, window, cx| {
-                                super::workspace_preview::open(true, window, cx)
-                            }),
-                    )
-                    .item(
-                        PopupMenuItem::new("Connection settings")
-                            .icon(IconName::Settings)
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(OpenSettings), cx);
-                            }),
-                    )
-            });
         let trigger = Button::new("board")
             .control(ids::BOARD, "Board")
             .ghost()
@@ -201,7 +163,7 @@ impl Render for TopBar {
                     .h_full()
                     .gap_2()
                     .pl(px(80.))
-                    .child(home)
+                    .child(self.home.clone())
                     .child(
                         div()
                             .debug_selector(|| "board-dropdown-button".into())

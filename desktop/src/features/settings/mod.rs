@@ -1,5 +1,5 @@
 //! Settings: the page that sets how the window looks and how code reads, and lists the machines. It opens from the
-//! Home button's menu, the palette and Cmd-, (Ctrl-, elsewhere), all through the `OpenSettings` intent. Replaces
+//! Home button's slide-out, the palette and Cmd-, (Ctrl-, elsewhere), all through the `OpenSettings` intent. Replaces
 //! mac-command-bar's shell/settings/.
 
 pub(crate) mod connections;

@@ -24,6 +24,12 @@ ids! {
         TERMINAL_TOGGLE = "topbar.terminal-toggle",
         RESTART_TO_UPDATE = "topbar.restart-to-update",
     }
+    home {
+        PANEL = "home.panel",
+        SUMMARY = "home.summary",
+        PROJECTS = "home.projects",
+        SETTINGS = "home.settings",
+    }
     open_project {
         TRIGGER = "open-project.trigger",
         NEW_SESSION = "open-project.new-session",
@@ -156,6 +162,22 @@ pub fn filter_back(area: &str) -> String {
 /// One value of an open quick filter: `sessions.filter.provider.claude`.
 pub fn filter_value(area: &str, group: &str, value: &str) -> String {
     format!("{}.{}", filter_group(area, group), slug(value))
+}
+
+/// A provider's row in the Home panel, or its state: `home.provider.codex.state` (`row`, `state`, `models`).
+pub fn home_provider(provider: &str, part: &str) -> String {
+    format!("home.provider.{}.{part}", slug(provider))
+}
+
+/// One machine's line inside a provider's grower: `home.provider.codex.workbox.state` (`state`, `versions`,
+/// `models`, `failure`).
+pub fn home_provider_machine(provider: &str, machine: &str, part: &str) -> String {
+    format!("home.provider.{}.{}.{part}", slug(provider), slug(machine))
+}
+
+/// A machine's row in the Home panel: `home.machine.workbox-test.state` (`name`, `state`).
+pub fn home_machine(machine: &str, part: &str) -> String {
+    format!("home.machine.{}.{part}", slug(machine))
 }
 
 /// A row of a list, by the key its owner gave it (`session:<id>`): `rows.session.<id>`.
