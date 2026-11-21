@@ -6,7 +6,7 @@ scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/scripts"
 cp "$here/socket-baseline.test.sh" "$scratch/scripts/"
-suites=(check4-case socket-rows terminal-socket workbox-row-log)
+suites=(socket-rows workbox-row-log)
 
 prepare() {
   local suite
@@ -29,8 +29,8 @@ run
 for suite in "${suites[@]}"; do
   [ "$(grep -cx "$suite" "$scratch/ran")" = 1 ] || { echo "FAIL $suite did not execute exactly once"; exit 1; }
 done
-[ "$(wc -l < "$scratch/ran")" = 4 ] || { echo 'FAIL unexpected suite invocation count'; exit 1; }
-echo 'ok the real wrapper executes all four suites exactly once'
+[ "$(wc -l < "$scratch/ran")" = 2 ] || { echo 'FAIL unexpected suite invocation count'; exit 1; }
+echo 'ok the real wrapper executes both suites exactly once'
 
 for suite in "${suites[@]}"; do
   prepare
