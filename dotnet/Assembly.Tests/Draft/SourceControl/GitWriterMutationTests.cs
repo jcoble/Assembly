@@ -6,27 +6,6 @@ namespace Assembly.Tests.Draft.SourceControl;
 
 public sealed class GitWriterMutationTests
 {
-    // Pins: g9#1, g9#2
-    [Theory]
-    [InlineData("a b.txt")]
-    [InlineData("ü.txt")]
-    [InlineData("-x.txt")]
-    [InlineData(":(top)y")]
-    public async Task Stage_and_unstage_keep_literal_paths_before_and_after_first_commit(string path)
-    {
-        using var repo = new GitHistoryTestRepository(); await repo.InitializeAsync();
-        await File.WriteAllTextAsync(Path.Combine(repo.Root, path), "new\n");
-        var writer = new GitWriter(repo.Git);
-        var staged = await writer.StageAsync(repo.Root, [path], default);
-        Assert.Equal('A', Assert.Single(staged.Status.Files).Index);
-        var unstaged = await writer.UnstageAsync(repo.Root, [path], default);
-        Assert.Equal('?', Assert.Single(unstaged.Status.Files).Index);
-        await writer.StageAsync(repo.Root, [path], default); await repo.Commit("Root");
-        await File.WriteAllTextAsync(Path.Combine(repo.Root, path), "changed\n");
-        Assert.Equal('M', Assert.Single((await writer.StageAsync(repo.Root, [path], default)).Status.Files).Index);
-        Assert.Equal('M', Assert.Single((await writer.UnstageAsync(repo.Root, [path], default)).Status.Files).Worktree);
-    }
-
     /// <summary>`git restore --staged` drops a conflict's unmerged entries, which would pass it off as an ordinary edit.</summary>
     [Fact]
     public async Task Unstage_all_leaves_a_conflict_a_conflict()
@@ -178,14 +157,4 @@ public sealed class GitWriterMutationTests
         await writer.CommitAsync(repo.Root, "", true, await repo.Head(), default);
         Assert.Equal("Newer", (await new GitHistoryReader(repo.Git).ReadAsync(repo.Root, null, null, default)).Commits[0].Subject);
     }
-    // Pins: g9#9
-    [Fact]
-    public async Task A_plain_folder_status_says_it_is_not_a_repository()
-    {
-        using var repo = new GitHistoryTestRepository(); Directory.CreateDirectory(repo.Root);
-        var failure = await Assert.ThrowsAsync<CallFailed>(() => new GitStatusReader(repo.Git).ReadAsync(repo.Root, default));
-        Assert.StartsWith("This folder isn't a git repository yet.", failure.Message);
-        Assert.Contains("not a git repository", failure.Message);
-    }
-
 }

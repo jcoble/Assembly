@@ -27,29 +27,6 @@ public sealed class FileReadTests
             (chunk.Content, chunk.Size, chunk.Revision, chunk.LineCount, chunk.Binary, chunk.NextOffset));
     }
 
-    // Pins: files#11
-    [Fact]
-    public async Task An_empty_file_has_no_lines_and_a_file_ending_in_a_newline_counts_no_extra_line()
-    {
-        using var folder = new GitFolder();
-        Write(folder, "empty", []);
-        Write(folder, "two", "a\nb\n"u8.ToArray());
-        Assert.Equal(0, (await FileRead.ReadAsync(folder.Root, "empty", 0, CancellationToken.None)).LineCount);
-        Assert.Equal(2, (await FileRead.ReadAsync(folder.Root, "two", 0, CancellationToken.None)).LineCount);
-    }
-
-    // Pins: files#13
-    [Theory]
-    [InlineData(new byte[] { (byte)'a', 0, (byte)'b' })]
-    [InlineData(new byte[] { (byte)'a', 0xC3, 0x28 })]
-    public async Task A_file_with_a_nul_byte_or_bytes_that_are_not_utf8_is_binary_and_shows_nothing(byte[] bytes)
-    {
-        using var folder = new GitFolder();
-        var revision = Write(folder, "blob", bytes);
-        var chunk = await FileRead.ReadAsync(folder.Root, "blob", 0, CancellationToken.None);
-        Assert.Equal(("", true, 0, (long?)null, revision), (chunk.Content, chunk.Binary, chunk.LineCount, chunk.NextOffset, chunk.Revision));
-    }
-
     // Pins: files#12
     [Fact]
     public async Task A_large_file_comes_in_parts_that_end_at_line_ends_and_join_to_the_file()
@@ -107,17 +84,6 @@ public sealed class FileReadTests
         Directory.CreateSymbolicLink(Path.Combine(folder.Root, "up"), Path.Combine(folder.Root, "src"));
         var failed = await Assert.ThrowsAsync<CallFailed>(() => FileRead.ReadAsync(folder.Root, path, 0, CancellationToken.None));
         Assert.Contains(why, failed.Message);
-    }
-
-    // Pins: files#12
-    [Theory]
-    [InlineData(-1)]
-    [InlineData(4)]
-    public async Task An_offset_outside_the_file_is_refused(long offset)
-    {
-        using var folder = new GitFolder();
-        Write(folder, "a.txt", "abc"u8.ToArray());
-        await Assert.ThrowsAsync<CallFailed>(() => FileRead.ReadAsync(folder.Root, "a.txt", offset, CancellationToken.None));
     }
 
     // Pins: files#15

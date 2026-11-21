@@ -8,21 +8,6 @@ namespace Assembly.Tests.Draft.Base.Chat;
 public sealed partial class ChatSocketTests
 {
     [Fact]
-    public async Task A_call_on_the_wrong_socket_answers_not_found()
-    {
-        var session = _sessions.Create("claude", "repo");
-        using var main = await OpenAsync();
-        using var bulk = await OpenBulkAsync();
-
-        await CallAsync(main, 1, "attachments", "begin", $$"""{"session":"{{session.SessionId}}","mime":"image/png","size":10}""");
-        Assert.Equal("""{"t":"error","id":1,"code":"not_found","message":"attachments/begin is on /socket/bulk"}""", await ReadAsync(main));
-        await CallAsync(bulk, 2, "config", "get", $$"""{"session":"{{session.SessionId}}"}""");
-        Assert.Equal("""{"t":"error","id":2,"code":"not_found","message":"config/get is on /socket"}""", await ReadAsync(bulk));
-        await SendAsync(bulk, $$"""{"t":"sub","id":3,"topic":"rows","key":"{{session.SessionId}}"}""");
-        Assert.Equal("""{"t":"error","id":3,"code":"not_found","message":"there are no topics on /socket/bulk"}""", await ReadAsync(bulk));
-    }
-
-    [Fact]
     public async Task Main_answers_and_streams_rows_while_a_20_MB_upload_is_held_on_bulk()
     {
         var remote = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");

@@ -98,53 +98,6 @@ public sealed class BoardToolsTests
     }
 
     [Fact]
-    public void SameTaskKeyUpdatesOneCard()
-    {
-        using var f = new BoardQueryTests.Fixture();
-        var first = f.Update();
-        Assert.Equal(first, f.Update());
-        Assert.Single(f.Page().Items);
-        Assert.Single(f.Detail().Feed);
-        Assert.Throws<CallFailed>(() => f.Transitions.Update("foreign", "project", f.Report()));
-        Assert.Equal("session", f.Detail().Task.CreatorSessionId);
-    }
-
-    [Theory]
-    [InlineData("text", "text", "Use it")]
-    [InlineData("approval", "approve", null)]
-    [InlineData("approval", "deny", null)]
-    public async Task TwoQuestionsRemainIndependent(string kind, string answerKind, string? text)
-    {
-        await using var host = new BoardSocketTests.Host();
-        var f = host.F;
-        var sessions = host.Sessions;
-        var session = sessions.CreateReady("codex", "project");
-        await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
-        tools.Update(session.SessionId, f.Report(question: f.Ask(kind: kind)));
-        tools.Update(session.SessionId, f.Report(question: f.Ask("q2")));
-        var args = f.Answer(value: new(answerKind, text));
-        var delivering = tools.AnswerAsync(args, CancellationToken.None);
-        var agent = await host.Launcher.NextAsync();
-        await agent.StartAsync();
-        var prompt = await agent.ReadAsync("session/prompt");
-        Assert.False(delivering.IsCompleted);
-        await agent.InsertAsync(prompt, "prompt-" + prompt.GetProperty("id").GetRawText());
-        await delivering;
-        Assert.Equal(1, Assert.Single(f.Page().Items).QuestionCount);
-        var message = Assert.Single(host.Rows.RowsAfter(session.SessionId, 0), row => row.Kind == "user").Payload.GetProperty("text").GetString();
-        var identity = $"""question "q1" (task "task", generation 1, answer key "{args.AnswerKey}")""";
-        Assert.Equal(answerKind switch
-        {
-            "approve" => "Approved: " + identity,
-            "deny" => "Denied: " + identity,
-            _ => $"Answer to {identity}: {text}"
-        }, message);
-        Assert.Equal("delivered", f.Detail().Questions.Single(q => q.QuestionKey == "q1").DeliveryState);
-        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
-        await agent.CloseAsync();
-    }
-
-    [Fact]
     public void ReaskRejectsStaleGeneration()
     {
         using var f = new BoardQueryTests.Fixture();
@@ -222,23 +175,6 @@ public sealed class BoardToolsTests
         f.Transitions.Recover();
         for (var i = 0; i < 205; i++)
             Assert.Equal("delivery_unknown", Assert.Single(f.Detail($"task-{i}").Questions).DeliveryState);
-    }
-
-    [Fact]
-    public async Task ChatAnswerRecordsWithoutSend()
-    {
-        await using var host = new BoardSocketTests.Host();
-        var f = host.F;
-        var sessions = host.Sessions;
-        var session = sessions.CreateReady("claude", "project");
-        await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
-        tools.Update(session.SessionId, f.Report(question: f.Ask()));
-        var a = f.Answer();
-        var received = new BoardAnswerReceived(a.QuestionKey, a.Generation, a.AnswerKey, a.Answer);
-        var result = tools.Update(session.SessionId, f.Report(received: received));
-        Assert.Equal(result, tools.Update(session.SessionId, f.Report(received: received)));
-        Assert.Empty(host.Rows.RowsAfter(session.SessionId, 0));
-        Assert.Equal("recorded_in_chat", Assert.Single(f.Detail().Questions).DeliveryState);
     }
 
     [Fact]

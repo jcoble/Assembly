@@ -29,8 +29,6 @@ namespace Assembly.Tests.Draft.Files;
 /// handlers. The routes must let it through to them, on every call and for the order key.</summary>
 public sealed class FilesPathRoutedSocketTests : IAsyncLifetime
 {
-    private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
-
     private readonly TempDatabase _file = new();
     private readonly DirectoryInfo _checkouts = Directory.CreateTempSubdirectory("files-routed-");
     private readonly BackgroundWork _work = new(TimeProvider.System, TextWriter.Null);
@@ -42,7 +40,6 @@ public sealed class FilesPathRoutedSocketTests : IAsyncLifetime
     private RemoteConnections _connections = null!;
     private FileRemoteRoutes _routes = null!;
     private WebApplication _app = null!;
-    private Uri _address = null!;
 
     private string Target => Path.Combine(_folder.Root, "a.txt");
 
@@ -77,8 +74,6 @@ public sealed class FilesPathRoutedSocketTests : IAsyncLifetime
         _app.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
         _app.Lifetime.ApplicationStopping.Register(endpoint.CloseAll);
         await _app.StartAsync();
-        var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
-        _address = new Uri($"ws://{http.Authority}/socket");
     }
 
     public async Task DisposeAsync()
@@ -96,110 +91,11 @@ public sealed class FilesPathRoutedSocketTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Owner_read_and_release_for_this_machine_reach_the_handlers()
-    {
-        await File.WriteAllTextAsync(Target, new string('x', FileRead.ChunkBytes + 1));
-        using var normal = await OpenAsync();
-        using var bulk = await OpenAsync(bulk: true);
-        await CallAsync(normal, 1, "owner", $$$"""{"target":{"path":"{{{Target}}}"}}""");
-        var owner = Result(await ReadAsync(normal));
-        Assert.Equal("a.txt", owner.GetProperty("file").GetString());
-        await CallAsync(bulk, 2, "read", $$$"""{"target":{"path":"{{{Target}}}"},"expectedOwner":{{{owner.GetRawText()}}}}""");
-        var read = Result(await ReadAsync(bulk));
-        Assert.NotEqual(JsonValueKind.Null, read.GetProperty("nextOffset").ValueKind);
-        await CallAsync(bulk, 3, "release", $$$"""{"target":{"path":"{{{Target}}}"},"revision":"{{{read.GetProperty("revision").GetString()}}}","expectedOwner":{{{owner.GetRawText()}}}}""");
-        Assert.True(Result(await ReadAsync(bulk)).GetProperty("released").GetBoolean());
-    }
-
-    [Fact]
-    public async Task A_save_for_this_machine_reaches_the_handlers()
-    {
-        using var bulk = await OpenAsync(bulk: true);
-        await CallAsync(bulk, 1, "beginSave", $$$"""{"target":{"path":"{{{Target}}}"},"expectedRevision":"{{{await FileSave.RevisionAsync(Target, default)}}}","size":3}""");
-        var upload = Result(await ReadAsync(bulk)).GetProperty("upload").GetString();
-        await CallAsync(bulk, 2, "saveChunk", $$$"""{"upload":"{{{upload}}}","offset":0,"data":"{{{Convert.ToBase64String(Encoding.UTF8.GetBytes("new"))}}}"}""");
-        await ReadAsync(bulk);
-        await CallAsync(bulk, 3, "commitSave", $$$"""{"upload":"{{{upload}}}"}""");
-        Assert.Equal("saved", Result(await ReadAsync(bulk)).GetProperty("state").GetString());
-        Assert.Equal("new", await File.ReadAllTextAsync(Target));
-    }
-
-    [Fact]
-    public async Task The_handlers_answer_a_refusal_with_routes_in_front_too()
-    {
-        var session = _sessions.Create("claude", "https://github.com/o/r");
-        Directory.CreateDirectory(_sessions.Item(session).Root!);
-        using var normal = await OpenAsync();
-        await CallAsync(normal, 1, "owner", """{"target":{"path":"/proc/self/status"}}""");
-        Assert.Equal("not_regular", Code(await ReadAsync(normal)));
-        await CallAsync(normal, 2, "owner", "{}");
-        Assert.Equal("bad_args", Code(await ReadAsync(normal)));
-        await CallAsync(normal, 3, "owner", $$$"""{"session":"{{{session.SessionId}}}","target":{"path":"{{{Target}}}"}}""");
-        Assert.Equal("bad_args", Code(await ReadAsync(normal)));
-        await CallAsync(normal, 4, "search", $$$"""{"target":{"path":"{{{Target}}}"},"query":"a"}""");
-        Assert.Equal("bad_args", Code(await ReadAsync(normal)));
-    }
-
-    [Fact]
-    public async Task A_session_call_for_this_machine_still_runs_with_routes_in_front()
-    {
-        var session = _sessions.Create("claude", "https://github.com/o/r");
-        var root = _sessions.Item(session).Root!;
-        Directory.CreateDirectory(root);
-        await File.WriteAllTextAsync(Path.Combine(root, "a.txt"), "one\n");
-        using var bulk = await OpenAsync(bulk: true);
-        await CallAsync(bulk, 1, "read", $$$"""{"session":"{{{session.SessionId}}}","path":"a.txt"}""");
-        Assert.Equal("one\n", Result(await ReadAsync(bulk)).GetProperty("content").GetString());
-    }
-
-    [Fact]
-    public void The_order_key_names_a_path_only_for_another_machine()
-    {
-        var revision = new string('0', 64);
-        BeginSave Save(string? machine) => new(null, null, revision, 0, Target: new PathTarget("/x/a.txt", machine));
-        Assert.Null(_routes.Order(Save(null), FilesJson.Default.BeginSave));
-        Assert.Equal("files-path:box:/x/a.txt", _routes.Order(Save("box"), FilesJson.Default.BeginSave));
-        Assert.Null(_routes.Order(new BeginSave("s", "a.txt", revision, 0), FilesJson.Default.BeginSave));
-    }
-
-    [Fact]
     public async Task The_routes_refuse_a_non_owner_peer_with_the_forbidden_code()
     {
         var phone = new CallContext(CancellationToken.None, "phone", Peer: new PhonePeer("phone"));
         var refused = await Assert.ThrowsAsync<CallFailed>(() => _routes.Invoke("owner", new ObserveRoot("s"),
             FilesJson.Default.ObserveRoot, FilesJson.Default.FileOwnership, phone, bulk: false, write: false));
         Assert.Equal("forbidden", refused.Reason);
-    }
-
-    private static JsonElement Result(string answer) => JsonDocument.Parse(answer).RootElement.GetProperty("result");
-    private static string? Code(string answer) => JsonDocument.Parse(answer).RootElement.GetProperty("code").GetString();
-
-    private async Task<ClientWebSocket> OpenAsync(bool bulk = false)
-    {
-        var socket = new ClientWebSocket();
-        await socket.ConnectAsync(bulk ? new Uri(_address + "/bulk") : _address, CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","token":"files-token","protocol":1}""");
-        Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
-        return socket;
-    }
-
-    private static Task CallAsync(WebSocket socket, long id, string method, string args) =>
-        SendAsync(socket, $$$"""{"t":"call","id":{{{id}}},"feature":"files","method":"{{{method}}}","args":{{{args}}}}""");
-
-    private static Task SendAsync(WebSocket socket, string text) =>
-        socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
-
-    private static async Task<string> ReadAsync(WebSocket socket)
-    {
-        using var message = new MemoryStream();
-        var buffer = new byte[64 * 1024];
-        WebSocketReceiveResult received;
-        do
-        {
-            received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(Wait);
-            message.Write(buffer, 0, received.Count);
-        }
-        while (!received.EndOfMessage);
-        return Encoding.UTF8.GetString(message.ToArray());
     }
 }

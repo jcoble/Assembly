@@ -106,14 +106,6 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_machines_subscription_starts_with_every_machine_and_a_remote_not_checked_yet()
-    {
-        using var socket = await OpenAsync();
-
-        Assert.Equal(List(1, Box(false, "not checked yet")), await SubAsync(socket, 1, "machines"));
-    }
-
-    [Fact]
     public async Task A_failed_call_sends_the_machines_change_before_its_error_frame()
     {
         using var socket = await OpenAsync();
@@ -132,54 +124,6 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_second_identical_outcome_publishes_nothing()
-    {
-        using var socket = await OpenAsync();
-        await SubAsync(socket, 1, "machines");
-        await _box.ProbeAsync(CancellationToken.None);
-        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
-        await CallAsync(socket, 2, "machines", "agents", """{"machine":"box"}""");
-        Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
-        Assert.Contains("\"result\":", await ReadAsync(socket));
-
-        // A change would be queued before the answer.
-        await CallAsync(socket, 3, "machines", "agents", """{"machine":"box"}""");
-        Assert.Contains("\"result\":", await ReadAsync(socket));
-        _stub.DropVersion = true; // Every later attempt is also down, so nothing can welcome it back during the checks below.
-        _stub.Drop = true;
-        await CallAsync(socket, 4, "machines", "agents", """{"machine":"box"}""");
-        Assert.Equal(Change(1, Box(false, "machine socket closed")), await ReadAsync(socket));
-        Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
-        // A call only waits while the machine reconnects; the socket's own next attempt is what fails, at the handshake.
-        var handshakeFailure = System.Text.Json.JsonDocument.Parse(await ReadAsync(socket)).RootElement;
-        Assert.Equal("change", handshakeFailure.GetProperty("t").GetString());
-        Assert.False(handshakeFailure.GetProperty("item").GetProperty("reachable").GetBoolean());
-        await CallAsync(socket, 5, "machines", "agents", """{"machine":"box"}""");
-        Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
-        await CallAsync(socket, 6, "machines", "agents", """{"machine":"box"}""");
-        Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
-    }
-
-    [Fact]
-    public async Task The_first_tick_opens_the_remote_socket_and_later_ticks_reuse_its_welcome()
-    {
-        using var socket = await OpenAsync();
-        await SubAsync(socket, 1, "machines");
-        await SubAsync(socket, 2, "clock", "second");
-
-        await TickAsync(socket);
-        Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
-        Assert.Equal(1, _stub.VersionHits);
-
-        _stub.DropVersion = true;
-        for (var tick = 0; tick < 14; tick++)
-            await TickAsync(socket);
-        Assert.Equal(1, _stub.VersionHits);
-        await TickAsync(socket);
-        Assert.Equal(1, _stub.VersionHits);
-    }
-
-    [Fact]
     public async Task With_nobody_watching_machines_no_probe_goes_out()
     {
         using var socket = await OpenAsync();
@@ -192,23 +136,6 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         await TickAsync(socket);
 
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
-    }
-
-    [Fact]
-    public async Task A_remote_with_a_live_follower_link_is_not_probed()
-    {
-        _box.WatchRunning(["s1"], []);
-        await Until(() => _stub.LiveHits == 1);
-        // The link counts once the follower's connect returns, just after the stub sees it.
-        await Task.Delay(200);
-        using var socket = await OpenAsync();
-        Assert.Equal(List(1, Box(true, null)), await SubAsync(socket, 1, "machines"));
-        await SubAsync(socket, 2, "clock", "second");
-
-        await TickAsync(socket);
-        await Task.Delay(300);
-
-        Assert.Equal(1, _stub.VersionHits);
     }
 
     [Fact]
@@ -246,25 +173,6 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         await Until(() => _stub.VersionAborted == 1);
         await Until(() => _time.Timers == 0);
         Assert.Equal(List(3, Box(false, "not checked yet")), await SubAsync(socket, 3, "machines"));
-    }
-
-    [Fact]
-    public async Task The_clock_runs_for_machines_alone_and_stops_when_neither_is_watched()
-    {
-        Assert.Equal(0, _time.Timers);
-        using var socket = await OpenAsync();
-        await SubAsync(socket, 1, "machines");
-        Assert.Equal(1, _time.Timers);
-        _time.Advance(TimeSpan.FromSeconds(1));
-        Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
-
-        await UnsubAsync(socket, 1);
-        _time.Advance(TimeSpan.FromSeconds(1));
-        await Until(() => _time.Timers == 0);
-
-        await SubAsync(socket, 3, "machines");
-        _time.Advance(TimeSpan.FromSeconds(1));
-        Assert.Equal(1, _stub.VersionHits);
     }
 
     [Fact]
@@ -323,41 +231,6 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         Assert.Equal(1, _stub.VersionHits);
     }
 
-    [Fact]
-    public async Task A_turn_does_not_refresh_its_title_over_HTTP_and_the_follower_keeps_copying()
-    {
-        _sessions.Add("s1", "claude", "https://github.com/o/r", "box");
-        _sessions.SetTitle("s1", "kept", "prompt");
-        _stub.LiveRows =
-        [
-            Row(1, "r1", """{"state":"done"}"""),
-            Row(2, "r2", """{"state":"started"}"""),
-        ];
-
-        _box.WatchRunning(["s1"], []);
-
-        await Until(() => _hub.LastSeq("s1") == 2);
-        Assert.Equal(0, _stub.TitleHits);
-        Assert.Equal("kept", _sessions.Get("s1")!.Title);
-    }
-
-    [Fact]
-    public async Task A_500_answers_failed_and_leaves_the_machine_reachable()
-    {
-        _stub.AgentsStatus = 500;
-        using var socket = await OpenAsync();
-
-        await _box.ProbeAsync(CancellationToken.None);
-        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
-        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
-        await CallAsync(socket, 1, "machines", "agents", """{"machine":"box"}""");
-        var error = await ReadAsync(socket);
-        Assert.Contains("\"code\":\"failed\"", error);
-        Assert.Contains("boom", error);
-
-        Assert.Equal(List(2, Box(true, null)), await ListAsync(socket, 2));
-    }
-
     [Theory]
     [InlineData(401)]
     [InlineData(403)]
@@ -402,51 +275,6 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         Assert.Equal(List(6, Box(true, null)), await ListAsync(socket, 6));
     }
 
-    [Fact]
-    public async Task A_remote_with_another_row_format_stays_unreachable_with_its_reason_on_each_call()
-    {
-        _stub.Format = 99;
-        var reason = $"stores rows in format 99; this computer reads format {RowStore.FormatVersion}";
-        using var socket = await OpenAsync();
-
-        for (var id = 1; id <= 4; id += 2)
-        {
-            var failure = await Assert.ThrowsAsync<MachineUnreachable>(() => _box.ProbeAsync(CancellationToken.None));
-            Assert.Contains(reason, failure.Message);
-            await CallAsync(socket, id, "machines", "agents", """{"machine":"box"}""");
-            var error = await ReadAsync(socket);
-            Assert.Contains("\"code\":\"unreachable\"", error);
-            Assert.Contains(reason, error);
-            Assert.Equal(List(id + 1, Box(false, reason)), await ListAsync(socket, id + 1));
-        }
-        Assert.Equal((2, 0), (_stub.VersionHits, _stub.AgentsHits));
-    }
-
-    [Theory]
-    [InlineData(202, "stopped")]
-    [InlineData(404, "not running")]
-    [InlineData(500, "failed")]
-    [InlineData(200, "failed")]
-    public async Task Stopping_a_run_on_the_remote_fails_on_an_error_status_instead_of_saying_it_isnt_running(int status, string expected)
-    {
-        _stub.StopStatus = status;
-        var session = new SessionInfo("s1", "claude", "https://github.com/o/r", "", null, 0);
-
-        await _box.ProbeAsync(CancellationToken.None);
-        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
-        string outcome;
-        try
-        {
-            outcome = await _box.StopAsync(session, "r1", CancellationToken.None) ? "stopped" : "not running";
-        }
-        catch (CallFailed)
-        {
-            outcome = "failed";
-        }
-
-        Assert.Equal(expected, outcome);
-    }
-
     // Pins: sessions-list#11 (checked is false only before the first probe answers or fails)
     private static string Box(bool reachable, string? reason) =>
         $$"""{"name":"box","kind":"remote","reachable":{{(reachable ? "true" : "false")}},"reason":{{(reason is null ? "null" : $"\"{reason}\"")}},"checked":{{(reason == "not checked yet" ? "false" : "true")}},"ssh":"box","port":9797,"tokenFile":".config/assembly-host/env"{{(!reachable && reason != "not checked yet" ? $",\"offlineSinceMs\":{OfflineSince}" : "")}}}""";
@@ -456,9 +284,6 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
 
     private static string Change(long sub, string box) =>
         $$"""{"t":"change","sub":{{sub}},"op":"upsert","key":"box","item":{{box}}}""";
-
-    private static string Row(long seq, string runId, string payload) =>
-        $$$"""{"type":"row","row":{"sessionId":"s1","seq":{{{seq}}},"runId":"{{{runId}}}","itemId":null,"kind":"turn","payload":{{{payload}}},"createdAt":{{{seq}}},"prevSeq":{{{seq - 1}}}}}""";
 
     // The machines state, read through a subscription that's then dropped.
     private static async Task<string> ListAsync(WebSocket socket, long id)

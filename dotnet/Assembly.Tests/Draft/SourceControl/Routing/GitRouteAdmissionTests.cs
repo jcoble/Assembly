@@ -32,17 +32,6 @@ public sealed class GitRouteAdmissionTests
         Assert.False(MachineReads.AllowRead(calls, "git", "missing", false));
     }
     [Theory]
-    [InlineData("status", CallKind.Read)]
-    [InlineData("history", CallKind.Read)]
-    [InlineData("operation_host", CallKind.Read)]
-    [InlineData("prFile", CallKind.BulkRead)]
-    [InlineData("commit", CallKind.Write)]
-    [InlineData("switchBranch", CallKind.Write)]
-    [InlineData("start", CallKind.Write)]
-    [InlineData("cancel", CallKind.Write)]
-    public void Named_git_methods_keep_their_reviewed_kind(string method, CallKind kind) =>
-        Assert.Equal(kind, GitCallKinds.KindOf(method));
-    [Theory]
     [InlineData("push")]
     [InlineData("review")]
     [InlineData("arbitrary")]

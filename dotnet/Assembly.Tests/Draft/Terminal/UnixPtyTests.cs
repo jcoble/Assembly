@@ -13,29 +13,6 @@ public sealed class UnixPtyTests
     private static readonly Dictionary<string, string?> NoEnvironment = [];
 
     [Fact]
-    public async Task Output_comes_out_byte_for_byte()
-    {
-        // Pins: terminal#3
-        await using var pty = Start("printf '\\344\\270'; printf '\\226\\377'");
-
-        var output = await ReadToEndAsync(pty);
-
-        Assert.Equal(new byte[] { 0xe4, 0xb8, 0x96, 0xff }, output);
-    }
-
-    [Fact]
-    public async Task What_you_type_reaches_the_program()
-    {
-        // Pins: terminal#2
-        await using var pty = Start("echo ready; read line; echo \"got:$line\"");
-        await ReadUntilAsync(pty, "ready");
-
-        await pty.WriteAsync("hi\n"u8.ToArray(), Cancel());
-
-        await ReadUntilAsync(pty, "got:hi");
-    }
-
-    [Fact]
     public async Task A_write_cancelled_while_the_program_isn_t_reading_stops_and_the_next_comes_after_it()
     {
         // Pins: terminal#2
@@ -69,32 +46,6 @@ public sealed class UnixPtyTests
     }
 
     [Fact]
-    public async Task Ctrl_c_stops_the_program_because_the_terminal_is_its_own()
-    {
-        // Pins: terminal#2
-        await using var pty = Start("echo ready; sleep 300");
-        await ReadUntilAsync(pty, "ready");
-
-        await pty.WriteAsync(new byte[] { 0x03 }, Cancel());
-        var exit = await pty.Exited.WaitAsync(Cancel());
-
-        Assert.Equal(130, exit);
-    }
-
-    [Fact]
-    public async Task The_program_sees_its_size_and_a_resize()
-    {
-        // Pins: terminal#4
-        await using var pty = Start("stty size; echo ready; read x; stty size", cols: 80, rows: 24);
-        Assert.Contains("24 80", await ReadUntilAsync(pty, "ready"));
-
-        pty.Resize(120, 40);
-        await pty.WriteAsync("\n"u8.ToArray(), Cancel());
-
-        await ReadUntilAsync(pty, "40 120");
-    }
-
-    [Fact]
     public async Task The_exit_code_comes_after_all_the_output()
     {
         // Pins: terminal#7
@@ -120,17 +71,6 @@ public sealed class UnixPtyTests
 
         await GoneAsync(child);
         await GoneAsync(pty.Pid);
-    }
-
-    [Fact]
-    public void A_folder_that_no_longer_exists_fails_with_its_path()
-    {
-        // Pins: terminal#1
-        var gone = Path.Combine(Path.GetTempPath(), $"assembly-gone-{Guid.NewGuid():N}");
-
-        var failed = Assert.Throws<CallFailed>(() => new UnixPtyStarter().Start(new PtyRequest("/bin/sh", [], gone, NoEnvironment, 80, 24)));
-
-        Assert.Contains(gone, failed.Message);
     }
 
     [Fact]

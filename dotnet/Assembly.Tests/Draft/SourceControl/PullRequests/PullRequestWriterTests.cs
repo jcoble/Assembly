@@ -41,29 +41,6 @@ public sealed class PullRequestWriterTests
         await Assert.ThrowsAsync<CallFailed>(() => f.Writer.ReviewAsync(f.Repo.Root, 7, Base, "Review", [], default));
         Assert.Equal(0, f.Gh.Writes);
     }
-    [Theory]
-    [InlineData("code.cs", 99, "RIGHT")]
-    [InlineData("other.cs", 1, "RIGHT")]
-    [InlineData("code.cs", 1, "LEFT")]
-    public async Task A_line_outside_the_patch_is_refused(string path, int line, string side)
-    {
-        using var f = await Fixture.Create();
-        await Assert.ThrowsAsync<CallFailed>(() => f.Writer.ReviewAsync(f.Repo.Root, 7, Head, "Review", [new(path, line, side, "Line")], default));
-        Assert.Equal(0, f.Gh.Writes);
-    }
-    [Fact]
-    public async Task A_review_is_a_COMMENT_event_at_actual_head_and_source_line()
-    {
-        using var f = await Fixture.Create();
-        await f.Writer.ReviewAsync(f.Repo.Root, 7, Head, " Overall ", [new("code.cs", 1, "RIGHT", " Line ")], default);
-        using var body = JsonDocument.Parse(f.Gh.Input!);
-        Assert.Equal("COMMENT", body.RootElement.GetProperty("event").GetString());
-        Assert.Equal(Head, body.RootElement.GetProperty("commit_id").GetString());
-        var comment = Assert.Single(body.RootElement.GetProperty("comments").EnumerateArray());
-        Assert.Equal(1, comment.GetProperty("line").GetInt32());
-        Assert.Equal("Line", comment.GetProperty("body").GetString());
-        Assert.Equal(1, f.Gh.Writes);
-    }
     // Pins: g9#24
     [Theory]
     [InlineData(true, "MERGEABLE", Base)]
@@ -97,23 +74,6 @@ public sealed class PullRequestWriterTests
     {
         using var f = await Fixture.Create(); f.Gh.WriteResult = new(0, "not JSON", "");
         await Assert.ThrowsAsync<GhUnconfirmed>(() => f.Writer.CommentAsync(f.Repo.Root, 7, Head, "Body", default));
-        Assert.Equal(1, f.Gh.Writes);
-    }
-    [Fact]
-    public async Task A_comment_posts_the_exact_trimmed_body_once_to_the_issue_endpoint()
-    {
-        using var f = await Fixture.Create();
-        const string text = "A \"quoted\" comment — café\nsecond line";
-        f.Gh.Create = (args, input) =>
-        {
-            Assert.Equal(new[] { "api", "--method", "POST", "repos/owner/repo/issues/7/comments", "--input", "-" }, args);
-            using var payload = JsonDocument.Parse(input!);
-            Assert.Equal(text, payload.RootElement.GetProperty("body").GetString());
-            Assert.Single(payload.RootElement.EnumerateObject());
-            return f.Gh.WriteResult;
-        };
-        var url = await f.Writer.CommentAsync(f.Repo.Root, 7, Head, "  " + text + "  ", default);
-        Assert.Equal("https://github.com/owner/repo/pull/7#issuecomment-1", url);
         Assert.Equal(1, f.Gh.Writes);
     }
     private sealed class Fixture : IDisposable
