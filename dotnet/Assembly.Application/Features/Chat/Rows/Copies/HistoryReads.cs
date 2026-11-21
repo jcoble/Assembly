@@ -7,8 +7,14 @@ namespace Assembly.Application.Features.Chat.Rows.Copies;
 /// <summary>A session's history as its owner holds it: its oldest seq, its newest seq, and its rows that are not deltas.</summary>
 public sealed record HistoryFacts(long Low, long Head, long Count);
 
-/// <summary>Whole items, newest first, with the facts read in the same snapshot. No rows means the download is done.</summary>
-public sealed record BeforeChunk(IReadOnlyList<JsonElement> Rows, HistoryFacts Facts);
+/// <summary>
+/// Whole items, newest first, with the facts read in the same snapshot, and the details of their tool items. No rows
+/// means the download is done.
+/// </summary>
+public sealed record BeforeChunk(IReadOnlyList<JsonElement> Rows, HistoryFacts Facts, IReadOnlyList<SavedToolDetail>? Details = null);
+
+/// <summary>A tool item of a run, at its last row's seq.</summary>
+public sealed record RunTool(string Item, long Seq);
 
 /// <summary>The owner's reads a saved copy downloads from (TSK-1692).</summary>
 public sealed class HistoryReads(IAppDatabase db)
@@ -73,6 +79,14 @@ public sealed class HistoryReads(IAppDatabase db)
     public IReadOnlyList<JsonElement> UserRows(string session, string run, CancellationToken ct = default) => db.Query(
         "SELECT session_id,seq,run_id,item_id,kind,payload,created_at FROM rows WHERE session_id=$session AND run_id=$run AND kind='user' ORDER BY seq",
         row => RowWire.ToElement(RowStore.ReadRow(row)), ct, new SqlArg("$session", session), new SqlArg("$run", run));
+
+    /// <summary>The run's tool items whose last row is past <paramref name="after"/>, in that row's order.</summary>
+    public IReadOnlyList<RunTool> ToolItems(string session, string run, long after, CancellationToken ct = default) => db.Query("""
+        SELECT item_id, MAX(seq) AS last FROM rows
+        WHERE session_id=$session AND run_id=$run AND kind='tool' AND item_id IS NOT NULL
+        GROUP BY item_id HAVING last>$after ORDER BY last
+        """, row => new RunTool(row.Text(0), row.Long(1)), ct, new SqlArg("$session", session), new SqlArg("$run", run),
+        new SqlArg("$after", after));
 
     /// <summary>Each named session's facts, in one query. A session with no rows here is left out.</summary>
     public IReadOnlyDictionary<string, HistoryFacts> Facts(IReadOnlyList<string> sessions, CancellationToken ct = default)

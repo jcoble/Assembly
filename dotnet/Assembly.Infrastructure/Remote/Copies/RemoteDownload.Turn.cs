@@ -5,13 +5,14 @@ using Assembly.Application.Features.Chat.Rows;
 namespace Assembly.Infrastructure.Remote.Copies;
 
 /// <summary>
-/// A finished run's user rows, read again from the remote (TSK-1692): their acknowledgment and send fields are written in
-/// place on the remote after the rows were copied here, so the saved copy takes them at turn end.
+/// A finished run, read again from the remote (TSK-1692): its user rows' acknowledgment and send fields are written in
+/// place on the remote after the rows were copied here, and its tools' details never travel on the rows topic, so the
+/// saved copy takes both at turn end.
 /// </summary>
 internal sealed partial class RemoteDownload
 {
     /// <summary>
-    /// A copied turn ended: its run's user rows are read again on the download loop, after any work queued before it.
+    /// A copied turn ended: its run is read again on the download loop, after any work queued before it.
     /// Only a session with a saved copy here is read.
     /// </summary>
     public void TurnEnded(string session, string run)
@@ -23,10 +24,17 @@ internal sealed partial class RemoteDownload
     {
         try
         {
-            var reply = await _bulkCall("turn", JsonSerializer.SerializeToElement(new RowsFeature.TurnArgs(session, run),
-                RowJsonContext.Rows.TurnArgs), ct);
-            var turn = reply.Deserialize(RowJsonContext.Rows.TurnRows) ?? throw new CallFailed("incompatible backend");
-            _hub.UpdateUserPayloads(session, [.. turn.Users.Select(RowWire.Read)]);
+            // Each frame holds as many tool details as fit; Next reads on from the last one it held.
+            long? after = null;
+            do
+            {
+                var reply = await _bulkCall("turn", JsonSerializer.SerializeToElement(new RowsFeature.TurnArgs(session, run, after),
+                    RowJsonContext.Rows.TurnArgs), ct);
+                var turn = reply.Deserialize(RowJsonContext.Rows.TurnRows) ?? throw new CallFailed("incompatible backend");
+                _hub.SaveTurn(session, [.. turn.Users.Select(RowWire.Read)], turn.Details);
+                after = turn.Next;
+            }
+            while (after is not null);
         }
         catch (Exception error) when (Failed(error, ct))
         {

@@ -18,7 +18,7 @@ pub(super) enum RowStep {
 }
 
 #[cfg(test)]
-#[path = "rows_feed_tests.rs"]
+#[path = "tests/rows_feed_tests.rs"]
 mod tests;
 
 impl RowsFeed {

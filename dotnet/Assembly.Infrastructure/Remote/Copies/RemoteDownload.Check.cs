@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Features.Chat.Rows.Copies;
 
 namespace Assembly.Infrastructure.Remote.Copies;
 
@@ -49,9 +50,9 @@ internal sealed partial class RemoteDownload
         {
             for (var at = Math.Max(from, reached); at < to - 1 && at < head;)
             {
-                var rows = await AfterAsync(session, at, ct);
+                var (rows, details) = await AfterAsync(session, at, ct);
                 if (rows.Count == 0) break;
-                foreach (var row in _hub.Backfill(session, [.. rows.Where(row => row.Seq <= head)])) _subagentCopied(session, row);
+                foreach (var row in _hub.Backfill(session, [.. rows.Where(row => row.Seq <= head)], details)) _subagentCopied(session, row);
                 at = reached = rows[^1].Seq;
             }
         }
@@ -60,11 +61,13 @@ internal sealed partial class RemoteDownload
         _hub.CompleteCopy(session);
     }
 
-    private async Task<IReadOnlyList<StoredRow>> AfterAsync(string session, long after, CancellationToken ct)
+    // The rows after a seq, with their tools' details.
+    private async Task<(IReadOnlyList<StoredRow> Rows, IReadOnlyList<SavedToolDetail>? Details)> AfterAsync(string session, long after, CancellationToken ct)
     {
-        var args = JsonSerializer.Deserialize($$"""{"session":{{JsonSerializer.Serialize(session, RowJsonContext.Rows.String)}},"after":{{after}},"limit":{{RowsFeature.PageLimit}}}""",
+        var args = JsonSerializer.Deserialize($$"""{"session":{{JsonSerializer.Serialize(session, RowJsonContext.Rows.String)}},"after":{{after}},"limit":{{RowsFeature.PageLimit}},"details":true}""",
             RowJsonContext.Rows.JsonElement);
         var reply = await _bulkCall("after", args, ct);
-        return [.. reply.GetProperty("rows").EnumerateArray().Select(RowWire.Read)];
+        var details = reply.TryGetProperty("details", out var saved) ? saved.Deserialize(RowJsonContext.Rows.IReadOnlyListSavedToolDetail) : null;
+        return ([.. reply.GetProperty("rows").EnumerateArray().Select(RowWire.Read)], details);
     }
 }

@@ -4,7 +4,9 @@ using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows.Context;
+using Assembly.Application.Features.Chat.Rows.Copies;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Rows;
 
@@ -113,18 +115,14 @@ internal sealed partial class RowsFeature : IFeature
             var after = args.GetProperty("after").GetInt64();
             var limit = args.TryGetProperty("limit", out var requested) ? requested.GetInt32() : PageLimit;
             var rows = _store.RowsAfter(session, after, Math.Clamp(limit, 1, PageLimit));
-            // A read is one frame, capped at 4 MB even on bulk. Leave space for its result envelope.
-            var json = new List<string>();
-            var bytes = 0;
-            foreach (var row in rows)
-            {
-                var wire = RowWire.ToJson(row);
-                var size = Encoding.UTF8.GetByteCount(wire) + 1;
-                if (bytes + size > 4 * 1024 * 1024 - 1024) break;
-                json.Add(wire);
-                bytes += size;
-            }
-            using var result = JsonDocument.Parse("{\"rows\":[" + string.Join(',', json) + "]}");
+            // A read is one frame, capped at 4 MB even on bulk. A saved copy's hole check asks for its tools' details too.
+            var json = rows.Select(RowWire.ToJson).ToList();
+            var details = args.TryGetProperty("details", out var asked) && asked.ValueKind == JsonValueKind.True
+                ? Detail(session, call.Cancellation) : null;
+            var (kept, saved) = DetailFrames.Fit([.. rows.Select((row, at) => new FrameRow(row.ItemId, row.Kind, Encoding.UTF8.GetByteCount(json[at])))],
+                details, wholeItems: false);
+            var detailJson = details is null ? "" : ",\"details\":" + JsonSerializer.Serialize(saved, RowJsonContext.Rows.IReadOnlyListSavedToolDetail);
+            using var result = JsonDocument.Parse("{\"rows\":[" + string.Join(',', json.Take(kept)) + "]" + detailJson + "}");
             return Task.FromResult(result.RootElement.Clone());
         }, bulk: true);
         calls.Read(Topic, "toolRaw", RowJsonContext.Rows.RawToolArgs, RowJsonContext.Rows.StoredToolCall, (args, call) =>
@@ -135,9 +133,7 @@ internal sealed partial class RowsFeature : IFeature
         }, bulk: true);
         calls.Read(Topic, "tool", RowJsonContext.Rows.ToolArgs, RowJsonContext.Rows.ToolDetail, async (args, call) =>
         {
-            var tool = _sessions.Get(args.Session) is { } session
-                ? await _machines.For(session).ToolCallAsync(session, args.Item, call.Cancellation)
-                : null;
+            var tool = _sessions.Get(args.Session) is { } session ? await ToolCallAsync(session, args.Item, call.Cancellation) : null;
             if (tool is null)
                 throw new CallFailed("unknown tool call");
             var (output, outputBytes) = Cut(tool.Output, tool.OutputBytes);
@@ -174,6 +170,16 @@ internal sealed partial class RowsFeature : IFeature
             bound?.EnsureCurrent();
             return new SessionAttachments(session.Machine, [.. prompts.Take(AttachmentPrompts)], prompts.Count > AttachmentPrompts);
         });
+    }
+
+    // A saved remote session's tool opens from its copy (TSK-1692). One with no saved detail, a tool of a turn still
+    // running, is read from its machine and shown, not saved: the turn-end read saves it. Offline it is unknown.
+    private async Task<StoredToolCall?> ToolCallAsync(SessionInfo session, string item, CancellationToken ct)
+    {
+        var copied = !string.IsNullOrEmpty(session.Machine) && _hub.Copies.RemoteCopyOf(session.SessionId) is not null;
+        if (copied && _hub.ToolCall(session.SessionId, item) is { } saved) return saved;
+        try { return await _machines.For(session).ToolCallAsync(session, item, ct); }
+        catch (MachineUnreachable) when (copied) { return null; }
     }
 
     // The text cut to at most ToolCap bytes, at a whole character, and its full size in bytes.

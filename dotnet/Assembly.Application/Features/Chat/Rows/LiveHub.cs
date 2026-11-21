@@ -94,19 +94,22 @@ public sealed class LiveHub : IDisposable
         CopyStart start;
         lock (_gate)
         {
-            start = _store.Copies.Start(sessionId, machine, rows, first.Facts);
+            start = _store.Copies.Start(sessionId, machine, rows, first.Facts, first.Details);
             Summarize(sessionId, [.. rows.OrderBy(row => row.Seq)]);
         }
         _downloads.Saved(sessionId);
         return start;
     }
 
-    /// <summary>Saves older rows below the copy's first seq. Nothing is pushed and the summary stays: they're older.</summary>
-    public IReadOnlyList<StoredRow> Backfill(string sessionId, IReadOnlyList<StoredRow> rows)
+    /// <summary>
+    /// Saves older rows below the copy's first seq, with their tool details. Nothing is pushed and the summary stays:
+    /// they're older.
+    /// </summary>
+    public IReadOnlyList<StoredRow> Backfill(string sessionId, IReadOnlyList<StoredRow> rows, IReadOnlyList<SavedToolDetail>? details = null)
     {
         IReadOnlyList<StoredRow> subagents;
         lock (_gate)
-            subagents = _store.Copies.Backfill(sessionId, rows);
+            subagents = _store.Copies.Backfill(sessionId, rows, details);
         _downloads.Saved(sessionId);
         return subagents;
     }
@@ -145,13 +148,13 @@ public sealed class LiveHub : IDisposable
     }
 
     /// <summary>
-    /// A copied run's user rows as the owner holds them now, written in place. Nothing is pushed: an open window shows
-    /// them on its next page read, as it does a local session's acknowledgment.
+    /// A copied run as the owner holds it now: its user rows written in place, and its tools' details saved. Nothing is
+    /// pushed: an open window shows them on its next page or tool read, as it does a local session's acknowledgment.
     /// </summary>
-    public void UpdateUserPayloads(string sessionId, IReadOnlyList<StoredRow> rows)
+    public void SaveTurn(string sessionId, IReadOnlyList<StoredRow> rows, IReadOnlyList<SavedToolDetail>? details)
     {
         lock (_gate)
-            _store.Copies.UpdateUsers(sessionId, rows);
+            _store.Copies.SaveTurn(sessionId, rows, details);
     }
 
     public void CompleteCopy(string sessionId)

@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Features.Chat.Rows.Copies;
 using Assembly.Domain.Events;
 
 namespace Assembly.Application.Features.Chat.Rows;
@@ -20,9 +21,11 @@ public sealed partial class RowStore
               ordinal INTEGER NOT NULL, current INTEGER NOT NULL,
               PRIMARY KEY(session_id, item_id, acp_session_id, terminal_id));
             """);
-        foreach (var column in new[] { "output_source", "acp_session_id" })
+        // A saved copy's detail keeps its fields' true sizes and whether a field was cut (TSK-1692).
+        foreach (var (column, type) in new[] { ("output_source", "TEXT"), ("acp_session_id", "TEXT"), ("output_total", "INTEGER"),
+                     ("diff_total", "INTEGER"), ("truncated", "INTEGER NOT NULL DEFAULT 0") })
             if (scope.QueryFirst("SELECT count(*) FROM pragma_table_info('tool_details') WHERE name=$name;", row => row.Long(0), new SqlArg("$name", column)) == 0)
-                scope.Execute($"ALTER TABLE tool_details ADD COLUMN {column} TEXT;");
+                scope.Execute($"ALTER TABLE tool_details ADD COLUMN {column} {type};");
     }
 
     private static void UpsertTerminal(IWriteScope scope, string sessionId, TerminalChanged terminal)
@@ -82,12 +85,30 @@ public sealed partial class RowStore
                 new SqlArg("$terminal", id));
     }
 
+    /// <summary>
+    /// The item's detail for another machine's saved copy (TSK-1692): output, diff and input each cut to <paramref name="cap"/> bytes at a
+    /// whole character, with the output's and diff's true sizes. A terminal tool's output is its terminals' output. Null
+    /// when the item has no detail, or a field is too big to read.
+    /// </summary>
+    public SavedToolDetail? DetailToSave(string session, string item, int cap, CancellationToken ct)
+    {
+        StoredToolCall? call;
+        try { call = ReadToolCall(session, item, cap, cap, ct); }
+        catch (CallFailed) { return null; }
+        if (call is null) return null;
+        var input = call.Input is { } text && Encoding.UTF8.GetByteCount(text) > cap
+            ? DecodePrefix(Encoding.UTF8.GetBytes(text), Encoding.UTF8.GetByteCount(text), cap, out _) : call.Input;
+        var cut = !ReferenceEquals(input, call.Input) || call.OutputTruncated
+            || call.OutputBytes > Encoding.UTF8.GetByteCount(call.Output ?? "") || call.DiffBytes > Encoding.UTF8.GetByteCount(call.Diff ?? "");
+        return new SavedToolDetail(item, call with { Summary = null, Input = input, OutputTruncated = cut });
+    }
+
     private StoredToolCall? ReadToolCall(string sessionId, string itemId, int outputLimit, int diffLimit, CancellationToken ct)
     {
         // One statement fixes the detail, newest summary, terminal identities, counts and bounded bytes together.
         var parts = _db.Query("""
             WITH detail AS (
-              SELECT input,output,diff,path,output_source,acp_session_id,
+              SELECT input,output,diff,path,output_source,acp_session_id,output_total,diff_total,truncated,
                 (SELECT json_extract(payload,'$.summary') FROM rows
                  WHERE session_id=$session AND item_id=$item AND kind='tool' ORDER BY seq DESC LIMIT 1) AS summary
               FROM tool_details WHERE session_id=$session AND item_id=$item),
@@ -105,12 +126,12 @@ public sealed partial class RowStore
                   ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS preceding_bytes
               FROM matched),
             chosen AS (
-              SELECT summary,input,output,diff,path,
+              SELECT summary,input,output,diff,path,truncated,
                 CASE WHEN (output_source IS NULL OR output_source='raw') AND output IS NOT NULL THEN 0
                   WHEN EXISTS(SELECT 1 FROM matched WHERE output_bytes IS NOT NULL) THEN 1 ELSE 0 END AS terminal_output,
                 COALESCE((SELECT SUM(output_bytes) FROM matched),0) AS terminal_total,
-                COALESCE(length(CAST(output AS BLOB)),0) AS output_total,
-                COALESCE(length(CAST(diff AS BLOB)),0) AS diff_total
+                COALESCE(output_total,length(CAST(output AS BLOB)),0) AS output_total,
+                COALESCE(diff_total,length(CAST(diff AS BLOB)),0) AS diff_total
               FROM detail)
             SELECT CASE WHEN COALESCE(b.position,1)=1 THEN 1 ELSE 0 END,
               COALESCE(length(CAST(d.summary AS BLOB)),0),COALESCE(length(CAST(d.input AS BLOB)),0),COALESCE(length(CAST(d.path AS BLOB)),0),
@@ -127,7 +148,8 @@ public sealed partial class RowStore
               CASE WHEN length(CAST(b.command AS BLOB))<=$field_max THEN CAST(b.command AS BLOB) END,
               CASE WHEN length(CAST(b.cwd AS BLOB))<=$field_max THEN CAST(b.cwd AS BLOB) END,
               CASE WHEN length(CAST(b.exit_status AS BLOB))<=$field_max THEN CAST(b.exit_status AS BLOB) END,
-              CASE WHEN d.terminal_output=1 THEN substr(b.output,1,max(0,$terminal_limit-b.preceding_bytes)) END
+              CASE WHEN d.terminal_output=1 THEN substr(b.output,1,max(0,$terminal_limit-b.preceding_bytes)) END,
+              d.truncated
             FROM chosen d LEFT JOIN bounded b ON 1=1 ORDER BY b.position;
             """, row =>
         {
@@ -136,7 +158,7 @@ public sealed partial class RowStore
                 if (row.Long(column) > 4 * 1024 * 1024) throw new CallFailed("the answer is over 4 MB");
             var call = row.Long(0) == 1 ? new StoredToolCall(BlobText(row, 4), BlobText(row, 5),
                 Prefix(row, 7, row.Long(9), outputLimit), Prefix(row, 8, row.Long(10), diffLimit), BlobText(row, 6),
-                row.Long(9), row.Long(10)) : null;
+                row.Long(9), row.Long(10), row.Long(21) != 0) : null;
             var state = row.IsNull(13) ? null : new ToolTerminalState(row.Text(12), row.Text(13), BlobText(row, 17), BlobText(row, 18),
                 row.IsNull(19) ? null : JsonSerializer.Deserialize(BlobText(row, 19)!, RowJsonContext.Rows.TerminalExit));
             return (Call: call, State: state, Bytes: row.IsNull(20) ? null : row.Blob(20), TerminalOutput: row.Long(11) != 0);
@@ -156,7 +178,7 @@ public sealed partial class RowStore
         return detail with
         {
             Output = output,
-            OutputTruncated = detail.OutputBytes > raw.LongLength || cut,
+            OutputTruncated = detail.OutputTruncated || detail.OutputBytes > raw.LongLength || cut,
             Terminals = states
         };
     }

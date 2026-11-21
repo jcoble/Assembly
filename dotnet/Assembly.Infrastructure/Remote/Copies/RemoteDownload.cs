@@ -149,7 +149,7 @@ internal sealed partial class RemoteDownload : IAsyncDisposable
         {
             var chunk = await Before(session, oldest, null, ct);
             if (chunk.Rows.Count == 0) return;
-            foreach (var row in _hub.Backfill(session, [.. chunk.Rows.Select(RowWire.Read)])) _subagentCopied(session, row);
+            foreach (var row in _hub.Backfill(session, [.. chunk.Rows.Select(RowWire.Read)], chunk.Details)) _subagentCopied(session, row);
         }
     }
 

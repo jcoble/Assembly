@@ -52,6 +52,8 @@ namespace Assembly.Application.Features.Chat.Rows;
 [JsonSerializable(typeof(RowsFeature.HeadsReply))]
 [JsonSerializable(typeof(RowsFeature.TurnArgs))]
 [JsonSerializable(typeof(RowsFeature.TurnRows))]
+[JsonSerializable(typeof(SavedToolDetail))]
+[JsonSerializable(typeof(IReadOnlyList<SavedToolDetail>))]
 [JsonSerializable(typeof(TerminalExit))]
 [JsonSerializable(typeof(IReadOnlyList<ToolTerminalState>))]
 internal sealed partial class RowJsonContext : JsonSerializerContext

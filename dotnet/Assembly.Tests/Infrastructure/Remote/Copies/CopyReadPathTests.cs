@@ -21,7 +21,7 @@ namespace Assembly.Tests.Infrastructure.Remote.Copies;
 /// A remote session saved here opens and scrolls from its copy, connected or not (TSK-1692). The desktop answers
 /// <c>sessions/open_target</c> and the rows reads over its own socket; the remote logs every rows and open call it answers.
 /// </summary>
-public sealed class CopyReadPathTests : IAsyncLifetime
+public sealed partial class CopyReadPathTests : IAsyncLifetime
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(30);
     private readonly TwoHosts _hosts = new(forwardCommands: true);
@@ -384,7 +384,7 @@ public sealed class CopyReadPathTests : IAsyncLifetime
     {
         var id = Interlocked.Increment(ref _id);
         var frame = new JsonObject { ["t"] = "call", ["id"] = id, ["feature"] = feature, ["method"] = method, ["args"] = args };
-        var socket = feature == "rows" && method is "page" or "subagents" ? _bulk : _socket;
+        var socket = feature == "rows" && method is "page" or "subagents" or "tool" ? _bulk : _socket;
         await Send(socket, frame.ToJsonString());
         return await Receive(socket);
     }

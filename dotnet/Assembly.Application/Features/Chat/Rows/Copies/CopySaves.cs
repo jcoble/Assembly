@@ -17,10 +17,12 @@ public sealed partial class CopyRecords
     /// The first chunk, the newest items: its rows, the session's next seq past the remote's head, and the copy record,
     /// complete when the remote has no rows or the chunk reached its oldest.
     /// </summary>
-    internal CopyStart Start(string session, string machine, IReadOnlyList<StoredRow> rows, HistoryFacts facts) =>
+    internal CopyStart Start(string session, string machine, IReadOnlyList<StoredRow> rows, HistoryFacts facts,
+        IReadOnlyList<SavedToolDetail>? details) =>
         writer.Write("rows.copy-start", scope =>
         {
             var saved = Save(scope, session, rows);
+            SaveDetails(scope, session, details);
             scope.Execute("""
                 INSERT INTO sessions(session_id,next_seq) VALUES($session,$next)
                 ON CONFLICT(session_id) DO UPDATE SET next_seq=MAX(next_seq, excluded.next_seq)
@@ -36,9 +38,14 @@ public sealed partial class CopyRecords
             return new CopyStart(complete, SubagentRows(saved));
         });
 
-    /// <summary>Older items below the copy's first seq. Returns the subagent cards it saved.</summary>
-    internal IReadOnlyList<StoredRow> Backfill(string session, IReadOnlyList<StoredRow> rows) =>
-        writer.Write("rows.copy-backfill", scope => SubagentRows(Save(scope, session, rows)));
+    /// <summary>Older items below the copy's first seq, with their tool details. Returns the subagent cards it saved.</summary>
+    internal IReadOnlyList<StoredRow> Backfill(string session, IReadOnlyList<StoredRow> rows, IReadOnlyList<SavedToolDetail>? details) =>
+        writer.Write("rows.copy-backfill", scope =>
+        {
+            var saved = Save(scope, session, rows);
+            SaveDetails(scope, session, details);
+            return SubagentRows(saved);
+        });
 
     /// <summary>
     /// Rows the follower already copied forward become a copy still downloading, to the remote's head and with its
@@ -95,12 +102,13 @@ public sealed partial class CopyRecords
     }
 
     /// <summary>
-    /// User rows read again from the owner, written over the saved ones at the same seq in one write. A seq not saved here,
-    /// or saved as another kind, is left alone.
+    /// A finished run read again from the owner, in one write: its user rows over the saved ones at the same seq, and its
+    /// tools' details. A seq not saved here, or saved as another kind, is left alone.
     /// </summary>
-    internal void UpdateUsers(string session, IReadOnlyList<StoredRow> rows) =>
-        writer.Write("rows.copy-users", scope =>
+    internal void SaveTurn(string session, IReadOnlyList<StoredRow> rows, IReadOnlyList<SavedToolDetail>? details) =>
+        writer.Write("rows.copy-turn", scope =>
         {
+            SaveDetails(scope, session, details);
             foreach (var row in rows.Where(row => row.Kind == RowKind.User))
                 scope.Execute("UPDATE rows SET payload=$payload WHERE session_id=$session AND seq=$seq AND kind='user'",
                     new SqlArg("$payload", row.Payload.GetRawText()), new SqlArg("$session", session), new SqlArg("$seq", row.Seq));
