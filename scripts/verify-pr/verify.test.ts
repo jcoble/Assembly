@@ -414,9 +414,16 @@ for (const [name,tests,receipt] of [
   const f=fixture(t),dir=f.result({...pass,tests});
   writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
   if(receipt!==undefined) writeFileSync(join(f.config.workerHome,'result','tests.log'),receipt);
-  assert.equal(f.run('post.ts',[dir]).status,0);
+  assert.equal(f.run('post.ts',[dir],{DIFF_FILES:'src/code.ts\nsrc/code.test.ts'}).status,0);
   const saved=JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8'));
   assert.equal(saved.label,'REDO'); assert.equal(saved.state,'failure');
+});
+test('a PR that changes no test passes on the window check alone',t=>{
+  const f=fixture(t),dir=f.result({...pass,tests:[]});
+  writeFileSync(join(f.config.workerHome,'result','after.png'),'capture');
+  assert.equal(f.run('post.ts',[dir]).status,0);
+  const saved=JSON.parse(readFileSync(join(dir,'receipt.json'),'utf8'));
+  assert.equal(saved.label,'PASS'); assert.equal(saved.state,'success');
 });
 test('valid test receipt is uploaded and labeled as the verifier receipt',t=>{
   const f=fixture(t),dir=f.result(pass);
