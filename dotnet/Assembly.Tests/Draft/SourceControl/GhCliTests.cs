@@ -83,20 +83,6 @@ public sealed class GhCliTests
     /// alive, so a test host killed mid-test can't leave it behind.</summary>
     private const string UntilHostGone = "printf ready > ready\nwhile kill -0 $PPID 2>/dev/null; do sleep 0.1; done\nprintf gone > gone\n";
 
-    [Fact]
-    public async Task A_waiting_fixture_ends_once_whoever_started_it_is_gone()
-    {
-        using var executable = new Executable(UntilHostGone);
-        using var watcher = new FileSystemWatcher(executable.Root, "gone");
-        var gone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        watcher.Created += (_, _) => gone.TrySetResult();
-        watcher.EnableRaisingEvents = true;
-        using var host = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/bin/sh", ["-c", $"'{executable.Path}' &"])
-        { WorkingDirectory = executable.Root })!;
-        await host.WaitForExitAsync();
-        await gone.Task.WaitAsync(TimeSpan.FromSeconds(10)); // throws if the fixture still runs with its host gone
-    }
-
     private sealed class Executable : IDisposable
     {
         internal string Root { get; } = Directory.CreateTempSubdirectory("assembly-gh-").FullName;

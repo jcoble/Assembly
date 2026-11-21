@@ -12,7 +12,7 @@ public sealed class RoutedNeedSchemaTests
     public void Fresh_seven_adds_only_nullable_addressed_session_and_keeps_chat_five()
     {
         using var f = new EngineFixture();
-        Assert.Equal(15, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(EngineFixture.CurrentSchemaVersion, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(5, f.Number("PRAGMA user_version"));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM pragma_table_info('engine_needs_me') WHERE name='addressee_session_id' AND type='TEXT' AND [notnull]=0"));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM pragma_foreign_key_list('engine_needs_me') WHERE [from]='addressee_session_id' AND [table]='engine_session' AND [to]='id'"));
@@ -32,13 +32,13 @@ public sealed class RoutedNeedSchemaTests
         var before = old.NeedRows();
         var init = old.Db.Writer.Write("test.routed-upgrade", s => EngineSchema.Initialize(s, 9000000));
         Assert.Equal(version, init.PreviousVersion);
-        Assert.Equal(15, old.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(EngineFixture.CurrentSchemaVersion, old.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(before, old.NeedRows());
         Assert.Equal(0, old.Number("SELECT COUNT(*) FROM engine_needs_me WHERE addressee_session_id IS NOT NULL"));
         Assert.Equal(5, old.Number("PRAGMA user_version"));
         Assert.Empty(old.Db.Query("PRAGMA foreign_key_check", r => r.Text(0), default));
         var next = old.Db.Writer.Write("test.reopen-seven", s => EngineSchema.Initialize(s, 9000001));
-        Assert.Equal(15, next.PreviousVersion);
+        Assert.Equal(EngineFixture.CurrentSchemaVersion, next.PreviousVersion);
         Assert.Equal(init.Machine, next.Machine);
         Assert.Equal(before, old.NeedRows());
     }
@@ -55,7 +55,7 @@ public sealed class RoutedNeedSchemaTests
         Assert.Equal(before, old.NeedRows());
         old.Db.Writer.Write("test.retry-seven", s => s.Execute("DROP TRIGGER reject_seven"));
         EngineSchema.Open(old.Db, 9000000);
-        Assert.Equal(15, old.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(EngineFixture.CurrentSchemaVersion, old.Number("SELECT schema_version FROM engine_meta"));
     }
 
     [Fact]
