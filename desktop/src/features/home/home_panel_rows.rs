@@ -145,7 +145,8 @@ impl HomePanel {
     }
 
     /// One machine inside a provider: its name and state, versions, the last failure with "Try again" and a
-    /// "Details" grower, its own models if they differ, and an "Advanced" grower with the four overrides.
+    /// "Details" grower, its own models if they differ, and an "Advanced" grower with the CLI path and
+    /// config folder overrides.
     /// Both growers are the shared expanding row the provider rows use, under their own keys.
     fn machine_line(
         &mut self,

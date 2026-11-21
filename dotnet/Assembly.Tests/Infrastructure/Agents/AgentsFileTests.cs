@@ -175,6 +175,8 @@ public sealed class AgentsFileTests : IDisposable
 
     [Theory]
     [InlineData("binary", "runtime_binary_unsupported")]
+    [InlineData("arguments", "runtime_arguments_unsupported")]
+    [InlineData("shadow", "runtime_shadow_unsupported")]
     public void Unsupported_runtime_changes_never_publish_or_mutate_the_descriptor(string field, string reason)
     {
         var source = Open();
@@ -182,7 +184,8 @@ public sealed class AgentsFileTests : IDisposable
         var settings = field switch
         {
             "binary" => before.Settings with { BinaryPath = "" },
-            _ => before.Settings
+            "arguments" => before.Settings with { LaunchArguments = ["--new-runtime-argument"] },
+            _ => before.Settings with { ShadowHome = "/fixture/shadow" }
         };
         var changes = new List<string>();
         using var subscription = _topics.Subscribe(AgentsFile.Topic, "engine-owner-7", _ => { }, (_, json) => changes.Add(json));

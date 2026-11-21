@@ -67,8 +67,9 @@ pub struct ProviderOnMachine {
     pub version: i64,
 }
 
-/// A provider's Advanced values on one machine, as the backend's runtime call reads and saves them: the CLI
-/// path, the config folder, the account folder and the launch arguments. Empty text means no override.
+/// A provider's runtime values on one machine, as the backend's runtime call reads and saves them. Advanced
+/// edits the CLI path and the config folder; the account folder and launch arguments are legacy values the
+/// read returns and a save sends back unchanged. Empty text means no override.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct RuntimeSettings {

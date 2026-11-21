@@ -1,10 +1,11 @@
 //! The inside of one machine line in a provider's grower: its Advanced section and the calls behind it.
-//! Advanced holds four text fields — the CLI path, the config folder, the account folder and the launch
-//! arguments — read from that machine through the backend's `providers/runtimeRead` call and saved back
-//! through `runtimeSave`, which writes them into that machine's own agents file, the one descriptor every
-//! check, launch and CLI probe on it captures. "Try again" on a failure sends the engine's check command
-//! for that provider on that machine. The panel decides none of the values; it shows what the call returns
-//! and sends what the person typed.
+//! Advanced holds two text fields — the CLI path and the config folder — read from that machine through
+//! the backend's `providers/runtimeRead` call and saved back through `runtimeSave`, which writes them into
+//! that machine's own agents file, the one descriptor every check, launch and CLI probe on it captures.
+//! (No stock adapter or CLI takes a separate account folder or launch arguments from the descriptor, so
+//! Advanced doesn't offer them; the values the read returns for them are sent back unchanged.)
+//! "Try again" on a failure sends the engine's check command for that provider on that machine. The panel
+//! decides none of the values; it shows what the call returns and sends what the person typed.
 
 use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{Input, InputState};
@@ -22,26 +23,16 @@ use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::home_provider_machine;
 use crate::core::ui::access::say;
 
-/// The four fields' labels, in the order the fields are held.
-const LABELS: [&str; 4] = [
-    "CLI path",
-    "Config folder",
-    "Account folder",
-    "Launch arguments",
-];
-/// The accessibility id part of each of the four fields, in the same order.
-const PARTS: [&str; 4] = [
-    "cli-path",
-    "config-folder",
-    "account-folder",
-    "launch-arguments",
-];
+/// The two fields' labels, in the order the fields are held.
+const LABELS: [&str; 2] = ["CLI path", "Config folder"];
+/// The accessibility id part of each of the two fields, in the same order.
+const PARTS: [&str; 2] = ["cli-path", "config-folder"];
 
 /// One machine line's Advanced editor: its four fields once made, and where its read and save stand.
 #[derive(Default)]
 pub(super) struct MachineEdit {
     /// The text fields, made when the grower first draws with values to show.
-    fields: Option<[Entity<InputState>; 4]>,
+    fields: Option<[Entity<InputState>; 2]>,
     /// The values the last read or save returned; the fields are made from these.
     loaded: Option<RuntimeSettings>,
     /// The revision the last read or save returned, which a save must name.
@@ -95,14 +86,12 @@ impl HomePanel {
             .get(&key)
             .is_some_and(|edit| edit.fields.is_some());
         if !has_fields && let Some(settings) = loaded {
-            let fields: [Entity<InputState>; 4] = std::array::from_fn(|index| {
+            let fields: [Entity<InputState>; 2] = std::array::from_fn(|index| {
                 cx.new(|cx| InputState::new(window, cx).placeholder(LABELS[index]))
             });
             let values = [
                 settings.binary_path.clone().unwrap_or_default(),
                 settings.config_home.clone().unwrap_or_default(),
-                settings.shadow_home.clone().unwrap_or_default(),
-                settings.launch_arguments.join(" "),
             ];
             for (field, value) in fields.iter().zip(values) {
                 field.update(cx, |field, cx| field.set_value(value, window, cx));
@@ -202,8 +191,9 @@ impl HomePanel {
         }));
     }
 
-    /// Sends the four fields' text as the machine's Advanced values. Empty text clears an override, and
-    /// launch arguments are the words typed, one argument per word.
+    /// Sends the two fields' text as the machine's Advanced values. Empty text clears an override. The
+    /// account folder and launch arguments the read returned go back exactly as they came: the backend
+    /// refuses a change to them, and the array keeps its boundaries.
     fn save_advanced(
         &mut self,
         provider: &str,
@@ -229,6 +219,7 @@ impl HomePanel {
             let trimmed = text[index].trim();
             (!trimmed.is_empty()).then(|| trimmed.to_string())
         };
+        let loaded = edit.loaded.clone().unwrap_or_default();
         let args = json!({
             "machine": engine_machine,
             "provider": provider,
@@ -236,8 +227,8 @@ impl HomePanel {
             "settings": {
                 "binaryPath": value(0),
                 "configHome": value(1),
-                "shadowHome": value(2),
-                "launchArguments": text[3].split_whitespace().collect::<Vec<_>>(),
+                "shadowHome": loaded.shadow_home,
+                "launchArguments": loaded.launch_arguments,
             },
         });
         edit.saving = true;

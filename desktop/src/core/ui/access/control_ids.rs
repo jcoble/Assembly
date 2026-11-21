@@ -171,8 +171,8 @@ pub fn home_provider(provider: &str, part: &str) -> String {
 }
 
 /// One machine's line inside a provider's grower: `home.provider.codex.workbox.state` (`state`, `versions`,
-/// `models`, `failure`, `try-again`, `details`, `advanced`, `cli-path`, `config-folder`, `account-folder`,
-/// `launch-arguments`, `advanced-save`, `advanced-notice`).
+/// `models`, `failure`, `try-again`, `details`, `advanced`, `cli-path`, `config-folder`, `advanced-save`,
+/// `advanced-notice`, `check-again`).
 pub fn home_provider_machine(provider: &str, machine: &str, part: &str) -> String {
     format!("home.provider.{}.{}.{part}", slug(provider), slug(machine))
 }

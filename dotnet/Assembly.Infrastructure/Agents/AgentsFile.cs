@@ -121,21 +121,6 @@ public sealed class AgentsFile : IReadOnlyList<AgentDescriptor>
             if (environment is null) entry["env"] = environment = new JsonObject();
             environment[variable] = settings.ConfigHome;
         }
-        if (settings.ShadowHome != agent.ShadowHome)
-        {
-            if (settings.ShadowHome is null) entry.Remove("shadowHome");
-            else entry["shadowHome"] = settings.ShadowHome;
-        }
-        if (!(agent.CliArgs ?? []).SequenceEqual(settings.LaunchArguments))
-        {
-            if (settings.LaunchArguments.Count == 0) entry.Remove("cliArgs");
-            else
-            {
-                var arguments = new JsonArray();
-                foreach (var argument in settings.LaunchArguments) arguments.Add((JsonNode?)JsonValue.Create(argument));
-                entry["cliArgs"] = arguments;
-            }
-        }
         var bytes = Encoding.UTF8.GetBytes(document.ToJsonString());
         var replacement = Parse(bytes);
         var reply = Reply(Selected(replacement, provider), replacement.Revision);
@@ -153,6 +138,10 @@ public sealed class AgentsFile : IReadOnlyList<AgentDescriptor>
         if (settings.BinaryPath != agent.Cli &&
             (AccountContext.ExecutableVariable(agent.VendorFamily) is null || settings.BinaryPath is { Length: 0 }))
             throw Refusal("runtime_binary_unsupported");
+        // No stock adapter or CLI takes a separate account folder or launch arguments from this
+        // descriptor, so a change to either is refused rather than saved and ignored.
+        if (!(agent.CliArgs ?? []).SequenceEqual(settings.LaunchArguments)) throw Refusal("runtime_arguments_unsupported");
+        if (settings.ShadowHome != agent.ShadowHome) throw Refusal("runtime_shadow_unsupported");
     }
 
     private ProviderRuntimeReply Reply(AgentDescriptor agent, string revision)
