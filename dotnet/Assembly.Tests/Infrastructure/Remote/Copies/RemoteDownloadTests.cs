@@ -16,7 +16,7 @@ namespace Assembly.Tests.Infrastructure.Remote.Copies;
 /// The download of a remote session into its saved copy here (TSK-1692), between two real hosts: the remote serves its
 /// rows reads, and this machine's <c>RemoteMachine</c> downloads them newest first.
 /// </summary>
-public sealed class RemoteDownloadTests : IAsyncLifetime
+public sealed partial class RemoteDownloadTests : IAsyncLifetime
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(30);
     private readonly TwoHosts _hosts = new();
@@ -25,6 +25,11 @@ public sealed class RemoteDownloadTests : IAsyncLifetime
     // Each rows/before call the remote answered: its args and the seqs it sent.
     private readonly ConcurrentQueue<(RowsFeature.BeforeArgs Args, long[] Seqs)> _answered = new();
     private Func<RowsFeature.BeforeArgs, CancellationToken, Task>? _beforeReading;
+    // Every rows call the remote answered, by method and session.
+    private readonly ConcurrentQueue<(string Method, string Session)> _calls = new();
+    // A rows/after call held until released, and rows a rows/before answer leaves out, as a faulty remote would.
+    private Func<CancellationToken, Task>? _afterReading;
+    private Func<long, bool>? _beforeDropping;
     // Each session whose download reached the bottom: the remote answered it with no rows. Recorded from the start.
     private readonly ConcurrentDictionary<string, TaskCompletionSource> _bottomed = new();
 
@@ -278,7 +283,20 @@ public sealed class RemoteDownloadTests : IAsyncLifetime
             {
                 if (value is RowsFeature.BeforeArgs before && test._beforeReading is { } reading)
                     await reading(before, call.Cancellation);
+                if (method == "after" && test._afterReading is { } holding)
+                    await holding(call.Cancellation);
                 var answer = await handler(value, call);
+                test._calls.Enqueue((method, value switch
+                {
+                    RowsFeature.BeforeArgs b => b.Session,
+                    JsonElement json when json.TryGetProperty("session", out var named) => named.GetString() ?? "",
+                    _ => "",
+                }));
+                if (answer is BeforeChunk dropped && test._beforeDropping is { } drop)
+                    answer = (TResult)(object)(dropped with
+                    {
+                        Rows = [.. dropped.Rows.Where(row => !drop(row.GetProperty("seq").GetInt64()))],
+                    });
                 if (value is RowsFeature.BeforeArgs asked && answer is BeforeChunk chunk)
                 {
                     test._answered.Enqueue((asked, [.. chunk.Rows.Select(row => row.GetProperty("seq").GetInt64())]));

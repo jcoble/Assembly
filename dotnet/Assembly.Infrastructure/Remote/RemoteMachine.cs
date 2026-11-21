@@ -53,7 +53,8 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         _hub = hub;
         _sessionStore = sessionStore;
         _status = status;
-        _follower = new RemoteFollower(hub, RowsAsync, ReadRowsAsync, ProbeAsync, RefreshAsync, AddSubagentSession, log);
+        _follower = new RemoteFollower(hub, RowsAsync, ReadRowsAsync, ProbeAsync, RefreshAsync, AddSubagentSession, log,
+            (session, lastSeq) => _download?.CaughtUp(session, lastSeq));
         _download = StartDownloads();
     }
 

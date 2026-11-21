@@ -50,7 +50,7 @@ internal static class Schema
     public const string Create = $"""
         CREATE TABLE IF NOT EXISTS sessions(session_id TEXT PRIMARY KEY, next_seq INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS remote_copy(session_id TEXT PRIMARY KEY, machine TEXT NOT NULL,
-          state TEXT NOT NULL CHECK(state IN ('downloading','complete')), head INTEGER);
+          state TEXT NOT NULL CHECK(state IN ('downloading','complete')), head INTEGER, count INTEGER);
         CREATE TABLE IF NOT EXISTS rows(session_id TEXT NOT NULL, seq INTEGER NOT NULL, run_id TEXT, item_id TEXT,
           kind TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (session_id, seq));
         CREATE INDEX IF NOT EXISTS rows_item ON rows(session_id, item_id, kind, seq);

@@ -112,10 +112,10 @@ public sealed class LiveHub : IDisposable
     }
 
     /// <summary>A forward copy the follower made becomes a copy still downloading.</summary>
-    public void AdoptCopy(string sessionId, string machine, long head)
+    public void AdoptCopy(string sessionId, string machine, HistoryFacts facts)
     {
         lock (_gate)
-            _store.Copies.Adopt(sessionId, machine, head);
+            _store.Copies.Adopt(sessionId, machine, facts);
     }
 
     public void CompleteCopy(string sessionId)

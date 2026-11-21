@@ -27,10 +27,12 @@ public sealed partial class CopyRecords
                 """, new SqlArg("$session", session), new SqlArg("$next", facts.Head + 1));
             var complete = facts.Head == 0 || rows.Count > 0 && rows.Min(row => row.Seq) <= facts.Low;
             scope.Execute("""
-                INSERT INTO remote_copy(session_id,machine,state,head) VALUES($session,$machine,$state,$head)
-                ON CONFLICT(session_id) DO UPDATE SET machine=excluded.machine, state=excluded.state, head=excluded.head
+                INSERT INTO remote_copy(session_id,machine,state,head,count) VALUES($session,$machine,$state,$head,$count)
+                ON CONFLICT(session_id) DO UPDATE SET machine=excluded.machine, state=excluded.state, head=excluded.head,
+                  count=excluded.count
                 """, new SqlArg("$session", session), new SqlArg("$machine", machine),
-                new SqlArg("$state", complete ? "complete" : "downloading"), new SqlArg("$head", facts.Head));
+                new SqlArg("$state", complete ? "complete" : "downloading"), new SqlArg("$head", facts.Head),
+                new SqlArg("$count", facts.Count));
             return new CopyStart(complete, SubagentRows(saved));
         });
 
@@ -38,11 +40,16 @@ public sealed partial class CopyRecords
     internal IReadOnlyList<StoredRow> Backfill(string session, IReadOnlyList<StoredRow> rows) =>
         writer.Write("rows.copy-backfill", scope => SubagentRows(Save(scope, session, rows)));
 
-    /// <summary>Rows the follower already copied forward become a copy still downloading, to the remote's head.</summary>
-    internal void Adopt(string session, string machine, long head) => writer.Write("rows.copy-adopt", scope => scope.Execute("""
-        INSERT INTO remote_copy(session_id,machine,state,head) VALUES($session,$machine,'downloading',$head)
-        ON CONFLICT(session_id) DO UPDATE SET machine=excluded.machine, state='downloading', head=excluded.head
-        """, new SqlArg("$session", session), new SqlArg("$machine", machine), new SqlArg("$head", head)));
+    /// <summary>
+    /// Rows the follower already copied forward become a copy still downloading, to the remote's head and with its
+    /// count of rows there, which the hole check compares.
+    /// </summary>
+    internal void Adopt(string session, string machine, HistoryFacts facts) => writer.Write("rows.copy-adopt", scope => scope.Execute("""
+        INSERT INTO remote_copy(session_id,machine,state,head,count) VALUES($session,$machine,'downloading',$head,$count)
+        ON CONFLICT(session_id) DO UPDATE SET machine=excluded.machine, state='downloading', head=excluded.head,
+          count=excluded.count
+        """, new SqlArg("$session", session), new SqlArg("$machine", machine), new SqlArg("$head", facts.Head),
+        new SqlArg("$count", facts.Count)));
 
     internal void MarkComplete(string session) => writer.Write("rows.copy-complete", scope => scope.Execute(
         "UPDATE remote_copy SET state='complete' WHERE session_id=$session", new SqlArg("$session", session)));

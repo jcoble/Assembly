@@ -11,7 +11,7 @@ internal sealed class RemoteFollower(
     LiveHub hub, Func<string, long, CancellationToken, IAsyncEnumerable<JsonElement>> subscribe,
     Func<string, long, CancellationToken, Task<IReadOnlyList<StoredRow>>> read,
     Func<CancellationToken, Task> checkFormat, Func<string, Task> turnEnded,
-    Action<string, StoredRow> subagentCopied, TextWriter log) : IAsyncDisposable
+    Action<string, StoredRow> subagentCopied, TextWriter log, Action<string, long>? reportCaughtUp = null) : IAsyncDisposable
 {
     // The sessions followed now; those watched again while followed, owed one more pass; and those given up on because
     // the remote was unreachable, until it answers again. All three under _following's lock.
@@ -162,6 +162,8 @@ internal sealed class RemoteFollower(
                     } while (rows.Count > 0);
                     if (interrupted) continue;
                     caughtUp = true;
+                    // A saved copy waiting for the follower to reach the remote's head can now be checked (TSK-1692).
+                    reportCaughtUp?.Invoke(sessionId, hub.LastSeq(sessionId));
                     if (TakeShownRunning(sessionId) && hub.OpenRun(sessionId) is null && hub.LastTurnEnd(sessionId) > 0)
                         await turnEnded(sessionId);
                 }

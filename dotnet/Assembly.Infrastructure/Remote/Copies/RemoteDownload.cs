@@ -12,7 +12,7 @@ namespace Assembly.Infrastructure.Remote.Copies;
 /// screen, then older chunks until the remote has none left. One loop per machine runs one session at a time. A download
 /// cut by a lost connection carries on with the next one. Everything it saves goes through <see cref="LiveHub"/>.
 /// </summary>
-internal sealed class RemoteDownload : IAsyncDisposable
+internal sealed partial class RemoteDownload : IAsyncDisposable
 {
     private readonly LiveHub _hub;
     private readonly Func<string, JsonElement, CancellationToken, Task<JsonElement>> _bulkCall;
@@ -99,13 +99,11 @@ internal sealed class RemoteDownload : IAsyncDisposable
         _hub.BeginDownload(session);
         try
         {
-            if (await StartAsync(session, ct)) _hub.CompleteCopy(session);
-            else
+            if (!await StartAsync(session, ct))
             {
                 first?.TrySetResult();
                 await BackfillAsync(session, ct);
-                // The hole check (step 6) decides when a copy is whole; until it lands, the bottom reached is enough.
-                _hub.CompleteCopy(session);
+                await CheckAsync(session, ct);
             }
             first?.TrySetResult();
         }
@@ -125,18 +123,28 @@ internal sealed class RemoteDownload : IAsyncDisposable
     private async Task<bool> StartAsync(string session, CancellationToken ct)
     {
         var machine = await _verifiedEngine(ct);
-        if (_hub.Copies.RemoteCopyOf(session) is { } existing) return existing.Complete;
+        // A copy adopted at startup has no head yet; the remote's head and count are what the hole check compares.
+        if (_hub.Copies.RemoteCopyOf(session) is { } existing)
+        {
+            if (existing is { Complete: false, Head: null }) await AdoptAsync(session, machine, ct);
+            return existing.Complete;
+        }
         if (_hub.LastSeq(session) > 0)
         {
-            var heads = await _bulkCall("heads", JsonSerializer.SerializeToElement(new RowsFeature.HeadsArgs([session]), RowJsonContext.Rows.HeadsArgs), ct);
-            var head = heads.Deserialize(RowJsonContext.Rows.HeadsReply)?.Sessions.GetValueOrDefault(session)?.Head ?? 0;
-            _hub.AdoptCopy(session, machine, head);
+            await AdoptAsync(session, machine, ct);
             return false;
         }
         var chunk = await Before(session, null, RowsFeature.FirstChunkItems, ct);
         var start = _hub.StartCopy(session, machine, chunk);
         foreach (var row in start.SubagentRows) _subagentCopied(session, row);
         return start.Complete;
+    }
+
+    private async Task AdoptAsync(string session, string machine, CancellationToken ct)
+    {
+        var heads = await _bulkCall("heads", JsonSerializer.SerializeToElement(new RowsFeature.HeadsArgs([session]), RowJsonContext.Rows.HeadsArgs), ct);
+        _hub.AdoptCopy(session, machine, heads.Deserialize(RowJsonContext.Rows.HeadsReply)?.Sessions.GetValueOrDefault(session)
+            ?? new HistoryFacts(0, 0, 0));
     }
 
     private async Task BackfillAsync(string session, CancellationToken ct)
