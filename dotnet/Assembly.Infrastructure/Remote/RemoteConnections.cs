@@ -183,6 +183,22 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
         return (captured.Machine, live, EnsureCurrent);
     }
 
+    /// <summary>
+    /// Opening a remote session this desktop has no proven facade for records it from the captured live mirror, with its
+    /// helper cards, in one write, while the mirror stays current. Opening it again writes nothing.
+    /// </summary>
+    internal void RecordOpenedFacade(SessionStore sessions, RemoteMachine machine, EngineMirror.LiveMirrorBinding live,
+        Action ensureCurrent, string sessionId, CancellationToken cancellation)
+    {
+        if (sessions.Recorded(sessionId, live.Machine, machine.Name!, cancellation)) return;
+        _writer.Write("sessions.opened", scope =>
+        {
+            ensureCurrent();
+            if (machine.RecordMirroredFacade(scope, live.Machine, sessionId)) _mirrored?.Invoke(scope, live.Machine);
+            return 0;
+        });
+    }
+
     private Task Queue(string name, bool connect, bool probe = false, CancellationToken cancel = default)
     {
         lock (_gate)
