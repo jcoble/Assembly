@@ -21,15 +21,21 @@ public sealed partial class AppSwapTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var file in Directory.GetFiles(_root, "*.pid", SearchOption.AllDirectories))
-            if (int.TryParse(File.ReadAllText(file).Trim(), out var pid) && pid != Environment.ProcessId) StopIfRunning(pid);
-        foreach (var process in _started) { if (!process.HasExited) process.Kill(); process.Dispose(); }
-        Directory.Delete(_root, recursive: true);
+        foreach (var process in _started) { if (!process.HasExited) { process.Kill(); process.WaitForExit(); } process.Dispose(); }
+        // A relaunched script may write its pid file after the first sweep, so each retry stops what it finds and waits for it to go.
+        var limit = Stopwatch.StartNew();
+        while (true)
+        {
+            foreach (var file in Directory.GetFiles(_root, "*.pid", SearchOption.AllDirectories))
+                if (int.TryParse(File.ReadAllText(file).Trim(), out var pid) && pid != Environment.ProcessId) StopIfRunning(pid);
+            try { Directory.Delete(_root, recursive: true); return; }
+            catch (IOException) when (limit.Elapsed < TimeSpan.FromSeconds(5)) { Thread.Sleep(20); }
+        }
     }
 
     private static void StopIfRunning(int pid)
     {
-        try { using var process = Process.GetProcessById(pid); process.Kill(); }
+        try { using var process = Process.GetProcessById(pid); process.Kill(); process.WaitForExit(5000); }
         catch (Exception error) when (error is ArgumentException or InvalidOperationException) { }
     }
 

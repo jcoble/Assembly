@@ -281,6 +281,8 @@ internal sealed class TwoHosts : IAsyncDisposable
     }
     public EngineMirror Mirror { get; private set; } = null!;
     public SharedLog MirrorLog { get; } = new();
+    /// <summary>The desktop's helper-card projection, run in each mirror write and in a first open's write.</summary>
+    public Action<IWriteScope, string>? Mirrored { get; set; }
     private RemoteMachine? _machine;
     private LiveHub? _hub;
     public async Task Start() { await Remote.Start(); await Mac.Start(); Remote.Fixture.SeedSession(); }
@@ -307,7 +309,7 @@ internal sealed class TwoHosts : IAsyncDisposable
                 _machinesFeature = new(machines, status, () => { }, TimeProvider.System);
                 _connections = new(profiles, Mac.Fixture.Db.Writer, machines, status, _hub, sessions, Mac.Topics, MirrorLog, _machinesFeature,
                     open: (profile, _) => Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((new(profile.Name,
-                        (profile.Name == "workbox-test" ? Remote : _additionalHosts[profile.Name]).Address, "isolated-token"), null)), acceptanceEngine: Mac.Runtime);
+                        (profile.Name == "workbox-test" ? Remote : _additionalHosts[profile.Name]).Address, "isolated-token"), null)), mirrored: Mirrored, acceptanceEngine: Mac.Runtime);
                 _connections.Start(new("workbox-test", "isolated"));
                 await _connections.ReadyAsync("workbox-test");
                 _machine = _connections.StartupSnapshot("workbox-test")!.Value.Machine;

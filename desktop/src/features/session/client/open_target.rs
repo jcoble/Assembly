@@ -1,12 +1,17 @@
-//! Exact sessions/open_target wire adapter. Recorded checkout metadata grants no filesystem authority.
+//! Builds the backend's `sessions/open_target` call and checks its answer, for opening a session's pane
+//! (`pane_open_read`) and a native subagent's details (`native_details`). The answer names where the session's rows
+//! come from, whether it is read-only, and the session's saved draft. Recorded checkout metadata grants no
+//! filesystem authority.
 use crate::core::{
     engine::{EngineRefusal, SessionKey},
     intents::session_open::{SessionOpenRequest, SessionOpenTarget},
     socket::row_source::ExpectedRowSource,
 };
+use crate::features::session::composer::composer_view::SavedDraft;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+/// What opening a session found: which session it is, where its rows come from, and what the pane starts with.
 pub(crate) struct OpenTarget {
     pub key: SessionKey,
     pub source: ExpectedRowSource,
@@ -20,6 +25,8 @@ pub(crate) struct OpenTarget {
     )]
     pub has_history_rows: bool,
     pub recorded_checkout_root: Option<String>,
+    /// The session's saved draft, read with the open from the machine it runs on; an older remote's answer carries none.
+    pub saved_draft: Option<SavedDraft>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -40,6 +47,8 @@ struct Read {
     checkout_root: Option<String>,
     expected_source: ExpectedRowSource,
     transcript_only: bool,
+    #[serde(default)]
+    draft: Option<SavedDraft>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -162,6 +171,7 @@ pub(crate) fn parse_response(
         read_only: read.read_only,
         has_history_rows: read.has_history_rows,
         recorded_checkout_root: read.checkout_root,
+        saved_draft: read.draft.filter(|_| !read.read_only),
     })
 }
 fn kind(target: &SessionOpenTarget) -> &'static str {

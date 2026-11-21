@@ -139,6 +139,7 @@ impl Composer {
         let draft = self.draft.read(cx).value();
         self.slash_selected = SlashCommand::query(&draft).map(|_| 0);
         self.slash_scroll.scroll_to_item(0);
+        self.save_shown(cx);
         cx.notify();
     }
 
@@ -151,11 +152,12 @@ impl Composer {
         else {
             return;
         };
-        let (text, hint) = command.pick();
+        let text = command.pick();
+        let end = text.len();
         self.slash_selected = None;
         self.draft.update(cx, |draft, cx| {
             draft.set_value(text, window, cx);
-            draft.set_selected_range(hint, cx);
+            draft.set_selected_range(end..end, cx);
             draft.focus(window, cx);
         });
         cx.notify();

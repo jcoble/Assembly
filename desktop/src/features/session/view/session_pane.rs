@@ -406,6 +406,11 @@ impl SessionPane {
         (at.elapsed() < FADE_FOR).then(|| key.clone())
     }
 
+    /// The chat's composer, for the window's close to wait on its draft saves.
+    pub fn composer_entity(&self) -> Entity<Composer> {
+        self.composer.clone()
+    }
+
     /// The timeline's entries, for tests.
     #[cfg(test)]
     pub fn entries(&self, cx: &App) -> Vec<Entry> {
@@ -495,6 +500,9 @@ mod workspace;
 
 #[path = "navigation/pane_discovery.rs"]
 mod discovery;
+#[cfg(test)]
+#[path = "tests/rail_pick_focus_tests.rs"]
+mod rail_pick_focus_tests;
 #[cfg(test)]
 #[path = "tests/session_route_tests.rs"]
 mod route_tests;

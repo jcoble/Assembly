@@ -35,19 +35,29 @@ impl Composer {
         self._tasks.retain(|task| !task.is_ready());
         self._tasks
             .push(cx.spawn_in(window, async move |composer, cx| {
-                let Ok(Ok(Some(paths))) = picked.await else {
-                    return;
+                let picked = match picked.await {
+                    Ok(Ok(Some(paths))) => Ok(paths),
+                    // On Linux the picker is a desktop portal, which may not be running.
+                    Ok(Err(error)) => Err(format!("The file picker didn't open: {error}")),
+                    _ => return,
                 };
                 // Not if another session was picked meanwhile.
                 composer
                     .update(cx, |composer, cx| {
-                        if !composer.start_busy()
-                            && (composer.start_draft.is_some()
-                                || (composer.session_key == session
-                                    && composer.source_serial == generation
-                                    && composer.operational()))
+                        if composer.start_busy()
+                            || (composer.start_draft.is_none()
+                                && (composer.session_key != session
+                                    || composer.source_serial != generation
+                                    || !composer.operational()))
                         {
-                            composer.attach_paths(&paths, cx)
+                            return;
+                        }
+                        match picked {
+                            Ok(paths) => composer.attach_paths(&paths, cx),
+                            Err(error) => {
+                                composer.error = Some(error.into());
+                                cx.notify();
+                            }
                         }
                     })
                     .ok();
@@ -149,6 +159,7 @@ impl Composer {
         self.attachments.retain(|attachment| attachment.id != id);
         self.uploads.remove(&id);
         self.previews.remove(&id);
+        self.save_shown(cx);
         cx.notify();
     }
 
@@ -300,6 +311,7 @@ impl Composer {
                                 Ok(path) => AttachmentState::Saved { path },
                                 Err(error) => AttachmentState::Failed(error.reason().into()),
                             };
+                            composer.save_shown(cx);
                             cx.notify();
                         }
                     })

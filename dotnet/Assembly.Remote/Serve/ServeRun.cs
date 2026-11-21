@@ -149,6 +149,7 @@ public static class ServeRun
             var cutover = new SessionCutover(db, sessionStore, launcher, options.Checkouts, TimeProvider.System, helperCards: helperCards,
                 projectRoots: projectRoots, projectUse: projectRoots, owningHome: owningHome);
             var checkoutWrites = new CheckoutWrites();
+            var attachments = new AttachmentStore(options.Attachments);
             engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits,
                 cutover: cutover,
                 effectsFactory: runtime =>
@@ -157,7 +158,8 @@ public static class ServeRun
                     sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work,
                         titler: agents is null ? null : new SessionTitler(sessionStore, store, utility),
                         feed: new EngineFeed(runtime, Console.Out, TimeProvider.System, helperCards),
-                        mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens));
+                        mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens),
+                        images: attachments);
                     sessions.BindHelperWorking(helperCards.Working, helperCards.Refresh);
                     sessions.BindNativeSessions(new Assembly.Infrastructure.Engine.Handoff.NativeSessionProducer(db, sessionStore));
                     workflowReceipts = WorkflowReceipts.Create(db, runtime.Machine, sessions);
@@ -195,7 +197,6 @@ public static class ServeRun
             helperCards.Start(registry.Helpers.Row);
             var gate = new McpGate(engine, sessionLimits, TimeProvider.System);
             answers = new NeedAnswers(gate, engine, registry, TimeProvider.System);
-            var attachments = new AttachmentStore(options.Attachments);
             var machines = new MachineSet(new LocalMachine(hub, sessionStore, registry, attachments));
             board = new BoardTools(sessionStore, registry, boardTransitions, boardQueries, hostStop.Token);
             var workflowCalls = new Assembly.Infrastructure.Workflows.WorkflowCalls(boardQueries, board.AnswerAsync);
@@ -228,7 +229,7 @@ public static class ServeRun
                 [new Assembly.Infrastructure.Engine.Messages.MessagesCalls(engine, db), new EngineCalls(engine, TimeProvider.System, answers, door, new WorkflowCommandRecovery(db, Path.Combine(options.Home, "workflow-proof"))), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, resolveProject: project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore), new SessionTitleCalls(engine, sessionStore), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines), ownerMachineCalls,
                     new ProvidersFeature(challenges, localEngineMachine: engine.Machine), new ProviderRuntimeCalls(engine.Machine, agents), new Assembly.Infrastructure.Updates.InstalledCalls(launcher, TimeProvider.System), new TerminalFeature(terminals), workflowCalls,
                     new RowsFeature(hub, store, sessionStore, machines, new DiskPathProbe(), owningHome, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome, remoteFolders: localFolders),
-                    new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
+                    new SendFeature(sessionStore, machines, hub, door), new Assembly.Application.Features.Chat.Sessions.Drafts.DraftsFeature(door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(options.Home, "staging", "attachments"), sessionSources),
                     new FilesFeature(sessionStore, new FileOwner(sessionStore, db), work, sources: sessionSources),
                     gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes, branches),

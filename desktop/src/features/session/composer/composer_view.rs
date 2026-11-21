@@ -88,7 +88,7 @@ pub struct Composer {
     _engine: Subscription,
     /// The owning agent's name, for the draft's hint and the settings menus.
     agent_name: Option<SharedString>,
-    /// The agent is waiting on an answer elsewhere, so the draft and its controls hold.
+    /// The agent is waiting on an answer elsewhere, so the draft holds; Stop and the settings stay.
     locked: Option<Lock>,
     /// What the agent is waiting on, answered inside the box. The session pane sets it as it draws.
     answer: Option<AnswerPanel>,
@@ -107,6 +107,16 @@ pub struct Composer {
     message_subscriptions: HashMap<String, Subscription>,
     machine: Option<String>,
     failed_drafts: HashMap<crate::core::engine::SessionKey, (String, Vec<Attachment>)>,
+    /// The sessions whose saved draft is in `drafts` or the box, with the source each saves through; only they save
+    /// (composer_draft_saves.rs).
+    saved_drafts: HashMap<
+        crate::core::engine::SessionKey,
+        crate::core::socket::row_source::ExpectedRowSource,
+    >,
+    draft_saves: HashMap<crate::core::engine::SessionKey, draft_saves::DraftSave>,
+    saves_done: Vec<futures_channel::oneshot::Sender<()>>,
+    /// The session picked while its open is still on the way: the draft on screen is its, and nothing sends.
+    parked: Option<selection::Parked>,
     delivered: HashMap<crate::core::engine::SessionKey, std::collections::HashSet<String>>,
     /// How many sends this composer has named, for the next clientId.
     named: u64,
@@ -235,6 +245,10 @@ impl Composer {
             message_subscriptions: HashMap::new(),
             machine: None,
             failed_drafts: HashMap::new(),
+            saved_drafts: HashMap::new(),
+            draft_saves: HashMap::new(),
+            saves_done: Vec::new(),
+            parked: None,
             delivered: HashMap::new(),
             named: 0,
             picks: 0,
@@ -448,6 +462,16 @@ impl Composer {
             .collect()
     }
 
+    /// The draft's text and whether it has the keys, for other features' tests.
+    #[cfg(test)]
+    pub fn draft_state(&self, window: &Window, cx: &App) -> (String, bool) {
+        let draft = self.draft.read(cx);
+        (
+            draft.value().to_string(),
+            draft.focus_handle(cx).is_focused(window),
+        )
+    }
+
     /// Types into the draft as a key press would, for other features' tests.
     #[cfg(test)]
     pub fn type_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -495,14 +519,24 @@ mod target;
 mod tests;
 
 #[cfg(test)]
+#[path = "composer_park_tests.rs"]
+mod park_tests;
+
+#[cfg(test)]
 #[path = "live_config_tests.rs"]
 mod live_config_tests;
 
+#[path = "composer_draft_saves.rs"]
+mod draft_saves;
 #[cfg(test)]
 #[path = "qualified_tests.rs"]
 mod qualified_tests;
 #[path = "composer_selection.rs"]
 mod selection;
+pub use draft_saves::SavedDraft;
+#[cfg(test)]
+#[path = "tests/draft_saves_tests.rs"]
+mod draft_saves_tests;
 #[path = "composer_send.rs"]
 mod send;
 

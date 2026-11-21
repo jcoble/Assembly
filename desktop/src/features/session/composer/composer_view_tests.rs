@@ -38,7 +38,7 @@ pub(super) fn open(
     (composer, client, (events, subscription), cx)
 }
 
-fn type_and_send(composer: &Entity<Composer>, text: &str, cx: &mut VisualTestContext) {
+pub(super) fn type_and_send(composer: &Entity<Composer>, text: &str, cx: &mut VisualTestContext) {
     composer.update_in(cx, |composer, window, cx| {
         composer.draft.update(cx, |draft, cx| {
             draft.set_value(text.to_string(), window, cx)

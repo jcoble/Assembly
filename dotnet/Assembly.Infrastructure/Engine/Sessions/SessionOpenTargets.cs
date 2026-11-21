@@ -11,7 +11,11 @@ internal sealed record SessionOpenTarget(string Kind, string Machine, string Ses
     SessionOpenKey? Parent = null, ulong RequestId = 0);
 internal sealed record SessionOpenTargetRead(string Kind, string Machine, long Generation, string? RouteMachine,
     string SessionId, string? ParentSessionId, string? ItemId, long? Seq, string? PayloadSessionId,
-    bool ReadOnly, bool HasHistoryRows, SessionOpenKey OriginalKey, ulong RequestId, string? CheckoutRoot)
+    bool ReadOnly, bool HasHistoryRows, SessionOpenKey OriginalKey, ulong RequestId, string? CheckoutRoot,
+    // A live session's saved draft, read with the open on the machine it runs on, so the box doesn't show empty first.
+    // A remote's answer passes through as it came; an older remote's carries none.
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Assembly.Application.Features.Chat.Sessions.Drafts.SessionDraft? Draft = null)
 {
     public ExpectedSource ExpectedSource => new(Machine, Generation, RouteMachine);
     // Recorded metadata only: this neither authorizes filesystem access nor activates a workspace.
@@ -60,7 +64,8 @@ internal sealed class SessionOpenTargets(IAppDatabase db, SessionStore sessions)
         ct.ThrowIfCancellationRequested();
         return new(target.Kind, source.Machine, source.Generation, source.RouteMachine, session.SessionId,
             session.ParentSessionId, null, null, null, target.Kind != "engine", HasRows(scope, session.SessionId),
-            new(target.Machine, target.Session), target.RequestId, RecordedCheckout(session.CheckoutRoot));
+            new(target.Machine, target.Session), target.RequestId, RecordedCheckout(session.CheckoutRoot),
+            target.Kind == "engine" ? Assembly.Application.Features.Chat.Sessions.Drafts.DraftStore.Get(scope, session.SessionId) : null);
     }
 
     private SessionOpenTargetRead Native(IReadScope scope, SessionOpenTarget target, ExpectedSource source, CancellationToken ct)

@@ -117,19 +117,26 @@ impl Composer {
             });
         });
         let offline = self.offline.is_some() || !self.operational();
+        // Keyed by the target, so a menu left open closes when another session takes the composer.
         Some(
-            ConfigPills {
-                provider: self
-                    .agent_name
-                    .clone()
-                    .unwrap_or_else(|| "the agent".into()),
-                options,
-                on_select,
-                disabled: offline || !self.backend_connected || self.advertised_target.is_none(),
-                saving: self.picking > 0,
-                compact,
-            }
-            .into_any_element(),
+            div()
+                .id(("composer:settings", generation as usize))
+                .flex_none()
+                .min_w_0()
+                .child(ConfigPills {
+                    provider: self
+                        .agent_name
+                        .clone()
+                        .unwrap_or_else(|| "the agent".into()),
+                    options,
+                    on_select,
+                    disabled: offline
+                        || !self.backend_connected
+                        || self.advertised_target.is_none(),
+                    saving: self.picking > 0,
+                    compact,
+                })
+                .into_any_element(),
         )
     }
 
@@ -140,11 +147,14 @@ impl Composer {
         let offline = self.offline.is_some() || !self.operational();
         let empty = !content;
         let running = self.running.is_some();
-        match slot(running, content, self.can_steer) {
+        // A held draft can't be sent, so a running turn offers Stop.
+        match slot(running, content && self.locked.is_none(), self.can_steer) {
+            // Its square is a child, not an icon, and the kit sizes only an icon button from `with_size`, so the
+            // size is set here or the button shrinks to the square.
             Slot::Stop => Button::new("composer:stop")
                 .danger()
                 .rounded(pill)
-                .with_size(SEND_SIZE)
+                .size(SEND_SIZE)
                 .disabled(offline)
                 .tooltip("Stop generation")
                 .control(ids::STOP, "Stop generation")
@@ -200,6 +210,7 @@ impl Composer {
         h_flex()
             .flex_none()
             .min_w_0()
+            .ml_auto()
             .gap_1()
             .children(footer)
             .when_some(self.meter.clone(), |trail, meter| {

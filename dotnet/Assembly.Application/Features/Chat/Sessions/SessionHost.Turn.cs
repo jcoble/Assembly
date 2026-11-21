@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Chat.Attachments;
 using System.Text.Json;
 using System.Threading.Channels;
 using Assembly.Application.Common;
@@ -80,6 +81,8 @@ public sealed partial class SessionHost
                 turn.Inserted.TrySetResult(new SendResult.Failed("expired"));
                 throw new CallFailed("expired", "expired");
             }
+            var prompt = await PromptContent.BuildAsync(_images, _sessionId, text, turn.AttachmentIds,
+                session.Adapter.Init.AcceptsImages, turn.Stopping.Token);
             // A stop that lands between here and the prompt reaching the agent is lost; the turn then runs to its end.
             if (turn.Stopping.IsCancellationRequested)
             {
@@ -87,7 +90,7 @@ public sealed partial class SessionHost
             }
             else
             {
-                turn.Prompt = session.Adapter.Link.Client.PromptAsync(session.AcpSessionId, [TextBlock.Of(text)], CancellationToken.None);
+                turn.Prompt = session.Adapter.Link.Client.PromptAsync(session.AcpSessionId, prompt, CancellationToken.None);
                 PromptResult response;
                 try
                 {

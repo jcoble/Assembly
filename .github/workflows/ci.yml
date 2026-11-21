@@ -126,6 +126,7 @@ jobs:
         run: node --test scripts/*.test.ts
       - name: Every scripts/*.test.sh passes
         run: |
+          echo "runner: $(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}') GB"
           failed=0
           # shutdown-timing.test.sh runs in the desktop job with its Rust toolchain and native dependencies, and
           # remote-cli.test.sh below, since its build can rewrite a lock file and lint-checks.test.sh needs a clean tree.

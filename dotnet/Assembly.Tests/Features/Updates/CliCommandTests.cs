@@ -102,15 +102,26 @@ public sealed class CliCommandTests
         if (cause == "caller") caller.Cancel(); else if (cause == "host") host.Cancel(); else f.Time.Advance(TimeSpan.FromSeconds(20));
         if (cause == "deadline") Assert.Equal("timeout", (await checking.WaitAsync(timeout.Token)).Reason);
         else await Assert.ThrowsAnyAsync<OperationCanceledException>(() => checking.WaitAsync(timeout.Token));
+        // The command waits for the group leader only, so a child the group kill signalled may still be exiting; it must go soon.
         foreach (var id in ids)
         {
-            try
+            var limit = Stopwatch.StartNew();
+            while (Running(id))
             {
-                using var child = Process.GetProcessById(id);
-                Assert.True(child.HasExited || OperatingSystem.IsLinux() && File.ReadAllText($"/proc/{id}/stat").Split(' ')[2] == "Z", "Owned child still running");
+                Assert.True(limit.Elapsed < TimeSpan.FromSeconds(2), "Owned child still running");
+                await Task.Delay(50);
             }
-            catch (ArgumentException) { }
-            catch (FileNotFoundException) { }
         }
+    }
+
+    private static bool Running(int id)
+    {
+        try
+        {
+            using var child = Process.GetProcessById(id);
+            return !(child.HasExited || OperatingSystem.IsLinux() && File.ReadAllText($"/proc/{id}/stat").Split(' ')[2] == "Z");
+        }
+        catch (ArgumentException) { return false; }
+        catch (FileNotFoundException) { return false; }
     }
 }

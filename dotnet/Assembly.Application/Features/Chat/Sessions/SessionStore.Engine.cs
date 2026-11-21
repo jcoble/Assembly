@@ -237,19 +237,39 @@ public sealed partial class SessionStore : ISessionProjectProjection
             throw new CallFailed("The accepted owner metadata is unavailable.", "source_changed");
         establishOwner?.Invoke(scope);
         validate(scope);
+        return RecordCopied(scope, sessionId, facts, route, projectId, accepted, validate);
+    });
+
+    /// <summary>
+    /// The facade of a remote session whose owner the caller has just established in this writer: the row naming its
+    /// route. A created session and one only its machine's mirror carries are both recorded here.
+    /// </summary>
+    /// <summary>
+    /// Refuses a copied facade whose owner record names another owner, or whose facade here names another route,
+    /// agent, parent or project. It writes nothing, so a chain can be checked whole before any of it is recorded.
+    /// </summary>
+    internal void RefuseCopiedConflict(IReadScope scope, string sessionId, SessionsFeature.CreatedSessionFacts facts, string route,
+        string? projectId)
+    {
         if (scope.QueryFirst("""
                 SELECT COUNT(*) FROM engine_session WHERE id=$id AND
                     (holder='local' OR machine<>$owner OR provider<>$agent OR parent_id IS NOT $parent)
                 """, row => row.Long(0), new SqlArg("$id", sessionId), new("$owner", facts.Machine),
                 new("$agent", facts.Agent), new("$parent", facts.ParentSessionId)) != 0)
             throw new CallFailed("The accepted session identity collides with another owner.", "source_changed");
+        if (Get(scope, sessionId) is { } existing && (existing.Machine != route || existing.Agent != facts.Agent ||
+                existing.ParentSessionId != facts.ParentSessionId || existing.ProjectId is not null && existing.ProjectId != projectId))
+            throw new CallFailed("The copied session identity changed.", "source_changed");
+    }
+
+    internal SessionInfo RecordCopied(IWriteScope scope, string sessionId, SessionsFeature.CreatedSessionFacts facts, string route,
+        string? projectId, Action<IWriteScope>? accepted = null, Action<IWriteScope>? validate = null)
+    {
+        RefuseCopiedConflict(scope, sessionId, facts, route, projectId);
         if (Get(scope, sessionId) is { } existing)
         {
-            if (existing.Machine != route || existing.Agent != facts.Agent || existing.ParentSessionId != facts.ParentSessionId ||
-                existing.ProjectId is not null && existing.ProjectId != projectId)
-                throw new CallFailed("The copied session identity changed.", "source_changed");
             accepted?.Invoke(scope);
-            validate(scope);
+            validate?.Invoke(scope);
             var isBare = existing.ProjectId is null && projectId is null && facts.IsBare;
             if (existing.IsBare != isBare)
             {
@@ -266,10 +286,58 @@ public sealed partial class SessionStore : ISessionProjectProjection
             """, new("$id", sessionId), new("$agent", facts.Agent), new("$repo", facts.RepoUrl), new("$now", session.UpdatedAt),
             new("$machine", route), new("$parent", facts.ParentSessionId), new("$helper", session.Helper ? 1 : 0), new("$folder", facts.Folder), new("$project", projectId), new("$bare", session.IsBare ? 1 : 0));
         accepted?.Invoke(scope);
-        validate(scope);
+        validate?.Invoke(scope);
         Publish(scope, session.SessionId);
         return session;
-    });
+    }
+
+    /// <summary>One session of a mirrored chain: its owner's facts as the live mirror carries them.</summary>
+    internal sealed record MirroredSession(string SessionId, string? ParentId, string Title, SessionsFeature.CreatedSessionFacts Facts);
+
+    /// <summary>Whether the session's facade names this route and its owner record names this machine.</summary>
+    internal bool Recorded(string sessionId, string machine, string route, CancellationToken cancellation) => _db.QueryFirst("""
+        SELECT COUNT(*) FROM session_info s JOIN engine_session e ON e.id=s.session_id
+        WHERE s.session_id=$id AND s.machine=$route AND e.machine=$machine AND e.state='foreign'
+        """, row => row.Long(0), cancellation, new SqlArg("$id", sessionId), new("$machine", machine),
+        new("$route", route)) == 1;
+
+    /// <summary>
+    /// The session and its ancestors that <paramref name="machine"/>'s live mirror under <paramref name="route"/>
+    /// carries, root first, in one statement; null when any of them can't serve as an owner record: not the machine's
+    /// own live session, or a title the mirror holds only part of (the owner record takes the exact title). The first
+    /// one's parent, when it has one, runs on another machine.
+    /// </summary>
+    internal IReadOnlyList<MirroredSession>? MirroredChain(IReadScope scope, string machine, string route, string sessionId)
+    {
+        var rows = scope.Query("""
+            WITH RECURSIVE owned AS (
+              SELECT r.entity_id AS id,r.row_json AS row FROM engine_mirror_row r
+              JOIN engine_mirror m ON m.machine=r.machine AND m.generation=r.generation
+              WHERE m.machine=$machine AND m.name=$route AND m.state='live' AND r.entity_kind='session'),
+            chain(id,depth) AS (
+              SELECT $id,0
+              UNION ALL
+              SELECT json_extract(o.row,'$.parentId'),c.depth+1 FROM chain c JOIN owned o ON o.id=c.id
+              WHERE json_type(o.row,'$.parentId')='text' AND c.depth<64)
+            SELECT c.id,o.row IS NOT NULL
+                AND json_extract(o.row,'$.id')=c.id AND json_extract(o.row,'$.machine')=$machine
+                AND json_extract(o.row,'$.holder')='local' AND json_extract(o.row,'$.state')<>'foreign'
+                AND json_type(o.row,'$.provider')='text' AND json_type(o.row,'$.folder')='text'
+                AND json_extract(o.row,'$.titleComplete') IS NOT 0,
+              json_extract(o.row,'$.provider'),json_extract(o.row,'$.folder'),COALESCE(json_extract(o.row,'$.title'),''),
+              CASE WHEN json_type(o.row,'$.parentId')='text' THEN json_extract(o.row,'$.parentId') END,
+              json_extract(o.row,'$.isBare')=1 AND json_extract(o.row,'$.projectId') IS NULL
+            FROM chain c LEFT JOIN owned o ON o.id=c.id ORDER BY c.depth DESC
+            """, row => (Owned: row.Long(1) == 1, Session: row.Long(1) == 1
+                ? new MirroredSession(row.Text(0), row.IsNull(5) ? null : row.Text(5), row.Text(4),
+                    new SessionsFeature.CreatedSessionFacts(machine, row.Text(2), row.IsNull(5) ? null : row.Text(5), row.Text(3),
+                        false, row.Text(3), row.Long(6) == 1))
+                : null),
+            new SqlArg("$machine", machine), new("$route", route), new("$id", sessionId));
+        // The walk ends at the first ancestor this machine doesn't own: the chain's outside parent, known here or not.
+        var owned = rows.Count > 1 && !rows[0].Owned ? rows.Skip(1).ToArray() : rows.ToArray();
+        return owned.All(row => row.Owned) ? owned.Select(row => row.Session!).ToArray() : null;
+    }
 
     public SessionInfo Create(IWriteScope scope, string agent, string clientId, string folder,
         string? projectId, CheckoutIntent? checkout, string? parentSessionId = null, string? title = null,

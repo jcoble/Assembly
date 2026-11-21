@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Chat.Attachments;
 using System.Text.Json;
 using System.Threading.Channels;
 using Assembly.Application.Common;
@@ -62,6 +63,7 @@ public sealed partial class SessionHost : IPermissionPolicy
     private readonly Action<string>? _sessionClosed;
     // Names the session once a turn has ended normally after the open that gave it its first title.
     private readonly SessionTitler? _titler;
+    private readonly IPromptImages? _images;
     // Set when an open gave the session its first title, until a turn that ends normally starts the titler. Kept in
     // memory only, so a session titled before a restart is never retitled. Guarded by _gate.
     private bool _titlePending;
@@ -80,9 +82,10 @@ public sealed partial class SessionHost : IPermissionPolicy
 
     public SessionHost(string sessionId, LiveHub hub, SessionStore sessionStore, SessionOpener opener, TimeProvider time, TextWriter log,
         BackgroundWork work, Func<bool>? startedWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null,
-        SessionTitler? titler = null, ISessionFeed? feed = null)
+        SessionTitler? titler = null, ISessionFeed? feed = null, IPromptImages? images = null)
     {
         _feed = feed;
+        _images = images;
         _sessionClosed = sessionClosed;
         _titler = titler;
         _startedWorking = startedWorking ?? (() => false);

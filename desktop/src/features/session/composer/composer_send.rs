@@ -29,6 +29,8 @@ impl Composer {
         }
         self.draft
             .update(cx, |draft, cx| draft.set_value("", window, cx));
+        // The send's accept clears the saved draft; this keeps a save still waiting from bringing it back after.
+        self.save_shown(cx);
         let attachment_ids: Vec<String> = attached
             .iter()
             .filter_map(|attachment| match &attachment.state {
@@ -88,7 +90,7 @@ impl Composer {
                 }
             })
             .collect();
-        if self.draft.read(cx).value() == typed
+        let resends_the_draft = self.draft.read(cx).value() == typed
             && self
                 .attachments
                 .iter()
@@ -96,8 +98,8 @@ impl Composer {
                     AttachmentState::Saved { path } => Some(path),
                     _ => None,
                 })
-                .eq(pending.request.attachment_ids.iter())
-        {
+                .eq(pending.request.attachment_ids.iter());
+        if resends_the_draft {
             self.draft
                 .update(cx, |draft, cx| draft.set_value("", window, cx));
             attached = std::mem::take(&mut self.attachments);
@@ -111,6 +113,10 @@ impl Composer {
         self.error = None;
         self.retry_ids.remove(&owner_key);
         self.submit(session, pending.request, typed, attached, window, cx);
+        // The retry's accept clears the saved draft; a different draft kept in the box is saved again after it.
+        if !resends_the_draft {
+            self.save_shown(cx);
+        }
     }
 
     pub fn recover_pending(&mut self, cx: &mut Context<Self>) {
@@ -201,8 +207,10 @@ impl Composer {
                         // unless something new was typed there, and a resend keeps its clientId in case the first
                         // did land. Images don't follow a draft to another session.
                         Err(error) => {
+                            // A parked box holds another session's draft, so the failed prompt goes to its own.
                             let selected = composer.session.as_ref() == Some(&session)
-                                && composer.session_key.as_ref() == Some(&prompt_key);
+                                && composer.session_key.as_ref() == Some(&prompt_key)
+                                && composer.parked.is_none();
                             if composer
                                 .delivered
                                 .get(&prompt_key)
@@ -241,6 +249,8 @@ impl Composer {
                                 let draft = composer.drafts.entry(prompt_key.clone()).or_default();
                                 if draft.0.is_empty() && draft.1.is_empty() {
                                     *draft = (typed, attached);
+                                    // The send saved the emptied box; the text it put back is the draft now.
+                                    composer.save_kept(&prompt_key, cx);
                                 } else {
                                     composer
                                         .failed_drafts
@@ -253,6 +263,8 @@ impl Composer {
                                     .draft
                                     .update(cx, |draft, cx| draft.set_value(typed, window, cx));
                                 composer.attachments = attached;
+                                // set_value sends no change, so the restored text is saved here, as the old app did.
+                                composer.save_shown(cx);
                                 cx.notify();
                             } else {
                                 composer
