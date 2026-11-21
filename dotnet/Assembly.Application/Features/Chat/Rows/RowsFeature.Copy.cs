@@ -47,8 +47,8 @@ internal sealed partial class RowsFeature
         return new TurnRows(users, details, kept < tools.Count ? tools[kept - 1].Seq : null);
     }
 
-    private Func<string, int, SavedToolDetail?> Detail(string session, CancellationToken ct) =>
-        (item, cap) => _store.DetailToSave(session, item, cap, ct);
+    private DetailReads Detail(string session, CancellationToken ct) =>
+        new((items, cap) => _store.DetailSizes(session, items, cap, ct), (items, cap) => _store.DetailsToSave(session, items, cap, ct));
 
     private static FrameRow Frame(JsonElement row) =>
         new(row.GetProperty("itemId").GetString(), row.GetProperty("kind").GetString()!, Encoding.UTF8.GetByteCount(row.GetRawText()));
