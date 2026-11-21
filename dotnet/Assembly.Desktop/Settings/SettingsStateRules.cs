@@ -54,14 +54,15 @@ internal static class SettingsStateRules
         SettingsStateComposer.ProviderRow? providerRow,
         SettingsStateComposer.SignInRow? activeSignIn,
         SettingsStateComposer.SignInRow? failedSignIn,
-        bool adapterMissingFromUpdates)
+        bool adapterMissingFromUpdates,
+        string? problemDetail = null)
     {
         if (localDescriptorInvalid && localAgent is not null)
             return FailureOf(localAgent.Invalid()!, prefix: null);
 
         if (providerRow?.Reason is { } providerReason
             && !(providerRow.AuthState == "signed_in" && providerReason == "interrupted"))
-            return FailureOf(providerReason, prefix: null);
+            return FailureOf(providerReason, prefix: null, problemDetail);
 
         if (activeSignIn is null
             && failedSignIn?.Reason is { } signInReason
@@ -255,13 +256,16 @@ internal static class SettingsStateRules
         return new SettingsSummary(SettingsSummary.Nothing, "Everything is ready.");
     }
 
-    private static SettingsFailure FailureOf(string rawCode, string? prefix)
+    private static SettingsFailure FailureOf(string rawCode, string? prefix, string? problemDetail = null)
     {
         var safeCode = ScrubSafeReason(rawCode);
         var message = safeCode == "unsupported"
             ? "Sign-in is not supported for this provider."
             : ProviderProblems.Text(ParseProblem(safeCode));
-        var detail = prefix is null ? safeCode : prefix + safeCode;
+        // The check's own scrubbed output when there is any; otherwise the safe code, as before.
+        var detail = !string.IsNullOrWhiteSpace(problemDetail)
+            ? problemDetail
+            : prefix is null ? safeCode : prefix + safeCode;
         return new SettingsFailure(message, detail);
     }
 

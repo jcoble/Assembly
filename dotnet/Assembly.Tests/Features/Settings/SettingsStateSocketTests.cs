@@ -249,7 +249,24 @@ public sealed class SettingsStateSocketTests
             Assert.Equal(SettingsSummary.Problem, failed.GetProperty("summary").GetProperty("kind").GetString());
             var lastFailure = ProviderMachine(failed, "codex", "Workbox").GetProperty("lastFailure");
             Assert.False(string.IsNullOrWhiteSpace(lastFailure.GetProperty("message").GetString()));
+            // A remote's raw output never leaves its machine: its detail stays the safe code.
             Assert.Equal("adapter_crashed", lastFailure.GetProperty("detail").GetString());
+
+            // A failing check on this machine keeps its raw output as the detail, with the secret scrubbed out.
+            var claudeVersion = ProviderMachine(failed, "claude", "local").GetProperty("version").GetInt64();
+            await SendCheckAsync(cmdSocket, engine!.Machine, $"claude/{claudeAccount}", callId: 6, claudeVersion);
+            // The warm adapter is reused, so the failing answer goes on the first check's link.
+            var localFailingOpen = await claudeLink.ReadAsync("session/new");
+            await claudeLink.ReplyErrorAsync(localFailingOpen, -32603, $"Adapter exploded with secret {ErrorDetailSecret}");
+
+            var localFailed = await WaitForStateAsync(subSocket, secrets, candidate =>
+            {
+                var failure = ProviderMachine(candidate, "claude", "local").GetProperty("lastFailure");
+                return failure.ValueKind == JsonValueKind.Object
+                    && (failure.GetProperty("detail").GetString() ?? "").Contains("Adapter exploded");
+            });
+            var localDetail = ProviderMachine(localFailed, "claude", "local").GetProperty("lastFailure").GetProperty("detail").GetString();
+            Assert.DoesNotContain(ErrorDetailSecret, localDetail);
 
             subSocket.Abort();
             cmdSocket.Abort();

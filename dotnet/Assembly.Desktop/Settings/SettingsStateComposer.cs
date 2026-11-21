@@ -18,7 +18,8 @@ internal sealed class SettingsStateComposer(
     IAgentLauncher launcher,
     MachinesFeature machinesFeature,
     string localEngineMachine,
-    TimeProvider time)
+    TimeProvider time,
+    ProviderFailureDetails? failureDetails = null)
 {
     private const string LocalKey = "local";
 
@@ -194,7 +195,7 @@ internal sealed class SettingsStateComposer(
         return new EngineSnapshotData(mirrorsByName, providers, signIns);
     }
 
-    private static SettingsProviderMachine ComposeProviderMachine(
+    private SettingsProviderMachine ComposeProviderMachine(
         ProviderSpec spec,
         SettingsMachine machine,
         AgentDescriptor? localAgent,
@@ -242,7 +243,12 @@ internal sealed class SettingsStateComposer(
             providerRow,
             activeSignIn,
             failedSignIn,
-            adapterMissingFromUpdates);
+            adapterMissingFromUpdates,
+            // Raw check output is held in memory by the effects, never in the engine's safe facts;
+            // a remote's detail never leaves its machine, so remotes fall back to the safe code.
+            isLocal && providerRow is not null
+                ? failureDetails?.Get($"{spec.Id}/{providerRow.AccountContext}")
+                : null);
 
         var state = SettingsStateRules.DeriveProviderMachineState(
             machine,

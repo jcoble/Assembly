@@ -39,6 +39,7 @@ public sealed partial class SharedAdapter
         InitializeResponse? initialize = null;
         NewSessionResponse? session = null;
         string? problem = null;
+        string? detail = null;
         var required = false;
         var cancelled = false;
         void Status(AuthStatus value) => Volatile.Write(ref auth, value);
@@ -73,6 +74,8 @@ public sealed partial class SharedAdapter
             problem = error is Win32Exception { NativeErrorCode: 2 } ? "not_installed"
                 : observed?.Exited.IsCompleted == true ? "adapter_crashed"
                 : observed is null ? "cannot_start" : "adapter_error";
+            // Only the scrubbed text is kept: the raw message may quote tokens or file contents.
+            detail = ProbeDetail.Scrub(error.Message, descriptor.Env);
         }
         finally
         {
@@ -84,7 +87,7 @@ public sealed partial class SharedAdapter
             }
         }
         if (cancelled) throw new OperationCanceledException(ct);
-        return new(initialize, session, Volatile.Read(ref auth), required, problem);
+        return new(initialize, session, Volatile.Read(ref auth), required, problem, detail);
     }
 
     private async Task<bool> CloseProbeAsync(RunningAdapter running, string sessionId)

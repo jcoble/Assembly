@@ -20,7 +20,9 @@ public sealed record ModelChoice(string Id, string Name);
 public sealed record SignInChoice(string MethodId, string Name, string Kind);
 public sealed record ProviderFacts(string Provider, string Name, string Adapter, string? Version,
     Installation Installation, AuthState Auth, ProviderProblem? Problem,
-    IReadOnlyList<ModelChoice> Models, IReadOnlyList<SignInChoice> Methods, long CheckedMs);
+    IReadOnlyList<ModelChoice> Models, IReadOnlyList<SignInChoice> Methods, long CheckedMs,
+    // Scrubbed raw output of the check, in memory only: the engine's safe facts never carry it.
+    [property: JsonIgnore] string? ProblemDetail = null);
 public sealed record ProviderTarget(string Provider, string AccountContext, string Name)
 {
     public string EntityId => Provider + "/" + AccountContext;

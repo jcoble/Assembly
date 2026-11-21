@@ -4,6 +4,7 @@ using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Features.Agents;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Infrastructure.Agents;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
@@ -35,11 +36,12 @@ internal sealed class SettingsStateFeature : IFeature, IAsyncDisposable
         IAgentLauncher launcher,
         MachinesFeature machinesFeature,
         string localEngineMachine,
-        TimeProvider time)
+        TimeProvider time,
+        ProviderFailureDetails? failureDetails = null)
     {
         _topics = topics;
         _work = work;
-        _composer = new SettingsStateComposer(db, launcher, machinesFeature, localEngineMachine, time);
+        _composer = new SettingsStateComposer(db, launcher, machinesFeature, localEngineMachine, time, failureDetails);
         _topics.Unsubscribed += OnUnsubscribed;
     }
 

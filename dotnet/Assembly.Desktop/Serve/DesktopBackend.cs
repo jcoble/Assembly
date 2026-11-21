@@ -213,6 +213,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         HttpClient? releaseHttp = null;
         Assembly.Infrastructure.Notion.NotionCalls? notion = null;
         var activity = new TurnActivity();
+        var failureDetails = new Assembly.Application.Features.Agents.ProviderFailureDetails();
         var tokens = new McpTokens();
         var endpoint = new McpEndpointReady(tokens);
         var stopGate = new object();
@@ -317,7 +318,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                     return new EffectRouter(new AdapterEffects(db, sessions, sessionStore, store))
                         .Add("checkout", new Assembly.Infrastructure.Engine.Checkouts.CheckoutEffects(db, new GitCli(), checkoutWrites, sessions,
                             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "dev", "work", "worktrees")))
-                        .Add("probe_provider", new ProviderEffects(db, catalogue, launcher, runtime, TimeProvider.System))
+                        .Add("probe_provider", new ProviderEffects(db, catalogue, launcher, runtime, TimeProvider.System, failureDetails))
                         .Add("begin_sign_in", signIn)
                         .Add("cancel_sign_in", signIn)
                         .Add("workflow_setup", workspace)
@@ -428,7 +429,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             var projectFolders = new ProjectFolderCreation(localFolders, projectWriter, checkoutWrites, gitOperations);
             var projectCoordinator = new NewProjectCoordinator(projectStore, db, localFolders, projectWriter, checkoutWrites, gitOperations, connections);
             providerRuntimeSubscriptions = new ProviderRuntimeSubscriptions(topics, connections.CaptureMirrorOwners);
-            settingsState = new SettingsStateFeature(db, topics, work, launcher, machinesFeature, engine.Machine, TimeProvider.System);
+            settingsState = new SettingsStateFeature(db, topics, work, launcher, machinesFeature, engine.Machine, TimeProvider.System, failureDetails);
             var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, machineForward, connections, git, projectRoots);
             var projectPrReads = new ProjectPullRequestReads(db, projectRoots, sessionSources, engine.Machine, prReader, machineForward, connections);
             var projectPrActions = new ProjectPullRequestActions(projectPrReads, gitOperations, sessionGit, machineForward);
