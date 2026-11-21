@@ -4,6 +4,7 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startRemoteUpdate } from './app-dev-remote.ts';
 import { agentsNeedInstall, profileFor, seedIfEmpty } from './seed-dev.ts';
+import { claimHome } from './app-dev-owner.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const backend = join(root, 'desktop/target/dev-backend');
@@ -52,7 +53,7 @@ async function buildAgents(): Promise<string | undefined> {
   console.warn('app:dev: no adapter release could be installed; building one locally');
   const versions = await attempt(process.execPath, [packager, 'resolve'], root, true);
   if (versions.status !== 0) return undefined;
-  const built = await attempt(process.execPath, [packager, 'build', `${process.platform}-${process.arch}`, versions.stdout.trim(), output]);
+  const built = await attempt(process.execPath, [packager, 'build-local', `${process.platform}-${process.arch}`, versions.stdout.trim(), output]);
   return built.status !== 0 ? undefined : output;
 }
 
@@ -87,8 +88,9 @@ const startUpdate = () => {
   try { stopUpdate = startRemoteUpdate(root, home, env); }
   catch (error) { console.warn(`app:dev: the remote update could not start: ${error instanceof Error ? error.message : String(error)}`); }
 };
-if (!isManaged && lane.status === 0 && laneName) startUpdate();
+let releaseHome: (() => void) | undefined;
 try {
+  releaseHome = await claimHome(isManaged ? profileFor(root).home : home, launch.signal);
   if (isManaged) {
     managed = await (await import('./app-dev-managed.ts')).prepareManagedLane(root, launch.signal);
     home = managed.home;
@@ -97,8 +99,8 @@ try {
     tokenFile = join(process.env.HOME!, '.config', managed.target.data, 'env');
     remoteTokenFile = `.config/${managed.target.data}/env`;
     env.ASSEMBLY_REMOTE = 'workbox-test';
-    startUpdate();
   }
+  if (managed || (lane.status === 0 && laneName)) startUpdate();
   const cache = existsSync(join(root, '.git')) ? await import('./dev-build-cache.ts') : undefined;
   const publish = async () => run('dotnet', [
     'publish', join(root, 'dotnet/Assembly.Desktop'), '--configuration', 'Debug',
@@ -150,6 +152,7 @@ try {
 } finally {
   await stopUpdate();
   managed?.release();
+  releaseHome?.();
   process.removeListener('SIGINT', interrupt);
   process.removeListener('SIGTERM', interrupt);
 }

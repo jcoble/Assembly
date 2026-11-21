@@ -9,6 +9,23 @@ namespace Assembly.Tests.Features.Chat.Sessions;
 
 public sealed class ComposerConfigDiscoveryTests
 {
+    [Fact]
+    public async Task Settings_discovery_reports_a_missing_adapter_before_starting_its_program()
+    {
+        var home = Directory.CreateTempSubdirectory("assembly-missing-adapter-").FullName;
+        try
+        {
+            var descriptor = new AgentDescriptor("claude", "Claude Code", "/usr/bin/true",
+                [Path.Combine(home, "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js")], null);
+            var launcher = new Assembly.Infrastructure.Agents.AdapterLauncher([descriptor], home, new UnclaimedPermissions());
+            var target = ConfigTargetIdentity.Capture(launcher, "claude").TargetId;
+            var error = await Assert.ThrowsAsync<CallFailed>(() => new ComposerConfigDiscovery(launcher, TimeProvider.System)
+                .DiscoverAsync("claude", target, home, default));
+            Assert.Equal("adapter_not_installed", error.Reason);
+        }
+        finally { Directory.Delete(home, true); }
+    }
+
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
     private static string Target(FakeLauncher launcher) => ConfigTargetIdentity.Capture(launcher, "claude").TargetId;
     private static string Options(string model, string effort) => $$"""

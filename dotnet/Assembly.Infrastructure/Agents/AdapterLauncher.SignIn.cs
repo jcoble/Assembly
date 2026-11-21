@@ -1,5 +1,6 @@
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Calls;
 using Assembly.Infrastructure.Transcript;
 
 namespace Assembly.Infrastructure.Agents;
@@ -21,6 +22,11 @@ public sealed partial class AdapterLauncher
     {
         ct.ThrowIfCancellationRequested();
         ConfigTargetIdentity.Validate(this, descriptor, effectiveEnvironment);
+        // Node can start successfully even when its adapter entry was removed. Refuse before opening that dead link.
+        var entry = descriptor.Args.FirstOrDefault();
+        if (entry is not null && Path.IsPathFullyQualified(entry) &&
+            entry.Replace('\\', '/').Contains("/node_modules/@agentclientprotocol/", StringComparison.Ordinal) && !File.Exists(entry))
+            throw new CallFailed($"The adapter for {descriptor.Name} is not installed. Update agents and try again.", "adapter_not_installed");
         // The complete environment was captured by the caller. Do not read ambient state a second time.
         var environment = effectiveEnvironment.ToDictionary(pair => pair.Key, pair => pair.Value, ConfigTargetIdentity.EnvironmentComparer);
         if (descriptor.Cli is { Length: > 0 } cli)
