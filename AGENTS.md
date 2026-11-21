@@ -51,3 +51,11 @@ Use only Claude Code models: Opus 5.5 medium for harder implementation and groun
 ## Shared UI components
 
 Before building UI, use the components in `desktop/src/components/`; see the [component catalog](https://app.notion.com/p/40e394b0689d81f2962dfc798918a034). Build a missing one there, on GPUI Kit, rather than inside a feature. Rows and cards expand with `core/ui/row_drop_down.rs`; don't write another grower.
+
+## Agent skills
+
+These replace the `docs/agents/*.md` files the engineering skills look for:
+
+- Issue tracker: Notion Command Center Tasks, Project = Assembly. See [Agent skills: issue tracker](https://app.notion.com/p/41f394b0689d815e9507d846a920f0a4).
+- Triage labels: the Tasks Triage select, default five roles. See [Agent skills: triage labels](https://app.notion.com/p/41f394b0689d815d9d54c38f04e065c8).
+- Domain docs: single-context; glossary and ADRs live in the Notion Library, not the repo. See [Agent skills: domain docs](https://app.notion.com/p/41f394b0689d8197bd1ee2be4865f58c).
