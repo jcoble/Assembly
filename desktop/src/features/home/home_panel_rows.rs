@@ -5,7 +5,8 @@
 //! the backend pushed (`state_words.rs`).
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -14,6 +15,7 @@ use super::settings_state::{Machine, Model, Provider, ProviderOnMachine, Setting
 use super::state_words::{connection, machine_state, provider_state, update};
 use crate::activity::DotChip;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::{home_machine, home_provider, home_provider_machine};
 use crate::core::ui::access::{ExposedElement as _, say};
 use crate::core::ui::row_drop_down::GrowingBody;
@@ -51,14 +53,20 @@ impl HomePanel {
         let panel = cx.weak_entity();
         let id = provider.id.clone();
         let body = move |_: &mut Window, cx: &mut App| -> AnyElement {
-            let state = panel
-                .upgrade()
-                .and_then(|panel| panel.read(cx).state.clone());
+            let (state, checking) = match panel.upgrade() {
+                Some(panel) => {
+                    let read = panel.read(cx);
+                    (read.state.clone(), read.checking)
+                }
+                None => (None, false),
+            };
             let provider = state
                 .as_ref()
                 .and_then(|state| state.providers.iter().find(|held| held.id == id));
             match (state.as_ref(), provider) {
-                (Some(state), Some(provider)) => grower(provider, &state.machines, cx),
+                (Some(state), Some(provider)) => {
+                    grower(provider, &state.machines, panel.clone(), checking, cx)
+                }
                 _ => Empty.into_any_element(),
             }
         };
@@ -115,7 +123,13 @@ impl HomePanel {
 }
 
 /// A provider's grower: a line per machine, then the model list when the backend says every machine agrees on one.
-fn grower(provider: &Provider, machines: &[Machine], cx: &App) -> AnyElement {
+fn grower(
+    provider: &Provider,
+    machines: &[Machine],
+    panel: WeakEntity<HomePanel>,
+    checking: bool,
+    cx: &App,
+) -> AnyElement {
     let shared = provider.models.is_some();
     let models = (provider.models.as_deref())
         .and_then(models_line)
@@ -132,18 +146,29 @@ fn grower(provider: &Provider, machines: &[Machine], cx: &App) -> AnyElement {
                 .map_or(on.machine_key.as_str(), |machine| {
                     machine.display_name.as_str()
                 });
-            machine_line(&provider.id, label, on, !shared, cx)
+            machine_line(
+                &provider.id,
+                label,
+                on,
+                !shared,
+                panel.clone(),
+                checking,
+                cx,
+            )
         }))
         .children(models)
         .into_any_element()
 }
 
-/// One machine inside a provider: its name and state, versions, the last failure, and its own models if they differ.
+/// One machine inside a provider: its name and state, versions, the last failure, its own models if they differ,
+/// and "Check again" for this machine (no update or reinstall buttons).
 fn machine_line(
     provider: &str,
     label: &str,
     on: &ProviderOnMachine,
     own_models: bool,
+    panel: WeakEntity<HomePanel>,
+    checking: bool,
     cx: &App,
 ) -> Div {
     let id = |part: &str| home_provider_machine(provider, &on.machine_key, part);
@@ -160,6 +185,22 @@ fn machine_line(
         say(id("failure"), failure.message.clone())
             .text_role(TextRole::Meta, cx)
             .text_color(cx.theme().danger)
+    });
+    // "Check again" re-runs the local check and reconcile; no update or reinstall button appears on a provider.
+    let check_again = (on.machine_key == "local").then(|| {
+        Button::new(SharedString::from(format!("check-again:{provider}:local")))
+            .ghost()
+            .xsmall()
+            .label(if checking {
+                "Checking…"
+            } else {
+                "Check again"
+            })
+            .disabled(checking)
+            .control(id("check-again"), "Check again")
+            .on_click(move |_, _, cx| {
+                _ = panel.update(cx, |panel, cx| panel.check_again(cx));
+            })
     });
     v_flex()
         .gap_0p5()
@@ -183,6 +224,7 @@ fn machine_line(
         })
         .children(failure)
         .children(models)
+        .children(check_again.map(|button| h_flex().pt_0p5().child(button)))
 }
 
 /// One machine: its name, its connection, and its update when there is one to mention.

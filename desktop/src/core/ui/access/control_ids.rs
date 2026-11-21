@@ -27,6 +27,7 @@ ids! {
     home {
         PANEL = "home.panel",
         SUMMARY = "home.summary",
+        RESTART = "home.restart",
         PROJECTS = "home.projects",
         SETTINGS = "home.settings",
     }
