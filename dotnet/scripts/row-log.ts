@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { connectSocket } from '../../scripts/features/socket.ts';
-import { readRows, type Row, type RowPage } from '../../scripts/features/live-rows.ts';
+import { connectSocket } from '../../scripts/drive/socket.ts';
+import { readRows, type Row, type RowPage } from '../../scripts/drive/live-rows.ts';
 
 type Session = { sessionId: string; title?: string; repoUrl: string };
 type LogOptions = { api: string; token: string; target: string; followMs: number; signal: AbortSignal;

@@ -392,7 +392,7 @@ internal sealed partial class RemoteMachine
             {
                 if (_socketStop.IsCancellationRequested) break;
                 if (error is not MachineUnreachable) _status.Unreachable(_name, "machine socket closed");
-                _log.WriteLine($"remote {_name}: socket lost ({error.GetType().Name})");
+                _log.WriteLine($"remote {_name}: socket lost ({error.GetType().Name}: {error.Message})");
             }
             finally
             {

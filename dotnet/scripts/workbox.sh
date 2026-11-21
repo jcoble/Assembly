@@ -50,7 +50,7 @@ BOX
     checkout_branch=$(git branch --show-current)
     [ -n "$checkout_branch" ] || { echo 'row-log needs a named checkout branch' >&2; exit 1; }
     checkout_commit=$(git rev-parse --verify 'HEAD^{commit}')
-    row_sources=(dotnet/scripts/row-log.ts scripts/features/live-rows.ts scripts/features/socket.ts)
+    row_sources=(dotnet/scripts/row-log.ts scripts/drive/live-rows.ts scripts/drive/socket.ts)
     git diff --quiet HEAD -- "${row_sources[@]}" || {
       echo 'row-log sources differ from this checkout commit; commit them before using the remote checkout' >&2
       exit 1
@@ -69,7 +69,7 @@ actual_commit=$(git -C "$checkout" rev-parse --verify 'HEAD^{commit}')
   exit 1
 }
 cd "$checkout"
-sources=(dotnet/scripts/row-log.ts scripts/features/live-rows.ts scripts/features/socket.ts)
+sources=(dotnet/scripts/row-log.ts scripts/drive/live-rows.ts scripts/drive/socket.ts)
 for source in "${sources[@]}"; do
   git ls-files --error-unmatch -- "$source" >/dev/null || { echo "row-log source is missing: $source" >&2; exit 1; }
 done
