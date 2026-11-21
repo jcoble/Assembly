@@ -1,5 +1,5 @@
 //! The buttons on a machine's card that update it: the one Update, with the run's figure, Cancel while it downloads, and
-//! Restart to Update, which Settings covers in the top bar.
+//! Restart to Update, which the Home panel covers on its top line.
 
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::button::ButtonVariants as _;
@@ -9,13 +9,14 @@ use serde_json::json;
 use super::settings_page::SettingsPage;
 use crate::core::state::machine::Machine;
 use crate::core::ui::access::control_ids::machine_button as machine_button_id;
-use crate::features::remote_install::restart_button::WORDS as RESTART;
 use crate::features::remote_install::updates::{update_figure, update_offered};
 
 /// The one button, on each card with something behind. It updates everything behind on every machine, in development and
 /// from a release: where it comes from is the backend's to decide.
 const UPDATE: &str = "Update everything";
 const CANCEL: &str = "Cancel";
+/// The words on this machine's card for the restart the Home panel's top line offers.
+const RESTART: &str = "Restart to Update";
 
 impl SettingsPage {
     pub(super) fn update_buttons(
@@ -25,7 +26,7 @@ impl SettingsPage {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let mut buttons = Vec::new();
-        // Settings covers the top bar's button, and the words on this card say to press it.
+        // The Home panel covers the restart on its top line, and the words on this card say to press it.
         if machine.name.is_none() && machine.restart_ready.is_some() {
             let about = key.to_string();
             let restart = self
