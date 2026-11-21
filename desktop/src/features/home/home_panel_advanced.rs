@@ -166,7 +166,13 @@ impl HomePanel {
     }
 
     /// Reads the machine's current Advanced values through the backend call that machine answers.
-    fn start_read(&mut self, provider: &str, engine_machine: &str, key: &str, cx: &mut Context<Self>) {
+    fn start_read(
+        &mut self,
+        provider: &str,
+        engine_machine: &str,
+        key: &str,
+        cx: &mut Context<Self>,
+    ) {
         let Some(client) = SocketClient::try_global(cx) else {
             return;
         };

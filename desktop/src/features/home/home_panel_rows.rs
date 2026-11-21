@@ -159,7 +159,9 @@ impl HomePanel {
         let id = |part: &str| home_provider_machine(&provider.id, &on.machine_key, part);
         let versions = [("Adapter", &on.adapter_version), ("CLI", &on.cli_version)]
             .into_iter()
-            .filter_map(|(what, version)| version.as_ref().map(|version| format!("{what} {version}")))
+            .filter_map(|(what, version)| {
+                version.as_ref().map(|version| format!("{what} {version}"))
+            })
             .collect::<Vec<_>>()
             .join(" · ");
         let models = own_models
@@ -205,8 +207,11 @@ impl HomePanel {
                     .on_click(cx.listener(move |panel, _, _, cx| panel.try_again(&on_click, cx))),
                 );
             }
-            let details_key: SharedString =
-                format!("provider:{}:machine:{}:details", provider.id, on.machine_key).into();
+            let details_key: SharedString = format!(
+                "provider:{}:machine:{}:details",
+                provider.id, on.machine_key
+            )
+            .into();
             actions = actions.child(self.grower_button(
                 details_key.clone(),
                 id("details"),
@@ -239,8 +244,11 @@ impl HomePanel {
                 ),
             );
         }
-        let advanced_key: SharedString =
-            format!("provider:{}:machine:{}:advanced", provider.id, on.machine_key).into();
+        let advanced_key: SharedString = format!(
+            "provider:{}:machine:{}:advanced",
+            provider.id, on.machine_key
+        )
+        .into();
         line = line
             .child(h_flex().child(self.grower_button(
                 advanced_key.clone(),

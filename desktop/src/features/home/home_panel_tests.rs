@@ -175,7 +175,11 @@ async fn a_stale_advanced_save_refreshes_and_the_retry_saves(cx: &mut TestAppCon
             }
             _ = tell.unbounded_send(());
             let id = frame["id"].clone();
-            match (frame["t"].as_str(), frame["feature"].as_str(), frame["method"].as_str()) {
+            match (
+                frame["t"].as_str(),
+                frame["feature"].as_str(),
+                frame["method"].as_str(),
+            ) {
                 (Some("sub"), _, _) if frame["topic"] == "settings_state" => vec![Reply::Frame(
                     json!({"t":"state","sub":frame["id"],"items":[{"key":"current","item":pushed()}]}),
                 )],
@@ -184,7 +188,9 @@ async fn a_stale_advanced_save_refreshes_and_the_retry_saves(cx: &mut TestAppCon
                     let provider = frame["args"]["provider"].as_str().unwrap().to_string();
                     server.reads.push(provider.clone());
                     let reply = settings_reply(&server, &provider);
-                    if server.bump_after_read && server.last_saver.as_deref() != Some(provider.as_str()) {
+                    if server.bump_after_read
+                        && server.last_saver.as_deref() != Some(provider.as_str())
+                    {
                         server.bump_after_read = false;
                         server.revision += 1;
                     }
@@ -234,7 +240,8 @@ async fn a_stale_advanced_save_refreshes_and_the_retry_saves(cx: &mut TestAppCon
     }
     fn settle(cx: &mut VisualTestContext) {
         for _ in 0..40 {
-            cx.executor().advance_clock(std::time::Duration::from_millis(16));
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(16));
             draw(cx);
         }
     }
@@ -248,11 +255,18 @@ async fn a_stale_advanced_save_refreshes_and_the_retry_saves(cx: &mut TestAppCon
         settle(cx);
     };
     let panel = |cx: &VisualTestContext| {
-        cx.read(|cx| home.read(cx).panel()).expect("the panel is open")
+        cx.read(|cx| home.read(cx).panel())
+            .expect("the panel is open")
     };
     let fields_made = |cx: &VisualTestContext, key: &str| {
         let panel = panel(cx);
-        cx.read(|cx| panel.read(cx).edits.get(key).is_some_and(|edit| edit.fields.is_some()))
+        cx.read(|cx| {
+            panel
+                .read(cx)
+                .edits
+                .get(key)
+                .is_some_and(|edit| edit.fields.is_some())
+        })
     };
     let set_cli = |cx: &mut VisualTestContext, key: &str, value: &str| {
         let panel = panel(cx);
@@ -263,9 +277,7 @@ async fn a_stale_advanced_save_refreshes_and_the_retry_saves(cx: &mut TestAppCon
                 .expect("fields are made")[0]
                 .clone()
         });
-        cx.update(|window, cx| {
-            field.update(cx, |field, cx| field.set_value(value, window, cx))
-        });
+        cx.update(|window, cx| field.update(cx, |field, cx| field.set_value(value, window, cx)));
         cx.run_until_parked();
     };
     let cli_value = |cx: &VisualTestContext, key: &str| {
@@ -325,36 +337,50 @@ async fn a_stale_advanced_save_refreshes_and_the_retry_saves(cx: &mut TestAppCon
     // Back to Claude: reopening its Advanced re-reads, and what was typed is still there.
     click(cx, "home-provider-claude");
     click(cx, "home-advanced-claude-local");
-    until("Claude is re-read on reopen", &mut changes, &changed, || {
-        cx.run_until_parked();
-        let reads = server.lock().unwrap().reads.clone();
-        reads.iter().filter(|provider| Some(*provider) == reads.first()).count() >= 2
-    })
+    until(
+        "Claude is re-read on reopen",
+        &mut changes,
+        &changed,
+        || {
+            cx.run_until_parked();
+            let reads = server.lock().unwrap().reads.clone();
+            reads
+                .iter()
+                .filter(|provider| Some(*provider) == reads.first())
+                .count()
+                >= 2
+        },
+    )
     .await;
     assert_eq!(cli_value(cx, "claude/local"), "/changed-claude");
 
     // A save landed just after that re-read, so the first save is refused for the stale
     // revision; the panel refreshes and says so.
     click(cx, "home-advanced-save-claude-local");
-    until("the refusal is answered with a refresh", &mut changes, &changed, || {
-        cx.run_until_parked();
-        let server = server.lock().unwrap();
-        server
-            .reads
-            .iter()
-            .filter(|provider| Some(*provider) == server.reads.first())
-            .count()
-            >= 3
-            && {
-                let panel = panel(cx);
-                cx.read(|cx| {
-                    panel.read(cx).edits["claude/local"]
-                        .notice
-                        .as_deref()
-                        .is_some_and(|notice| notice.contains("wasn't saved"))
-                })
-            }
-    })
+    until(
+        "the refusal is answered with a refresh",
+        &mut changes,
+        &changed,
+        || {
+            cx.run_until_parked();
+            let server = server.lock().unwrap();
+            server
+                .reads
+                .iter()
+                .filter(|provider| Some(*provider) == server.reads.first())
+                .count()
+                >= 3
+                && {
+                    let panel = panel(cx);
+                    cx.read(|cx| {
+                        panel.read(cx).edits["claude/local"]
+                            .notice
+                            .as_deref()
+                            .is_some_and(|notice| notice.contains("wasn't saved"))
+                    })
+                }
+        },
+    )
     .await;
     assert_eq!(cli_value(cx, "claude/local"), "/changed-claude");
 
