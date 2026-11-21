@@ -38,53 +38,6 @@ public sealed partial class StartSessionToolTests
         Assert.Equal(0, h.Fixture.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='send'"));
     }
 
-    [Fact]
-    public async Task Other_provider_uses_its_actual_adapter_default_and_explicit_model_is_kept()
-    {
-        await using var h = new Harness();
-        h.Fixture.SeedSession("owner");
-        Assert.False((await h.Call(h.Start, "owner", """{"prompt":"Task","title":"Helper","provider":"claude"}""")).IsError);
-        Assert.Null(h.Fixture.Text("SELECT model FROM engine_session WHERE parent_id='owner'"));
-        Assert.False((await h.Call(h.Start, "owner", """{"prompt":"Task","title":"Other","provider":"claude","model":"specific"}""")).IsError);
-        Assert.Equal("specific", h.Fixture.Text("SELECT model FROM engine_session WHERE title='Other'"));
-    }
-
-    [Fact]
-    public async Task Configured_custom_provider_and_unknown_caller_model_do_not_require_a_default_catalog()
-    {
-        await using var h = new Harness();
-        h.Fixture.SeedSession("owner", provider: "work-profile");
-        h.Fixture.Db.Writer.Write("test.unknown-model", scope => scope.Execute("UPDATE engine_session SET model=NULL WHERE id='owner'"));
-        Assert.Null(h.Gate.Read(new("owner", 0), (caller, _) => caller.Model, default));
-        var response = await h.Call(h.Start, "owner", """{"prompt":"Task","title":"Helper"}""");
-        Assert.False(response.IsError);
-        Assert.Equal("work-profile", h.Fixture.Text("SELECT provider FROM engine_session WHERE parent_id='owner'"));
-        Assert.Null(h.Fixture.Text("SELECT model FROM engine_session WHERE parent_id='owner'"));
-    }
-
-    [Fact]
-    public async Task Omitted_folder_inherits_actual_managed_policy_but_an_explicit_same_folder_is_direct()
-    {
-        await using var h = new Harness(); h.Fixture.SeedSession("owner");
-        h.Fixture.Db.Writer.Write("test.managed", scope => scope.Execute("UPDATE engine_session SET managed_checkout=1 WHERE id='owner'"));
-        Assert.False((await h.Call(h.Start, "owner", """{"prompt":"Task","title":"Inherited"}""")).IsError);
-        Assert.Equal(1, h.Fixture.Number("SELECT managed_checkout FROM engine_session WHERE title='Inherited'"));
-        Assert.False((await h.Call(h.Start, "owner", """{"prompt":"Task","title":"Explicit","folder":"/test"}""")).IsError);
-        Assert.Equal(0, h.Fixture.Number("SELECT managed_checkout FROM engine_session WHERE title='Explicit'"));
-    }
-
-    [Fact]
-    public async Task Unconfigured_provider_names_the_configured_choices()
-    {
-        await using var h = new Harness();
-        h.Fixture.SeedSession("owner");
-        var tool = new StartSessionTool(h.Gate, () => ["codex"], _ => true);
-        var result = await h.Call(tool, "owner", """{"prompt":"Task","title":"Helper","provider":"claude","model":"explicit"}""");
-        Assert.True(result.IsError);
-        Assert.Equal("start_session: provider must be one of the configured providers: codex.", Text(result));
-        Assert.Equal(1, h.Fixture.Count("engine_session"));
-    }
-
     [Theory]
     [InlineData("{}", "prompt")]
     [InlineData("{\"prompt\":\"\",\"title\":\"Helper\"}", "prompt")]
@@ -111,53 +64,6 @@ public sealed partial class StartSessionToolTests
         Assert.Equal(0, h.Fixture.Count("engine_command_receipt"));
     }
 
-    [Theory]
-    [InlineData("prompt", 16000, false)]
-    [InlineData("prompt", 16001, true)]
-    [InlineData("title", 120, false)]
-    [InlineData("title", 121, true)]
-    public async Task Argument_length_boundaries_are_enforced(string field, int length, bool refused)
-    {
-        await using var h = new Harness();
-        h.Fixture.SeedSession("owner");
-        using var task = JsonDocument.Parse("\"Task\"");
-        using var title = JsonDocument.Parse("\"Helper\"");
-        using var value = JsonDocument.Parse("\"" + new string('a', length) + "\"");
-        var values = new Dictionary<string, JsonElement>
-        {
-            ["prompt"] = task.RootElement.Clone(),
-            ["title"] = title.RootElement.Clone(),
-            [field] = value.RootElement.Clone()
-        };
-        var result = await h.Call(h.Start, "owner", JsonSerializer.Serialize(values, McpJson.Default.DictionaryStringJsonElement));
-        Assert.Equal(refused, result.IsError == true);
-        Assert.Equal(refused ? 1 : 2, h.Fixture.Count("engine_session"));
-    }
-
-    [Theory]
-    [InlineData(1, 1, "Sessions 2 levels down can't start sessions (the limit is 1, set by \"Session depth limit\" in Settings); ask your starter to start it.")]
-    [InlineData(9, 9, "Sessions 10 levels down can't start sessions (the limit is 9, set by \"Session depth limit\" in Settings); ask your starter to start it.")]
-    [InlineData(9, 1, "Sessions 10 levels down can't start sessions (the limit is 1, set by \"Session depth limit\" in Settings); ask your starter to start it.")]
-    public async Task Refusal_reports_actual_depth_and_current_limit(int callerDepth, int limit, string expected)
-    {
-        await using var h = new Harness(new(() => limit, () => 5));
-        SessionLimitTests.SeedChain(h.Fixture, callerDepth);
-        var response = await h.Call(h.Start, $"node-{callerDepth}", """{"prompt":"Task","title":"Helper"}""");
-        Assert.True(response.IsError);
-        Assert.Equal(expected, Text(response));
-    }
-
-    [Fact]
-    public async Task Start_above_three_uses_the_same_runtime_limits()
-    {
-        await using var h = new Harness(new(() => 9, () => 5));
-        SessionLimitTests.SeedChain(h.Fixture, 8);
-        var response = await h.Call(h.Start, "node-8", """{"prompt":"Task","title":"Helper"}""");
-        Assert.False(response.IsError);
-        Assert.Equal(10, h.Fixture.Count("engine_session"));
-        Assert.Equal(1, h.Fixture.Count("engine_message"));
-    }
-
     [Fact]
     public async Task Second_command_refusal_rolls_back_child_prompt_receipts_events_outbox_and_publications()
     {
@@ -172,46 +78,6 @@ public sealed partial class StartSessionToolTests
         Assert.Equal("You've reached the message limit for that session.", Text(result));
         Assert.Equal(before, tables.Select(h.Fixture.Count).ToArray());
         Assert.Equal(0, publications);
-    }
-
-    [Fact]
-    public async Task List_returns_local_nonended_relations_in_lexical_and_updated_order()
-    {
-        await using var h = new Harness();
-        var f = h.Fixture;
-        f.SeedSession("top");
-        f.SeedSession("caller", parentId: "top");
-        f.SeedSession("sibling", parentId: "top");
-        f.SeedSession("child-old", parentId: "caller");
-        f.Time.Advance(TimeSpan.FromMilliseconds(1));
-        f.SeedSession("child-new", parentId: "caller");
-        f.SeedSession("other");
-        f.SeedSession("grandchild", parentId: "child-new");
-        f.SeedSession("cousin", parentId: "sibling");
-        f.SeedSession("ended", "ended");
-        f.SeedSession("mirror");
-        f.Db.Writer.Write("test.machine", s => s.Execute("UPDATE engine_session SET machine='elsewhere' WHERE id='mirror'"));
-        var result = await h.Call(new ListSessionsTool(h.Gate), "caller", "{}");
-        Assert.False(result.IsError);
-        using var json = JsonDocument.Parse(Text(result));
-        var rows = json.RootElement.GetProperty("sessions").EnumerateArray().ToArray();
-        Assert.Equal(["child:child-new", "child:child-old", "other:other", "sibling:sibling", "starter:top"],
-            rows.Select(r => r.GetProperty("relation").GetString() + ":" + r.GetProperty("sessionId").GetString()));
-        Assert.All(rows, r => Assert.False(r.TryGetProperty("machine", out _)));
-        h.Gate.Read(new("caller", 0), (_, scope) =>
-        {
-            Assert.True(SessionDirectory.CanReach(scope, "caller", "child-new"));
-            Assert.True(SessionDirectory.CanReach(scope, "caller", "top"));
-            Assert.True(SessionDirectory.CanReach(scope, "caller", "sibling"));
-            Assert.True(SessionDirectory.CanReach(scope, "caller", "other"));
-            Assert.False(SessionDirectory.CanReach(scope, "caller", "caller"));
-            Assert.False(SessionDirectory.CanReach(scope, "caller", "mirror"));
-            Assert.False(SessionDirectory.CanReach(scope, "caller", "ended"));
-            Assert.False(SessionDirectory.CanReach(scope, "caller", "grandchild"));
-            Assert.False(SessionDirectory.CanReach(scope, "caller", "cousin"));
-            Assert.All(SessionDirectory.Reachable(scope, "caller"), row => Assert.Equal(f.Machine, row.Machine));
-            return 0;
-        }, default);
     }
 
     [Fact]

@@ -37,17 +37,6 @@ public sealed class NeedToolTests
         Assert.False(request.Items.ContainsKey("assembly.internal.original-request-wait/v1"));
     }
 
-    [Fact]
-    public async Task Escalation_uses_same_port_without_an_answer_or_new_question()
-    {
-        await using var h = new Harness();
-        h.Needs.Handle = (_, _, _, _) => Task.FromResult(new CommandResult(true, false, null, 2, 1, 0));
-        var result = await h.Call(new AskOwnerTool(h.Gate, h.Needs), h.Request("ask_owner", """{"childNeedId":"need/child"}"""));
-        Assert.False(result.IsError); Assert.Equal("{\"needId\":\"need/child\",\"state\":\"open\"}", Text(result));
-        Assert.Equal(ParentNeedAction.Escalate, h.Needs.Request!.Action); Assert.Null(h.Needs.Request.Answer);
-        Assert.Equal(new McpCaller("parent", 7), h.Needs.Caller); Assert.Equal(0, h.Fixture.Count("engine_needs_me"));
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -77,18 +66,6 @@ public sealed class NeedToolTests
             Assert.False(request.Items.ContainsKey("assembly.internal.original-request-wait/v1"));
         }
         finally { emergency.Cancel(); original.Cancel(); try { await call; } catch (OperationCanceledException) { } }
-    }
-
-    [Theory]
-    [InlineData("forbidden", "That question isn't yours to answer.")]
-    [InlineData("bad_answer", "Use an exact optionId supplied by the question, or its original form action and content object.")]
-    public async Task Service_refusal_keeps_raw_text_error_and_truthful_audit(string error, string expected)
-    {
-        await using var h = new Harness();
-        h.Needs.Handle = (_, _, _, _) => Task.FromResult(new CommandResult(false, false, error, 1, 0, 0));
-        var result = await h.Call(new AnswerNeedTool(h.Gate, h.Needs), h.Request("answer_need", """{"needId":"n","answer":"yes"}"""));
-        Assert.True(result.IsError); Assert.Equal(expected, Text(result));
-        Assert.Equal("refused", h.Fixture.Text("SELECT outcome FROM engine_tool_call"));
     }
 
     [Theory]

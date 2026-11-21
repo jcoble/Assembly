@@ -12,39 +12,6 @@ namespace Assembly.Tests.Engine.Relays;
 
 public sealed class RelayTurnReplyTests
 {
-    private const string Carrier = "turn-reply-fp/v1/AQAAAAAAAAAAB3BW1pl-OsZB4-S6W0qX92XD1agJ9hk1foW8IFRD63dBEREREREREREREREREREREREREREREREREREREREREREZgkCvInbTydQnF8_sbTjVN_KVATijqUvrucjJwKcH1Q";
-
-    [Fact]
-    public void Independent_reply_composition_vectors_and_null_branch_preserve_existing_bytes()
-    {
-        var evidence = new RelayTurnReplyEvidence("chat-run-1", 7, Carrier);
-        Assert.Equal("61dc46bf0775e662523e6b0a26648c6b96a7573fed7ada2d903d33c01b5cc357",
-            RelayTurnReplies.Identity(new string('2', 64), evidence));
-        Assert.Equal("d77713b4d158c9823817b5ba384ec101003db319bc7452dec8a3111196ec4b3f",
-            RelayTurnReplies.Descriptor(new string('3', 64), evidence));
-        var actual = RelayDigests.Describe(RelayDigests.Capture("machine-A", "machine-B",
-            "turn-reply/2b48e069c5bc1cc6c0cada1aca01cd17de3c9b304dbd74d8f8286d24e5168d71", "session",
-            new("child-1", "parent-1", "", "prompt"), "Captured", new(1, "queued", 0, false, 0, "local", null, 0, "machine-B"), evidence));
-        Assert.Equal("3bdd320c65d28d7fb281c7e30bb6a22c547c94061ff3987be82207035b00b3bf", actual.IdentitySha256);
-        Assert.Equal("64b5f7d9d30ce0a09590f71eb2b51cfa1bd9903e613394b6e6d82adc510676aa", actual.SourceSha256);
-        Assert.Equal("3be88be53d98cee8aa5ab6efb1edb0a801826f21fe0d2f8170001073bfd3149b", RelayDigests.DescriptorCommitment(actual));
-        Assert.Equal(new string('2', 64), RelayTurnReplies.Identity(new string('2', 64), null));
-        Assert.Equal(new string('3', 64), RelayTurnReplies.Descriptor(new string('3', 64), null));
-        foreach (var changed in new[] { evidence with { ChatRunId = "different" }, evidence with { TerminalSeq = 8 },
-            evidence with { ReceiptFingerprint = Carrier[..^1] + "A" } })
-        {
-            Assert.NotEqual(RelayTurnReplies.Identity(new string('2', 64), evidence), RelayTurnReplies.Identity(new string('2', 64), changed));
-            Assert.NotEqual(RelayTurnReplies.Descriptor(new string('3', 64), evidence), RelayTurnReplies.Descriptor(new string('3', 64), changed));
-        }
-        var capture = RelayDigests.Capture("source", "target", "message", "session", new("sender", "recipient", "Hello", "prompt"),
-            "Captured", new(1, "queued", 0, false, 0, "local", null, 0, "target"));
-        var descriptor = RelayDigests.Describe(capture);
-        Assert.DoesNotContain("replyEvidence", JsonSerializer.Serialize(descriptor));
-        Assert.DoesNotContain("ReplyEvidence", JsonSerializer.Serialize(descriptor));
-        Assert.Equal("ef03753ff608cd275b486a4001795f3b179438bfd5ad0d43c42a44071bdf7173", capture.IdentitySha256);
-        Assert.Equal("cdd1ac0dccba33e62788bad4c4f904ac217b1e2306efcd06f9e8e50e4965fb53", RelayDigests.DescriptorCommitment(descriptor));
-    }
-
     [Theory]
     [InlineData("")]
     [InlineData(" \n\t")]

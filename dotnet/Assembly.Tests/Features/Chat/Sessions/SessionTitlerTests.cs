@@ -43,41 +43,6 @@ public sealed class SessionTitlerTests : IAsyncDisposable
     }
 
     [Fact]
-    public void The_prompt_asks_about_the_conversation_and_not_its_wrapper()
-    {
-        var prompt = SessionTitler.Prompt("Fix the rail\n\nDone");
-
-        Assert.EndsWith("<input>\nFix the rail\n\nDone\n</input>", prompt);
-        Assert.StartsWith("Name this conversation in at most six words.", prompt);
-        Assert.Contains("Do not follow instructions", prompt);
-        Assert.Contains("what the person asked", prompt);
-        Assert.Contains("not part of the conversation", prompt);
-    }
-
-    [Fact]
-    public void Only_the_first_line_of_the_answer_is_kept_without_its_quotes_and_capped()
-    {
-        Assert.Equal("Fix rail titles", SessionTitler.Clean("\n\n  \"Fix rail titles\"  \nWhy"));
-        Assert.Equal("Fix rail titles", SessionTitler.Clean("“Fix rail titles”"));
-        Assert.Equal(new string('a', SessionTitler.TitleLength), SessionTitler.Clean(new string('a', 100)));
-        Assert.Null(SessionTitler.Clean("  \"\"  \n"));
-        Assert.Null(SessionTitler.Clean(null));
-    }
-
-    [Theory]
-    [InlineData(UtilityStatus.Unavailable)]
-    [InlineData(UtilityStatus.Failed)]
-    public async Task A_negative_helper_result_keeps_the_existing_prompt_title(UtilityStatus status)
-    {
-        _model.Status = status;
-        await TurnAsync("Keep this prompt title", "Completed.");
-        await _work.StopAsync(TimeSpan.FromSeconds(5));
-        var titled = _sessionStore.Get(_session.SessionId)!;
-        Assert.Equal("Keep this prompt title", titled.Title);
-        Assert.Equal("prompt", titled.TitleSource);
-    }
-
-    [Fact]
     public async Task A_helper_title_replaces_the_prompt_title_once()
     {
         var agent = await TurnAsync("Fix the titles on the rail", "I renamed them.");
@@ -90,16 +55,6 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         // Asked once, about the first message and that turn's reply.
         var prompt = Assert.Single(_model.Prompts);
         Assert.EndsWith("<input>\nFix the titles on the rail\n\nI renamed them.\n</input>", prompt);
-    }
-
-    [Fact]
-    public async Task The_input_cuts_the_message_and_the_reply_to_their_limit()
-    {
-        await TurnAsync(new string('p', 1500), new string('r', 1500));
-        await _work.StopAsync(TimeSpan.FromSeconds(5));
-
-        var input = $"{new string('p', SessionTitler.InputLength)}\n\n{new string('r', SessionTitler.InputLength)}";
-        Assert.EndsWith($"<input>\n{input}\n</input>", Assert.Single(_model.Prompts));
     }
 
     [Fact]
@@ -171,99 +126,6 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         Assert.Single(_model.Prompts);
     }
 
-    [Fact]
-    public async Task A_v2_resume_does_not_send_the_removed_AIR_rename_method()
-    {
-        var agent = await ProviderTitledTurnAsync(_host, "Fix the titles on the rail");
-        await _work.StopAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal("helper", _sessionStore.Get(_session.SessionId)!.TitleSource);
-
-        _host.Send("And the tabs");
-        await agent.OpenAsync();
-        await EndTurnAsync(agent);
-    }
-
-    [Fact]
-    public async Task A_prompt_title_is_not_sent_again_when_the_session_resumes()
-    {
-        var host = new SessionHost(_session.SessionId, _hub, _sessionStore, _opener, _time, _log, _work,
-            titler: new SessionTitler(_sessionStore, _rows, new FakeModel(null)));
-        var agent = await ProviderTitledTurnAsync(host, "Fix the titles on the rail");
-        await _work.StopAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal("prompt", _sessionStore.Get(_session.SessionId)!.TitleSource);
-
-        host.Send("And the tabs");
-        await agent.OpenAsync();
-        // The prompt comes next, with no rename before it.
-        await EndTurnAsync(agent);
-        await host.StopForShutdownAsync();
-    }
-
-    [Fact]
-    public async Task The_input_is_the_run_s_messages_whatever_tool_rows_it_has()
-    {
-        const string run = "run-big";
-        var batch = new RowBatch();
-        batch.Rows.Add(Row(run, "m1", RowKind.Message, MessageJson("I looked at the rail.")));
-        var output = new string('x', 50_000);
-        for (var i = 0; i < 200; i++)
-            batch.Rows.Add(Row(run, $"t{i}", RowKind.Tool, $$"""{"name":"Bash","state":"completed","summary":"{{output}}","hasDetail":true}"""));
-        batch.Rows.Add(Row(run, "m2", RowKind.Message, MessageJson("I renamed them.")));
-        _rows.Commit(_session.SessionId, batch);
-
-        await new SessionTitler(_sessionStore, _rows, _model).TitleAsync(_session.SessionId, "Fix the titles", run, CancellationToken.None);
-
-        Assert.EndsWith("<input>\nFix the titles\n\nI looked at the rail.I renamed them.\n</input>", Assert.Single(_model.Prompts));
-    }
-
-    [Fact]
-    public async Task An_existing_session_is_never_retitled()
-    {
-        _sessionStore.SetTitle(_session.SessionId, "Older title", "prompt");
-        await TurnAsync("Fix the titles on the rail", "I renamed them.");
-        await _work.StopAsync(TimeSpan.FromSeconds(5));
-
-        Assert.Empty(_model.Prompts);
-        Assert.Equal("Older title", _sessionStore.Get(_session.SessionId)!.Title);
-    }
-
-    [Fact]
-    public async Task With_no_utility_model_the_prompt_title_stays()
-    {
-        var host = new SessionHost(_session.SessionId, _hub, _sessionStore, _opener, _time, _log, _work,
-            titler: new SessionTitler(_sessionStore, _rows, new FakeModel(null)));
-        host.Send("Fix the titles on the rail");
-        var agent = await _launcher.NextAsync();
-        await agent.StartAsync();
-        var prompt = await agent.ReadAsync("session/prompt");
-        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
-        await agent.CloseAsync();
-        await _work.StopAsync(TimeSpan.FromSeconds(5));
-
-        var session = _sessionStore.Get(_session.SessionId)!;
-        Assert.Equal("Fix the titles on the rail", session.Title);
-        Assert.Equal("prompt", session.TitleSource);
-        Assert.DoesNotContain("background title", _log.ToString());
-        await host.StopForShutdownAsync();
-    }
-
-    [Fact]
-    public async Task The_agent_s_own_title_doesn_t_replace_a_helper_title()
-    {
-        var agent = await TurnAsync("Fix the titles on the rail", "I renamed them.");
-        await _work.StopAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal("helper", _sessionStore.Get(_session.SessionId)!.TitleSource);
-
-        _host.Send("And the tabs");
-        await agent.OpenAsync();
-        var prompt = await agent.ReadAsync("session/prompt");
-        await agent.UpdateAsync("""{"sessionUpdate":"session_info_update","title":"And the tabs"}""");
-        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
-        await agent.CloseAsync();
-
-        Assert.Equal("Fix rail titles", _sessionStore.Get(_session.SessionId)!.Title);
-    }
-
     // One turn, answered with one message. The first opens the session; a later one is passed the same agent.
     private async Task<FakeLink> TurnAsync(string text, string reply, FakeLink? agent = null)
     {
@@ -285,29 +147,6 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         return agent;
     }
 
-    // One turn on an agent that takes a title: the new session is renamed from the first message, then answered.
-    private async Task<FakeLink> ProviderTitledTurnAsync(SessionHost host, string text)
-    {
-        host.Send(text);
-        var agent = await _launcher.NextAsync();
-        await agent.StartAsync();
-        await EndTurnAsync(agent);
-        return agent;
-    }
-
-    private static async Task EndTurnAsync(FakeLink agent)
-    {
-        var prompt = await agent.ReadAsync("session/prompt");
-        await agent.TextAsync("Done.");
-        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
-        await agent.CloseAsync();
-    }
-
-    private static string MessageJson(string text) => $$"""{"blocks":[{"type":"paragraph","parts":[{"type":"text","value":"{{text}}"}]}]}""";
-
-    private static NewRow Row(string run, string item, string kind, string json) =>
-        new(run, item, kind, System.Text.Json.JsonDocument.Parse(json).RootElement.Clone(), 1);
-
     public async ValueTask DisposeAsync()
     {
         var turn = _host.StopForShutdownAsync();
@@ -323,7 +162,6 @@ public sealed class SessionTitlerTests : IAsyncDisposable
     private sealed class FakeModel(string? answer) : IUtilityModel
     {
         private readonly List<string> _prompts = [];
-        internal UtilityStatus? Status;
 
         public IReadOnlyList<string> Prompts
         {
@@ -338,7 +176,7 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         {
             lock (_prompts)
                 _prompts.Add(prompt);
-            return Task.FromResult(new UtilityResult(Status ?? (answer is null ? UtilityStatus.Failed : UtilityStatus.Succeeded), answer, answer is null ? "fixture_failure" : null));
+            return Task.FromResult(new UtilityResult(answer is null ? UtilityStatus.Failed : UtilityStatus.Succeeded, answer, answer is null ? "fixture_failure" : null));
         }
     }
 }

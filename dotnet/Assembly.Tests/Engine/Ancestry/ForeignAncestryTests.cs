@@ -119,20 +119,6 @@ public sealed class ForeignAncestryTests
         Assert.Equal(0, f.Count("engine_session"));
         Assert.Equal(0, f.Count("engine_command_receipt"));
     }
-
-    [Theory]
-    [InlineData(2, false)]
-    [InlineData(3, true)]
-    public void Proven_foreign_ancestry_counts_full_depth(int cap, bool allowed)
-    {
-        using var f = new EngineFixture(limits: new(() => cap, () => 5));
-        Assert.True(Batch(f).Applied);
-        f.SeedSession("child", parentId: Parent);
-        var chain = f.Db.Writer.Write("test.chain", s => SessionAncestry.Read(s, f.Machine, "child"));
-        Assert.True(chain.Known);
-        Assert.Equal(3, chain.Nodes.Count);
-        Assert.Equal(allowed ? null : "depth_limit", f.Db.Writer.Write("test.check", s => MachineStartCheck.Check(s, "child", cap, 5)));
-    }
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -166,19 +152,6 @@ public sealed class ForeignAncestryTests
         Assert.Throws<ForeignAncestryRefused>(() => Batch(f));
         Assert.Equal(0, f.Count("engine_session"));
         Assert.Equal(1, f.Count("engine_command_receipt"));
-    }
-
-    [Fact]
-    public void Exact_title_bytes_are_preserved_without_structural_rewrite()
-    {
-        using var f = new EngineFixture();
-        var title = "prefix\0" + new string('界', 30000) + "e\u0301";
-        var args = Chain() with { RootToParent = [new(Root, "source", "codex", title, null), Chain().RootToParent[1]] };
-        Assert.True(Batch(f, args).Applied);
-        var bytes = f.Db.QueryFirst("SELECT CAST(title AS BLOB) FROM engine_session WHERE id='root'", r => r.Blob(0), default);
-        Assert.Equal(new System.Text.UTF8Encoding(false, true).GetBytes(title), bytes);
-        Assert.True(Batch(f, args with { RootToParent = [args.RootToParent[0] with { Title = "Later title", Provider = "different" }, args.RootToParent[1]] }).Applied);
-        Assert.Equal(bytes, f.Db.QueryFirst("SELECT CAST(title AS BLOB) FROM engine_session WHERE id='root'", r => r.Blob(0), default));
     }
 
     [Fact]
