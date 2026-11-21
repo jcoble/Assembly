@@ -3,10 +3,10 @@
 //! - an open dock's content fades in and slides in from the dock's outer edge. The dock's width still appears at once,
 //!   and closing is instant: a width slide would need a change to the kit. With Reduce Motion on, the kit's animations
 //!   jump to the end. New: the old app had no dock motion.
-//! - splits and tab groups paint no fill of their own, so the sessions column shows the rail and the rest shows the
-//!   work panel that Frame draws behind them (the design system's "a ground and one panel").
-//! - the sessions column is a tile, `RAIL_GAP` in from the window's edges, with the utility strip at its foot, as the
-//!   look has it; there's no bottom bar.
+//! - splits and tab groups paint no fill of their own, so each shows the tile behind it: the sessions column and the
+//!   drawer are tiles drawn here, and the chat sheet is the tile Frame draws behind the centre and the bottom dock.
+//! - the sessions column is a tile, `TILE_GAP` in from the window's edges, with the utility strip at its foot, as the
+//!   look has it; there's no bottom bar. The drawer is a tile `TILE_GAP` from the sheet.
 //! - the sessions column uses text chips (side_tabs.rs), the drawer uses its compact tool capsule and overflow menu
 //!   (drawer_buttons.rs), and the chat's title and an open bottom dock's tabs are the kit's.
 //! - a closed bottom dock draws nothing along the foot, and the centre reaches over the strip the kit keeps for it;
@@ -31,9 +31,6 @@ use super::{drawer_buttons::DrawerButtons, side_tabs};
 use crate::core::theme::look::Look;
 use crate::core::theme::metrics::{CORNER_TILE, TILE_GAP};
 
-/// The sessions tile's distance from the window's edge and from the work tile; the glass shows in it.
-const RAIL_GAP: Pixels = TILE_GAP;
-
 pub struct MotionSkin {
     pub inner: Rc<DockSkin>,
     /// Drawn at the foot of the sessions column.
@@ -43,6 +40,18 @@ pub struct MotionSkin {
     /// The bottom dock is shut, as Frame saw it this frame: the centre then reaches over the strip the kit keeps for
     /// it, so the chat's composer sits 16 px off the panel's foot, as the mock's.
     pub bottom_shut: Rc<Cell<bool>>,
+}
+
+/// A side tile's box: the tile colour, its corners and its faint edge, holding whatever is put in it.
+fn tile(cx: &App) -> Div {
+    let look = Look::of(cx);
+    v_flex()
+        .size_full()
+        .overflow_hidden()
+        .rounded(CORNER_TILE)
+        .border_1()
+        .border_color(look.tile_edge)
+        .bg(look.tile)
 }
 
 /// How far the centre reaches down over a shut bottom dock's strip so the chat's foot meets the panel's: the kit keeps
@@ -91,27 +100,26 @@ impl DockAreaRenderer for MotionSkin {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        let content = if dock.placement() == DockPlacement::Left {
-            // A tile like the work tile: its darker colour separates it from the glass, with only a faint edge and
-            // no shadow (the look's outline rule).
-            let look = Look::of(cx);
-            div()
+        // The sessions column and the drawer are tiles of their own: the darker colour separates each from the
+        // glass, with only a faint edge and no shadow (the look's outline rule). The sessions tile sits `TILE_GAP`
+        // in from the window's edge and from the chat sheet; the drawer tile `TILE_GAP` in from the sheet, with
+        // Frame keeping the window's edge. The gaps hold the kit's resize edges.
+        let content = match dock.placement() {
+            DockPlacement::Left => div()
                 .size_full()
-                .px(RAIL_GAP)
+                .px(TILE_GAP)
                 .child(
-                    v_flex()
-                        .size_full()
-                        .overflow_hidden()
-                        .rounded(CORNER_TILE)
-                        .border_1()
-                        .border_color(look.tile_edge)
-                        .bg(look.tile)
+                    tile(cx)
                         .child(div().flex_1().min_h_0().child(content))
                         .child(self.foot.clone()),
                 )
-                .into_any_element()
-        } else {
-            content
+                .into_any_element(),
+            DockPlacement::Right => div()
+                .size_full()
+                .pl(TILE_GAP)
+                .child(tile(cx).child(content))
+                .into_any_element(),
+            _ => content,
         };
         // A closed bottom dock draws nothing in the strip the kit keeps for it; the tools menu opens Terminal.
         if dock.placement() == DockPlacement::Bottom && !dock.is_open() {
