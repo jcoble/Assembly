@@ -259,15 +259,22 @@ public sealed class DesktopBackendTests : IAsyncLifetime
 
     // The wiring the desktop backend gives the features no other real-backend test reaches: the clock and the config call
     // on the main socket, the attachment call on the large calls' socket. Each feature's own behaviour is proved in its
-    // socket tests (ClockSocketTests, ChatSocketTests).
+    // socket tests (ClockSocketTests, ChatSocketTests). The clock ticks on its socket once a second, so the config call
+    // has a socket of its own and no tick can arrive in front of its answer.
     [Fact]
     public async Task The_desktop_socket_serves_the_clock_config_and_attachments()
     {
-        using var socket = await OpenSocketAsync();
-        await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"clock","key":"second"}""");
-        Assert.StartsWith("""{"t":"state","sub":1,"items":[{"key":"second","item":{"now":""", await ReadTextAsync(socket));
-        await SendTextAsync(socket, """{"t":"call","id":2,"feature":"config","method":"get","args":{"session":"no-such-session"}}""");
-        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"unknown session"}""", await ReadTextAsync(socket));
+        using (var socket = await OpenSocketAsync())
+        {
+            await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"clock","key":"second"}""");
+            Assert.StartsWith("""{"t":"state","sub":1,"items":[{"key":"second","item":{"now":""", await ReadTextAsync(socket));
+        }
+
+        using (var socket = await OpenSocketAsync())
+        {
+            await SendTextAsync(socket, """{"t":"call","id":2,"feature":"config","method":"get","args":{"session":"no-such-session"}}""");
+            Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"unknown session"}""", await ReadTextAsync(socket));
+        }
 
         using var bulk = await OpenSocketAsync("/socket/bulk");
         await SendTextAsync(bulk, """{"t":"call","id":1,"feature":"attachments","method":"begin","args":{"session":"no-such-session","mime":"image/png","size":10}}""");
