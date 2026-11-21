@@ -86,11 +86,6 @@ internal sealed partial class RowsFeature : IFeature
         calls.Read(Topic, "page", RowJsonContext.Rows.PageArgs, RowJsonContext.Rows.JsonElement, async (args, call) =>
         {
             var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
-            if (bound?.Remote == true)
-            {
-                var remote = await bound.PageAsync(args.Before, Math.Clamp(args.Limit, 1, PageLimit), call.Cancellation);
-                bound.EnsureCurrent(); return remote;
-            }
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
             var page = await _hub.PageAsync(args.Session, args.Before, Math.Clamp(args.Limit, 1, PageLimit), call.Cancellation);
             if (bound is not null)
@@ -105,11 +100,6 @@ internal sealed partial class RowsFeature : IFeature
         {
             call.Cancellation.ThrowIfCancellationRequested();
             var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
-            if (bound?.Remote == true)
-            {
-                var remote = await bound.SubagentsAsync(args.After, args.Limit, call.Cancellation);
-                bound.EnsureCurrent(); return remote;
-            }
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
             var page = _store.Subagents(args.Session, args.After, args.Limit, call.Cancellation, args.ExpectedSource ?? call.ExpectedSource);
             if (bound is not null) { bound.Watch(); bound.EnsureCurrent(); }
@@ -155,16 +145,11 @@ internal sealed partial class RowsFeature : IFeature
             return new ToolDetail(tool.Summary, tool.Input, output, diff, tool.Path, tool.OutputTruncated || outputBytes != Encoding.UTF8.GetByteCount(output ?? "") || diffBytes != Encoding.UTF8.GetByteCount(diff ?? ""),
                 outputBytes, diffBytes, tool.Terminals);
         }, bulk: true);
-        // Explicit remote context comes from the captured owner, never an unqualified copied-row cache.
+        // A remote session's context is read from its saved copy here, under the captured copy guard (TSK-1692).
         calls.Read(Topic, "files", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.IReadOnlyListFileTouched, async (args, call) =>
         {
             call.Cancellation.ThrowIfCancellationRequested();
             var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
-            if (bound?.Remote == true)
-            {
-                var files = await bound.FilesAsync(call.Cancellation);
-                bound.EnsureCurrent(); return files;
-            }
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
             // A remote session's copied rows are read here with no disk check, since this disk isn't the one they name.
             var local = string.IsNullOrEmpty(session.Machine);
@@ -176,11 +161,6 @@ internal sealed partial class RowsFeature : IFeature
         {
             call.Cancellation.ThrowIfCancellationRequested();
             var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
-            if (bound?.Remote == true)
-            {
-                var tokens = await bound.TokensAsync(call.Cancellation);
-                bound.EnsureCurrent(); return tokens;
-            }
             if (_sessions.Get(args.Session) is null) throw new CallFailed("unknown session");
             var result = new SessionTokens(_store.SessionTokens(args.Session, call.Cancellation));
             bound?.EnsureCurrent(); return result;
@@ -189,11 +169,6 @@ internal sealed partial class RowsFeature : IFeature
         {
             call.Cancellation.ThrowIfCancellationRequested();
             var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
-            if (bound?.Remote == true)
-            {
-                var attachments = await bound.AttachmentsAsync(call.Cancellation);
-                bound.EnsureCurrent(); return attachments;
-            }
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
             var prompts = _store.Attachments(args.Session, AttachmentPrompts + 1, AttachmentTail, call.Cancellation);
             bound?.EnsureCurrent();

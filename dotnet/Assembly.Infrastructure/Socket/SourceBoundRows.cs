@@ -1,5 +1,3 @@
-using System.Buffers;
-using System.Text.Json;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Infrastructure.Engine;
@@ -27,7 +25,7 @@ internal sealed class SourceBoundRows : ISocketSubscription, IExpectedSourceGuar
     public CancellationToken Closed => _token;
     internal RowSourceBinding Source => _source;
     public CancellationToken Changed => _token;
-    public Task Completion { get; private set; } = Task.CompletedTask;
+    public Task Completion => Task.CompletedTask;
     public void Attach(ISocketSubscription inner)
     {
         _inner = inner;
@@ -41,36 +39,6 @@ internal sealed class SourceBoundRows : ISocketSubscription, IExpectedSourceGuar
             if (_source.Changed.IsCancellationRequested || !Closed.IsCancellationRequested) Fail();
             throw;
         }
-    }
-    public void Start(long? after) => Completion = RunAsync(after);
-    private async Task RunAsync(long? after)
-    {
-        try
-        {
-            await foreach (var frame in _source.WatchAsync(after, Closed))
-            {
-                EnsureCurrent();
-                var type = frame.GetProperty("t").GetString();
-                if (type is not ("state" or "rows")) throw new CallFailed("Invalid row stream.");
-                var buffer = new ArrayBufferWriter<byte>();
-                using (var writer = new Utf8JsonWriter(buffer))
-                {
-                    writer.WriteStartObject();
-                    foreach (var property in frame.EnumerateObject())
-                        if (property.Name == "sub") writer.WriteNumber("sub", _id);
-                        else property.WriteTo(writer);
-                    writer.WriteEndObject();
-                }
-                EnsureCurrent();
-                _connection.Send(buffer.WrittenMemory, this);
-            }
-            if (!Closed.IsCancellationRequested) Fail();
-        }
-        catch (Exception error) when (error is CallFailed or OperationCanceledException or IOException)
-        {
-            if (!Closed.IsCancellationRequested || _source.Changed.IsCancellationRequested) Fail();
-        }
-        finally { Dispose(); }
     }
     private void Fail()
     {

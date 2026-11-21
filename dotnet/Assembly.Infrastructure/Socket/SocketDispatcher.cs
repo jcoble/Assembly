@@ -162,7 +162,6 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             binding = await topic.Sources.CaptureAsync(frame.ExpectedSource, frame.Key, capture.Token);
             binding.EnsureCurrent();
             subscription = new(binding, connection, id);
-            if (binding.Remote) { subscription.Start(frame.After); return subscription; }
             var opened = Subscribe(frame, id, connection, subscription);
             if (opened is null) subscription.Dispose();
             return opened;

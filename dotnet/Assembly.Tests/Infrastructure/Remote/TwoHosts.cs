@@ -268,6 +268,7 @@ internal sealed class TwoHosts : IAsyncDisposable
     private RemoteConnections? _connections;
     private MachinesFeature? _machinesFeature;
     private MachineStore? _profiles;
+    private MachineSet? _machineSet;
     private readonly Dictionary<string, Host> _additionalHosts = new(StringComparer.Ordinal);
     public TwoHosts(bool windowCalls = false, bool forwardCommands = false, IEngineEffects? effects = null,
         IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? macLimits = null, SessionLimits? remoteLimits = null, IEngineEffects? macEffects = null, TextWriter? remoteLog = null,
@@ -304,7 +305,7 @@ internal sealed class TwoHosts : IAsyncDisposable
             if (_forwardCommands)
             {
                 var profiles = _profiles = new MachineStore(Mac.Fixture.Db);
-                var machines = new MachineSet(new FakeMachine(null, sessions));
+                var machines = _machineSet = new MachineSet(new FakeMachine(null, sessions));
                 var status = new MachineStatus(Mac.Topics, []);
                 _machinesFeature = new(machines, status, () => { }, TimeProvider.System);
                 _connections = new(profiles, Mac.Fixture.Db.Writer, machines, status, _hub, sessions, Mac.Topics, MirrorLog, _machinesFeature,
@@ -359,6 +360,8 @@ internal sealed class TwoHosts : IAsyncDisposable
         Remote.Fixture.SeedSession();
     }
     internal RemoteMachine ConnectedMachine => _machine!;
+    /// <summary>The desktop's machines, which the connection owner adds a connected remote to and removes it from.</summary>
+    internal MachineSet Machines => _machineSet ?? throw new InvalidOperationException("No configured connection owner");
     internal LiveHub MacHub => _hub ?? throw new InvalidOperationException("No mirror started");
     internal RemoteConnections Connections => _connections ?? throw new InvalidOperationException("No configured connection owner");
     public Task DisconnectMirror() => _connections!.ConnectionAsync("workbox-test", false, default);

@@ -75,7 +75,7 @@ internal sealed partial class SourceControlFeature
         var target = await Capture(info.Machine, session, call.Cancellation, expected);
         if (qualified)
         {
-            call.SourceGuard = SessionRowSources.CapturedRemote(session, target.Owner.Machine, target.Live, target.EnsureCurrent);
+            call.SourceGuard = SessionRowSources.CapturedRemote(target.Owner.Machine, target.Live, target.EnsureCurrent);
             json = OwnerArguments(json, target.Owner.Engine);
         }
         return await Forward(method, resultType, json, target, session, call, kind);
@@ -95,7 +95,7 @@ internal sealed partial class SourceControlFeature
         {
             if (forward is null || connections is null) throw new CallFailed("This host does not own that folder.");
             var target = await Capture(machine, null, call.Cancellation);
-            call.SourceGuard = SessionRowSources.CapturedRemote(session, target.Owner.Machine, target.Live, target.EnsureCurrent);
+            call.SourceGuard = SessionRowSources.CapturedRemote(target.Owner.Machine, target.Live, target.EnsureCurrent);
             return await Forward(method, resultType, OwnerArguments(json, target.Owner.Engine), target, session, call, kind);
         }
         var folder = view.LocalFolder();

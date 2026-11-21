@@ -169,24 +169,29 @@ internal sealed class RemoteFollower(
                 {
                     // A bounded raw read also marks the end of catch-up, so an idle follower needs no quiet timer.
                     // The subscription's queued pushes are consumed afterwards; already copied seqs are skipped.
+                    // For a saved copy, a state at its last seq means the subscription's own frames carry the rest,
+                    // so nothing is read (TSK-1692: reopening a saved session asks the remote for no rows).
                     caughtUp = false;
                     var target = frame.GetProperty("seq").GetInt64();
-                    IReadOnlyList<StoredRow> rows;
                     var interrupted = false;
-                    do
+                    if (target > hub.LastSeq(sessionId) || hub.Copies.RemoteCopyOf(sessionId) is null)
                     {
-                        try { rows = await read(sessionId, hub.LastSeq(sessionId), done.Token); }
-                        catch (Exception error) when (error is IOException or System.Net.WebSockets.WebSocketException or ObjectDisposedException ||
-                            error is OperationCanceledException && !done.IsCancellationRequested)
+                        IReadOnlyList<StoredRow> rows;
+                        do
                         {
-                            // The machine reconnects and sends a state from the last copied seq.
-                            interrupted = true;
-                            break;
-                        }
-                        foreach (var row in rows) await CopyAsync(row);
-                        if (rows.Count == 0 && hub.LastSeq(sessionId) < target)
-                            throw new IOException("remote catch-up made no progress");
-                    } while (rows.Count > 0);
+                            try { rows = await read(sessionId, hub.LastSeq(sessionId), done.Token); }
+                            catch (Exception error) when (error is IOException or System.Net.WebSockets.WebSocketException or ObjectDisposedException ||
+                                error is OperationCanceledException && !done.IsCancellationRequested)
+                            {
+                                // The machine reconnects and sends a state from the last copied seq.
+                                interrupted = true;
+                                break;
+                            }
+                            foreach (var row in rows) await CopyAsync(row);
+                            if (rows.Count == 0 && hub.LastSeq(sessionId) < target)
+                                throw new IOException("remote catch-up made no progress");
+                        } while (rows.Count > 0);
+                    }
                     if (interrupted) continue;
                     caughtUp = true;
                     // A saved copy waiting for the follower to reach the remote's head can now be checked (TSK-1692).
@@ -195,7 +200,11 @@ internal sealed class RemoteFollower(
                         await turnEnded(sessionId);
                 }
                 else if (caughtUp && frame.GetProperty("t").GetString() == "rows")
+                {
                     await CopyAsync(RowWire.Read(frame.GetProperty("row")));
+                    // The catch-up the subscription carried, or a live row, can be what a waiting copy needs.
+                    reportCaughtUp?.Invoke(sessionId, hub.LastSeq(sessionId));
+                }
                 if (caughtUp && !Needed(sessionId)) return;
             }
         }
