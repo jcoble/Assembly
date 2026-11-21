@@ -83,6 +83,7 @@ impl HomePanel {
         &mut self,
         provider: &str,
         on: &ProviderOnMachine,
+        offline: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -110,6 +111,9 @@ impl HomePanel {
         }
         let edit = self.edits.entry(key.clone()).or_default();
         if edit.fields.is_none() {
+            if offline {
+                return note("This machine is offline.", cx).into_any_element();
+            }
             if edit.read_failed {
                 return note("Couldn't load these settings.", cx).into_any_element();
             }

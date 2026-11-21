@@ -297,7 +297,23 @@ impl HomePanel {
             return Empty.into_any_element();
         };
         match kind {
-            "advanced" => self.advanced_body(provider_id, &on, window, cx),
+            "advanced" => {
+                // An offline machine can't answer the read, and a forwarded call to one waits
+                // indefinitely, so the grower says so from the pushed connection state instead.
+                let offline = self.state.as_ref().is_some_and(|state| {
+                    state
+                        .machines
+                        .iter()
+                        .find(|machine| machine.key == machine_key)
+                        .is_some_and(|machine| {
+                            matches!(
+                                machine.connection_state.as_deref(),
+                                Some("offline" | "disconnected")
+                            )
+                        })
+                });
+                self.advanced_body(provider_id, &on, offline, window, cx)
+            }
             _ => match &on.last_failure {
                 Some(failure) => div()
                     .py_1()
