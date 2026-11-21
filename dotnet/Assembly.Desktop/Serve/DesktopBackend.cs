@@ -136,6 +136,8 @@ public sealed class DesktopBackend : IAsyncDisposable
     /// <summary>Whether App Nap is held, while any turn runs.</summary>
     internal bool ActivityHeld => _activity.Held;
 
+    internal RemoteReleaseJobs RemoteReleases => _remoteReleases;
+
     /// <summary>How many of its background works are still running.</summary>
     internal int BackgroundRunning => _work.Running;
     internal RemoteConnections Connections => _connections;
@@ -218,6 +220,8 @@ public sealed class DesktopBackend : IAsyncDisposable
         Assembly.Infrastructure.Notion.NotionCalls? notion = null;
         var activity = new TurnActivity();
         var failureDetails = new Assembly.Application.Features.Agents.ProviderFailureDetails();
+        // Only runs on this machine: a remote's turns never make this machine's own tools wait.
+        var localRuns = new TurnActivity(keepAwake: false);
         var tokens = new McpTokens();
         var endpoint = new McpEndpointReady(tokens);
         var stopGate = new object();
@@ -255,13 +259,19 @@ public sealed class DesktopBackend : IAsyncDisposable
             var sessionStore = SessionStore.Open(db, TimeProvider.System, checkouts, summaries);
             var projectStore = new ProjectStore(db, TimeProvider.System);
             // App Nap is held while any session has a run open, here or on a remote.
+            bool RunsHere(string session) => sessionStore.Get(session) is not { Machine: not null };
+            // The sessions here with a run open: changed only by the hub's callback, which runs under its lock, one at a time.
+            HashSet<string> openHere = [];
             hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: session =>
             {
                 sessionStore.PublishSummary(session);
                 activity.Hold(summaries.AnyRunOpen);
+                if (summaries.Get(session).RunId is not null && RunsHere(session)) openHere.Add(session);
+                else openHere.Remove(session);
+                localRuns.Hold(openHere.Count > 0);
             });
             var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                runsHere: session => sessionStore.Get(session) is not { Machine: not null });
+                runsHere: RunsHere);
             if (closed > 0)
                 log.WriteLine($"closed {closed} turn(s) the last run left unfinished");
             // Loading the summaries tells nobody: a remote's run left open holds it from the start.
@@ -363,7 +373,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             remoteReleases = new RemoteReleaseJobs(new RemoteReleaseInstall(releaseFeed, remoteShell, TimeProvider.System, Assembly.Infrastructure.Socket.BackendBuild.Version,
                 givenRemotePackages ?? (UpdateSources.Checkout is { } checkout ? new CheckoutPackages(remoteShell, CheckoutBuild.For(checkout, home)) : null), updateProgress),
                 connections.SavedProfile, (name, ct) => connections.ConnectionAsync(name, true, ct), releaseFeed,
-                agentsFile is null ? null : new LocalReleaseTools(releaseFeed, new ThisMachineShell(), agentsFile.Path, Path.Combine(home, "adapters"), () => activity.Held, updateProgress: updateProgress));
+                agentsFile is null ? null : new LocalReleaseTools(releaseFeed, new ThisMachineShell(), agentsFile.Path, Path.Combine(home, "adapters"), () => localRuns.Held, localRuns.WhenIdleAsync, updateProgress: updateProgress));
             connections.Start(savedRemote ?? (remote is null ? null : new SavedMachine(remote.Name, remote.Name)));
             // Direct test endpoints use the same owner; their callers historically expect routing ready on return.
             var startupName = savedRemote?.Name ?? remote?.Name;

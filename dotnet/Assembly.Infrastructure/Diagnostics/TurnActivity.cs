@@ -5,9 +5,10 @@ namespace Assembly.Infrastructure.Diagnostics;
 /// <summary>
 /// While any turn runs, an <c>NSProcessInfo</c> activity keeps App Nap from throttling the app. A user-initiated
 /// activity that still allows idle system sleep, so the Mac and its display may still sleep. Holding it while it's
-/// held does nothing. Off macOS only <see cref="Held"/> changes.
+/// held does nothing. Off macOS only <see cref="Held"/> changes. With <c>keepAwake</c> false it only tracks whether a turn
+/// is running and tells waiters when none is.
 /// </summary>
-internal sealed class TurnActivity
+internal sealed class TurnActivity(bool keepAwake = true)
 {
     // NSActivityUserInitiatedAllowingIdleSystemSleep.
     private const ulong UserInitiatedAllowingIdleSystemSleep = 0x00EFFFFF;
@@ -29,9 +30,9 @@ internal sealed class TurnActivity
         {
             if (held == _held)
                 return;
-            if (OperatingSystem.IsMacOS() && held)
+            if (keepAwake && OperatingSystem.IsMacOS() && held)
                 Begin();
-            else if (OperatingSystem.IsMacOS())
+            else if (keepAwake && OperatingSystem.IsMacOS())
                 End();
             _held = held;
             if (!held)
