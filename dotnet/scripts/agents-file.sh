@@ -31,6 +31,18 @@ if not os.path.isdir(os.path.dirname(path)):
 print(path)
 PY
 )
+# A launch that found an adapter missing asks only for a repair. When the two entries this installer writes can both
+# still start, the missing one is not this installer's to put right, so nothing is fetched and the file is left alone.
+if [[ "${ASSEMBLY_REPAIR_ONLY:-}" == 1 ]] && python3 -I - "$out" <<'PY' 2>/dev/null
+import json, os, sys
+agents = {agent["id"]: agent for agent in json.load(open(sys.argv[1], encoding="utf-8"))}
+for name in ("claude", "codex"):
+    command, entry = agents[name]["command"], agents[name]["args"][0]
+    if not os.path.isfile(entry) or (os.path.isabs(command) and not os.path.exists(command)): sys.exit(1)
+PY
+then
+  exit 0
+fi
 work=$(mktemp -d "$bundle_root/.install.XXXXXX")
 descriptor_tmp=
 published_bundle=
@@ -285,7 +297,9 @@ try:
         if old_env is None: old_env = {}
         if not isinstance(old_env, dict): raise ValueError("invalid configured provider environment")
         agent["env"] = {**{key: value for key, value in old_env.items() if key not in installer_env[agent["id"]]}, **agent["env"]}
-        agent.update({key: value for key, value in old.items() if key not in installer_fields})
+        # AIR belonged to the patched Codex adapter. The stock one has no such field, so an older file's is not carried over.
+        retired = {"air"} if agent["id"] == "codex" else set()
+        agent.update({key: value for key, value in old.items() if key not in installer_fields | retired})
     if os.environ.get("ASSEMBLY_MANAGED_CLIS") == "1":
         for agent in generated:
             cli = os.environ[f"ASSEMBLY_{agent['id'].upper()}"]
@@ -299,7 +313,6 @@ try:
     for name, relative in [("claude", "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"), ("codex", "node_modules/@agentclientprotocol/codex-acp/dist/index.js")]:
         if validated[name]["args"] != [os.path.join(bundle, relative)]: raise ValueError("descriptor entry mismatch")
         if not os.path.isfile(os.path.join(stage if final_bundle else bundle, relative)): raise ValueError("validated bundle is unavailable")
-    if "air" in validated["codex"]: raise ValueError("Codex descriptor must not opt into AIR")
     descriptor, temporary = tempfile.mkstemp(prefix="." + os.path.basename(out) + ".tmp.", dir=os.path.dirname(out))
     with os.fdopen(descriptor, "wb") as output:
         output.write(encoded); output.flush(); os.fsync(output.fileno())

@@ -147,6 +147,56 @@ public sealed class EngineMirrorTests
         Assert.Equal(calls, h.Remote.MachineCalls);
     }
 
+    [Fact]
+    public async Task A_burst_past_the_buffer_with_a_slow_mirror_keeps_the_connection_and_applies_every_event_once()
+    {
+        var remoteLog = new SharedLog();
+        await using var h = new TwoHosts(remoteLog: remoteLog);
+        await h.Start();
+        var writer = new HeldWriter(h.Mac.Fixture.Db.Writer);
+        await h.StartMirror(mirrorWriter: writer);
+        writer.Hold();
+        try
+        {
+            h.Remote.Commit(1);
+            await writer.Held.WaitAsync(TimeSpan.FromSeconds(30));
+            // One frame per event, far more than the stream's 16-frame buffer, while the mirror is stuck on the first.
+            for (var i = 0; i < 40; i++) h.Remote.Commit(1, "burst");
+            await remoteLog.WrittenAsync("engine stream fell behind").WaitAsync(TimeSpan.FromSeconds(30));
+
+            // The same connection still answers calls while the mirror is behind.
+            var answer = await h.ConnectedMachine.CallAsync("sessions", "page", System.Text.Json.JsonDocument.Parse("""{"limit":10}""").RootElement, false, default)
+                .WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal(System.Text.Json.JsonValueKind.Array, answer.GetProperty("sessions").ValueKind);
+        }
+        finally { writer.Release(); }
+        await h.Reached(h.Remote.Through);
+        Assert.Equal(Enumerable.Range(1, 41).Select(i => (long)i), h.Mac.Fixture.Db.Query(
+            "SELECT seq FROM engine_event WHERE machine=$m ORDER BY seq", r => r.Long(0), default,
+            new SqlArg("$m", h.Remote.Fixture.Machine)));
+        Assert.Equal("burst", h.RowTitle);
+        Assert.DoesNotContain("socket lost", remoteLog.ToString());
+    }
+
+    /// <summary>Holds the mirror's event writes (not its snapshot or bookkeeping) until released: a slow consumer.</summary>
+    private sealed class HeldWriter(IAtomicWriter inner) : IAtomicWriter
+    {
+        private readonly ManualResetEventSlim _open = new(true);
+        private readonly TaskCompletionSource _held = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task Held => _held.Task;
+        public void Hold() => _open.Reset();
+        public void Release() => _open.Set();
+        public T Write<T>(string what, Func<IWriteScope, T> write)
+        {
+            if (what == "engine.mirror.events" && !_open.IsSet)
+            {
+                _held.TrySetResult();
+                if (!_open.Wait(TimeSpan.FromSeconds(60))) throw new TimeoutException("the held mirror write was never released");
+            }
+            return inner.Write(what, write);
+        }
+    }
+
     private sealed class MirrorClock : TimeProvider
     {
         private readonly Microsoft.Extensions.Time.Testing.FakeTimeProvider _time = new();

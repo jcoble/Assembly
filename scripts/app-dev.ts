@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startRemoteUpdate } from './app-dev-remote.ts';
-import { profileFor, seedIfEmpty } from './seed-dev.ts';
+import { agentsNeedInstall, profileFor, seedIfEmpty } from './seed-dev.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const backend = join(root, 'desktop/target/dev-backend');
@@ -122,8 +122,11 @@ try {
   }, null, 2) + '\n');
   renameSync(temporaryLane, laneFile);
   mkdirSync(home, { recursive: true });
-  // No agents at all means nothing to run. Otherwise the update above, the button and `npm run deploy:remote` install them.
-  if (!managed && !existsSync(join(home, 'agents.json'))) {
+  // No agents, or an adapter or its program gone, means nothing to run. Otherwise the update above, the button and
+  // `npm run deploy:remote` install them. Over a file that is there, the installer is asked only to repair what it
+  // owns, so an entry it cannot put right costs no download at every start.
+  if (!managed && agentsNeedInstall(join(home, 'agents.json'))) {
+  if (existsSync(join(home, 'agents.json'))) env.ASSEMBLY_REPAIR_ONLY = '1';
   const installer = ['dotnet/scripts/agents-file.sh', process.env.ADAPTERS ?? adapters, join(home, 'agents.json')];
   const installed = await attempt('bash', installer);
   // The backend starts with an empty list when there's no agents file, so failing here doesn't stop the app.
@@ -132,6 +135,8 @@ try {
     const retried = built ? await attempt('bash', [...installer, built]) : undefined;
     if (retried?.status !== 0) console.warn('app:dev: agents could not be updated; opening with the ones already installed, if any');
   }
+  // The request was for this launch's installer alone. The app's own Update runs the same installer and installs in full.
+  delete env.ASSEMBLY_REPAIR_ONLY;
   }
   if (cache) {
     const executable = join(root, 'desktop/target/debug/assembly-desktop');
