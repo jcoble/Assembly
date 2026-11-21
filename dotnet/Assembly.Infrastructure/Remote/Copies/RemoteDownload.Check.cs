@@ -24,9 +24,7 @@ internal sealed partial class RemoteDownload
             if (!_awaitingFollower.TryGetValue(session, out var head) || lastSeq < head) return;
             _awaitingFollower.Remove(session);
         }
-        lock (_downloading)
-            if (_downloading.TryAdd(session, new(TaskCreationOptions.RunContinuationsAsynchronously)))
-                _work.Writer.TryWrite(session);
+        Queue(session);
     }
 
     // Finishes the copy, or leaves it waiting for the follower when the rows up to the remote's head aren't here yet.

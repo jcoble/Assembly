@@ -69,6 +69,13 @@ public sealed class SessionSummaries
         return true;
     }
 
+    /// <summary>The session's rows were deleted: it has no summary until rows are saved again. Only under the hub's lock.</summary>
+    internal bool Remove(string sessionId)
+    {
+        _trackers.Remove(sessionId);
+        return ImmutableInterlocked.TryRemove(ref _current, sessionId, out _);
+    }
+
     /// <summary>Uses the remote machine's current state even when its rows aren't being followed here.</summary>
     public void ApplyRemote(Sessions.SessionItem item) =>
         ImmutableInterlocked.AddOrUpdate(ref _current, item.SessionId,

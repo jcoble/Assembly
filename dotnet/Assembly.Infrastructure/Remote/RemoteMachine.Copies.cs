@@ -13,7 +13,8 @@ internal sealed partial class RemoteMachine
     internal Task EnsureCopyAsync(string session, CancellationToken ct) => Download.Ensure(session, ct);
 
     private RemoteDownload StartDownloads() =>
-        new(_hub, (method, args, ct) => CallAsync("rows", method, args, true, ct), VerifiedEngineAsync, AddSubagentSession, _log);
+        new(_hub, (method, args, ct) => CallAsync("rows", method, args, true, ct), VerifiedEngineAsync, AddSubagentSession,
+            session => _follower.Watch(session), _follower.ForgetAsync, _log);
 
     // The engine id this socket verified. Until the mirror's handshake verifies it, this waits on the identity the
     // session publication awaits, and asks the remote nothing itself.

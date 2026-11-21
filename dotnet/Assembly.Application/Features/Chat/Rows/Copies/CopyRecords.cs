@@ -41,6 +41,15 @@ public sealed partial class CopyRecords(IAppDatabase db, IAtomicWriter writer)
         "SELECT session_id,machine,state,head FROM remote_copy WHERE machine=$machine ORDER BY session_id", ReadCopy,
         CancellationToken.None, new SqlArg("$machine", machine));
 
+    /// <summary>
+    /// Copies of sessions this machine owns now that were saved from another machine: one replaced under the same name.
+    /// </summary>
+    public IReadOnlyList<string> MovedTo(string machine) => db.Query($"""
+        WITH {RemoteOwners}
+        SELECT c.session_id FROM remote_copy c JOIN owned o ON o.session_id=c.session_id
+        WHERE o.machine=$machine AND c.machine<>$machine ORDER BY c.session_id
+        """, row => row.Text(0), CancellationToken.None, new SqlArg("$machine", machine));
+
     /// <summary>A mirrored session's provider and folder, for a session with no record of its own here.</summary>
     public (string Provider, string Folder)? MirroredSession(string session) => db.QueryFirst("""
         SELECT json_extract(r.row_json,'$.provider'), json_extract(r.row_json,'$.folder') FROM engine_mirror_row r
@@ -54,9 +63,10 @@ public sealed partial class CopyRecords(IAppDatabase db, IAtomicWriter writer)
         "SELECT MIN(seq) FROM rows WHERE session_id=$session", row => row.IsNull(0) ? (long?)null : row.Long(0),
         CancellationToken.None, new SqlArg("$session", session));
 
-    internal static void MarkDownloading(IWriteScope scope, string session, long head) => scope.Execute(
-        "UPDATE remote_copy SET state='downloading', head=$head WHERE session_id=$session",
-        new SqlArg("$session", session), new SqlArg("$head", head));
+    /// <summary>The copy downloads again below its oldest row, to the remote's head and with its count there.</summary>
+    internal static void MarkDownloading(IWriteScope scope, string session, long head, long? count = null) => scope.Execute(
+        "UPDATE remote_copy SET state='downloading', head=$head, count=$count WHERE session_id=$session",
+        new SqlArg("$session", session), new SqlArg("$head", head), new SqlArg("$count", count));
 
     /// <summary>Deletes everything the copy saved, in the caller's write. The session's own record stays.</summary>
     internal static void DropCopy(IWriteScope scope, string session)

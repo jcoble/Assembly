@@ -18,6 +18,8 @@ internal sealed partial class RemoteDownload : IAsyncDisposable
     private readonly Func<string, JsonElement, CancellationToken, Task<JsonElement>> _bulkCall;
     private readonly Func<CancellationToken, Task<string>> _verifiedEngine;
     private readonly Action<string, StoredRow> _subagentCopied;
+    private readonly Action<string> _follow;
+    private readonly Func<string, Task> _forget;
     private readonly TextWriter _log;
     private readonly Channel<string?> _work = Channel.CreateUnbounded<string?>(new UnboundedChannelOptions { SingleReader = true });
     // Sessions whose download is queued or running, each with its first chunk's save; under its own lock.
@@ -28,13 +30,18 @@ internal sealed partial class RemoteDownload : IAsyncDisposable
     /// <param name="bulkCall">A rows read on the machine's bulk socket: method, args, cancellation.</param>
     /// <param name="verifiedEngine">The remote's engine id, once its socket's identity is verified.</param>
     /// <param name="subagentCopied">Told each subagent card a chunk saved, so its child session is known here.</param>
+    /// <param name="follow">Catches a session up from its last saved row, on the follower.</param>
+    /// <param name="forget">Stops following a session, returning once its follow has ended.</param>
     public RemoteDownload(LiveHub hub, Func<string, JsonElement, CancellationToken, Task<JsonElement>> bulkCall,
-        Func<CancellationToken, Task<string>> verifiedEngine, Action<string, StoredRow> subagentCopied, TextWriter log)
+        Func<CancellationToken, Task<string>> verifiedEngine, Action<string, StoredRow> subagentCopied,
+        Action<string> follow, Func<string, Task> forget, TextWriter log)
     {
         _hub = hub;
         _bulkCall = bulkCall;
         _verifiedEngine = verifiedEngine;
         _subagentCopied = subagentCopied;
+        _follow = follow;
+        _forget = forget;
         _log = log;
         _loop = Task.Run(LoopAsync);
     }
@@ -59,8 +66,9 @@ internal sealed partial class RemoteDownload : IAsyncDisposable
     }
 
     /// <summary>
-    /// A machine socket opened: copies still downloading carry on. Called under the machine's send lock, so it only
-    /// queues; the work runs on the download loop. A chunk call on the socket that closed has already failed with it.
+    /// A machine socket opened: one <c>rows/heads</c> call decides each saved copy. Called under the machine's send
+    /// lock, so it only queues; the work runs on the download loop. A chunk call on the socket that closed has already
+    /// failed with it.
     /// </summary>
     public void Connected() => _work.Writer.TryWrite(null);
 
@@ -70,26 +78,11 @@ internal sealed partial class RemoteDownload : IAsyncDisposable
         {
             await foreach (var session in _work.Reader.ReadAllAsync(_stop.Token))
             {
-                if (session is null) await ResumeAsync(_stop.Token);
+                if (session is null) await ReconnectAsync(_stop.Token);
                 else await DownloadAsync(session, _stop.Token);
             }
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
-    }
-
-    // Copies left downloading, by an earlier connection or an older install, carry on.
-    private async Task ResumeAsync(CancellationToken ct)
-    {
-        string machine;
-        try { machine = await _verifiedEngine(ct); }
-        catch (Exception error) when (Failed(error, ct)) { _log.WriteLine($"remote downloads: {error.Message}"); return; }
-        foreach (var copy in _hub.Copies.RemoteCopiesOn(machine).Where(copy => !copy.Complete))
-            lock (_downloading)
-                if (!_downloading.ContainsKey(copy.Session))
-                {
-                    _downloading[copy.Session] = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                    _work.Writer.TryWrite(copy.Session);
-                }
     }
 
     private async Task DownloadAsync(string session, CancellationToken ct)
@@ -142,9 +135,8 @@ internal sealed partial class RemoteDownload : IAsyncDisposable
 
     private async Task AdoptAsync(string session, string machine, CancellationToken ct)
     {
-        var heads = await _bulkCall("heads", JsonSerializer.SerializeToElement(new RowsFeature.HeadsArgs([session]), RowJsonContext.Rows.HeadsArgs), ct);
-        _hub.AdoptCopy(session, machine, heads.Deserialize(RowJsonContext.Rows.HeadsReply)?.Sessions.GetValueOrDefault(session)
-            ?? new HistoryFacts(0, 0, 0));
+        var heads = await HeadsAsync([session], ct);
+        _hub.AdoptCopy(session, machine, heads.GetValueOrDefault(session) ?? new HistoryFacts(0, 0, 0));
     }
 
     private async Task BackfillAsync(string session, CancellationToken ct)

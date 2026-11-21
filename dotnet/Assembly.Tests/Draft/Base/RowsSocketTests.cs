@@ -128,6 +128,26 @@ public sealed class RowsSocketTests : IAsyncLifetime
         AssertRow(await ReadAsync(behind), sub: 1, RowsFeature.PageLimit + 2, prevSeq: RowsFeature.PageLimit + 1);
     }
 
+    // Pins: TSK-1692 review focus 4. A saved copy dropped while its window shows it: the window is told to reload from
+    // seq 0, and the rows saved again reach it from there.
+    [Fact]
+    public async Task A_drop_while_open_sends_a_jump_and_the_page_reloads()
+    {
+        Commit("s", 3);
+        _db.Writer.Write("test.copy", scope => scope.Execute(
+            "INSERT INTO remote_copy(session_id,machine,state,head) VALUES('s','box-engine','complete',NULL)"));
+        using var socket = await OpenAsync();
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"s"}""");
+        Assert.Equal("""{"t":"state","sub":1,"seq":3,"items":[]}""", await ReadAsync(socket));
+
+        _hub.DropCopy("s");
+        Assert.Equal("""{"t":"state","sub":1,"seq":0,"items":[]}""", await ReadAsync(socket));
+        Assert.Null(_hub.Copies.RemoteCopyOf("s"));
+
+        Commit("s", 1);
+        AssertRow(await ReadAsync(socket), sub: 1, seq: 1, prevSeq: 0);
+    }
+
     // A copied or restored database can be behind what the page applied: it starts again from the last seq.
     [Fact]
     public async Task An_after_past_the_sessions_last_seq_starts_again_from_the_last_seq()

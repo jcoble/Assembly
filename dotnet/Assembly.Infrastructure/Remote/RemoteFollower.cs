@@ -16,6 +16,8 @@ internal sealed class RemoteFollower(
     // The sessions followed now; those watched again while followed, owed one more pass; and those given up on because
     // the remote was unreachable, until it answers again. All three under _following's lock.
     private readonly Dictionary<string, Task> _following = [];
+    // Each followed session's own stop, so one session can be forgotten while the others carry on.
+    private readonly Dictionary<string, CancellationTokenSource> _stops = [];
     private readonly HashSet<string> _again = [];
     private readonly HashSet<string> _gaveUp = [];
     // Remote helpers a restart found shown running here, until their follower first catches up. Under the same lock.
@@ -41,8 +43,30 @@ internal sealed class RemoteFollower(
             if (_following.ContainsKey(sessionId))
                 _again.Add(sessionId);
             else
-                _following[sessionId] = Task.Run(() => FollowAsync(sessionId));
+            {
+                var stop = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token);
+                _stops[sessionId] = stop;
+                _following[sessionId] = Task.Run(() => FollowAsync(sessionId, stop.Token));
+            }
         }
+    }
+
+    /// <summary>
+    /// Stops following the session and waits until its follow has ended, before its saved copy is dropped (TSK-1692).
+    /// The next follow starts from the rows saved then.
+    /// </summary>
+    public async Task ForgetAsync(string sessionId)
+    {
+        Task? running;
+        lock (_following)
+        {
+            _again.Remove(sessionId);
+            _gaveUp.Remove(sessionId);
+            _expectedRuns.Remove(sessionId);
+            running = _following.GetValueOrDefault(sessionId);
+            _stops.GetValueOrDefault(sessionId)?.Cancel();
+        }
+        if (running is not null) await running;
     }
 
     /// <summary>The remote answered again: follows the sessions given up on while it was unreachable.</summary>
@@ -92,7 +116,8 @@ internal sealed class RemoteFollower(
         return expected is not null || hub.OpenRun(sessionId) is not null || hub.HasSubscribers(sessionId);
     }
 
-    private async Task FollowAsync(string sessionId)
+    // stop: this session's own, linked to the whole follower's.
+    private async Task FollowAsync(string sessionId, CancellationToken stop)
     {
         var gaveUp = false;
         var again = false;
@@ -100,11 +125,11 @@ internal sealed class RemoteFollower(
         {
             do
             {
-                await checkFormat(_stopping.Token);
-                await FollowOnceAsync(sessionId, _stopping.Token);
-            } while (!_stopping.IsCancellationRequested && Again(sessionId));
+                await checkFormat(stop);
+                await FollowOnceAsync(sessionId, stop);
+            } while (!stop.IsCancellationRequested && Again(sessionId));
         }
-        catch (OperationCanceledException) when (_stopping.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
         catch (Exception error) when (error is MachineUnreachable or CallFailed or IOException or System.Net.WebSockets.WebSocketException or ObjectDisposedException)
         {
             log.WriteLine($"remote session {sessionId}: {error.Message}");
@@ -115,12 +140,14 @@ internal sealed class RemoteFollower(
             lock (_following)
             {
                 _following.Remove(sessionId);
+                if (_stops.Remove(sessionId, out var own)) own.Dispose();
                 if (gaveUp) _expectedRuns.Remove(sessionId);
                 again = _again.Remove(sessionId);
                 if (gaveUp && !again) _gaveUp.Add(sessionId);
             }
         }
-        if (!_stopping.IsCancellationRequested && (again || (!gaveUp && Needed(sessionId)))) Watch(sessionId);
+        // A forgotten session is followed again only when something watches it anew.
+        if (!stop.IsCancellationRequested && (again || (!gaveUp && Needed(sessionId)))) Watch(sessionId);
     }
 
     private async Task FollowOnceAsync(string sessionId, CancellationToken stopping)

@@ -51,6 +51,20 @@ public sealed partial class CopyRecords
         """, new SqlArg("$session", session), new SqlArg("$machine", machine), new SqlArg("$head", facts.Head),
         new SqlArg("$count", facts.Count)));
 
+    /// <summary>Rows were imported on the remote below the copy's oldest: it downloads again below it.</summary>
+    internal void Reopen(string session, HistoryFacts facts) => writer.Write("rows.copy-reopen", scope =>
+    {
+        MarkDownloading(scope, session, facts.Head, facts.Count);
+        return 0;
+    });
+
+    /// <summary>Deletes the copy and everything it saved, in one write, so it downloads again from the top.</summary>
+    internal void Drop(string session) => writer.Write("rows.copy-drop", scope =>
+    {
+        DropCopy(scope, session);
+        return 0;
+    });
+
     internal void MarkComplete(string session) => writer.Write("rows.copy-complete", scope => scope.Execute(
         "UPDATE remote_copy SET state='complete' WHERE session_id=$session", new SqlArg("$session", session)));
 

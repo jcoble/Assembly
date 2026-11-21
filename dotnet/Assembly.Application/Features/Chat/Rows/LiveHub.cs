@@ -118,6 +118,32 @@ public sealed class LiveHub : IDisposable
             _store.Copies.Adopt(sessionId, machine, facts);
     }
 
+    /// <summary>
+    /// The rows topic's word that a session's rows were replaced, not a row: a window showing it reloads its page.
+    /// </summary>
+    public const string Reset = """{"reset":0}""";
+
+    /// <summary>Rows imported on the remote below the copy's oldest: the copy downloads again below it.</summary>
+    public void ReopenCopy(string sessionId, HistoryFacts facts)
+    {
+        lock (_gate)
+            _store.Copies.Reopen(sessionId, facts);
+    }
+
+    /// <summary>
+    /// Deletes the copy and its rows, in one write, so it downloads again from the top. Its summary goes with them,
+    /// and a window showing it is told to reload.
+    /// </summary>
+    public void DropCopy(string sessionId)
+    {
+        lock (_gate)
+        {
+            _store.Copies.Drop(sessionId);
+            if (_summaries?.Remove(sessionId) == true) _summaryChanged(sessionId);
+            _topics?.Publish(RowsFeature.Topic, sessionId, Reset);
+        }
+    }
+
     public void CompleteCopy(string sessionId)
     {
         lock (_gate)
