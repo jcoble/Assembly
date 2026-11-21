@@ -14,6 +14,10 @@ fn late_projects(cx: &mut TestAppContext, drops: bool) -> Fake {
         if let Some(reply) = hello(frame) {
             return reply;
         }
+        // Record the call before waking the test, so a wait on the calls seen cannot wake too early and then sleep.
+        if frame["t"] == "call" {
+            observed.lock().unwrap().push(frame.clone());
+        }
         let _ = heard.unbounded_send(());
         if frame["t"] == "sub" {
             return vec![Reply::Frame(
@@ -23,7 +27,6 @@ fn late_projects(cx: &mut TestAppContext, drops: bool) -> Fake {
         if frame["t"] != "call" {
             return vec![];
         }
-        observed.lock().unwrap().push(frame.clone());
         let answer = |result: Value| json!({"t":"result","id":frame["id"],"result":result});
         match frame["method"].as_str() {
             Some("list") if drops => vec![Reply::Drop],
@@ -63,6 +66,7 @@ fn late_projects(cx: &mut TestAppContext, drops: bool) -> Fake {
         seen,
         changes,
         changed,
+        watching: Vec::new(),
     }
 }
 
