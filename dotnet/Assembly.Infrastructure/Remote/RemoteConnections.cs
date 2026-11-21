@@ -199,6 +199,23 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
         });
     }
 
+    /// <summary>
+    /// A first use other than an open (moving it from the rail) records the facade of a session only a live mirror
+    /// carries, as its open does. Nothing is written when no live mirror carries it or its owner can't be proven.
+    /// </summary>
+    internal async Task RecordFirstUseAsync(IAppDatabase db, SessionStore sessions, string sessionId, CancellationToken ct)
+    {
+        if (sessions.Get(sessionId) is not null) return;
+        var expected = db.QueryFirst("""
+            SELECT m.machine,m.generation,m.name FROM engine_mirror_row r
+            JOIN engine_mirror m ON m.machine=r.machine AND m.generation=r.generation AND m.state='live'
+            WHERE r.entity_kind='session' AND r.entity_id=$id
+            """, row => new ExpectedSource(row.Text(0), row.Long(1), row.Text(2)), ct, new SqlArg("$id", sessionId));
+        if (expected is null) return;
+        var captured = await CaptureSessionOpenSourceAsync(db, expected, ct);
+        RecordOpenedFacade(sessions, captured.Machine, captured.Live, captured.EnsureCurrent, sessionId, ct);
+    }
+
     private Task Queue(string name, bool connect, bool probe = false, CancellationToken cancel = default)
     {
         lock (_gate)
