@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Assembly.Application.Common.Database;
 using Assembly.Domain.Rows;
 using Assembly.Infrastructure.Engine;
+using Assembly.Engine.Hosting;
 using Assembly.Engine.Messages;
 using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Sessions;
@@ -98,6 +99,18 @@ public sealed partial class EngineHostTests
             Assert.NotNull(needId);
             AssertHostAnswerExactlyOnce(running, needId);
             await running.WaitState("sessions", "agy", "idle");
+
+            // One engine record under A's id, named by its version 1 title and ended by its run. The saved row reads as it
+            // did before version 1 tools had a name: the name is the title, so no summary repeats it.
+            var (records, row) = ((IEngineRuntime)running.Runtime).Read(scope => (
+                scope.Query("SELECT boundary_id,tool,outcome FROM engine_tool_call", r => (r.Text(0), r.Text(1), r.Text(2))),
+                scope.QueryFirst("""
+                    SELECT json_extract(payload,'$.name'),json_extract(payload,'$.summary'),json_extract(payload,'$.kind'),
+                        json_extract(payload,'$.state') FROM rows WHERE kind=$kind ORDER BY seq DESC LIMIT 1
+                    """, r => (Name: r.Text(0), Summary: r.IsNull(1) ? null : r.Text(1), Kind: r.Text(2), State: r.Text(3)),
+                    new SqlArg("$kind", RowKind.Tool))), default);
+            Assert.Equal(("Run create_file?", (string?)null, "edit", "completed"), row);
+            Assert.Equal((FakeLink.AcpSessionId + "/fca527de00e344c0820bcb4c2834c906", "Run create_file?", "completed"), Assert.Single(records));
         }
         finally { Directory.Delete(home, true); }
     }
@@ -194,6 +207,47 @@ public sealed partial class EngineHostTests
             // row, so no rail preview either (the preview is the newest message row's text).
             Assert.Equal(0L, db.Query("SELECT COUNT(*) FROM rows WHERE kind=$kind", row => row.Long(0), default,
                 new SqlArg("$kind", RowKind.Message))[0]);
+            // The waiting tool's engine record is ended cancelled, through the turn's close.
+            var records = db.Query("SELECT tool,outcome,ended_ms IS NOT NULL FROM engine_tool_call", row => (row.Text(0), row.Text(1), row.Long(2)), default);
+            Assert.Equal(("Run create_file?", "cancelled", 1L), Assert.Single(records));
+        }
+        finally { Directory.Delete(home, true); }
+    }
+
+    [Theory]
+    [InlineData("desktop")]
+    [InlineData("remote")]
+    public async Task A_running_version_1_tool_keeps_the_session_busy_until_its_turn_closes_it(string host)
+    {
+        var home = Directory.CreateTempSubdirectory("assembly-engine-v1-tool-").FullName;
+        var launcher = new FakeLauncher();
+        try
+        {
+            await using var running = await Host.Start(host, home, null, launcher: launcher);
+            using var socket = await running.Open();
+            var started = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var ended = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var tools = running.Runtime.Publisher.Register(item =>
+            {
+                if (item.Kind == "tool.started") started.TrySetResult(item.EntityId);
+                if (item.Kind == "tool.ended") ended.TrySetResult(item.EntityId);
+            }, out _);
+            var (agent, prompt) = await OpenVersion1Turn(running, socket, launcher, home);
+            // The recorded run of the approved edit (agy-main line 17) on its own: a tool in progress, no terminal status.
+            var tool = RecordedTurn(5).First(line => line.Line["params"]?["update"]?["status"]?.GetValue<string>() == "in_progress").Line;
+            await agent.SendAsync(tool.ToJsonString());
+            var id = await started.Task.WaitAsync(Timeout);
+            await running.WaitState("messages", "work", "next_turn"); // the send receipt; only the tool is left running
+            var engine = (IEngineRuntime)running.Runtime;
+            Assert.Equal(1L, engine.Read(scope => scope.QueryFirst("SELECT COUNT(*) FROM engine_tool_call WHERE ended_ms IS NULL", r => r.Long(0)), default));
+            Assert.False(engine.Read(scope => SessionTransitions.CheckoutQuiescent(scope, "agy"), default));
+
+            // The turn ends with the tool still open: the version 1 close ends its record, and the session is quiet again.
+            await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+            Assert.Equal(id, await ended.Task.WaitAsync(Timeout));
+            await running.WaitState("sessions", "agy", "idle");
+            Assert.Equal(("Running edit_file", "failed"), engine.Read(scope => scope.QueryFirst("SELECT tool,outcome FROM engine_tool_call", r => (r.Text(0), r.Text(1))), default));
+            Assert.True(engine.Read(scope => SessionTransitions.CheckoutQuiescent(scope, "agy"), default));
         }
         finally { Directory.Delete(home, true); }
     }
