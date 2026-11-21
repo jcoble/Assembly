@@ -24,7 +24,7 @@ internal static class ReleaseCliUpdate
 
     private static async Task UpdateAsync(RemoteReleaseShell shell, string target, CliBehind cli, string agentsFile, CancellationToken ct)
     {
-        var now = await shell.RunAsync(target, $"set -eu; PATH=$HOME/.local/bin:/usr/local/bin:$PATH; cli=$(node -e \"{Configured}\" {agentsFile} {cli.Family}); \"$cli\" --version || true", null, ct);
+        var now = await shell.RunAsync(target, $"set -eu; PATH=$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH; cli=$(node -e \"{Configured}\" {agentsFile} {cli.Family}); \"$cli\" --version || true", null, ct);
         if (CliCommand.ReadVersion(cli.Family, now.Split('\n')[^1].Trim()) is { } found && CliVersion.Compare(found, cli.Version) != "update_available") return;
         var said = await shell.RunAsync(target, Command(cli, agentsFile), null, ct);
         var version = CliCommand.ReadVersion(cli.Family, said.Split('\n')[^1].Trim());
@@ -35,12 +35,28 @@ internal static class ReleaseCliUpdate
     internal static string Command(CliBehind cli, string agentsFile)
     {
         if (!CliVersion.IsStable(cli.Version) || !CliCommand.Supports(cli.Family)) throw new CallFailed($"Can't update {cli.Family} to {cli.Version}.", "bad_args");
-        var update = CliCommand.UpdatesItself(cli.Family)
-            ? "\"$cli\" update >&2"
-            : $"command -v npm >/dev/null || {{ echo '{cli.Family} updates through npm, and npm is missing' >&2; exit 1; }}; " +
-              $"[ -f \"$(npm root -g)/{CliCommand.PackageOf(cli.Family)}/package.json\" ] || {{ echo '{cli.Family} was not installed with npm: update it the way it was installed' >&2; exit 1; }}; " +
-              $"npm install --global --no-audit --no-fund {CliCommand.PackageOf(cli.Family)}@{cli.Version} >&2";
-        return $"set -eu; PATH=$HOME/.local/bin:/usr/local/bin:$PATH; cli=$(node -e \"{Configured}\" {agentsFile} {cli.Family}); {update}; \"$cli\" --version";
+        var update = CliCommand.UpdateMethodOf(cli.Family) switch
+        {
+            CliUpdateMethod.SelfUpdate => "\"$cli\" update >&2",
+            CliUpdateMethod.InstalledMethod => InstalledMethodUpdate(cli),
+            _ => throw new CallFailed($"Can't update {cli.Family} to {cli.Version}.", "bad_args")
+        };
+        return $"set -eu; PATH=$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH; cli=$(node -e \"{Configured}\" {agentsFile} {cli.Family}); {update}; \"$cli\" --version";
+    }
+
+    private static string InstalledMethodUpdate(CliBehind cli)
+    {
+        var package = CliCommand.PackageOf(cli.Family);
+        var brew = CliCommand.HomebrewNameOf(cli.Family);
+        var brewBranch = brew is null
+            ? ""
+            : $"elif command -v brew >/dev/null && brew list --cask {brew} >/dev/null 2>&1; then brew upgrade --cask {brew} >&2; " +
+              $"elif command -v brew >/dev/null && brew list --formula {brew} >/dev/null 2>&1; then brew upgrade {brew} >&2; ";
+        return $"if command -v npm >/dev/null && [ -f \"$(npm root -g)/{package}/package.json\" ]; then " +
+               $"npm install --global --no-audit --no-fund {package}@{cli.Version} >&2; " +
+               brewBranch +
+               $"elif \"$cli\" update >&2; then true; " +
+               $"else echo '{cli.Family} was not installed with npm or Homebrew and its own update failed: update it the way it was installed' >&2; exit 1; fi";
     }
 }
 

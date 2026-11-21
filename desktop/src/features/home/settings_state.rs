@@ -15,13 +15,18 @@ pub struct SettingsState {
 }
 
 /// The panel's top line: what kind of thing needs the user, and the backend's plain sentence for it (also when
-/// nothing does).
+/// nothing does), plus backend-derived flags for the Home button's progress ring (`working`) and amber state
+/// (`needs_user`).
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Summary {
     /// `nothing`, `problem`, `needs_sign_in`, `waiting_on_sessions` or `restart_to_finish`.
     pub kind: String,
     pub message: String,
+    /// True while Assembly is checking, installing or updating on its own; drives the Home button's progress ring.
+    pub working: bool,
+    /// True only when something needs the user; turns the Home button amber.
+    pub needs_user: bool,
 }
 
 /// One provider across every machine.

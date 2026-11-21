@@ -140,6 +140,8 @@ public sealed class DesktopBackend : IAsyncDisposable
     internal int BackgroundRunning => _work.Running;
     internal RemoteConnections Connections => _connections;
     private MachineUpdates? _updates;
+    private LocalProviderReconciler? _reconciler;
+    internal LocalProviderReconciler? Reconciler => _reconciler;
     private SessionBranches? _branches;
     private IAppInstall? _appInstall;
 
@@ -180,7 +182,8 @@ public sealed class DesktopBackend : IAsyncDisposable
     internal static async Task<DesktopBackend> StartAsync(FileStream homeLock, string home, string token, int port, IAgentLauncher launcher, TextWriter log,
         RemoteConfig? remote, RemoteTunnel? tunnel, (string Claude, string Codex)? utilityClis, SavedMachine? savedRemote,
         IEngineEffects? engineEffects, Action<EngineRuntime>? engineStarted, AgentsFile? agentsFile,
-        Func<CancellationToken, Task<(string? Path, string? Error)>>? loginShell, Action<IProgramTerminals>? programTerminals, IAppInstall? givenInstall = null)
+        Func<CancellationToken, Task<(string? Path, string? Error)>>? loginShell, Action<IProgramTerminals>? programTerminals, IAppInstall? givenInstall = null,
+        RemoteReleaseShell? givenRemoteShell = null, IRemotePackages? givenRemotePackages = null, IUpdateSource? givenUpdateSource = null)
     {
         var database = Path.Combine(home, "assembly.db");
         var topics = new Topics();
@@ -209,6 +212,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         GitOperations? gitOperations = null;
         ProviderRuntimeSubscriptions? providerRuntimeSubscriptions = null;
         SettingsStateFeature? settingsState = null;
+        LocalProviderReconciler? reconciler = null;
         RemoteReleaseJobs? remoteReleases = null;
         HttpClient? releaseHttp = null;
         Assembly.Infrastructure.Notion.NotionCalls? notion = null;
@@ -354,10 +358,10 @@ public sealed class DesktopBackend : IAsyncDisposable
             // Follows GitHub's redirect to the release asset, which the shared client deliberately doesn't.
             releaseHttp = new HttpClient(new SocketsHttpHandler { UseCookies = false });
             var releaseFeed = new RemoteReleaseFeed(releaseHttp);
-            var remoteShell = new RemoteReleaseShell();
+            var remoteShell = givenRemoteShell ?? new RemoteReleaseShell();
             var updateProgress = new UpdateProgress(status);
             remoteReleases = new RemoteReleaseJobs(new RemoteReleaseInstall(releaseFeed, remoteShell, TimeProvider.System, Assembly.Infrastructure.Socket.BackendBuild.Version,
-                UpdateSources.Checkout is { } checkout ? new CheckoutPackages(remoteShell, CheckoutBuild.For(checkout, home)) : null, updateProgress),
+                givenRemotePackages ?? (UpdateSources.Checkout is { } checkout ? new CheckoutPackages(remoteShell, CheckoutBuild.For(checkout, home)) : null), updateProgress),
                 connections.SavedProfile, (name, ct) => connections.ConnectionAsync(name, true, ct), releaseFeed,
                 agentsFile is null ? null : new LocalReleaseTools(releaseFeed, new ThisMachineShell(), agentsFile.Path, Path.Combine(home, "adapters"), () => activity.Held, updateProgress: updateProgress));
             connections.Start(savedRemote ?? (remote is null ? null : new SavedMachine(remote.Name, remote.Name)));
@@ -410,7 +414,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             var appBundle = AppUpdate.BundleOf(AppContext.BaseDirectory);
             IAppInstall? appInstall = givenInstall ?? (appBundle is null || UpdateSources.Checkout is not null || Assembly.Infrastructure.Socket.BackendBuild.Version is not { } appVersion ? null : new AppUpdate(new(appBundle, home, database, appVersion),
                 releaseFeed, activity.WhenIdleAsync, () => activity.Held, AppUpdate.StartHelperAsync, AppSwap.Window, status.QuitWindow, updateProgress));
-            var updates = new MachineUpdates(UpdateSources.ForHost(cliHttp, TimeProvider.System, remoteReleases, home: home, app: appInstall), status, new InstalledCalls(launcher, TimeProvider.System),
+            var updates = new MachineUpdates(givenUpdateSource ?? UpdateSources.ForHost(cliHttp, TimeProvider.System, remoteReleases, home: home, app: appInstall), status, new InstalledCalls(launcher, TimeProvider.System),
                 async (machine, ct) => connections!.ByName(machine) is { } reached ? await reached.InstalledToolsAsync(ct) : null,
                 agentsFile is null ? null : () => agentsFile.Reload(), work, log, updateProgress);
             var cliUpdates = new UpdateCalls(launcher, engine.Machine, cliHttp, TimeProvider.System, hostStop.Token,
@@ -429,14 +433,18 @@ public sealed class DesktopBackend : IAsyncDisposable
             var projectFolders = new ProjectFolderCreation(localFolders, projectWriter, checkoutWrites, gitOperations);
             var projectCoordinator = new NewProjectCoordinator(projectStore, db, localFolders, projectWriter, checkoutWrites, gitOperations, connections);
             providerRuntimeSubscriptions = new ProviderRuntimeSubscriptions(topics, connections.CaptureMirrorOwners);
-            settingsState = new SettingsStateFeature(db, topics, work, launcher, machinesFeature, engine.Machine, TimeProvider.System, failureDetails);
+            var providerEnablement = new ProviderEnablementStore(db, TimeProvider.System);
+            reconciler = new LocalProviderReconciler(db, topics, work, launcher, updates, providerEnablement, engine, TimeProvider.System, log,
+                detectLocalCli: agentsFile is null ? null : CliCommand.IsInstalledOnLocalPath, probeAfterCheck: agentsFile is not null);
+            updates.OnLocalReconcile = () => reconciler.Trigger(fresh: false);
+            settingsState = new SettingsStateFeature(db, topics, work, launcher, machinesFeature, engine.Machine, TimeProvider.System, failureDetails, () => reconciler.IsWorking);
             var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, machineForward, connections, git, projectRoots);
             var projectPrReads = new ProjectPullRequestReads(db, projectRoots, sessionSources, engine.Machine, prReader, machineForward, connections);
             var projectPrActions = new ProjectPullRequestActions(projectPrReads, gitOperations, sessionGit, machineForward);
             var fileOwners = new FileOwner(sessionStore, db, projectRoots);
             routedTerminals = new RoutedTerminals(terminals, sessionStore, machines, topics, work);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
-                [notion, settingsState, new Assembly.Infrastructure.Remote.SshHostsFeature(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)), cliUpdates, updates, new InstalledCalls(launcher, TimeProvider.System), new ProviderRuntimeCalls(engine.Machine, agentsFile, machineForward, providerRuntimeSubscriptions), new Assembly.Infrastructure.Engine.Messages.MessagesCalls(engine, db, machineForward), new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts, door, new WorkflowCommandRecovery(db, Path.Combine(home, "workflow-proof"))), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward, project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore, connections: connections), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, localEngineMachine: engine.Machine, readRemoteChallenge: signInRelay.ReadChallengeAsync, submitRemoteCode: signInRelay.SubmitCodeAsync, acknowledgeRemoteUrl: signInRelay.AcknowledgeUrlAsync), new TerminalFeature(routedTerminals), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, new DiskPathProbe(), owningHome, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome,
+                [notion, settingsState, reconciler, new Assembly.Infrastructure.Remote.SshHostsFeature(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)), cliUpdates, updates, new InstalledCalls(launcher, TimeProvider.System), new ProviderRuntimeCalls(engine.Machine, agentsFile, machineForward, providerRuntimeSubscriptions), new Assembly.Infrastructure.Engine.Messages.MessagesCalls(engine, db, machineForward), new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts, door, new WorkflowCommandRecovery(db, Path.Combine(home, "workflow-proof"))), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward, project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore, connections: connections), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, localEngineMachine: engine.Machine, readRemoteChallenge: signInRelay.ReadChallengeAsync, submitRemoteCode: signInRelay.SubmitCodeAsync, acknowledgeRemoteUrl: signInRelay.AcknowledgeUrlAsync), new TerminalFeature(routedTerminals), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, new DiskPathProbe(), owningHome, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources, projectRoots, engine.Machine, owningHome,
                         (args, call) => connections.CreateSessionAsync(db, projectStore, engine.Machine, args, call),
                         (args, call) => connections.ReadCreatedSessionAsync(db, projectStore, args, call), remoteFolders: localFolders),
                     new SendFeature(sessionStore, machines, hub, door), new Assembly.Application.Features.Chat.Sessions.Drafts.DraftsFeature(door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
@@ -463,6 +471,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             await app.StartAsync();
             var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, routedTerminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp, gitOperations, providerRuntimeSubscriptions, settingsState, remoteReleases, releaseHttp, signInRelay, notion);
             backend._updates = updates;
+            backend._reconciler = reconciler;
             backend._branches = branches;
             backend._windowGone = windowGone;
             backend._appInstall = appInstall;
@@ -489,6 +498,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             if (boardMirror is not null) await boardMirror.DisposeAsync();
             if (board is not null) await board.DisposeAsync();
             if (gitOperations is not null) await gitOperations.DisposeAsync();
+            if (reconciler is not null) await reconciler.DisposeAsync();
             if (settingsState is not null) await settingsState.DisposeAsync();
             if (providerRuntimeSubscriptions is not null) await providerRuntimeSubscriptions.DisposeAsync();
             if (routedTerminals is not null) await routedTerminals.DisposeAsync();
@@ -544,6 +554,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         await _gitOperations.DisposeAsync();
         _hostStop.Dispose();
         // Before the remote, so no probe is still out on it.
+        if (_reconciler is not null) await _reconciler.DisposeAsync();
         await _settingsState.DisposeAsync();
         await _providerRuntimeSubscriptions.DisposeAsync();
         await _routedTerminals.DisposeAsync();

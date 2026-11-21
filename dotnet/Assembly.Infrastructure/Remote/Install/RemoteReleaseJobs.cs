@@ -39,7 +39,15 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install,
     {
         if (machine is not null)
             return WaitedAsync(machine, progress, async (saved, phase, stop) => { await install.UpdateToolsAsync(saved, tools, phase, stop); return null; }, ct);
-        return local is null ? throw new CallFailed("This app can't update its own adapters and CLIs.", "local_update_unavailable") : local.UpdateAsync(tools, progress, ct);
+        return local is null
+            ? throw new CallFailed("This app can't update its own adapters and CLIs.", "local_update_unavailable")
+            : UpdateLocalToolsAsync(local, tools, progress, ct);
+    }
+
+    private static async Task UpdateLocalToolsAsync(LocalReleaseTools local, ToolsBehind tools, Action<string> progress, CancellationToken ct)
+    {
+        try { await local.UpdateAsync(tools, progress, ct); }
+        catch (CallFailed failed) { throw new CallFailed(MachineUpdates.SafeFailure(failed), failed.Reason); }
     }
 
     public Task<PublishedVersions> PublishedAsync(CancellationToken ct) => feed?.PublishedAsync(ct) ?? Task.FromResult(new PublishedVersions(null, null, null));
@@ -71,7 +79,7 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install,
             Change(entry, job => job with { State = "succeeded" });
         }
         catch (OperationCanceledException) { Change(entry, job => job with { State = "cancelled", ErrorCode = "cancelled" }); }
-        catch (CallFailed failed) { Change(entry, job => job with { State = "failed", ErrorCode = failed.Reason ?? "install_failed", Message = failed.Message }); }
+        catch (CallFailed failed) { Change(entry, job => job with { State = "failed", ErrorCode = failed.Reason ?? "install_failed", Message = MachineUpdates.SafeFailure(failed) }); }
         catch (Exception error) when (error is IOException or InvalidOperationException) { Change(entry, job => job with { State = "failed", ErrorCode = "install_failed", Message = error.Message }); }
         finally { entry.Done.TrySetResult(); }
     }

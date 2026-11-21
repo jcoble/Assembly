@@ -1,16 +1,27 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
+using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Desktop.Serve;
 using Assembly.Desktop.Settings;
+using Assembly.Engine.Persistence;
 using Assembly.Engine.Providers;
 using Assembly.Infrastructure.Engine;
+using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Remote;
+using Assembly.Infrastructure.Remote.Install;
+using Assembly.Infrastructure.Updates;
 using Assembly.Remote.Serve;
+using Assembly.Tests.Draft.Base.Chat;
 using Assembly.Tests.Features.Chat.Sessions;
+using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Features.Settings;
 
@@ -26,6 +37,7 @@ public sealed class SettingsStateSocketTests
     private const string EnvPrivateSecret = "SECRET_ENV_VALUE_CANARY";
     private const string AdapterArgSecret = "SECRET_ADAPTER_ARG_CANARY";
     private const string ErrorDetailSecret = "SECRET_ERROR_DETAIL_CANARY";
+    private const string InstallOutputSecret = "SECRET_INSTALL_STDERR_CANARY";
 
     [Fact]
     public async Task Subscribing_returns_composed_settings_state_and_never_leaks_secrets()
@@ -52,6 +64,7 @@ public sealed class SettingsStateSocketTests
             EnvPrivateSecret,
             AdapterArgSecret,
             ErrorDetailSecret,
+            InstallOutputSecret,
             claudeHome,
             codexHome,
             remoteClaudeHome,
@@ -117,18 +130,38 @@ public sealed class SettingsStateSocketTests
                 await serving;
             var remoteAddress = await remoteReady.Task.WaitAsync(Wait);
 
-            await using var backend = await DesktopBackend.StartAsync(
-                home,
-                LocalToken,
-                port: 0,
-                launcher,
-                TextWriter.Null,
-                remote: new RemoteConfig("Workbox", remoteAddress, RemoteToken),
-                savedRemote: new SavedMachine("Workbox", "workbox-ssh", 9797, tokenFile),
-                engineStarted: started => engine = started,
-                loginShell: _ => Task.FromResult<(string?, string?)>((null, null)));
+            var homeLock = HomeLock.Take(home);
+            DesktopBackend? backend = null;
+            try
+            {
+                backend = await DesktopBackend.StartAsync(
+                    homeLock,
+                    home,
+                    LocalToken,
+                    port: 0,
+                    launcher,
+                    TextWriter.Null,
+                    remote: new RemoteConfig("Workbox", remoteAddress, RemoteToken),
+                    tunnel: null,
+                    utilityClis: null,
+                    savedRemote: new SavedMachine("Workbox", "workbox-ssh", 9797, SavedMachine.InstalledTokenFile),
+                    engineEffects: null,
+                    engineStarted: started => engine = started,
+                    agentsFile: null,
+                    loginShell: _ => Task.FromResult<(string?, string?)>((null, null)),
+                    programTerminals: null,
+                    givenRemoteShell: new FailingInstallShell(tempRoot, InstallOutputSecret),
+                    givenRemotePackages: new StubPackages());
+            }
+            catch
+            {
+                homeLock.Dispose();
+                throw;
+            }
+            await using var ownedBackend = backend;
 
             using var subSocket = await OpenSocketAsync(backend.Address);
+            using var machinesSocket = await OpenSocketAsync(backend.Address);
             using var cmdSocket = await OpenSocketAsync(backend.Address);
 
             await SendAsync(subSocket, new { t = "sub", id = 1, topic = SettingsStateFeature.Topic });
@@ -136,6 +169,11 @@ public sealed class SettingsStateSocketTests
             Assert.Equal("state", initial.GetProperty("t").GetString());
             Assert.Equal(1, initial.GetProperty("sub").GetInt64());
             AssertNoSecrets(initial.GetRawText(), secrets);
+
+            await SendAsync(machinesSocket, new { t = "sub", id = 10, topic = MachinesFeature.Topic });
+            var initialMachines = await ReadAsync(machinesSocket);
+            Assert.Equal("state", initialMachines.GetProperty("t").GetString());
+            AssertNoSecrets(initialMachines.GetRawText(), secrets);
 
             var entry = Assert.Single(initial.GetProperty("items").EnumerateArray());
             Assert.Equal(SettingsStateFeature.CurrentKey, entry.GetProperty("key").GetString());
@@ -151,7 +189,7 @@ public sealed class SettingsStateSocketTests
             var remoteMachine = Assert.Single(machines, m => m.GetProperty("key").GetString() == "Workbox");
             Assert.Equal(MachineConnectionState.Connected, remoteMachine.GetProperty("connectionState").GetString());
             Assert.Equal("remote", remoteMachine.GetProperty("machine").GetProperty("kind").GetString());
-            Assert.Equal(tokenFile, remoteMachine.GetProperty("machine").GetProperty("tokenFile").GetString());
+            Assert.Equal(SavedMachine.InstalledTokenFile, remoteMachine.GetProperty("machine").GetProperty("tokenFile").GetString());
             var remoteEngineMachine = remoteMachine.GetProperty("engineMachine").GetString();
             Assert.False(string.IsNullOrWhiteSpace(remoteEngineMachine));
 
@@ -267,8 +305,24 @@ public sealed class SettingsStateSocketTests
             });
             var localDetail = ProviderMachine(localFailed, "claude", "local").GetProperty("lastFailure").GetProperty("detail").GetString();
             Assert.DoesNotContain(ErrorDetailSecret, localDetail);
+            // Run a failing remote install whose stderr prints a secret canary: neither settings_state nor machines may push it.
+            await SendAsync(cmdSocket, new { t = "call", id = 7, feature = "updates", method = "install", args = new { machine = "Workbox" } });
+            var installReply = await ReadAsync(cmdSocket);
+            Assert.Equal("result", installReply.GetProperty("t").GetString());
+            Assert.True(installReply.GetProperty("result").GetProperty("started").GetBoolean(), installReply.GetRawText());
 
+            var failedInstall = await WaitForStateAsync(subSocket, secrets, candidate =>
+                Machine(candidate, "Workbox").GetProperty("updateState").GetString() == MachineUpdateState.Failed);
+            var failedRemoteNote = Machine(failedInstall, "Workbox").GetProperty("machine").GetProperty("updateNote").GetString();
+            Assert.False(string.IsNullOrWhiteSpace(failedRemoteNote));
+
+            var failedMachinesFrame = await WaitForMachineChangeAsync(machinesSocket, secrets, "Workbox", candidate =>
+                candidate.TryGetProperty("updateNote", out var note)
+                && note.ValueKind == JsonValueKind.String
+                && (!candidate.TryGetProperty("updating", out var updating) || !updating.GetBoolean()));
+            Assert.Equal(failedRemoteNote, failedMachinesFrame.GetProperty("updateNote").GetString());
             subSocket.Abort();
+            machinesSocket.Abort();
             cmdSocket.Abort();
         }
         finally
@@ -278,6 +332,114 @@ public sealed class SettingsStateSocketTests
                 await serving;
             Directory.Delete(tempRoot, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task Concurrent_subscribe_unsubscribe_resubscribe_never_deadlocks_and_still_delivers()
+    {
+        var tempRoot = Directory.CreateTempSubdirectory("assembly-settings-lock-").FullName;
+        var dbPath = Path.Combine(tempRoot, "assembly.db");
+        var topics = new TopicSet();
+        var db = AppDatabase.Open(dbPath, TimeProvider.System, topics);
+        EngineSchema.Open(db, TimeProvider.System.GetUtcNow().ToUnixTimeMilliseconds());
+        var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
+        var status = new MachineStatus(topics, []);
+        var sessions = SessionStore.Open(db, TimeProvider.System, Path.Combine(tempRoot, "sessions"));
+        var machinesFeature = new MachinesFeature(new MachineSet(new FakeMachine(null, sessions)), status, () => { }, TimeProvider.System);
+        var launcher = new FakeLauncher();
+        var feature = new SettingsStateFeature(db, topics, work, launcher, machinesFeature, "local-engine", TimeProvider.System);
+        var registry = new TopicCaptureRegistry();
+        feature.Register(registry);
+        var ownerCall = new CallContext(CancellationToken.None, "owner", Peer: new OwnerPeer());
+        var stormDone = false;
+        try
+        {
+            var workers = Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
+            {
+                for (var i = 0; i < 300; i++)
+                {
+                    var sub = topics.Subscribe(
+                        SettingsStateFeature.Topic,
+                        null,
+                        _ => registry.ReadState!(null, ownerCall),
+                        (_, _) => { });
+                    topics.Unsubscribe(sub);
+                }
+            })).ToArray();
+
+            await Task.WhenAll(workers).WaitAsync(TimeSpan.FromSeconds(5));
+            stormDone = true;
+
+            var delivered = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var liveSub = topics.Subscribe(
+                SettingsStateFeature.Topic,
+                null,
+                _ => registry.ReadState!(null, ownerCall),
+                (_, json) => delivered.TrySetResult(json));
+
+            var unwatched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void WatchMachinesUnsub(string topic, string? _)
+            {
+                if (topic == MachinesFeature.Topic && !topics.HasSubscribers(MachinesFeature.Topic))
+                    unwatched.TrySetResult();
+            }
+            topics.Unsubscribed += WatchMachinesUnsub;
+            try
+            {
+                status.Updates(null, [new UpdateItem("desktop", "Desktop", "0.1.0", "0.2.0", UpdateItem.Behind)]);
+                var pushed = await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.Contains("\"update_available\"", pushed, StringComparison.Ordinal);
+
+                topics.Unsubscribe(liveSub);
+                await unwatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.False(topics.HasSubscribers(MachinesFeature.Topic));
+            }
+            finally
+            {
+                topics.Unsubscribed -= WatchMachinesUnsub;
+            }
+        }
+        finally
+        {
+            if (stormDone)
+            {
+                await feature.DisposeAsync();
+                await machinesFeature.DisposeAsync();
+                await work.DisposeAsync();
+                db.Dispose();
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    private sealed class FailingInstallShell(string workingDirectory, string secret) : RemoteReleaseShell
+    {
+        internal override Task<string> RunAsync(string target, string command, Action<string>? line, CancellationToken ct) =>
+            RunProcessAsync(
+                new AgentCommand("sh", ["-c", $"printf '%s\\n' \"ANTHROPIC_API_KEY={secret}\" >&2; exit 1"], workingDirectory),
+                null,
+                line,
+                ct);
+    }
+
+    private sealed class StubPackages : IRemotePackages, IRemotePackage
+    {
+        public Task<IRemotePackage> PrepareAsync(CancellationToken ct) => Task.FromResult<IRemotePackage>(this);
+        public Task<ReceivedPackage> ReceiveAsync(string target, string stage, Action<string> phase, CancellationToken ct) => throw new NotSupportedException();
+        public Task<AdapterArguments> InstallAdaptersAsync(string target, string quotedStage, bool keep, Action<string> phase, CancellationToken ct) => throw new NotSupportedException();
+        public Task<AdapterArguments?> UpdateToolsAsync(string target, string quotedStage, ToolsBehind tools, Action<string> phase, CancellationToken ct) => throw new NotSupportedException();
+    }
+
+    private sealed class TopicCaptureRegistry : ICallRegistry
+    {
+        internal Func<string?, CallContext, object>? ReadState { get; private set; }
+        public void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result, Func<TArgs, CallContext, Task<TResult>> handler, bool bulk = false) { }
+        public void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result, Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null, Action<TArgs, CallContext>? failed = null, bool bulk = false) { }
+        public void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Action<string, TValue, IWriteScope> save) { }
+        public void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<TItem, string> key, Func<string?, CallContext, IReadOnlyList<TItem>> state, bool terminal = false) =>
+            ReadState = (k, c) => state(k, c);
+        public void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state, Action<string, CallContext>? opened = null) { }
+        public void Closed(Action<string> connection) { }
     }
 
     private static async Task<JsonElement> WaitForStateAsync(
@@ -296,6 +458,29 @@ public sealed class SettingsStateSocketTests
                 return candidate.Clone();
         }
     }
+
+    private static async Task<JsonElement> WaitForMachineChangeAsync(
+        ClientWebSocket socket,
+        string[] secrets,
+        string key,
+        Func<JsonElement, bool> predicate)
+    {
+        using var deadline = new CancellationTokenSource(Wait);
+        while (true)
+        {
+            var frame = await ReadAsync(socket, deadline.Token);
+            AssertNoSecrets(frame.GetRawText(), secrets);
+            if (frame.GetProperty("t").GetString() != "change" || frame.GetProperty("key").GetString() != key)
+                continue;
+            var candidate = frame.GetProperty("item");
+            if (predicate(candidate))
+                return candidate.Clone();
+        }
+    }
+
+    private static JsonElement Machine(JsonElement state, string machineKey) =>
+        state.GetProperty("machines").EnumerateArray()
+            .Single(m => m.GetProperty("key").GetString() == machineKey);
 
     private static JsonElement Provider(JsonElement state, string providerId) =>
         state.GetProperty("providers").EnumerateArray()

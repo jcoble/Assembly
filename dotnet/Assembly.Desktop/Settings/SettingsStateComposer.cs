@@ -19,7 +19,8 @@ internal sealed class SettingsStateComposer(
     MachinesFeature machinesFeature,
     string localEngineMachine,
     TimeProvider time,
-    ProviderFailureDetails? failureDetails = null)
+    ProviderFailureDetails? failureDetails = null,
+    Func<bool>? isReconciling = null)
 {
     private const string LocalKey = "local";
 
@@ -43,20 +44,13 @@ internal sealed class SettingsStateComposer(
         long DeadlineMs,
         long UpdatedMs);
 
-    private sealed record ProviderSpec(string Id, string Name, string? VendorFamily, string? AdapterPackage);
-
     private sealed record MirrorRow(string Machine, string Name, string State);
 
     private sealed record EngineSnapshotData(
         Dictionary<string, MirrorRow> MirrorsByName,
         List<ProviderRow> Providers,
-        List<SignInRow> SignIns);
-
-    private static readonly IReadOnlyList<ProviderSpec> KnownProviders =
-    [
-        new("claude", "Claude Code", "claude", "claude-agent-acp"),
-        new("codex", "Codex", "codex", "codex-acp"),
-    ];
+        List<SignInRow> SignIns,
+        IReadOnlyDictionary<string, bool> SavedEnabled);
 
     internal SettingsState Compose(CancellationToken ct)
     {
@@ -107,8 +101,10 @@ internal sealed class SettingsStateComposer(
                     nowMs));
             }
 
-            // Every provider already installed on any machine counts as switched on.
-            var enabled = perMachine.Any(entry => entry.Installed);
+            // Saved on/off setting is the authority; any provider already installed without a saved row counts as on.
+            var enabled = engineData.SavedEnabled.TryGetValue(spec.Id, out var savedEnabled)
+                ? savedEnabled
+                : perMachine.Any(entry => entry.Installed);
             IReadOnlyList<SettingsProviderMachine> finalized = enabled
                 ? perMachine
                 : perMachine.Select(entry => entry with { State = null }).ToArray();
@@ -124,7 +120,7 @@ internal sealed class SettingsStateComposer(
                 Machines: finalized));
         }
 
-        var summary = SettingsStateRules.DeriveSummary(providers, machines);
+        var summary = SettingsStateRules.DeriveSummary(providers, machines, reconciling: isReconciling?.Invoke() ?? false);
         return new SettingsState(summary, providers, machines);
     }
 
@@ -192,7 +188,8 @@ internal sealed class SettingsStateComposer(
         }
 
         signIns.Sort((a, b) => b.UpdatedMs.CompareTo(a.UpdatedMs));
-        return new EngineSnapshotData(mirrorsByName, providers, signIns);
+        var savedEnabled = ProviderEnablementStore.ReadAll(snapshot);
+        return new EngineSnapshotData(mirrorsByName, providers, signIns, savedEnabled);
     }
 
     private SettingsProviderMachine ComposeProviderMachine(
@@ -278,13 +275,13 @@ internal sealed class SettingsStateComposer(
 
     private static IReadOnlyList<ProviderSpec> ResolveProviders(IReadOnlyList<AgentDescriptor> localAgents)
     {
-        var specs = new List<ProviderSpec>(KnownProviders.Count);
+        var specs = new List<ProviderSpec>(ProviderCatalog.Known.Count);
         var byId = localAgents
             .GroupBy(agent => agent.Id, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var known in KnownProviders)
+        foreach (var known in ProviderCatalog.Known)
         {
             seen.Add(known.Id);
             if (byId.TryGetValue(known.Id, out var configured))
@@ -301,7 +298,7 @@ internal sealed class SettingsStateComposer(
             }
         }
 
-        var packageByFamily = KnownProviders
+        var packageByFamily = ProviderCatalog.Known
             .Where(p => p.VendorFamily is not null)
             .ToDictionary(p => p.VendorFamily!, p => p.AdapterPackage, StringComparer.Ordinal);
         foreach (var agent in localAgents)

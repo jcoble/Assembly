@@ -87,6 +87,9 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     /// <summary>Calls off everything downloading in the run. False once an install has started, or with nothing to call off.</summary>
     internal bool Cancel() => _progress.Cancel();
 
+    /// <summary>When set, replaces the local check trigger on app start and after an update so one reconciler owns this machine.</summary>
+    internal Action? OnLocalReconcile { get; set; }
+
     /// <summary>The first check, and every remote's check from here on.</summary>
     internal void Begin()
     {
@@ -98,7 +101,8 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             using var watcher = new DevRemoteSyncStatus(path, status, Updated);
             await Task.Delay(Timeout.Infinite, stop).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         });
-        Check(null);
+        if (OnLocalReconcile is { } reconcile) reconcile();
+        else Check(null);
         foreach (var item in status.Items.Where(item => item.Name is not null && item.Backend is not null)) Check(item.Name);
     }
 
@@ -109,20 +113,68 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         await CheckAsync(machine, stop, answered: answered);
     });
 
+    internal async Task<IReadOnlyList<UpdateItem>> CheckLocalAsync(CancellationToken stop, bool fresh = false)
+    {
+        var wanted = await source.WantedAsync(stop, fresh);
+        var here = UpdateCheck.Local(BackendBuild.Version, await TryRead(async () => await local.ReadAsync(stop)), wanted);
+        status.Updates(null, here);
+        if (here.Any(item => item.Kind == "desktop" && item.State == UpdateItem.Behind && item.Wanted is not null && source.StartsAppUpdate(item.Wanted))) StartBy(ThisApp);
+        return here;
+    }
+
+    internal void ClearLocalFailureIfIdle()
+    {
+        if (!Updating(null)) status.Updating(null, false, null);
+    }
+
+    /// <summary>Installs or updates local adapters/CLIs under the single local update slot, reloading agents on success.</summary>
+    internal async Task<bool> UpdateLocalToolsAsync(IReadOnlyList<UpdateItem> behind, bool adaptersNewer, CancellationToken stop)
+    {
+        await TakeWhenFreeAsync(ThisApp, () => { }, stop);
+        string? ending = null;
+        var cancelled = false;
+        status.Updating(null, true, null);
+        var run = _progress.Begin(null, UpdateProgress.ThisMachine, behind.Count, downloads: false);
+        try
+        {
+            using var either = CancellationTokenSource.CreateLinkedTokenSource(stop, run);
+            await source.UpdateAsync([new(null, behind, adaptersNewer)], automatic: false, note => status.Updating(null, true, note), either.Token);
+            run.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException) when (run.IsCancellationRequested && !stop.IsCancellationRequested)
+        {
+            cancelled = true;
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            cancelled = true;
+            throw;
+        }
+        catch (CallFailed error) { ending = "Update failed: " + SafeFailure(error); }
+        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }
+        finally
+        {
+            _progress.End(UpdateProgress.ThisMachine);
+            Free(null);
+            status.Updating(null, false, ending);
+        }
+        if (cancelled || ending is not null) return false;
+        reload?.Invoke();
+        return true;
+    }
+
     /// <param name="machine">Null is this app.</param>
     /// <param name="stop">Stops the reads.</param>
     /// <param name="fresh">Someone asked, so nothing kept answers for the release.</param>
     /// <param name="answered">It just said hello, which comes before its status says it's reachable.</param>
     internal async Task CheckAsync(string? machine, CancellationToken stop, bool fresh = false, bool answered = false)
     {
-        var wanted = await source.WantedAsync(stop, fresh);
         if (machine is null)
         {
-            var here = UpdateCheck.Local(BackendBuild.Version, await TryRead(async () => await local.ReadAsync(stop)), wanted);
-            status.Updates(null, here);
-            if (here.Any(item => item.Kind == "desktop" && item.State == UpdateItem.Behind && item.Wanted is not null && source.StartsAppUpdate(item.Wanted))) StartBy(ThisApp);
+            await CheckLocalAsync(stop, fresh);
             return;
         }
+        var wanted = await source.WantedAsync(stop, fresh);
         var saved = status.Items.FirstOrDefault(item => item.Name == machine);
         // What an unreachable machine last said is old news: a decision from it could install over a newer backend.
         var reachable = answered || saved?.Reachable == true;
@@ -171,7 +223,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
                 status.Updating(machine, true, null);
                 await source.InstallAsync(machine, note => status.Updating(machine, true, note), stop);
             }
-            catch (CallFailed error) { ending = "Install failed: " + error.Message; }
+            catch (CallFailed error) { ending = "Install failed: " + SafeFailure(error); }
             catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Install failed: " + error.Message; }
             finally
             {
@@ -282,7 +334,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             // What this run got ready goes with it, so there's no Restart to Update for an update someone called off.
             if (machine is null && source.AppReady != readyBefore) source.DropAppReady();
         }
-        catch (CallFailed error) { ending = "Update failed: " + error.Message; }
+        catch (CallFailed error) { ending = "Update failed: " + SafeFailure(error); }
         catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }
         finally
         {
@@ -296,10 +348,23 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         else Check(machine);
     }
 
+    // Raw command stdout/stderr from RemoteReleaseShell must never leave the backend in a pushed updateNote.
+    internal static string SafeFailure(CallFailed error) => error.Reason switch
+    {
+        "ssh_unavailable" => "Could not reach the remote machine over SSH.",
+        "remote_busy" => "A session is running on the machine; try again when it finishes.",
+        "remote_command_failed" => "The update command failed.",
+        _ => error.Message
+    };
+
     /// <summary>Adapters may be new: agents are read again, and every machine checked again.</summary>
     private void Updated()
     {
         reload?.Invoke();
-        foreach (var machine in status.Items.Select(item => item.Name)) Check(machine);
+        foreach (var machine in status.Items.Select(item => item.Name))
+        {
+            if (machine is null && OnLocalReconcile is { } reconcile) reconcile();
+            else Check(machine);
+        }
     }
 }

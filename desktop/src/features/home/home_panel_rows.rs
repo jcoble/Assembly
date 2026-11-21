@@ -7,7 +7,7 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -215,6 +215,27 @@ impl HomePanel {
             line = line.child(actions).child(
                 GrowingBody::new(details_key, self.sub_drops.clone(), row_height(cx))
                     .max_rows(None),
+            );
+        }
+        // "Check again" on this machine's line re-runs the local check and reconcile.
+        if on.machine_key == "local" {
+            line = line.child(
+                h_flex().pt_0p5().child(
+                    Button::new(SharedString::from(format!(
+                        "check-again:{}:local",
+                        provider.id
+                    )))
+                    .ghost()
+                    .xsmall()
+                    .label(if self.checking {
+                        "Checking…"
+                    } else {
+                        "Check again"
+                    })
+                    .disabled(self.checking)
+                    .control(id("check-again"), "Check again")
+                    .on_click(cx.listener(|panel, _, _, cx| panel.check_again(cx))),
+                ),
             );
         }
         let advanced_key: SharedString =
