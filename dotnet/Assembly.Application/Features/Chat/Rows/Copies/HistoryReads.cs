@@ -69,6 +69,11 @@ public sealed class HistoryReads(IAppDatabase db)
         return new BeforeChunk(rows, facts);
     }
 
+    /// <summary>The run's user rows, oldest first.</summary>
+    public IReadOnlyList<JsonElement> UserRows(string session, string run, CancellationToken ct = default) => db.Query(
+        "SELECT session_id,seq,run_id,item_id,kind,payload,created_at FROM rows WHERE session_id=$session AND run_id=$run AND kind='user' ORDER BY seq",
+        row => RowWire.ToElement(RowStore.ReadRow(row)), ct, new SqlArg("$session", session), new SqlArg("$run", run));
+
     /// <summary>Each named session's facts, in one query. A session with no rows here is left out.</summary>
     public IReadOnlyDictionary<string, HistoryFacts> Facts(IReadOnlyList<string> sessions, CancellationToken ct = default)
     {

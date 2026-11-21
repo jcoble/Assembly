@@ -21,7 +21,10 @@ internal sealed partial class RemoteDownload : IAsyncDisposable
     private readonly Action<string> _follow;
     private readonly Func<string, Task> _forget;
     private readonly TextWriter _log;
-    private readonly Channel<string?> _work = Channel.CreateUnbounded<string?>(new UnboundedChannelOptions { SingleReader = true });
+    // The loop's work, in order: a session to download, a finished run whose user rows are read again, or a connection
+    // (no session) whose saved copies are decided.
+    private readonly record struct Work(string? Session, string? Run = null);
+    private readonly Channel<Work> _work = Channel.CreateUnbounded<Work>(new UnboundedChannelOptions { SingleReader = true });
     // Sessions whose download is queued or running, each with its first chunk's save; under its own lock.
     private readonly Dictionary<string, TaskCompletionSource> _downloading = [];
     private readonly CancellationTokenSource _stop = new();
@@ -59,7 +62,7 @@ internal sealed partial class RemoteDownload : IAsyncDisposable
             {
                 if (_hub.Copies.RemoteCopyOf(session) is not null) return Task.CompletedTask;
                 _downloading[session] = first = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                _work.Writer.TryWrite(session);
+                _work.Writer.TryWrite(new(session));
             }
         }
         return first.Task.WaitAsync(ct);
@@ -70,15 +73,16 @@ internal sealed partial class RemoteDownload : IAsyncDisposable
     /// lock, so it only queues; the work runs on the download loop. A chunk call on the socket that closed has already
     /// failed with it.
     /// </summary>
-    public void Connected() => _work.Writer.TryWrite(null);
+    public void Connected() => _work.Writer.TryWrite(new(null));
 
     private async Task LoopAsync()
     {
         try
         {
-            await foreach (var session in _work.Reader.ReadAllAsync(_stop.Token))
+            await foreach (var work in _work.Reader.ReadAllAsync(_stop.Token))
             {
-                if (session is null) await ReconnectAsync(_stop.Token);
+                if (work.Session is not { } session) await ReconnectAsync(_stop.Token);
+                else if (work.Run is { } run) await RereadTurnAsync(session, run, _stop.Token);
                 else await DownloadAsync(session, _stop.Token);
             }
         }

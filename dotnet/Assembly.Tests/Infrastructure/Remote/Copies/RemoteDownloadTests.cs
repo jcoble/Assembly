@@ -32,6 +32,8 @@ public sealed partial class RemoteDownloadTests : IAsyncLifetime
     private Func<long, bool>? _beforeDropping;
     // Each session whose download reached the bottom: the remote answered it with no rows. Recorded from the start.
     private readonly ConcurrentDictionary<string, TaskCompletionSource> _bottomed = new();
+    // Told each rows call the remote answered, by method and session, after it is recorded.
+    private Action<string, string>? _onAnswered;
 
     public async Task InitializeAsync()
     {
@@ -286,12 +288,15 @@ public sealed partial class RemoteDownloadTests : IAsyncLifetime
                 if (method == "after" && test._afterReading is { } holding)
                     await holding(call.Cancellation);
                 var answer = await handler(value, call);
-                test._calls.Enqueue((method, value switch
+                var session = value switch
                 {
                     RowsFeature.BeforeArgs b => b.Session,
+                    RowsFeature.TurnArgs t => t.Session,
                     JsonElement json when json.TryGetProperty("session", out var named) => named.GetString() ?? "",
                     _ => "",
-                }));
+                };
+                test._calls.Enqueue((method, session));
+                test._onAnswered?.Invoke(method, session);
                 if (answer is BeforeChunk dropped && test._beforeDropping is { } drop)
                     answer = (TResult)(object)(dropped with
                     {

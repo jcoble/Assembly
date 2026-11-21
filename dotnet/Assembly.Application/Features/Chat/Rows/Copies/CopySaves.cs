@@ -93,4 +93,17 @@ public sealed partial class CopyRecords
         }
         return saved;
     }
+
+    /// <summary>
+    /// User rows read again from the owner, written over the saved ones at the same seq in one write. A seq not saved here,
+    /// or saved as another kind, is left alone.
+    /// </summary>
+    internal void UpdateUsers(string session, IReadOnlyList<StoredRow> rows) =>
+        writer.Write("rows.copy-users", scope =>
+        {
+            foreach (var row in rows.Where(row => row.Kind == RowKind.User))
+                scope.Execute("UPDATE rows SET payload=$payload WHERE session_id=$session AND seq=$seq AND kind='user'",
+                    new SqlArg("$payload", row.Payload.GetRawText()), new SqlArg("$session", session), new SqlArg("$seq", row.Seq));
+            return 0;
+        });
 }

@@ -130,6 +130,33 @@ public sealed class CopyReadPathTests : IAsyncLifetime
         Assert.DoesNotContain(_calls, call => call.StartsWith("rows/", StringComparison.Ordinal));
     }
 
+    // The agent kept working while this desktop was away. The reconnect pass's one rows/heads call sees the remote's head
+    // past the copy and starts the follow; the follow's subscription catch-up frames carry the new rows, with no read.
+    [Fact]
+    public async Task Rows_saved_while_disconnected_arrive_once_in_order_through_the_reconnect_follow_with_only_a_heads_call()
+    {
+        Seed("s", 250);
+        Result(await Open(Target("historical")));
+        await DownloadedAsync("s");
+        await _hosts.DisconnectMirror();
+        for (var seq = 251; seq <= 255; seq++)
+            Assert.True(_remoteRows.Copy(new StoredRow("s", seq, "run", $"item-{seq}", RowKind.Tool,
+                JsonSerializer.SerializeToElement(new { text = $"row {seq}" }), seq, PrevSeq: seq - 1)));
+        using var viewer = _hosts.MacHub.Subscribe("s", 250);
+        _calls.Clear();
+
+        await _hosts.Connections.ConnectionAsync("workbox-test", true, default);
+        var read = Result(await Open(Target("historical")));
+        for (var seq = 251; seq <= 255; seq++)
+            Assert.Equal(seq, (await viewer.Queue.Reader.ReadAsync().AsTask().WaitAsync(Wait)).Seq);
+        var page = await Page(read, "s");
+
+        Assert.Equal(255, page.Seqs.Max());
+        Assert.False(viewer.Queue.Reader.TryRead(out _));
+        Assert.Equal(RemoteRows("s"), MacRows("s"));
+        Assert.Equal(["rows/heads"], _calls.Where(call => call.StartsWith("rows/", StringComparison.Ordinal)));
+    }
+
     // Pins: spec test 11.
     [Fact]
     public async Task Spec11_offline_a_complete_session_opens_and_scrolls_with_subagents_files_tokens_and_attachments()
@@ -294,7 +321,11 @@ public sealed class CopyReadPathTests : IAsyncLifetime
 
     private void Mac(string sql) => _hosts.Mac.Fixture.Db.Writer.Write("test.mac", scope => scope.Execute(sql));
 
-    private IReadOnlyList<string> MacRows(string session) => _hosts.Mac.Fixture.Db.Query(
+    private IReadOnlyList<string> RemoteRows(string session) => Rows(_hosts.Remote.Fixture.Db, session);
+
+    private IReadOnlyList<string> MacRows(string session) => Rows(_hosts.Mac.Fixture.Db, session);
+
+    private static IReadOnlyList<string> Rows(IAppDatabase db, string session) => db.Query(
         "SELECT seq, item_id, kind, payload FROM rows WHERE session_id=$s ORDER BY seq",
         row => $"{row.Long(0)} {row.Text(1)} {row.Text(2)} {row.Text(3)}", default, new SqlArg("$s", session));
 

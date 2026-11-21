@@ -144,6 +144,16 @@ public sealed class LiveHub : IDisposable
         }
     }
 
+    /// <summary>
+    /// A copied run's user rows as the owner holds them now, written in place. Nothing is pushed: an open window shows
+    /// them on its next page read, as it does a local session's acknowledgment.
+    /// </summary>
+    public void UpdateUserPayloads(string sessionId, IReadOnlyList<StoredRow> rows)
+    {
+        lock (_gate)
+            _store.Copies.UpdateUsers(sessionId, rows);
+    }
+
     public void CompleteCopy(string sessionId)
     {
         lock (_gate)

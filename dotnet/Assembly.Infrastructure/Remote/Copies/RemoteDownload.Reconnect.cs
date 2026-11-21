@@ -78,7 +78,7 @@ internal sealed partial class RemoteDownload
     {
         lock (_downloading)
             if (_downloading.TryAdd(session, new(TaskCreationOptions.RunContinuationsAsynchronously)))
-                _work.Writer.TryWrite(session);
+                _work.Writer.TryWrite(new(session));
     }
 
     private async Task<IReadOnlyDictionary<string, HistoryFacts>> HeadsAsync(IReadOnlyList<string> sessions, CancellationToken ct)
