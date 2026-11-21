@@ -8,13 +8,6 @@ namespace Assembly.Tests.Engine.Workflows.Persistence;
 public sealed class WorkflowSchemaTests
 {
     [Fact]
-    public void Fresh_engine_uses_the_next_real_current_schema()
-    {
-        using var f = new EngineFixture();
-        Assert.Equal(15, f.Number("SELECT schema_version FROM engine_meta"));
-    }
-
-    [Fact]
     public void Workflow_records_and_permanent_history_are_installed()
     {
         using var f = new EngineFixture();
@@ -55,7 +48,7 @@ public sealed class WorkflowSchemaTests
         var before = OriginalRows(db, columns);
         var machine = db.QueryFirst("SELECT machine_id FROM engine_meta", r => r.Text(0), default);
         Assert.Equal(machine, EngineSchema.Open(db, 2000));
-        Assert.Equal(15, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(EngineFixture.CurrentSchemaVersion, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
         Assert.Equal(before, OriginalRows(db, columns));
         Assert.Empty(db.Query("PRAGMA foreign_key_check", r => r.Text(0), default));
     }

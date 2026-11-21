@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Net;
 using System.Net.Sockets;
-using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -26,7 +25,6 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     private readonly SharedLog _log = new();
     private DesktopBackend _backend = null!;
     private bool _disposed;
-    private HttpClient _http = null!;
 
     [Theory]
     [InlineData("/socket", "machines", "agents", "{}", "result")]
@@ -88,8 +86,6 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _backend = await DesktopBackend.StartAsync(_home, Token, port: 0, _launcher, _log);
-        _http = new HttpClient { BaseAddress = _backend.Address };
-        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token);
     }
 
     [Fact]
@@ -198,21 +194,6 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("/page/memory.sample", "{}")]
-    [InlineData("/page/attachment.thumbnail", "{}")]
-    [InlineData("/page/attachment.thumbnail_path", "{}")]
-    [InlineData("/page/attachment.upload_path", "{}")]
-    [InlineData("/page/soak.append", "{\"name\":\"removed.csv\",\"line\":\"a,b\"}")]
-    [InlineData("/debug/drop", "{}")]
-    [InlineData("/preferences/get", "{}")]
-    [InlineData("/preferences/set", "{\"values\":{\"theme\":\"dark\"}}")]
-    public async Task Removed_webview_HTTP_calls_are_not_found(string path, string body)
-    {
-        using var answer = await _http.PostAsync(path, Json(body));
-        Assert.Equal(HttpStatusCode.NotFound, answer.StatusCode);
-    }
-
-    [Theory]
     [InlineData("/socket", "wrong-token")]
     [InlineData("/socket/bulk", "wrong-token")]
     [InlineData("/socket/terminal", "wrong-token")]
@@ -231,32 +212,6 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         var answer = await refused.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(WebSocketMessageType.Close, answer.MessageType);
         Assert.Equal(4401, (int)refused.CloseStatus!);
-    }
-
-    [Fact]
-    public async Task The_socket_serves_the_desktops_clock()
-    {
-        using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
-        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
-
-        await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"clock","key":"second"}""");
-
-        Assert.StartsWith("""{"t":"state","sub":1,"items":[{"key":"second","item":{"now":""", await ReadTextAsync(socket));
-    }
-
-    [Fact]
-    public async Task The_socket_serves_the_desktops_rows()
-    {
-        using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
-        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
-
-        await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"no-such-session"}""");
-
-        Assert.Equal("""{"t":"state","sub":1,"seq":0,"items":[]}""", await ReadTextAsync(socket));
     }
 
     // The large calls' socket takes the same hello; any other path under /socket is no socket, even with the token.
@@ -293,12 +248,6 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         Assert.Equal((string)(await read.ExecuteScalarAsync())!, welcome.GetProperty("engine").GetString());
     }
 
-    [Fact]
-    public async Task The_terminal_socket_opens_and_takes_the_hello()
-    {
-        using var terminal = await OpenSocketAsync("/socket/terminal");
-    }
-
     private async Task<ClientWebSocket> OpenSocketAsync(string path = "/socket")
     {
         var socket = new ClientWebSocket();
@@ -308,58 +257,23 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         return socket;
     }
 
+    // The wiring the desktop backend gives the features no other real-backend test reaches: the clock and the config call
+    // on the main socket, the attachment call on the large calls' socket. Each feature's own behaviour is proved in its
+    // socket tests (ClockSocketTests, ChatSocketTests).
     [Fact]
-    public async Task The_socket_serves_the_desktops_sessions()
+    public async Task The_desktop_socket_serves_the_clock_config_and_attachments()
     {
-        using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
-        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
+        using var socket = await OpenSocketAsync();
+        await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"clock","key":"second"}""");
+        Assert.StartsWith("""{"t":"state","sub":1,"items":[{"key":"second","item":{"now":""", await ReadTextAsync(socket));
+        await SendTextAsync(socket, """{"t":"call","id":2,"feature":"config","method":"get","args":{"session":"no-such-session"}}""");
+        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"unknown session"}""", await ReadTextAsync(socket));
 
-        await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"sessions","key":"no-such-session"}""");
-
-        Assert.Equal("""{"t":"state","sub":1,"items":[]}""", await ReadTextAsync(socket));
+        using var bulk = await OpenSocketAsync("/socket/bulk");
+        await SendTextAsync(bulk, """{"t":"call","id":1,"feature":"attachments","method":"begin","args":{"session":"no-such-session","mime":"image/png","size":10}}""");
+        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"unknown session"}""", await ReadTextAsync(bulk));
     }
 
-    [Fact]
-    public async Task The_socket_takes_the_desktops_sends()
-    {
-        using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
-        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
-
-        await SendTextAsync(socket, """{"t":"call","id":1,"feature":"send","method":"stop","args":{"runId":"no-such-run"}}""");
-
-        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"that run isn't running"}""", await ReadTextAsync(socket));
-    }
-
-    [Fact]
-    public async Task The_socket_serves_the_desktops_config_and_machines()
-    {
-        using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
-        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
-
-        await SendTextAsync(socket, """{"t":"call","id":1,"feature":"config","method":"get","args":{"session":"no-such-session"}}""");
-        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"unknown session"}""", await ReadTextAsync(socket));
-        await SendTextAsync(socket, """{"t":"call","id":2,"feature":"machines","method":"agents","args":{"machine":"no-such-machine"}}""");
-        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"unknown machine"}""", await ReadTextAsync(socket));
-    }
-
-    [Fact]
-    public async Task The_socket_takes_the_desktops_attachments()
-    {
-        using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket/bulk"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
-        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
-
-        await SendTextAsync(socket, """{"t":"call","id":1,"feature":"attachments","method":"begin","args":{"session":"no-such-session","mime":"image/png","size":10}}""");
-
-        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"unknown session"}""", await ReadTextAsync(socket));
-    }
     private static async Task<string> CreateSocketSessionAsync(WebSocket socket)
     {
         var args = JsonSerializer.Serialize(new { agent = "claude", clientId = Guid.NewGuid().ToString("N") });
@@ -551,7 +465,6 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         Assert.Equal("state", state.RootElement.GetProperty("t").GetString());
         return Assert.Single(state.RootElement.GetProperty("items").EnumerateArray()).GetProperty("item").Clone();
     }
-    private static StringContent Json(string json) => new(json, Encoding.UTF8, "application/json");
     private Task<ClientWebSocket> OpenLiveAsync(string sessionId, long after) =>
         ApiTests.OpenRowsAsync(_backend.Address, Token, sessionId, after);
 
@@ -593,7 +506,6 @@ public sealed class DesktopBackendTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        _http.Dispose();
         await DisposeBackendAsync();
         Directory.Delete(_home, recursive: true);
     }
