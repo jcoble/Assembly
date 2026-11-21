@@ -1,4 +1,4 @@
-// Worktrees and Source control over the socket (docs/behavior/scm.md): for the case's session, worktrees/list answers
+// Worktrees and Source control over the socket (Source control and worktrees: behavior list, https://app.notion.com/p/409394b0689d810ca866f3c09de23b25): for the case's session, worktrees/list answers
 // its folder's worktrees with the main checkout first (scm#1), git/status its branch and changed files (scm#9), and
 // git/diff a file's staged and working tree diffs (scm#14), and git/branchDiff the branch against its base, or why it
 // has none (scm#18, scm#19).

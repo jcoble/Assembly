@@ -1,4 +1,4 @@
-// The sessions list's groups (docs/behavior/sessions-list.md) over the socket, as the window's row menu uses them:
+// The sessions list's groups (Sessions list: behavior list, https://app.notion.com/p/409394b0689d81c193b7ee1f927ccd37) over the socket, as the window's row menu uses them:
 // sessions/mark moves the case's session to Done, Settled and back to Working, and each move reaches the keyed
 // sessions topic with its stamps. It ends with the session back in Working, where it started. The rail
 // (sessions/rail) lists it under its provider, location and lifecycle, including while it is Settled,
