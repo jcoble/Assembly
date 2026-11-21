@@ -1,4 +1,4 @@
-//! Tests for the side docks' tabs (docs/behavior/g0-shape.md).
+//! Tests for the side docks' tabs (G0 shape: behavior list, https://app.notion.com/p/409394b0689d815fba58f8f372f1cc20).
 
 use gpui::TestAppContext;
 use gpui_kit::component::dock::DockPlacement;

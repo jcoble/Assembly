@@ -1,4 +1,4 @@
-//! Tests for saving and reloading the window's layout (docs/behavior/g0-shape.md).
+//! Tests for saving and reloading the window's layout (G0 shape: behavior list, https://app.notion.com/p/409394b0689d815fba58f8f372f1cc20).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

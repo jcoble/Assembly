@@ -1,4 +1,4 @@
-//! Tests for the window's icons (docs/behavior/g0-shape.md).
+//! Tests for the window's icons (G0 shape: behavior list, https://app.notion.com/p/409394b0689d815fba58f8f372f1cc20).
 
 use gpui_kit::AssetSource as _;
 use gpui_kit::assets::IconName;
