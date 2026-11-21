@@ -87,8 +87,7 @@ public sealed partial class AcpClient
     private void OnUpdateV1(SessionNotification received)
     {
         if (_resuming.ContainsKey(received.SessionId)) return; // replay text is not live traffic
-        _openTools.Read(received);
-        var update = UpdateNormalizer.Normalize(received);
+        var update = UpdateNormalizer.Normalize(_openTools.Read(received));
         if (SignOfLife.Counts(received.Kind)) Taken(update.SessionId);
         if (_foreground.TryGetValue(update.SessionId, out var foreground))
             foreground.Read(update, () => PublishAccepted(update));
@@ -103,6 +102,7 @@ public sealed partial class AcpClient
         try
         {
             if (!foreground.Running) return;
+            _openTools.Stopping(sessionId);
             await _rpc.NotifyAsync(AcpMethods.SessionCancel,
                 JsonSerializer.SerializeToElement(new CancelNotification(sessionId), AcpJsonContext.Default.CancelNotification), cancellationToken);
             await waiting.Task.WaitAsync(cancellationToken);

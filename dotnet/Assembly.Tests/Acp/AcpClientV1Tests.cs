@@ -139,6 +139,9 @@ public sealed class AcpClientV1Tests
         Assert.All(tools, tool => Assert.Equal("tool_call_update", tool.Kind));
         Assert.Equal("completed", tools.Last(tool => tool.Update.GetProperty("toolCallId").GetString() == FirstSession + ":3")
             .Update.GetProperty("status").GetString());
+        // No stop: the agent's own "failed" for the approved call stays failed.
+        Assert.Equal("failed", tools.Last(tool => tool.Update.GetProperty("toolCallId").GetString() == "fca527de00e344c0820bcb4c2834c906")
+            .Update.GetProperty("status").GetString());
     }
 
     [Fact]

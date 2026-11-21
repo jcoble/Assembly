@@ -17,13 +17,14 @@ public sealed partial class EngineHostTests
     private const string HostModel = """[{"id":"model","category":"model","type":"select","currentValue":"model","options":[{"value":"model","name":"Model"}]}]""";
 
     /// <summary>
-    /// Antigravity's recorded turn for prompt request <paramref name="recordedId"/>, after the prompt up to its reply, moved
+    /// Antigravity's recorded turn (<paramref name="fixture"/>) for prompt request <paramref name="recordedId"/>, after the prompt up to its reply, moved
     /// to <see cref="FakeLink.AcpSessionId"/>. Each line is the adapter's (<c>in</c>) or the client's (<c>out</c>).
     /// </summary>
-    private static List<(string Dir, JsonObject Line)> RecordedTurn(long recordedId)
+    private static List<(string Dir, JsonObject Line)> RecordedTurn(long recordedId, string fixture = "agy-main.jsonl",
+        string recordedSession = RecordedSession)
     {
-        var lines = File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Fixtures", "acp-v1", "agy-main.jsonl"))
-            .Select(line => JsonNode.Parse(line.Replace(RecordedSession, FakeLink.AcpSessionId))!.AsObject())
+        var lines = File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Fixtures", "acp-v1", fixture))
+            .Select(line => JsonNode.Parse(line.Replace(recordedSession, FakeLink.AcpSessionId))!.AsObject())
             .Where(line => line["dir"]!.GetValue<string>() is "in" or "out")
             .Select(line => (Dir: line["dir"]!.GetValue<string>(), Line: line["line"]!.AsObject())).ToList();
         var start = lines.FindIndex(line => line.Line["method"]?.GetValue<string>() == "session/prompt"
@@ -138,6 +139,57 @@ public sealed partial class EngineHostTests
                 row => row.Text(0), default, new SqlArg("$kind", RowKind.Turn));
             Assert.Equal("cancelled", turns[^1]);
             Assert.DoesNotContain("failed", turns);
+        }
+        finally { Directory.Delete(home, true); }
+    }
+
+    [Theory]
+    [InlineData("desktop")]
+    [InlineData("remote")]
+    public async Task A_version_1_stop_with_an_approval_open_saves_the_tool_cancelled(string host)
+    {
+        var home = Directory.CreateTempSubdirectory("assembly-engine-v1-stop-ask-").FullName;
+        var launcher = new FakeLauncher();
+        try
+        {
+            await using (var running = await Host.Start(host, home, null, launcher: launcher))
+            {
+                using var socket = await running.Open();
+                using var bulk = await running.Open(bulk: true);
+                var opened = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                using var needs = running.Runtime.Publisher.Register(item =>
+                {
+                    if (item.Kind == "needs_me.opened") opened.TrySetResult(item.EntityId);
+                }, out _);
+                var (agent, prompt) = await OpenVersion1Turn(running, socket, launcher, home);
+                // Recorded: Stop while the card is open. Antigravity reports the waiting tool failed ("Rejected by user")
+                // right after session/cancel, then says the request was cancelled and replies cancelled.
+                var turn = RecordedTurn(3, "agy-stopask.jsonl", "55ada90b-107e-4a69-9950-d61196bf0630");
+                var ask = turn.FindIndex(line => line.Line["method"]?.GetValue<string>() == "session/request_permission");
+                await agent.SendAsync(turn[ask - 1].Line.ToJsonString() + "\n" + turn[ask].Line.ToJsonString());
+                var needId = await opened.Task.WaitAsync(Timeout);
+                await running.WaitState("needs_me", needId, "open");
+                await running.WaitState("messages", "work", "next_turn");
+
+                var session = await Entity(bulk, "session", "agy");
+                var stop = new WindowCommand(Guid.NewGuid(), "agy", session.GetProperty("version").GetInt64(), 0, new StopSession());
+                var stopped = await Call(socket, "command", JsonSerializer.SerializeToElement(stop, EngineSocketJson.Default.WindowCommand));
+                Assert.True(stopped.GetProperty("applied").GetBoolean(), stopped.ToString());
+                await agent.ReadAsync("session/cancel");
+                foreach (var (dir, line) in turn.Skip(ask + 1).Where(line => line.Dir == "in"))
+                {
+                    if (line["method"] is null) await agent.ReplyAsync(prompt, line["result"]!.ToJsonString());
+                    else await agent.SendAsync(line.ToJsonString());
+                }
+                await running.WaitState("sessions", "agy", "idle");
+            }
+
+            using var db = TestDatabase.Open(Path.Combine(home, "assembly.db"));
+            var tools = db.Query("SELECT json_extract(payload,'$.state') FROM rows WHERE kind=$kind ORDER BY seq",
+                row => row.Text(0), default, new SqlArg("$kind", RowKind.Tool));
+            Assert.NotEmpty(tools);
+            Assert.Equal("cancelled", tools[^1]);
+            Assert.DoesNotContain("failed", tools);
         }
         finally { Directory.Delete(home, true); }
     }
