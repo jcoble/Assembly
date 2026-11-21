@@ -10,8 +10,12 @@ internal sealed record SettingsState(
     IReadOnlyList<SettingsProvider> Providers,
     IReadOnlyList<SettingsMachine> Machines);
 
-/// <summary>One top-level summary of what needs the user right now.</summary>
-internal sealed record SettingsSummary(string Kind, string Message)
+/// <summary>
+/// One top-level summary of what needs the user right now, plus whether Assembly is working on its own
+/// (<see cref="Working"/>, for the Home button's progress ring) and whether the user is needed
+/// (<see cref="NeedsUser"/>, for turning the Home button amber).
+/// </summary>
+internal sealed record SettingsSummary(string Kind, string Message, bool Working = false, bool NeedsUser = false)
 {
     internal const string Nothing = "nothing";
     internal const string RestartToFinish = "restart_to_finish";
@@ -104,4 +108,5 @@ internal sealed record SettingsMachine(
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(SettingsState))]
+[JsonSerializable(typeof(SettingsSummary))]
 internal sealed partial class SettingsStateJson : JsonSerializerContext;
