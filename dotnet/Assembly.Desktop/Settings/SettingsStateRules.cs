@@ -256,8 +256,7 @@ internal static class SettingsStateRules
             return new SettingsSummary(SettingsSummary.RestartToFinish, $"Restart Assembly to finish updating to {readyVersion}.", working, NeedsUser: true);
 
         // 5. Nothing needs the user.
-        var message = working ? "Setting up providers…" : "Everything is ready.";
-        return new SettingsSummary(SettingsSummary.Nothing, message, working, NeedsUser: false);
+        return new SettingsSummary(SettingsSummary.Nothing, "Everything is ready.", working, NeedsUser: false);
     }
 
     private static SettingsFailure FailureOf(string rawCode, string? prefix)

@@ -150,7 +150,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             cancelled = true;
             throw;
         }
-        catch (CallFailed error) { ending = "Update failed: " + error.Message; }
+        catch (CallFailed error) { ending = "Update failed: " + SafeFailure(error); }
         catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }
         finally
         {
@@ -223,7 +223,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
                 status.Updating(machine, true, null);
                 await source.InstallAsync(machine, note => status.Updating(machine, true, note), stop);
             }
-            catch (CallFailed error) { ending = "Install failed: " + error.Message; }
+            catch (CallFailed error) { ending = "Install failed: " + SafeFailure(error); }
             catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Install failed: " + error.Message; }
             finally
             {
@@ -334,7 +334,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             // What this run got ready goes with it, so there's no Restart to Update for an update someone called off.
             if (machine is null && source.AppReady != readyBefore) source.DropAppReady();
         }
-        catch (CallFailed error) { ending = "Update failed: " + error.Message; }
+        catch (CallFailed error) { ending = "Update failed: " + SafeFailure(error); }
         catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }
         finally
         {
@@ -347,6 +347,15 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         if (ending is null) Updated();
         else Check(machine);
     }
+
+    // Raw command stdout/stderr from RemoteReleaseShell must never leave the backend in a pushed updateNote.
+    internal static string SafeFailure(CallFailed error) => error.Reason switch
+    {
+        "ssh_unavailable" => "Could not reach the remote machine over SSH.",
+        "remote_busy" => "A session is running on the machine; try again when it finishes.",
+        "remote_command_failed" => "The update command failed.",
+        _ => error.Message
+    };
 
     /// <summary>Adapters may be new: agents are read again, and every machine checked again.</summary>
     private void Updated()

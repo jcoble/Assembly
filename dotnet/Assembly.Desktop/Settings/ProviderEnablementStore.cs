@@ -28,8 +28,11 @@ internal sealed class ProviderEnablementStore
     {
         _db = db;
         _time = time;
-        _db.Writer.Write("settings.providers.schema", scope => scope.Execute(CreateTable));
+        EnsureSchema(db);
     }
+
+    internal static void EnsureSchema(IAppDatabase db) =>
+        db.Writer.Write("settings.providers.schema", scope => scope.Execute(CreateTable));
 
     internal IReadOnlyDictionary<string, bool> ReadAll(CancellationToken ct)
     {

@@ -183,7 +183,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         RemoteConfig? remote, RemoteTunnel? tunnel, (string Claude, string Codex)? utilityClis, SavedMachine? savedRemote,
         IEngineEffects? engineEffects, Action<EngineRuntime>? engineStarted, AgentsFile? agentsFile,
         Func<CancellationToken, Task<(string? Path, string? Error)>>? loginShell, Action<IProgramTerminals>? programTerminals, IAppInstall? givenInstall = null,
-        IUpdateSource? givenUpdateSource = null)
+        RemoteReleaseShell? givenRemoteShell = null, IRemotePackages? givenRemotePackages = null, IUpdateSource? givenUpdateSource = null)
     {
         var database = Path.Combine(home, "assembly.db");
         var topics = new Topics();
@@ -357,10 +357,10 @@ public sealed class DesktopBackend : IAsyncDisposable
             // Follows GitHub's redirect to the release asset, which the shared client deliberately doesn't.
             releaseHttp = new HttpClient(new SocketsHttpHandler { UseCookies = false });
             var releaseFeed = new RemoteReleaseFeed(releaseHttp);
-            var remoteShell = new RemoteReleaseShell();
+            var remoteShell = givenRemoteShell ?? new RemoteReleaseShell();
             var updateProgress = new UpdateProgress(status);
             remoteReleases = new RemoteReleaseJobs(new RemoteReleaseInstall(releaseFeed, remoteShell, TimeProvider.System, Assembly.Infrastructure.Socket.BackendBuild.Version,
-                UpdateSources.Checkout is { } checkout ? new CheckoutPackages(remoteShell, CheckoutBuild.For(checkout, home)) : null, updateProgress),
+                givenRemotePackages ?? (UpdateSources.Checkout is { } checkout ? new CheckoutPackages(remoteShell, CheckoutBuild.For(checkout, home)) : null), updateProgress),
                 connections.SavedProfile, (name, ct) => connections.ConnectionAsync(name, true, ct), releaseFeed,
                 agentsFile is null ? null : new LocalReleaseTools(releaseFeed, new ThisMachineShell(), agentsFile.Path, Path.Combine(home, "adapters"), () => activity.Held, updateProgress: updateProgress));
             connections.Start(savedRemote ?? (remote is null ? null : new SavedMachine(remote.Name, remote.Name)));
