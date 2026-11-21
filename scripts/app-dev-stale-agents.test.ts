@@ -14,7 +14,7 @@ function launch(agents: (root: string) => string) {
   // Stands in for the installer: it records how it was asked, then writes the file.
   writeFileSync(join(root, 'dotnet/scripts/agents-file.sh'), 'printf "%s" "${ASSEMBLY_REPAIR_ONLY:-whole}" > "$ASKED"\nprintf "installed" > "$2"\n');
   writeFileSync(join(root, 'bin/dotnet'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  writeFileSync(join(root, 'bin/cargo'), '#!/bin/sh\ntouch "$LAUNCHED"\n', { mode: 0o755 });
+  writeFileSync(join(root, 'bin/cargo'), '#!/bin/sh\nprintf "%s" "${ASSEMBLY_REPAIR_ONLY:-whole}" > "$LAUNCHED"\n', { mode: 0o755 });
   const file = join(root, 'data/mac/agents.json'), launched = join(root, 'launched'), asked = join(root, 'asked');
   const before = agents(root);
   writeFileSync(file, before);
@@ -39,6 +39,16 @@ test('agents whose adapter is gone are installed again before the app opens', ()
     assert.equal(after, 'installed');
     assert.equal(asked, '1', 'over a file that is there, the installer is asked for a repair only');
     assert.ok(existsSync(launched), 'the app was not launched');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// The app's own Update button runs the same installer later, and that one must install in full.
+test('the repair request reaches the installer only, never the app it then opens', () => {
+  const { root, result, launched, asked } = launch(root => agentAt(process.execPath, adapterIn(join(root, 'removed'))));
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(asked, '1');
+    assert.equal(readFileSync(launched, 'utf8'), 'whole');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

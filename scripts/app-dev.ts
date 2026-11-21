@@ -135,6 +135,8 @@ try {
     const retried = built ? await attempt('bash', [...installer, built]) : undefined;
     if (retried?.status !== 0) console.warn('app:dev: agents could not be updated; opening with the ones already installed, if any');
   }
+  // The request was for this launch's installer alone. The app's own Update runs the same installer and installs in full.
+  delete env.ASSEMBLY_REPAIR_ONLY;
   }
   if (cache) {
     const executable = join(root, 'desktop/target/debug/assembly-desktop');
