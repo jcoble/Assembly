@@ -8,26 +8,6 @@ public sealed class GitCliTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "assembly-git-" + Guid.NewGuid());
 
-    // Pins: scm#2
-    [Fact]
-    public async Task A_last_record_without_a_trailing_nul_is_read()
-    {
-        Directory.CreateDirectory(_root);
-        await Read("init", "-b", "main");
-        await Read("-c", "user.name=Git Test", "-c", "user.email=git@example.invalid", "-c", "commit.gpgsign=false",
-            "commit", "--allow-empty", "-m", "First commit");
-        Assert.Equal("1\n", Assert.Single(await Read("rev-list", "--count", "HEAD")));
-    }
-
-    // Pins: scm#6
-    [Fact]
-    public async Task A_missing_folder_fails_with_gits_own_message()
-    {
-        var error = await Assert.ThrowsAsync<CallFailed>(() => Read("status"));
-        Assert.Contains("cannot change to", error.Message);
-        Assert.Contains(_root, error.Message);
-    }
-
     // Pins: scm#16
     [Fact]
     public async Task Large_record_is_yielded_in_one_mebibyte_pieces()

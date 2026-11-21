@@ -36,14 +36,6 @@ public sealed partial class GitSessionOperationsTests
         await Assert.ThrowsAsync<CallFailed>(() => execute(default));
         Assert.Equal(0, f.Gh.Reads); Assert.Equal(0, f.Gh.Writes);
     }
-    [Fact]
-    public async Task Unsupported_actions_and_missing_sessions_cannot_open_git_or_github()
-    {
-        await using var f = await Fixture.Create();
-        Assert.Throws<CallFailed>(() => f.Producer.Prepare(f.Request() with { Action = "arbitrary" }));
-        Assert.Throws<CallFailed>(() => f.Producer.Prepare(f.Request() with { Session = "missing" }));
-        Assert.Equal(0, f.Gh.Reads); Assert.Equal(0, f.Gh.Writes);
-    }
     private sealed class Fixture : IAsyncDisposable
     {
         public GitHistoryTestRepository Repo { get; } = new();

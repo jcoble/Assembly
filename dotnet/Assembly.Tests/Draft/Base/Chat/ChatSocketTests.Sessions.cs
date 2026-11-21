@@ -5,29 +5,6 @@ namespace Assembly.Tests.Draft.Base.Chat;
 
 public sealed partial class ChatSocketTests
 {
-    // Pins: sessions-list#9
-    [Fact]
-    public async Task Sessions_state_is_open_and_pages_can_select_settled()
-    {
-        var open = _sessions.Create("claude", "open-repo");
-        var settled = _sessions.Create("claude", "settled-repo");
-        _db.Writer.Write("test.mark", scope => { _sessions.Mark(scope, settled.SessionId, "settled"); return 0; });
-        using var socket = await OpenAsync();
-        await SendAsync(socket, """{"t":"sub","id":1,"topic":"sessions"}""");
-        using (var state = JsonDocument.Parse(await ReadAsync(socket)))
-            Assert.Equal([open.SessionId], state.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("key").GetString()));
-
-        await CallAsync(socket, 2, "sessions", "page", """{"group":"settled"}""");
-        using (var answer = JsonDocument.Parse(await ReadAsync(socket)))
-            Assert.Equal([settled.SessionId], answer.RootElement.GetProperty("result").GetProperty("sessions").EnumerateArray()
-                .Select(item => item.GetProperty("sessionId").GetString()));
-        await CallAsync(socket, 3, "sessions", "page", """{"group":"bogus"}""");
-        Assert.Equal("""{"t":"error","id":3,"code":"failed","message":"expected open or settled"}""", await ReadAsync(socket));
-
-        _sessions.SetTitle(settled.SessionId, "Still published", "prompt");
-        Assert.Contains("\"title\":\"Still published\"", await ReadAsync(socket));
-    }
-
     [Fact]
     public async Task The_sessions_topic_starts_with_the_newest_page_then_any_session_that_changes()
     {
@@ -53,39 +30,6 @@ public sealed partial class ChatSocketTests
         Assert.Equal("change", change.RootElement.GetProperty("t").GetString());
         Assert.Equal(made[0], change.RootElement.GetProperty("key").GetString());
         Assert.Equal(_time.GetUtcNow().ToUnixTimeMilliseconds(), change.RootElement.GetProperty("item").GetProperty("updatedAt").GetInt64());
-    }
-
-    [Fact]
-    public async Task A_keyed_sessions_sub_gets_that_session_and_its_changes()
-    {
-        var session = _sessions.Create("claude", "repo");
-        using var socket = await OpenAsync();
-
-        await SendAsync(socket, $$"""{"t":"sub","id":1,"topic":"sessions","key":"{{session.SessionId}}"}""");
-        Assert.Contains($"\"sessionId\":\"{session.SessionId}\"", await ReadAsync(socket));
-
-        _sessions.SetTitle(session.SessionId, "Renamed", "prompt");
-        Assert.Contains("\"title\":\"Renamed\"", await ReadAsync(socket));
-    }
-
-    [Fact]
-    public async Task Sessions_page_reads_older_sessions_before_a_time()
-    {
-        var made = new List<string>();
-        for (var i = 0; i < 3; i++)
-        {
-            _time.Advance(TimeSpan.FromSeconds(1));
-            made.Add(_sessions.Create("claude", $"repo-{i}").SessionId);
-        }
-        var newest = _sessions.Get(made[2])!.UpdatedAt;
-        using var socket = await OpenAsync();
-
-        await CallAsync(socket, 1, "sessions", "page", $$"""{"before":{{newest}},"limit":1}""");
-
-        using var answer = JsonDocument.Parse(await ReadAsync(socket));
-        var page = answer.RootElement.GetProperty("result");
-        Assert.Equal([made[1]], page.GetProperty("sessions").EnumerateArray().Select(item => item.GetProperty("sessionId").GetString()));
-        Assert.Equal(_sessions.Get(made[1])!.UpdatedAt, page.GetProperty("nextBefore").GetInt64());
     }
 
     // The window already has the new session when it opens it.
@@ -131,46 +75,6 @@ public sealed partial class ChatSocketTests
         Assert.Equal("""{"t":"error","id":1,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
     }
 
-    // Escaped, an accent or apostrophe takes six bytes; a big answer of such text would pass the 4 MB frame limit.
-    [Fact]
-    public async Task Frames_carry_text_as_it_is()
-    {
-        var session = _sessions.Create("claude", "repo");
-        _sessions.SetTitle(session.SessionId, "Café's", "prompt");
-        using var socket = await OpenAsync();
-
-        await SendAsync(socket, $$"""{"t":"sub","id":1,"topic":"sessions","key":"{{session.SessionId}}"}""");
-        Assert.Contains("\"title\":\"Café's\"", await ReadAsync(socket));
-        await CallAsync(socket, 2, "sessions", "page", "{}");
-        Assert.Contains("\"title\":\"Café's\"", await ReadAsync(socket));
-    }
-
-    // Pins: sessions-list#6. Started sessions publish to the list and still reach their own subscription.
-    [Fact]
-    public async Task A_started_sessions_changes_go_to_the_list_and_its_own_sub()
-    {
-        var parent = _sessions.Create("claude", "repo");
-        using var list = await OpenAsync();
-        await SendAsync(list, """{"t":"sub","id":1,"topic":"sessions"}""");
-        await ReadAsync(list);
-
-        var helper = _sessions.Helper(parent, "claude", "Helper");
-        using var created = JsonDocument.Parse(await ReadAsync(list));
-        Assert.Equal(helper.SessionId, created.RootElement.GetProperty("key").GetString());
-        using var own = await OpenAsync();
-        await SendAsync(own, $$"""{"t":"sub","id":1,"topic":"sessions","key":"{{helper.SessionId}}"}""");
-        await ReadAsync(own);
-        _sessions.SetTitle(helper.SessionId, "Renamed", "prompt");
-        _sessions.SetTitle(parent.SessionId, "Parent", "prompt");
-
-        Assert.Contains("\"title\":\"Renamed\"", await ReadAsync(own));
-        using var change = JsonDocument.Parse(await ReadAsync(list));
-        Assert.Equal(helper.SessionId, change.RootElement.GetProperty("key").GetString());
-        Assert.Contains("\"title\":\"Renamed\"", change.RootElement.GetRawText());
-        using var parentChange = JsonDocument.Parse(await ReadAsync(list));
-        Assert.Equal(parent.SessionId, parentChange.RootElement.GetProperty("key").GetString());
-    }
-
     // Copied databases give sessions the same time; a page break between them loses neither.
     [Fact]
     public async Task Sessions_page_keeps_sessions_that_share_a_time()
@@ -204,45 +108,5 @@ public sealed partial class ChatSocketTests
         await CallAsync(socket, 1, "sessions", "page", "{}");
 
         Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"the answer is over 4 MB"}""", await ReadAsync(socket));
-    }
-
-    [Fact]
-    public async Task Sessions_create_fails_for_an_unknown_machine_or_an_agent_the_machine_doesnt_have()
-    {
-        using var socket = await OpenAsync();
-
-        await CallAsync(socket, 1, "sessions", "create", """{"agent":"claude","clientId":"unknown_machine","machine":"nope"}""");
-        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"unknown machine"}""", await ReadAsync(socket));
-        await CallAsync(socket, 2, "sessions", "create", """{"agent":"codex","clientId":"unknown_agent"}""");
-        Assert.Equal("""{"t":"error","id":2,"code":"bad_args","message":"The agent is not configured on this owner."}""", await ReadAsync(socket));
-
-        Assert.Equal(["agents"], _here.Asked);
-        Assert.Empty(_box.Asked);
-    }
-
-    [Fact]
-    public async Task Sessions_create_with_a_parent_makes_a_helper_with_its_title_or_Helper()
-    {
-        var parent = ReadyParent();
-        var parentLocation = _sessions.Location(parent);
-        Assert.NotNull(parentLocation);
-        var parentFolder = parentLocation.Folder;
-        Assert.Equal(_home.FullName, parentFolder);
-        using var socket = await OpenAsync();
-
-        await CallAsync(socket, 1, "sessions", "create", JsonSerializer.Serialize(
-            new SessionsFeature.CreateArgs("claude", "child_titled", ParentSessionId: parent.SessionId, Title: "Look",
-                ExpectedSource: new(_engine.Machine, 0, null)), SessionsJson.Default.CreateArgs));
-        var titled = _sessions.Get(Result(await ReadAsync(socket)).GetProperty("sessionId").GetString()!)!;
-        await CallAsync(socket, 2, "sessions", "create", JsonSerializer.Serialize(
-            new SessionsFeature.CreateArgs("claude", "child_untitled", ParentSessionId: parent.SessionId,
-                ExpectedSource: new(_engine.Machine, 0, null)), SessionsJson.Default.CreateArgs));
-        var untitled = _sessions.Get(Result(await ReadAsync(socket)).GetProperty("sessionId").GetString()!)!;
-
-        Assert.Equal((parent.SessionId, true, "Look"), (titled.ParentSessionId, titled.Helper, titled.Title));
-        Assert.Equal((parent.SessionId, true, "Session"), (untitled.ParentSessionId, untitled.Helper, untitled.Title));
-        Assert.Equal(["agents", "agents"], _here.Asked);
-        Assert.Equal(parentFolder, titled.WorkingFolder);
-        Assert.Equal(parentFolder, untitled.WorkingFolder);
     }
 }

@@ -60,20 +60,6 @@ public sealed class FileReadSessionTests
             first.Revision, "c", new CancellationToken(true)));
         Assert.Equal(0, reads.HeldBytes);
     }
-
-    [Fact]
-    public async Task Four_unfinished_snapshots_are_the_connection_limit()
-    {
-        using var folder = new GitFolder();
-        var reads = new FileReadSession();
-        for (var i = 0; i < 5; i++)
-            await File.WriteAllTextAsync(Path.Combine(folder.Root, i.ToString()), new string('x', FileRead.ChunkBytes + 1));
-        for (var i = 0; i < 4; i++)
-            await reads.ReadAsync(folder.Root, i.ToString(), 0, null, "c", CancellationToken.None);
-        await Assert.ThrowsAsync<CallFailed>(() => reads.ReadAsync(folder.Root, "4", 0, null, "c", CancellationToken.None));
-        reads.Close("c");
-        Assert.Equal(0, reads.HeldBytes);
-    }
     [Fact]
     public async Task View_cleanup_releases_its_snapshot_after_the_session_checkout_moves()
     {

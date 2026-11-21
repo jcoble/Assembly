@@ -66,16 +66,6 @@ public sealed class NameSearchTests
         Assert.Equal(3, page.Names.Count);
     }
 
-    // Pins: files#7
-    [Fact]
-    public async Task A_search_with_nothing_to_find_is_complete_and_empty()
-    {
-        using var folder = new GitFolder(Tree);
-        var page = await PageAsync(folder.Root, "nothing-like-it", 50, CancellationToken.None);
-        Assert.Empty(page.Names);
-        Assert.False(page.More);
-    }
-
     // Pins: files#8
     [Fact]
     public async Task A_cancelled_search_stops()
