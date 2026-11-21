@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# Moves a feature's draft tests into the pinned folders once Jesse has corrected its behavior list:
-#   scripts/pin.sh <feature>   dotnet/Assembly.Tests/Draft/<Feature>/ -> Pinned/<Feature>/ (namespace too), and
+# Moves a feature's draft tests into the pinned folders once Jesse has corrected its behavior list (a page in the
+# Assembly documentation in Notion):
+#   scripts/pin.sh <feature> <link to the behavior list page>
+#                              dotnet/Assembly.Tests/Draft/<Feature>/ -> Pinned/<Feature>/ (namespace too), and
 #                              staged for a commit of their own
-# It refuses while docs/behavior/<feature>.md still says it's a draft, if a test doesn't name the list line it pins
+# It cannot read Notion, so the person running it has checked that Jesse corrected the list; the link goes in the pin
+# commit's message. It refuses if the link isn't a Notion page link, if a test doesn't name the list line it pins
 # (// Pins: <feature>#<n>), or if a pinned file of the same name exists.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-feature=${1:?usage: scripts/pin.sh <feature>}
-list=docs/behavior/$feature.md
-[ -f "$list" ] || { echo "no behavior list $list" >&2; exit 1; }
-if grep -q "Draft by Claude" "$list" || ! grep -q "^Corrected by Jesse on " "$list"; then
-  echo "$list is still a draft; tests are pinned only after Jesse corrects it" >&2; exit 1
-fi
+feature=${1:?usage: scripts/pin.sh <feature> <link to the behavior list page>}
+list=${2:?usage: scripts/pin.sh <feature> <link to the behavior list page>}
+grep -Eq '^https://app[.]notion[.]com/p/[0-9a-fA-F]{32}([?].*)?$' <<<"$list" \
+  || { echo "the second argument must be the behavior list's Notion page link, got: $list" >&2; exit 1; }
 
 dirs=()
 cs=$(find dotnet/Assembly.Tests/Draft -mindepth 1 -maxdepth 1 -type d -iname "$feature" 2>/dev/null | head -1)
@@ -37,4 +38,4 @@ for f in $files; do
   git mv "$f" "$to"
   case "$to" in *.cs) sed -i.bak 's/Assembly\.Tests\.Draft\./Assembly.Tests.Pinned./g' "$to" && rm "$to.bak" && git add "$to" ;; esac
 done
-echo "pinned $(wc -w <<<"$files" | tr -d ' ') file(s) for $feature; commit them on their own"
+echo "pinned $(wc -w <<<"$files" | tr -d ' ') file(s) for $feature; commit them on their own, naming the behavior list: $list"
