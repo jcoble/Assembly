@@ -37,6 +37,9 @@ public sealed partial class CopyRecords(IAppDatabase db, IAtomicWriter writer)
         "SELECT session_id,machine,state,head FROM remote_copy WHERE session_id=$session", ReadCopy, CancellationToken.None,
         new SqlArg("$session", session));
 
+    /// <summary>Whether any remote session is saved here.</summary>
+    public bool Any() => db.QueryFirst("SELECT EXISTS(SELECT 1 FROM remote_copy)", row => row.Long(0) != 0, CancellationToken.None);
+
     public IReadOnlyList<RemoteCopy> RemoteCopiesOn(string machine) => db.Query(
         "SELECT session_id,machine,state,head FROM remote_copy WHERE machine=$machine ORDER BY session_id", ReadCopy,
         CancellationToken.None, new SqlArg("$machine", machine));

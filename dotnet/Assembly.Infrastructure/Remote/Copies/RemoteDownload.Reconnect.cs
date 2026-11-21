@@ -16,6 +16,8 @@ internal sealed partial class RemoteDownload
         IReadOnlyDictionary<string, HistoryFacts> heads;
         try
         {
+            // With nothing saved here there is nothing to decide, and no call is made.
+            if (!_hub.Copies.Any()) return;
             machine = await _verifiedEngine(ct);
             // A machine replaced under the same name: its copies were saved from another engine.
             foreach (var session in _hub.Copies.MovedTo(machine))
