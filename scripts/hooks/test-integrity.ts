@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // EdiPlatform's TEST-CHANGE discipline, adapted to Assembly's C#, Rust, TS and Dart.
-// A reason is an audit trail, never approval to change behavior or proof of correctness.
+// A commit that changes or removes an assertion of an existing test names the test in a TEST-CHANGE line with its reason; adding
+// a test needs no line. The reason is an audit trail the reviewer reads (CI lists every line), never approval to change a test to match code.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -86,9 +87,7 @@ export function changedAssertions(before: string, after: string): string[] {
 }
 export function violations(changes: Change[], message: string): string[] {
   const errors: string[] = [], tests = changes.filter(change => (isTest(change.path) || Boolean(change.previousPath && isTest(change.previousPath))));
-  const production = changes.some(change => !isTest(change.path) && !/^(?:docs\/|evidence\/|scripts\/|\.githooks\/|\.github\/|\.claude\/|\.codex\/)|\.(?:md|mdx)$/.test(change.path));
   const tokens = message.split('\n').map(line => line.trim());
-  if (tests.length && !production && !tokens.some(line => /^TEST-CHANGE:\s*\S/.test(line))) errors.push('Test-only changes require TEST-CHANGE: <reason>.');
   for (const change of tests) {
     for (const name of changedAssertions(change.before, change.after)) {
       const prefix = 'TEST-CHANGE: ' + name + ':';

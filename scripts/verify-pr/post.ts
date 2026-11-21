@@ -44,6 +44,12 @@ function makeReceipt(c: Config, ctx: Context, directory: string) {
       details:'Verifier changed the lane or its HEAD; the declared PR commit was not verified cleanly.',proof:[]});
     const changedFiles=worker(c,'git',['-C',ctx.worktree,'diff','--name-only',`${ctx.base}...${ctx.sha}`]).trim().split('\n').filter(Boolean);
     const codeChanged=changedFiles.some(file=>!(/\.(md|rst)$/i.test(file) || /^(docs\/.*\.txt|(?:README|LICENSE|NOTICE)(?:\.[^/]*)?)$/i.test(file)));
+    // The test locations scripts/check-commit-msg.sh names for a fix commit, and any Rust file that holds inline #[cfg(test)] tests.
+    const inlineRustTests=(file:string)=>{
+      if(!file.endsWith('.rs')) return false;
+      try { return /#\[cfg\(test\)\]/.test(worker(c,'git',['-C',ctx.worktree,'show',`${ctx.sha}:${file}`]).toString()); } catch { return false; }
+    };
+    const testsChanged=changedFiles.some(file=>/^(dotnet\/Assembly\.Tests\/|desktop\/tests\/|app\/test\/)|\.test\.(sh|ts)$|(^|\/)([^/]*_)?tests\.rs$/.test(file) || inlineRustTests(file));
     let receiptsValid=true;
     const receipts: {file:string;description:string}[]=[];
     for(const test of result.tests) {
@@ -55,7 +61,7 @@ function makeReceipt(c: Config, ctx: Context, directory: string) {
       } catch { receiptsValid=false; }
     }
     links = upload(c,ctx,directory,[...result.proof.filter(p=>!receipts.some(r=>r.file===p.file)),...receipts]);
-    outcome = verdict(result,links,codeChanged,receiptsValid);
+    outcome = verdict(result,links,codeChanged,receiptsValid,testsChanged);
   } catch { /* Missing, malformed, killed or timed-out runs are explicit no-result. */ }
   const details = outcome.result;
   let latestCI:unknown;
