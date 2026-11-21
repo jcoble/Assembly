@@ -241,10 +241,6 @@ public sealed partial class SessionStore : ISessionProjectProjection
     });
 
     /// <summary>
-    /// The facade of a remote session whose owner the caller has just established in this writer: the row naming its
-    /// route. A created session and one only its machine's mirror carries are both recorded here.
-    /// </summary>
-    /// <summary>
     /// Refuses a copied facade whose owner record names another owner, or whose facade here names another route,
     /// agent, parent or project. It writes nothing, so a chain can be checked whole before any of it is recorded.
     /// </summary>
@@ -263,8 +259,10 @@ public sealed partial class SessionStore : ISessionProjectProjection
     }
 
     /// <summary>
-    /// Records a remote session's facade and publishes it. <paramref name="title"/> is the title the remote already gave
-    /// a session this desktop didn't create; it ranks as a prompt title, so the remote's later titles replace it.
+    /// The facade of a remote session whose owner the caller has just established in this writer: the row naming its
+    /// route. A created session and one only its machine's mirror carries are both recorded here.
+    /// <paramref name="title"/> is the title the remote already gave a session this desktop didn't create; it ranks as a
+    /// prompt title, so the remote's later titles replace it.
     /// </summary>
     internal SessionInfo RecordCopied(IWriteScope scope, string sessionId, SessionsFeature.CreatedSessionFacts facts, string route,
         string? projectId, Action<IWriteScope>? accepted = null, Action<IWriteScope>? validate = null, string? title = null)
