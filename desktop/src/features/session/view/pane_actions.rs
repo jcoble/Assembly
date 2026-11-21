@@ -411,7 +411,7 @@ impl SessionPane {
     /// session, whose saved copy stays readable while the machine is away.
     pub(super) fn say_failed(&mut self, what: &str, error: CallError, cx: &mut Context<Self>) {
         if let CallError::Unreachable { machine } = &error {
-            self.status = offline_words(machine).into();
+            self.status = crate::core::navigation::file_link::offline_words(machine).into();
             cx.notify();
             return;
         }
@@ -429,11 +429,6 @@ impl SessionPane {
         };
         cx.notify();
     }
-}
-
-/// What an action that needs `machine` says while it's offline.
-pub(super) fn offline_words(machine: &str) -> String {
-    format!("On {machine}, which is offline.")
 }
 
 impl SessionPane {

@@ -299,7 +299,7 @@ fn refusal_words(failure: CallFailure, machine: Option<String>) -> String {
         ErrorCode::Unreachable { machine: named } => {
             let named = Some(named.clone()).filter(|named| !named.is_empty());
             if let Some(on) = named.or(machine) {
-                return not_connected(&on);
+                return offline_words(&on);
             }
             return didnt_open(&failure.message);
         }
@@ -325,6 +325,12 @@ const THIS_COMPUTER: &str = if cfg!(target_os = "macos") {
     "this computer"
 };
 
+/// What opening something on `machine` says while that listed machine is offline (TSK-1692 spec §5).
+pub(crate) fn offline_words(machine: &str) -> String {
+    format!("On {machine}, which is offline.")
+}
+
+/// A machine this app doesn't have set up.
 fn not_connected(machine: &str) -> String {
     format!("That file is on {machine}, which this app isn't connected to.")
 }
