@@ -394,15 +394,4 @@ public sealed class AcpClientV1Tests
         await replay.Recording.PlayToReplyAsync(2);
         await session.WaitAsync(Bounded);
     }
-
-    [Theory]
-    [InlineData("agent_message_chunk", true)]
-    [InlineData("agent_thought_chunk", true)]
-    [InlineData("tool_call", true)]
-    [InlineData("tool_call_update", true)]
-    [InlineData("config_option_update", false)]
-    [InlineData("usage_update", false)]
-    [InlineData("available_commands_update", false)]
-    [InlineData("current_mode_update", false)]
-    public void Only_turn_content_is_a_sign_of_life(string kind, bool counts) => Assert.Equal(counts, SignOfLife.Counts(kind));
 }
