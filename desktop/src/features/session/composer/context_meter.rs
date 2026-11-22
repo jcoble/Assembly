@@ -19,12 +19,12 @@ pub struct ContextMeter {
 }
 
 impl ContextMeter {
-    /// `None` when the agent hasn't reported, or reports more used than the window holds.
+    /// `None` when the agent hasn't reported a valid window or non-negative usage.
     pub fn of(used: i64, size: i64) -> Option<ContextMeter> {
-        if size <= 0 || used < 0 || used > size {
+        if size <= 0 || used < 0 {
             return None;
         }
-        let spent = used as f64 / size as f64 * 100.0;
+        let spent = (used as f64 / size as f64 * 100.0).min(100.0);
         let left = (100.0 - spent).round() as u8;
         Some(ContextMeter {
             left,

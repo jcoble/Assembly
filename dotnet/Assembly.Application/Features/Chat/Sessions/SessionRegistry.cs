@@ -29,6 +29,7 @@ public sealed partial class SessionRegistry : IAsyncDisposable, Assembly.Applica
     private readonly IPromptImages? _images;
     private readonly ISessionFeed? _feed;
     private readonly SessionMcp _mcp;
+    private readonly ComposerConfigDiscovery _discovery;
     public Assembly.Application.Common.Engine.INativeSessionResolver? NativeSessions { get; private set; }
     public void BindNativeSessions(Assembly.Application.Common.Engine.INativeSessionResolver resolver)
     {
@@ -56,6 +57,7 @@ public sealed partial class SessionRegistry : IAsyncDisposable, Assembly.Applica
         _log = log;
         _work = work;
         _titler = titler;
+        _discovery = new ComposerConfigDiscovery(_launcher, _time, _sessionStore, _log);
     }
 
     /// <summary>The agents this machine can run.</summary>
@@ -70,9 +72,9 @@ public sealed partial class SessionRegistry : IAsyncDisposable, Assembly.Applica
             account, captured.Descriptor.Id + "/" + account);
     }).ToList();
 
-    /// <summary>One bounded private metadata observation through the configured launcher.</summary>
+    /// <summary>The composer's settings for one configuration and folder: a saved answer can return immediately, with one background refresh per backend run.</summary>
     public Task<ComposerCatalogue> DiscoverConfigAsync(string agent, string targetId, string cwd, CancellationToken ct) =>
-        new ComposerConfigDiscovery(_launcher, _time).DiscoverAsync(agent, targetId, cwd, ct);
+        _discovery.DiscoverAsync(agent, targetId, cwd, ct);
 
     /// <summary>The existing parent-card writer used by the Engine helper projection.</summary>
     public HelperSessions Helpers { get; }
@@ -130,6 +132,7 @@ public sealed partial class SessionRegistry : IAsyncDisposable, Assembly.Applica
     /// <summary>Stops every running turn and the adapter. A turn cut short here ends as rows like any other.</summary>
     public async ValueTask DisposeAsync()
     {
+        await _discovery.DisposeAsync();
         await Task.WhenAll(_hosts.Values.Select(host => host.StopWarmForShutdownAsync()));
         // Sessions kept for background work stop it and close cleanly while their adapter is still there.
         try

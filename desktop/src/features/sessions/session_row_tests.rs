@@ -53,12 +53,17 @@ fn a_session_on_a_machine_that_isnt_answering_keeps_its_state_and_says_offline()
         ["offline", "Working"]
     );
     assert_eq!(details(&running), "Workbox Test · lane/rail");
-    // A local session is on This Mac.
+    // A local session is on this machine: "This Mac" on a Mac, "This computer" anywhere else.
     let local = RailEntry {
         machine: None,
         ..running
     };
-    assert_eq!(details(&local), "This Mac · lane/rail");
+    let here = if cfg!(target_os = "macos") {
+        "This Mac"
+    } else {
+        "This computer"
+    };
+    assert_eq!(details(&local), format!("{here} · lane/rail"));
 }
 
 #[test]

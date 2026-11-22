@@ -1,8 +1,9 @@
 //! Content tabs in the window chrome, backed by the dock's existing panels and layout. Selection, closing and
 //! movement still go through the dock; this bar keeps no second list of open tabs.
 //!
-//! The kit's tab bar in its segmented variant, so the strip keeps the kit's tab-list role, wheel scrolling, reveal of
-//! a clipped tab and keyboard focus; each tab's close is a named kit icon button. Called by the top bar.
+//! The kit's tab bar in its segmented variant with its track cleared, so the strip keeps the kit's tab-list role,
+//! wheel scrolling, reveal of a clipped tab and keyboard focus; each tab's close is a named kit icon button. Called by
+//! the top bar.
 
 use std::sync::Arc;
 
@@ -68,36 +69,69 @@ pub(super) fn tabs(dock: Entity<DockArea>, window: &mut Window, cx: &mut App) ->
         .position(|tab| tab.shown && tab.panel.focus_handle(cx).contains_focused(window, cx))
         .or_else(|| tabs.iter().position(|tab| tab.shown))
         .unwrap_or(0);
+    let strip = revealing(&tabs, selected, window, cx);
     let chips = tabs
         .into_iter()
-        .map(|tab| tab_of(tab, &dock, window, cx))
+        .map(|tab| tab_of(tab, &dock, cx))
         .collect::<Vec<_>>();
     TabBar::new("chrome-content-tabs")
         .segmented()
+        // No track behind the tabs, so they sit on the bar as separate chips with only the open one filled, as the
+        // old app's tab row did.
+        .bg(cx.theme().transparent)
         .max_width(TAB_MAX_WIDTH)
         .selected_index(selected)
+        // Scrolled by the handle that keeps the open tab in view, with the kit's menu of every tab for those
+        // scrolled out of sight.
+        .track_scroll(&strip)
+        .menu(true)
         .children(chips)
         // Sized to its tabs, and shrinking (the kit then scrolls it) when the bar runs out of room.
         .min_w_0()
         .into_any_element()
 }
 
+/// The strip's scroll handle, kept across frames. When another tab becomes the open one (opened, picked from the
+/// menu, or chosen anywhere but a click on its chip), it scrolls that tab into view; the kit itself only does so for a
+/// click.
+fn revealing(
+    tabs: &[ContentTab],
+    selected: usize,
+    window: &mut Window,
+    cx: &mut App,
+) -> ScrollHandle {
+    let strip = window
+        .use_keyed_state("chrome-content-tabs-scroll", cx, |_, _| ScrollHandle::new())
+        .read(cx)
+        .clone();
+    // Which pane was last brought into view, by its id, so a tab added or closed before it doesn't count as a change.
+    let shown = window.use_keyed_state("chrome-content-tabs-shown", cx, |_, _| None);
+    let open = tabs.get(selected).map(|tab| tab.panel.panel_id(cx));
+    if *shown.read(cx) != open {
+        shown.update(cx, |shown, _| *shown = open);
+        strip.scroll_to_item(selected);
+    }
+    strip
+}
+
 /// One tab: a click shows its pane, its x closes it through the kit's close path, a drag carries it to another
 /// group, and a tab dropped on it lands in its place.
-fn tab_of(tab: ContentTab, dock: &Entity<DockArea>, window: &mut Window, cx: &mut App) -> Tab {
+fn tab_of(tab: ContentTab, dock: &Entity<DockArea>, cx: &mut App) -> Tab {
     let id = tab.panel.panel_id(cx);
     let name = tab.panel.panel_name(cx);
-    let title = PanelHandle::of(&tab.panel)
-        .map(|handle| handle.title(window, cx))
-        .unwrap_or_else(|| SharedString::from(name).into_any_element());
+    // What the tab is called: the pane's own short name when it has one (a file tab's file name), else its kind
+    // ("Chat", "Changes"). The chip shows it, a screen reader reads it, and the kit's menu of tabs lists it.
+    let label = PanelHandle::of(&tab.panel)
+        .and_then(|handle| handle.tab_name(cx))
+        .unwrap_or_else(|| SharedString::from(name));
     let target = cx.theme().tokens.drop_target;
     let (select, close, drop) = (dock.clone(), dock.clone(), dock.clone());
     let panel = tab.panel.clone();
     Tab::new()
         .debug_selector(move || format!("top-tab-{name}"))
-        .control(content_tab(name), name)
+        .control(content_tab(name), label.clone())
         .prefix(Icon::new(icon(name)).size(TAB_GLYPH))
-        .child(title)
+        .label(label.clone())
         .on_click(move |_, window, cx| {
             cx.defer(WorkspaceCoordinator::changed);
             select.update(cx, |dock, cx| dock.select_panel(id, window, cx));
@@ -105,7 +139,7 @@ fn tab_of(tab: ContentTab, dock: &Entity<DockArea>, window: &mut Window, cx: &mu
         .when(tab.panel.closable(cx), |chip| {
             chip.suffix(
                 Button::new(("close-content-tab", id.as_u64()))
-                    .named(format!("Close {name}"))
+                    .named(format!("Close {label}"))
                     .ghost()
                     .xsmall()
                     .icon(Icon::new(IconName::X).size(CLOSE_GLYPH))

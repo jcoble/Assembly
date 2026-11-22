@@ -2,6 +2,7 @@
 //! then the branch card holding the branch menu, upstream counts, and a second line naming its machine, base branch
 //! and age. Called by the pane's render.
 use super::SourceControlPane;
+use crate::core::state::machines::THIS_MACHINE;
 use crate::core::state::viewed_project::{LOCAL_MACHINE, ViewedProject};
 use crate::core::theme::look::Look;
 use crate::core::theme::metrics::{CORNER_TILE, SPACE};
@@ -124,11 +125,11 @@ impl SourceControlPane {
                     ),
             )
     }
-    /// Whether the displayed folder is on a remote machine, and its display name ("This Mac" for local).
+    /// Whether the displayed folder is on a remote machine, and the machine's display name.
     fn machine_label(&self, cx: &App) -> (bool, String) {
         if let Some(viewed) = ViewedProject::viewed(cx) {
             return if viewed.machine == LOCAL_MACHINE {
-                (false, "This Mac".into())
+                (false, THIS_MACHINE.into())
             } else {
                 (true, viewed.machine)
             };
@@ -141,7 +142,7 @@ impl SourceControlPane {
             .filter(|name| !name.is_empty())
         {
             Some(name) => (true, name.to_string()),
-            None => (false, "This Mac".into()),
+            None => (false, THIS_MACHINE.into()),
         }
     }
     /// The branch's name with its menu: the branch icon, the name at 600, a chevron.
