@@ -110,7 +110,8 @@ impl SessionsPane {
 
     /// A row's Connect: asks the backend to reach the machine now, the same `machines/connect` Settings and the
     /// composer use. The machines list says when it answers, and the rows follow it; one that doesn't answer
-    /// says why above the list. A press for a machine already being reached is the same press.
+    /// says why on that machine's rows, where it was pressed. A press for a machine already being reached is
+    /// the same press.
     pub(super) fn connect(&mut self, machine: String, cx: &mut Context<Self>) {
         if self
             .connecting
@@ -132,7 +133,13 @@ impl SessionsPane {
                 json!({ "machine": machine }),
                 None,
             );
-        self.row_error = None;
+        if self
+            .connect_error
+            .as_ref()
+            .is_some_and(|(failed, _)| failed == &machine)
+        {
+            self.connect_error = None;
+        }
         let reached = machine.clone();
         let task = cx.spawn(async move |pane, cx| {
             let outcome = call.await;
@@ -144,19 +151,16 @@ impl SessionsPane {
                 {
                     pane.connecting = None;
                 }
-                pane.row_error = match outcome {
-                    Outcome::Ok(machine) if !machine.reachable => Some(
-                        match machine.reason {
-                            Some(reason) => format!("Couldn't connect to {reached}: {reason}"),
-                            None => format!("Couldn't connect to {reached}."),
-                        }
-                        .into(),
-                    ),
-                    Outcome::Failed(failure) => {
-                        Some(format!("Couldn't connect to {reached}: {}", failure.message).into())
-                    }
-                    _ => pane.row_error.take(),
+                let failed = match outcome {
+                    Outcome::Ok(machine) if !machine.reachable => Some(match machine.reason {
+                        Some(reason) => reason,
+                        None => "didn't answer".to_string(),
+                    }),
+                    Outcome::Failed(failure) => Some(failure.message),
+                    _ => None,
                 };
+                pane.connect_error =
+                    failed.map(|reason| (reached.clone(), SharedString::from(reason)));
                 cx.notify();
             })
             .ok();

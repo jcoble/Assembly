@@ -55,6 +55,8 @@ pub struct SessionsPane {
     pub(super) next_mark: u64,
     /// A row's Connect while it reaches its machine, and which machine it is for.
     pub(super) connecting: Option<(String, Task<()>)>,
+    /// Why the last Connect didn't reach its machine, shown on that machine's rows until it answers or is pressed again.
+    pub(super) connect_error: Option<(String, SharedString)>,
     /// Why the last mark or open failed, until the next one starts.
     pub(super) row_error: Option<SharedString>,
     /// Waits for the answer to the last row opened, so a refusal says why instead of looking like a dead click.
@@ -202,6 +204,7 @@ impl SessionsPane {
             marking: HashMap::new(),
             next_mark: 0,
             connecting: None,
+            connect_error: None,
             row_error: None,
             opening: None,
             rail: Rail::default(),

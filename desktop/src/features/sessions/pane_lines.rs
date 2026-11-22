@@ -111,6 +111,7 @@ impl SessionsPane {
             })
         };
         let connecting = self.connecting.as_ref().map(|(machine, _)| machine.clone());
+        let connect_error = self.connect_error.clone();
         move |at, _, cx| {
             let Some(entry) = entries.get(at).cloned() else {
                 return Empty.into_any_element();
@@ -132,6 +133,12 @@ impl SessionsPane {
                     arrow: None,
                     connect: offline.then(|| Connect {
                         connecting: connecting.as_deref() == entry.machine.as_deref(),
+                        error: connect_error
+                            .as_ref()
+                            .filter(|(machine, _)| {
+                                Some(machine.as_str()) == entry.machine.as_deref()
+                            })
+                            .map(|(_, reason)| reason.clone()),
                         on_connect: on_connect.clone(),
                     }),
                     on_open: on_open.clone(),

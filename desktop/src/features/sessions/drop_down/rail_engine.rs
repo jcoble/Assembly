@@ -135,6 +135,14 @@ impl SessionsPane {
         backend.extend(Machines::try_global(cx).map(|machines| {
             cx.observe(&machines, |pane, _, cx| {
                 pane.source_cut = None;
+                // A Connect failure belongs to the outage that caused it: once the machine answers, it's gone.
+                if pane
+                    .connect_error
+                    .as_ref()
+                    .is_some_and(|(machine, _)| !Machines::offline(Some(machine), cx))
+                {
+                    pane.connect_error = None;
+                }
                 pane.follow_sources(cx);
                 cx.notify();
             })

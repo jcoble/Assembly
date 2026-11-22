@@ -9,7 +9,8 @@ use std::rc::Rc;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex};
+use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
 use super::history::age::{age, elapsed_text};
@@ -17,6 +18,7 @@ use super::presence::Presence;
 use super::rail_page::RailEntry;
 use super::status::Status;
 use crate::core::navigation::external_urls::session_link;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::row as row_id;
 use crate::core::ui::three_line_row::{RowArrow, ThreeLineRow};
@@ -34,6 +36,8 @@ pub type OnConnect = Rc<dyn Fn(String, &mut App)>;
 pub struct Connect {
     /// A press is already reaching the machine: the button says so and won't press again.
     pub connecting: bool,
+    /// Why the last press didn't reach it, shown on this row where it was pressed.
+    pub error: Option<SharedString>,
     pub on_connect: OnConnect,
 }
 
@@ -186,25 +190,44 @@ impl RenderOnce for SessionRow {
         // and its clicks are its own.
         let connect = connect.zip(route.clone()).map(|(connect, machine)| {
             let on_connect = connect.on_connect;
-            div().flex_none().pb(px(6.)).pr(px(8.)).child(
-                Button::new(SharedString::from(format!("connect:{id}")))
-                    .control(
-                        format!("{}.connect", row_id(&format!("session:{id}"))),
-                        format!("Connect to {machine}"),
-                    )
-                    .outline()
-                    .xsmall()
-                    .label(if connect.connecting {
-                        "Connecting…"
-                    } else {
-                        "Connect"
-                    })
-                    .disabled(connect.connecting)
-                    .on_click(move |_, _, cx| {
-                        cx.stop_propagation();
-                        on_connect(machine.clone(), cx);
-                    }),
-            )
+            // Why the last press didn't reach, over the button: short on the row, whole in its tooltip.
+            let reason = connect.error.map(|reason| {
+                let whole = reason.clone();
+                div()
+                    .id(SharedString::from(format!("connect-error:{id}")))
+                    .max_w(px(170.))
+                    .truncate()
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(cx.theme().danger)
+                    .tooltip(move |window, cx| Tooltip::new(whole.clone()).build(window, cx))
+                    .child(reason)
+            });
+            v_flex()
+                .flex_none()
+                .items_end()
+                .gap_1()
+                .pb(px(6.))
+                .pr(px(8.))
+                .children(reason)
+                .child(
+                    Button::new(SharedString::from(format!("connect:{id}")))
+                        .control(
+                            format!("{}.connect", row_id(&format!("session:{id}"))),
+                            format!("Connect to {machine}"),
+                        )
+                        .outline()
+                        .xsmall()
+                        .label(if connect.connecting {
+                            "Connecting…"
+                        } else {
+                            "Connect"
+                        })
+                        .disabled(connect.connecting)
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            on_connect(machine.clone(), cx);
+                        }),
+                )
         });
         let item = ThreeLineRow {
             key: format!("session:{id}").into(),
