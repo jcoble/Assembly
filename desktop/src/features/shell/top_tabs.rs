@@ -87,6 +87,11 @@ pub(super) fn tabs(dock: Entity<DockArea>, window: &mut Window, cx: &mut App) ->
 fn tab_of(tab: ContentTab, dock: &Entity<DockArea>, window: &mut Window, cx: &mut App) -> Tab {
     let id = tab.panel.panel_id(cx);
     let name = tab.panel.panel_name(cx);
+    // What the tab is called to a screen reader: the pane's own short name when it has one (a file tab's file
+    // name), else its kind ("Chat", "Changes").
+    let label = PanelHandle::of(&tab.panel)
+        .and_then(|handle| handle.tab_name(cx))
+        .unwrap_or_else(|| SharedString::from(name));
     let title = PanelHandle::of(&tab.panel)
         .map(|handle| handle.title(window, cx))
         .unwrap_or_else(|| SharedString::from(name).into_any_element());
@@ -95,7 +100,7 @@ fn tab_of(tab: ContentTab, dock: &Entity<DockArea>, window: &mut Window, cx: &mu
     let panel = tab.panel.clone();
     Tab::new()
         .debug_selector(move || format!("top-tab-{name}"))
-        .control(content_tab(name), name)
+        .control(content_tab(name), label.clone())
         .prefix(Icon::new(icon(name)).size(TAB_GLYPH))
         .child(title)
         .on_click(move |_, window, cx| {
@@ -105,7 +110,7 @@ fn tab_of(tab: ContentTab, dock: &Entity<DockArea>, window: &mut Window, cx: &mu
         .when(tab.panel.closable(cx), |chip| {
             chip.suffix(
                 Button::new(("close-content-tab", id.as_u64()))
-                    .named(format!("Close {name}"))
+                    .named(format!("Close {label}"))
                     .ghost()
                     .xsmall()
                     .icon(Icon::new(IconName::X).size(CLOSE_GLYPH))
