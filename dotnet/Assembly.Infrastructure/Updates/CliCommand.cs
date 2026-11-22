@@ -27,8 +27,8 @@ internal sealed class CliCommand(TimeProvider time)
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private static readonly IReadOnlyDictionary<string, KnownCli> Known = new Dictionary<string, KnownCli>(StringComparer.Ordinal)
     {
-        ["codex"] = new("codex", "@openai/codex", "codex-cli ", "", CliUpdateMethod.InstalledMethod, HomebrewName: "codex"),
-        ["claude"] = new("claude", "@anthropic-ai/claude-code", "", " (Claude Code)", CliUpdateMethod.SelfUpdate)
+        ["codex"] = new("codex", "@openai/codex", "codex-cli ", "", CliUpdateMethod.InstalledMethod, "curl -fsSL https://chatgpt.com/codex/install.sh | sh", HomebrewName: "codex"),
+        ["claude"] = new("claude", "@anthropic-ai/claude-code", "", " (Claude Code)", CliUpdateMethod.SelfUpdate, "curl -fsSL https://claude.ai/install.sh | bash")
     };
 
     internal static bool Supports(string? family) => family is not null && Known.ContainsKey(family);
@@ -36,6 +36,8 @@ internal sealed class CliCommand(TimeProvider time)
     internal static string PackageOf(string family) => Known[family].Package;
     internal static CliUpdateMethod UpdateMethodOf(string family) => Known[family].UpdateMethod;
     internal static string? HomebrewNameOf(string family) => Known[family].HomebrewName;
+    /// <summary>The vendor's official installer, the fallback when the CLI's own update fails.</summary>
+    internal static string OfficialInstallerOf(string family) => Known[family].Installer;
     /// <summary>True for a CLI with its own <c>update</c> command; the others update the way they were installed.</summary>
     internal static bool UpdatesItself(string family) => Known[family].UpdateMethod == CliUpdateMethod.SelfUpdate;
 
@@ -217,5 +219,5 @@ internal sealed class CliCommand(TimeProvider time)
     }
 
     private static CallFailed Failure(string reason) => new("CLI check unavailable.", reason);
-    private sealed record KnownCli(string Name, string Package, string Prefix, string Suffix, CliUpdateMethod UpdateMethod, string? HomebrewName = null);
+    private sealed record KnownCli(string Name, string Package, string Prefix, string Suffix, CliUpdateMethod UpdateMethod, string Installer, string? HomebrewName = null);
 }

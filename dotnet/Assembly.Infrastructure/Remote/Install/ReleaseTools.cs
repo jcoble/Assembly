@@ -10,6 +10,8 @@ internal static class ReleaseCliUpdate
 {
     // Names the CLI the agents file really runs, which may not be the first one on PATH.
     private const string Configured = "const a=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).find(x=>x.vendorFamily===process.argv[2]);console.log(a&&a.cli||process.argv[2])";
+    // The file that CLI really is, through every symlink: which install owns it decides how it updates.
+    private const string Resolved = "console.log(require('fs').realpathSync(process.argv[1]))";
 
     /// <summary>
     /// Exit success with the old version still there is a failure: <c>version_readback_mismatch</c>. The version is read first:
@@ -37,7 +39,8 @@ internal static class ReleaseCliUpdate
         if (!CliVersion.IsStable(cli.Version) || !CliCommand.Supports(cli.Family)) throw new CallFailed($"Can't update {cli.Family} to {cli.Version}.", "bad_args");
         var update = CliCommand.UpdateMethodOf(cli.Family) switch
         {
-            CliUpdateMethod.SelfUpdate => "\"$cli\" update >&2",
+            // Its own update first; when that fails, the vendor's official installer.
+            CliUpdateMethod.SelfUpdate => $"\"$cli\" update >&2 || {{ {CliCommand.OfficialInstallerOf(cli.Family)} >&2; }}",
             CliUpdateMethod.InstalledMethod => InstalledMethodUpdate(cli),
             _ => throw new CallFailed($"Can't update {cli.Family} to {cli.Version}.", "bad_args")
         };
@@ -48,15 +51,23 @@ internal static class ReleaseCliUpdate
     {
         var package = CliCommand.PackageOf(cli.Family);
         var brew = CliCommand.HomebrewNameOf(cli.Family);
-        var brewBranch = brew is null
+        // The install that owns the configured executable decides, decided the way the CLI probe
+        // decides npm ownership: resolved through its symlinks, an npm copy lives under the global
+        // root's package and a Homebrew copy under its Cellar or Caskroom. Any other copy updates
+        // itself, and when that fails the vendor's official installer is the fallback.
+        // Prefixes go through the same resolution, so a symlinked prefix still matches its own files.
+        var decide = $"resolved=$(node -e \"{Resolved}\" \"$cli\" 2>/dev/null || printf %s \"$cli\"); " +
+                     $"npmroot=$(npm root -g 2>/dev/null || true); npmroot=$(node -e \"{Resolved}\" \"$npmroot\" 2>/dev/null || printf %s \"$npmroot\"); " +
+                     $"brewpre=$(brew --prefix 2>/dev/null || true); brewpre=$(node -e \"{Resolved}\" \"$brewpre\" 2>/dev/null || printf %s \"$brewpre\"); ";
+        var brewArms = brew is null
             ? ""
-            : $"elif command -v brew >/dev/null && brew list --cask {brew} >/dev/null 2>&1; then brew upgrade --cask {brew} >&2; " +
-              $"elif command -v brew >/dev/null && brew list --formula {brew} >/dev/null 2>&1; then brew upgrade {brew} >&2; ";
-        return $"if command -v npm >/dev/null && [ -f \"$(npm root -g)/{package}/package.json\" ]; then " +
-               $"npm install --global --no-audit --no-fund {package}@{cli.Version} >&2; " +
-               brewBranch +
-               $"elif \"$cli\" update >&2; then true; " +
-               $"else echo '{cli.Family} was not installed with npm or Homebrew and its own update failed: update it the way it was installed' >&2; exit 1; fi";
+            : $"\"$brewpre/Cellar/{brew}/\"*) brew upgrade {brew} >&2 ;; " +
+              $"\"$brewpre/Caskroom/{brew}/\"*) brew upgrade --cask {brew} >&2 ;; ";
+        return decide +
+               "case \"$resolved\" in " +
+               $"\"$npmroot/{package}/\"*) npm install --global --no-audit --no-fund {package}@{cli.Version} >&2 ;; " +
+               brewArms +
+               $"*) \"$cli\" update >&2 || {{ {CliCommand.OfficialInstallerOf(cli.Family)} >&2; }} ;; esac";
     }
 }
 
