@@ -1,6 +1,7 @@
 //! The sessions column's tabs (Sessions, Files, Search) as the kit's segmented tab bar across the column, the
-//! segments sharing it equally, on the look's capsule track with its outline. Selection and pane drag/drop stay owned
-//! by the dock. Called by the dock for the left column's groups.
+//! segments sharing the room past their names, on the look's capsule track with its outline; when the panes no longer
+//! fit, the kit scrolls the strip. Selection and pane drag/drop stay owned by the dock. Called by the dock for the left
+//! column's groups.
 
 use crate::core::theme::look::Look;
 use crate::core::theme::metrics::{CORNER_PILL, SPACE};
@@ -42,8 +43,9 @@ fn tab(group: &TabGroupContext, ix: usize, name: &'static str, cx: &App) -> Tab 
     let (select, drop) = (group.clone(), group.clone());
     Tab::new()
         .label(name)
-        // Each segment takes an equal share of the column.
-        .flex_1()
+        // Each segment is at least as wide as its name and shares out the room left over, so a crowded column scrolls
+        // the strip rather than cutting a name short.
+        .flex_grow(1.)
         .control(side_tab(name), name)
         .debug_selector(move || format!("side-tab-{name}"))
         .on_click(move |_, window, cx| {
