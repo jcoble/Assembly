@@ -26,13 +26,18 @@ internal sealed record SettingsSummary(string Kind, string Message, bool Working
     internal const string Problem = "problem";
 }
 
-/// <summary>The four backend-derived row states shared by a provider and each of its machines.</summary>
+/// <summary>
+/// The backend-derived row states shared by a provider and each of its machines. A remote with no
+/// recorded provider facts is <see cref="NotChecked"/>: nothing here can start its first check yet
+/// (that origination is the later remote-reconcile work), so it is never shown as setting up.
+/// </summary>
 internal static class ProviderRowState
 {
     internal const string Ready = "ready";
     internal const string SettingUp = "setting_up";
     internal const string NeedsSignIn = "needs_sign_in";
     internal const string Problem = "problem";
+    internal const string NotChecked = "not_checked";
 }
 
 /// <summary>Safe sign-in state values derived from engine provider and sign-in rows.</summary>

@@ -120,6 +120,12 @@ internal static class SettingsStateRules
         if (lastFailure is not null || providerRow?.AuthState is "could_not_check" or "unsupported")
             return ProviderRowState.Problem;
 
+        // A remote with no recorded provider facts is not setting up: nothing in this build can
+        // start its first check (the remote cannot be named as a check target until it has facts),
+        // so it says not checked yet and drags neither the provider nor the summary with it.
+        if (providerRow is null && machine.Machine.Name is not null)
+            return ProviderRowState.NotChecked;
+
         // Ready only on evidence: a check done in this run that found the provider installed and
         // usable (a completed check records sign-in as signed in or unverified; both are post-check
         // states). No row, a stale row, or sign-in not yet checked in this run is still setting up.

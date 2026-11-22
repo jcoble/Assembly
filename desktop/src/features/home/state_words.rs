@@ -21,6 +21,7 @@ fn row_state(state: &str) -> Option<(&'static str, Tone)> {
     Some(match state {
         "ready" => ("Ready", Tone::Success),
         "setting_up" => ("Setting up", Tone::Info),
+        "not_checked" => ("Not checked yet", Tone::Neutral),
         "needs_sign_in" => ("Needs sign-in", Tone::Warning),
         "problem" => ("Problem", Tone::Danger),
         _ => return None,
