@@ -121,6 +121,48 @@ public sealed class ComposerConfigDiscoveryTests
     }
 
     [Fact]
+    public async Task A_second_warm_draft_starts_no_adapter_after_discovery_in_this_run()
+    {
+        using var file = new TempDatabase();
+        using var database = TestDatabase.Open(file.Path);
+        var store = SessionStore.Open(database, TimeProvider.System, "/tmp");
+        var launcher = new FakeLauncher();
+        var target = Target(launcher);
+        await using var discovery = new ComposerConfigDiscovery(launcher, TimeProvider.System, store);
+        var cold = discovery.DiscoverAsync("claude", target, "/tmp", default);
+        var link = await launcher.NextAsync();
+        await link.StartAsync(configOptions: "[]");
+        await cold.WaitAsync(Wait);
+
+        // Run any scheduled launch up to its first I/O so the count is independent of task scheduling.
+        var outer = SynchronizationContext.Current;
+        Task<ComposerCatalogue> first;
+        Task<ComposerCatalogue> second;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(new InlineLaunchContext());
+            first = discovery.DiscoverAsync("claude", target, "/tmp", default);
+            second = discovery.DiscoverAsync("claude", target, "/tmp", default);
+        }
+        finally { SynchronizationContext.SetSynchronizationContext(outer); }
+
+        await Task.WhenAll(first, second).WaitAsync(Wait);
+        Assert.Equal(1, launcher.Launches);
+    }
+
+    private sealed class InlineLaunchContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback callback, object? state)
+        {
+            var outer = Current;
+            // Only the first continuation runs inline. Adapter I/O completes on its own scheduler.
+            SetSynchronizationContext(null);
+            try { callback(state); }
+            finally { SetSynchronizationContext(outer); }
+        }
+    }
+
+    [Fact]
     public async Task Target_replaced_before_ingress_launches_nothing()
     {
         var launcher = new FakeLauncher();

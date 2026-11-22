@@ -11,7 +11,6 @@ public sealed partial class AdapterLauncher
         var context = NativeLaunchContext.Capture(descriptor, environment, "", "", cwd);
         if (context is null) return null;
         var home = context.ProviderHome;
-        var user = environment.GetValueOrDefault(OperatingSystem.IsWindows() ? "USERPROFILE" : "HOME");
         var entry = descriptor.Args.FirstOrDefault();
         using var bytes = new MemoryStream();
         using var revision = new BinaryWriter(bytes, Encoding.UTF8, leaveOpen: true);
@@ -23,17 +22,16 @@ public sealed partial class AdapterLauncher
         try
         {
             Stamp(descriptor.Command);
-            Stamp(descriptor.Cli);
+            // Resolve parent links as well as the executable link so repointing an install's current directory is visible.
+            if (descriptor.Cli is { } cli && Path.IsPathFullyQualified(cli))
+                Stamp(File.Exists(cli) ? AgentsFile.CanonicalPath(cli) : cli);
             Stamp(entry);
             if (entry is not null)
                 Stamp(Path.Combine(Path.GetDirectoryName(entry) ?? "", "..", "package.json"));
 
-            // Only stat the provider files. Credential contents never enter the cache key or database.
+            // Startup state and credentials can change during discovery itself. Only stamp settings inputs.
             var files = AccountContext.CatalogueFiles(context.VendorFamily);
-            foreach (var file in files.Profile)
-                Stamp(Path.Combine(home, file));
-            if (user is not null && files.User is not null)
-                Stamp(Path.Combine(user, files.User));
+            Stamp(Path.Combine(home, files.Profile));
             for (var folder = new DirectoryInfo(cwd); folder is not null; folder = folder.Parent)
                 foreach (var file in files.Project)
                     Stamp(Path.Combine(folder.FullName, file));

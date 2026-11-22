@@ -16,12 +16,12 @@ public static class AccountContext
         _ => null
     };
 
-    /// <summary>Provider files whose metadata can invalidate saved composer settings.</summary>
-    public static (string[] Profile, string[] Project, string? User) CatalogueFiles(string vendorFamily) => vendorFamily switch
+    /// <summary>Settings files that a read-only composer probe does not rewrite.</summary>
+    public static (string Profile, string[] Project) CatalogueFiles(string vendorFamily) => vendorFamily switch
     {
-        "claude" => (["settings.json", ".credentials.json"], [".claude/settings.json", ".claude/settings.local.json"], ".claude.json"),
-        "codex" => (["config.toml", "auth.json"], [".codex/config.toml"], null),
-        _ => ([], [], null)
+        "claude" => ("settings.json", [".claude/settings.json", ".claude/settings.local.json"]),
+        "codex" => ("config.toml", [".codex/config.toml"]),
+        _ => ("", [])
     };
 
     public static string? ExecutableVariable(string? vendorFamily) => vendorFamily switch

@@ -16,6 +16,7 @@ public sealed class ComposerConfigDiscovery(
 
     private readonly Lock _gate = new();
     private readonly Dictionary<CacheKey, Flight> _flights = new();
+    private readonly HashSet<CacheKey> _checkedThisRun = [];
     private bool _disposed;
 
     private sealed record CacheKey(string Agent, string Target, string Cwd);
@@ -49,6 +50,7 @@ public sealed class ComposerConfigDiscovery(
                 var known = revision is null ? null : LoadSaved(key, revision, ct);
                 if (!_flights.TryGetValue(key, out flight!))
                 {
+                    if (known is not null && !_checkedThisRun.Add(key)) return known;
                     flight = new Flight(revision, known is not null);
                     _flights.Add(key, flight);
                     flight.Answer = RunProbeAsync(key, flight, captured);
@@ -94,20 +96,22 @@ public sealed class ComposerConfigDiscovery(
     private async Task<ComposerCatalogue?> RunProbeAsync(CacheKey key, Flight flight,
         (AgentDescriptor Descriptor, IReadOnlyDictionary<string, string> Environment, string TargetId) captured)
     {
-        // Register the task before starting the adapter, including when the launcher completes synchronously.
+        // Yield so adapter startup can run independently of the draft that registered this flight.
         await Task.Yield();
         var ct = flight.Stop.Token;
         try
         {
             ct.ThrowIfCancellationRequested();
             var result = await ProbeAsync(captured, key.Cwd, ct);
+            var current = flight.Revision is null ? null : launcher.CatalogueRevision(captured.Descriptor, captured.Environment, key.Cwd);
             lock (_gate)
             {
                 ct.ThrowIfCancellationRequested();
                 if (flight.Revision is { } revision)
                 {
-                    var current = launcher.CatalogueRevision(captured.Descriptor, captured.Environment, key.Cwd);
                     WriteSaved(key, revision, revision == current ? result : null);
+                    // A fresh cold answer already did the work of this run's warm refresh.
+                    if (store is not null && revision == current) _checkedThisRun.Add(key);
                 }
                 return result;
             }

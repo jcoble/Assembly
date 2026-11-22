@@ -72,7 +72,7 @@ public sealed partial class SessionRegistry : IAsyncDisposable, Assembly.Applica
             account, captured.Descriptor.Id + "/" + account);
     }).ToList();
 
-    /// <summary>The composer's settings for one configuration and folder: the last known answer at once, refreshed behind it.</summary>
+    /// <summary>The composer's settings for one configuration and folder: a saved answer can return immediately, with one background refresh per backend run.</summary>
     public Task<ComposerCatalogue> DiscoverConfigAsync(string agent, string targetId, string cwd, CancellationToken ct) =>
         _discovery.DiscoverAsync(agent, targetId, cwd, ct);
 
