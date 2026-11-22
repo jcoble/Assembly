@@ -12,6 +12,41 @@ namespace Assembly.Tests.Infrastructure.Socket;
 public sealed class SessionRailSectionsSocketTests
 {
     [Fact]
+    public async Task A_manual_mark_shelves_a_failed_session_unless_the_owner_has_an_open_need()
+    {
+        await using var host = new TwoHosts.Host();
+        const string session = "failed-shelved-session";
+        host.Fixture.SeedSession(session);
+        host.Fixture.Db.Writer.Write("test.project-session", scope =>
+        {
+            host.Sessions.ProjectEngineSession(scope, new(session, "codex", "/test", "Test", null, 1), null, "/test");
+            return 0;
+        });
+        var failure = new RowBatch();
+        failure.Rows.Add(new("run", null, RowKind.Turn, JsonSerializer.SerializeToElement(new { state = "failed" }), 1));
+        RowStore.Open(host.Fixture.Db).Commit(session, failure);
+        await host.Start();
+
+        using var socket = await ApiTests.OpenOwnerSocketAsync(host.Address, "isolated-token");
+        var request = 0;
+        async Task<JsonElement> Call(string method, object args) =>
+            ApiTests.Result(await ApiTests.SocketRequestAsync(socket, ++request, "sessions", method, JsonSerializer.Serialize(args)));
+        async Task<JsonElement> SessionRow() => (await Call("rail", new { folded = new[] { "+done" } }))
+            .GetProperty("sessions").EnumerateArray().Single(row => row.GetProperty("sessionId").GetString() == session);
+
+        foreach (var state in new[] { "done", "settled" })
+        {
+            await Call("mark", new { session, state });
+            var shelved = await SessionRow();
+            Assert.Equal("done", shelved.GetProperty("section").GetString());
+            Assert.Equal("failed", shelved.GetProperty("statusKind").GetString());
+        }
+        Assert.True(host.Fixture.Apply(new OpenNeed(session, null, null, "question", "Which counter?",
+            [], null, null, null), "shelved-question", actor: new(ActorKind.System, "host")).Applied);
+        Assert.Equal("needs", (await SessionRow()).GetProperty("section").GetString());
+    }
+
+    [Fact]
     public async Task Rail_pages_owner_attention_and_lifecycle_shelves_with_permanent_handles()
     {
         await using var host = new TwoHosts.Host();

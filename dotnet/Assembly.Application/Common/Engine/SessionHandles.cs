@@ -33,37 +33,13 @@ public static class SessionHandles
 
     public static void Upgrade(IWriteScope scope, string table, string id)
     {
+        UpgradeAllocator(scope);
         var trigger = $"{table}_register_handle";
         if (scope.QueryFirst("SELECT COUNT(*) FROM sqlite_schema WHERE type='trigger' AND name=$trigger",
                 row => row.Long(0), new SqlArg("$trigger", trigger)) != 0)
             return;
 
-        // The engine and the facade can refer to the same session. They share the host's handle registry.
-        // A session ID gives the same word choice when a development fixture is seeded again.
         scope.Execute($"""
-            CREATE TABLE IF NOT EXISTS session_handle (
-              session_id TEXT PRIMARY KEY NOT NULL,
-              handle TEXT UNIQUE
-            );
-            CREATE TRIGGER IF NOT EXISTS session_handle_allocate AFTER INSERT ON session_handle BEGIN
-              UPDATE session_handle SET handle=(
-                WITH RECURSIVE hash(position, value) AS (
-                  VALUES(1, 0)
-                  UNION ALL
-                  SELECT position+1, (value*131+unicode(substr(new.session_id,position,1))) & 4095
-                  FROM hash WHERE position<=length(new.session_id)
-                ), candidate(name) AS MATERIALIZED (
-                  SELECT json_extract('{Adjectives}', '$[' || (value & 63) || ']') || '-' ||
-                         json_extract('{Nouns}', '$[' || (value >> 6) || ']')
-                  FROM hash WHERE position=length(new.session_id)+1
-                )
-                SELECT CASE
-                  WHEN NOT EXISTS (SELECT 1 FROM session_handle h WHERE h.handle=c.name)
-                    THEN c.name
-                  ELSE c.name || '-' || lower(hex(new.session_id)) END
-                FROM candidate c)
-              WHERE session_id=new.session_id;
-            END;
             INSERT INTO session_handle(session_id)
             SELECT s.{id} FROM {table} s
             WHERE NOT EXISTS (SELECT 1 FROM session_handle h WHERE h.session_id=s.{id})
@@ -72,6 +48,52 @@ public static class SessionHandles
               INSERT INTO session_handle(session_id)
               SELECT new.{id} WHERE NOT EXISTS (SELECT 1 FROM session_handle WHERE session_id=new.{id});
             END;
+            """);
+    }
+
+    private static void UpgradeAllocator(IWriteScope scope)
+    {
+        if (scope.QueryFirst("SELECT COUNT(*) FROM sqlite_schema WHERE type='trigger' AND name='session_handle_allocate_prefix'",
+                row => row.Long(0)) != 0)
+            return;
+
+        // Engine and facade rows share the host registry. The same ID picks the same pair in repeatable seeds.
+        scope.Execute($"""
+            CREATE TABLE IF NOT EXISTS session_handle (
+              session_id TEXT PRIMARY KEY NOT NULL,
+              handle TEXT UNIQUE
+            );
+            DROP TRIGGER IF EXISTS session_handle_allocate;
+            CREATE TRIGGER session_handle_allocate_prefix AFTER INSERT ON session_handle WHEN new.handle IS NULL BEGIN
+              UPDATE session_handle SET handle=(
+                WITH RECURSIVE hash(position, value) AS (
+                  VALUES(1, 0)
+                  UNION ALL
+                  SELECT position+1, (value*131+unicode(substr(new.session_id,position,1))) & 4095
+                  FROM hash WHERE position<=length(new.session_id)
+                ), pair(name) AS MATERIALIZED (
+                  SELECT json_extract('{Adjectives}', '$[' || (value & 63) || ']') || '-' ||
+                         json_extract('{Nouns}', '$[' || (value >> 6) || ']')
+                  FROM hash WHERE position=length(new.session_id)+1
+                ), candidates(prefix, name) AS (
+                  SELECT min(8, length(new.session_id))-1, name FROM pair
+                  UNION ALL
+                  SELECT c.prefix+1, pair.name || '-' || substr(new.session_id,1,c.prefix+1) ||
+                         CASE WHEN c.prefix>=length(new.session_id)
+                              THEN '-' || (c.prefix-length(new.session_id)+2) ELSE '' END
+                  FROM candidates c CROSS JOIN pair
+                  WHERE EXISTS (SELECT 1 FROM session_handle h WHERE h.handle=c.name)
+                )
+                SELECT c.name FROM candidates c
+                WHERE NOT EXISTS (SELECT 1 FROM session_handle h WHERE h.handle=c.name) LIMIT 1)
+              WHERE session_id=new.session_id;
+            END;
+
+            -- Release only the old hex suffixes before assigning replacements in a stable order.
+            UPDATE session_handle SET handle=NULL
+            WHERE handle GLOB '*-*-*' AND substr(handle,-length(hex(session_id))-1)='-' || lower(hex(session_id));
+            INSERT OR REPLACE INTO session_handle(session_id)
+            SELECT session_id FROM session_handle WHERE handle IS NULL ORDER BY session_id;
             """);
     }
 }

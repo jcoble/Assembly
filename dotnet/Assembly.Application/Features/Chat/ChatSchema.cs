@@ -205,7 +205,8 @@ internal static class Schema
         classified AS (
           SELECT s.*, n.status_kind, n.text, n.reason,
             (s.turn IS 'failed' OR s.state IS 'lost') AS failed,
-            CASE WHEN n.id IS NOT NULL OR s.turn IS 'failed' OR s.state IS 'lost' THEN 'needs'
+            CASE WHEN n.status_kind='need'
+                      OR (s.lifecycle='working' AND (n.id IS NOT NULL OR s.turn IS 'failed' OR s.state IS 'lost')) THEN 'needs'
                  WHEN $project_group=1 AND $status_group=0 AND s.lifecycle<>'working' THEN 'done'
                  WHEN $project_group=1 OR $status_group=1 THEN s.lifecycle ELSE '' END AS section
           FROM eligible s LEFT JOIN ranked_needs n ON n.session_id=s.session_id AND n.machine=s.source_machine
@@ -391,7 +392,8 @@ internal static class Schema
              AND err.kind IN ('message', 'error') AND err.kind='error' ORDER BY err.seq DESC LIMIT 1),
           NULL, NULL, CASE WHEN e.parent_id IS NULL THEN 0 ELSE 1 END, p.native_activity,
           p.kind='session' AND p.section='needs',
-          CASE WHEN p.kind<>'session' THEN NULL WHEN p.status_kind IS NOT NULL THEN p.status_kind
+          CASE WHEN p.kind<>'session' THEN NULL WHEN p.failed AND p.section<>'needs' THEN 'failed'
+               WHEN p.status_kind IS NOT NULL THEN p.status_kind
                WHEN p.failed THEN 'failed' WHEN p.child_total + json_extract(p.native_counts,'$[0]')>0 THEN 'subagents'
                WHEN m.seq IS NOT NULL THEN 'preview' END,
           substr(trim(replace(p.text,char(10),' ')),1,200), substr(p.reason,1,200),
