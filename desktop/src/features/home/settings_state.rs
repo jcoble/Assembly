@@ -82,6 +82,7 @@ pub struct RuntimeSettings {
     pub launch_arguments: Vec<String>,
 }
 
+/// One model a provider offers on a machine, as its last check reported it.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Model {

@@ -127,7 +127,11 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         if (!Updating(null)) status.Updating(null, false, null);
     }
 
-    /// <summary>Installs or updates local adapters/CLIs under the single local update slot, reloading agents on success.</summary>
+    /// <summary>
+    /// Installs or updates local adapters/CLIs under the single local update slot, reloading agents on success.
+    /// The work was selected before the wait for the slot, so it is re-checked once the slot is held:
+    /// whatever the run ahead already did is not installed a second time.
+    /// </summary>
     internal async Task<bool> UpdateLocalToolsAsync(IReadOnlyList<UpdateItem> behind, bool adaptersNewer, CancellationToken stop)
     {
         await TakeWhenFreeAsync(ThisApp, () => { }, stop);
@@ -138,7 +142,19 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         try
         {
             using var either = CancellationTokenSource.CreateLinkedTokenSource(stop, run);
-            await source.UpdateAsync([new(null, behind, adaptersNewer)], automatic: false, note => status.Updating(null, true, note), either.Token);
+            var current = await CheckLocalAsync(either.Token, fresh: false);
+            IReadOnlyList<UpdateItem> stillBehind =
+            [
+                .. behind
+                    .Select(item => current.FirstOrDefault(candidate =>
+                        candidate.Kind == item.Kind && candidate.Name == item.Name && candidate.State == UpdateItem.Behind))
+                    .OfType<UpdateItem>()
+            ];
+            if (stillBehind.Count > 0)
+            {
+                var currentAdaptersNewer = current.Any(item => item.Kind == "adapter" && item.State == UpdateItem.Newer);
+                await source.UpdateAsync([new(null, stillBehind, currentAdaptersNewer)], automatic: false, note => status.Updating(null, true, note), either.Token);
+            }
             run.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) when (run.IsCancellationRequested && !stop.IsCancellationRequested)

@@ -22,6 +22,8 @@ const SIZE: Pixels = px(26.);
 /// The slide-out's circles, a little smaller than Home.
 const CIRCLE: Pixels = px(22.);
 
+/// The top bar's round Home button: its hover slide-out, the providers panel it opens, and the
+/// summary ring and amber state it shows while the panel is closed.
 #[derive(Default)]
 pub struct HomeButton {
     /// The pointer is over Home or its slide-out, so the slide-out is showing.
@@ -67,6 +69,7 @@ impl HomeButton {
         }
     }
 
+    /// Opens the providers panel by creating it, or closes it by dropping it (which unsubscribes it).
     fn show_panel(&mut self, open: bool, cx: &mut Context<Self>) {
         match (open, self.panel.is_some()) {
             (true, false) => self.panel = Some(cx.new(HomePanel::new)),

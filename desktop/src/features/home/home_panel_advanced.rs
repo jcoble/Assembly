@@ -372,9 +372,10 @@ impl HomePanel {
             let Some(client) = SocketClient::try_global(cx) else {
                 return;
             };
-            let call = client
-                .read(cx)
-                .call::<serde_json::Value>("updates", "start", json!({}), None);
+            let call =
+                client
+                    .read(cx)
+                    .call::<serde_json::Value>("updates", "start", json!({}), None);
             self.calls.push(cx.spawn(async move |_, _| {
                 _ = call.await;
             }));

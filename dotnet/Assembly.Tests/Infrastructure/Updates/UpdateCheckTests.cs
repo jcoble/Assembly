@@ -9,7 +9,7 @@ using Assembly.Infrastructure.Updates;
 
 namespace Assembly.Tests.Infrastructure.Updates;
 
-public sealed class UpdateCheckTests
+public sealed partial class UpdateCheckTests
 {
     private static readonly RemoteBackend Same = new("a", "a", false, "1.0.0", "1.0.0");
     private static UpdateWanted Dev(string? adapter = "2.0.0", string? cli = "3.0.0") => new(null, "1.0.0",
@@ -164,6 +164,7 @@ public sealed class UpdateCheckTests
         Assert.Contains(status.Items[1].Updates!, item => item.Kind == "backend");
         Assert.Contains(status.Items[0].Updates!, item => item.Kind == "desktop");
     }
+
 
     [Fact]
     public async Task A_failed_update_says_why_and_a_new_one_can_start()
