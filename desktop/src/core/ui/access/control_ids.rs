@@ -89,6 +89,7 @@ ids! {
     }
     changes {
         REFRESH = "changes.refresh",
+        FILTER = "changes.filter",
     }
     commits {
         REFRESH = "commits.refresh",
