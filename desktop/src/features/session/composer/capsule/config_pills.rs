@@ -6,9 +6,11 @@
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::CORNER_PILL;
 use crate::core::ui::spinner::Spinner;
 use gpui_kit::assets::IconName as Glyph;
-use gpui_kit::component::button::{Button, ButtonRounded, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -18,7 +20,10 @@ use super::config_labels::{
 };
 use crate::features::session::composer::agent_config::ConfigOption;
 
-const CHIP_HEIGHT: Pixels = px(28.);
+/// A picker's height and sides, the look's `.pill`.
+const PICKER_HEIGHT: Pixels = px(30.);
+const PICKER_PADDING_LEFT: Pixels = px(11.);
+const PICKER_PADDING_RIGHT: Pixels = px(9.);
 
 pub type OnSelect = Rc<dyn Fn(&str, &str, &mut Window, &mut App)>;
 
@@ -53,12 +58,13 @@ impl RenderOnce for ConfigPills {
                 self.provider,
                 self.on_select,
                 self.disabled,
+                cx,
             ));
         }
         let approval = grouped.approval.clone().map(|(option, current)| {
             let (provider, on_select) = (self.provider.clone(), self.on_select.clone());
             let label = approval_label(Some(&option), shown(&option, &current));
-            chip("composer:approval")
+            chip("composer:approval", cx)
                 .icon(Icon::new(Glyph::ShieldCheck).size(px(14.)))
                 .label(label)
                 .disabled(self.disabled || self.saving)
@@ -72,7 +78,7 @@ impl RenderOnce for ConfigPills {
         let empty =
             grouped.model.is_none() && grouped.effort.is_none() && grouped.others.is_empty();
         let model = (!empty).then(|| {
-            chip("composer:model")
+            chip("composer:model", cx)
                 .label(label)
                 .disabled(self.disabled)
                 .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, cx| {
@@ -182,8 +188,9 @@ fn compact(
     provider: SharedString,
     on_select: OnSelect,
     disabled: bool,
+    cx: &App,
 ) -> impl IntoElement {
-    chip("composer:controls")
+    chip("composer:controls", cx)
         .icon(Icon::new(Glyph::Ellipsis).size(px(16.)))
         .accessibility_label("More composer controls")
         .disabled(disabled)
@@ -219,12 +226,20 @@ fn compact(
         })
 }
 
-fn chip(id: &'static str) -> Button {
+/// A picker, the look's `.pill`: 30 high, the picker fill under its outline, in text-2, with the kit's caret.
+fn chip(id: &'static str, cx: &App) -> Button {
+    let look = Look::of(cx);
     Button::new(id)
         .ghost()
         .small()
-        .h(CHIP_HEIGHT)
-        .rounded(ButtonRounded::Size(px(999.)))
+        .h(PICKER_HEIGHT)
+        .pl(PICKER_PADDING_LEFT)
+        .pr(PICKER_PADDING_RIGHT)
+        .rounded(CORNER_PILL)
+        .bg(look.picker_pill)
+        .border_1()
+        .border_color(look.picker_pill_border)
+        .text_color(look.text_2)
         .dropdown_caret(true)
 }
 

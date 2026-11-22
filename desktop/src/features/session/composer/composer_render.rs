@@ -25,8 +25,8 @@ use crate::features::session::composer::attachment_card::AttachmentCard;
 use crate::features::session::composer::shape::{Facts, hint, look};
 use crate::features::session::composer::slash_list::SlashList;
 
-/// The box is 820 wide at most, with 22 on either side of it in a narrower pane.
-const COLUMN: Pixels = px(864.);
+/// The box is the look's 724 wide at most (metrics::COMPOSER_WIDTH), with 22 on either side of it in a narrower pane.
+const COLUMN: Pixels = px(768.);
 const GUTTER: Pixels = px(22.);
 /// Three lines of room once the box is open, so opening is visible.
 const OPEN_DRAFT: Pixels = px(63.);
@@ -237,10 +237,8 @@ impl Render for Composer {
             .px_1()
             .text_role(TextRole::Meta, cx)
             .text_color(theme.muted_foreground.opacity(0.78))
-            .child("Paste or drop images · type / for commands")
-            .when_some(self.meter.as_ref(), |line, meter| {
-                line.child("·").child(format!("{}% left", meter.left))
-            });
+            // What's left of the context window shows beside its ring (context_gauge.rs), not here.
+            .child("Paste or drop images · type / for commands");
         let column = v_flex()
             .relative()
             .w_full()
