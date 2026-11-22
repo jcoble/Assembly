@@ -88,8 +88,8 @@ pub const KEY_VALUE_HEIGHT: Pixels = px(40.);
 pub const KEY_COLUMN_WIDTH: Pixels = px(108.);
 /// A connection row.
 pub const CONNECTION_ROW_HEIGHT: Pixels = px(56.);
-/// A file row.
-pub const FILE_ROW_HEIGHT: Pixels = px(32.);
+/// A file row in source control: as dense as the old app's 28 px list rows, and still a comfortable target.
+pub const FILE_ROW_HEIGHT: Pixels = px(28.);
 /// A count badge's height and narrowest width, as Board's count.
 pub const COUNT_HEIGHT: Pixels = px(20.);
 pub const COUNT_MIN_WIDTH: Pixels = px(22.);

@@ -6,7 +6,7 @@ use super::super::section_heading::{CHIP_HEIGHT, heading_label};
 use super::{CommitFiles, CommitTimeline};
 use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_file::OpenFile};
 use crate::core::theme::look::Look;
-use crate::core::theme::metrics::{CORNER_FIELD, GROUP_HEIGHT, SPACE, TINT};
+use crate::core::theme::metrics::{CORNER_FIELD, FILE_ROW_HEIGHT, GROUP_HEIGHT, SPACE, TINT};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids as ids;
@@ -22,8 +22,8 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-/// The look's 11 between a commit's mark and its words.
-const ROW_GAP: Pixels = px(11.);
+/// The gap between a commit's mark and its words, the old app's 8.
+const ROW_GAP: Pixels = SPACE[3];
 const CURRENT_FILE_ELSEWHERE: &str = "Switch back to the session folder to open it.";
 const MERGE_HAS_NO_CHANGES: &str = "This is a merge, and a merge brings no changes of its own. Open the commits it brought in to see the work.";
 /// What an open commit says instead of a file list; every case ends in words.
@@ -227,8 +227,9 @@ impl CommitTimeline {
         let view = cx.entity().downgrade();
         // The look's `.crow`: the chevron, then the subject in text-1 after any ref pills, and the byline under it in
         // text-3.
+        // Two lines with only 2 above and below, so the list is about as dense as the old app's.
         let row = ListItem::new(SharedString::from(format!("commit:{}", commit.sha)))
-            .py(SPACE[2])
+            .py(SPACE[0])
             .px(SPACE[2])
             .rounded(CORNER_FIELD)
             .text_role(TextRole::Body, cx)
@@ -375,6 +376,9 @@ impl CommitTimeline {
                         file.path
                     )))
                     .selected(chosen)
+                    // The same height as a changed file's row above, so both lists read alike.
+                    .py_0()
+                    .h(FILE_ROW_HEIGHT)
                     .text_role(TextRole::Body, cx)
                     .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
                     .on_click(cx.listener(move |timeline, _, window, cx| {
