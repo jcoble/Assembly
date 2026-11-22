@@ -69,6 +69,7 @@ pub(super) fn tabs(dock: Entity<DockArea>, window: &mut Window, cx: &mut App) ->
         .position(|tab| tab.shown && tab.panel.focus_handle(cx).contains_focused(window, cx))
         .or_else(|| tabs.iter().position(|tab| tab.shown))
         .unwrap_or(0);
+    let strip = revealing(&tabs, selected, window, cx);
     let chips = tabs
         .into_iter()
         .map(|tab| tab_of(tab, &dock, window, cx))
@@ -80,10 +81,37 @@ pub(super) fn tabs(dock: Entity<DockArea>, window: &mut Window, cx: &mut App) ->
         .bg(cx.theme().transparent)
         .max_width(TAB_MAX_WIDTH)
         .selected_index(selected)
+        // Scrolled by the handle that keeps the open tab in view, with the kit's menu of every tab for those
+        // scrolled out of sight.
+        .track_scroll(&strip)
+        .menu(true)
         .children(chips)
         // Sized to its tabs, and shrinking (the kit then scrolls it) when the bar runs out of room.
         .min_w_0()
         .into_any_element()
+}
+
+/// The strip's scroll handle, kept across frames. When another tab becomes the open one (opened, picked from the
+/// menu, or chosen anywhere but a click on its chip), it scrolls that tab into view; the kit itself only does so for a
+/// click.
+fn revealing(
+    tabs: &[ContentTab],
+    selected: usize,
+    window: &mut Window,
+    cx: &mut App,
+) -> ScrollHandle {
+    let strip = window
+        .use_keyed_state("chrome-content-tabs-scroll", cx, |_, _| ScrollHandle::new())
+        .read(cx)
+        .clone();
+    // Which pane was last brought into view, by its id, so a tab added or closed before it doesn't count as a change.
+    let shown = window.use_keyed_state("chrome-content-tabs-shown", cx, |_, _| None);
+    let open = tabs.get(selected).map(|tab| tab.panel.panel_id(cx));
+    if *shown.read(cx) != open {
+        shown.update(cx, |shown, _| *shown = open);
+        strip.scroll_to_item(selected);
+    }
+    strip
 }
 
 /// One tab: a click shows its pane, its x closes it through the kit's close path, a drag carries it to another
