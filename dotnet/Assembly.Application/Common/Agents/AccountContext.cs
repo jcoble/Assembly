@@ -4,6 +4,16 @@ using Assembly.Application.Common.Calls;
 
 namespace Assembly.Application.Common.Agents;
 
+/// <summary>Which provider configuration format supplies an effective auto-compact context limit.</summary>
+public enum ContextLimitSource
+{
+    None,
+    /// <summary>JSON settings (<c>settings.json</c> / <c>settings.local.json</c>) with <c>autoCompactWindow</c> and non-widening effective window.</summary>
+    JsonAutoCompactWindow,
+    /// <summary>TOML/JSON config (<c>config.toml</c> / <c>CODEX_CONFIG</c>) with <c>model_auto_compact_token_limit</c>.</summary>
+    TomlAutoCompactLimit,
+}
+
 public static class AccountContext
 {
     private const string Prefix = "acct-v1:";
@@ -15,6 +25,27 @@ public static class AccountContext
         "claude" => "CLAUDE_CONFIG_DIR",
         _ => null
     };
+
+    public static ContextLimitSource ContextLimitKind(string? vendorFamily) => vendorFamily switch
+    {
+        "claude" => ContextLimitSource.JsonAutoCompactWindow,
+        "codex" => ContextLimitSource.TomlAutoCompactLimit,
+        _ => ContextLimitSource.None,
+    };
+
+    public static string? ConfigHome(string? vendorFamily, IReadOnlyDictionary<string, string> environment)
+    {
+        var variable = ConfigHomeVariable(vendorFamily);
+        if (variable is null) return null;
+        var home = environment.GetValueOrDefault(variable);
+        if (string.IsNullOrEmpty(home))
+        {
+            var user = environment.GetValueOrDefault(OperatingSystem.IsWindows() ? "USERPROFILE" : "HOME");
+            if (string.IsNullOrEmpty(user) || !Path.IsPathFullyQualified(user)) return null;
+            home = Path.Combine(user, DefaultHomeFolder(vendorFamily));
+        }
+        return Path.IsPathFullyQualified(home) ? Path.GetFullPath(home) : null;
+    }
 
     public static string? ExecutableVariable(string? vendorFamily) => vendorFamily switch
     {

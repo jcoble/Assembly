@@ -17,7 +17,7 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// clean close. <c>Titled</c> is set when this open gave the session its first title, from the turn's message.
 /// </summary>
 internal sealed record OpenSession(SharedAdapter Pool, RunningAdapter Adapter, string AcpSessionId, bool Resumed, decimal? SavedCost, string? Model = null,
-    bool Titled = false, string? Folder = null);
+    bool Titled = false, string? Folder = null, ContextLimitPolicy? ContextLimit = null);
 
 /// <summary>
 /// Opens a session's ACP session on its agent's shared adapter, in the session's checkout: its earlier session,
@@ -68,12 +68,14 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             validate?.Invoke();
             if (!configWarm) mcp?.ValidateOpen(sessionId, observation);
         }
+        var contextLimit = EffectiveContextLimit.Resolve(captured.Descriptor, captured.Environment, folder, launcher.ReadConfigFile);
         string? acceptedNativeId = session.AcpSessionId;
         try
         {
             return await OpenOnAsync(adapter, running, session, folder, firstText, stages, cancellationToken, observation, authAttempt,
                 config, location, configWarm, pendingInitial, pick, Validate, id => acceptedNativeId = id,
-                id => NativeLaunchContext.Capture(captured.Descriptor, captured.Environment, captured.TargetId, id, folder));
+                id => NativeLaunchContext.Capture(captured.Descriptor, captured.Environment, captured.TargetId, id, folder),
+                contextLimit);
         }
         catch (Exception error)
         {
@@ -118,7 +120,8 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         SharedAdapter adapter, RunningAdapter running, SessionInfo session, string folder, string firstText, StageTimes stages,
         CancellationToken cancellationToken, SessionObservation? observation, AuthOpenAttempt? authAttempt,
         SessionConfig config, SessionLocation location, bool configWarm, bool pendingInitial,
-        KeyValuePair<string, string>? pick, Action validate, Action<string> nativeAccepted, Func<string, NativeSessionLaunch?> nativeLaunch)
+        KeyValuePair<string, string>? pick, Action validate, Action<string> nativeAccepted, Func<string, NativeSessionLaunch?> nativeLaunch,
+        ContextLimitPolicy? contextLimit)
     {
         var sessionId = session.SessionId;
         var detached = configWarm || pendingInitial;
@@ -136,7 +139,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
                 var model = await ApplyChoicesAsync(running, session, config, location, previous, resumed.ConfigOptions,
                     resumed.AvailableCommands, stages, cancellationToken, pendingInitial, pick, validate, saveAgentOptions: false, nativeLaunch(previous));
                 if (!configWarm) mcp?.ValidateOpen(sessionId, observation);
-                return new OpenSession(adapter, running, previous, Resumed: true, session.SessionCost, model, Folder: folder);
+                return new OpenSession(adapter, running, previous, Resumed: true, session.SessionCost, model, Folder: folder, ContextLimit: contextLimit);
             }
             catch (JsonRpcException error) when (resumed is null && error.Code == -32000)
             {
@@ -181,7 +184,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             if (title is not null)
                 sessionStore.SetTitle(sessionId, title, "prompt");
             if (!configWarm) mcp?.ValidateOpen(sessionId, observation);
-            return new OpenSession(adapter, running, acp.SessionId, Resumed: false, SavedCost: null, chosen, Titled: title is not null, Folder: folder);
+            return new OpenSession(adapter, running, acp.SessionId, Resumed: false, SavedCost: null, chosen, Titled: title is not null, Folder: folder, ContextLimit: contextLimit);
         }
         catch (Exception)
         {

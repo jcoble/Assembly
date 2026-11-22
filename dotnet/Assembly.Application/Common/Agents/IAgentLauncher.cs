@@ -22,4 +22,7 @@ public interface IAgentLauncher
 
     Task<IAgentLink> LaunchSignInAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
         IPermissionPolicy policy, StageTimes stages, CancellationToken cancellationToken);
+
+    /// <summary>Reads a provider configuration file when it exists, or returns null when missing or unreadable.</summary>
+    string? ReadConfigFile(string path) => null;
 }

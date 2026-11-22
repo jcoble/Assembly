@@ -35,6 +35,12 @@ public sealed partial class AdapterLauncher(IReadOnlyList<AgentDescriptor> agent
             throw new CallFailed(File.Exists(folder) ? $"This session's folder isn't a folder: {folder}" : $"This session's folder no longer exists: {folder}");
     }
 
+    public string? ReadConfigFile(string path)
+    {
+        try { return File.Exists(path) ? File.ReadAllText(path) : null; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+    }
+
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken)
     {
         var captured = ConfigTargetIdentity.Capture(this, agentId);
