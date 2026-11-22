@@ -6,9 +6,9 @@
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 
+use crate::components::picker_pill::picker_pill;
 use crate::core::ui::spinner::Spinner;
 use gpui_kit::assets::IconName as Glyph;
-use gpui_kit::component::button::{Button, ButtonRounded, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -17,8 +17,6 @@ use super::config_labels::{
     approval_description, approval_label, effort_label, model_effort_label, model_label,
 };
 use crate::features::session::composer::agent_config::ConfigOption;
-
-const CHIP_HEIGHT: Pixels = px(28.);
 
 pub type OnSelect = Rc<dyn Fn(&str, &str, &mut Window, &mut App)>;
 
@@ -53,12 +51,13 @@ impl RenderOnce for ConfigPills {
                 self.provider,
                 self.on_select,
                 self.disabled,
+                cx,
             ));
         }
         let approval = grouped.approval.clone().map(|(option, current)| {
             let (provider, on_select) = (self.provider.clone(), self.on_select.clone());
             let label = approval_label(Some(&option), shown(&option, &current));
-            chip("composer:approval")
+            picker_pill("composer:approval", cx)
                 .icon(Icon::new(Glyph::ShieldCheck).size(px(14.)))
                 .label(label)
                 .disabled(self.disabled || self.saving)
@@ -72,7 +71,7 @@ impl RenderOnce for ConfigPills {
         let empty =
             grouped.model.is_none() && grouped.effort.is_none() && grouped.others.is_empty();
         let model = (!empty).then(|| {
-            chip("composer:model")
+            picker_pill("composer:model", cx)
                 .label(label)
                 .disabled(self.disabled)
                 .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, cx| {
@@ -182,8 +181,9 @@ fn compact(
     provider: SharedString,
     on_select: OnSelect,
     disabled: bool,
+    cx: &App,
 ) -> impl IntoElement {
-    chip("composer:controls")
+    picker_pill("composer:controls", cx)
         .icon(Icon::new(Glyph::Ellipsis).size(px(16.)))
         .accessibility_label("More composer controls")
         .disabled(disabled)
@@ -217,15 +217,6 @@ fn compact(
             }
             menu
         })
-}
-
-fn chip(id: &'static str) -> Button {
-    Button::new(id)
-        .ghost()
-        .small()
-        .h(CHIP_HEIGHT)
-        .rounded(ButtonRounded::Size(px(999.)))
-        .dropdown_caret(true)
 }
 
 /// The value to read back: the one offered now, or what the agent reported even if it no longer offers it.

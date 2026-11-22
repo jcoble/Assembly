@@ -1,27 +1,24 @@
-//! The drawer's tool capsule, overflow menu and close button, as RightPanelTabs.svelte drew them: the permanent tools,
-//! then the one overflow tool last picked, which the next pick replaces. Only the close button shuts the drawer. The dock
+//! The drawer's tool capsule (icon segments on the kit's button group, components/icon_segments.rs), overflow menu and close button,
+//! as RightPanelTabs.svelte arranged them: the permanent tools, then the one overflow tool last picked, which the next
+//! pick replaces. Only the close button shuts the drawer. The dock
 //! remains the authority for the shown pane and its saved layout.
 
+use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::{drawer as ids, drawer_pane, topbar};
-use crate::core::ui::access::{Control as _, ExposedElement as _};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{DockArea, DockPlacement, PaneRef, PanelId};
+use gpui_kit::component::h_flex;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::default_layout::{
     AGENTS, CONTEXT, FILES, HISTORY, RUN, SOURCE_CONTROL, TASKS, WORKTREES,
 };
 use super::terminal_toggle::menu_item;
-
-const PILL_W: Pixels = px(28.);
-const PILL_H: Pixels = px(24.);
-const CONTROL: Pixels = px(28.);
-const GLYPH: Pixels = px(14.);
+use crate::components::glass_button::glass_icon_button;
+use crate::components::icon_segments::{icon_segments, segment};
+use crate::components::quiet_button::quiet_icon_button;
+use crate::core::theme::metrics::DRAWER_HEADER_HEIGHT;
 
 /// The overflow tool in the capsule. Memory only, as the old app kept it: after a relaunch it follows the shown pane.
 #[derive(Default)]
@@ -78,42 +75,24 @@ impl RenderOnce for DrawerButtons {
         if extra != last {
             cx.set_global(LastExtra(extra));
         }
-        let theme = cx.theme();
-        let (lit, color, foreground, capsule) = (
-            theme.secondary_hover,
-            theme.muted_foreground,
-            theme.foreground,
-            theme.secondary,
-        );
-        let button = |name: &'static str, tree_id: String, glyph: IconName, on: bool| {
-            div()
-                .id(name)
-                .selected_in_tree(Role::Button, tree_id, name, on)
-                .debug_selector(move || format!("drawer-button-{name}"))
-                .w(PILL_W)
-                .h(PILL_H)
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .text_color(color)
-                .cursor_pointer()
-                .when(on, |button| button.bg(lit).text_color(foreground))
-                .hover(|button| button.bg(lit))
-                .tooltip(move |window, cx| Tooltip::new(name).build(window, cx))
-                .child(Icon::new(glyph).size(GLYPH))
-        };
         let overflow: Vec<_> = panes
             .iter()
             .copied()
             .filter(|(_, name, _)| !primary(name))
             .collect();
-        let panes = panes
+        // The capsule's panes: the permanent tools, then the one overflow tool kept. While the drawer is open, the
+        // shown one is the bar's selected segment.
+        let panes: Vec<_> = panes
             .into_iter()
             .filter(|(_, name, _)| primary(name) || extra == Some(*name))
-            .map(|(id, name, shown)| {
-                let dock = self.dock.clone();
-                button(name, drawer_pane(name), icon(name), open && shown).on_click(move |_, window, cx| {
+            .collect();
+        let tabs = panes.into_iter().map(|(id, name, shown)| {
+            let dock = self.dock.clone();
+            segment(SharedString::from(format!("drawer-pane-{name}")), icon(name), open && shown, cx)
+                .control(drawer_pane(name), name)
+                .debug_selector(move || format!("drawer-button-{name}"))
+                .tooltip(name)
+                .on_click(move |_, window, cx| {
                     cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
                     dock.update(cx, |dock, cx| match press(open) {
                         Press::Open => {
@@ -123,14 +102,11 @@ impl RenderOnce for DrawerButtons {
                         Press::Show => dock.select_panel(id, window, cx),
                     })
                 })
-            });
+        });
+        let capsule = icon_segments("drawer-panes", cx).children(tabs);
         let dock = self.dock.clone();
-        let menu = Button::new("drawer-overflow")
+        let menu = quiet_icon_button("drawer-overflow", IconName::Ellipsis, cx)
             .control(ids::MORE_PANELS, "More panels")
-            .ghost()
-            .icon(Icon::new(IconName::Ellipsis).size(GLYPH))
-            .w(CONTROL)
-            .h(CONTROL)
             .tooltip("More panels")
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, cx| {
                 let menu =
@@ -152,25 +128,20 @@ impl RenderOnce for DrawerButtons {
                 menu.separator().item(menu_item(dock.clone(), cx))
             });
         let dock = self.dock.clone();
-        let close = button("Close side panel", ids::CLOSE.into(), IconName::X, false).w(CONTROL).h(CONTROL).rounded_md().on_click(move |_, window, cx| {
-                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
-            dock.update(cx, |dock, cx| {
-                dock.toggle_dock(DockPlacement::Right, window, cx)
-            })
-        });
+        let close = quiet_icon_button("drawer-close", IconName::X, cx)
+            .control(ids::CLOSE, "Close side panel")
+            .tooltip("Close side panel")
+            .on_click(move |_, window, cx| {
+                cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
+                dock.update(cx, |dock, cx| {
+                    dock.toggle_dock(DockPlacement::Right, window, cx)
+                })
+            });
         h_flex()
-            .h(px(44.))
+            .h(DRAWER_HEADER_HEIGHT)
             .px_2()
             .gap_1()
-            .child(
-                h_flex()
-                    .flex_none()
-                    .p(px(3.))
-                    .gap(px(2.))
-                    .rounded_full()
-                    .bg(capsule)
-                    .children(panes),
-            )
+            .child(capsule)
             .child(div().flex_1())
             .child(
                 div()
@@ -185,42 +156,25 @@ fn primary(name: &str) -> bool {
     matches!(name, SOURCE_CONTROL | AGENTS | TASKS)
 }
 
-/// The chrome keeps a single, discoverable control while the drawer is closed.
+/// The chrome keeps a single, discoverable control while the drawer is closed: a glass icon button, picked while the
+/// drawer is open.
 pub fn toggle(dock: Entity<DockArea>, cx: &App) -> impl IntoElement {
     let open = dock.read(cx).is_dock_open(DockPlacement::Right);
-    let theme = cx.theme();
-    div()
-        .id("drawer-toggle")
-        .selected_in_tree(
-            Role::Button,
-            topbar::DRAWER_TOGGLE,
-            "Toggle tools drawer",
-            open,
-        )
-        .debug_selector(|| "drawer-toggle".into())
-        .size(px(30.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_full()
-        .text_color(theme.muted_foreground)
-        .when(open, |button| {
-            button
-                .bg(theme.secondary_hover)
-                .text_color(theme.foreground)
-        })
-        .hover(|button| button.bg(theme.secondary_hover))
-        .cursor_pointer()
-        .tooltip(|window, cx| Tooltip::new("Toggle tools drawer").build(window, cx))
-        .child(Icon::new(IconName::PanelRight).size(px(17.)))
-        .on_click(move |_, window, cx| {
-            cx.defer(
-                crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed,
-            );
-            dock.update(cx, |dock, cx| {
-                dock.toggle_dock(DockPlacement::Right, window, cx)
-            })
-        })
+    div().debug_selector(|| "drawer-toggle".into()).child(
+        glass_icon_button("drawer-toggle", IconName::PanelRight, open, cx)
+            .control(topbar::DRAWER_TOGGLE, "Toggle tools drawer")
+            // A toggle in the tree: whether the drawer is open.
+            .toggled(open)
+            .tooltip("Toggle tools drawer")
+            .on_click(move |_, window, cx| {
+                cx.defer(
+                    crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed,
+                );
+                dock.update(cx, |dock, cx| {
+                    dock.toggle_dock(DockPlacement::Right, window, cx)
+                })
+            }),
+    )
 }
 
 /// The old app's icon for each drawer pane; a pane it didn't have gets a dot.

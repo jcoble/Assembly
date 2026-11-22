@@ -4,7 +4,9 @@ using System.Globalization;
 namespace Assembly.DevSeed;
 
 public sealed record SeedCommit(string Message, double DaysAgo, IReadOnlyDictionary<string, string> Files);
-public sealed record SeedBranch(string Name, bool Worktree, IReadOnlyList<SeedCommit> Commits, IReadOnlyDictionary<string, string>? Dirty = null);
+/// <param name="Staged">Files written and staged in the branch's own checkout; <c>Dirty</c> ones are written after and left unstaged.</param>
+public sealed record SeedBranch(string Name, bool Worktree, IReadOnlyList<SeedCommit> Commits, IReadOnlyDictionary<string, string>? Dirty = null,
+    IReadOnlyDictionary<string, string>? Staged = null);
 public sealed record SeedRepo(string Key, string Title, IReadOnlyList<SeedCommit> Commits, IReadOnlyList<SeedBranch> Branches,
     IReadOnlyDictionary<string, string> Staged, IReadOnlyDictionary<string, string> Modified, bool Origin = false);
 
@@ -33,6 +35,11 @@ public static class SeedRepos
                 else Git(world, root, null, "switch", "-q", branch.Name);
                 foreach (var commit in branch.Commits) Commit(world, folder, commit);
                 if (!branch.Worktree) Git(world, root, null, "switch", "-q", "main");
+                if (branch.Staged is { Count: > 0 } staged)
+                {
+                    Files(folder, staged);
+                    Git(world, folder, null, ["add", "--", .. staged.Keys]);
+                }
                 if (branch.Dirty is { } dirty) Files(folder, dirty);
             }
             if (repo.Origin)

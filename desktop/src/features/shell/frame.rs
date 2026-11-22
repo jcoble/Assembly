@@ -1,7 +1,8 @@
 //! `Frame` owns the window's root view: the title row and the DockArea (drawn by MotionSkin over the kit's DockSkin,
-//! which is what emits a layout change when a dock edge drag ends) on the window's ground, and the one rounded work
-//! panel behind the center, the drawer and the bottom dock. The utility strip sits at the foot of the sessions column
-//! (MotionSkin). Replaces ShellFrame.svelte and the `next-shell` markup in routes/+page.svelte (lines 817-958).
+//! which is what emits a layout change when a dock edge drag ends) on the window's glass, and the chat sheet: the
+//! rounded tile behind the centre and the bottom dock. The sessions column and the drawer are tiles of their own
+//! (MotionSkin), 8 apart from the sheet and from the window's edges, with the utility strip at the sessions
+//! column's foot. Replaces ShellFrame.svelte and the `next-shell` markup in routes/+page.svelte (lines 817-958).
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::cell::Cell;
@@ -19,17 +20,15 @@ use super::motion_skin::MotionSkin;
 use super::top_bar::TopBar;
 use super::utility_strip::UtilityStrip;
 use crate::core::native_views::views::NativeViews;
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{CORNER_TILE, TILE_GAP};
 use crate::core::ui::center_panes::CenterPanes;
 use crate::features::workspaces::workspace_coordinator::{
     WorkspaceActivated, WorkspaceCoordinator, WorkspaceSaved,
 };
 
-/// The work panel's distance from the window's edges (the design system's `panel-gap`).
-const PANEL_GAP: Pixels = px(8.);
-/// The window's ground, darker than the work panel (the approved mock's `.win`, #0e0e0f).
-const GROUND: u32 = 0x0e0e0f;
-/// The work panel's corners (the approved mock's `.panel`).
-const PANEL_RADIUS: Pixels = px(14.);
+/// The tiles' distance from the window's edges; the glass shows in it.
+const PANEL_GAP: Pixels = TILE_GAP;
 /// How narrow and how wide the sessions column and the drawer can be dragged (the approved look's layout). The kit
 /// has no per-dock limits, so Frame holds them.
 const LIMITS: [(DockPlacement, Pixels, Pixels); 2] = [
@@ -76,7 +75,7 @@ impl Frame {
         CenterPanes::init(&dock, cx);
         let top_bar = cx.new(|cx| TopBar::new(dock.clone(), cx));
         // Any dock change (a layout change, zoom, a live edge drag, a resize) moves panes, so the terminal and
-        // browser views are placed afresh, and the work panel follows the sessions column's edge.
+        // browser views are placed afresh, and the sheet follows the side columns' edges.
         let docked = cx.observe_in(&dock, window, |_, _, window, cx| {
             NativeViews::layout_changed(window, cx);
             cx.notify();
@@ -160,28 +159,34 @@ fn hold_to_limits(dock: &mut DockArea, window: &mut Window, cx: &mut Context<Doc
 impl Render for Frame {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dock = self.dock.read(cx);
-        // A zoomed pane fills the area without the sessions column, so the panel starts at the window's edge then too.
-        let sessions = (!dock.is_zoomed() && dock.is_dock_open(DockPlacement::Left))
-            .then(|| dock.dock_size(DockPlacement::Left))
-            .flatten();
+        // A zoomed pane fills the area without the side docks, so the sheet reaches the window's edges then too.
+        let side = |placement| {
+            (!dock.is_zoomed() && dock.is_dock_open(placement))
+                .then(|| dock.dock_size(placement))
+                .flatten()
+        };
+        let (sessions, drawer) = (side(DockPlacement::Left), side(DockPlacement::Right));
         self.bottom_shut
             .set(!dock.is_dock_open(DockPlacement::Bottom));
         let status =
             WorkspaceCoordinator::try_global(cx).and_then(|view| view.read(cx).status.clone());
         let theme = cx.theme();
-        // The panel's box: from the sessions column's edge to `PANEL_GAP` short of the window's.
+        let look = Look::of(cx);
+        // The sheet's box: from the sessions column's edge to the drawer's, or `PANEL_GAP` short of the window's
+        // edge where a column is shut. The drawer's own gap to the sheet is inside its dock (MotionSkin).
         let panel = || {
             div()
                 .absolute()
                 .top_0()
                 .left(sessions.unwrap_or(PANEL_GAP))
-                .right(PANEL_GAP)
+                .right(PANEL_GAP + drawer.unwrap_or_default())
                 .bottom(PANEL_GAP)
-                .rounded(PANEL_RADIUS)
+                .rounded(CORNER_TILE)
         };
+        // The window's ground is the glass: the macOS blur shows through it (theme::set makes the window blurred).
         v_flex()
             .size_full()
-            .bg(rgb(GROUND))
+            .bg(look.glass)
             .child(self.top_bar.clone())
             .children(status.map(|text| {
                 div()
@@ -196,7 +201,7 @@ impl Render for Frame {
                     .flex_1()
                     .min_h_0()
                     .relative()
-                    .child(panel().bg(theme.background))
+                    .child(panel().bg(look.tile))
                     .child(
                         div()
                             .size_full()
@@ -205,9 +210,8 @@ impl Render for Frame {
                             .when(sessions.is_none(), |area| area.pl(PANEL_GAP))
                             .child(self.dock.clone()),
                     )
-                    // The ring goes over the panes, so a tab bar or a pane with its own fill doesn't hide it.
-                    // The mock's faint edge (#1d1d1f on the dark theme): the theme's border at under half strength.
-                    .child(panel().border_1().border_color(theme.border.opacity(0.45))),
+                    // The tile's edge goes over the panes, so a tab bar or a pane with its own fill doesn't hide it.
+                    .child(panel().border_1().border_color(look.tile_edge)),
             )
     }
 }

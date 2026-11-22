@@ -64,7 +64,11 @@ public static partial class SeedScenario
         new("fix/webhook-signature", true, [Commit("Check signatures in constant time", 0.5, ("src/signature.ts", "import { timingSafeEqual } from 'node:crypto';\n\nexport const same = (a: Buffer, b: Buffer) => a.length === b.length && timingSafeEqual(a, b);\n"))],
             Files(("src/signature.ts", "import { timingSafeEqual } from 'node:crypto';\n\n// TODO: accept the previous key during rotation\nexport const same = (a: Buffer, b: Buffer) => a.length === b.length && timingSafeEqual(a, b);\n"))),
         new("feature/rate-limit", true, [Commit("Limit requests per tenant", 0.2, ("src/limiter.ts", Limiter + "\n"))],
-            Files(("test/limiter.test.ts", "import { TenantLimiter } from '../src/limiter';\n\ntest('stops at the limit', () => {\n  const limiter = new TenantLimiter();\n  expect(limiter.allow('a', 0)).toBe(false);\n});\n"))),
+            Files(("test/limiter.test.ts", "import { TenantLimiter } from '../src/limiter';\n\ntest('stops at the limit', () => {\n  const limiter = new TenantLimiter();\n  expect(limiter.allow('a', 0)).toBe(false);\n});\n"),
+                ("src/limiter.ts", Limiter.Replace("  allow(", "  reset(): void {\n    this.counts.clear();\n  }\n  allow(", StringComparison.Ordinal) + "\n"),
+                ("README.md", "# Harbor API\n\nReceives partner webhooks and queues deliveries.\n\n## Rate limits\n\nEach tenant gets its plan's limit per window; past it, /hooks answers 429.\n")),
+            Staged: Files(("src/server.ts", "import { handle } from './webhooks';\nimport { limited } from './window';\n\nexport const routes = { '/hooks': limited(handle) };\n"),
+                ("src/window.ts", "import { TenantLimiter } from './limiter';\n\nconst limiter = new TenantLimiter();\n\nexport const limited = (next: (body: unknown) => unknown) => (body: { tenant: string }) =>\n  limiter.allow(body.tenant, 100_000) ? next(body) : { status: 429 };\n"))),
         new("spike/otel", true, [Commit("Try OpenTelemetry on the hot path", 9, ("src/tracing.ts", "export const tracer = { start: (name: string) => name };\n"))]),
     ],
         Staged: Files(("docs/retries.md", "# Retries\n\nDeliveries back off up to one minute, then go to the dead-letter queue.\n")),
@@ -104,6 +108,7 @@ public static partial class SeedScenario
 
         yield return new SeedChat("harbor-rate-limit", "codex", "harbor-api", "Per-tenant rate limits on /hooks").On("feature/rate-limit").Ago(32).Is(SeedStatus.Working).MarkUnread().Costing("1.12")
             .Turn("One noisy tenant is starving everyone else. Add a per-tenant limit in front of the webhook handler.")
+            .Think("The handler doesn't know the tenant yet, but every body carries it. The limiter can wrap the route and key on that, so the handler itself stays as it is.")
             .Find("handle(", "src/server.ts:3:export const routes = { '/hooks': handle };\nsrc/webhooks.ts:1:export function handle(body: unknown) {\n")
             .Edit("src/limiter.ts", """
                 --- /dev/null
@@ -120,7 +125,9 @@ public static partial class SeedScenario
                 +}
                 """)
             .Run("npm test -- limiter", " ✓ test/limiter.test.ts (1)\n      Tests  1 passed (1)\n")
-            .Say("The limiter is in and tested, but nothing resets the counts yet. That needs a window, and picking one is a product call: **per minute** or **per hour**?\n\nThe workflow is waiting on your approval on the Board.")
+            .Say("The limiter now runs in front of `/hooks`, with one counter per tenant:\n\n```ts\nexport const limited = (next) => (body) =>\n  limiter.allow(body.tenant, 100_000) ? next(body) : { status: 429 };\n```")
+            .Question("How long should a tenant's window be?", "Nothing resets the counts yet. A minute smooths bursts; an hour matches the limits partners see on their plan.", "Window", "Per minute", "Per hour", "Per day")
+            .Context(58_400, 272_000)
             .End(inputTokens: 52_800, outputTokens: 4_400, costUsd: 1.12m);
 
         yield return new SeedChat("harbor-signature", "claude", "harbor-api", "Signature check during key rotation").On("fix/webhook-signature").Ago(175).Is(SeedStatus.Done).MarkUnread().Costing("0.97")

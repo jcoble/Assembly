@@ -1,13 +1,17 @@
-//! The one section heading in Source control: a muted uppercase name with its count, a chevron when it folds, and the
-//! section's actions at the right edge.
+//! The one section heading in Source control, the look's `.dsec`: the name in text-2 at 600 with its count in text-3, a
+//! chevron when it folds, and the section's actions at the right edge. Called by the change sections, the commits and
+//! the pull requests.
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Named as _;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::tag::Tag;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
+use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex};
 use gpui_kit::*;
 use std::time::Duration;
+
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{GROUP_HEIGHT, SPACE};
 
 /// The name and count, for a heading that doesn't fold as well as one that does.
 /// A count beside a heading or the branch: body-sized text in a pill no taller than its row.
@@ -21,13 +25,19 @@ pub fn count_chip(count: impl Into<SharedString>, cx: &App) -> impl IntoElement 
 }
 pub const CHIP_HEIGHT: Pixels = px(20.);
 pub fn heading_label(title: &'static str, count: Option<String>, cx: &App) -> Div {
+    let look = Look::of(cx);
     h_flex()
-        .gap_1()
-        .text_role(TextRole::Body, cx)
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(cx.theme().muted_foreground)
-        .child(title.to_uppercase())
-        .children(count.map(|count| count_chip(count, cx)))
+        .gap(SPACE[2])
+        .text_role(TextRole::Meta, cx)
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(look.text_2)
+        .child(title)
+        .children(count.map(|count| {
+            div()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(look.text_3)
+                .child(count)
+        }))
 }
 pub fn section_heading(
     id: impl Into<SharedString>,
@@ -54,7 +64,7 @@ pub fn section_heading(
         );
     h_flex()
         .w_full()
-        .min_h(px(24.))
+        .h(GROUP_HEIGHT)
         .gap_1()
         .child(
             Button::new(ElementId::Name(id))
@@ -65,11 +75,38 @@ pub fn section_heading(
                 .child(
                     h_flex()
                         .gap_1()
-                        .text_color(cx.theme().muted_foreground)
+                        .text_color(Look::of(cx).text_3)
                         .child(chevron)
                         .child(heading_label(title, count, cx)),
                 ),
         )
         .child(div().flex_1())
         .children(actions)
+}
+
+/// A section's worded action at its right edge ("Stage all", "Unstage all"), the look's `.lk2`: a kit ghost button in
+/// text-2 at Meta 500.
+pub fn text_action(
+    id: SharedString,
+    text: &'static str,
+    disabled: bool,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+    cx: &App,
+) -> Button {
+    Button::new(id)
+        .named(text)
+        .ghost()
+        .compact()
+        .disabled(disabled)
+        .text_color(Look::of(cx).text_2)
+        .child(
+            div()
+                .text_role(TextRole::Meta, cx)
+                .font_weight(FontWeight::MEDIUM)
+                .child(text),
+        )
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            on_click(window, cx)
+        })
 }

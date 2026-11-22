@@ -45,10 +45,10 @@ pub const PANES: [&str; 13] = [
     TERMINAL,
 ];
 
-/// The sessions column opens so its card is 320 px wide (frame.ts SESSIONS_WIDTH); the design card width is not pinned.
-pub const SESSIONS_WIDTH: Pixels = px(326.);
-/// The drawer's card width (routes/+page.svelte drawerWidth).
-pub const DRAWER_WIDTH: Pixels = px(320.);
+/// The sessions column opens so its tile is 312 px wide, as the look's rule sheet sets it: the tile and 8 on each side.
+pub const SESSIONS_WIDTH: Pixels = px(328.);
+/// The drawer opens so its tile is 332 px wide, as the rule sheet sets it: the tile and the 8 before it.
+pub const DRAWER_WIDTH: Pixels = px(340.);
 /// What the bottom dock opens at (frame.ts DOCK_HEIGHT).
 pub const DOCK_HEIGHT: Pixels = px(180.);
 

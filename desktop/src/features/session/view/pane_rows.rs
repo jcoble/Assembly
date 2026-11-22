@@ -14,7 +14,7 @@ use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::model::markdown_text::markdown_of;
 use crate::features::session::model::turn_line::{checkout_line, turn_line};
 use crate::features::session::view::activity_card::ActivityCard;
-use crate::features::session::view::item_row::{CHAT_COLUMN, ItemRow};
+use crate::features::session::view::item_row::{ItemRow, chat_column};
 use crate::features::session::view::plan_card::current_step;
 use crate::features::session::view::sent_message::SentMessage;
 use crate::features::session::view::session_action::SessionAction;
@@ -106,7 +106,7 @@ impl SessionPane {
                         // In the reading column, where the confirmed row lands, so the bubble doesn't jump.
                         return v_flex()
                             .w_full()
-                            .max_w(CHAT_COLUMN)
+                            .max_w(chat_column())
                             .mx_auto()
                             .px_4()
                             .gap_1()
@@ -193,7 +193,7 @@ impl SessionPane {
             Entry::FoldHeading { run_id, .. } => match self.folds.get(run_id) {
                 Some(fold) => div()
                     .w_full()
-                    .max_w(CHAT_COLUMN)
+                    .max_w(chat_column())
                     .mx_auto()
                     .px_4()
                     .child(TurnFoldRow {
@@ -227,7 +227,7 @@ impl SessionPane {
                         tool.then(|| self.expand_of(&item, Some(step.took_ms), cx))?
                     })
                     .collect();
-                (div().w_full().max_w(CHAT_COLUMN).mx_auto())
+                (div().w_full().max_w(chat_column()).mx_auto())
                     .child(ActivityCard { steps, footer })
                     .into_any_element()
             }
@@ -316,7 +316,7 @@ impl SessionPane {
 fn line(text: impl Into<SharedString>, color: Hsla, cx: &App) -> AnyElement {
     div()
         .w_full()
-        .max_w(CHAT_COLUMN)
+        .max_w(chat_column())
         .mx_auto()
         .px_4()
         .text_role(TextRole::Meta, cx)

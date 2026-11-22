@@ -12,7 +12,7 @@ use serde_json::json;
 use crate::core::intents::open_project::OpenProject;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
-use crate::core::state::machines::Machines;
+use crate::core::state::machines::{Machines, THIS_MACHINE};
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::{GlobalSessions, Sessions};
 use crate::core::state::viewed_project::{LOCAL_MACHINE, Viewed, ViewedProject};
@@ -22,18 +22,9 @@ use crate::open_project_component::{
     FILTER_PLACEHOLDER, OpenProjectBar, ProjectGroup, ProjectOption, filtered,
 };
 
-/// What this machine is called in the list and the bar.
-fn this_machine() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "This Mac"
-    } else {
-        "This computer"
-    }
-}
-
 fn machine_label(machine: &str) -> String {
     if machine == LOCAL_MACHINE {
-        this_machine().to_string()
+        THIS_MACHINE.to_string()
     } else {
         machine.to_string()
     }
