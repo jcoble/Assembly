@@ -1,6 +1,6 @@
 //! The rail owns one lease per actual source/topic; all rows reuse the same held facts.
 use super::{RAIL_TOPIC, saved_filters, saved_view};
-use crate::core::engine::{EngineFeed, EngineScope, SessionKey};
+use crate::core::engine::{EngineFeed, SessionKey};
 use crate::core::socket::outcome::Outcome;
 use crate::core::{
     clock::{backend_clock::BackendClock, tick::Tick},
@@ -10,13 +10,6 @@ use crate::core::{
 use crate::features::sessions::{rail_page::RailEntry, sessions_pane::SessionsPane};
 use crate::features::sessions::{rail_page::RailPage, view_options::View};
 use gpui_kit::*;
-fn scope(machine: &str, topic: &str) -> EngineScope {
-    EngineScope {
-        machine: machine.into(),
-        topic: topic.into(),
-        key: None,
-    }
-}
 /// Whether the row has anything to open: a question for you, a workflow, sessions it started, or native activity.
 pub(crate) fn has_details(entry: &RailEntry, cx: &mut App) -> bool {
     let Some(source) = &entry.source else {
