@@ -83,6 +83,10 @@ public sealed class SeedChat(string key, string provider, string project, string
     public SeedChat Approved(string title, string command, string output) => Ask(title, command, "answered", "allow_once").Run(command, output);
     /// <summary>The turn stops here, waiting on the user. A finished turn holding an open ask survives a restart.</summary>
     public SeedChat Waiting(string title, string command) => Ask(title, command, "open", null);
+    /// <summary>The turn stops on a question for the user: one field and its choices, still unanswered.</summary>
+    public SeedChat Question(string title, string message, string field, params string[] choices) => Step(c =>
+        Add(Next(c), c.Run, "ask:" + key + ":" + c.Item, RowKind.Ask, new AskPayload("question", "open", title, message, null, [],
+            JsonSerializer.SerializeToElement(new { type = "object", properties = new Dictionary<string, object> { [field] = new { type = "string", title = field, @enum = choices } }, required = new[] { field } }), null)));
 
     public SeedChat Background(string name, string state = "completed") => Step(c =>
         Add(Next(c), c.Run, "task-" + key + "-" + c.Item, RowKind.Task, new TaskPayload(name, state, false, null)));
