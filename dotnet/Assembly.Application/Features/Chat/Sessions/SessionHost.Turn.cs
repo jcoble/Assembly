@@ -51,8 +51,12 @@ public sealed partial class SessionHost
                     // reader under the same gate used to drain updates, before starting this session's pump.
                     if (_readerSessionId != session.AcpSessionId)
                     {
-                        _updateReader = new UpdateReader();
+                        _updateReader = new UpdateReader(session.ContextLimit);
                         _readerSessionId = session.AcpSessionId;
+                    }
+                    else
+                    {
+                        _updateReader.SetContextLimit(session.ContextLimit);
                     }
                     turn.Session = session;
                     RememberHandoffExecution(turn);

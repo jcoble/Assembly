@@ -284,7 +284,7 @@ impl Render for Header {
             .child(
                 h_flex()
                     .flex_none()
-                    .gap(SPACE[2])
+                    .gap(SPACE[1])
                     .when_some(waiting, |line, since| {
                         line.child(waiting_pill(since, self.now, cx))
                     })
@@ -319,36 +319,33 @@ fn waiting_pill(since: Option<i64>, now: Option<i64>, cx: &App) -> Tag {
         (Some(since), Some(now)) => format!("Waiting on you · {}", age(now, since)),
         _ => "Waiting on you".into(),
     };
-    Tag::custom(look.card, look.text_2, look.line)
-        .rounded_full()
-        .h(PILL_HEIGHT)
-        .pl(SPACE[2])
-        .pr(SPACE[4])
-        .text_role(TextRole::Meta, cx)
-        .child(
-            h_flex()
-                .items_center()
-                .gap(SPACE[2])
-                .child(
-                    Icon::new(IconName::CircleQuestionMark)
-                        .size(WAITING_ICON)
-                        .text_color(look.needs_you),
-                )
-                .child(label),
-        )
+    crumb_pill(cx).pl(SPACE[2]).pr(SPACE[4]).child(
+        h_flex()
+            .items_center()
+            .gap(SPACE[2])
+            .child(
+                Icon::new(IconName::CircleQuestionMark)
+                    .size(WAITING_ICON)
+                    .text_color(look.needs_you),
+            )
+            .child(label),
+    )
 }
 
 /// The look's quiet pill at the crumb's right (`.runpill`'s size): the kit's tag with the crumb's line and no fill,
 /// naming the provider and any other machine in text-2. The provider's mark waits on the `sessions` item carrying the
 /// glyph the rail's entries already have.
 fn provider_pill(item: &SessionItem, cx: &App) -> Tag {
+    crumb_pill(cx).px(SPACE[5]).child(item.place())
+}
+
+/// The crumb's neutral outline, size and type, shared by its pills.
+fn crumb_pill(cx: &App) -> Tag {
     let look = Look::of(cx);
     Tag::custom(transparent_black(), look.text_2, look.line)
         .rounded_full()
         .h(PILL_HEIGHT)
-        .px(SPACE[5])
         .text_role(TextRole::Meta, cx)
-        .child(item.place())
 }
 
 #[cfg(test)]

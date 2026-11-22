@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use super::fold::Fold;
 use super::item::{Item, ItemKind};
+use super::session_view::SessionView;
 use crate::core::ui::markdown::payload::{Block, Inline};
 use crate::features::session::rows::turn_stats::TurnStats;
 
@@ -51,6 +52,14 @@ fn stats() -> HashMap<String, TurnStats> {
         "model": null, "inputTokens": null, "outputTokens": null, "cacheHitPct": null, "costUsd": null, "toolCalls": 0,
         "branch": null, "head": null, "prevBranch": null, "prevHead": null });
     HashMap::from([("r1".into(), serde_json::from_value(stats).unwrap())])
+}
+
+/// Builds a transcript from the items and optional stats already received by the pane.
+fn fold_view(items: &[Item], stats: HashMap<String, TurnStats>) -> SessionView {
+    let mut view = SessionView::default();
+    view.items = items.to_vec();
+    view.stats = stats;
+    view
 }
 
 fn turn() -> Vec<Item> {
@@ -105,22 +114,22 @@ fn summary(work: &[Item]) -> String {
 #[test]
 fn cancelled_command_folds_as_terminal_work_without_adding_a_failed_call() {
     let cancelled = tool("cancelled", "execute", json!({"state":"cancelled"}));
-    assert_eq!(summary(std::slice::from_ref(&cancelled)), "ran a command");
+    assert_eq!(summary(std::slice::from_ref(&cancelled)), "Worked");
     let items = vec![
         cancelled,
         tool("failed", "execute", json!({"state":"failed"})),
         text("reply"),
     ];
-    assert_eq!(summary(&items), "ran 2 commands · 1 call failed");
-    let folds = Fold::all(&items, &stats(), None);
+    assert_eq!(summary(&items), "1 call failed");
+    let folds = Fold::all(&fold_view(&items, stats()), None);
     assert!(folds["r1"].work.contains("cancelled"));
-    assert_eq!(folds["r1"].summary, "ran 2 commands · 1 call failed");
+    assert_eq!(folds["r1"].summary, "1 call failed");
 }
 
 // Pins: g0-session#9
 #[test]
 fn a_finished_turn_folds_its_work_not_its_prompt_reply_open_card_or_running_task() {
-    let fold = &Fold::all(&turn(), &stats(), None)["r1"];
+    let fold = &Fold::all(&fold_view(&turn(), stats()), None)["r1"];
     let work: HashSet<String> = ["th", "before", "t1", "t2", "t3"].map(String::from).into();
     assert_eq!(fold.work, work);
     assert_eq!(fold.reply.as_deref(), Some("reply"));
@@ -131,13 +140,13 @@ fn a_finished_turn_folds_its_work_not_its_prompt_reply_open_card_or_running_task
 // Pins: g0-session#9
 #[test]
 fn a_running_turn_or_one_without_stats_yet_never_folds() {
-    assert!(Fold::all(&turn(), &stats(), Some("r1")).is_empty());
-    assert!(Fold::all(&turn(), &HashMap::new(), None).is_empty());
+    assert!(Fold::all(&fold_view(&turn(), stats()), Some("r1")).is_empty());
+    assert!(Fold::all(&fold_view(&turn(), HashMap::new()), None).is_empty());
 }
 
 #[test]
 fn a_turn_that_is_only_its_reply_has_no_work_to_fold_but_its_reply_is_known() {
-    let fold = &Fold::all(&[text("reply")], &stats(), None)["r1"];
+    let fold = &Fold::all(&fold_view(&[text("reply")], stats()), None)["r1"];
     assert!(fold.work.is_empty());
     assert_eq!(fold.reply.as_deref(), Some("reply"));
 }
@@ -160,12 +169,12 @@ fn the_summary_counts_work_by_kind_distinct_files_and_failures() {
     ];
     assert_eq!(
         summary(&mixed),
-        "ran a command · read a file · searched once · 1 call failed"
+        "read a file · searched once · 1 call failed"
     );
-    // A command stopped mid-run reads failed; it still ran.
+    // A failed command is reported only as a failed call.
     assert_eq!(
         summary(&[tool("a", "execute", json!({ "state": "failed" }))]),
-        "ran a command · 1 call failed"
+        "1 call failed"
     );
     let subagent = serde_json::from_value(
         json!({ "sessionId": "c1", "title": "Explore", "state": "idle", "canStop": false }),
@@ -223,7 +232,7 @@ fn a_denied_command_is_not_counted_as_run_or_failed() {
     assert_eq!(summary(&calls("no")), "ran a command");
     assert_eq!(
         summary(&calls("yes")),
-        "ran 2 commands · 1 call failed",
+        "ran a command · 1 call failed",
         "an allowed call that failed still counts"
     );
 }
@@ -345,7 +354,8 @@ fn a_multi_line_command_shows_its_first_line() {
 // Pins: g0-session#10
 #[test]
 fn a_turn_with_no_finished_reply_keeps_its_own_line() {
-    let reply_done = |items: &[Item]| Fold::all(items, &stats(), None)["r1"].reply_done(items);
+    let reply_done =
+        |items: &[Item]| Fold::all(&fold_view(items, stats()), None)["r1"].reply_done(items);
     let tool_only = [tool("t", "execute", json!({}))];
     assert!(
         !reply_done(&tool_only),
@@ -357,4 +367,38 @@ fn a_turn_with_no_finished_reply_keeps_its_own_line() {
     }
     assert!(!reply_done(&[tool("t", "execute", json!({})), unfinished]));
     assert!(reply_done(&[tool("t", "execute", json!({})), text("m")]));
+}
+
+#[test]
+fn a_cancelled_or_failed_edit_is_not_counted_as_completed_work() {
+    let ask = item(
+        "ask",
+        ItemKind::Ask {
+            ask_id: "1".into(),
+            ask: serde_json::from_value(json!({
+                "kind": "permission",
+                "state": "cancelled",
+                "toolCallId": "create",
+                "options": [{ "optionId": "allow", "name": "Allow", "kind": "allow_once" }]
+            }))
+            .unwrap(),
+        },
+    );
+    let cancelled = tool(
+        "create",
+        "edit",
+        json!({ "state": "cancelled", "path": "stop.txt" }),
+    );
+    let stopped_turn = [ask, cancelled];
+    assert_eq!(summary(&stopped_turn), "Worked");
+    let folds = Fold::all(&fold_view(&stopped_turn, stats()), None);
+    assert!(folds["r1"].work.contains("create"));
+    assert_eq!(folds["r1"].summary, "Worked");
+
+    let failed = tool(
+        "bad-edit",
+        "edit",
+        json!({ "state": "failed", "path": "stop.txt" }),
+    );
+    assert_eq!(summary(&[failed]), "1 call failed");
 }

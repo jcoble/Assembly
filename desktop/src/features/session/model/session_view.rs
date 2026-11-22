@@ -36,6 +36,8 @@ pub struct SessionView {
     row_refs: HashMap<String, RowReference>,
     /// Each run's stats, for the line under its turn and its fold.
     pub stats: HashMap<String, TurnStats>,
+    /// Runs with a terminal turn row, including those recovery ended without stats.
+    ended_runs: HashSet<String>,
     /// The newest plan row's seq and items.
     pub plan: Option<(i64, Vec<PlanItem>)>,
     pub turn: Option<Turn>,
@@ -107,6 +109,11 @@ impl SessionView {
         let run_id = row.run_id.clone();
         let kind = match RowBody::of(row) {
             RowBody::Turn { state, reason } => {
+                if state != TurnState::Started
+                    && let Some(run) = &run_id
+                {
+                    self.ended_runs.insert(run.clone());
+                }
                 if self.turn.as_ref().is_none_or(|turn| row.seq > turn.seq) {
                     self.turn = Some(Turn {
                         seq: row.seq,
@@ -324,6 +331,7 @@ impl SessionView {
         for (run, stats) in page.stats {
             self.stats.entry(run).or_insert(stats);
         }
+        self.ended_runs.extend(page.ended_runs);
         self.plan = self.plan.take().or(page.plan);
         self.turn = self.turn.take().or(page.turn);
         self.context = self.context.or(page.context);
@@ -417,6 +425,11 @@ impl SessionView {
         });
     }
 
+    /// Whether the rows include evidence that a run ended. Recovery may have only a terminal turn row.
+    pub fn run_has_ended(&self, run: &str) -> bool {
+        self.stats.contains_key(run) || self.ended_runs.contains(run)
+    }
+
     /// The run going now: the newest turn row's while it's started; else `known` (the page's activeRunId on open,
     /// or the run just sent) until a turn row or stats for it arrive.
     pub fn active_run(&self, known: Option<&str>) -> Option<String> {
@@ -425,10 +438,10 @@ impl SessionView {
         {
             return turn.run_id.clone();
         }
-        // A sent run counts until its first turn row; one with stats has ended, whatever run ended after it.
+        // A sent run counts until its first turn row. Evidence an older run ended stays valid after later turns.
         let known = known?;
         let turn_run = self.turn.as_ref().and_then(|turn| turn.run_id.as_deref());
-        (turn_run != Some(known) && !self.stats.contains_key(known)).then(|| known.to_string())
+        (turn_run != Some(known) && !self.run_has_ended(known)).then(|| known.to_string())
     }
 
     /// The plan's items, when the turn going now wrote it: an earlier turn's plan is no step of this one.

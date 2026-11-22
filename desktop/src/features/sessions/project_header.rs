@@ -2,6 +2,7 @@
 //! count, then for a project its machines and a "+ New" chip.
 
 use crate::components::chip_button::chip_button;
+use crate::core::state::machines::THIS_MACHINE;
 use crate::core::theme::look::Look;
 use crate::core::theme::metrics::{CORNER_TAG, GROUP_HEIGHT, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
@@ -75,7 +76,7 @@ impl RenderOnce for ProjectHeader {
             .children(self.machines.into_iter().map(|machine| {
                 let local = machine == "local";
                 let name: SharedString = if local {
-                    "This Mac".into()
+                    THIS_MACHINE.into()
                 } else {
                     machine.into()
                 };

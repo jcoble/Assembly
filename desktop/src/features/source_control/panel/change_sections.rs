@@ -27,8 +27,8 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-/// The look's file row: 9 between its pieces.
-const ROW_GAP: Pixels = px(9.);
+/// The file row's gap between its pieces, the old app's 8.
+const ROW_GAP: Pixels = SPACE[3];
 const NOT_IN_FINDER: &str = "This file is on a remote machine, so Finder cannot show it.";
 const NO_ROOT: &str = "This panel is not pointed at a repository folder yet.";
 const DELETED: &str = "This file was deleted, so there is nothing on disk to open.";
