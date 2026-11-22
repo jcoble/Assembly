@@ -1,15 +1,19 @@
 //! `Header` is the 46 px crumb above the timeline, as the look's `.crumb` draws it: a button that shows and hides the
-//! sessions column, a rule, then "project › Session title", and at the right the agent and machine and, for a session
-//! another session started, a link to the session that started it (the open session intent, lane g0-host). The center
-//! draws no tab row over a lone pane, so this button stands in for the one that row had. Built from the kit's Button and Icon. It follows the `sessions`
-//! topic keyed on the open session. Replaces SessionHeader.svelte.
+//! sessions column, then "project › Session title", and at the right the provider (and any other machine) in a quiet
+//! pill and, for a session another session started, a link to the session that started it (the open session intent,
+//! lane g0-host). The center draws no tab row over a lone pane, so this button stands in for the one that row had.
+//! Built from the kit's Button, Tag and Icon. It follows the `sessions` topic keyed on the open session. Replaces
+//! SessionHeader.svelte.
 
 use crate::core::theme::look::Look;
 use crate::core::theme::metrics::{BUTTON_HEIGHT, CORNER_PILL, CRUMB_HEIGHT, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::chat as ids;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::DockPlacement;
+use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -25,6 +29,8 @@ use crate::core::{
 
 /// The crumb's icons: the sessions button's and the chevron.
 const CRUMB_ICON: Pixels = px(16.);
+/// The provider pill's height, the look's `.runpill`.
+const PILL_HEIGHT: Pixels = px(26.);
 
 /// The project a session is in: its folder's or repo's last name ("Assembly" for `https://github.com/me/Assembly`).
 pub fn project(repo_url: &str) -> &str {
@@ -99,6 +105,7 @@ impl Render for Header {
         // The look's crumb: a 32px ghost button that shows and hides the sessions column, in text-3.
         let sessions = div().debug_selector(|| "toggle-sessions".into()).child(
             Button::new("toggle-sessions")
+                .control(ids::SESSIONS_TOGGLE, "Show or hide the sessions column")
                 .ghost()
                 .size(BUTTON_HEIGHT)
                 .px_0()
@@ -152,19 +159,19 @@ impl Render for Header {
                             .child(item.title()),
                     ),
             )
-            // The agent and machine at the right, in text-2, then the link to the session that started it.
+            // The provider at the right in a quiet pill (the kit's tag, its line and no fill), with the machine when
+            // it isn't this one, then the link to the session that started it.
             .child(
                 h_flex()
                     .flex_none()
                     .gap(SPACE[1])
-                    .child(item.place())
+                    .child(provider_pill(item, cx))
                     .when_some(parent, |line, parent| {
                         line.child("·").child(
-                            div()
-                                .id("parent-session")
-                                .text_color(look.link)
-                                .cursor_pointer()
-                                .child("Parent session")
+                            Button::new("parent-session")
+                                .control(ids::PARENT_SESSION, "Parent session")
+                                .link()
+                                .label("Parent session")
                                 .on_click(move |_, window, cx| {
                                     window.dispatch_action(
                                         Box::new(SessionOpenRequest {
@@ -180,6 +187,19 @@ impl Render for Header {
             ),
         )
     }
+}
+
+/// The look's quiet pill at the crumb's right (`.runpill`'s size): the kit's tag with the crumb's line and no fill,
+/// naming the provider and any other machine in text-2. The provider's mark waits on the `sessions` item carrying the
+/// glyph the rail's entries already have.
+fn provider_pill(item: &SessionItem, cx: &App) -> Tag {
+    let look = Look::of(cx);
+    Tag::custom(transparent_black(), look.text_2, look.line)
+        .rounded_full()
+        .h(PILL_HEIGHT)
+        .px(SPACE[5])
+        .text_role(TextRole::Meta, cx)
+        .child(item.place())
 }
 
 #[cfg(test)]

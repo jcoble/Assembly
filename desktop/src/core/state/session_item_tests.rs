@@ -22,10 +22,10 @@ fn a_session_shows_the_title_else_the_repo_and_where_it_runs() {
         session(Some("  "), "/home/me/repo", None).title(),
         "/home/me/repo"
     );
-    assert_eq!(session(None, "/r", None).place(), "claude");
+    assert_eq!(session(None, "/r", None).place(), "Claude");
     assert_eq!(
         session(None, "/r", Some("Workbox Test")).place(),
-        "claude · Workbox Test"
+        "Claude · Workbox Test"
     );
 }
 
