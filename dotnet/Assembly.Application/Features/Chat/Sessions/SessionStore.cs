@@ -21,6 +21,7 @@ public sealed partial class SessionStore
         CREATE INDEX IF NOT EXISTS session_info_updated ON session_info(updated_at);
         CREATE TABLE IF NOT EXISTS session_config(session_id TEXT PRIMARY KEY, options TEXT, choices TEXT NOT NULL DEFAULT '{}');
         CREATE TABLE IF NOT EXISTS agent_config(agent TEXT PRIMARY KEY, options TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS agent_catalogue(agent TEXT NOT NULL, target TEXT NOT NULL, cwd TEXT NOT NULL, revision TEXT NOT NULL, catalogue TEXT NOT NULL, PRIMARY KEY(agent, target, cwd));
         CREATE TABLE IF NOT EXISTS session_commands(session_id TEXT PRIMARY KEY, commands TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS agent_commands(agent TEXT PRIMARY KEY, commands TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS helper_messages(message_id TEXT PRIMARY KEY, from_session TEXT NOT NULL, to_session TEXT NOT NULL,

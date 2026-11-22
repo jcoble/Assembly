@@ -18,6 +18,8 @@ public sealed partial class SessionRegistry : IProviderAdapters
         return running is null ? null : new Capture(this, adapter, running);
     }
 
+    void IProviderAdapters.InvalidateComposerCatalogue(string provider) => _discovery.Invalidate(provider);
+
     async Task IProviderAdapters.RetireAsync(ProviderAdapterCapture capture, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();

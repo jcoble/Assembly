@@ -17,6 +17,9 @@ public interface IAgentLauncher
     /// <summary>Whether this owner can reproduce its configured command in its direct program terminal.</summary>
     bool CanRunTerminalAuthentication { get; }
 
+    /// <summary>Changes when known inputs to the composer's catalogue change. Null disables reuse.</summary>
+    string? CatalogueRevision(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> environment, string cwd) => null;
+
     Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
         StageTimes stages, CancellationToken cancellationToken);
 

@@ -180,6 +180,34 @@ public sealed partial class SessionStore
                 """, new SqlArg("$id", sessionId), new SqlArg("$commands", commands));
     }
 
+    /// <summary>The last composer discovery answer saved for this exact agent configuration and folder, if any.</summary>
+    public string? SavedCatalogue(string agent, string target, string cwd, string revision, CancellationToken ct)
+    {
+        using var scope = _db.OpenSnapshot(ct);
+        return scope.QueryFirst("""
+            SELECT catalogue FROM agent_catalogue WHERE agent = $agent AND target = $target AND cwd = $cwd AND revision = $revision
+            """, r => r.Text(0), new SqlArg("$agent", agent), new SqlArg("$target", target),
+            new SqlArg("$cwd", cwd), new SqlArg("$revision", revision));
+    }
+
+    public void SaveCatalogue(string agent, string target, string cwd, string revision, string? catalogue) =>
+        _writer.Write("sessions.config", scope =>
+        {
+            var key = new SqlArg[] { new("$agent", agent), new("$target", target), new("$cwd", cwd), new("$revision", revision) };
+            if (catalogue is null)
+                return scope.Execute("""
+                    DELETE FROM agent_catalogue WHERE agent = $agent AND target = $target AND cwd = $cwd AND revision = $revision
+                    """, key);
+            return scope.Execute("""
+                INSERT INTO agent_catalogue(agent, target, cwd, revision, catalogue) VALUES ($agent, $target, $cwd, $revision, $catalogue)
+                ON CONFLICT(agent, target, cwd) DO UPDATE SET revision = $revision, catalogue = $catalogue;
+                """, [.. key, new SqlArg("$catalogue", catalogue)]);
+        });
+
+    public void ClearCatalogues(string agent) =>
+        _writer.Write("sessions.config", scope =>
+            scope.Execute("DELETE FROM agent_catalogue WHERE agent = $agent", new SqlArg("$agent", agent)));
+
     public void SetAgentConfig(string agent, string options) =>
         _writer.Write("sessions.config", scope => { SaveAgentOptions(scope, agent, options); return 0; });
 

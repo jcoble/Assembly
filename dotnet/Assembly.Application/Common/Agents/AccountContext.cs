@@ -16,6 +16,14 @@ public static class AccountContext
         _ => null
     };
 
+    /// <summary>Provider files whose metadata can invalidate saved composer settings.</summary>
+    public static (string[] Profile, string[] Project, string? User) CatalogueFiles(string vendorFamily) => vendorFamily switch
+    {
+        "claude" => (["settings.json", ".credentials.json"], [".claude/settings.json", ".claude/settings.local.json"], ".claude.json"),
+        "codex" => (["config.toml", "auth.json"], [".codex/config.toml"], null),
+        _ => ([], [], null)
+    };
+
     public static string? ExecutableVariable(string? vendorFamily) => vendorFamily switch
     {
         "codex" => "CODEX_PATH",
