@@ -25,7 +25,7 @@ using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Features.Settings;
 
-public sealed class SettingsStateSocketTests
+public sealed partial class SettingsStateSocketTests
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(15);
 
@@ -287,8 +287,8 @@ public sealed class SettingsStateSocketTests
             Assert.Equal(SettingsSummary.Problem, failed.GetProperty("summary").GetProperty("kind").GetString());
             var lastFailure = ProviderMachine(failed, "codex", "Workbox").GetProperty("lastFailure");
             Assert.False(string.IsNullOrWhiteSpace(lastFailure.GetProperty("message").GetString()));
-            // A remote's raw output never leaves its machine: its detail stays the safe code.
-            Assert.Equal("adapter_crashed", lastFailure.GetProperty("detail").GetString());
+            // A remote's raw output never leaves its machine: its detail is a plain sentence, never a code.
+            Assert.Equal("The provider's adapter stopped while it was being checked.", lastFailure.GetProperty("detail").GetString());
 
             // A failing check on this machine keeps its raw output as the detail, with the secret scrubbed out.
             var claudeVersion = ProviderMachine(failed, "claude", "local").GetProperty("version").GetInt64();

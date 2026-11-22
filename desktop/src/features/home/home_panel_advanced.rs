@@ -354,9 +354,32 @@ impl HomePanel {
         }
     }
 
-    /// "Try again" on a failure: sends the engine's check command for this provider on this machine, at
-    /// the row version the backend last pushed. The answer arrives as the next pushed state.
+    /// "Try again" on a failure retries what the backend said failed: an install failure re-runs
+    /// the install (this machine through its reconcile, a remote through the one update start),
+    /// anything else sends the engine's check command for this provider on this machine, at the
+    /// row version the backend last pushed. The answer arrives as the next pushed state.
     pub(super) fn try_again(&mut self, on: &ProviderOnMachine, cx: &mut Context<Self>) {
+        if on
+            .last_failure
+            .as_ref()
+            .and_then(|failure| failure.retry.as_deref())
+            == Some("install")
+        {
+            if on.machine_key == "local" {
+                self.check_again(cx);
+                return;
+            }
+            let Some(client) = SocketClient::try_global(cx) else {
+                return;
+            };
+            let call = client
+                .read(cx)
+                .call::<serde_json::Value>("updates", "start", json!({}), None);
+            self.calls.push(cx.spawn(async move |_, _| {
+                _ = call.await;
+            }));
+            return;
+        }
         let (Some(engine), Some(target)) = (&on.engine_machine, &on.provider_target_id) else {
             return;
         };

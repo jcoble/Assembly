@@ -95,8 +95,16 @@ internal sealed record SettingsProviderMachine(
     long? CheckedMs,
     long Version);
 
-/// <summary>Last safe failure for a provider on a machine: one plain sentence plus scrubbed raw detail.</summary>
-internal sealed record SettingsFailure(string Message, string Detail);
+/// <summary>
+/// Last safe failure for a provider on a machine: one plain sentence, the detail for its Details
+/// view (scrubbed raw output where this machine has it, a plain sentence otherwise — never a code),
+/// and what Try again must retry: a check, or the install/update itself.
+/// </summary>
+internal sealed record SettingsFailure(string Message, string Detail, string Retry = SettingsFailure.RetryCheck)
+{
+    internal const string RetryCheck = "check";
+    internal const string RetryInstall = "install";
+}
 
 /// <summary>One machine with its existing <see cref="MachineItem"/> plus backend-derived status fields.</summary>
 internal sealed record SettingsMachine(

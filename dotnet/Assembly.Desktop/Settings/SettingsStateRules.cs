@@ -133,17 +133,20 @@ internal static class SettingsStateRules
 
     internal static IReadOnlyList<ModelChoice>? DeriveSharedModels(IReadOnlyList<SettingsProviderMachine> machines)
     {
+        // Only a checked machine votes: no facts (null) is silence, but a checked empty list is a
+        // real answer, so one machine with no models and one with some do not agree.
         IReadOnlyList<ModelChoice>? shared = null;
         foreach (var machine in machines)
         {
-            if (machine.Models is not { Count: > 0 } models)
+            if (machine.Models is not { } models)
                 continue;
             if (shared is null)
                 shared = models;
             else if (!shared.SequenceEqual(models))
                 return null;
         }
-        return shared;
+        // No models anywhere is still "no shared list to show", as before.
+        return shared is { Count: > 0 } ? shared : null;
     }
 
     internal static string DeriveAggregateProviderState(IReadOnlyList<SettingsProviderMachine> machines)
@@ -288,11 +291,36 @@ internal static class SettingsStateRules
         var message = safeCode == "unsupported"
             ? "Sign-in is not supported for this provider."
             : ProviderProblems.Text(ParseProblem(safeCode));
-        // The check's own scrubbed output when there is any; otherwise the safe code, as before.
+        // The check's own scrubbed output when this machine has it; otherwise a plain sentence.
+        // A reason code is never shown: a remote's checked detail reads the same way as a local one.
         var detail = !string.IsNullOrWhiteSpace(problemDetail)
             ? problemDetail
-            : prefix is null ? safeCode : prefix + safeCode;
+            : DetailOf(safeCode, prefix);
         return new SettingsFailure(message, detail);
+    }
+
+    /// <summary>The provider's own failure when its adapter or CLI install/update failed on a machine.</summary>
+    internal static SettingsFailure InstallFailure(string? safeNote) =>
+        new("The update didn't finish.",
+            string.IsNullOrWhiteSpace(safeNote) ? "Installing or updating this provider didn't finish." : safeNote,
+            SettingsFailure.RetryInstall);
+
+    private static string DetailOf(string safeCode, string? prefix)
+    {
+        var sentence = safeCode switch
+        {
+            "not_installed" => "The provider's adapter is not installed on this machine.",
+            "cannot_start" => "The provider's adapter could not be started on this machine.",
+            "invalid_descriptor" => "The provider's saved configuration is incomplete.",
+            "timed_out" => "The check ran out of time before the provider answered.",
+            "adapter_crashed" => "The provider's adapter stopped while it was being checked.",
+            "network" => "The provider could not be reached for this check.",
+            "version_unknown" => "The check finished without a reported adapter version.",
+            "interrupted" => "The check was interrupted before it finished.",
+            "unsupported" => "This provider does not support sign-in from Assembly.",
+            _ => "The check could not be completed on this machine."
+        };
+        return prefix is null ? sentence : "Sign-in didn't finish. " + sentence;
     }
 
     // Only fixed allowlisted reason codes may ever leave the backend as failure detail.

@@ -245,10 +245,23 @@ internal sealed class SettingsStateComposer(
             failedSignIn,
             adapterMissingFromUpdates,
             // Raw check output is held in memory by the effects, never in the engine's safe facts;
-            // a remote's detail never leaves its machine, so remotes fall back to the safe code.
+            // a remote's detail never leaves its machine, so remotes fall back to a plain sentence.
             isLocal && providerRow is not null
                 ? failureDetails?.Get($"{spec.Id}/{providerRow.AccountContext}")
                 : null);
+
+        // A failed install or update of this provider's adapter or CLI is the provider's own
+        // failure (its note is already a fixed safe sentence), not just a machine warning. It
+        // stands in for a plain not-installed result, which is usually the same event seen twice.
+        var installFailed = machine.UpdateState == MachineUpdateState.Failed
+            && machine.Machine.UpdateNote is not null
+            && (adapterUpdate is { State: UpdateItem.Behind } || cliUpdate is { State: UpdateItem.Behind });
+        if (installFailed
+            && (lastFailure is null
+                || adapterMissingFromUpdates
+                || providerRow?.Installation == "not_installed"
+                || providerRow?.Reason == "not_installed"))
+            lastFailure = SettingsStateRules.InstallFailure(machine.Machine.UpdateNote);
 
         // Local evidence must be from a check in this run; a remote's facts count once its mirror is live.
         var checkedThisRun = isLocal

@@ -89,12 +89,14 @@ pub struct Model {
     pub name: String,
 }
 
-/// Why the last check or install failed: one plain sentence, and the raw detail for a Details grower.
+/// Why the last check or install failed: one plain sentence, the detail for a Details grower, and
+/// what "Try again" retries (`check` or `install`), as the backend decided.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Failure {
     pub message: String,
     pub detail: String,
+    pub retry: Option<String>,
 }
 
 /// One machine: this one or a remote. The backend also sends the full machine item under `machine`; the panel

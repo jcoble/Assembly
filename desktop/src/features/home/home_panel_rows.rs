@@ -196,7 +196,9 @@ impl HomePanel {
                     .text_color(cx.theme().danger),
             );
             let mut actions = h_flex().gap_2();
-            if on.provider_target_id.is_some() && on.engine_machine.is_some() {
+            // An install retry needs no provider row to address; a check retry does.
+            let retry_install = failure.retry.as_deref() == Some("install");
+            if retry_install || (on.provider_target_id.is_some() && on.engine_machine.is_some()) {
                 let on_click = on.clone();
                 actions = actions.child(
                     small_button(
