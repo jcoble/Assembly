@@ -36,11 +36,13 @@ internal sealed class SessionsFeature : IFeature
     private readonly Func<CreateArgs, CallContext, Task<Func<IWriteScope, Created>>>? _remoteCreate;
     private readonly Func<ByClientArgs, CallContext, Task<ByClientReply>>? _remoteByClient;
     private readonly IProjectFolders? _remoteFolders;
+    private readonly Func<string, CancellationToken, Task>? _recordFirstUse;
 
     public SessionsFeature(SessionStore store, MachineSet machines, IRowSourceBindings? sources = null,
         IProjectRoots? projects = null, string? owningMachine = null, string? owningHome = null,
         Func<CreateArgs, CallContext, Task<Func<IWriteScope, Created>>>? remoteCreate = null,
-        Func<ByClientArgs, CallContext, Task<ByClientReply>>? remoteByClient = null, IProjectFolders? remoteFolders = null)
+        Func<ByClientArgs, CallContext, Task<ByClientReply>>? remoteByClient = null, IProjectFolders? remoteFolders = null,
+        Func<string, CancellationToken, Task>? recordFirstUse = null)
     {
         _store = store;
         _machines = machines;
@@ -51,6 +53,7 @@ internal sealed class SessionsFeature : IFeature
         _remoteCreate = remoteCreate;
         _remoteByClient = remoteByClient;
         _remoteFolders = remoteFolders;
+        _recordFirstUse = recordFirstUse;
     }
 
     public void Register(ICallRegistry calls)
@@ -122,17 +125,23 @@ internal sealed class SessionsFeature : IFeature
                     throw new CallFailed("The selected session source changed.", "source_changed");
             }
         });
-        calls.Write(Topic, "mark", SessionsJson.Default.MarkArgs, SessionsJson.Default.Done, (args, _) =>
+        calls.Write(Topic, "mark", SessionsJson.Default.MarkArgs, SessionsJson.Default.Done, async (args, call) =>
         {
+            // A remote session moved from the rail before it was ever opened gets its facade first, as an open does.
+            if (_recordFirstUse is not null && args.State is ("working" or "done" or "settled") && _store.Get(args.Session) is null)
+            {
+                try { await _recordFirstUse(args.Session, call.Cancellation); }
+                catch (CallFailed error) when (error.Reason == "source_changed") { }
+            }
             if (_store.Get(args.Session) is null)
                 throw new CallFailed("unknown session");
             if (args.State is not ("working" or "done" or "settled"))
                 throw new CallFailed("expected working, done or settled");
-            return Task.FromResult<Func<IWriteScope, SendFeature.Done>>(scope =>
+            return scope =>
             {
                 _store.Mark(scope, args.Session, args.State);
                 return new SendFeature.Done(true);
-            });
+            };
         });
         // The machine's work runs before the write, which only answers: the store's own write publishes the new
         // session, so it goes out on this socket before the answer. It's keyed on its machine, so one that hangs holds
