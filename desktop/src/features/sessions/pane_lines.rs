@@ -274,15 +274,21 @@ impl SessionsPane {
                         // Rows sit 1 apart. A helper (a session another started) hangs under its starter on the
                         // tree line, as the old app had it.
                         .map(|row| {
+                            // The indent is padding on the full-width line, so a helper's row narrows rather
+                            // than running past the column's edge.
+                            let row = match helper {
+                                true => div()
+                                    .pl(TREE_PADDING)
+                                    .border_l_1()
+                                    .border_color(tree)
+                                    .child(row)
+                                    .into_any_element(),
+                                false => row.into_any_element(),
+                            };
                             div()
                                 .w_full()
                                 .pb(ROW_GAP)
-                                .when(helper, |line| {
-                                    line.ml(TREE_INDENT)
-                                        .pl(TREE_PADDING)
-                                        .border_l_1()
-                                        .border_color(tree)
-                                })
+                                .when(helper, |line| line.pl(TREE_INDENT))
                                 .child(row)
                         })
                         .into_any_element()
