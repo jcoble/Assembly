@@ -9,6 +9,10 @@ fn file(path: &str, index: &str, worktree: &str) -> ChangedFile {
         index: index.into(),
         worktree: worktree.into(),
         revision: None,
+        staged_added: None,
+        staged_removed: None,
+        unstaged_added: None,
+        unstaged_removed: None,
     }
 }
 fn status(files: Vec<ChangedFile>) -> GitStatus {
@@ -23,6 +27,8 @@ fn status(files: Vec<ChangedFile>) -> GitStatus {
         total_staged: None,
         fingerprint: "f".into(),
         checkout_root: Some("/root".into()),
+        base_branch: None,
+        branch_created_at: None,
     }
 }
 // Pins: g9#8
@@ -130,6 +136,10 @@ fn a_row_tip_gives_the_path_then_what_each_side_of_git_says() {
         index: index.into(),
         worktree: worktree.into(),
         revision: None,
+        staged_added: None,
+        staged_removed: None,
+        unstaged_added: None,
+        unstaged_removed: None,
     };
     assert_eq!(
         file("M", "D").tip(),

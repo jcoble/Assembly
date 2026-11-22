@@ -16,6 +16,8 @@ use super::open_another_project::OpenAnotherProject;
 use super::pull_requests::pr_section::PrSection;
 use super::result_line::PaneResult;
 use super::stash_dialogs::Stash;
+use crate::core::clock::{backend_clock::BackendClock, tick::Tick};
+use crate::core::socket::client::SocketClient;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::session_read::{SessionRead, Shown};
 use crate::core::state::sessions::Sessions;
@@ -101,6 +103,10 @@ pub struct SourceControlPane {
     pull_requests: Option<(String, Entity<PrSection>)>,
     /// Asking where the session's folder is, to show a file in the file manager.
     reveal_read: Option<Task<()>>,
+    /// The backend clock's last tick, for the branch card's age.
+    pub(super) now: Option<i64>,
+    /// Held only while this tab is visible and the branch card has a creation timestamp to format.
+    clock: Option<(Entity<BackendClock>, Subscription)>,
     scroll: ScrollHandle,
     _heard: Vec<Subscription>,
 }
@@ -272,8 +278,43 @@ impl SourceControlPane {
             seen_head: None,
             pull_requests: None,
             reveal_read: None,
+            now: None,
+            clock: None,
             scroll: ScrollHandle::new(),
             _heard: heard,
+        }
+    }
+
+    /// Holds the backend clock only while the panel is visible and showing a branch age, so nothing runs at rest.
+    pub(super) fn sync_clock(&mut self, cx: &mut Context<Self>) {
+        let needs_clock = self.active
+            && self
+                .shown_status(cx)
+                .and_then(|status| status.branch_created_at)
+                .is_some()
+            && SocketClient::try_global(cx).is_some();
+        if needs_clock {
+            if self.clock.is_none() {
+                let clock = cx.new(|cx| {
+                    let mut clock = BackendClock::new();
+                    clock.hold(cx);
+                    clock
+                });
+                let ticks =
+                    cx.subscribe(&clock, |pane, _, tick: &Tick, cx| pane.tick(tick.now, cx));
+                self.clock = Some((clock, ticks));
+            }
+        } else {
+            self.clock = None;
+        }
+    }
+
+    /// The branch age is minutes at the finest, so a tick redraws only when the minute turns.
+    fn tick(&mut self, now: i64, cx: &mut Context<Self>) {
+        let turned = self.now.map(|held| held / 60_000) != Some(now / 60_000);
+        self.now = Some(now);
+        if turned {
+            cx.notify();
         }
     }
 
@@ -406,6 +447,7 @@ impl BasePanel for SourceControlPane {
             section.update(cx, |section, cx| section.set_active(active, cx));
         }
         self.sync_children(cx);
+        self.sync_clock(cx);
     }
 
     fn dump(&self, _: &App) -> PanelState {

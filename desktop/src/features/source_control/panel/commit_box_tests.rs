@@ -7,6 +7,10 @@ fn file(path: &str, index: &str, worktree: &str) -> ChangedFile {
         index: index.into(),
         worktree: worktree.into(),
         revision: None,
+        staged_added: None,
+        staged_removed: None,
+        unstaged_added: None,
+        unstaged_removed: None,
     }
 }
 fn status(files: Vec<ChangedFile>, staged: usize) -> GitStatus {
@@ -21,6 +25,8 @@ fn status(files: Vec<ChangedFile>, staged: usize) -> GitStatus {
         total_staged: Some(staged),
         fingerprint: "f".into(),
         checkout_root: None,
+        base_branch: None,
+        branch_created_at: None,
     }
 }
 // Pins: g9#2

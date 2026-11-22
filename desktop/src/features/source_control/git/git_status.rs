@@ -23,6 +23,12 @@ pub struct GitStatus {
     /// The root the read actually came from; writes send it back unchanged.
     #[serde(default)]
     pub checkout_root: Option<String>,
+    /// The default branch this branch sits off (`origin/HEAD`, else local `main`/`master`); `None` on the base itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_branch: Option<String>,
+    /// Unix ms of the first commit on this branch not on `base_branch`; `None` before the branch has its own commits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_created_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -37,6 +43,15 @@ pub struct ChangedFile {
     /// The file's revision when it was read; a discard sends it back so an edit since then refuses it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
+    /// Per-side text line counts from `git diff --numstat`; absent for untracked, binary or capped reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_added: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_removed: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unstaged_added: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unstaged_removed: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -90,6 +105,15 @@ impl ChangedFile {
             _ if self.conflicted() => Some('U'),
             Section::Staged => letter(&self.index),
             Section::Changes => letter(&self.worktree),
+        }
+    }
+
+    /// The `(added, removed)` line counts for `section`, when git reported text counts for that side.
+    pub fn line_counts(&self, section: Section) -> Option<(u32, u32)> {
+        match section {
+            Section::Staged => Some((self.staged_added?, self.staged_removed?)),
+            Section::Changes => Some((self.unstaged_added?, self.unstaged_removed?)),
+            Section::Untracked => None,
         }
     }
 

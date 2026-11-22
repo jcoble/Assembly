@@ -12,7 +12,7 @@ use crate::core::ui::access::Named as _;
 use crate::core::ui::file_icon::file_icon;
 use crate::core::ui::reasoned_item::reasoned_item;
 use crate::features::source_control::actions_menu::{READ_ONLY_SCOPE, STILL_RUNNING};
-use crate::features::source_control::file_letter::file_letter;
+use crate::features::source_control::file_letter::{file_counts, file_letter};
 use crate::features::source_control::git_labels::split_path;
 use crate::features::source_control::git_status::{ChangedFile, GitStatus, Section};
 use crate::features::source_control::git_target::GitTarget;
@@ -321,7 +321,12 @@ impl SourceControlPane {
         let cluster =
             hovered.then(|| self.row_buttons(file, target, &id, name, busy, &reasons, cx));
         let word = (!hovered).then(|| change_word(file)).flatten();
-        // The look's `.frow`: the file's mark, its name in text-1, its folder in text-3 taking the room, then the letter.
+        // Per-side text line counts give way to the row's action buttons on hover, the same as the status word.
+        let counts = (!hovered)
+            .then(|| file.line_counts(section))
+            .flatten()
+            .filter(|&(added, removed)| added > 0 || removed > 0);
+        // The look's `.frow`: the file's mark, its name in text-1, its folder in text-3 taking the room, counts, then the letter.
         let row = h_flex()
             .w_full()
             .gap(ROW_GAP)
@@ -343,6 +348,7 @@ impl SourceControlPane {
                     .text_color(look.text_3)
                     .child(word)
             }))
+            .children(counts.map(|(added, removed)| file_counts(added, removed, cx)))
             .child(file_letter(letter, cx))
             .children(cluster);
         let open = OpenDiff {

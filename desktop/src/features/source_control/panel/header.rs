@@ -1,6 +1,8 @@
 //! The drawer's head, as the look draws it: "Source control" with how many files changed and the more-actions menu,
-//! then the branch card holding the branch menu and how far it is ahead or behind. Called by the pane's render.
+//! then the branch card holding the branch menu, upstream counts, and a second line naming its machine, base branch
+//! and age. Called by the pane's render.
 use super::SourceControlPane;
+use crate::core::state::viewed_project::{LOCAL_MACHINE, ViewedProject};
 use crate::core::theme::look::Look;
 use crate::core::theme::metrics::{CORNER_TILE, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
@@ -8,6 +10,7 @@ use crate::core::ui::access::control_ids as ids;
 use crate::core::ui::access::{Control as _, Named as _};
 use crate::core::ui::reasoned_item::reasoned_item;
 use crate::features::source_control::actions_menu::{MenuAction, PublishRow, READ_ONLY_SCOPE};
+use crate::features::source_control::git_labels::branch_age;
 use crate::features::source_control::git_status::GitStatus;
 use crate::features::source_control::section_heading::count_chip;
 use gpui_kit::assets::IconName;
@@ -22,6 +25,7 @@ use gpui_kit::*;
 const CARD_PADDING_X: Pixels = px(8.);
 const BRANCH_ICON: Pixels = px(16.);
 const CHEVRON_ICON: Pixels = px(12.);
+const MACHINE_ICON: Pixels = px(12.);
 
 impl SourceControlPane {
     /// The look's drawer head: the "Source control" title on a line with how many files changed and the more-actions
@@ -54,11 +58,20 @@ impl SourceControlPane {
             .child(title)
             .children(status.map(|status| self.branch_card(&status, cx)))
     }
-    /// The look's `.gcard`: the kit's group box on the card fill, holding the branch menu and how far it is ahead of
-    /// and behind its upstream.
+    /// The look's `.gcard`: the kit's group box on the card fill, holding the branch menu, upstream counts, and a
+    /// second line naming the machine and (when off the default branch) its base branch and age.
     fn branch_card(&self, status: &GitStatus, cx: &mut Context<Self>) -> GroupBox {
         let look = Look::of(cx);
         let (ahead, behind) = (status.ahead, status.behind);
+        let (remote, machine) = self.machine_label(cx);
+        // On the base branch itself, detached, or when no base is found, the second line names only the machine.
+        let subtitle = match (&status.base_branch, status.branch_created_at, self.now) {
+            (Some(base), Some(created), Some(now)) => {
+                format!("{machine} · from {base}, {}", branch_age(now, created))
+            }
+            (Some(base), _, _) => format!("{machine} · from {base}"),
+            (None, _, _) => machine,
+        };
         let surface = StyleRefinement::default()
             .px(CARD_PADDING_X)
             .py(SPACE[1])
@@ -70,23 +83,66 @@ impl SourceControlPane {
             .id("git-branch-card")
             .content_style(surface)
             .child(
-                h_flex()
-                    .gap(SPACE[3])
-                    .child(self.branch_trigger(status, cx))
-                    .child(div().flex_1())
-                    .children((behind > 0).then(|| {
-                        div()
+                v_flex()
+                    .gap(SPACE[0])
+                    .child(
+                        h_flex()
+                            .gap(SPACE[3])
+                            .child(self.branch_trigger(status, cx))
+                            .child(div().flex_1())
+                            .children((behind > 0).then(|| {
+                                div()
+                                    .text_role(TextRole::Meta, cx)
+                                    .text_color(look.needs_you)
+                                    .child(format!("{behind} behind"))
+                            }))
+                            .children((ahead > 0).then(|| {
+                                div()
+                                    .text_role(TextRole::Meta, cx)
+                                    .text_color(look.text_2)
+                                    .child(format!("{ahead} ahead"))
+                            })),
+                    )
+                    .child(
+                        h_flex()
+                            .gap(SPACE[1])
+                            .pl(SPACE[1])
+                            .pb(SPACE[0])
+                            .min_w_0()
                             .text_role(TextRole::Meta, cx)
-                            .text_color(look.needs_you)
-                            .child(format!("{behind} behind"))
-                    }))
-                    .children((ahead > 0).then(|| {
-                        div()
-                            .text_role(TextRole::Meta, cx)
-                            .text_color(look.text_2)
-                            .child(format!("{ahead} ahead"))
-                    })),
+                            .text_color(look.text_3)
+                            .child(
+                                Icon::new(if remote {
+                                    IconName::Server
+                                } else {
+                                    IconName::Laptop
+                                })
+                                .size(MACHINE_ICON)
+                                .flex_none(),
+                            )
+                            .child(div().min_w_0().truncate().child(subtitle)),
+                    ),
             )
+    }
+    /// Whether the displayed folder is on a remote machine, and its display name ("This Mac" for local).
+    fn machine_label(&self, cx: &App) -> (bool, String) {
+        if let Some(viewed) = ViewedProject::viewed(cx) {
+            return if viewed.machine == LOCAL_MACHINE {
+                (false, "This Mac".into())
+            } else {
+                (true, viewed.machine)
+            };
+        }
+        match self
+            .read
+            .read(cx)
+            .source()
+            .and_then(|source| source.route_machine.as_deref())
+            .filter(|name| !name.is_empty())
+        {
+            Some(name) => (true, name.to_string()),
+            None => (false, "This Mac".into()),
+        }
     }
     /// The branch's name with its menu: the branch icon, the name at 600, a chevron.
     fn branch_trigger(

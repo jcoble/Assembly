@@ -100,6 +100,83 @@ public sealed partial class GitSocketTests : IAsyncLifetime
         Assert.Equal("?", file.GetProperty("worktree").GetString());
     }
 
+    [Fact]
+    public async Task Status_answers_base_branch_first_commit_age_and_per_file_line_counts()
+    {
+        var session = _sessions.Create("claude", "https://github.com/o/r");
+        var root = _sessions.Item(session).Root!;
+        await MakeRepoAsync(root);
+        await File.WriteAllTextAsync(Path.Combine(root, "old name.txt"), "line one\n");
+        await GitAsync(root, "add", "old name.txt");
+        await GitAsync(root, "-c", "commit.gpgsign=false", "commit", "-m", "Add rename target");
+        using var socket = await OpenAsync();
+
+        // On the base branch itself: no baseBranch and no branchCreatedAt.
+        await CallAsync(socket, 1, "git", "status", session.SessionId);
+        using (var onBase = JsonDocument.Parse(await ReadAsync(socket)))
+        {
+            var result = onBase.RootElement.GetProperty("result");
+            Assert.Equal("main", result.GetProperty("branch").GetString());
+            Assert.False(result.TryGetProperty("baseBranch", out _));
+            Assert.False(result.TryGetProperty("branchCreatedAt", out _));
+        }
+
+        // Fresh feature branch with no commits of its own yet: baseBranch without branchCreatedAt.
+        await GitAsync(root, "switch", "-c", "feat/counts");
+        await CallAsync(socket, 2, "git", "status", session.SessionId);
+        using (var emptyBranch = JsonDocument.Parse(await ReadAsync(socket)))
+        {
+            var result = emptyBranch.RootElement.GetProperty("result");
+            Assert.Equal("feat/counts", result.GetProperty("branch").GetString());
+            Assert.Equal("main", result.GetProperty("baseBranch").GetString());
+            Assert.False(result.TryGetProperty("branchCreatedAt", out _));
+        }
+
+        // Two commits on the branch: branchCreatedAt is the first own commit's time, not HEAD's.
+        await GitAsync(root, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "First branch commit");
+        var firstCommitMs = long.Parse((await GitAsync(root, "log", "-1", "--format=%ct")).Trim(), System.Globalization.CultureInfo.InvariantCulture) * 1000;
+        await Task.Delay(1100);
+        await GitAsync(root, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Second branch commit");
+        var headCommitMs = long.Parse((await GitAsync(root, "log", "-1", "--format=%ct")).Trim(), System.Globalization.CultureInfo.InvariantCulture) * 1000;
+        Assert.True(headCommitMs > firstCommitMs);
+
+        // Staged add, staged+unstaged edit, staged rename with spaces, staged binary, and untracked file.
+        await File.WriteAllTextAsync(Path.Combine(root, "plans.ts"), "export const a = 1;\nexport const b = 2;\n");
+        await GitAsync(root, "add", "plans.ts");
+        await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "staged one\nstaged two\n");
+        await GitAsync(root, "add", "tracked.txt");
+        await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "staged one\nstaged two\nunstaged three\n");
+        await GitAsync(root, "mv", "old name.txt", "new name.txt");
+        await File.WriteAllTextAsync(Path.Combine(root, "new name.txt"), "line one\nline two\n");
+        await GitAsync(root, "add", "new name.txt");
+        await File.WriteAllBytesAsync(Path.Combine(root, "bin.dat"), [0, 1, 2, 3, 0, 255]);
+        await GitAsync(root, "add", "bin.dat");
+        await File.WriteAllTextAsync(Path.Combine(root, "scratch.txt"), "not tracked\n");
+
+        await CallAsync(socket, 3, "git", "status", session.SessionId);
+        using var populated = JsonDocument.Parse(await ReadAsync(socket));
+        var status = populated.RootElement.GetProperty("result");
+        Assert.Equal("main", status.GetProperty("baseBranch").GetString());
+        Assert.Equal(firstCommitMs, status.GetProperty("branchCreatedAt").GetInt64());
+
+        var byPath = status.GetProperty("files").EnumerateArray().ToDictionary(entry => entry.GetProperty("path").GetString()!);
+        Assert.Equal(2, byPath["plans.ts"].GetProperty("stagedAdded").GetInt32());
+        Assert.Equal(0, byPath["plans.ts"].GetProperty("stagedRemoved").GetInt32());
+        Assert.False(byPath["plans.ts"].TryGetProperty("unstagedAdded", out _));
+
+        Assert.Equal(2, byPath["tracked.txt"].GetProperty("stagedAdded").GetInt32());
+        Assert.Equal(1, byPath["tracked.txt"].GetProperty("stagedRemoved").GetInt32());
+        Assert.Equal(1, byPath["tracked.txt"].GetProperty("unstagedAdded").GetInt32());
+        Assert.Equal(0, byPath["tracked.txt"].GetProperty("unstagedRemoved").GetInt32());
+
+        Assert.Equal(1, byPath["new name.txt"].GetProperty("stagedAdded").GetInt32());
+        Assert.Equal(0, byPath["new name.txt"].GetProperty("stagedRemoved").GetInt32());
+
+        Assert.False(byPath["bin.dat"].TryGetProperty("stagedAdded", out _));
+        Assert.False(byPath["scratch.txt"].TryGetProperty("stagedAdded", out _));
+        Assert.False(byPath["scratch.txt"].TryGetProperty("unstagedAdded", out _));
+    }
+
     // Pins: scm#17
     [Fact]
     public async Task Diff_answers_working_changes_and_refuses_paths_outside_the_session()
