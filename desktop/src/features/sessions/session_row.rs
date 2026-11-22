@@ -1,9 +1,6 @@
 //! `SessionRow` is one session in the rail, on the shared three-line row, as the look's session row: its state's
-//! glyph (a shape as well as a colour), then its title with how long it has run or its age, and an arrow when the row
-//! has something to open; its provider's glyph, then its machine's icon and name ("This Mac" for a local one), all
-//! spelled out with the branch in a tooltip; and its newest text, one line, or its project before it has any. A row that needs you
-//! is outlined in amber; the selected row gets the selected fill and line. The right-click menu moves it between Working and Done or
-//! settles it (`sessions/mark`), and copies its link, saying what that link does while the pointer rests on it.
+//! glyph, then its title and age or running time. The provider, permanent handle, machine and branch sit above the
+//! backend's highest-priority status. The right-click menu moves it between lifecycle shelves and copies its link.
 
 use std::rc::Rc;
 
@@ -16,15 +13,14 @@ use super::history::age::{age, elapsed_text};
 use super::presence::Presence;
 use super::rail_page::RailEntry;
 use super::status::Status;
+use crate::components::three_line_row::{RowArrow, ThreeLineRow};
 use crate::core::navigation::external_urls::session_link;
 use crate::core::theme::look::Look;
-use crate::core::ui::three_line_row::{RowArrow, ThreeLineRow};
 use crate::hinted_item::HintedItem;
 
-/// The state glyph, the provider's glyph and the machine's icon (the mockup's `.st`, the sheet's 14 and `.l2 .i`).
+/// The state and provider glyph sizes from the look.
 const GLYPH: Pixels = px(16.);
 const PROVIDER_GLYPH: Pixels = px(14.);
-const MACHINE_GLYPH: Pixels = px(13.);
 
 /// Moves a session to a group: the pane's `mark`.
 pub type OnMark = Rc<dyn Fn(String, Status, &mut App)>;
@@ -82,6 +78,42 @@ pub fn details(entry: &RailEntry) -> String {
     parts.join(" · ")
 }
 
+/// The row identifies the session before naming where it runs.
+fn identity(entry: &RailEntry) -> String {
+    let details = details(entry);
+    match &entry.handle {
+        Some(handle) => format!("{handle} · {details}"),
+        None => details,
+    }
+}
+
+/// Phrases the backend's highest-priority status using the facts available on this machine.
+fn status_line(entry: &RailEntry) -> String {
+    match entry.status_kind.as_deref() {
+        Some("need") => entry.status_text.clone().unwrap_or_default(),
+        Some("step") => match (&entry.status_text, &entry.status_reason) {
+            (Some(name), Some(reason)) => format!("{name}: {}", reason.replace('_', " ")),
+            (Some(name), None) => name.clone(),
+            (None, reason) => reason.clone().unwrap_or_default(),
+        },
+        Some("failed") => entry
+            .last_error
+            .as_ref()
+            .map_or_else(|| "Stopped".into(), |error| format!("Stopped: {error}")),
+        Some("subagents") => {
+            let total = entry.subagent_count.unwrap_or_default();
+            let done = entry.subagent_done.unwrap_or_default();
+            let noun = if total == 1 {
+                "sub-agent"
+            } else {
+                "sub-agents"
+            };
+            format!("Coordinating {total} {noun}, {done} done")
+        }
+        _ => entry.preview.clone().unwrap_or_default(),
+    }
+}
+
 /// The icon for a state that has its own: working and idle take the ring and the empty circle (`glyph`).
 pub fn state_icon(presence: Presence) -> Option<IconName> {
     match presence {
@@ -125,7 +157,11 @@ impl RenderOnce for SessionRow {
             on_open,
             on_mark,
         } = self.context;
-        let presence = Presence::of(&entry, needs_you);
+        let presence = if entry.status_kind.as_deref() == Some("failed") {
+            Presence::Failed
+        } else {
+            Presence::of(&entry, needs_you)
+        };
         let running = entry.running;
         let id = entry.session_id.clone();
         let route = entry.machine.clone();
@@ -145,7 +181,8 @@ impl RenderOnce for SessionRow {
                 .into_iter()
                 .map(str::to_owned)
                 .collect();
-            parts.push(details(&entry));
+            parts.push(identity(&entry));
+            parts.push(status_line(&entry));
             parts.join(" · ").into()
         };
         let provider = Icon::empty()
@@ -154,15 +191,6 @@ impl RenderOnce for SessionRow {
             .flex_none()
             .text_color(look.text_2)
             .into_any_element();
-        let machine = Icon::new(match (offline, entry.machine.is_some()) {
-            (true, _) => IconName::WifiOff,
-            (false, true) => IconName::Server,
-            (false, false) => IconName::Laptop,
-        })
-        .size(MACHINE_GLYPH)
-        .flex_none()
-        .text_color(look.text_3)
-        .into_any_element();
         // Every row has a 1px outline, clear unless it's selected or needs you, so none shifts when that changes.
         let outline = match (selected, needs_you) {
             (true, true) => look.needs_you_line,
@@ -181,16 +209,10 @@ impl RenderOnce for SessionRow {
             title_color,
             time,
             arrow,
-            icons: vec![provider, machine],
-            // The second line names the machine after its icon, "This Mac" for a local one, as the look's row does.
-            second: machine_name(&entry).into(),
+            icons: vec![provider],
+            second: identity(&entry).into(),
             spelled_out,
-            // Always a third line, so every row is the same height: its newest answer, or its project before it has one.
-            third: entry
-                .preview
-                .clone()
-                .unwrap_or_else(|| entry.group.clone())
-                .into(),
+            third: status_line(&entry).into(),
             dot: presence == Presence::Unread,
         }
         .item(cx)

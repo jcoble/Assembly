@@ -1,6 +1,5 @@
 //! `SessionsPane`'s panel traits (name, title, focus) and its render: the header, filters, search and rail list.
 use super::*;
-use crate::activity::{DotChip, Tone};
 use crate::core::backend::launcher::Launcher;
 use crate::core::ui::access::say;
 
@@ -68,14 +67,7 @@ impl Render for SessionsPane {
                     .pt(SPACE[5])
                     .pb(SPACE[2])
                     .px(SPACE[4])
-                    .child(self.pills.clone())
-                    // Its own line under the pills, so it never covers one: the rows' amber question chip.
-                    .children(needs_words(self.rail.totals.needs).map(|words| {
-                        h_flex()
-                            .justify_end()
-                            .pt(SPACE[2])
-                            .child(DotChip::new(words, Tone::Warning).named(ids::NEEDS_YOU))
-                    })),
+                    .child(self.pills.clone()),
             )
             // Above the list, which takes all the height there is and would push this out of the window.
             .when_some(self.row_error.clone(), |pane, error| {

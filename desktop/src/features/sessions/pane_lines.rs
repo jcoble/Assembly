@@ -122,7 +122,7 @@ impl SessionsPane {
                             key.machine == source.machine && key.id == entry.session_id
                         })
                 }),
-                needs_you: super::sessions_pane::engine_rows::needs_you(entry, cx),
+                needs_you: entry.needs_you,
                 offline: Machines::offline(entry.machine.as_deref(), cx),
                 now,
                 arrow: None,

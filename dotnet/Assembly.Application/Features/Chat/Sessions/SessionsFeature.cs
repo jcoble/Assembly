@@ -326,7 +326,8 @@ internal sealed class SessionsFeature : IFeature
         bool Running, bool Failed, bool Unread, string? Branch,
         string Icon, int SectionIndex, int Header, string Ordering, string? Preview,
         string? ParentSessionId, int Depth, long? PinnedAt, long? OrchestratorAt, long? Position, string? Model,
-        string? Worktree, string? LastError, string? ResumeCommand, long? LastSeenMs, ExpectedSource? Source, bool NativeActivity);
+        string? Worktree, string? LastError, string? ResumeCommand, long? LastSeenMs, ExpectedSource? Source, bool NativeActivity,
+        bool NeedsYou, string? StatusKind, string? StatusText, string? StatusReason, int? SubagentCount, int? SubagentDone, string? Handle);
 
     internal sealed record Rail(RailTotals Totals, IReadOnlyList<string> Agents, IReadOnlyList<RailEntry> Sessions, RailCursor? Next, int Start = 0);
 

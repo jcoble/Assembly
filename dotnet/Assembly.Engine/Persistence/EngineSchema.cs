@@ -41,6 +41,7 @@ public static class EngineSchema
             CheckoutIndex(scope);
             Messages.Reading.MessageReadSchemaUpgrade.Apply(scope);
             WorkflowControlSchema.Upgrade(scope);
+            Assembly.Application.Common.Engine.SessionHandles.Upgrade(scope, "engine_session", "id");
             return new(machine, null);
         }
         if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13 or 14 or 15))
@@ -59,6 +60,7 @@ public static class EngineSchema
             CheckoutIndex(scope);
             if (meta.Version < 14) Messages.Reading.MessageReadSchemaUpgrade.Apply(scope);
             if (meta.Version < 15) WorkflowControlSchema.Upgrade(scope);
+            Assembly.Application.Common.Engine.SessionHandles.Upgrade(scope, "engine_session", "id");
             return new(meta.Machine, meta.Version);
         }
         if (meta.Version == 1)
@@ -85,6 +87,7 @@ public static class EngineSchema
         CheckoutIndex(scope);
         Messages.Reading.MessageReadSchemaUpgrade.Apply(scope);
         WorkflowControlSchema.Upgrade(scope);
+        Assembly.Application.Common.Engine.SessionHandles.Upgrade(scope, "engine_session", "id");
         return new(meta.Machine, meta.Version);
     }
 

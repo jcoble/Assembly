@@ -15,7 +15,7 @@ pub fn list_entries(rail: &Rail) -> Vec<ListEntry> {
                 fold_key: entry.section.clone(),
                 label: entry.group.clone(),
                 count: entry.count,
-                folded: rail.folded.contains(&entry.section),
+                folded: rail.section_folded(&entry.section),
             },
             "project" => {
                 let fold_key = entry

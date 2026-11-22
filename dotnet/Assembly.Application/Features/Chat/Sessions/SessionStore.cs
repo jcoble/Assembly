@@ -121,6 +121,7 @@ public sealed partial class SessionStore
             foreach (var column in new[] { "pinned_at", "orchestrator_at", "position" })
                 if (Missing($"SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name='{column}'"))
                     scope.Execute($"ALTER TABLE session_info ADD COLUMN {column} INTEGER NULL;");
+            Assembly.Application.Common.Engine.SessionHandles.Upgrade(scope, "session_info", "session_id");
             EnsureProjectProjectionSchema(scope);
             return !Missing("SELECT COUNT(*) FROM pragma_table_info('session_config') WHERE name='pending_model'");
         });
@@ -303,11 +304,14 @@ public sealed partial class SessionStore
         string? Json(IReadOnlyList<string>? values) =>
             values is { Count: > 0 } ? JsonSerializer.Serialize(values, SessionsJson.Default.IReadOnlyListString) : null;
         var groupBy = args.GroupBy ?? new SessionsFeature.RailGroupBy(false, true);
+        IReadOnlyList<string> folded = args.Folded ?? [];
+        if (groupBy.Project && !groupBy.Status && !folded.Contains("+done"))
+            folded = [.. folded, "done"];
         var parts = _db.Query(Chat.Schema.Rail, row => (Part: row.Long(0), N: (int)row.Long(1), Row: ReadRail(row)), cancel,
             new SqlArg("$providers", Json(args.Providers)), new SqlArg("$locations", Json(args.Locations)),
             new SqlArg("$statuses", Json(args.Statuses)), new SqlArg("$status_group", groupBy.Status ? 1 : 0),
             new SqlArg("$project_group", groupBy.Project ? 1 : 0), new SqlArg("$sort", args.Sort), new SqlArg("$dir", args.Dir),
-            new SqlArg("$folded", Json(args.Folded)), new SqlArg("$filter", string.IsNullOrWhiteSpace(args.Filter) ? null : args.Filter.Trim()),
+            new SqlArg("$folded", Json(folded)), new SqlArg("$filter", string.IsNullOrWhiteSpace(args.Filter) ? null : args.Filter.Trim()),
             new SqlArg("$limit", args.Limit), new SqlArg("$after_section", args.After?.Section),
             new SqlArg("$after_group", args.After?.Group), new SqlArg("$after_repo", args.After?.RepoUrl),
             new SqlArg("$after_header", args.After?.Header), new SqlArg("$after_ordering", args.After?.Ordering),
@@ -316,7 +320,8 @@ public sealed partial class SessionStore
         int Start(long part) => parts.FirstOrDefault(row => row.Part == part) is { Row: not null } first ? first.N - 1 : 0;
         var sessions = parts.Where(part => part.Part == 2).Select(part => (SessionsFeature.RailEntry)part.Row).ToList();
         SessionsFeature.RailCursor Cursor(SessionsFeature.RailEntry entry) => new(
-            groupBy.Status ? entry.SectionIndex : 0, groupBy.Project ? entry.Group : "", groupBy.Project ? entry.RepoUrl : "",
+            entry.SectionIndex, groupBy.Project && !entry.NeedsYou && entry.Header != 0 ? entry.Group : "",
+            groupBy.Project && !entry.NeedsYou && entry.Header != 0 ? entry.RepoUrl : "",
             entry.Header, entry.Ordering);
         return new SessionsFeature.Rail((SessionsFeature.RailTotals)parts[0].Row, [.. parts.Where(part => part.Part == 1).Select(part => (string)part.Row)],
             sessions, sessions.Count == args.Limit ? Cursor(sessions[^1]) : null, Start(2));
@@ -337,7 +342,8 @@ public sealed partial class SessionStore
                 Text(17), ProviderGlyph.Of(row.Text(5)), (int)row.Long(18), (int)row.Long(19),
                 row.Text(20), Text(21), Text(25), (int)row.Long(34), Long(26), Long(27), Long(28),
                 Text(29), Text(30), Text(31), Text(32), Long(33),
-                Text(22) is { } machine ? new(machine, row.Long(23), Text(24)) : null, row.Long(35) == 1),
+                Text(22) is { } machine ? new(machine, row.Long(23), Text(24)) : null, row.Long(35) == 1,
+                row.Long(36) == 1, Text(37), Text(38), Text(39), (int?)Long(40), (int?)Long(41), Text(42)),
         };
     }
 

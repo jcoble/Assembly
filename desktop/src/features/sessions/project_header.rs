@@ -145,15 +145,29 @@ impl SectionHeader {
 impl RenderOnce for SectionHeader {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(cx);
+        let attention = self.key == "needs";
+        let title_color = if attention {
+            look.needs_you
+        } else {
+            look.text_2
+        };
+        let detail_color = if attention {
+            look.needs_you
+        } else {
+            look.text_3
+        };
         header_row()
-            .child(chevron(
-                format!("fold:section:{}", self.key),
-                self.folded,
-                &look,
-                self.on_toggle,
-            ))
-            .child(label(self.label, &look, cx))
-            .child(count(self.count, &look, cx))
+            .child(
+                chevron(
+                    format!("fold:section:{}", self.key),
+                    self.folded,
+                    &look,
+                    self.on_toggle,
+                )
+                .text_color(detail_color),
+            )
+            .child(label(self.label, &look, cx).text_color(title_color))
+            .child(count(self.count, &look, cx).text_color(detail_color))
     }
 }
 

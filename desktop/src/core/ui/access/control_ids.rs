@@ -42,7 +42,6 @@ ids! {
         SEARCH = "sessions.search",
         VIEW_OPTIONS = "sessions.view-options",
         NEW_SESSION = "sessions.new-session",
-        NEEDS_YOU = "sessions.needs-you",
         EMPTY = "sessions.empty",
         ROW_ERROR = "sessions.row-error",
         RAIL_ERROR = "sessions.rail-error",
