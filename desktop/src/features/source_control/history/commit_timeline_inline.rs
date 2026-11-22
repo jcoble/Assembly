@@ -6,7 +6,7 @@ use super::super::section_heading::{CHIP_HEIGHT, heading_label};
 use super::{CommitFiles, CommitTimeline};
 use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_file::OpenFile};
 use crate::core::theme::look::Look;
-use crate::core::theme::metrics::{CORNER_FIELD, GROUP_HEIGHT, SPACE};
+use crate::core::theme::metrics::{CORNER_FIELD, GROUP_HEIGHT, SPACE, TINT};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids as ids;
@@ -269,7 +269,7 @@ impl CommitTimeline {
                                             .map(|pill| {
                                                 let tint = |color: Hsla| {
                                                     Tag::custom(
-                                                        color.opacity(0.12),
+                                                        color.opacity(TINT),
                                                         color,
                                                         color.opacity(0.),
                                                     )

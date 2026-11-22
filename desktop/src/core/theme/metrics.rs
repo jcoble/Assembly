@@ -110,3 +110,6 @@ pub fn composer_shadow() -> Vec<BoxShadow> {
 
 /// How a disabled control is drawn: the whole control at this opacity.
 pub const DISABLED_OPACITY: f32 = 0.45;
+
+/// A status colour laid behind its own text, as a chip's or a ref pill's fill: the colour at this opacity.
+pub const TINT: f32 = 0.12;
