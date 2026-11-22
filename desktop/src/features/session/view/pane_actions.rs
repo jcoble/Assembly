@@ -50,10 +50,13 @@ impl SessionPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .active_source_cut
-            .as_ref()
-            .is_some_and(|cut| !cut.current(cx))
+        // A fold reveals rows already loaded in this transcript, even when its owner is unavailable.
+        let needs_source = !matches!(action, SessionAction::ToggleFold { .. });
+        if needs_source
+            && self
+                .active_source_cut
+                .as_ref()
+                .is_some_and(|cut| !cut.current(cx))
         {
             self.composer
                 .update(cx, |composer, cx| composer.invalidate_source(cx));
@@ -61,7 +64,7 @@ impl SessionPane {
             cx.notify();
             return;
         }
-        if self.row_source.is_some() && self._rows.is_none() {
+        if needs_source && self.row_source.is_some() && self._rows.is_none() {
             self.status =
                 "The captured session source is unavailable. Open the session again.".into();
             cx.notify();
@@ -91,6 +94,13 @@ impl SessionPane {
                 });
             }
             SessionAction::ToggleFold { run_id } => {
+                if !self
+                    .folds
+                    .get(&run_id)
+                    .is_some_and(|fold| !fold.work.is_empty())
+                {
+                    return;
+                }
                 // A fold's work stays on the list while it shuts, and goes when it's done (ease_frame).
                 let key = format!("fold:{run_id}");
                 let kept = self.kept.entry(key.clone()).or_default();
