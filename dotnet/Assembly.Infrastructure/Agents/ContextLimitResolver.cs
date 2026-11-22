@@ -1,52 +1,42 @@
 using System.Globalization;
 using System.Text.Json;
+using Assembly.Application.Common.Agents;
 
-namespace Assembly.Application.Common.Agents;
-
-/// <summary>
-/// Provider-neutral effective context window policy: an optional fixed auto-compact limit, plus whether later
-/// turn-end model capacity reports must never widen an already-observed window.
-/// </summary>
-public sealed record ContextLimitPolicy(long? FixedLimit, bool NeverWiden);
+namespace Assembly.Infrastructure.Agents;
 
 /// <summary>
-/// Resolves each provider's user-level effective auto-compact limit from its own config home.
+/// Resolves a provider-neutral <see cref="ContextLimitPolicy"/> at the adapter boundary from the provider's
+/// user-level configuration on this host.
 /// </summary>
-public static class EffectiveContextLimit
+internal static class ContextLimitResolver
 {
-    public static ContextLimitPolicy? Resolve(
-        AgentDescriptor descriptor,
-        IReadOnlyDictionary<string, string> environment,
-        Func<string, string?> readFile)
+    public static ContextLimitPolicy? Resolve(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> environment)
     {
         var kind = AccountContext.ContextLimitKind(descriptor.VendorFamily);
         if (kind == ContextLimitSource.None) return null;
         var configHome = AccountContext.ConfigHome(descriptor.VendorFamily, environment);
         return kind switch
         {
-            ContextLimitSource.JsonAutoCompactWindow => ResolveJsonAutoCompactWindow(configHome, environment, readFile),
-            ContextLimitSource.TomlAutoCompactLimit => ResolveTomlAutoCompactLimit(configHome, readFile),
+            ContextLimitSource.JsonAutoCompactWindow => ResolveJsonAutoCompactWindow(configHome, environment),
+            ContextLimitSource.TomlAutoCompactLimit => ResolveTomlAutoCompactLimit(configHome),
             _ => null,
         };
     }
 
-    private static ContextLimitPolicy ResolveJsonAutoCompactWindow(
-        string? configHome,
-        IReadOnlyDictionary<string, string> environment,
-        Func<string, string?> readFile)
+    private static ContextLimitPolicy ResolveJsonAutoCompactWindow(string? configHome, IReadOnlyDictionary<string, string> environment)
     {
         var autoCompactEnabled = true;
         long? autoCompactWindow = null;
         string? disableAutoCompact = null;
 
-        if (configHome is not null && readFile(Path.Combine(configHome, "settings.json")) is { Length: > 0 } text)
+        if (configHome is not null && ReadText(Path.Combine(configHome, "settings.json")) is { Length: > 0 } text)
         {
             try
             {
-                using var document = JsonDocument.Parse(text, new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
-                if (document.RootElement.ValueKind == JsonValueKind.Object)
+                using var doc = JsonDocument.Parse(text, new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+                if (doc.RootElement.ValueKind == JsonValueKind.Object)
                 {
-                    var root = document.RootElement;
+                    var root = doc.RootElement;
                     if (root.TryGetProperty("autoCompactEnabled", out var enabled) && enabled.ValueKind is JsonValueKind.True or JsonValueKind.False)
                         autoCompactEnabled = enabled.GetBoolean();
                     if (root.TryGetProperty("autoCompactWindow", out var window) && window.ValueKind == JsonValueKind.Number
@@ -63,15 +53,14 @@ public static class EffectiveContextLimit
         if (environment.TryGetValue("DISABLE_AUTO_COMPACT", out var envDisable) && !string.IsNullOrEmpty(envDisable))
             disableAutoCompact = envDisable;
 
-        if (!autoCompactEnabled || IsTruthy(disableAutoCompact))
-            return new ContextLimitPolicy(null, NeverWiden: false);
-
-        return new ContextLimitPolicy(autoCompactWindow, NeverWiden: true);
+        var enabledEffective = autoCompactEnabled
+            && disableAutoCompact is not ("1") && !string.Equals(disableAutoCompact, "true", StringComparison.OrdinalIgnoreCase);
+        return enabledEffective ? new ContextLimitPolicy(autoCompactWindow, NeverWiden: true) : new ContextLimitPolicy(null, NeverWiden: false);
     }
 
-    private static ContextLimitPolicy? ResolveTomlAutoCompactLimit(string? configHome, Func<string, string?> readFile)
+    private static ContextLimitPolicy? ResolveTomlAutoCompactLimit(string? configHome)
     {
-        if (configHome is null || readFile(Path.Combine(configHome, "config.toml")) is not { Length: > 0 } text)
+        if (configHome is null || ReadText(Path.Combine(configHome, "config.toml")) is not { Length: > 0 } text)
             return null;
 
         foreach (var rawLine in text.Split('\n'))
@@ -90,6 +79,9 @@ public static class EffectiveContextLimit
         return null;
     }
 
-    private static bool IsTruthy(string? value) =>
-        value is not null && (value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase));
+    private static string? ReadText(string path)
+    {
+        try { return File.Exists(path) ? File.ReadAllText(path) : null; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+    }
 }
