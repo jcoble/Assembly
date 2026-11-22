@@ -147,9 +147,11 @@ TimeoutStopSec=30
     } catch { console.error('previous host could not be restored before candidate startup; inspect the lane unit'); }
   }
   const said = error instanceof Error ? error.message : String(error);
-  console.log('ASSEMBLY_REMOTE_SYNC ' + JSON.stringify({ reason: error instanceof HostDown || error instanceof HostUnseen ? said
-    : candidateStarted ? `Remote backend started, but checking it failed: ${said}`
-    : `Remote backend build or deploy failed: ${said}` }));
+  // The marked line can reach a pushed note in the app, so it carries a fixed sentence by kind;
+  // the raw diagnostics stay in the log and this terminal (the console.error below).
+  console.log('ASSEMBLY_REMOTE_SYNC ' + JSON.stringify({ reason: error instanceof HostDown || error instanceof HostUnseen ? 'Remote backend failed to start.'
+    : candidateStarted ? 'Remote backend started, but checking it failed.'
+    : 'Remote backend build or deploy failed.' }));
   console.error(`Workbox Test sync failed${candidateStarted ? ' after candidate startup (host state needs inspection)' : ''}: ${said}`);
   process.exitCode = 1;
 }

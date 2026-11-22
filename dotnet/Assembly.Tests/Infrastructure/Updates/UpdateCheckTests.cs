@@ -329,7 +329,9 @@ public sealed partial class UpdateCheckTests
             var notes = new List<string>();
             var source = UpdateSources.ForHost(new HttpClient(), TimeProvider.System, checkout: root, home: root);
             var failed = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync([new(null, [Item("adapter", "codex-acp")])], false, notes.Add, CancellationToken.None));
-            Assert.Equal(["Waiting."], notes);
+            var note = Assert.Single(notes);
+            Assert.False(string.IsNullOrWhiteSpace(note));
+            Assert.DoesNotContain("Workbox Test sync: nope", note, StringComparison.Ordinal);
             Assert.Equal($"--this-machine --home {root}", File.ReadAllText(Path.Combine(root, "scripts/args")));
             Assert.False(string.IsNullOrWhiteSpace(failed.Message));
             Assert.Equal("update_failed", failed.Reason);

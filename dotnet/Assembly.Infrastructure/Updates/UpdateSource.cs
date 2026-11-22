@@ -159,10 +159,11 @@ internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm, IR
         void Line(string? line)
         {
             if (string.IsNullOrWhiteSpace(line) || line.StartsWith("[dev-sync timing]", StringComparison.Ordinal)) return;
-            // Raw script output is never kept: only its marked progress lines leave this method.
+            // Raw script output is never kept: only its marked progress lines leave this method,
+            // and those only as fixed sentences, since progress becomes the pushed update note.
             if (!line.StartsWith(Marker, StringComparison.Ordinal)) return;
             using var json = JsonDocument.Parse(line[Marker.Length..]);
-            if (json.RootElement.GetProperty("reason").GetString() is { } reason) progress(reason);
+            if (json.RootElement.GetProperty("reason").GetString() is { } reason) progress(SafeProgress(reason));
         }
         process.OutputDataReceived += (_, line) => Line(line.Data);
         process.ErrorDataReceived += (_, line) => Line(line.Data);
@@ -174,6 +175,22 @@ internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm, IR
         await process.WaitForExitAsync(CancellationToken.None);
         ct.ThrowIfCancellationRequested();
         if (process.ExitCode != 0) failures.Add(new("The update didn't finish."));
+    }
+
+    // The same fixed sentences app-dev-remote.ts publishes, chosen by the marked reason's kind.
+    private static string SafeProgress(string reason)
+    {
+        if (reason.StartsWith("Remote backend update is waiting", StringComparison.Ordinal))
+            return "Remote backend update is waiting: a session is running there. It finishes when the host goes idle.";
+        if (reason.StartsWith("Remote backend failed to start", StringComparison.Ordinal))
+            return "Remote backend failed to start.";
+        if (reason.StartsWith("Remote backend started, but checking it failed", StringComparison.Ordinal))
+            return "Remote backend started, but checking it failed.";
+        if (reason.StartsWith("Remote backend build or deploy failed", StringComparison.Ordinal))
+            return "Remote backend build or deploy failed.";
+        return reason is "Updating this machine's adapters and CLIs." or "Checking the remote."
+            ? reason
+            : "The remote update is running.";
     }
 
     private const string Marker = "ASSEMBLY_REMOTE_SYNC ";
