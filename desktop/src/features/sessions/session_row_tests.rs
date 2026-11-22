@@ -1,4 +1,4 @@
-use super::{details, short_details, state_icon, status_words};
+use super::{details, state_icon, status_words};
 use crate::features::sessions::presence::Presence;
 use crate::features::sessions::rail_page::{RailEntry, test_entry};
 
@@ -90,22 +90,6 @@ fn a_finished_row_that_isnt_marked_still_names_its_state() {
         ..finished
     };
     assert_eq!(status_words(Presence::of(&unread, false), false), ["Idle"]);
-}
-
-#[test]
-fn the_short_form_drops_this_mac_and_keeps_the_rest() {
-    let remote = RailEntry {
-        machine: Some("Workbox Test".into()),
-        branch: Some("lane/rail".into()),
-        ..entry()
-    };
-    assert_eq!(short_details(&remote), "Workbox Test · lane/rail");
-    let local = RailEntry {
-        branch: Some("lane/rail".into()),
-        ..entry()
-    };
-    assert_eq!(short_details(&local), "lane/rail");
-    assert_eq!(short_details(&entry()), "");
 }
 
 struct OneRow {

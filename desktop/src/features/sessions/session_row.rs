@@ -77,14 +77,6 @@ pub fn details(entry: &RailEntry) -> String {
     parts.join(" · ")
 }
 
-/// The short form of `details`, beside the machine's icon: a remote machine's name and the branch. The icon says
-/// a session is local, so that needs no words.
-pub fn short_details(entry: &RailEntry) -> String {
-    let mut parts: Vec<String> = entry.machine.iter().cloned().collect();
-    parts.extend(entry.branch.clone().filter(|branch| !branch.is_empty()));
-    parts.join(" · ")
-}
-
 /// The icon for a state that has its own: working and idle take the ring and the empty circle (`glyph`).
 pub fn state_icon(presence: Presence) -> Option<IconName> {
     match presence {
@@ -185,7 +177,8 @@ impl RenderOnce for SessionRow {
             time,
             arrow,
             icons: vec![provider, machine],
-            second: short_details(&entry).into(),
+            // The second line names the machine: a remote one by name, while the icon alone says This Mac.
+            second: entry.machine.clone().unwrap_or_default().into(),
             spelled_out,
             // Always a third line, so every row is the same height: its newest answer, or its project before it has one.
             third: entry
