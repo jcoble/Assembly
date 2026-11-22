@@ -33,15 +33,24 @@ internal static class UpdateNormalizer
         node[name]?.GetValueKind() == JsonValueKind.String && node[name]!.GetValue<string>() is { } text
         && !string.IsNullOrWhiteSpace(text) ? text : null;
 
-    /// <summary>Gives each version 1 diff item (<c>{type: diff, path}</c>) the version 2 <c>changes</c> list.</summary>
+    /// <summary>Turns version 1 file snapshots into the changes and Git patch read by the version 2 path.</summary>
     public static void Diffs(JsonObject tool)
     {
         if (tool["content"] is not JsonArray content) return;
         foreach (var item in content.OfType<JsonObject>())
-            if (item["type"]?.GetValueKind() == JsonValueKind.String && item["type"]!.GetValue<string>() == "diff"
-                && item["changes"] is null && item["path"]?.GetValueKind() == JsonValueKind.String)
-                item["changes"] = new JsonArray(new JsonObject { ["path"] = item["path"]!.GetValue<string>() });
+        {
+            if (Text(item, "type") != "diff" || item["changes"] is not null || Text(item, "path") is not { } path)
+                continue;
+            item["changes"] = new JsonArray(new JsonObject { ["path"] = path });
+            var oldText = FileText(item, "oldText");
+            var newText = FileText(item, "newText");
+            if (item["patch"] is null && DiffPatch.FromSnapshots(path, oldText, newText) is { } patch)
+                item["patch"] = new JsonObject { ["format"] = "git_patch", ["text"] = patch };
+        }
     }
+
+    private static string? FileText(JsonObject item, string key) =>
+        item[key] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 
     public static JsonElement Element(JsonNode node)
     {

@@ -24,6 +24,7 @@ internal sealed class OpenTools
     private sealed class Turn
     {
         public readonly HashSet<string> Open = [];
+        public readonly HashSet<string> Stopped = [];
         public readonly Dictionary<string, string> RunOf = [];   // B's id -> A's id
         public readonly Dictionary<string, IReadOnlyList<JsonElement>> ApprovedDiffs = []; // A's id -> A's diff items
         public readonly HashSet<string> RanThrough = [];         // A ids that finished through their run
@@ -92,12 +93,15 @@ internal sealed class OpenTools
             runOf = turn.RunOf.GetValueOrDefault(toolCallId);
             var id = runOf ?? toolCallId;
             if (runOf is null && turn.RanThrough.Contains(id)) return null;
+            // Prompt cleanup can report another failure for a call already cancelled by Stop.
+            if (status == "failed" && turn.Stopped.Contains(id)) return null;
             if (runOf is null && DiffItems(received.Update) is { Count: > 0 } diffs) turn.ApprovedDiffs[id] = diffs;
             approvedDiffs = runOf is not null ? turn.ApprovedDiffs.GetValueOrDefault(runOf) : null;
             if (status is "pending" or "in_progress") turn.Open.Add(id);
             else if (status is not null)
             {
                 stopped = turn.Open.Remove(id) && status == "failed" && turn.Stopping;
+                if (stopped || (status == "cancelled" && turn.Stopping)) turn.Stopped.Add(id);
                 if (runOf is not null) turn.RanThrough.Add(id);
             }
         }

@@ -8,6 +8,7 @@ using Assembly.Application.Common.Acp.V2;
 using Assembly.Application.Features.Agents;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Events;
+using Assembly.Domain.Rows;
 using Assembly.Infrastructure.Transcript;
 using Assembly.Remote.Record;
 using Assembly.Tests.Core.Acp;
@@ -225,6 +226,36 @@ public sealed class AcpClientV1Tests
         Assert.Equal("content", detail.OutputSource);
         Assert.Equal(["term-1"], detail.TerminalIds);
         Assert.Single(last.Fields.Diffs!);
+    }
+
+    [Fact]
+    public async Task A_recorded_approved_edit_keeps_its_diff_and_output_after_reopen()
+    {
+        await using var replay = await AntigravityAsync();
+        await PromptAsync(replay, FirstSession, 4);
+        Published(replay.Client);
+        await PromptAsync(replay, FirstSession, 5);
+
+        using var file = new TempDatabase();
+        using (var db = TestDatabase.Open(file.Path))
+        {
+            var store = RowStore.Open(db);
+            var reader = new UpdateReader();
+            var converter = new RowConverter();
+            foreach (var update in Published(replay.Client))
+                foreach (var change in reader.Read(update))
+                    store.Commit("session", converter.Apply(change));
+        }
+
+        using var reopened = TestDatabase.Open(file.Path);
+        var saved = RowStore.Open(reopened);
+        var edits = saved.RowsAfter("session", 0).Where(row => row.Kind == RowKind.Tool).ToArray();
+        var item = Assert.Single(edits.Select(row => row.ItemId).Distinct());
+        Assert.Equal("completed", edits[^1].Payload.GetProperty("state").GetString());
+        var detail = saved.ToolCall("session", item!);
+        Assert.NotNull(detail);
+        Assert.Equal("Create file note.txt", detail.Output);
+        Assert.Contains("\n+hi\n", detail.Diff);
     }
 
     [Fact]

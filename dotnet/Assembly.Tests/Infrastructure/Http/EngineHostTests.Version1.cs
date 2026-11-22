@@ -214,6 +214,52 @@ public sealed partial class EngineHostTests
         finally { Directory.Delete(home, true); }
     }
 
+    [Fact]
+    public async Task A_dropped_step_failure_after_stop_keeps_the_version_1_tool_cancelled()
+    {
+        using var file = new TempDatabase();
+        var launcher = new FakeLauncher();
+        await using var running = await Host.Start("desktop", file.Folder, null, launcher: launcher);
+        using var socket = await running.Open();
+        using var bulk = await running.Open(bulk: true);
+        var opened = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var needs = running.Runtime.Publisher.Register(item =>
+        {
+            if (item.Kind == "needs_me.opened") opened.TrySetResult(item.EntityId);
+        }, out _);
+        var (agent, prompt) = await OpenVersion1Turn(running, socket, launcher, file.Folder);
+        var turn = RecordedTurn(3, "agy-stopask.jsonl", "55ada90b-107e-4a69-9950-d61196bf0630");
+        var ask = turn.FindIndex(frame => frame.Line["method"]?.GetValue<string>() == "session/request_permission");
+        await agent.SendAsync(turn[ask - 1].Line.ToJsonString() + "\n" + turn[ask].Line.ToJsonString());
+        var needId = await opened.Task.WaitAsync(Timeout);
+        await running.WaitState("needs_me", needId, "open");
+        await running.WaitState("messages", "work", "next_turn");
+
+        var session = await Entity(bulk, "session", "agy");
+        var stop = new WindowCommand(Guid.NewGuid(), "agy", session.GetProperty("version").GetInt64(), 0, new StopSession());
+        var accepted = await Call(socket, "command", JsonSerializer.SerializeToElement(stop, EngineSocketJson.Default.WindowCommand));
+        Assert.True(accepted.GetProperty("applied").GetBoolean(), accepted.ToString());
+        JsonElement[] stopFrames = [await agent.NextMessageAsync().WaitAsync(Timeout), await agent.NextMessageAsync().WaitAsync(Timeout)];
+        Assert.Contains(stopFrames, frame => frame.TryGetProperty("method", out var method) && method.GetString() == "session/cancel");
+        var permission = Assert.Single(stopFrames, frame => frame.TryGetProperty("result", out _));
+        Assert.Equal("cancelled", permission.GetProperty("result").GetProperty("outcome").GetProperty("outcome").GetString());
+
+        var rejection = turn.First(frame => frame.Line["params"]?["update"]?["status"]?.GetValue<string>() == "failed").Line;
+        await agent.SendAsync(rejection.ToJsonString());
+        // The recheck logged a second failure for the same call during cancelled-prompt cleanup.
+        var dropped = rejection.DeepClone().AsObject();
+        dropped["params"]!["update"]!.AsObject().Remove("rawOutput");
+        await agent.SendAsync(dropped.ToJsonString());
+        await agent.ReplyAsync(prompt, turn[^1].Line["result"]!.ToJsonString());
+        await running.WaitState("sessions", "agy", "idle");
+
+        var states = ((IEngineRuntime)running.Runtime).Read(scope => scope.Query(
+            "SELECT json_extract(payload,'$.state') FROM rows WHERE kind=$kind ORDER BY seq",
+            row => row.Text(0), new SqlArg("$kind", RowKind.Tool)), default);
+        Assert.Contains("cancelled", states);
+        Assert.DoesNotContain("failed", states);
+    }
+
     [Theory]
     [InlineData("desktop")]
     [InlineData("remote")]
