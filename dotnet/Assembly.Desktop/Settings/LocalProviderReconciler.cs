@@ -45,6 +45,9 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
     private bool _working;
     private bool _autoFailed;
     private bool _disposed;
+    // Providers whose check could not be started in the latest run; the composer shows them as a
+    // problem with a Try again instead of leaving them in Setting up with no word.
+    private readonly HashSet<string> _probeFailures = new(StringComparer.Ordinal);
 
     internal LocalProviderReconciler(
         IAppDatabase db,
@@ -74,6 +77,22 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
 
     /// <summary>True while a reconciliation run is actively working on this machine.</summary>
     internal bool IsWorking => Volatile.Read(ref _working);
+
+    /// <summary>True when the latest run could not start this provider's check on this machine.</summary>
+    internal bool ProbeDidNotRun(string provider)
+    {
+        lock (_probeFailures) return _probeFailures.Contains(provider);
+    }
+
+    private void RecordProbeFailure(string provider)
+    {
+        lock (_probeFailures) _probeFailures.Add(provider);
+    }
+
+    private void ClearProbeFailure(string provider)
+    {
+        lock (_probeFailures) _probeFailures.Remove(provider);
+    }
 
     /// <summary>Raised when a concurrent trigger joins an in-flight reconciliation run.</summary>
     internal event Action? Coalesced;
@@ -147,13 +166,14 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(hostStop, _stop.Token);
         var ct = linked.Token;
         PublishWorking(true);
+        ProviderSpec[] enabledSpecs = [];
         try
         {
             // Yield so callers that triggered under another component's lock never re-enter synchronously.
             await Task.Yield();
             ct.ThrowIfCancellationRequested();
 
-            var enabledSpecs = SeedAndReadEnabled(ct);
+            enabledSpecs = SeedAndReadEnabled(ct);
             var localItems = await _updates.CheckLocalAsync(ct, fresh);
             if (enabledSpecs.Length == 0)
             {
@@ -209,6 +229,9 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
         }
         catch (Exception error) when (error is CallFailed or IOException or UnauthorizedAccessException or JsonException)
         {
+            // The enabled providers got no check from this run: say so on their rows, not silently.
+            foreach (var spec in enabledSpecs)
+                RecordProbeFailure(spec.Id);
             _log.WriteLine($"local provider reconcile: {error.Message}");
         }
         finally
@@ -347,9 +370,9 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
                 continue;
             string account;
             try { account = AccountContext.Of(agent, Environment.GetEnvironmentVariable); }
-            catch (CallFailed) { continue; }
+            catch (CallFailed) { RecordProbeFailure(agent.Id); continue; }
             var entityId = $"{agent.Id}/{account}";
-            ((IEngineRuntime)_engine).Write(scope =>
+            var result = ((IEngineRuntime)_engine).Write(scope =>
             {
                 var expectedVersion = scope.QueryFirst(
                     "SELECT version FROM engine_provider WHERE id = $id;",
@@ -365,6 +388,9 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
                     nowMs);
                 return _engine.Commands.Apply(scope, context, new CheckProvider());
             });
+            // A refused check command is a failure the provider shows, not a silent skip.
+            if (result.Applied) ClearProbeFailure(agent.Id);
+            else RecordProbeFailure(agent.Id);
         }
     }
 

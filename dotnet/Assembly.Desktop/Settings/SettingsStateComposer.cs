@@ -20,7 +20,8 @@ internal sealed class SettingsStateComposer(
     string localEngineMachine,
     TimeProvider time,
     ProviderFailureDetails? failureDetails = null,
-    Func<bool>? isReconciling = null)
+    Func<bool>? isReconciling = null,
+    Func<string, bool>? probeDidNotRun = null)
 {
     private const string LocalKey = "local";
 
@@ -267,6 +268,9 @@ internal sealed class SettingsStateComposer(
         var checkedThisRun = isLocal
             ? providerRow?.CheckedMs is { } checkedMs && checkedMs >= _runStartMs
             : mirrorState == "live";
+        // A check this run could not start is a problem with a Try again, never a silent Setting up.
+        if (isLocal && lastFailure is null && !checkedThisRun && probeDidNotRun?.Invoke(spec.Id) == true)
+            lastFailure = SettingsStateRules.CheckDidNotRun();
         var state = SettingsStateRules.DeriveProviderMachineState(
             machine,
             mirrorState,

@@ -277,11 +277,26 @@ internal static class SettingsStateRules
         if (waitingMachines.Length > 1)
             return Summary(SettingsSummary.WaitingOnSessions, $"{waitingMachines.Length} machines are waiting for running sessions to finish.", needsUser: true);
 
-        // 4. Restart to finish (restartVersion already rides along above when something else leads).
+        // 4. Still awaiting a check in this run: not ready, and not the user's to act on.
+        var settingUpProviders = providers.Where(p => p.Enabled && p.State == ProviderRowState.SettingUp).ToArray();
+        if (settingUpProviders.Length == 1)
+        {
+            var provider = settingUpProviders[0];
+            var settingUp = provider.Machines.Where(m => m.State == ProviderRowState.SettingUp).ToArray();
+            if (settingUp.Length == 1 && machineLabels.TryGetValue(settingUp[0].MachineKey, out var label))
+                return Summary(SettingsSummary.SettingUp, $"{provider.Name} is setting up on {label}.", needsUser: false);
+            if (settingUp.Length > 1)
+                return Summary(SettingsSummary.SettingUp, $"{provider.Name} is setting up on {settingUp.Length} machines.", needsUser: false);
+            return Summary(SettingsSummary.SettingUp, $"{provider.Name} is setting up.", needsUser: false);
+        }
+        if (settingUpProviders.Length > 1)
+            return Summary(SettingsSummary.SettingUp, $"{settingUpProviders.Length} providers are setting up.", needsUser: false);
+
+        // 5. Restart to finish (restartVersion already rides along above when something else leads).
         if (restartVersion is not null)
             return Summary(SettingsSummary.RestartToFinish, $"Restart Assembly to finish updating to {restartVersion}.", needsUser: true);
 
-        // 5. Nothing needs the user.
+        // 6. Nothing needs the user.
         return Summary(SettingsSummary.Nothing, "Everything is ready.", needsUser: false);
     }
 
@@ -298,6 +313,10 @@ internal static class SettingsStateRules
             : DetailOf(safeCode, prefix);
         return new SettingsFailure(message, detail);
     }
+
+    /// <summary>The failure shown when this run's check for a provider could not even be started.</summary>
+    internal static SettingsFailure CheckDidNotRun() =>
+        new("The check could not be started.", "Assembly could not start the check for this provider on this machine.");
 
     /// <summary>The provider's own failure when its adapter or CLI install/update failed on a machine.</summary>
     internal static SettingsFailure InstallFailure(string? safeNote) =>

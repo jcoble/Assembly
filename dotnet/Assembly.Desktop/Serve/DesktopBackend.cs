@@ -447,7 +447,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             reconciler = new LocalProviderReconciler(db, topics, work, launcher, updates, providerEnablement, engine, TimeProvider.System, log,
                 detectLocalCli: agentsFile is null ? null : CliCommand.IsInstalledOnLocalPath, probeAfterCheck: agentsFile is not null);
             updates.OnLocalReconcile = () => reconciler.Trigger(fresh: false);
-            settingsState = new SettingsStateFeature(db, topics, work, launcher, machinesFeature, engine.Machine, TimeProvider.System, failureDetails, () => reconciler.IsWorking);
+            settingsState = new SettingsStateFeature(db, topics, work, launcher, machinesFeature, engine.Machine, TimeProvider.System, failureDetails, () => reconciler.IsWorking, reconciler.ProbeDidNotRun);
             var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, machineForward, connections, git, projectRoots);
             var projectPrReads = new ProjectPullRequestReads(db, projectRoots, sessionSources, engine.Machine, prReader, machineForward, connections);
             var projectPrActions = new ProjectPullRequestActions(projectPrReads, gitOperations, sessionGit, machineForward);

@@ -56,6 +56,7 @@ pub fn update(state: Option<&str>) -> Option<(&'static str, Tone)> {
 pub fn summary_tone(kind: &str) -> Tone {
     match kind {
         "nothing" => Tone::Success,
+        "setting_up" => Tone::Info,
         "problem" => Tone::Danger,
         _ => Tone::Warning,
     }

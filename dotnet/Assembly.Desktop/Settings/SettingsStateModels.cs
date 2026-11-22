@@ -19,6 +19,7 @@ internal sealed record SettingsState(
 internal sealed record SettingsSummary(string Kind, string Message, bool Working = false, bool NeedsUser = false, string? RestartVersion = null)
 {
     internal const string Nothing = "nothing";
+    internal const string SettingUp = "setting_up";
     internal const string RestartToFinish = "restart_to_finish";
     internal const string WaitingOnSessions = "waiting_on_sessions";
     internal const string NeedsSignIn = "needs_sign_in";

@@ -179,8 +179,9 @@ public sealed partial class SettingsStateSocketTests
             Assert.Equal(SettingsStateFeature.CurrentKey, entry.GetProperty("key").GetString());
             var item = entry.GetProperty("item");
             var initialSummary = item.GetProperty("summary");
-            Assert.Equal(SettingsSummary.Nothing, initialSummary.GetProperty("kind").GetString());
-            Assert.Equal("Everything is ready.", initialSummary.GetProperty("message").GetString());
+            // Nothing has been checked yet in this run, so the summary says so instead of ready.
+            Assert.Equal(SettingsSummary.SettingUp, initialSummary.GetProperty("kind").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(initialSummary.GetProperty("message").GetString()));
 
             var machines = item.GetProperty("machines").EnumerateArray().ToArray();
             var localMachine = Assert.Single(machines, m => m.GetProperty("key").GetString() == "local");

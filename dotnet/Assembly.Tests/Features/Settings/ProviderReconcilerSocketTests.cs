@@ -18,7 +18,7 @@ using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Features.Settings;
 
-public sealed class ProviderReconcilerSocketTests
+public sealed partial class ProviderReconcilerSocketTests
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(15);
     private const string Token = "test-reconcile-token";

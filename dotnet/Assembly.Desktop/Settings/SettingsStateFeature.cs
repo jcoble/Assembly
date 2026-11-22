@@ -44,12 +44,13 @@ internal sealed class SettingsStateFeature : IFeature, IAsyncDisposable
         string localEngineMachine,
         TimeProvider time,
         ProviderFailureDetails? failureDetails = null,
-        Func<bool>? isReconciling = null)
+        Func<bool>? isReconciling = null,
+        Func<string, bool>? probeDidNotRun = null)
     {
         _topics = topics;
         _work = work;
         ProviderEnablementStore.EnsureSchema(db);
-        _composer = new SettingsStateComposer(db, launcher, machinesFeature, localEngineMachine, time, failureDetails, isReconciling);
+        _composer = new SettingsStateComposer(db, launcher, machinesFeature, localEngineMachine, time, failureDetails, isReconciling, probeDidNotRun);
         _topics.Unsubscribed += OnUnsubscribed;
     }
 
