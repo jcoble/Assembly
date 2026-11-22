@@ -2,11 +2,12 @@
 //! paths. A row's buttons mount only while it's hovered, so a long list holds no idle controls. Replaces
 //! ChangedFileRow.svelte and sourceControlFileMenu.ts.
 use super::SourceControlPane;
+use crate::components::file_row::file_row;
 use crate::core::intents::{open_diff::OpenDiff, open_file::OpenFile};
 use crate::core::socket::{client::SocketClient, row_source::ExpectedRowSource};
 use crate::core::state::viewed_project::{LOCAL_MACHINE, ViewedProject};
 use crate::core::theme::look::Look;
-use crate::core::theme::metrics::{CORNER_FIELD, FILE_ROW_HEIGHT, SPACE};
+use crate::core::theme::metrics::FILE_ROW_GAP;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Named as _;
 use crate::core::ui::file_icon::file_icon;
@@ -20,15 +21,12 @@ use crate::features::source_control::section_heading::{section_heading, text_act
 use crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::list::ListItem;
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-/// The file row's gap between its pieces, the old app's 8.
-const ROW_GAP: Pixels = SPACE[3];
 const NOT_IN_FINDER: &str = "This file is on a remote machine, so Finder cannot show it.";
 const NO_ROOT: &str = "This panel is not pointed at a repository folder yet.";
 const DELETED: &str = "This file was deleted, so there is nothing on disk to open.";
@@ -324,7 +322,7 @@ impl SourceControlPane {
         // The look's `.frow`: the file's mark, its name in text-1, its folder in text-3 taking the room, then the letter.
         let row = h_flex()
             .w_full()
-            .gap(ROW_GAP)
+            .gap(FILE_ROW_GAP)
             .child(file_icon(format!("icon:{id}"), &file.path, cx))
             .child(div().min_w_0().truncate().child(name.to_string()))
             .child(
@@ -352,20 +350,7 @@ impl SourceControlPane {
         let tip = SharedString::from(file.tip());
         let hover_key = key.clone();
         let menu = self.file_menu(file, target, read_only, root, busy, cx);
-        ListItem::new(SharedString::from(format!("git-file:{id}")))
-            .selected(selected)
-            .px(SPACE[3])
-            .py_0()
-            .h(FILE_ROW_HEIGHT)
-            .rounded(CORNER_FIELD)
-            .border_1()
-            .border_color(if selected {
-                look.line_selected
-            } else {
-                transparent_black()
-            })
-            .text_role(TextRole::Body, cx)
-            .text_color(look.text_1)
+        file_row(SharedString::from(format!("git-file:{id}")), selected, cx)
             .on_click(cx.listener(move |pane, _, window, cx| {
                 pane.selected_file = Some(key.clone());
                 window.dispatch_action(Box::new(open.clone()), cx);

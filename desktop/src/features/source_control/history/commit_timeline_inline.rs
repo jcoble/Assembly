@@ -2,8 +2,9 @@
 //! ref pills, opening onto its files, and more only on Load more. The history tab keeps the graph.
 use super::super::git_history::GitCommit;
 use super::super::git_labels::{RefKind, commit_age, ref_pills, split_path};
-use super::super::section_heading::{CHIP_HEIGHT, heading_label};
+use super::super::section_heading::CHIP_HEIGHT;
 use super::{CommitFiles, CommitTimeline};
+use crate::components::heading_label::heading_label;
 use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_file::OpenFile};
 use crate::core::theme::look::Look;
 use crate::core::theme::metrics::{CORNER_FIELD, FILE_ROW_HEIGHT, GROUP_HEIGHT, SPACE, TINT};

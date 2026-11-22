@@ -1,7 +1,8 @@
 //! `UtilityStrip` owns the bar at the foot of the sessions column, the look's 46-high footer: Settings, Resources
-//! and Usage as quiet buttons, each opening the kit's popover anchored to it and opening upward, which the kit keeps on screen.
-//! Settings opens the Settings page through the `OpenSettings` intent; the other two bodies wait for the resources and
-//! usage quota feeds; nothing here polls. Replaces UtilityStrip.svelte, utilityStrip.ts and the usage and resource popovers in ShellOverlays.svelte.
+//! and Usage as quiet buttons, each opening the kit's popover anchored to it and opening upward, which the kit keeps
+//! on screen. Settings opens the Settings page through the `OpenSettings` intent; the other two bodies wait for the
+//! resources and usage quota feeds; nothing here polls. Replaces UtilityStrip.svelte, utilityStrip.ts and the usage
+//! and resource popovers in ShellOverlays.svelte.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::Button;
@@ -11,7 +12,9 @@ use gpui_kit::*;
 
 use crate::components::quiet_button::quiet_button;
 use crate::core::intents::open_settings::OpenSettings;
+use crate::core::theme::look::Look;
 use crate::core::theme::metrics::{CRUMB_HEIGHT, SPACE};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::control_ids::utility as ids;
 use crate::core::ui::access::{Control as _, say};
 
@@ -58,10 +61,13 @@ fn figure(
         Popover::new(id)
             .anchor(Anchor::BottomLeft)
             .trigger(trigger)
-            .content(move |_, _, _| {
+            // The popover's words in the body type and the look's secondary text colour.
+            .content(move |_, _, cx| {
                 say(body_id, body)
                     .debug_selector(move || format!("{id}-body"))
-                    .p_2()
+                    .p(SPACE[3])
+                    .text_role(TextRole::Body, cx)
+                    .text_color(Look::of(cx).text_2)
             }),
     )
 }

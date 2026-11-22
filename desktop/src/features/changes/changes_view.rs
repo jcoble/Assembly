@@ -1,10 +1,14 @@
 //! How the Changes tab looks: the bar, what's being waited on, the stacked diff and the file tree.
 use super::{ChangesPane, Target};
+use crate::components::quiet_button::quiet_icon_button;
+use crate::components::search_field::search_field;
 use crate::core::intents::open_file::OpenFile;
 use crate::core::socket::{error_code::ErrorCode, row_source::ExpectedRowSource};
 use crate::core::state::{
     preferences::Preferences, session_read::Shown, viewed_project::ViewedProject,
 };
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{CRUMB_HEIGHT, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::control_ids as ids;
 use crate::core::ui::access::{Control as _, Named as _};
@@ -16,21 +20,18 @@ use crate::core::ui::{
 use crate::features::changes::working_copy::{Scope, is_working_part};
 use crate::features::source_control::actions_menu::READ_ONLY_SCOPE;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::diff::{Diff, DiffMode};
-use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
+use gpui_kit::component::input::{Editor, EditorState, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex,
-};
+use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use std::rc::Rc;
 
 const COMBINED: &str = "Combined conflict diff — shown exactly as Git returned it.";
 /// Tall enough to read a conflict in place while the stack below it stays on screen.
 const COMBINED_HEIGHT: Pixels = px(240.);
-const BAR_HEIGHT: Pixels = px(44.);
 
 /// What stands in for the stack, in the order the old view asked.
 #[derive(Debug, PartialEq)]
@@ -188,10 +189,8 @@ impl ChangesPane {
             })
     }
     fn bar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = cx.theme();
-        let (border, muted, added, removed) =
-            (theme.border, theme.muted_foreground, theme.green, theme.red);
-        let mono = theme.mono_font_family.clone();
+        let look = Look::of(cx);
+        let mono = cx.theme().mono_font_family.clone();
         let stack = self.target == Target::Stack;
         let label = match &self.target {
             Target::Commit(pick) => Some(format!("Commit {}", &pick.sha[..pick.sha.len().min(7)])),
@@ -203,22 +202,18 @@ impl ChangesPane {
         let pending = if stack { self.working.pending() } else { 0 };
         let refreshing = self.status.read(cx).reading();
         let mode = self.mode;
-        h_flex()
-            .flex_none()
-            .min_h(BAR_HEIGHT)
-            .pl_3()
-            .pr_2()
-            .gap_3()
-            .border_b_1()
-            .border_color(border)
-            .text_role(TextRole::Body, cx)
+        // What is shown, its folder in text-3, the line counts in the diff colours, and how far the reading has got.
+        let about = h_flex()
+            .flex_grow(1.)
+            .min_w_0()
+            .gap(SPACE[5])
             .children(label.map(|label| div().flex_none().child(label)))
             .children(stack.then(|| self.scope_menu(cx)))
             .children(folder.map(|folder| {
                 div()
                     .min_w_0()
                     .truncate()
-                    .text_color(muted)
+                    .text_color(look.text_3)
                     .child(format!("in {folder}"))
             }))
             .child(
@@ -227,10 +222,14 @@ impl ChangesPane {
                     .gap_1()
                     .text_role(TextRole::Meta, cx)
                     .font_family(mono)
-                    .child(div().text_color(added).child(format!("+{}", self.totals.0)))
                     .child(
                         div()
-                            .text_color(removed)
+                            .text_color(look.ready)
+                            .child(format!("+{}", self.totals.0)),
+                    )
+                    .child(
+                        div()
+                            .text_color(look.problem)
                             .child(format!("-{}", self.totals.1)),
                     ),
             )
@@ -238,48 +237,58 @@ impl ChangesPane {
                 h_flex()
                     .flex_none()
                     .gap_1()
-                    .text_color(muted)
-                    .child(Spinner::new().xsmall())
+                    .text_color(look.text_3)
+                    .child(working_mark(cx))
                     .child(format!(
                         "Reading {pending} more {}…",
                         if pending == 1 { "file" } else { "files" }
                     ))
-            }))
-            .child(div().flex_1())
+            }));
+        // How to show it, then Refresh.
+        let controls = h_flex()
+            .flex_none()
+            .ml_auto()
+            .gap(SPACE[5])
             .child(
-                ButtonGroup::new("changes-mode")
-                    .compact()
-                    .outline()
+                TabBar::new("changes-mode")
+                    .segmented()
                     .small()
-                    .child(
-                        Button::new("changes-unified")
-                            .label("Unified")
-                            .selected(mode == DiffMode::Unified),
-                    )
-                    .child(
-                        Button::new("changes-split")
-                            .label("Side by side")
-                            .selected(mode == DiffMode::Split),
-                    )
-                    .on_click(cx.listener(|pane, picked: &Vec<usize>, _, cx| {
-                        let mode = match picked.first() {
-                            Some(0) => DiffMode::Unified,
-                            Some(1) => DiffMode::Split,
-                            _ => return,
-                        };
-                        pane.set_mode(mode, cx);
-                    })),
+                    .flex_none()
+                    .border_1()
+                    .border_color(look.line)
+                    .selected_index(usize::from(mode == DiffMode::Split))
+                    .child(Tab::new().label("Unified").on_click(
+                        cx.listener(|pane, _, _, cx| pane.set_mode(DiffMode::Unified, cx)),
+                    ))
+                    .child(Tab::new().label("Side by side").on_click(
+                        cx.listener(|pane, _, _, cx| pane.set_mode(DiffMode::Split, cx)),
+                    )),
             )
             .children(stack.then(|| {
-                Button::new("changes-refresh")
+                quiet_icon_button("changes-refresh", IconName::RefreshCw, cx)
                     .control(ids::changes::REFRESH, "Refresh changes")
-                    .ghost()
-                    .small()
-                    .icon(IconName::RefreshCw)
                     .tooltip("Refresh changes")
                     .disabled(refreshing)
                     .on_click(cx.listener(|pane, _, _, cx| pane.refresh(cx)))
-            }))
+            }));
+        // The tab's crumb, as the chat's and a file's: 46 high under a hairline, the controls at the right. Each part
+        // takes the width its words measure; when the tab is too narrow for both, the controls move to a second line
+        // rather than being cut, and only then does the folder shorten.
+        h_flex()
+            .flex_none()
+            .flex_wrap()
+            .min_h(CRUMB_HEIGHT)
+            .py(SPACE[2])
+            .pl(SPACE[6])
+            .pr(SPACE[3])
+            .gap_x(SPACE[5])
+            .gap_y(SPACE[2])
+            .border_b_1()
+            .border_color(look.hairline)
+            .text_role(TextRole::Body, cx)
+            .text_color(look.text_1)
+            .child(about)
+            .child(controls)
     }
     fn stack(&self, cx: &mut Context<Self>) -> Diff {
         let both = self.both.clone();
@@ -346,12 +355,13 @@ impl ChangesPane {
             .h_full()
             .min_h_0()
             .border_l_1()
-            .border_color(cx.theme().border)
-            .children(
-                self.filter_input
-                    .as_ref()
-                    .map(|(input, _)| div().p_2().child(Input::new(input).small())),
-            )
+            .border_color(Look::of(cx).hairline)
+            // The shared search field over the changed files.
+            .children(self.filter_input.as_ref().map(|(input, _)| {
+                h_flex()
+                    .p(SPACE[3])
+                    .child(search_field(input, cx).control(ids::changes::FILTER, "Filter files"))
+            }))
             .child(div().flex_1().min_h_0().child(self.tree.list(
                 "changes-tree",
                 Rc::new(self.viewed.clone()),
@@ -433,14 +443,17 @@ impl Render for ChangesPane {
             .size_full()
             .min_h_0()
             .child(bar);
-        let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
+        let look = Look::of(cx);
+        let (muted, danger) = (look.text_3, look.problem);
+        // A line about the diff, in Meta: text-3, or the problem colour for a failure. The sizes are read first, so
+        // the line can be made after `cx` is lent out below.
         let (note_size, note_height) =
-            Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Body));
+            Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Meta));
         let note = |text: String| {
             div()
                 .flex_none()
-                .px_3()
-                .py_1()
+                .px(SPACE[6])
+                .py(SPACE[1])
                 .text_size(note_size)
                 .line_height(note_height)
                 .child(text)
@@ -449,12 +462,12 @@ impl Render for ChangesPane {
             Some(Waiting::Busy(text)) => {
                 return pane.child(
                     h_flex()
-                        .px_3()
-                        .py_2()
-                        .gap_1()
-                        .text_role(TextRole::Body, cx)
+                        .px(SPACE[6])
+                        .py(SPACE[3])
+                        .gap(SPACE[2])
+                        .text_role(TextRole::Meta, cx)
                         .text_color(muted)
-                        .child(Spinner::new().xsmall())
+                        .child(working_mark(cx))
                         .child(text),
                 );
             }
@@ -526,4 +539,11 @@ impl Render for ChangesPane {
         let aside = self.aside(cx);
         pane.child(h_flex().flex_1().min_h_0().child(body).child(aside))
     }
+}
+
+/// Work still going, as the rail marks it: the still three-quarter ring in the accent, never turning.
+fn working_mark(cx: &App) -> Icon {
+    Icon::new(IconName::LoaderCircle)
+        .xsmall()
+        .text_color(Look::of(cx).accent)
 }

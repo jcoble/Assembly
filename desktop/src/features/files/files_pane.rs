@@ -24,7 +24,6 @@ use crate::core::socket::outcome::Outcome;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::ui::pane_names::FILES;
 
-pub const TREE_LINE: Pixels = px(26.);
 /// How far each level of the tree steps in.
 const INDENT: Pixels = px(14.);
 
