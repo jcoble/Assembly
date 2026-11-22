@@ -35,6 +35,9 @@ public sealed partial class AdapterLauncher(IReadOnlyList<AgentDescriptor> agent
             throw new CallFailed(File.Exists(folder) ? $"This session's folder isn't a folder: {folder}" : $"This session's folder no longer exists: {folder}");
     }
 
+    public ContextLimitPolicy? ContextLimit(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment) =>
+        ContextLimitResolver.Resolve(descriptor, effectiveEnvironment);
+
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken)
     {
         var captured = ConfigTargetIdentity.Capture(this, agentId);
