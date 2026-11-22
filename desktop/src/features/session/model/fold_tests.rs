@@ -105,16 +105,16 @@ fn summary(work: &[Item]) -> String {
 #[test]
 fn cancelled_command_folds_as_terminal_work_without_adding_a_failed_call() {
     let cancelled = tool("cancelled", "execute", json!({"state":"cancelled"}));
-    assert_eq!(summary(std::slice::from_ref(&cancelled)), "ran a command");
+    assert_eq!(summary(std::slice::from_ref(&cancelled)), "Worked");
     let items = vec![
         cancelled,
         tool("failed", "execute", json!({"state":"failed"})),
         text("reply"),
     ];
-    assert_eq!(summary(&items), "ran 2 commands · 1 call failed");
+    assert_eq!(summary(&items), "1 call failed");
     let folds = Fold::all(&items, &stats(), None);
     assert!(folds["r1"].work.contains("cancelled"));
-    assert_eq!(folds["r1"].summary, "ran 2 commands · 1 call failed");
+    assert_eq!(folds["r1"].summary, "1 call failed");
 }
 
 // Pins: g0-session#9
@@ -160,12 +160,12 @@ fn the_summary_counts_work_by_kind_distinct_files_and_failures() {
     ];
     assert_eq!(
         summary(&mixed),
-        "ran a command · read a file · searched once · 1 call failed"
+        "read a file · searched once · 1 call failed"
     );
-    // A command stopped mid-run reads failed; it still ran.
+    // A failed command is reported only as a failed call.
     assert_eq!(
         summary(&[tool("a", "execute", json!({ "state": "failed" }))]),
-        "ran a command · 1 call failed"
+        "1 call failed"
     );
     let subagent = serde_json::from_value(
         json!({ "sessionId": "c1", "title": "Explore", "state": "idle", "canStop": false }),
@@ -223,7 +223,7 @@ fn a_denied_command_is_not_counted_as_run_or_failed() {
     assert_eq!(summary(&calls("no")), "ran a command");
     assert_eq!(
         summary(&calls("yes")),
-        "ran 2 commands · 1 call failed",
+        "ran a command · 1 call failed",
         "an allowed call that failed still counts"
     );
 }
