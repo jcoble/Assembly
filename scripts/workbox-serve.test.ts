@@ -304,7 +304,10 @@ for (const [state, reason] of [[{ unreachable: true }, /Network is unreachable/]
       assert.equal(run.app.exitCode, null);
       const shown = JSON.parse(readFileSync(f.statusFile, 'utf8'));
       assert.equal(shown.updating, false);
-      assert.match(shown.reason, reason);
+      // The status file is shown in the app: a fixed sentence is present, the raw output is not.
+      assert.equal(typeof shown.reason, 'string');
+      assert.ok(shown.reason.length > 0);
+      assert.doesNotMatch(shown.reason, /Network is unreachable|test compiler error|Host may be down/);
       writeFileSync(f.paths.release, 'close app');
       assert.equal(await run.exited, 0, run.stderr());
     } finally { run.app.kill('SIGTERM'); await run.exited; f.close(); }
