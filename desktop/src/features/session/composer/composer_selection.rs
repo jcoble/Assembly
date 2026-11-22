@@ -266,7 +266,8 @@ impl Composer {
             self.source_lost(cx);
         }
     }
-    pub(super) fn operational(&self) -> bool {
+    /// The composer can act on its session: a valid source is bound. The pane asks before calling an open ready.
+    pub fn operational(&self) -> bool {
         self.source_valid && self.session_key.is_some()
     }
     /// Legacy unit fixture setup names its simulated owner explicitly; production uses set_target.
