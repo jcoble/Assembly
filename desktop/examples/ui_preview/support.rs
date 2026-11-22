@@ -23,6 +23,8 @@ pub mod ui {
     }
     #[path = "../../src/core/ui/access/mod.rs"]
     pub mod access;
+    #[path = "../../src/core/ui/provider_name.rs"]
+    pub mod provider_name;
     #[path = "../../src/core/ui/row_drop_down.rs"]
     pub mod row_drop_down;
     #[path = "../../src/core/ui/spinner.rs"]
