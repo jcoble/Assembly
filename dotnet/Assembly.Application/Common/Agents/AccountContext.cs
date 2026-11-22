@@ -26,6 +26,14 @@ public static class AccountContext
         _ => null
     };
 
+    /// <summary>Settings files that a read-only composer probe does not rewrite.</summary>
+    public static (string Profile, string[] Project) CatalogueFiles(string vendorFamily) => vendorFamily switch
+    {
+        "claude" => ("settings.json", [".claude/settings.json", ".claude/settings.local.json"]),
+        "codex" => ("config.toml", [".codex/config.toml"]),
+        _ => ("", [])
+    };
+
     public static ContextLimitSource ContextLimitKind(string? vendorFamily) => vendorFamily switch
     {
         "claude" => ContextLimitSource.JsonAutoCompactWindow,
