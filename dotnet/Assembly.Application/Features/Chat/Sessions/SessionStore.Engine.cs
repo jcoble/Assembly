@@ -363,7 +363,7 @@ public sealed partial class SessionStore : ISessionProjectProjection
                 throw new CallFailed("The parent's owning folder changed.", "source_changed");
         }
         if (initialConfig is not null && (string.IsNullOrEmpty(initialConfig.TargetId) || initialConfig.Choices is null ||
-            initialConfig.Choices.Count == 0 || initialConfig.Choices.Any(choice => string.IsNullOrEmpty(choice.Key) || choice.Value is null)))
+            initialConfig.Choices.Any(choice => string.IsNullOrEmpty(choice.Key) || choice.Value is null)))
             throw new CallBadArguments("Select the agent settings again.");
         var session = new SessionInfo(Guid.NewGuid().ToString(), agent, folder, title, null, Now(),
             ParentSessionId: parentSessionId, Helper: parentSessionId is not null,
