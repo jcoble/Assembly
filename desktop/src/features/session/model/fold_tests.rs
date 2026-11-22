@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use super::fold::Fold;
 use super::item::{Item, ItemKind};
+use super::session_view::SessionView;
 use crate::core::ui::markdown::payload::{Block, Inline};
 use crate::features::session::rows::turn_stats::TurnStats;
 
@@ -51,6 +52,14 @@ fn stats() -> HashMap<String, TurnStats> {
         "model": null, "inputTokens": null, "outputTokens": null, "cacheHitPct": null, "costUsd": null, "toolCalls": 0,
         "branch": null, "head": null, "prevBranch": null, "prevHead": null });
     HashMap::from([("r1".into(), serde_json::from_value(stats).unwrap())])
+}
+
+/// Builds a transcript from the items and optional stats already received by the pane.
+fn fold_view(items: &[Item], stats: HashMap<String, TurnStats>) -> SessionView {
+    let mut view = SessionView::default();
+    view.items = items.to_vec();
+    view.stats = stats;
+    view
 }
 
 fn turn() -> Vec<Item> {
@@ -112,7 +121,7 @@ fn cancelled_command_folds_as_terminal_work_without_adding_a_failed_call() {
         text("reply"),
     ];
     assert_eq!(summary(&items), "ran 2 commands · 1 call failed");
-    let folds = Fold::all(&items, &stats(), None);
+    let folds = Fold::all(&fold_view(&items, stats()), None);
     assert!(folds["r1"].work.contains("cancelled"));
     assert_eq!(folds["r1"].summary, "ran 2 commands · 1 call failed");
 }
@@ -120,7 +129,7 @@ fn cancelled_command_folds_as_terminal_work_without_adding_a_failed_call() {
 // Pins: g0-session#9
 #[test]
 fn a_finished_turn_folds_its_work_not_its_prompt_reply_open_card_or_running_task() {
-    let fold = &Fold::all(&turn(), &stats(), None)["r1"];
+    let fold = &Fold::all(&fold_view(&turn(), stats()), None)["r1"];
     let work: HashSet<String> = ["th", "before", "t1", "t2", "t3"].map(String::from).into();
     assert_eq!(fold.work, work);
     assert_eq!(fold.reply.as_deref(), Some("reply"));
@@ -131,13 +140,13 @@ fn a_finished_turn_folds_its_work_not_its_prompt_reply_open_card_or_running_task
 // Pins: g0-session#9
 #[test]
 fn a_running_turn_or_one_without_stats_yet_never_folds() {
-    assert!(Fold::all(&turn(), &stats(), Some("r1")).is_empty());
-    assert!(Fold::all(&turn(), &HashMap::new(), None).is_empty());
+    assert!(Fold::all(&fold_view(&turn(), stats()), Some("r1")).is_empty());
+    assert!(Fold::all(&fold_view(&turn(), HashMap::new()), None).is_empty());
 }
 
 #[test]
 fn a_turn_that_is_only_its_reply_has_no_work_to_fold_but_its_reply_is_known() {
-    let fold = &Fold::all(&[text("reply")], &stats(), None)["r1"];
+    let fold = &Fold::all(&fold_view(&[text("reply")], stats()), None)["r1"];
     assert!(fold.work.is_empty());
     assert_eq!(fold.reply.as_deref(), Some("reply"));
 }
@@ -345,7 +354,8 @@ fn a_multi_line_command_shows_its_first_line() {
 // Pins: g0-session#10
 #[test]
 fn a_turn_with_no_finished_reply_keeps_its_own_line() {
-    let reply_done = |items: &[Item]| Fold::all(items, &stats(), None)["r1"].reply_done(items);
+    let reply_done =
+        |items: &[Item]| Fold::all(&fold_view(items, stats()), None)["r1"].reply_done(items);
     let tool_only = [tool("t", "execute", json!({}))];
     assert!(
         !reply_done(&tool_only),
