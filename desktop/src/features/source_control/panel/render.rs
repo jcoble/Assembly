@@ -16,6 +16,7 @@ use crate::features::source_control::result_line::result_line;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Textarea;
+use gpui_kit::component::resizable::{HandleEdge, resize_handle};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
@@ -109,13 +110,14 @@ impl SourceControlPane {
             Shown::Read(status) => self.repository_body(status, cx),
         }
     }
-    /// The kit's textarea with a grip under it, the kit having no drag to resize: it grows with its text until dragged.
+    /// The kit's textarea with the kit's resize handle on its bottom edge: it grows with its text until dragged.
     fn commit_box(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let height = self.commit_height;
         let read_only = self.read_only(cx);
         let look = Look::of(cx);
         v_flex()
             .id("commit-box")
+            .relative()
             .mt(SPACE[5])
             .debug_selector(|| "git-commit-box".into())
             .w_full()
@@ -138,12 +140,10 @@ impl SourceControlPane {
                     .text_role(TextRole::Body, cx)
                     .when_some(height, |area, height| area.h(height)),
             )
+            // The kit's resize handle along the field's bottom edge: a drag sets the box's height.
             .child(
-                div()
-                    .id("commit-box-grip")
-                    .w_full()
-                    .h(px(6.))
-                    .cursor_row_resize()
+                resize_handle::<CommitBoxDrag, CommitBoxDrag>("commit-box-grip", Axis::Vertical)
+                    .inside(HandleEdge::Trailing)
                     .on_drag(CommitBoxDrag, |drag, _, _, cx| cx.new(|_| drag.clone())),
             )
     }

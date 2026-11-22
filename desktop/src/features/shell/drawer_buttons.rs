@@ -173,6 +173,8 @@ pub fn toggle(dock: Entity<DockArea>, cx: &App) -> impl IntoElement {
     div().debug_selector(|| "drawer-toggle".into()).child(
         glass_icon_button("drawer-toggle", IconName::PanelRight, open, cx)
             .control(topbar::DRAWER_TOGGLE, "Toggle tools drawer")
+            // A toggle in the tree: whether the drawer is open.
+            .toggled(open)
             .tooltip("Toggle tools drawer")
             .on_click(move |_, window, cx| {
                 cx.defer(

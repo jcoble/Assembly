@@ -95,6 +95,8 @@ pub fn button(dock: Entity<DockArea>, cx: &App) -> impl IntoElement {
     div().debug_selector(|| "terminal-toggle".into()).child(
         glass_icon_button("terminal-toggle", IconName::SquareTerminal, showing, cx)
             .control(topbar::TERMINAL_TOGGLE, TERMINAL)
+            // A toggle in the tree: whether the terminal shows.
+            .toggled(showing)
             .tooltip(TERMINAL)
             .on_click(move |_, window, cx| toggle_terminal(&dock, window, cx)),
     )
