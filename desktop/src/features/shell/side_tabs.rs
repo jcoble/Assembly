@@ -1,6 +1,7 @@
 //! The sessions column's tabs (Sessions, Files, Search) as the kit's segmented tab bar across the column, the
-//! segments sharing it equally, on the look's capsule track with its outline. Selection and pane drag/drop stay owned
-//! by the dock. Called by the dock for the left column's groups.
+//! segments sharing the room past their names, on the look's capsule track with its outline; when the panes no longer
+//! fit, the kit scrolls the strip. Selection and pane drag/drop stay owned by the dock. Called by the dock for the left
+//! column's groups.
 
 use crate::core::theme::look::Look;
 use crate::core::theme::metrics::{CORNER_PILL, SPACE};
@@ -12,6 +13,9 @@ use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+/// How readily the bar shrinks next to the gutter: so little that the gutter gives up nearly all the room it can
+/// first. A flex item shrinks by this times its own width, and the gutter's factor is 1.
+const BAR_SHRINK: f32 = 0.0001;
 /// The drag chip's size while a segment is dragged.
 const DRAG_SIZE: Size<Pixels> = size(px(96.), px(30.));
 
@@ -42,8 +46,9 @@ fn tab(group: &TabGroupContext, ix: usize, name: &'static str, cx: &App) -> Tab 
     let (select, drop) = (group.clone(), group.clone());
     Tab::new()
         .label(name)
-        // Each segment takes an equal share of the column.
-        .flex_1()
+        // Each segment is at least as wide as its name and shares out the room left over, so a crowded column scrolls
+        // the strip rather than cutting a name short.
+        .flex_grow(1.)
         .control(side_tab(name), name)
         .debug_selector(move || format!("side-tab-{name}"))
         .on_click(move |_, window, cx| {
@@ -69,15 +74,17 @@ fn tab(group: &TabGroupContext, ix: usize, name: &'static str, cx: &App) -> Tab 
 
 /// The column's right gutter after the bar, where a dropped pane joins the group at the end, as on the kit's tab bar:
 /// one from another group joins behind the shown one, and one from this group moves to the last place. A little wider
-/// than the left margin so it stays easy to drop on.
+/// than the left margin so it stays easy to drop on, and the first thing to give way, down to a sliver, when the
+/// segments' names need the room.
 fn end(group: &TabGroupContext, cx: &App) -> Stateful<Div> {
     let drop_target = cx.theme().tokens.drop_target;
     let (group, last) = (group.clone(), group.panels().len() - 1);
     div()
         .id("side-tabs-end")
         .h_full()
-        .flex_none()
         .w(SPACE[9])
+        .min_w(SPACE[1])
+        .flex_shrink(1.)
         .when(group.is_droppable(), |end| {
             end.drag_over::<DragPanel>(move |end, _, _, _| end.bg(drop_target))
                 .on_drop(move |drag: &DragPanel, window, cx| {
@@ -99,10 +106,16 @@ pub(super) fn chips(group: &TabGroupContext, _: &mut Window, cx: &mut App) -> An
     let shown = tabs.iter().position(|(_, _, shown)| *shown);
     // Across the column, as the look's `.seg`; the column's right gutter after it stays the drop target. The kit's
     // small size keeps a segment within the header's 30px.
+    //
+    // The bar starts from its segments' own width, which the layout measures from each name as the font draws it,
+    // and grows into any room left over. When the column is short of that width, the gutter gives up its room first
+    // (the bar barely shrinks while the gutter can); only once the gutter is down to its sliver does the bar shrink
+    // below its names, and then the kit scrolls the strip.
     let bar = TabBar::new("side-tabs-bar")
         .segmented()
         .small()
-        .flex_1()
+        .flex_grow(1.)
+        .flex_shrink(BAR_SHRINK)
         .min_w_0()
         .rounded(CORNER_PILL)
         .border_1()

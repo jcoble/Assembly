@@ -18,5 +18,6 @@ public interface IProviderAdapters
     Task<ProviderProbeResult> ProbeAsync(AgentDescriptor descriptor, string configurationTargetId,
         string probeFolder, CancellationToken ct);
     Task<ProviderAdapterCapture?> CaptureAsync(string provider, string configurationTargetId, CancellationToken ct);
+    void InvalidateComposerCatalogue(string provider) { }
     Task RetireAsync(ProviderAdapterCapture capture, CancellationToken ct);
 }

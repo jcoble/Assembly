@@ -128,7 +128,11 @@ public sealed class SignInEffects : IEngineEffects, IAsyncDisposable
                 if (!Progress(attempt, "finishing", null) || !Current(attempt)) return;
                 ConfigTargetIdentity.Validate(_launcher, attempt.Descriptor, attempt.Environment);
                 if (attempt.Capture is { } capture) await _adapters.RetireAsync(capture, attempt.Stop.Token);
-                if (Current(attempt)) Progress(attempt, "signed_in", null);
+                if (Current(attempt))
+                {
+                    _adapters.InvalidateComposerCatalogue(attempt.Row.Provider);
+                    Progress(attempt, "signed_in", null);
+                }
             }
             else Progress(attempt, "failed", end switch
             {
