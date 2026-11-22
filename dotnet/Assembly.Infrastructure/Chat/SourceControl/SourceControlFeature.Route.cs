@@ -72,7 +72,7 @@ internal sealed partial class SourceControlFeature
         if (qualified && (expected is null || expected.RouteMachine != info.Machine))
             throw new CallFailed("The session's owning machine changed.", "source_changed");
         if (forward is null || connections is null) throw new CallFailed("This host does not own that session.");
-        var target = await Capture(info.Machine, session, call.Cancellation, expected);
+        var target = await Capture(info.Machine, session, call.Cancellation, expected, kind == CallKind.Write);
         if (qualified)
         {
             call.SourceGuard = SessionRowSources.CapturedRemote(target.Owner.Machine, target.Live, target.EnsureCurrent);
@@ -94,7 +94,7 @@ internal sealed partial class SourceControlFeature
         if (views.RemoteMachine(view) is { } machine)
         {
             if (forward is null || connections is null) throw new CallFailed("This host does not own that folder.");
-            var target = await Capture(machine, null, call.Cancellation);
+            var target = await Capture(machine, null, call.Cancellation, write: kind == CallKind.Write);
             call.SourceGuard = SessionRowSources.CapturedRemote(target.Owner.Machine, target.Live, target.EnsureCurrent);
             return await Forward(method, resultType, OwnerArguments(json, target.Owner.Engine), target, session, call, kind);
         }
@@ -171,28 +171,38 @@ internal sealed partial class SourceControlFeature
 
     private sealed record GitTarget(RemoteConnections.ProjectOwner Owner, EngineMirror.LiveMirrorBinding Live, Action EnsureCurrent);
 
-    private async Task<GitTarget> Capture(string name, string? session, CancellationToken ct, ExpectedSource? expected = null)
+    // A read on a machine with no live mirror is an outage, whatever check noticed first (a dead socket leaves
+    // the registered machine and its mirror row behind): it answers unreachable, so the drawer can offer Connect
+    // instead of showing a moved source. A write keeps source_changed: its captured source can no longer be
+    // certified, which is what refuses it before either checkout is touched.
+    private async Task<GitTarget> Capture(string name, string? session, CancellationToken ct, ExpectedSource? expected = null, bool write = false)
     {
-        var matches = db.Query("SELECT machine,generation FROM engine_mirror WHERE name=$name AND state='live' LIMIT 2",
-            row => new ExpectedSource(row.Text(0), row.Long(1), name), ct, new SqlArg("$name", name));
-        if (matches.Count != 1 || expected is not null && matches[0] != expected) throw new CallFailed("The session's owning machine changed.", "source_changed");
-        // The mirror still names this source; the machine just isn't connected. Say so, so the drawer can offer
-        // Connect instead of showing a moved source (a copied session now opens while its machine is away).
-        if (connections!.ByName(name) is null) throw new MachineUnreachable(name, $"{name}: machine socket is disconnected");
-        var source = await connections!.CaptureSessionOpenSourceAsync(db, matches[0], ct);
-        var owner = await connections.CaptureProjectOwnerAsync(name, ct);
-        if (owner.Engine != matches[0].Machine || !ReferenceEquals(owner.Machine, source.Machine) ||
-            !ReferenceEquals(owner.Binding, source.Live.OwnerBinding))
-            throw new CallFailed("The session's owning machine changed.", "source_changed");
-        void EnsureCurrent()
+        try
         {
-            connections!.RequireProjectOwner(owner, ct);
-            source.EnsureCurrent();
-            if (session is not null && sessions.Get(session)?.Machine != name)
+            var matches = db.Query("SELECT machine,generation FROM engine_mirror WHERE name=$name AND state='live' LIMIT 2",
+                row => new ExpectedSource(row.Text(0), row.Long(1), name), ct, new SqlArg("$name", name));
+            if (matches.Count != 1 || expected is not null && matches[0] != expected) throw new CallFailed("The session's owning machine changed.", "source_changed");
+            var source = await connections!.CaptureSessionOpenSourceAsync(db, matches[0], ct);
+            var owner = await connections.CaptureProjectOwnerAsync(name, ct);
+            if (owner.Engine != matches[0].Machine || !ReferenceEquals(owner.Machine, source.Machine) ||
+                !ReferenceEquals(owner.Binding, source.Live.OwnerBinding))
                 throw new CallFailed("The session's owning machine changed.", "source_changed");
+            void EnsureCurrent()
+            {
+                connections!.RequireProjectOwner(owner, ct);
+                source.EnsureCurrent();
+                if (session is not null && sessions.Get(session)?.Machine != name)
+                    throw new CallFailed("The session's owning machine changed.", "source_changed");
+            }
+            EnsureCurrent();
+            return new(owner, source.Live, EnsureCurrent);
         }
-        EnsureCurrent();
-        return new(owner, source.Live, EnsureCurrent);
+        catch (CallFailed failed)
+        {
+            if (!write && failed.Reason == "source_changed" && !await connections!.LiveAsync(name, ct))
+                throw RemoteConnections.Disconnected(name);
+            throw;
+        }
     }
 
     internal IReadOnlyList<GitOperationStatus> ObserveRemoteOperation(string key, CallContext call, GitOperations operations)
