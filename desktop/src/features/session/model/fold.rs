@@ -1,13 +1,13 @@
-//! `Fold` is a finished turn's work folded under one "Worked for" heading above its final reply. The prompt, the
+//! `Fold` is a finished turn's work folded under one "Worked for" heading. The prompt, the
 //! final reply, errors and notes stay out, and so does anything still waiting on the user or still running. Ported
 //! from session/fold.ts (turnFolds, workSummary, toolTitle).
 
 use std::collections::{HashMap, HashSet};
 
 use super::item::{Item, ItemKind};
+use super::session_view::SessionView;
 use crate::core::ui::ask::payload::AskPayload;
 use crate::features::session::rows::tool::ToolState;
-use crate::features::session::rows::turn_stats::TurnStats;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fold {
@@ -32,18 +32,14 @@ impl Fold {
         })
     }
 
-    /// Each finished run's fold, by run id. A run is finished once its stats are in and it isn't the one running.
-    pub fn all(
-        items: &[Item],
-        stats: &HashMap<String, TurnStats>,
-        active_run: Option<&str>,
-    ) -> HashMap<String, Fold> {
+    /// Each finished run's fold, by run id. A terminal row can close a run even when its stats are unavailable.
+    pub fn all(view: &SessionView, active_run: Option<&str>) -> HashMap<String, Fold> {
         let mut by_run: HashMap<&str, Vec<&Item>> = HashMap::new();
-        for item in items {
+        for item in &view.items {
             let Some(run) = item.run_id.as_deref() else {
                 continue;
             };
-            if Some(run) != active_run && stats.contains_key(run) {
+            if Some(run) != active_run && view.run_has_ended(run) {
                 by_run.entry(run).or_default().push(item);
             }
         }
@@ -73,7 +69,7 @@ impl Fold {
                 duration_ms: if work.is_empty() {
                     None
                 } else {
-                    stats[run].duration_ms
+                    view.stats.get(run).and_then(|stats| stats.duration_ms)
                 },
             };
             folds.insert(run.to_string(), fold);
