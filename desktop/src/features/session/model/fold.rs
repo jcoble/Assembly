@@ -101,9 +101,15 @@ impl Fold {
                 ItemKind::Tool { item_id, tool } if !denied.contains(item_id.as_str()) => tool,
                 _ => continue,
             };
-            // A failed call still counts as what it was (a stopped command is still a command run).
-            if tool.state == ToolState::Failed {
-                failed += 1;
+            // Only completed calls count as work done. A failed call is reported only as a failure,
+            // and a cancelled or still-running call is omitted (matching mac-command-bar's fold summary).
+            match tool.state {
+                ToolState::Completed => {}
+                ToolState::Failed => {
+                    failed += 1;
+                    continue;
+                }
+                ToolState::Cancelled | ToolState::Started => continue,
             }
             if let Some(helper) = helper_of(&tool.name) {
                 helpers[helper] += 1;

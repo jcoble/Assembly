@@ -60,12 +60,18 @@ public static partial class MessageTransitions
         List<EffectDraft> effects = [];
         if (outcome.State == "next_turn" && outcome.CompletedTurn is null)
         {
+            // A send receipt can land after an approval opened, even when the adapter sent both in the same write.
+            // An open need must keep the session at needs_me, the same rule SessionTransitions.SetState applies;
+            // only the activity becomes running.
+            var sessionState = s.QueryFirst("""
+                SELECT COUNT(*) FROM engine_needs_me WHERE session_id=$id AND state='open'
+                """, r => r.Long(0), new SqlArg("$id", current.To)) > 0 ? "needs_me" : "running";
             var sessionVersion = s.QueryFirst("""
-                UPDATE engine_session SET state='running',activity_state='running',version=version+1,updated_ms=$now
+                UPDATE engine_session SET state=$state,activity_state='running',version=version+1,updated_ms=$now
                 WHERE id=$id RETURNING version
-                """, r => r.Long(0), new("$now", c.NowMs), new("$id", current.To));
+                """, r => r.Long(0), new("$state", sessionState), new("$now", c.NowMs), new("$id", current.To));
             events.Add(new("session.changed", "session", current.To, sessionVersion, false,
-                new(current.To, recipient.RunId, null, null, "running", recipient.Epoch)));
+                new(current.To, recipient.RunId, null, null, sessionState, recipient.Epoch)));
         }
         var recipientVersion = s.QueryFirst("SELECT version FROM engine_session WHERE id=$id", r => r.Long(0), new SqlArg("$id", current.To));
         var releasedVersion = s.QueryFirst("""
