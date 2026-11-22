@@ -315,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "assembly-desktop"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "alacritty_terminal",
  "async-process",

@@ -22,4 +22,7 @@ public interface IAgentLauncher
 
     Task<IAgentLink> LaunchSignInAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
         IPermissionPolicy policy, StageTimes stages, CancellationToken cancellationToken);
+
+    /// <summary>Resolves the provider-neutral effective context window policy for this adapter on its host, if any.</summary>
+    ContextLimitPolicy? ContextLimit(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment) => null;
 }

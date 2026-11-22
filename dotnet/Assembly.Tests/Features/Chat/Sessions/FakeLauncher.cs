@@ -29,6 +29,9 @@ internal sealed class FakeLauncher : IAgentLauncher
 
     public void ValidateFolder(string folder) => new AdapterLauncher([], "", new UnclaimedPermissions()).ValidateFolder(folder);
 
+    public ContextLimitPolicy? ContextLimit(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment) =>
+        ContextLimitResolver.Resolve(descriptor, effectiveEnvironment);
+
     public bool CanRunTerminalAuthentication => false;
     public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
         StageTimes stages, CancellationToken cancellationToken) => LaunchAsync(descriptor.Id, stages, cancellationToken);
