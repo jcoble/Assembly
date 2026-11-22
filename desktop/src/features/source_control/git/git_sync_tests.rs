@@ -12,6 +12,8 @@ fn status() -> GitStatus {
         total_staged: Some(0),
         fingerprint: "snapshot".into(),
         checkout_root: None,
+        base_branch: None,
+        branch_created_at: None,
     }
 }
 #[test]

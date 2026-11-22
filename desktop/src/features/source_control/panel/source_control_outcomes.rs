@@ -59,6 +59,7 @@ impl SourceControlPane {
             self.result = None;
         }
         self.sync_children(cx);
+        self.sync_clock(cx);
         let target = self.shown_target(cx);
         if self.branches_target.is_some() && self.branches_target != target {
             self.forget_branches();

@@ -49,6 +49,37 @@ pub fn age_of_millis(millis: i64) -> String {
     }
 }
 
+/// How long ago a branch's first own commit was, in plain words for the branch card ("just now", "3 days ago").
+/// Both stamps are Unix milliseconds from the backend; a stamp ahead of `now` reads as "just now".
+pub fn branch_age(now_ms: i64, created_ms: i64) -> String {
+    const MINUTE: i64 = 60_000;
+    const HOUR: i64 = 60 * MINUTE;
+    const DAY: i64 = 24 * HOUR;
+    let elapsed = now_ms - created_ms;
+    let unit = |count: i64, singular: &str, plural: &str| {
+        if count == 1 {
+            format!("1 {singular} ago")
+        } else {
+            format!("{count} {plural} ago")
+        }
+    };
+    if elapsed < MINUTE {
+        "just now".into()
+    } else if elapsed < HOUR {
+        unit(elapsed / MINUTE, "min", "min")
+    } else if elapsed < DAY {
+        unit(elapsed / HOUR, "hour", "hours")
+    } else if elapsed < 7 * DAY {
+        unit(elapsed / DAY, "day", "days")
+    } else if elapsed < 30 * DAY {
+        unit(elapsed / (7 * DAY), "week", "weeks")
+    } else if elapsed < 365 * DAY {
+        unit(elapsed / (30 * DAY), "month", "months")
+    } else {
+        unit(elapsed / (365 * DAY), "year", "years")
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RefKind {
     Head,

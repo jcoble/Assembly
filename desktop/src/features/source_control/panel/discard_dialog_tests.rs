@@ -20,6 +20,10 @@ fn file(path: &str, index: &str, worktree: &str) -> ChangedFile {
         index: index.into(),
         worktree: worktree.into(),
         revision: None,
+        staged_added: None,
+        staged_removed: None,
+        unstaged_added: None,
+        unstaged_removed: None,
     }
 }
 // Pins: g9#3
